@@ -3,7 +3,8 @@ import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { SidebarFacts, SidebarHeading } from '../../ui/detail-layout.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { useRetryFailedJobs, isTerminal } from '../../api/hooks/useJobs.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
+import { useDismissFollowUps, useRetryFailedJobs, isTerminal } from '../../api/hooks/useJobs.ts';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import type { JobDetail } from '../../api/types.ts';
 import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusTone, zoneSlug } from './status.ts';
@@ -27,6 +28,8 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
   const toast = useToast();
   const cancel = useCancelRun(org, job.id);
   const retry = useRetryFailedJobs(org, job.id);
+  const dismiss = useDismissFollowUps(org, job.id);
+  const confirm = useConfirm();
 
   const terminal = isTerminal(status);
   const retryable = terminal && hasFailedHosts(job.stats);
@@ -36,6 +39,21 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
   // retry uses the template's own limit and extra vars — said next to the
   // button, where the operator decides.
   const retryDropsOverrides = job.trigger === 'schedule' || job.trigger === 'webhook';
+
+  const parent = job.chain?.parent ?? null;
+  const hasPending = (job.chain?.follow_ups ?? []).some((f) => f.state === 'pending');
+  const dismissable = canRun && !terminal && hasPending;
+
+  async function onDismiss() {
+    const c = t.runs.detail.chain;
+    if (!(await confirm({ message: c.dismissConfirm, confirmLabel: c.dismiss }))) return;
+    try {
+      const { dismissed } = await dismiss.mutateAsync();
+      toast.show(c.dismissed(dismissed));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : c.dismissFailed, 'destructive');
+    }
+  }
 
   async function onRetry() {
     try {
@@ -63,7 +81,22 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
           </>
         )}
       </SidebarHeading>
+      {parent && (
+        <p className="text-xs text-muted-foreground">
+          {t.runs.detail.chain.parentOf}{' '}
+          <Link to="/o/$org/runs/$id" params={{ org, id: parent.first_job_id }} className="font-mono hover:text-primary">
+            {parent.template_name || t.runs.detail.chain.deletedTemplate}
+          </Link>
+        </p>
+      )}
       <RunFacts org={org} job={job} />
+      {dismissable && (
+        <div>
+          <Button type="button" onClick={() => void onDismiss()} disabled={dismiss.isPending}>
+            {t.runs.detail.chain.dismiss}
+          </Button>
+        </div>
+      )}
       {canRun && (cancellable || terminal) && (
         <div className="flex flex-col items-start gap-2">
           <div className="flex flex-wrap items-center gap-2">

@@ -10,7 +10,9 @@ import { EventLog } from './EventLog.tsx';
 import { RunSidebar } from './RunSidebar.tsx';
 import { RunResultSection } from './RunResultSection.tsx';
 import { RunGroupSection } from './RunGroupSection.tsx';
+import { RunChainSection } from './RunChainSection.tsx';
 import { RunVaultSection } from './RunVaultSection.tsx';
+import type { JobDetail } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /**
@@ -29,8 +31,12 @@ export function RunDetailPage() {
   // log has its own SSE stream (useRunLog).
   const job = useJob(org, id, {
     refetchInterval: (q) => {
-      const data = q.state.data as { job?: { status?: string } } | undefined;
-      return data && !isTerminal(data.job?.status) ? 2000 : false;
+      const data = q.state.data as { job?: JobDetail } | undefined;
+      if (!data) return false;
+      // Keep polling while the run is live or a follow-up has yet to start,
+      // so "Waiting" turns into "Started" without a reload.
+      const waiting = (data.job?.chain?.follow_ups ?? []).some((f) => f.state === 'pending' || f.state === 'due');
+      return !isTerminal(data.job?.status) || waiting ? 2000 : false;
     },
   });
   const log = useRunLog(org, id);
@@ -49,10 +55,12 @@ export function RunDetailPage() {
   // Empty for a run whose repository uses no encrypted files at all.
   const vaultIdentities = j.vault_identities ?? [];
   const s = t.runs.detail.section;
+  const followUps = j.chain?.follow_ups ?? [];
 
   const nav: SectionNavItem[] = [
     { id: 'result', label: s.result },
     ...(siblings.length > 0 ? [{ id: 'group', label: s.group, count: siblings.length + 1 }] : []),
+    ...(followUps.length > 0 ? [{ id: 'chain', label: t.runs.detail.chain.title, count: followUps.length }] : []),
     ...(vaultIdentities.length > 0 ? [{ id: 'vault', label: t.credentials.vault.heading }] : []),
     { id: 'log', label: s.log },
   ];
@@ -61,6 +69,7 @@ export function RunDetailPage() {
     <DetailLayout sidebar={<RunSidebar org={org} job={j} status={status} canRun={canRun} />} nav={nav} navLabel={t.common.sections}>
       <RunResultSection job={j} status={status} events={log.events} />
       {siblings.length > 0 && <RunGroupSection org={org} siblings={siblings} />}
+      {followUps.length > 0 && <RunChainSection org={org} followUps={followUps} />}
       {vaultIdentities.length > 0 && <RunVaultSection identities={vaultIdentities} recorded={j.vault_identities_source === 'recorded'} />}
       <Section
         id="log"
