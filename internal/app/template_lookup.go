@@ -122,6 +122,18 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 	}, nil
 }
 
+// TemplateExists implements jobs.TemplateExistence: a plain row read, so a
+// template with an unregistered playbook or sealed values still exists.
+func (a templateLookup) TemplateExists(ctx context.Context, orgID, id uuid.UUID) (bool, error) {
+	if _, err := a.templates.Get(ctx, orgID, id); err != nil {
+		if errors.Is(err, templates.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // dropStraySealed is t's sendable values without every top-level value
 // that holds a sealed secret under a field that is not secret-typed (spec
 // 7.75 owner decision 4: a secret field a person removed keeps its sealed

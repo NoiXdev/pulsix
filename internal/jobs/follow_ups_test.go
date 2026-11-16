@@ -2,10 +2,13 @@ package jobs_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -316,4 +319,49 @@ func TestRunGroupSinksCallsAllAndJoinsErrors(t *testing.T) {
 	if err := (jobs.RunGroupSinks{b}).RunGroupFinished(ctx, jobs.RunGroupResult{}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestEnqueueOverrideAcceptsNotReadyTemplate(t *testing.T) {
+	f := newChainFixture(t)
+	other := f.addTemplate()
+	ids := []uuid.UUID{other}
+	src := &notReadyTemplates{fakeTemplates: f.tmpl, notReady: other}
+	// Fallback path: a lookup that answers ErrTemplateNotReady still counts as existing.
+	svc2 := jobs.NewService(f.store, &fakeQueue{}, src, f.res, &fakeHosts{}, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc2.SetFollowUpPlanner(f.planner)
+	if _, err := svc2.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{Trigger: jobs.TriggerManual, FollowUps: &ids}); err != nil {
+		t.Fatalf("not-ready follow-up must be accepted: %v", err)
+	}
+}
+
+func TestEnqueueOverrideWrapsLookupErrorWithID(t *testing.T) {
+	f := newChainFixture(t)
+	other := f.addTemplate()
+	ids := []uuid.UUID{other}
+	boom := errors.New("boom")
+	src := &notReadyTemplates{fakeTemplates: f.tmpl, failID: other, failErr: boom}
+	svc := jobs.NewService(f.store, &fakeQueue{}, src, f.res, &fakeHosts{}, nil, fakeSealer{}, time.Now, rand.Reader)
+	svc.SetFollowUpPlanner(f.planner)
+	_, err := svc.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{Trigger: jobs.TriggerManual, FollowUps: &ids})
+	if !errors.Is(err, boom) || !strings.Contains(err.Error(), "check follow-up template "+other.String()) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// notReadyTemplates answers ErrTemplateNotReady for one id and a custom
+// error for another, like a lookup over unregistered playbooks.
+type notReadyTemplates struct {
+	*fakeTemplates
+	notReady, failID uuid.UUID
+	failErr          error
+}
+
+func (n *notReadyTemplates) TemplateLookup(c context.Context, org, id uuid.UUID) (jobs.TemplateRow, error) {
+	switch id {
+	case n.notReady:
+		return jobs.TemplateRow{}, jobs.ErrTemplateNotReady
+	case n.failID:
+		return jobs.TemplateRow{}, n.failErr
+	}
+	return n.fakeTemplates.TemplateLookup(c, org, id)
 }

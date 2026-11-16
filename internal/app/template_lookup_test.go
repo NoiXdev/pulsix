@@ -306,3 +306,33 @@ func TestTemplateLookupNeverOpensAStraySealedValue(t *testing.T) {
 		t.Fatalf("opened secrets without a schema = %v", row.OpenedSecrets)
 	}
 }
+
+// A template whose playbook is not registered yet exists even though a full
+// lookup refuses it as not ready; an unknown id does not exist.
+func TestTemplateExistsIgnoresUnregisteredPlaybook(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org, err := gen.New(d.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "app-template-exists", Name: "exists"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org.ID)
+	inline := "- hosts: all\n  tasks: []"
+	pbStore := playbooks.NewSQLStore(d)
+	pb, err := pbStore.Create(scoped, playbooks.Playbook{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Inline: &inline, Source: playbooks.SourceEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := templates.NewSQLStore(d)
+	id := uuid.Must(uuid.NewV7())
+	if _, err := store.Create(scoped, templates.Template{ID: id, OrgID: org.ID, PlaybookID: pb.ID, Name: "exists"}); err != nil {
+		t.Fatal(err)
+	}
+	lookup := NewTemplateLookup(store, pbStore, crypto.NewBox([32]byte{1})).(jobs.TemplateExistence)
+	if ok, err := lookup.TemplateExists(scoped, org.ID, id); err != nil || !ok {
+		t.Fatalf("existing = %v, %v", ok, err)
+	}
+	if ok, err := lookup.TemplateExists(scoped, org.ID, uuid.Must(uuid.NewV7())); err != nil || ok {
+		t.Fatalf("unknown = %v, %v", ok, err)
+	}
+}

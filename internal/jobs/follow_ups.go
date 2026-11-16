@@ -73,6 +73,17 @@ func (s *Service) planFollowUps(ctx context.Context, orgID, groupID uuid.UUID, t
 	return nil
 }
 
+// TemplateExistence is the optional cheap existence check the override
+// validation prefers over TemplateLookup, which also opens secrets and
+// refuses a template whose playbook is not registered yet. NewService
+// resolves it from the TemplateSource's own type.
+type TemplateExistence interface {
+	TemplateExists(ctx context.Context, orgID, id uuid.UUID) (bool, error)
+}
+
+// checkFollowUpOverride validates an override like a template's list:
+// at most MaxFollowUps, no self, no duplicates, every template exists.
+// Whether a follow-up can start is the starter's concern, later.
 func (s *Service) checkFollowUpOverride(ctx context.Context, orgID, self uuid.UUID, ids []uuid.UUID) error {
 	if len(ids) > MaxFollowUps {
 		return fmt.Errorf("%w: at most %d follow-ups per run", ErrInvalidInput, MaxFollowUps)
@@ -86,12 +97,29 @@ func (s *Service) checkFollowUpOverride(ctx context.Context, orgID, self uuid.UU
 			return fmt.Errorf("%w: follow-up template %s is listed twice", ErrInvalidInput, id)
 		}
 		seen[id] = true
-		if _, err := s.templates.TemplateLookup(ctx, orgID, id); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("%w: follow-up template %s does not exist", ErrInvalidInput, id)
-			}
-			return err
+	}
+	for _, id := range ids {
+		exists, err := s.followUpExists(ctx, orgID, id)
+		if err != nil {
+			return fmt.Errorf("check follow-up template %s: %w", id, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: follow-up template %s does not exist", ErrInvalidInput, id)
 		}
 	}
 	return nil
+}
+
+func (s *Service) followUpExists(ctx context.Context, orgID, id uuid.UUID) (bool, error) {
+	if s.templateExists != nil {
+		return s.templateExists.TemplateExists(ctx, orgID, id)
+	}
+	_, err := s.templates.TemplateLookup(ctx, orgID, id)
+	switch {
+	case err == nil, errors.Is(err, ErrTemplateNotReady):
+		return true, nil
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	}
+	return false, err
 }

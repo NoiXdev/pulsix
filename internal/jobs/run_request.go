@@ -61,7 +61,8 @@ type RunRequest struct {
 	// OnlyHosts keeps just these hosts of the resolved targets (a chained
 	// run plays only on the hosts its parent played on). Whatever the scope
 	// does not select is dropped; when nothing is left the enqueue fails
-	// with ErrHostNotInScope.
+	// with ErrHostNotInScope. Empty means unrestricted: a caller that means
+	// "no hosts" must not enqueue at all (the follow-up starter skips).
 	OnlyHosts []uuid.UUID
 	// FollowUps overrides the template's follow-ups for this run (manual
 	// runs only); nil keeps the template's own list, an empty list none.

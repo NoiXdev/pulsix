@@ -530,6 +530,9 @@ type Service struct {
 	// followUps plans a run's follow-ups at enqueue time (SetFollowUpPlanner);
 	// unwired, nothing is planned.
 	followUps FollowUpPlanner
+	// templateExists is the optional cheap existence check, resolved from
+	// the TemplateSource's own type.
+	templateExists TemplateExistence
 }
 
 // NewService wires the store, the claim queue, the template source, the
@@ -539,6 +542,9 @@ type Service struct {
 // blocks on changed host keys.
 func NewService(store Store, queue Queue, templates TemplateSource, resolver ScopeResolver, hosts HostLookup, zones DefaultZoneSource, box Sealer, now func() time.Time, rand io.Reader) *Service {
 	s := &Service{store: store, queue: queue, templates: templates, resolver: resolver, hosts: hosts, zones: zones, box: box, now: now, rand: rand}
+	if te, ok := templates.(TemplateExistence); ok {
+		s.templateExists = te
+	}
 	if g, ok := hosts.(KeyGuardSource); ok {
 		s.keyGuard = g
 	}
