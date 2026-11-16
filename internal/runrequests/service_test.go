@@ -538,3 +538,30 @@ func TestApproveSelection(t *testing.T) {
 		}
 	})
 }
+
+func TestListFiltersByEffectiveStatus(t *testing.T) {
+	w := newWiring()
+	old := w.create(t)
+	w.now = w.now.Add(30 * time.Minute)
+	fresh := w.create(t)
+	w.now = w.now.Add(30 * time.Minute) // old has reached its hour, fresh has not
+	ctx := context.Background()
+
+	all, err := w.svc.List(ctx, w.org, nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all = %+v %v", all, err)
+	}
+	for _, tc := range []struct {
+		status runrequests.Status
+		want   uuid.UUID
+	}{{runrequests.StatusExpired, old.ID}, {runrequests.StatusPending, fresh.ID}} {
+		st := tc.status
+		got, err := w.svc.List(ctx, w.org, &st)
+		if err != nil || len(got) != 1 || got[0].ID != tc.want || got[0].Status != tc.status {
+			t.Fatalf("%s = %+v %v", tc.status, got, err)
+		}
+	}
+	if got, err := w.svc.List(ctx, uuid.Must(uuid.NewV7()), nil); err != nil || len(got) != 0 {
+		t.Fatalf("another organization = %+v %v", got, err)
+	}
+}
