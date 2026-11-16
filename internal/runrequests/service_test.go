@@ -1,0 +1,349 @@
+package runrequests_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/runrequests"
+)
+
+type memStore struct {
+	rows map[uuid.UUID]runrequests.Request
+}
+
+func newMemStore() *memStore { return &memStore{rows: map[uuid.UUID]runrequests.Request{}} }
+
+func (m *memStore) Insert(_ context.Context, r runrequests.Request) error {
+	m.rows[r.ID] = r
+	return nil
+}
+
+func (m *memStore) Get(_ context.Context, orgID, id uuid.UUID) (runrequests.Request, error) {
+	r, ok := m.rows[id]
+	if !ok || r.OrgID != orgID {
+		return runrequests.Request{}, runrequests.ErrNotFound
+	}
+	return r, nil
+}
+
+func (m *memStore) List(_ context.Context, orgID uuid.UUID) ([]runrequests.Request, error) {
+	var out []runrequests.Request
+	for _, r := range m.rows {
+		if r.OrgID == orgID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time) (bool, error) {
+	r, ok := m.rows[id]
+	if !ok || r.OrgID != orgID || r.Status != runrequests.StatusPending {
+		return false, nil
+	}
+	r.Status, r.DecidedBy, r.DecidedAt = to, &by, &at
+	m.rows[id] = r
+	return true, nil
+}
+
+func (m *memStore) SetRunGroup(_ context.Context, orgID, id, group uuid.UUID) error {
+	r := m.rows[id]
+	r.RunGroupID = &group
+	m.rows[id] = r
+	return nil
+}
+
+func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {
+	r := m.rows[id]
+	r.Status, r.DecidedBy, r.DecidedAt = runrequests.StatusPending, nil, nil
+	m.rows[id] = r
+	return nil
+}
+
+func (m *memStore) ByRunGroup(_ context.Context, orgID, group uuid.UUID) (runrequests.Request, error) {
+	for _, r := range m.rows {
+		if r.OrgID == orgID && r.RunGroupID != nil && *r.RunGroupID == group {
+			return r, nil
+		}
+	}
+	return runrequests.Request{}, runrequests.ErrNotFound
+}
+
+type fakePictures struct{ p runrequests.Picture }
+
+func (f *fakePictures) Picture(context.Context, uuid.UUID, runrequests.Request) (runrequests.Picture, error) {
+	return f.p, nil
+}
+
+type fakeEnqueuer struct {
+	runs    []string // idempotency keys
+	retries []uuid.UUID
+	actor   uuid.UUID
+	err     error
+	group   uuid.UUID
+}
+
+func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string) (uuid.UUID, error) {
+	if f.err != nil {
+		return uuid.Nil, f.err
+	}
+	f.runs, f.actor = append(f.runs, key), actor
+	return f.group, nil
+}
+
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID) (uuid.UUID, error) {
+	if f.err != nil {
+		return uuid.Nil, f.err
+	}
+	f.retries, f.actor = append(f.retries, jobID), actor
+	return f.group, nil
+}
+
+type fakeValidator struct {
+	err      error
+	template uuid.UUID
+}
+
+func (f *fakeValidator) ValidateRun(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (int64, error) {
+	return 7, f.err
+}
+
+func (f *fakeValidator) ValidateRetry(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, int64, error) {
+	return f.template, 7, f.err
+}
+
+type wiring struct {
+	svc   *runrequests.Service
+	store *memStore
+	pics  *fakePictures
+	enq   *fakeEnqueuer
+	val   *fakeValidator
+	now   time.Time
+	org   uuid.UUID
+}
+
+func newWiring() *wiring {
+	w := &wiring{
+		store: newMemStore(), pics: &fakePictures{p: runrequests.Picture{TemplateName: "deploy", Limit: "web"}},
+		enq: &fakeEnqueuer{group: uuid.Must(uuid.NewV7())}, val: &fakeValidator{template: uuid.Must(uuid.NewV7())},
+		now: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC), org: uuid.Must(uuid.NewV7()),
+	}
+	w.svc = runrequests.NewService(w.store, w.pics, w.enq, w.val, func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	return w
+}
+
+func (w *wiring) create(t *testing.T) runrequests.Request {
+	t.Helper()
+	tok := uuid.Must(uuid.NewV7())
+	r, err := w.svc.Create(context.Background(), w.org, runrequests.CreateInput{
+		Kind: runrequests.KindRun, TemplateID: uuid.Must(uuid.NewV7()), Reason: "set up web",
+		RequestedByUser: uuid.Must(uuid.NewV7()), RequestedByToken: &tok,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestCreateValidatesAndExpiresAfterAnHour(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	if r.Status != runrequests.StatusPending || r.TemplateRevision != 7 || !r.ExpiresAt.Equal(w.now.Add(time.Hour)) {
+		t.Fatalf("created = %+v", r)
+	}
+	w.now = w.now.Add(time.Hour - time.Second)
+	if got, _, _, err := w.svc.Get(context.Background(), w.org, r.ID); err != nil || got.Status != runrequests.StatusPending {
+		t.Fatalf("just before the hour = %+v %v", got, err)
+	}
+	w.now = w.now.Add(time.Second)
+	if got, _, _, err := w.svc.Get(context.Background(), w.org, r.ID); err != nil || got.Status != runrequests.StatusExpired {
+		t.Fatalf("at the hour = %+v %v", got, err)
+	}
+
+	w.val.err = runrequests.ErrInvalidInput
+	if _, err := w.svc.Create(context.Background(), w.org, runrequests.CreateInput{Kind: runrequests.KindRun, TemplateID: uuid.Must(uuid.NewV7()), Reason: "x", RequestedByUser: uuid.Must(uuid.NewV7())}); !errors.Is(err, runrequests.ErrInvalidInput) {
+		t.Fatalf("create with a failing validation = %v", err)
+	}
+}
+
+func TestCreateNeedsAReason(t *testing.T) {
+	w := newWiring()
+	if _, err := w.svc.Create(context.Background(), w.org, runrequests.CreateInput{Kind: runrequests.KindRun, TemplateID: uuid.Must(uuid.NewV7()), RequestedByUser: uuid.Must(uuid.NewV7())}); !errors.Is(err, runrequests.ErrInvalidInput) {
+		t.Fatalf("create without a reason = %v", err)
+	}
+}
+
+func TestApproveEnqueuesAsTheApprover(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	_, _, fp, err := w.svc.Get(context.Background(), w.org, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approver := uuid.Must(uuid.NewV7())
+	got, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != runrequests.StatusApproved || got.RunGroupID == nil || *got.RunGroupID != w.enq.group || *got.DecidedBy != approver {
+		t.Fatalf("approved = %+v", got)
+	}
+	if len(w.enq.runs) != 1 || w.enq.runs[0] != "run-request:"+r.ID.String() || w.enq.actor != approver {
+		t.Fatalf("enqueue = %+v", w.enq)
+	}
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp); !errors.Is(err, runrequests.ErrDecided) {
+		t.Fatalf("second approve = %v, want ErrDecided", err)
+	}
+}
+
+func TestApproveRefusesAChangedPicture(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	w.pics.p.Limit = "db"
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp); !errors.Is(err, runrequests.ErrChanged) {
+		t.Fatalf("approve after a change = %v, want ErrChanged", err)
+	}
+	if len(w.enq.runs) != 0 {
+		t.Fatal("a changed request was enqueued")
+	}
+	got, _, _, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	if got.Status != runrequests.StatusPending {
+		t.Fatalf("status after the refusal = %s, want pending", got.Status)
+	}
+}
+
+func TestApproveRefusesAnExpiredRequest(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	w.now = w.now.Add(time.Hour)
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp); !errors.Is(err, runrequests.ErrExpired) {
+		t.Fatalf("approve after expiry = %v, want ErrExpired", err)
+	}
+}
+
+func TestApproveRevertsWhenTheEnqueueFails(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	w.enq.err = errors.New("no worker zone")
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp); err == nil {
+		t.Fatal("approve with a failing enqueue succeeded")
+	}
+	got, _, _, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	if got.Status != runrequests.StatusPending || got.DecidedBy != nil {
+		t.Fatalf("after the failed enqueue = %+v, want pending again", got)
+	}
+}
+
+func TestApproveRetryUsesRetryFailed(t *testing.T) {
+	w := newWiring()
+	job := uuid.Must(uuid.NewV7())
+	r, err := w.svc.Create(context.Background(), w.org, runrequests.CreateInput{Kind: runrequests.KindRetryFailed, JobID: &job, Reason: "retry", RequestedByUser: uuid.Must(uuid.NewV7())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TemplateID != w.val.template {
+		t.Fatalf("retry request template = %s, want the job's", r.TemplateID)
+	}
+	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.enq.retries) != 1 || w.enq.retries[0] != job {
+		t.Fatalf("retries = %+v", w.enq.retries)
+	}
+}
+
+func TestReject(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	got, err := w.svc.Reject(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()))
+	if err != nil || got.Status != runrequests.StatusRejected {
+		t.Fatalf("reject = %+v %v", got, err)
+	}
+	if _, err := w.svc.Reject(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7())); !errors.Is(err, runrequests.ErrDecided) {
+		t.Fatalf("second reject = %v", err)
+	}
+}
+
+func TestCreatedByToken(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := w.svc.CreatedByToken(context.Background(), w.org, w.enq.group, *r.RequestedByToken); err != nil || !ok {
+		t.Fatalf("own run group = %v %v", ok, err)
+	}
+	if ok, _ := w.svc.CreatedByToken(context.Background(), w.org, w.enq.group, uuid.Must(uuid.NewV7())); ok {
+		t.Fatal("another token's run group counted as its own")
+	}
+	if ok, _ := w.svc.CreatedByToken(context.Background(), w.org, uuid.Must(uuid.NewV7()), *r.RequestedByToken); ok {
+		t.Fatal("an unrelated run group counted")
+	}
+}
+
+func TestFingerprintCoversEveryField(t *testing.T) {
+	id := uuid.Must(uuid.NewV7())
+	base := runrequests.Picture{
+		TemplateID: "t", TemplateName: "deploy", TemplateRevision: 1, Limit: "web", OnlyHost: "",
+		Playbook: runrequests.PicturePlaybook{Source: "repo", Path: "site.yml"},
+		Repo:     &runrequests.PictureRepo{Name: "infra", URL: "https://git.example/infra", Branch: "main", Subpath: "ansible"},
+		Targets: []runrequests.PictureHost{
+			{ID: "b", Name: "web-2", Address: "10.0.0.2", SSHUser: "root", SSHPort: 22},
+			{ID: "a", Name: "web-1", Address: "10.0.0.1", SSHUser: "root", SSHPort: 22, JumpHost: "bastion"},
+		},
+		SSHCredential:   "deploy-key",
+		VaultIdentities: []runrequests.PictureVault{{Label: "noidee", Credential: "vault"}},
+		ExtraVars:       map[string]any{"a": 1},
+		VarsDigest:      "d1",
+	}
+	fp := runrequests.Fingerprint(id, base)
+	if fp != runrequests.Fingerprint(id, base) {
+		t.Fatal("not deterministic")
+	}
+	reordered := base
+	reordered.Targets = []runrequests.PictureHost{base.Targets[1], base.Targets[0]}
+	if runrequests.Fingerprint(id, reordered) != fp {
+		t.Fatal("host order changes the fingerprint")
+	}
+	if runrequests.Fingerprint(uuid.Must(uuid.NewV7()), base) == fp {
+		t.Fatal("the request id is not covered")
+	}
+	mutations := map[string]func(p *runrequests.Picture){
+		"template name": func(p *runrequests.Picture) { p.TemplateName = "x" },
+		"revision":      func(p *runrequests.Picture) { p.TemplateRevision = 2 },
+		"limit":         func(p *runrequests.Picture) { p.Limit = "db" },
+		"only host":     func(p *runrequests.Picture) { p.OnlyHost = "a" },
+		"playbook":      func(p *runrequests.Picture) { p.Playbook.Path = "other.yml" },
+		"repo url":      func(p *runrequests.Picture) { r := *p.Repo; r.URL = "https://evil.example/x"; p.Repo = &r },
+		"repo branch":   func(p *runrequests.Picture) { r := *p.Repo; r.Branch = "dev"; p.Repo = &r },
+		"repo subpath":  func(p *runrequests.Picture) { r := *p.Repo; r.Subpath = ""; p.Repo = &r },
+		"target added": func(p *runrequests.Picture) {
+			p.Targets = append(append([]runrequests.PictureHost{}, p.Targets...), runrequests.PictureHost{ID: "c"})
+		},
+		"target address": func(p *runrequests.Picture) {
+			p.Targets = append([]runrequests.PictureHost{}, p.Targets...)
+			p.Targets[0].Address = "10.9.9.9"
+		},
+		"ssh credential": func(p *runrequests.Picture) { p.SSHCredential = "other" },
+		"vault":          func(p *runrequests.Picture) { p.VaultIdentities = nil },
+		"extra vars":     func(p *runrequests.Picture) { p.ExtraVars = map[string]any{"a": 2} },
+		"vars digest":    func(p *runrequests.Picture) { p.VarsDigest = "d2" },
+		"retry":          func(p *runrequests.Picture) { p.Retry = &runrequests.PictureRetry{JobID: "j"} },
+	}
+	for name, mutate := range mutations {
+		p := base
+		mutate(&p)
+		if runrequests.Fingerprint(id, p) == fp {
+			t.Errorf("%s does not change the fingerprint", name)
+		}
+	}
+}

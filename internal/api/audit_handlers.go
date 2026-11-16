@@ -27,6 +27,7 @@ type eventDTO struct {
 	ObjectID   string    `json:"object_id"`
 	Summary    string    `json:"summary"`
 	At         time.Time `json:"at"`
+	TokenName  string    `json:"token_name,omitempty" doc:"The API token the change was made with, when there was one"`
 }
 
 type activityListOutput struct {
@@ -146,7 +147,7 @@ func toEventDTOs(events []audit.Event) []eventDTO {
 		out[i] = eventDTO{
 			ID: e.ID.String(), OrgID: uuidPtrToStringPtr(e.OrgID), ActorID: uuidPtrToStringPtr(e.ActorID),
 			ActorKind: string(e.ActorKind), Action: e.Action, ObjectType: e.ObjectType,
-			ObjectID: e.ObjectID, Summary: e.Summary, At: e.At,
+			ObjectID: e.ObjectID, Summary: e.Summary, At: e.At, TokenName: e.TokenName,
 		}
 	}
 	return out

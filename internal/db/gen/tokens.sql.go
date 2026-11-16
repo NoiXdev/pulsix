@@ -38,7 +38,7 @@ func (q *Queries) APITokenUsable(ctx context.Context, arg APITokenUsableParams) 
 }
 
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
-SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, u.instance_admin
+SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, t.kind, t.areas, u.instance_admin
 FROM api_tokens t JOIN users u ON u.id = t.user_id
 WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > $2::timestamptz) AND u.disabled_at IS NULL
 `
@@ -58,6 +58,8 @@ type GetAPITokenByHashRow struct {
 	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt     time.Time          `json:"created_at"`
+	Kind          string             `json:"kind"`
+	Areas         []string           `json:"areas"`
 	InstanceAdmin bool               `json:"instance_admin"`
 }
 
@@ -84,14 +86,16 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashPa
 		&i.LastUsedAt,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Kind,
+		&i.Areas,
 		&i.InstanceAdmin,
 	)
 	return i, err
 }
 
 const insertAPIToken = `-- name: InsertAPIToken :exec
-INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash, expires_at, kind, areas)
+VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8::text, ''), 'api'), $9::text[])
 `
 
 type InsertAPITokenParams struct {
@@ -102,6 +106,8 @@ type InsertAPITokenParams struct {
 	Role       OrgRole            `json:"role"`
 	SecretHash []byte             `json:"secret_hash"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
 }
 
 func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) error {
@@ -113,12 +119,14 @@ func (q *Queries) InsertAPIToken(ctx context.Context, arg InsertAPITokenParams) 
 		arg.Role,
 		arg.SecretHash,
 		arg.ExpiresAt,
+		arg.Kind,
+		arg.Areas,
 	)
 	return err
 }
 
 const listAPITokensForOrg = `-- name: ListAPITokensForOrg :many
-SELECT id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at
+SELECT id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at, kind, areas
 FROM api_tokens WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at
 `
 
@@ -132,6 +140,8 @@ type ListAPITokensForOrgRow struct {
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt  time.Time          `json:"created_at"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
 }
 
 // Columns are named explicitly for the same reason as GetAPITokenByHash
@@ -155,6 +165,8 @@ func (q *Queries) ListAPITokensForOrg(ctx context.Context, orgID uuid.UUID) ([]L
 			&i.LastUsedAt,
 			&i.RevokedAt,
 			&i.CreatedAt,
+			&i.Kind,
+			&i.Areas,
 		); err != nil {
 			return nil, err
 		}

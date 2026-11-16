@@ -27,6 +27,7 @@ import (
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/assistant"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/backup"
@@ -56,6 +57,7 @@ import (
 	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
@@ -631,6 +633,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	backupsSvc := newBackupService(appDB, box, cfg.MasterKey, mailer, cfg.Version)
 
 	accountsSvc := accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader)
+	// The run request resolver (spec 2026-11-16 assistant access) reads the
+	// same services the run paths use.
+	runRequestResolver := runrequests.NewResolver(runrequests.Sources{
+		Templates: templatesSvc, Playbooks: playbooksSvc, Repos: reposSvc, Jobs: jobsSvc,
+		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc, Inventory: renderer,
+	})
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Accounts: accountsSvc,
@@ -642,6 +650,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Credentials:   credsSvc, SSH: sshSvc, OrgSecrets: orgSecretsSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
+		Assistant: assistant.NewService(assistant.NewSQLStore(appDB)),
+		RunRequests: runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
+			time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) }),
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry

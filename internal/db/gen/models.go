@@ -199,19 +199,22 @@ type ApiToken struct {
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt  time.Time          `json:"created_at"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
 }
 
 type AuditEvent struct {
-	ID         uuid.UUID   `json:"id"`
-	OrgID      pgtype.UUID `json:"org_id"`
-	ActorID    pgtype.UUID `json:"actor_id"`
-	ActorKind  string      `json:"actor_kind"`
-	Action     string      `json:"action"`
-	ObjectType string      `json:"object_type"`
-	ObjectID   string      `json:"object_id"`
-	Summary    string      `json:"summary"`
-	Meta       []byte      `json:"meta"`
-	At         time.Time   `json:"at"`
+	ID           uuid.UUID   `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorKind    string      `json:"actor_kind"`
+	Action       string      `json:"action"`
+	ObjectType   string      `json:"object_type"`
+	ObjectID     string      `json:"object_id"`
+	Summary      string      `json:"summary"`
+	Meta         []byte      `json:"meta"`
+	At           time.Time   `json:"at"`
+	ActorTokenID pgtype.UUID `json:"actor_token_id"`
 }
 
 type BackupRun struct {
@@ -753,6 +756,12 @@ type OncallRotationChannel struct {
 	ChannelID  uuid.UUID `json:"channel_id"`
 }
 
+type OrgAssistantSetting struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	Enabled   bool      `json:"enabled"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type OrgJobSetting struct {
 	OrgID                  uuid.UUID `json:"org_id"`
 	JobsRequirePinnedHosts bool      `json:"jobs_require_pinned_hosts"`
@@ -891,6 +900,25 @@ type RotationGroup struct {
 	CredentialID uuid.UUID `json:"credential_id"`
 	Targets      []byte    `json:"targets"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type RunRequest struct {
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	Kind             string             `json:"kind"`
+	TemplateID       uuid.UUID          `json:"template_id"`
+	TemplateRevision int64              `json:"template_revision"`
+	HostID           pgtype.UUID        `json:"host_id"`
+	JobID            pgtype.UUID        `json:"job_id"`
+	Reason           string             `json:"reason"`
+	RequestedByUser  uuid.UUID          `json:"requested_by_user"`
+	RequestedByToken pgtype.UUID        `json:"requested_by_token"`
+	Status           string             `json:"status"`
+	DecidedBy        pgtype.UUID        `json:"decided_by"`
+	DecidedAt        pgtype.Timestamptz `json:"decided_at"`
+	RunGroupID       pgtype.UUID        `json:"run_group_id"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	CreatedAt        time.Time          `json:"created_at"`
 }
 
 type Schedule struct {

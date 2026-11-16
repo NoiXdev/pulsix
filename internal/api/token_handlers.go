@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -28,6 +30,10 @@ type orgTokenCreateInput struct {
 		// mapAuthErr would otherwise turn into a generic 500).
 		Role      string     `json:"role" enum:"owner,admin,operator,viewer"`
 		ExpiresAt *time.Time `json:"expires_at,omitempty"`
+		// Kind and Areas (spec 2026-11-16 assistant access): an assistant
+		// token works only at the assistant endpoint and within its areas.
+		Kind  string   `json:"kind,omitempty" enum:"api,assistant" doc:"api (the default) or assistant"`
+		Areas []string `json:"areas,omitempty" doc:"Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request)"`
 	}
 }
 
@@ -41,6 +47,8 @@ type orgTokenCreateOutput struct {
 		ID        string     `json:"id"`
 		Name      string     `json:"name"`
 		Role      string     `json:"role"`
+		Kind      string     `json:"kind"`
+		Areas     []string   `json:"areas,omitempty"`
 		ExpiresAt *time.Time `json:"expires_at,omitempty"`
 		CreatedAt time.Time  `json:"created_at"`
 	}
@@ -53,6 +61,8 @@ type tokenDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
 	Role       string     `json:"role"`
+	Kind       string     `json:"kind" enum:"api,assistant"`
+	Areas      []string   `json:"areas,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -112,13 +122,27 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		role := tenancy.Lower(scope.Role, tenancy.Role(in.Body.Role))
-		plain, tok, err := deps.Tokens.Create(ctx, scope.UserID, scope.OrgID, in.Body.Name, string(role), in.Body.ExpiresAt)
+		kind := auth.TokenKind(in.Body.Kind)
+		if kind == "" {
+			kind = auth.TokenKindAPI
+		}
+		if err := validateTokenAreas(kind, role, in.Body.Areas); err != nil {
+			return nil, err
+		}
+		plain, tok, err := deps.Tokens.CreateWith(ctx, scope.UserID, scope.OrgID, auth.NewToken{
+			Name: in.Body.Name, Role: string(role), Kind: kind, Areas: in.Body.Areas, ExpiresAt: in.Body.ExpiresAt,
+		})
 		if err != nil {
 			return nil, mapTokenErr(ctx, err)
 		}
-		setAuditObject(ctx, tok.ID.String(), "created API token "+tok.Name+" ("+tok.Role+")")
+		summary := "created API token " + tok.Name + " (" + tok.Role + ")"
+		if kind == auth.TokenKindAssistant {
+			summary = "created assistant token " + tok.Name + " (" + tok.Role + "; " + strings.Join(tok.Areas, ", ") + ")"
+		}
+		setAuditObject(ctx, tok.ID.String(), summary)
 		out := &orgTokenCreateOutput{}
 		out.Body.Token, out.Body.ID, out.Body.Name, out.Body.Role = plain, tok.ID.String(), tok.Name, tok.Role
+		out.Body.Kind, out.Body.Areas = string(tok.Kind), tok.Areas
 		out.Body.ExpiresAt, out.Body.CreatedAt = tok.ExpiresAt, tok.CreatedAt
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createToken", "token"))
@@ -136,7 +160,7 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		out.Body.Tokens = make([]tokenDTO, len(toks))
 		for i, tok := range toks {
 			out.Body.Tokens[i] = tokenDTO{
-				ID: tok.ID.String(), Name: tok.Name, Role: tok.Role,
+				ID: tok.ID.String(), Name: tok.Name, Role: tok.Role, Kind: string(tok.Kind), Areas: tok.Areas,
 				ExpiresAt: tok.ExpiresAt, LastUsedAt: tok.LastUsedAt, CreatedAt: tok.CreatedAt,
 			}
 		}
@@ -158,6 +182,36 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "revoked API token")
 		return &okOutput{}, nil
 	}, withAudit("revokeToken", "token"))
+}
+
+// validateTokenAreas enforces the token create body's kind/areas shape: an
+// assistant token needs at least one known, distinct area, each fully
+// covered by the token's capped role (so no area is dead weight), and an
+// api token has none.
+func validateTokenAreas(kind auth.TokenKind, role tenancy.Role, areas []string) error {
+	if kind != auth.TokenKindAssistant {
+		if len(areas) > 0 {
+			return huma.Error422UnprocessableEntity("only assistant tokens have areas")
+		}
+		return nil
+	}
+	if len(areas) == 0 {
+		return huma.Error422UnprocessableEntity("an assistant token needs at least one area")
+	}
+	seen := map[string]bool{}
+	for _, a := range areas {
+		if !tenancy.ValidArea(tenancy.Area(a)) {
+			return huma.Error422UnprocessableEntity("unknown area " + strconv.Quote(a))
+		}
+		if seen[a] {
+			return huma.Error422UnprocessableEntity("area " + a + " is listed twice")
+		}
+		seen[a] = true
+		if !tenancy.RoleAllowsArea(role, tenancy.Area(a)) {
+			return huma.Error422UnprocessableEntity("area " + a + " needs more than the token's role " + string(role) + " allows")
+		}
+	}
+	return nil
 }
 
 // mapTokenErr is mapAuthErr plus one override, exactly like mapPasskeyErr:

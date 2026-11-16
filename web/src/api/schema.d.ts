@@ -1822,6 +1822,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/job-templates/{id}/run-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org job templates by ID run requests */
+        post: operations["requestRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/job-templates/{id}/variables": {
         parameters: {
             query?: never;
@@ -1979,6 +1996,23 @@ export interface paths {
         put?: never;
         /** Post API v1 orgs by org jobs by ID retry failed */
         post: operations["retryFailedJobs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/retry-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org jobs by ID retry requests */
+        post: operations["requestRetry"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2537,6 +2571,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/run-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org run requests */
+        get: operations["get-api-v1-orgs-by-org-run-requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/run-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org run requests by ID */
+        get: operations["get-api-v1-orgs-by-org-run-requests-by-id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/run-requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org run requests by ID approve */
+        post: operations["approveRunRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/run-requests/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org run requests by ID reject */
+        post: operations["rejectRunRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/schedules": {
         parameters: {
             query?: never;
@@ -2724,6 +2826,24 @@ export interface paths {
         post?: never;
         /** Delete API v1 orgs by org secrets by name */
         delete: operations["deleteOrgSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/settings/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org settings assistant */
+        get: operations["get-api-v1-orgs-by-org-settings-assistant"];
+        /** Put API v1 orgs by org settings assistant */
+        put: operations["updateAssistantSettings"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3580,6 +3700,35 @@ export interface components {
             /** @enum {string} */
             kind: "event" | "state_change";
         };
+        ApproveRunRequestRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ApproveRunRequestRequest.json
+             */
+            readonly $schema?: string;
+            /** @description The fingerprint of the detail the person reviewed */
+            fingerprint: string;
+        };
+        AssistantSettingsDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AssistantSettingsDTO.json
+             */
+            readonly $schema?: string;
+            /** @description Whether assistant tokens of this organization may use the assistant endpoint */
+            assistant_enabled: boolean;
+        };
+        AssistantSettingsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AssistantSettingsOutputBody.json
+             */
+            readonly $schema?: string;
+            settings: components["schemas"]["AssistantSettingsDTO"];
+        };
         BackupItem: {
             /**
              * Format: uuid
@@ -4369,6 +4518,8 @@ export interface components {
             object_type: string;
             org_id?: string;
             summary: string;
+            /** @description The API token the change was made with, when there was one */
+            token_name?: string;
         };
         Field: {
             active?: boolean;
@@ -6162,8 +6313,15 @@ export interface components {
              * @example https://example.com/schemas/OrgTokenCreateInputBody.json
              */
             readonly $schema?: string;
+            /** @description Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request) */
+            areas?: string[] | null;
             /** Format: date-time */
             expires_at?: string;
+            /**
+             * @description api (the default) or assistant
+             * @enum {string}
+             */
+            kind?: "api" | "assistant";
             name: string;
             /** @enum {string} */
             role: "owner" | "admin" | "operator" | "viewer";
@@ -6175,11 +6333,13 @@ export interface components {
              * @example https://example.com/schemas/OrgTokenCreateOutputBody.json
              */
             readonly $schema?: string;
+            areas?: string[] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             expires_at?: string;
             id: string;
+            kind: string;
             name: string;
             role: string;
             token: string;
@@ -6290,6 +6450,55 @@ export interface components {
             invited_by: string;
             invited_by_name: string;
             role: string;
+        };
+        Picture: {
+            extra_vars: {
+                [key: string]: unknown;
+            };
+            limit: string;
+            only_host?: string;
+            playbook: components["schemas"]["PicturePlaybook"];
+            repo?: components["schemas"]["PictureRepo"];
+            retry?: components["schemas"]["PictureRetry"];
+            ssh_credential?: string;
+            targets: components["schemas"]["PictureHost"][] | null;
+            template_id: string;
+            template_name: string;
+            /** Format: int64 */
+            template_revision: number;
+            vars_digest: string;
+            vault_identities: components["schemas"]["PictureVault"][] | null;
+        };
+        PictureHost: {
+            address: string;
+            credential?: string;
+            id: string;
+            jump_host?: string;
+            name: string;
+            /** Format: int64 */
+            ssh_port?: number;
+            ssh_user?: string;
+        };
+        PicturePlaybook: {
+            id: string;
+            inline_digest?: string;
+            path?: string;
+            source: string;
+        };
+        PictureRepo: {
+            branch: string;
+            id: string;
+            name: string;
+            subpath: string;
+            url: string;
+        };
+        PictureRetry: {
+            failed_hosts: string[] | null;
+            job_id: string;
+        };
+        PictureVault: {
+            credential: string;
+            label: string;
         };
         PlaybookCreateInputBody: {
             /**
@@ -6557,6 +6766,27 @@ export interface components {
             vault_credential_id?: string;
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
+        RequestRetryRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RequestRetryRequest.json
+             */
+            readonly $schema?: string;
+            reason: string;
+        };
+        RequestRunRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RequestRunRequest.json
+             */
+            readonly $schema?: string;
+            /** @description Run on this one host only; it must be among the template's targets */
+            host_id?: string;
+            /** @description Why the run is needed, shown to the person who approves it */
+            reason: string;
+        };
         ResetAvailableOutputBody: {
             /**
              * Format: uri
@@ -6736,6 +6966,60 @@ export interface components {
              */
             readonly $schema?: string;
             rule: components["schemas"]["RuleDTO"];
+        };
+        RunRequestDTO: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+            decided_by_user_id?: string;
+            /** Format: date-time */
+            expires_at: string;
+            host_id?: string;
+            id: string;
+            job_id?: string;
+            /** @enum {string} */
+            kind: "run" | "retry_failed";
+            reason: string;
+            requested_by_token_id?: string;
+            requested_by_user_id: string;
+            run_group_id?: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "rejected" | "expired";
+            template_id: string;
+        };
+        RunRequestDetailOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RunRequestDetailOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The GUI page where a person approves or rejects the request */
+            approval_path: string;
+            /** @description Send it back on approve; a change to the picture refuses the approval */
+            fingerprint: string;
+            /** @description What the run would use if it were approved now */
+            picture: components["schemas"]["Picture"];
+            request: components["schemas"]["RunRequestDTO"];
+        };
+        RunRequestListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RunRequestListOutputBody.json
+             */
+            readonly $schema?: string;
+            requests: components["schemas"]["RunRequestDTO"][] | null;
+        };
+        RunRequestOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RunRequestOutputBody.json
+             */
+            readonly $schema?: string;
+            request: components["schemas"]["RunRequestDTO"];
         };
         ScheduleBody: {
             /**
@@ -7299,11 +7583,14 @@ export interface components {
             password: string;
         };
         TokenDTO: {
+            areas?: string[] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             expires_at?: string;
             id: string;
+            /** @enum {string} */
+            kind: "api" | "assistant";
             /** Format: date-time */
             last_used_at?: string;
             name: string;
@@ -12694,6 +12981,42 @@ export interface operations {
             };
         };
     };
+    requestRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-job-templates-by-id-variables": {
         parameters: {
             query?: never;
@@ -13041,6 +13364,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    requestRetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequestRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
                 };
             };
             /** @description Error */
@@ -14942,6 +15301,139 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-run-requests": {
+        parameters: {
+            query?: {
+                status?: "pending" | "approved" | "rejected" | "expired";
+            };
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-run-requests-by-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    approveRunRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRunRequestRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    rejectRunRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-schedules": {
         parameters: {
             query?: {
@@ -15472,6 +15964,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-settings-assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantSettingsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateAssistantSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantSettingsDTO"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantSettingsOutputBody"];
                 };
             };
             /** @description Error */

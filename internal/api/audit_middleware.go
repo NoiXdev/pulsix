@@ -55,6 +55,9 @@ type auditCarrierKey struct{}
 // comment describes.
 type auditCarrier struct {
 	haveScope bool
+	// tokenID is the API token the request authenticated with (spec
+	// 2026-11-16 assistant access, "Audit"), captured with the scope.
+	tokenID *uuid.UUID
 	// orgID is a pointer, not a uuid.UUID, so the carrier can express "this
 	// event has no organization" as a real nil rather than the
 	// indistinguishable-from-a-real-id zero value uuid.UUID{} would be.
@@ -134,6 +137,7 @@ func setAuditScope(ctx context.Context, orgID *uuid.UUID, userID uuid.UUID) {
 func setAuditScopeAs(ctx context.Context, orgID *uuid.UUID, userID uuid.UUID, kind audit.ActorKind) {
 	if c, ok := auditCarrierFromContext(ctx); ok {
 		c.haveScope, c.orgID, c.userID, c.kind = true, orgID, userID, kind
+		c.tokenID = actorTokenID(ctx)
 	}
 }
 
@@ -168,7 +172,7 @@ func setAuditObject(ctx context.Context, objectID, summary string) {
 // event's summary away regardless (same gate, same reason).
 func recordAuditFailure(ctx context.Context, deps Deps, orgID, userID uuid.UUID, action, objectType, objectID, summary string) {
 	if err := deps.Audit.Record(db.WithOrgScope(ctx, orgID), audit.Event{
-		OrgID: &orgID, ActorID: &userID, ActorKind: actorKind(ctx),
+		OrgID: &orgID, ActorID: &userID, ActorKind: actorKind(ctx), TokenID: actorTokenID(ctx),
 		Action: action, ObjectType: objectType, ObjectID: objectID, Summary: summary,
 	}); err != nil {
 		slog.ErrorContext(ctx, "audit: failed to record event", "err", err, "action", action)
@@ -193,6 +197,15 @@ func actorKind(ctx context.Context) audit.ActorKind {
 		return audit.ActorKindToken
 	}
 	return audit.ActorKindUser
+}
+
+// actorTokenID is the API token the request authenticated with, if any,
+// so the recorded event names it (spec 2026-11-16 assistant access).
+func actorTokenID(ctx context.Context) *uuid.UUID {
+	if p, ok := auth.FromContext(ctx); ok {
+		return p.TokenID
+	}
+	return nil
 }
 
 // withAudit is an operation modifier (the variadic func(*huma.Operation)
@@ -273,7 +286,7 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 			// copied into a local and re-addressed — see auditCarrier's own
 			// doc comment on why that used to be able to silently turn "no
 			// organization" into "organization uuid.Nil".
-			OrgID: carrier.orgID, ActorID: &userID, ActorKind: carrier.kind,
+			OrgID: carrier.orgID, ActorID: &userID, ActorKind: carrier.kind, TokenID: carrier.tokenID,
 			Action: ctx.Method() + " " + op.OperationID, ObjectType: objType,
 			ObjectID: carrier.objectID, Summary: carrier.summary, Meta: meta,
 		}); err != nil {

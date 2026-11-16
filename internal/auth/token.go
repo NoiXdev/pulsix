@@ -24,6 +24,28 @@ type Token struct {
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time
 	CreatedAt  time.Time
+	// Kind and Areas (spec 2026-11-16 assistant access): an assistant token
+	// works only at the assistant endpoint and only within its areas
+	// (tenancy.Area values); an api token has no areas.
+	Kind  TokenKind
+	Areas []string
+}
+
+// TokenKind tells an ordinary API token from an assistant token.
+type TokenKind string
+
+// The token kinds.
+const (
+	TokenKindAPI       TokenKind = "api"
+	TokenKindAssistant TokenKind = "assistant"
+)
+
+// NewToken is what CreateWith mints.
+type NewToken struct {
+	Name, Role string
+	Kind       TokenKind
+	Areas      []string
+	ExpiresAt  *time.Time
 }
 
 // TokenScope pins a bearer token to one org and a maximum role. Task 10's
@@ -33,6 +55,8 @@ type Token struct {
 type TokenScope struct {
 	OrgID uuid.UUID
 	Role  string
+	Kind  TokenKind
+	Areas []string
 }
 
 // TokenStore persists API tokens. It mirrors Store and TOTPStore's seam:
@@ -109,12 +133,25 @@ const tokenSecretBytes = 32
 // an id it never needs would only hand an attacker a working row hint for
 // free.
 func (t *Tokens) Create(ctx context.Context, userID, orgID uuid.UUID, name, role string, expiresAt *time.Time) (string, Token, error) {
+	return t.CreateWith(ctx, userID, orgID, NewToken{Name: name, Role: role, Kind: TokenKindAPI, ExpiresAt: expiresAt})
+}
+
+// CreateWith is Create with the token's kind and areas. An empty Kind
+// means TokenKindAPI. The store's CHECK refuses an assistant token without
+// areas and an api token with any; callers validate earlier for a better
+// error.
+func (t *Tokens) CreateWith(ctx context.Context, userID, orgID uuid.UUID, in NewToken) (string, Token, error) {
+	kind := in.Kind
+	if kind == "" {
+		kind = TokenKindAPI
+	}
 	secret := make([]byte, tokenSecretBytes)
 	if _, err := rand.Read(secret); err != nil {
 		return "", Token{}, err
 	}
 	sum := sha256.Sum256(secret)
-	tok := Token{ID: uuid.Must(uuid.NewV7()), UserID: userID, OrgID: orgID, Name: name, Role: role, ExpiresAt: expiresAt, CreatedAt: t.now()}
+	tok := Token{ID: uuid.Must(uuid.NewV7()), UserID: userID, OrgID: orgID, Name: in.Name, Role: in.Role,
+		ExpiresAt: in.ExpiresAt, CreatedAt: t.now(), Kind: kind, Areas: in.Areas}
 	if err := t.store.Insert(ctx, tok, sum[:]); err != nil {
 		return "", Token{}, err
 	}
@@ -176,7 +213,7 @@ func (t *Tokens) Resolve(ctx context.Context, plain string) (Principal, TokenSco
 	// token_handlers.go), so a resolved bearer principal counts as
 	// MFA-complete from the start.
 	principal := Principal{UserID: tok.UserID, TokenID: &id, InstanceAdmin: admin, MFAComplete: true}
-	return principal, TokenScope{OrgID: tok.OrgID, Role: tok.Role}, nil
+	return principal, TokenScope{OrgID: tok.OrgID, Role: tok.Role, Kind: tok.Kind, Areas: tok.Areas}, nil
 }
 
 // StillUsable reports whether the token id a request was authorised with

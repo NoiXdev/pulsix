@@ -10,10 +10,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/assistant"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/mail"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -51,17 +53,19 @@ func Document() ([]byte, error) {
 // comment for why nothing here ever needs to actually work.
 func stubDeps() Deps {
 	return Deps{
-		Sessions: &auth.Sessions{},
-		Auth:     stubAuthService{},
-		TOTP:     &auth.TOTP{},
-		Passkeys: &auth.Passkeys{},
-		Tokens:   &auth.Tokens{},
-		Tenancy:  &tenancy.Service{},
-		Accounts: &accounts.Service{},
-		Audit:    &audit.Recorder{},
-		Setup:    &setup.Service{},
-		Hosts:    &hosts.Service{},
-		Mailer:   &mail.SMTP{},
+		Sessions:    &auth.Sessions{},
+		Auth:        stubAuthService{},
+		TOTP:        &auth.TOTP{},
+		Passkeys:    &auth.Passkeys{},
+		Tokens:      &auth.Tokens{},
+		Tenancy:     &tenancy.Service{},
+		Accounts:    &accounts.Service{},
+		Audit:       &audit.Recorder{},
+		Setup:       &setup.Service{},
+		Hosts:       &hosts.Service{},
+		Mailer:      &mail.SMTP{},
+		Assistant:   &assistant.Service{},
+		RunRequests: &runrequests.Service{},
 	}
 }
 

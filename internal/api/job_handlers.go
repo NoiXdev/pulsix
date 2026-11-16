@@ -417,11 +417,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("runJobTemplate", "job_template"))
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/jobs/{id}/cancel", func(ctx context.Context, in *jobGetInput) (*jobCancelOutput, error) {
-		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRun)
-		if err != nil {
-			return nil, err
-		}
-		id, err := parseUUID(in.ID, "job id")
+		scope, id, err := authorizeCancel(ctx, deps, in.Org, in.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -616,6 +612,39 @@ func parseTriggerFilter(kind, ref string) (*string, *uuid.UUID, error) {
 		return nil, nil, huma.Error400BadRequest("invalid trigger_ref")
 	}
 	return k, &id, nil
+}
+
+// authorizeCancel is the cancel route's gate: jobs.run, or — for a token
+// whose run request started the job (spec 2026-11-16 assistant access) —
+// jobs.request, so an assistant can stop what it asked for and nothing
+// else.
+func authorizeCancel(ctx context.Context, deps Deps, org, rawID string) (Scope, uuid.UUID, error) {
+	scope, err := requireOrg(ctx, deps, org, tenancy.PermJobsRun)
+	if err == nil {
+		id, perr := parseUUID(rawID, "job id")
+		return scope, id, perr
+	}
+	reqScope, reqErr := requireOrg(ctx, deps, org, tenancy.PermJobsRequest)
+	if reqErr != nil || reqScope.TokenID == nil {
+		return Scope{}, uuid.Nil, err
+	}
+	id, perr := parseUUID(rawID, "job id")
+	if perr != nil {
+		return Scope{}, uuid.Nil, perr
+	}
+	j, getErr := deps.Jobs.Get(ctx, reqScope.OrgID, id)
+	if getErr != nil {
+		return Scope{}, uuid.Nil, mapJobsErr(ctx, getErr)
+	}
+	own, ownErr := deps.RunRequests.CreatedByToken(ctx, reqScope.OrgID, j.RunGroupID, *reqScope.TokenID)
+	if ownErr != nil {
+		slog.ErrorContext(ctx, "cancel: look up the run request", "err", ownErr)
+		return Scope{}, uuid.Nil, huma.Error500InternalServerError("internal error")
+	}
+	if !own {
+		return Scope{}, uuid.Nil, err
+	}
+	return reqScope, id, nil
 }
 
 // mapJobsErr converts the jobs package's sentinels to HTTP errors, the

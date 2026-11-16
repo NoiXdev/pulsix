@@ -174,6 +174,15 @@ func bearerAuthMiddleware(tokens *auth.Tokens) func(huma.Context, func(huma.Cont
 			// rather than fall through to the operation handler.
 			return
 		}
+		// An assistant token (spec 2026-11-16 assistant access) works only
+		// through the assistant endpoint, whose in-process dispatch marks
+		// the context; presented to the REST API directly it is refused
+		// here, before any handler runs.
+		if ts, ok := auth.TokenScopeFromContext(resolved.Context()); ok &&
+			ts.Kind == auth.TokenKindAssistant && !auth.ViaAssistantEndpoint(resolved.Context()) {
+			writeGateRefusal(w, huma.Error403Forbidden(assistantOnlyAtEndpoint))
+			return
+		}
 		next(huma.WithContext(ctx, resolved.Context()))
 	}
 }

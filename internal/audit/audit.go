@@ -48,6 +48,10 @@ type Event struct {
 	Summary    string
 	Meta       map[string]any
 	At         time.Time
+	// TokenID is the API token the change was made with, if any; TokenName
+	// is filled on reads only (spec 2026-11-16 assistant access, "Audit").
+	TokenID   *uuid.UUID
+	TokenName string
 }
 
 // Filter narrows a List or ListForActor call. A zero Filter matches

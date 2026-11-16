@@ -50,7 +50,13 @@ type runFixture struct {
 
 func newRunFixture(t *testing.T, slug string) runFixture {
 	t.Helper()
-	s := apitest.New(t)
+	return newRunFixtureWith(t, slug)
+}
+
+// newRunFixtureWith is newRunFixture with server options.
+func newRunFixtureWith(t *testing.T, slug string, opts ...apitest.Option) runFixture {
+	t.Helper()
+	s := apitest.New(t, opts...)
 	admin := s.SeedUser(slug+"-admin@example.test", "correct horse battery")
 	operator := s.SeedUser(slug+"-operator@example.test", "correct horse battery")
 	viewer := s.SeedUser(slug+"-viewer@example.test", "correct horse battery")

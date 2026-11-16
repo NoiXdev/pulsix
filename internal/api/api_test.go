@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/assistant"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/backup"
@@ -38,6 +39,7 @@ import (
 	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -206,6 +208,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{},
 		Accounts: &accounts.Service{},
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
@@ -331,53 +334,61 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{},
 	}); err == nil {
 		t.Fatal("api.New without Setup did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 	}); err == nil {
 		t.Fatal("api.New without Mailer did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(),
 	}); err == nil {
 		t.Fatal("api.New without Hosts did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(),
 	}); err == nil {
 		t.Fatal("api.New without Credentials did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(),
 	}); err == nil {
 		t.Fatal("api.New without SSH did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 	}); err == nil {
 		t.Fatal("api.New without Inventory did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 	}); err == nil {
 		t.Fatal("api.New without Renderer did not return an error")
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(),
 	}); err == nil {
@@ -385,7 +396,8 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(), Repos: testRepos(),
 	}); err == nil {
@@ -393,7 +405,8 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	}
 	if _, err := api.New(api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
-		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(), Setup: testSetup(),
+		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Setup: testSetup(),
 		Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(), Inventory: testInventory(),
 		Renderer: testRenderer(), Repos: testRepos(), Playbooks: testPlaybooks(),
 	}); err == nil {

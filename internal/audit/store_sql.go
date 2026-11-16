@@ -37,7 +37,7 @@ func (s *SQLStore) Insert(ctx context.Context, e Event) error {
 	return s.q.InsertAuditEvent(ctx, gen.InsertAuditEventParams{
 		ID: e.ID, OrgID: uuidToPg(e.OrgID), ActorID: uuidToPg(e.ActorID), ActorKind: string(e.ActorKind),
 		Action: e.Action, ObjectType: e.ObjectType, ObjectID: e.ObjectID, Summary: e.Summary,
-		Meta: meta, At: e.At,
+		Meta: meta, At: e.At, ActorTokenID: uuidToPg(e.TokenID),
 	})
 }
 
@@ -56,7 +56,11 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID, filter Filter, cur
 	if err != nil {
 		return nil, "", err
 	}
-	return page(rows, limit)
+	out := make([]eventRow, len(rows))
+	for i, r := range rows {
+		out[i] = eventRow(r)
+	}
+	return page(out, limit)
 }
 
 // ListForActor returns actorID's own events across every organization.
@@ -74,15 +78,23 @@ func (s *SQLStore) ListForActor(ctx context.Context, actorID uuid.UUID, filter F
 	if err != nil {
 		return nil, "", err
 	}
-	return page(rows, limit)
+	out := make([]eventRow, len(rows))
+	for i, r := range rows {
+		out[i] = eventRow(r)
+	}
+	return page(out, limit)
 }
+
+// eventRow is the shape both listing queries return (their generated row
+// types are identical, so each converts to it directly).
+type eventRow gen.ListAuditEventsForOrgRow
 
 // page turns up to limit+1 rows (the query's own RowLimit — see List and
 // ListForActor) into a page of at most limit events plus the next cursor:
 // fetching one extra row is the standard way to learn "is there a next
 // page" without a second COUNT query, and costs nothing here since limit is
 // already bounded by Recorder's clampLimit.
-func page(rows []gen.AuditEvent, limit int) ([]Event, string, error) {
+func page(rows []eventRow, limit int) ([]Event, string, error) {
 	events := make([]Event, len(rows))
 	for i, r := range rows {
 		e, err := fromRow(r)
@@ -100,7 +112,7 @@ func page(rows []gen.AuditEvent, limit int) ([]Event, string, error) {
 	return events, next, nil
 }
 
-func fromRow(r gen.AuditEvent) (Event, error) {
+func fromRow(r eventRow) (Event, error) {
 	var meta map[string]any
 	if len(r.Meta) > 0 {
 		if err := json.Unmarshal(r.Meta, &meta); err != nil {
@@ -110,6 +122,7 @@ func fromRow(r gen.AuditEvent) (Event, error) {
 	return Event{
 		ID: r.ID, OrgID: pgToUUID(r.OrgID), ActorID: pgToUUID(r.ActorID), ActorKind: ActorKind(r.ActorKind),
 		Action: r.Action, ObjectType: r.ObjectType, ObjectID: r.ObjectID, Summary: r.Summary, Meta: meta, At: r.At,
+		TokenID: pgToUUID(r.ActorTokenID), TokenName: r.TokenName,
 	}, nil
 }
 

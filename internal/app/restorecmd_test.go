@@ -211,6 +211,7 @@ func TestRestoreNextStepSaysWhatIsAtTheBackupsState(t *testing.T) {
 		"passwords", "passkeys", "second factors (TOTP and recovery codes)", "API tokens", "open invitations",
 		"worker and agent certificates", "memberships", "disabled users",
 		"Check the users, members, invitations, API tokens, enrollment tokens, workers and agents",
+		"A pending run request is approvable again until it expires: reject the ones you do not want on the Run requests page.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("restore output lacks %q:\n%s", want, out.String())

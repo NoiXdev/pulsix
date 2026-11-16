@@ -28,6 +28,7 @@ import (
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/app"
+	"github.com/noixdev/pulsix/internal/assistant"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/backup"
@@ -57,6 +58,7 @@ import (
 	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
@@ -315,6 +317,21 @@ func WithSecureCookies() Option {
 // on here with a small budget.
 func WithAuthRateLimit(n int) Option {
 	return func(s *Server) { s.Deps.AuthRateLimit = n }
+}
+
+// WithRunRequestClock rebuilds the run request service on the test's
+// clock, so a test can let a request expire.
+func WithRunRequestClock(now func() time.Time) Option {
+	return func(s *Server) { s.Deps.RunRequests = newRunRequests(s.DB, s.Deps, now) }
+}
+
+// newRunRequests wires the run request service exactly as app.Build does.
+func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.Service {
+	res := runrequests.NewResolver(runrequests.Sources{
+		Templates: deps.Templates, Playbooks: deps.Playbooks, Repos: deps.Repos, Jobs: deps.Jobs,
+		Hosts: deps.Hosts, SSH: deps.SSH, Credentials: deps.Credentials, Inventory: deps.Renderer,
+	})
+	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 }
 
 // WithRetentionMaxDays sets the instance retention maximum the monitoring
@@ -692,9 +709,12 @@ func New(t *testing.T, opts ...Option) *Server {
 		Playbooks:   playbooksSvc,
 		Templates:   templatesSvc,
 		Jobs:        jobsSvc,
-		Schedules:   schedulesSvc,
-		Triggers:    triggersSvc,
-		Workers:     workersSvc,
+		Assistant:   assistant.NewService(assistant.NewSQLStore(d)),
+		// RunRequests is set below, once the services it reads exist on
+		// s.Deps (newRunRequests).
+		Schedules: schedulesSvc,
+		Triggers:  triggersSvc,
+		Workers:   workersSvc,
 		// The agent registry, wired exactly as app.Build wires it (the
 		// same store and host provisioner), so the API tests exercise the
 		// real thing rather than a stand-in.
@@ -735,6 +755,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		// what GET /install.sh templates the agent download into.
 		PublicURL: publicURL,
 	}
+	s.Deps.RunRequests = newRunRequests(d, s.Deps, time.Now)
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -1011,6 +1032,87 @@ func (s *Server) orgWithTokenRole(t *testing.T, role tenancy.Role) (uuid.UUID, s
 	return org, plain
 }
 
+// OrgWithAssistantToken is OrgWithToken for an assistant token (spec
+// 2026-11-16 assistant access): capped at role, granted areas. The org's
+// slug is its id, as with OrgWithToken.
+func (s *Server) OrgWithAssistantToken(t *testing.T, role tenancy.Role, areas ...tenancy.Area) (uuid.UUID, string) {
+	t.Helper()
+	suffix := uniqueSuffix()
+	uid := s.SeedUser(suffix+"@example.test", "correct horse battery")
+	org := s.SeedOrg("org-"+suffix, uid)
+	if _, err := s.DB.Pool().Exec(context.Background(), `UPDATE organizations SET slug = $1 WHERE id = $2`, org.String(), org); err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, len(areas))
+	for i, a := range areas {
+		names[i] = string(a)
+	}
+	plain, _, err := s.Deps.Tokens.CreateWith(context.Background(), uid, org, auth.NewToken{
+		Name: "assistant", Role: string(role), Kind: auth.TokenKindAssistant, Areas: names,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetAssistantEnabled(t, org, true)
+	return org, plain
+}
+
+// SetAssistantEnabled turns the org's assistant access switch on or off
+// directly through Deps.Assistant. OrgWithAssistantToken turns it on.
+func (s *Server) SetAssistantEnabled(t *testing.T, org uuid.UUID, enabled bool) {
+	t.Helper()
+	if err := s.Deps.Assistant.SetEnabled(db.WithOrgScope(context.Background(), org), org, enabled); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// AssistantTokenFor mints an assistant token for an existing member of an
+// existing organization and turns the org's assistant access switch on.
+func (s *Server) AssistantTokenFor(t *testing.T, org, user uuid.UUID, role tenancy.Role, areas ...tenancy.Area) string {
+	t.Helper()
+	names := make([]string, len(areas))
+	for i, a := range areas {
+		names[i] = string(a)
+	}
+	plain, _, err := s.Deps.Tokens.CreateWith(context.Background(), user, org, auth.NewToken{
+		Name: "assistant", Role: string(role), Kind: auth.TokenKindAssistant, Areas: names,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetAssistantEnabled(t, org, true)
+	return plain
+}
+
+// AssistantDo serves a bearer request in-process with the assistant
+// endpoint's context mark (auth.WithAssistantEndpoint), the way the
+// endpoint dispatches its tools — something no request over the network
+// can carry.
+func (s *Server) AssistantDo(t *testing.T, method, tok, path, ifMatch string, body any) *Response {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(b)
+	}
+	req := httptest.NewRequestWithContext(auth.WithAssistantEndpoint(context.Background()), method, path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
+	rec := httptest.NewRecorder()
+	s.HTTP.Config.Handler.ServeHTTP(rec, req)
+	return &Response{Code: rec.Code, Body: rec.Body}
+}
+
 // SeedChannel creates an enabled webhook notification channel directly
 // through Deps.Notify (bypassing the API, like the Checks/Rules fixtures
 // above) and returns its id — a channel id to name in an alert route.
@@ -1161,6 +1263,12 @@ func (s *Server) bearerDo(t *testing.T, method, tok, path, ifMatch string, body 
 		t.Fatal(err)
 	}
 	return &Response{Code: resp.StatusCode, Body: bytes.NewBuffer(data)}
+}
+
+// Put issues a bearer-authenticated PUT.
+func (s *Server) Put(t *testing.T, tok, path, ifMatch string, body any) *Response {
+	t.Helper()
+	return s.bearerDo(t, http.MethodPut, tok, path, ifMatch, body)
 }
 
 // Get issues a bearer-authenticated GET.

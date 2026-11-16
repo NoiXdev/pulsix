@@ -14,21 +14,22 @@ import (
 )
 
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
-INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type InsertAuditEventParams struct {
-	ID         uuid.UUID   `json:"id"`
-	OrgID      pgtype.UUID `json:"org_id"`
-	ActorID    pgtype.UUID `json:"actor_id"`
-	ActorKind  string      `json:"actor_kind"`
-	Action     string      `json:"action"`
-	ObjectType string      `json:"object_type"`
-	ObjectID   string      `json:"object_id"`
-	Summary    string      `json:"summary"`
-	Meta       []byte      `json:"meta"`
-	At         time.Time   `json:"at"`
+	ID           uuid.UUID   `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorKind    string      `json:"actor_kind"`
+	Action       string      `json:"action"`
+	ObjectType   string      `json:"object_type"`
+	ObjectID     string      `json:"object_id"`
+	Summary      string      `json:"summary"`
+	Meta         []byte      `json:"meta"`
+	At           time.Time   `json:"at"`
+	ActorTokenID pgtype.UUID `json:"actor_token_id"`
 }
 
 func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
@@ -43,21 +44,23 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 		arg.Summary,
 		arg.Meta,
 		arg.At,
+		arg.ActorTokenID,
 	)
 	return err
 }
 
 const listAuditEventsForActor = `-- name: ListAuditEventsForActor :many
-SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at
-FROM audit_events
-WHERE actor_id = $1
-  AND ($2::text IS NULL OR object_type = $2::text)
-  AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
+SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
+       e.actor_token_id, COALESCE(t.name, '')::text AS token_name
+FROM audit_events e LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+WHERE e.actor_id = $1
+  AND ($2::text IS NULL OR e.object_type = $2::text)
+  AND ($3::timestamptz IS NULL OR e.at >= $3::timestamptz)
   AND (
     $4::timestamptz IS NULL
-    OR (at, id) < ($4::timestamptz, $5::uuid)
+    OR (e.at, e.id) < ($4::timestamptz, $5::uuid)
   )
-ORDER BY at DESC, id DESC
+ORDER BY e.at DESC, e.id DESC
 LIMIT $6
 `
 
@@ -70,10 +73,27 @@ type ListAuditEventsForActorParams struct {
 	RowLimit   int32              `json:"row_limit"`
 }
 
+type ListAuditEventsForActorRow struct {
+	ID           uuid.UUID   `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorKind    string      `json:"actor_kind"`
+	Action       string      `json:"action"`
+	ObjectType   string      `json:"object_type"`
+	ObjectID     string      `json:"object_id"`
+	Summary      string      `json:"summary"`
+	Meta         []byte      `json:"meta"`
+	At           time.Time   `json:"at"`
+	ActorTokenID pgtype.UUID `json:"actor_token_id"`
+	TokenName    string      `json:"token_name"`
+}
+
 // The cross-org counterpart of ListAuditEventsForOrg, for GET /me/activity:
 // filtered by actor_id instead of org_id, with the same optional
 // object_type / since / cursor conditions.
-func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEventsForActorParams) ([]AuditEvent, error) {
+// The token's name comes from a left join (spec 2026-11-16 assistant
+// access, "Audit"): empty for sessions, system events and older rows.
+func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEventsForActorParams) ([]ListAuditEventsForActorRow, error) {
 	rows, err := q.db.Query(ctx, listAuditEventsForActor,
 		arg.ActorID,
 		arg.ObjectType,
@@ -86,9 +106,9 @@ func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEven
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditEvent
+	var items []ListAuditEventsForActorRow
 	for rows.Next() {
-		var i AuditEvent
+		var i ListAuditEventsForActorRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -100,6 +120,8 @@ func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEven
 			&i.Summary,
 			&i.Meta,
 			&i.At,
+			&i.ActorTokenID,
+			&i.TokenName,
 		); err != nil {
 			return nil, err
 		}
@@ -112,17 +134,18 @@ func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEven
 }
 
 const listAuditEventsForOrg = `-- name: ListAuditEventsForOrg :many
-SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at
-FROM audit_events
-WHERE org_id = $1
-  AND ($2::uuid IS NULL OR actor_id = $2::uuid)
-  AND ($3::text IS NULL OR object_type = $3::text)
-  AND ($4::timestamptz IS NULL OR at >= $4::timestamptz)
+SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
+       e.actor_token_id, COALESCE(t.name, '')::text AS token_name
+FROM audit_events e LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+WHERE e.org_id = $1
+  AND ($2::uuid IS NULL OR e.actor_id = $2::uuid)
+  AND ($3::text IS NULL OR e.object_type = $3::text)
+  AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
   AND (
     $5::timestamptz IS NULL
-    OR (at, id) < ($5::timestamptz, $6::uuid)
+    OR (e.at, e.id) < ($5::timestamptz, $6::uuid)
   )
-ORDER BY at DESC, id DESC
+ORDER BY e.at DESC, e.id DESC
 LIMIT $7
 `
 
@@ -136,6 +159,21 @@ type ListAuditEventsForOrgParams struct {
 	RowLimit   int32              `json:"row_limit"`
 }
 
+type ListAuditEventsForOrgRow struct {
+	ID           uuid.UUID   `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorKind    string      `json:"actor_kind"`
+	Action       string      `json:"action"`
+	ObjectType   string      `json:"object_type"`
+	ObjectID     string      `json:"object_id"`
+	Summary      string      `json:"summary"`
+	Meta         []byte      `json:"meta"`
+	At           time.Time   `json:"at"`
+	ActorTokenID pgtype.UUID `json:"actor_token_id"`
+	TokenName    string      `json:"token_name"`
+}
+
 // Every optional filter (actor_id, object_type, since, and the cursor's own
 // (at, id) keyset pair) is expressed as "param IS NULL OR <condition>", so
 // one query serves every combination the activity feed route accepts
@@ -145,7 +183,9 @@ type ListAuditEventsForOrgParams struct {
 // that sort strictly after the cursor row in that order, which is what
 // keeps pagination stable even when several events share the same at
 // (store_sql.go's cursor always carries id as the tiebreaker).
-func (q *Queries) ListAuditEventsForOrg(ctx context.Context, arg ListAuditEventsForOrgParams) ([]AuditEvent, error) {
+// The token's name comes from a left join (spec 2026-11-16 assistant
+// access, "Audit"): empty for sessions, system events and older rows.
+func (q *Queries) ListAuditEventsForOrg(ctx context.Context, arg ListAuditEventsForOrgParams) ([]ListAuditEventsForOrgRow, error) {
 	rows, err := q.db.Query(ctx, listAuditEventsForOrg,
 		arg.OrgID,
 		arg.ActorID,
@@ -159,9 +199,9 @@ func (q *Queries) ListAuditEventsForOrg(ctx context.Context, arg ListAuditEvents
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditEvent
+	var items []ListAuditEventsForOrgRow
 	for rows.Next() {
-		var i AuditEvent
+		var i ListAuditEventsForOrgRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -173,6 +213,8 @@ func (q *Queries) ListAuditEventsForOrg(ctx context.Context, arg ListAuditEvents
 			&i.Summary,
 			&i.Meta,
 			&i.At,
+			&i.ActorTokenID,
+			&i.TokenName,
 		); err != nil {
 			return nil, err
 		}

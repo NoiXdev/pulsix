@@ -48,6 +48,23 @@ func TokenScopeFromContext(ctx context.Context) (TokenScope, bool) {
 	return s, ok
 }
 
+// assistantEndpointKey marks a request the assistant endpoint dispatches
+// in-process (spec 2026-11-16 assistant access, "Dispatch"). Only
+// WithAssistantEndpoint sets it; nothing in an incoming HTTP request can,
+// so an assistant token presented to the REST API directly is refused.
+type assistantEndpointKey struct{}
+
+// WithAssistantEndpoint marks ctx as a request of the assistant endpoint.
+func WithAssistantEndpoint(ctx context.Context) context.Context {
+	return context.WithValue(ctx, assistantEndpointKey{}, true)
+}
+
+// ViaAssistantEndpoint reports whether ctx carries the endpoint's mark.
+func ViaAssistantEndpoint(ctx context.Context) bool {
+	v, _ := ctx.Value(assistantEndpointKey{}).(bool)
+	return v
+}
+
 // BearerMiddleware resolves "Authorization: Bearer pxt_…" into a Principal
 // (with TokenID set and MFAComplete true — see Tokens.Resolve) and its
 // TokenScope.

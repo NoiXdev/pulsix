@@ -30,6 +30,7 @@ func (s *SQLTokenStore) Insert(ctx context.Context, t Token, secretHash []byte) 
 	return s.q.InsertAPIToken(ctx, gen.InsertAPITokenParams{
 		ID: t.ID, UserID: t.UserID, OrgID: t.OrgID, Name: t.Name, Role: gen.OrgRole(t.Role),
 		SecretHash: secretHash, ExpiresAt: toPgTimestamptz(t.ExpiresAt),
+		Kind: string(kindOrAPI(t.Kind)), Areas: t.Areas,
 	})
 }
 
@@ -56,6 +57,7 @@ func (s *SQLTokenStore) GetByHash(ctx context.Context, secretHash []byte, now ti
 	return Token{
 		ID: row.ID, UserID: row.UserID, OrgID: row.OrgID, Name: row.Name, Role: string(row.Role),
 		ExpiresAt: fromPgTimestamptz(row.ExpiresAt), LastUsedAt: fromPgTimestamptz(row.LastUsedAt), CreatedAt: row.CreatedAt,
+		Kind: TokenKind(row.Kind), Areas: row.Areas,
 	}, row.InstanceAdmin, nil
 }
 
@@ -75,6 +77,7 @@ func (s *SQLTokenStore) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Toke
 		out[i] = Token{
 			ID: row.ID, UserID: row.UserID, OrgID: row.OrgID, Name: row.Name, Role: string(row.Role),
 			ExpiresAt: fromPgTimestamptz(row.ExpiresAt), LastUsedAt: fromPgTimestamptz(row.LastUsedAt), CreatedAt: row.CreatedAt,
+			Kind: TokenKind(row.Kind), Areas: row.Areas,
 		}
 	}
 	return out, nil
@@ -109,6 +112,15 @@ func (s *SQLTokenStore) Revoke(ctx context.Context, orgID, id uuid.UUID) error {
 // minute, which is all the throttle promises.
 func (s *SQLTokenStore) TouchLastUsed(ctx context.Context, id uuid.UUID, at time.Time) error {
 	return s.q.TouchAPIToken(ctx, gen.TouchAPITokenParams{ID: id, LastUsedAt: pgtype.Timestamptz{Time: at, Valid: true}})
+}
+
+// kindOrAPI maps the zero kind to TokenKindAPI, so a Token built without
+// a kind (every caller before assistant tokens) stays an api token.
+func kindOrAPI(k TokenKind) TokenKind {
+	if k == "" {
+		return TokenKindAPI
+	}
+	return k
 }
 
 func toPgTimestamptz(t *time.Time) pgtype.Timestamptz {

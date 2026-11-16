@@ -1049,31 +1049,43 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	j, err := s.store.GetJob(ctx, orgID, id)
+	templateID, retry, err := s.RetryTargets(ctx, orgID, id)
 	if err != nil {
 		return nil, err
 	}
-	if j.Kind != KindRun {
-		return nil, fmt.Errorf("%w: only run jobs can be retried", ErrInvalidInput)
-	}
-	if !j.Status.Terminal() {
-		return nil, fmt.Errorf("%w: job has not finished yet", ErrNotRunning)
-	}
-	if j.Status != StatusFailed && j.Status != StatusError {
-		return nil, fmt.Errorf("%w: only failed or errored runs can be retried", ErrNothingToRetry)
-	}
-	if j.TemplateID == nil {
-		return nil, fmt.Errorf("%w: job carries no template", ErrInvalidInput)
-	}
-	retry := failedHostIDs(j.Stats, j.HostIDs)
-	if len(retry) == 0 {
-		return nil, ErrNothingToRetry
-	}
-	tmpl, err := s.templates.TemplateLookup(ctx, orgID, *j.TemplateID)
+	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
 	if err != nil {
 		return nil, err
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, s.newID(), nil)
+}
+
+// RetryTargets is RetryFailed's checks without the enqueue: the template
+// and the host ids a retry of the finished run id would target. A run
+// request for a retry is validated with it (spec 2026-11-16 assistant
+// access).
+func (s *Service) RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, []uuid.UUID, error) {
+	j, err := s.store.GetJob(ctx, orgID, id)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if j.Kind != KindRun {
+		return uuid.Nil, nil, fmt.Errorf("%w: only run jobs can be retried", ErrInvalidInput)
+	}
+	if !j.Status.Terminal() {
+		return uuid.Nil, nil, fmt.Errorf("%w: job has not finished yet", ErrNotRunning)
+	}
+	if j.Status != StatusFailed && j.Status != StatusError {
+		return uuid.Nil, nil, fmt.Errorf("%w: only failed or errored runs can be retried", ErrNothingToRetry)
+	}
+	if j.TemplateID == nil {
+		return uuid.Nil, nil, fmt.Errorf("%w: job carries no template", ErrInvalidInput)
+	}
+	retry := failedHostIDs(j.Stats, j.HostIDs)
+	if len(retry) == 0 {
+		return uuid.Nil, nil, ErrNothingToRetry
+	}
+	return *j.TemplateID, retry, nil
 }
 
 // failedHostIDs intersects the stats' failed/unreachable host ids with the

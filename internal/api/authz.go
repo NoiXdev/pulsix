@@ -22,6 +22,13 @@ type Scope struct {
 	UserID uuid.UUID
 	Role   tenancy.Role
 	Org    tenancy.Org
+	// TokenID, TokenKind and Areas describe the bearer token, if the
+	// request carried one (spec 2026-11-16 assistant access): Areas is nil
+	// for a session and for an api token, so a handler that checks
+	// scope.Role again after requireOrg can also consult the areas.
+	TokenID   *uuid.UUID
+	TokenKind auth.TokenKind
+	Areas     []tenancy.Area
 }
 
 // requireOrg resolves the org named by orgSlug and checks that the calling
@@ -83,14 +90,45 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	if err != nil {
 		return Scope{}, mapTenancyErr(ctx, err)
 	}
-	if ts, ok := auth.TokenScopeFromContext(ctx); ok {
+	var areas []tenancy.Area
+	var kind auth.TokenKind
+	ts, hasToken := auth.TokenScopeFromContext(ctx)
+	if hasToken {
 		if ts.OrgID != org.ID {
 			return Scope{}, huma.Error403Forbidden("token is scoped to another organization")
 		}
 		role = tenancy.Lower(role, tenancy.Role(ts.Role))
+		kind = ts.Kind
 	}
 	if !tenancy.Allows(role, perm) {
 		return Scope{}, huma.Error403Forbidden("insufficient role")
+	}
+	if hasToken && ts.Kind == auth.TokenKindAssistant {
+		// 8. An assistant token (spec 2026-11-16 assistant access) only
+		//    reaches what one of its areas grants — after the role check, so
+		//    an area never widens the role. bearerAuthMiddleware already
+		//    refused it outside the assistant endpoint; this is the second
+		//    line should a route ever accept a bearer outside that group.
+		if !auth.ViaAssistantEndpoint(ctx) {
+			return Scope{}, huma.Error403Forbidden(assistantOnlyAtEndpoint)
+		}
+		// The switch is read on every request, so turning it off ends a
+		// session the endpoint already started.
+		on, err := deps.Assistant.Enabled(ctx, org.ID)
+		if err != nil {
+			slog.ErrorContext(ctx, "read assistant switch", "err", err)
+			return Scope{}, huma.Error500InternalServerError("internal error")
+		}
+		if !on {
+			return Scope{}, huma.Error403Forbidden(assistantSwitchedOff)
+		}
+		areas = make([]tenancy.Area, len(ts.Areas))
+		for i, a := range ts.Areas {
+			areas[i] = tenancy.Area(a)
+		}
+		if !tenancy.AreasAllow(areas, perm) {
+			return Scope{}, huma.Error403Forbidden("the token's areas do not include " + string(perm))
+		}
 	}
 	// Fills in the request's audit carrier, if it has one (only operations
 	// registered with withAudit do — see audit_middleware.go). Every
@@ -100,8 +138,16 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	// actor on a recorded event impossible to get wrong or forget: there is
 	// no separate step to skip.
 	setAuditScope(ctx, &org.ID, p.UserID)
-	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org}, nil
+	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org, TokenID: p.TokenID, TokenKind: kind, Areas: areas}, nil
 }
+
+// assistantOnlyAtEndpoint is the refusal an assistant token gets anywhere
+// but the assistant endpoint.
+const assistantOnlyAtEndpoint = "assistant tokens work only at the assistant endpoint"
+
+// assistantSwitchedOff is the refusal while the organization's assistant
+// access switch is off.
+const assistantSwitchedOff = "assistant access is turned off for this organization"
 
 // requireInstanceAdmin gates instance-level routes that are not scoped to
 // any organization (/admin/users…, /admin/backups…, the shared resources).

@@ -92,7 +92,9 @@ const restoreNextStep = "Start the stack. Workers and agents reconnect on their 
 	"member removed or a user disabled since is back. An enrollment token used up or withdrawn\n" +
 	"since is redeemable again until it expires: withdraw pending ones on the Agents and Workers\n" +
 	"pages. Check the users, members, invitations, API tokens, enrollment tokens, workers and\n" +
-	"agents, and make each of those changes again.\n"
+	"agents, and make each of those changes again.\n" +
+	"A pending run request is approvable again until it expires: reject the ones you do not want\n" +
+	"on the Run requests page.\n"
 
 // RunRestore implements `restore`. It refuses while a manager is connected
 // to the database and, on a database that is not empty, without --replace

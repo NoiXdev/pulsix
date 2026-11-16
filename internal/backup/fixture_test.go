@@ -96,6 +96,8 @@ INSERT INTO check_state_changes (at, org_id, host_id, check_key, metric, from_st
 INSERT INTO check_states (org_id, host_id, check_key, metric, state, since, rule_id, evaluated_at) VALUES ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000004', 'cpu', 'usage', 'crit', now(), '00000000-0000-4000-8000-000000000013', now());
 INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, starts_at, ends_at, created_by) VALUES ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000001', 'patch', 'host', '00000000-0000-4000-8000-000000000004', now(), now() + interval '1 hour', '00000000-0000-4000-8000-000000000002');
 INSERT INTO org_job_settings (org_id) VALUES ('00000000-0000-4000-8000-000000000001');
+INSERT INTO org_assistant_settings (org_id, enabled) VALUES ('00000000-0000-4000-8000-000000000001', true);
+INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, reason, requested_by_user, expires_at) VALUES ('00000000-0000-4000-8000-0000000000f1', '00000000-0000-4000-8000-000000000001', 'run', '00000000-0000-4000-8000-000000000009', 1, 'fixture', '00000000-0000-4000-8000-000000000002', now() + interval '1 hour');
 INSERT INTO org_monitoring_settings (org_id, client_absent_days) VALUES ('00000000-0000-4000-8000-000000000001', 7);
 INSERT INTO org_secrets (org_id, name, fields_sealed, field_names) VALUES ('00000000-0000-4000-8000-000000000001', 'fixture', '\x0f', '{community}');
 INSERT INTO rotation_groups (id, org_id, credential_id, targets) VALUES ('00000000-0000-4000-8000-00000000002a', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000005', '[]');

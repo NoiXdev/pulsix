@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
@@ -107,6 +108,12 @@ type Deps struct {
 	// Jobs is the org-scoped job queue; the connection-test trigger route
 	// enqueues through it (registerHostopsRoutes).
 	Jobs *jobs.Service
+	// Assistant is the per-organization assistant access switch (spec
+	// 2026-11-16 assistant access).
+	Assistant AssistantSettings
+	// RunRequests are the run requests an assistant makes and a person
+	// approves (spec 2026-11-16 assistant access).
+	RunRequests *runrequests.Service
 	// Schedules fires job templates on a timetable; see
 	// registerScheduleRoutes.
 	Schedules *schedules.Service
@@ -284,6 +291,12 @@ func (d Deps) validate() error {
 	}
 	if d.Tokens == nil {
 		missing = append(missing, "Tokens")
+	}
+	if d.Assistant == nil {
+		missing = append(missing, "Assistant")
+	}
+	if d.RunRequests == nil {
+		missing = append(missing, "RunRequests")
 	}
 	if d.Enrolment == nil {
 		missing = append(missing, "Enrolment")
@@ -633,6 +646,8 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerNotifyDigestRoutes(orgScoped, deps)       // /orgs/{org}/notification-digest
 	registerCalendarRoutes(orgScoped, deps)           // GET /orgs/{org}/calendar
 	registerOrgSettingsRoutes(orgScoped, deps)        // /orgs/{org}/settings/jobs
+	registerAssistantSettingsRoutes(orgScoped, deps)  // /orgs/{org}/settings/assistant
+	registerRunRequestRoutes(orgScoped, deps)         // /orgs/{org}/run-requests..., .../run-requests, .../retry-requests
 	registerMonitoringSettingsRoutes(orgScoped, deps) // /orgs/{org}/settings/monitoring
 	registerAlertRoutes(orgScoped, deps)              // /orgs/{org}/alerts..., the host view is List's own ?host= filter
 	registerAlertRouteRoutes(orgScoped, deps)         // /orgs/{org}/alert-routes..., GET /orgs/{org}/hosts/{id}/alert-routes

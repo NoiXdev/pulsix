@@ -45,6 +45,10 @@ const (
 	// templates.write clears.
 	PermJobsRead Permission = "jobs.read"
 	PermJobsRun  Permission = "jobs.run"
+	// PermJobsRequest asks for a run that a person then approves (spec
+	// 2026-11-16 assistant access, "Run requests"): the operator bar
+	// jobs.run clears, because an approved request starts a run.
+	PermJobsRequest Permission = "jobs.request"
 
 	PermWorkersRead  Permission = "workers.read"
 	PermWorkersWrite Permission = "workers.write"
@@ -112,6 +116,8 @@ var matrix = map[Permission]Role{
 	// cancel and retry runs.
 	PermJobsRead: RoleViewer,
 	PermJobsRun:  RoleOperator,
+	// Requesting a run is no less than starting one once approved.
+	PermJobsRequest: RoleOperator,
 	// Workers are infrastructure: owner and admin see and manage them
 	// (spec 2026-09-18 §4).
 	PermWorkersRead:  RoleAdmin,
