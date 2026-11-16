@@ -4674,6 +4674,11 @@ export interface components {
             definition_id?: string;
             /** @description false means the winning scope turned this check off; it is listed so the GUI can show where */
             enabled: boolean;
+            /**
+             * @description When the check as a whole is down: any, a majority, or all of the vantage points with a result say down. Present only for a check with vantage groups
+             * @enum {string}
+             */
+            fail_policy?: "any" | "majority" | "all";
             /** Format: int64 */
             interval_seconds: number;
             key: string;
@@ -4698,6 +4703,8 @@ export interface components {
             source_id?: string;
             source_name?: string;
             values: components["schemas"]["HostCheckValueDTO"][] | null;
+            /** @description The vantage points this check is probed from, in the order its combined verdict picks a representative: the Pulsix server when it probes, then the assigned agents by host name. Present only for a check with vantage groups */
+            vantages?: components["schemas"]["HostCheckVantageDTO"][];
         };
         HostCheckValueDTO: {
             /**
@@ -4737,6 +4744,40 @@ export interface components {
             state: "ok" | "warn" | "crit" | "unknown" | null;
             /** @description Evaluated more than three of the check's own intervals ago; mirrors stale, but for the verdict rather than the reading */
             state_stale: boolean;
+            /**
+             * Format: double
+             * @description Set for a numeric metric
+             */
+            value?: number;
+        };
+        HostCheckVantageDTO: {
+            /**
+             * Format: date-time
+             * @description When the vantage's latest round was taken; absent when it has none
+             */
+            at?: string;
+            /** @enum {string} */
+            kind: "manager" | "agent";
+            /** @description The probing agent's host name; empty for the Pulsix server itself */
+            name: string;
+            /** @description The latest round's values */
+            observations: components["schemas"]["HostCheckVantageValueDTO"][] | null;
+            /**
+             * @description The vantage's latest round: down when the check's up metric is 0, up when it is 1, none for an error, no up metric, a round older than twice the interval plus 30 seconds, or no round yet
+             * @enum {string}
+             */
+            status: "up" | "down" | "none";
+            /** @description manager, or the probing agent's host id */
+            vantage: string;
+        };
+        HostCheckVantageValueDTO: {
+            /** @description Set when the probe failed; value and label are then both absent */
+            error?: string;
+            /** @description The item this value is for; empty for a whole-check metric */
+            item: string;
+            /** @description Set for a discrete metric */
+            label?: string;
+            metric: string;
             /**
              * Format: double
              * @description Set for a numeric metric
@@ -11542,6 +11583,8 @@ export interface operations {
                 metric?: string;
                 /** @description One of 1h, 24h, 7d, 30d, 90d */
                 range?: string;
+                /** @description Read one vantage point's samples of a check probed from several: manager, or the probing agent's host id (lower case); omit for the check's combined series */
+                vantage?: string;
             };
             header?: never;
             path: {

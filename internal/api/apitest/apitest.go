@@ -54,6 +54,7 @@ import (
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -702,7 +703,10 @@ func New(t *testing.T, opts ...Option) *Server {
 		// every mutating check route (api.CheckConfigPusher). The recorder
 		// stands in for *agentapi.Service, which needs a live gRPC stream
 		// to observe anything at all.
-		Checks:     s.Checks,
+		Checks: s.Checks,
+		// The vantage view (backlog 3.13a) as app.Build wires it, on the
+		// test database's per-vantage tables.
+		Vantages:   probes.NewView(probes.NewSQLStore(d), hostsSvc, time.Now),
 		Rules:      s.Rules,
 		RuleStates: ruleStates,
 		// The items surface (v0.3b-3): the same instance exposed as s.Items,

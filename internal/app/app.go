@@ -654,6 +654,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// affected hosts their freshly resolved set (api.CheckConfigPusher,
 		// satisfied by *agentapi.Service.PushHosts).
 		Checks: checksSvc, AgentPush: agentSvc,
+		// The vantage points of the checks probed from several places
+		// (backlog 3.13a): the per-vantage tables the probe runner and the
+		// agent stream write, named through the host registry.
+		Vantages: probes.NewView(probes.NewSQLStore(appDB), hostsSvc, time.Now),
 		// The rule engine's own surface (v0.3b-2 Task 10): the same
 		// rulesSvc instance the org-created hook above seeds with, and
 		// checksSvc for the effective view's group membership and current

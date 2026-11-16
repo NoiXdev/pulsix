@@ -258,3 +258,21 @@ func (s *SQLStore) DeleteVantages(ctx context.Context, org, host uuid.UUID, key 
 	}
 	return nil
 }
+
+// VantageSeries downsamples one vantage's probe_samples of (key, item,
+// metric) in [from, to) into at most buckets points, like the check's own
+// series (checks.SQLStore.SeriesForHost).
+func (s *SQLStore) VantageSeries(ctx context.Context, org, host uuid.UUID, key, vantage, item, metric string, from, to time.Time, buckets int) ([]checks.Point, error) {
+	rows, err := s.q.ProbeSeriesForHost(ctx, gen.ProbeSeriesForHostParams{
+		BucketSeconds: to.Sub(from).Seconds() / float64(buckets), OrgID: org, HostID: host,
+		CheckKey: key, Vantage: vantage, Item: item, Metric: metric, FromAt: from, ToAt: to,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("vantage series: %w", err)
+	}
+	points := make([]checks.Point, len(rows))
+	for i, r := range rows {
+		points[i] = checks.Point{At: r.Bucket, Value: r.Value}
+	}
+	return points, nil
+}

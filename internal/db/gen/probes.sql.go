@@ -285,6 +285,69 @@ func (q *Queries) ListProbeSlotAgents(ctx context.Context, arg ListProbeSlotAgen
 	return items, nil
 }
 
+const probeSeriesForHost = `-- name: ProbeSeriesForHost :many
+SELECT time_bucket(make_interval(secs => $1::double precision), at)::timestamptz AS bucket,
+       avg(value)::double precision AS value
+FROM probe_samples
+WHERE org_id = $2 AND host_id = $3 AND check_key = $4
+  AND vantage = $5 AND item = $6 AND metric = $7
+  AND at >= $8 AND at < $9
+  AND value IS NOT NULL
+  AND value BETWEEN -1e100 AND 1e100
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type ProbeSeriesForHostParams struct {
+	BucketSeconds float64   `json:"bucket_seconds"`
+	OrgID         uuid.UUID `json:"org_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	CheckKey      string    `json:"check_key"`
+	Vantage       string    `json:"vantage"`
+	Item          string    `json:"item"`
+	Metric        string    `json:"metric"`
+	FromAt        time.Time `json:"from_at"`
+	ToAt          time.Time `json:"to_at"`
+}
+
+type ProbeSeriesForHostRow struct {
+	Bucket time.Time `json:"bucket"`
+	Value  float64   `json:"value"`
+}
+
+// One vantage's samples of one metric, downsampled like SeriesForHost
+// (checks.sql): the same bucketing, NULL filter and value bounds, so a
+// vantage's graph reads exactly like the check's own.
+func (q *Queries) ProbeSeriesForHost(ctx context.Context, arg ProbeSeriesForHostParams) ([]ProbeSeriesForHostRow, error) {
+	rows, err := q.db.Query(ctx, probeSeriesForHost,
+		arg.BucketSeconds,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Vantage,
+		arg.Item,
+		arg.Metric,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProbeSeriesForHostRow
+	for rows.Next() {
+		var i ProbeSeriesForHostRow
+		if err := rows.Scan(&i.Bucket, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProbeAssignment = `-- name: UpdateProbeAssignment :exec
 UPDATE probe_assignments SET
   plugin = $1, params = $2::jsonb,

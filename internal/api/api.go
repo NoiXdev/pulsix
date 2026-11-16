@@ -125,6 +125,10 @@ type Deps struct {
 	// stored samples behind the graphs. See registerCheckRoutes,
 	// registerMonitoringGroupRoutes and registerHostCheckRoutes.
 	Checks *checks.Service
+	// Vantages reads the vantage points of the synthetic checks probed
+	// from several places (backlog 3.13a): the vantage table on the host
+	// page and one vantage's graph. See registerHostCheckRoutes.
+	Vantages VantageReader
 	// Rules is the rule engine's own surface (v0.3b-2 spec, "API and
 	// permissions"): rule CRUD, the validate-only route the editor drives,
 	// and — together with Checks (for a host's group membership and
@@ -361,6 +365,9 @@ func (d Deps) validate() error {
 	}
 	if d.MonitorSettings == nil {
 		missing = append(missing, "MonitorSettings")
+	}
+	if d.Vantages == nil {
+		missing = append(missing, "Vantages")
 	}
 	if d.AgentPush == nil {
 		missing = append(missing, "AgentPush")

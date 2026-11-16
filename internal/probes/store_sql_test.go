@@ -348,3 +348,46 @@ func TestReplaceOrgAssignmentsRefusesDuplicates(t *testing.T) {
 		t.Fatalf("err = %v, want a duplicate assignment error", err)
 	}
 }
+
+// TestVantageSeriesBucketsOneVantage: the per-vantage series reads one
+// vantage's numeric samples of one (check, item, metric) in [from, to),
+// averaged per bucket, and nothing of another vantage, metric, or an
+// error round.
+func TestVantageSeriesBucketsOneVantage(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	store := probes.NewSQLStore(d)
+	org, host := seedStoreOrg(t, d, "pv-series")
+	target, agent := host("target"), host("agent")
+	scoped := db.WithOrgScope(ctx, org)
+	to := time.Now().UTC().Truncate(time.Hour).Add(time.Hour)
+	from := to.Add(-time.Hour)
+	f := func(v float64) *float64 { return &v }
+	rec := func(vantage string, at time.Time, metric string, v *float64, errText string) {
+		t.Helper()
+		if err := store.RecordVantage(scoped, org, vantage, []checks.Observation{
+			{HostID: target, CheckKey: "site", Metric: metric, At: at, Value: v, Err: errText},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec(agent.String(), from.Add(time.Minute), "tcp.response_ms", f(10), "")
+	rec(agent.String(), from.Add(2*time.Minute), "tcp.response_ms", f(20), "")
+	rec(agent.String(), from.Add(40*time.Minute), "tcp.response_ms", f(30), "")
+	rec(agent.String(), from.Add(41*time.Minute), "tcp.response_ms", nil, "timeout")
+	rec(agent.String(), from.Add(-time.Minute), "tcp.response_ms", f(99), "") // before the window
+	rec(agent.String(), from.Add(time.Minute), "tcp.up", f(1), "")
+	rec("manager", from.Add(time.Minute), "tcp.response_ms", f(500), "")
+
+	points, err := store.VantageSeries(scoped, org, target, "site", agent.String(), "", "tcp.response_ms", from, to, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 2 || points[0].Value != 15 || points[1].Value != 30 || !points[0].At.Equal(from) {
+		t.Fatalf("points = %+v, want 15 at %s and 30", points, from)
+	}
+	points, err = store.VantageSeries(db.WithOrgScope(ctx, uuid.New()), org, target, "site", agent.String(), "", "tcp.response_ms", from, to, 2)
+	if err != nil || len(points) != 0 {
+		t.Fatalf("another org's scope read %+v, %v", points, err)
+	}
+}

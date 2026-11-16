@@ -13,6 +13,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/items"
+	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -161,6 +162,12 @@ type hostCheckDTO struct {
 	// host's agent report for an agent plugin, the organization's secret
 	// store for a probe (backlog 3.13d).
 	MissingSecret string `json:"missing_secret,omitempty" doc:"The secret this check's secret parameter names that is not available to it. For a check the host's agent runs: the agent did not report it in its last heartbeat, and fails the check with \"secret <name> is not defined in agent.yaml\" until it is added. For a check probed from the manager: the organization's secret store holds no secret of that name, and every probe fails until one is stored. Absent when the check names no secret, the secret is there, the check is disabled, or (for a check the agent runs) the agent's report is unknown"`
+	// Vantages and FailPolicy are backlog 3.13a's, set only for an enabled
+	// synthetic check with vantage groups and left out otherwise, so every
+	// other check reads exactly as before. Vantages is a pointer so such a
+	// check with no expected vantage at all still says so with [].
+	Vantages   *[]hostCheckVantageDTO `json:"vantages,omitempty" doc:"The vantage points this check is probed from, in the order its combined verdict picks a representative: the Pulsix server when it probes, then the assigned agents by host name. Present only for a check with vantage groups"`
+	FailPolicy string                 `json:"fail_policy,omitempty" enum:"any,majority,all" doc:"When the check as a whole is down: any, a majority, or all of the vantage points with a result say down. Present only for a check with vantage groups"`
 }
 
 type hostChecksOutput struct {
@@ -204,6 +211,9 @@ type hostMetricsInput struct {
 	Item   string `query:"item" doc:"The mount or unit; omit for a whole-host metric"`
 	Metric string `query:"metric"`
 	Range  string `query:"range" doc:"One of 1h, 24h, 7d, 30d, 90d"`
+	// Vantage is backlog 3.13a's: one vantage point's own series instead
+	// of the check's combined one.
+	Vantage string `query:"vantage" doc:"Read one vantage point's samples of a check probed from several: manager, or the probing agent's host id (lower case); omit for the check's combined series"`
 }
 
 type metricPointDTO struct {
@@ -282,6 +292,10 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 				return nil, mapOrgSecretsErr(ctx, err)
 			}
 		}
+		vantages, err := hostVantages(ctx, deps, scope.OrgID, hostID, resolved.Synthetic)
+		if err != nil {
+			return nil, err
+		}
 
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
@@ -308,6 +322,9 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			}
 			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, known)
+			if d.Enabled {
+				hostCheckVantages(&dto, vantages)
+			}
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
 		// The checks defined in the host's agent.yaml (backlog 3.5a), after
@@ -337,6 +354,9 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		if !ok {
 			return nil, huma.Error400BadRequest("range must be one of " + strings.Join(metricRangeNames, ", "))
 		}
+		if in.Vantage != "" && !probes.IsVantage(in.Vantage) {
+			return nil, huma.Error400BadRequest("vantage must be manager or a host id in lower case")
+		}
 		if _, err := deps.Hosts.GetHost(ctx, scope.OrgID, hostID); err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
@@ -358,8 +378,13 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 
 		to := time.Now()
 		from := to.Add(-spec.window)
-		series, err := deps.Checks.SeriesForHost(ctx, scope.OrgID, hostID, checkKey, in.Item, metric, from, to, spec.buckets)
-		if err != nil {
+		var series checks.Series
+		if in.Vantage != "" {
+			series, err = vantageSeries(ctx, deps, scope.OrgID, hostID, checkKey, in.Vantage, in.Item, metric, from, to, spec.buckets)
+			if err != nil {
+				return nil, err
+			}
+		} else if series, err = deps.Checks.SeriesForHost(ctx, scope.OrgID, hostID, checkKey, in.Item, metric, from, to, spec.buckets); err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
 		out := &hostMetricsOutput{}

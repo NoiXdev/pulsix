@@ -66,3 +66,18 @@ ORDER BY vantage, item, metric;
 DELETE FROM probe_current
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
   AND NOT (vantage = ANY(sqlc.arg(keep)::text[]));
+
+-- name: ProbeSeriesForHost :many
+-- One vantage's samples of one metric, downsampled like SeriesForHost
+-- (checks.sql): the same bucketing, NULL filter and value bounds, so a
+-- vantage's graph reads exactly like the check's own.
+SELECT time_bucket(make_interval(secs => sqlc.arg(bucket_seconds)::double precision), at)::timestamptz AS bucket,
+       avg(value)::double precision AS value
+FROM probe_samples
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
+  AND vantage = sqlc.arg(vantage) AND item = sqlc.arg(item) AND metric = sqlc.arg(metric)
+  AND at >= sqlc.arg(from_at) AND at < sqlc.arg(to_at)
+  AND value IS NOT NULL
+  AND value BETWEEN -1e100 AND 1e100
+GROUP BY bucket
+ORDER BY bucket;

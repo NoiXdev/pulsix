@@ -35,6 +35,7 @@ import (
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -242,6 +243,8 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// Backlog 3.13d's required dependency: the secret store of the
 		// server-run checks. Zero-valued like its siblings.
 		OrgSecrets: &orgsecrets.Service{},
+		// Backlog 3.13a's required dependency: the vantage view.
+		Vantages: &probes.View{},
 	}
 }
 

@@ -1,6 +1,7 @@
 package probes
 
 import (
+	"slices"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
@@ -55,28 +56,33 @@ const (
 	stateDown
 )
 
-// combineVantages applies the spec's Combining steps 2–5 to rows (every
-// stored current row of the slot): only the vantages in order count (the
-// expected ones, in representative order: manager, then agents by host
-// name, then host id); a vantage's latest round is its rows with the
-// greatest At, fresh when At is within freshness(interval) of now; a fresh
-// round is down when <plugin>.up (item "") is 0, up when it is 1, and no
-// result otherwise (an error or no up metric). The representative is the
-// first down vantage when the policy says down, else the first up one.
-func combineVantages(plugin, policy string, order []string, rows []VantageRow, now time.Time, interval time.Duration) verdict {
-	latest := map[string]time.Time{}
+// classifyVantages reads the vantages in order out of rows (every stored
+// current row of the slot; rows of any other vantage are ignored): a
+// vantage's latest round is its rows with the greatest At, and latest
+// holds that At for every vantage in order that has rows. A round is fresh
+// when its At is within freshness(interval) of now; a fresh round is down
+// when <plugin>.up (item "") is 0, up when it is 1, and no result
+// otherwise (an error or no up metric). A stale round, or a vantage with
+// no rows at all, is no result too. Combining and the host page's
+// vantage table both read the vantages through it, so the two never
+// disagree about a vantage's state.
+func classifyVantages(plugin string, order []string, rows []VantageRow, now time.Time, interval time.Duration) (latest map[string]time.Time, states map[string]vantageState) {
+	latest = map[string]time.Time{}
 	for _, r := range rows {
+		if !slices.Contains(order, r.Vantage) {
+			continue
+		}
 		if at, ok := latest[r.Vantage]; !ok || r.At.After(at) {
 			latest[r.Vantage] = r.At
 		}
 	}
 	upMetric := plugin + ".up"
 	window := freshness(interval)
-	states := make(map[string]vantageState, len(order))
-	var v verdict
+	states = make(map[string]vantageState, len(order))
 	for _, vant := range order {
 		at, ok := latest[vant]
 		if !ok || now.Sub(at) > window {
+			states[vant] = stateNone
 			continue
 		}
 		state := stateNone
@@ -92,12 +98,39 @@ func combineVantages(plugin, policy string, order []string, rows []VantageRow, n
 			}
 		}
 		states[vant] = state
-		switch state {
+	}
+	return latest, states
+}
+
+// latestRound is vantage's rows at its latest round's at, in the order
+// the store gave them.
+func latestRound(vantage string, at time.Time, rows []VantageRow) []VantageRow {
+	var out []VantageRow
+	for _, r := range rows {
+		if r.Vantage == vantage && r.At.Equal(at) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// combineVantages applies the spec's Combining steps 2–5 to rows (every
+// stored current row of the slot): only the vantages in order count (the
+// expected ones, in representative order: manager, then agents by host
+// name, then host id), each read by classifyVantages. The representative
+// is the first down vantage when the policy says down, else the first up
+// one.
+func combineVantages(plugin, policy string, order []string, rows []VantageRow, now time.Time, interval time.Duration) verdict {
+	latest, states := classifyVantages(plugin, order, rows, now, interval)
+	var v verdict
+	for _, vant := range order {
+		switch states[vant] {
 		case stateDown:
 			v.n++
 			v.down++
 		case stateUp:
 			v.n++
+		case stateNone:
 		}
 	}
 	if v.n == 0 {
@@ -114,11 +147,6 @@ func combineVantages(plugin, policy string, order []string, rows []VantageRow, n
 			break
 		}
 	}
-	at := latest[v.rep]
-	for _, r := range rows {
-		if r.Vantage == v.rep && r.At.Equal(at) {
-			v.rows = append(v.rows, r)
-		}
-	}
+	v.rows = latestRound(v.rep, latest[v.rep], rows)
 	return v
 }
