@@ -125,12 +125,18 @@ func (b *blockingProbe) fn(plugin string) probe.Func {
 		b.inFlight++
 		b.maxSeen = max(b.maxSeen, b.inFlight)
 		b.mu.Unlock()
-		b.started <- struct{}{}
 		defer func() {
 			b.mu.Lock()
 			b.inFlight--
 			b.mu.Unlock()
 		}()
+		// started holds 64 starts; a test that never reads it must not
+		// block a probe past its cancel.
+		select {
+		case b.started <- struct{}{}:
+		case <-ctx.Done():
+			return nil
+		}
 		if b.gate != nil {
 			select {
 			case <-b.gate:
