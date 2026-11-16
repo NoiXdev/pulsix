@@ -229,8 +229,9 @@ func (f rulesFixture) auditActionsFor(t *testing.T, objectType, objectID string)
 func TestRuleRoutes(t *testing.T) {
 	f := newRulesFixture(t, "rules")
 
-	// Every organization is created with the nine-row starter set
-	// (rules.SeedRules), origin "seed", scope org, enabled.
+	// Every organization is created with the sixteen-row starter set
+	// (rules.SeedRules), origin "seed", scope org, enabled; the nine
+	// older rows are checked here.
 	t.Run("lists the seed set", func(t *testing.T) {
 		byName := map[string]ruleDTO{}
 		for _, r := range f.listRules(t, f.viewerC) {
