@@ -13,8 +13,10 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 )
 
-// metricsTable is the one table IncludeMetrics switches.
-const metricsTable = "check_samples"
+// metricsTables are the tables IncludeMetrics switches: the metric history
+// hypertables, check_samples and the per-vantage probe_samples (backlog
+// 3.13a). Their "current" companions stay in every backup.
+var metricsTables = map[string]bool{"check_samples": true, "probe_samples": true}
 
 // DumpOptions describes the backup Dump writes.
 type DumpOptions struct {
@@ -79,7 +81,7 @@ func Dump(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, w io.Writ
 
 	m := Manifest{Header: h, Sequences: sequences, Tables: []TableCount{}}
 	for _, t := range tables {
-		if t.name == metricsTable && !opts.IncludeMetrics {
+		if metricsTables[t.name] && !opts.IncludeMetrics {
 			continue
 		}
 		rows, err := dumpTable(ctx, tx, fw, t)

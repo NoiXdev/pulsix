@@ -226,14 +226,14 @@ func TestDumpedTablesEqualMigratedTables(t *testing.T) {
 	if want := publicTables(t, src.Pool()); !slices.Equal(dumped, want) {
 		t.Errorf("dumped tables %v\nwant the migrated tables %v", dumped, want)
 	}
-	for _, name := range []string{"job_events", "check_samples", "check_state_changes", "instance_ca", "users"} {
+	for _, name := range []string{"job_events", "check_samples", "probe_samples", "check_state_changes", "instance_ca", "users"} {
 		if !slices.Contains(dumped, name) {
 			t.Errorf("%s is missing from the dump", name)
 		}
 	}
 }
 
-func TestDumpWithoutMetricsLeavesCheckSamplesEmpty(t *testing.T) {
+func TestDumpWithoutMetricsLeavesSampleTablesEmpty(t *testing.T) {
 	src := sourceDB(t)
 	fillEveryTable(t, src.Pool())
 	data, h := dumpBytes(t, src.Pool(), backup.DumpOptions{IncludeMetrics: false})
@@ -247,13 +247,13 @@ func TestDumpWithoutMetricsLeavesCheckSamplesEmpty(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 	for _, tc := range m.Tables {
-		if tc.Name == "check_samples" {
-			t.Error("the manifest lists check_samples although metrics were left out")
+		if tc.Name == "check_samples" || tc.Name == "probe_samples" {
+			t.Errorf("the manifest lists %s although metrics were left out", tc.Name)
 		}
 	}
 	for _, name := range publicTables(t, src.Pool()) {
 		got, want := rowCount(t, target.Pool(), name), rowCount(t, src.Pool(), name)
-		if name == "check_samples" || endedByRestore[name] {
+		if name == "check_samples" || name == "probe_samples" || endedByRestore[name] {
 			want = 0
 		}
 		if name == "instance_settings" {
