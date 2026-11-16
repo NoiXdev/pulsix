@@ -48,7 +48,7 @@ describe('RunWithFollowUpsDialog', () => {
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['beta']);
     await user.click(within(dialog).getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0].body ?? null).toBeNull();
+    expect(posts[0].body === undefined || !('follow_ups' in (posts[0].body as object))).toBe(true);
     expect(started).toEqual([{ id: 'job-1' }]);
   });
 
@@ -73,5 +73,20 @@ describe('RunWithFollowUpsDialog', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0].body).toEqual({ follow_ups: ['b', 'c'] });
+  });
+
+  it('starts one run however often Run is pressed while the route changes', async () => {
+    const user = userEvent.setup();
+    const posts = setup();
+    // onStarted never settles quickly, as while navigation is pending.
+    renderDialog(A, () => new Promise<void>(() => undefined) as unknown as void);
+    const dialog = await screen.findByRole('dialog', { name: 'Run alpha' });
+    await within(dialog).findByText('beta');
+    const run = within(dialog).getByRole('button', { name: 'Run' });
+    await user.click(run);
+    await waitFor(() => expect(posts).toHaveLength(1));
+    await user.click(run);
+    expect(run).toBeDisabled();
+    expect(posts).toHaveLength(1);
   });
 });

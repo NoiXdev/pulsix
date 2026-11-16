@@ -24,18 +24,27 @@ export function RunWithFollowUpsDialog({
 }) {
   const t = useT();
   const run = useRunTemplateById(org);
-  const own = followUpIds(template);
+  // Frozen at mount: a refetch of the list must not turn an untouched
+  // selection into an override.
+  const [own] = useState(() => followUpIds(template));
   const [selection, setSelection] = useState(own);
   const [error, setError] = useState<string | null>(null);
+  // Set from the first press until the run failed or the dialog closed: a
+  // started run leaves the dialog open while the route changes, and a
+  // second press in that window would start a second run.
+  const [submitting, setSubmitting] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
+    setSubmitting(true);
     try {
       const { jobs } = await run.mutateAsync({ id: template.id, followUps: sameIds(selection, own) ? undefined : selection });
       await onStarted(jobs ?? []);
       onClose();
     } catch (err) {
+      setSubmitting(false);
       setError(err instanceof Error ? err.message : t.templates.followUps.runFailed);
     }
   }
@@ -53,7 +62,7 @@ export function RunWithFollowUpsDialog({
           <Button type="button" onClick={onClose}>
             {t.common.cancel}
           </Button>
-          <Button type="submit" variant="primary" disabled={run.isPending}>
+          <Button type="submit" variant="primary" disabled={run.isPending || submitting}>
             {t.templates.followUps.run}
           </Button>
         </div>

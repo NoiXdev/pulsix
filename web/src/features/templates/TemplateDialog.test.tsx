@@ -102,4 +102,17 @@ describe('TemplateDialog follow-ups', () => {
     expect(alert).toHaveAttribute('role', 'alert');
     expect(within(dialog).getByLabelText('Follow-ups on success')).toHaveAttribute('aria-describedby', expect.stringContaining('template-follow-ups-error'));
   });
+
+  it('keeps a stored follow-up the template list does not hold, listed as unavailable, and sends it', async () => {
+    const user = userEvent.setup();
+    let put: MockRequest | undefined;
+    const loaded = template('a', 'alpha', { follow_ups: [{ template_id: 'gone', template_name: 'gone', position: 0 }] });
+    mockApi(routes(loaded, (req) => ((put = req), { template: loaded })));
+    renderDialog('a');
+    const dialog = await screen.findByRole('dialog', { name: 'alpha' });
+    expect(await within(dialog).findByText('gone (unavailable)')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template alpha saved');
+    expect(put?.body).toMatchObject({ follow_ups: [{ template_id: 'gone' }] });
+  });
 });
