@@ -115,8 +115,8 @@ type Pictures interface {
 // Enqueuer starts what an approval allows, through the existing run paths.
 type Enqueuer interface {
 	// Run and RetryFailed enqueue into the run group group.
-	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string, group uuid.UUID) error
-	RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID) error
+	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
+	RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error
 }
 
 // Validator checks a request the way the run and retry routes would check
@@ -242,9 +242,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	}
 	group := r.ID
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group)
+		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group, []uuid.UUID{})
 	} else {
-		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group)
+		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group, []uuid.UUID{})
 	}
 	if err != nil {
 		if rerr := s.store.RevertToPending(ctx, orgID, id); rerr != nil {

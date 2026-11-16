@@ -81,22 +81,23 @@ type fakeEnqueuer struct {
 	retries []uuid.UUID
 	actor   uuid.UUID
 	err     error
-	group   uuid.UUID // the run group the last enqueue was given
+	group   uuid.UUID   // the run group the last enqueue was given
+	list    []uuid.UUID // the follow-up list the last enqueue was given
 }
 
-func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID) error {
+func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.runs, f.actor, f.group = append(f.runs, key), actor, group
+	f.runs, f.actor, f.group, f.list = append(f.runs, key), actor, group, followUps
 	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor, group uuid.UUID) error {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.retries, f.actor, f.group = append(f.retries, jobID), actor, group
+	f.retries, f.actor, f.group, f.list = append(f.retries, jobID), actor, group, followUps
 	return nil
 }
 

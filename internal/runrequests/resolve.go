@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/chain"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
@@ -49,6 +50,15 @@ type (
 	CredentialSource interface {
 		Get(ctx context.Context, orgID, id uuid.UUID) (credentials.Credential, error)
 	}
+	// FollowUpSettings is the org's switch for starting follow-ups.
+	FollowUpSettings interface {
+		StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error)
+	}
+	// FollowUpRunSource reads and clears the follow-up rows of a run group.
+	FollowUpRunSource interface {
+		ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
+		ClearUnstarted(ctx context.Context, orgID, groupID uuid.UUID) error
+	}
 	InventorySource interface {
 		Preview(ctx context.Context, orgID uuid.UUID, scope render.Scope) (render.Inventory, error)
 	}
@@ -56,14 +66,16 @@ type (
 
 // Sources is what NewResolver reads from.
 type Sources struct {
-	Templates   TemplateSource
-	Playbooks   PlaybookSource
-	Repos       RepoSource
-	Jobs        JobRunner
-	Hosts       HostSource
-	SSH         SSHSource
-	Credentials CredentialSource
-	Inventory   InventorySource
+	Templates    TemplateSource
+	Playbooks    PlaybookSource
+	Repos        RepoSource
+	Jobs         JobRunner
+	Hosts        HostSource
+	SSH          SSHSource
+	Credentials  CredentialSource
+	Inventory    InventorySource
+	Settings     FollowUpSettings
+	FollowUpRuns FollowUpRunSource
 }
 
 // Resolver implements Pictures, Enqueuer and Validator over the existing
@@ -108,17 +120,28 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 	return templateID, tmpl.Revision, nil
 }
 
-// Run implements Enqueuer through the manual run path.
-func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID) error {
+// Run implements Enqueuer through the manual run path. The follow-ups the
+// group holds unstarted are cleared first; followUps is then the whole list
+// the run plans (empty, never nil, so nothing is inherited).
+func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
+		return fmt.Errorf("clear unstarted follow-ups: %w", err)
+	}
+	list := nonNil(followUps)
 	_, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, templateID, jobs.RunRequest{
-		Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, IdempotencyKey: key, RunGroupID: group,
+		Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, IdempotencyKey: key, RunGroupID: group, FollowUps: &list,
 	})
 	return err
 }
 
-// RetryFailed implements Enqueuer through the retry path.
-func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID) error {
-	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group, nil)
+// RetryFailed implements Enqueuer through the retry path, with Run's
+// follow-up handling.
+func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error {
+	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
+		return fmt.Errorf("clear unstarted follow-ups: %w", err)
+	}
+	list := nonNil(followUps)
+	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group, &list)
 	return err
 }
 
@@ -184,6 +207,9 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		return Picture{}, err
 	}
 	p.VarsDigest = digest
+	if p.FollowUps, err = r.followUps(ctx, orgID, req, tmpl); err != nil {
+		return Picture{}, err
+	}
 	return p, nil
 }
 
