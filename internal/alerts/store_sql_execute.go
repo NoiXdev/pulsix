@@ -138,7 +138,8 @@ func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(
 // it for the very same action.
 //
 // a.Detail (backlog 3.13b) replaces the alert's detail — the latest
-// capture, NULL when this change has none — and goes on both events.
+// capture, NULL when this change has none — and goes on both events; with
+// a.KeepDetail (the capture failed) the alert keeps the detail it had.
 //
 // The severity this replaced comes back from the UPDATE itself (backlog
 // 4.25). It used to be a GetAlertSeverity SELECT issued immediately
@@ -150,7 +151,7 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 	before, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
 		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
-		Detail: nullDetail(a.Detail),
+		Detail: nullDetail(a.Detail), KeepDetail: a.KeepDetail,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// This organization has no such alert. The same ANSWER the other

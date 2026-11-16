@@ -179,6 +179,10 @@ type Action struct {
 	// which never sets it, staying pure — and written by Execute to the
 	// alert and to the action's events.
 	Detail string
+	// KeepDetail (ActionSeverity only) says the detail capture failed:
+	// the alert keeps the detail it had instead of taking Detail, which is
+	// then empty, and the change's events carry none.
+	KeepDetail bool
 }
 
 // EventKind is one row of alert_events.kind. The eight constants below

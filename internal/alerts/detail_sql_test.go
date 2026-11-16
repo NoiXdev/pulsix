@@ -175,55 +175,115 @@ func TestReadsCarryTheDetail(t *testing.T) {
 	}
 }
 
-// failingSource runs a statement that fails on the transaction it is
-// handed, the way a broken lookup query would. Without the savepoint the
+// sqlSource runs a statement that fails on the transaction it is handed,
+// the way a broken lookup query would. Without the savepoint the
 // evaluator's transaction would be aborted: every later statement fails
 // with "current transaction is aborted" and the host's whole evaluation
-// rolls back.
-type failingSource struct{}
+// rolls back. With swallow it ignores the error and reports success — the
+// RELEASE is then what fails, and the savepoint must still be rolled back.
+type sqlSource struct{ swallow bool }
 
-func (failingSource) Detail(ctx context.Context, tx pgx.Tx, _ uuid.UUID, _ alerts.Subject) (string, error) {
-	if _, err := tx.Exec(ctx, `SELECT 1 / 0`); err != nil {
-		return "", err
+func (s sqlSource) Lookup() alerts.DetailLookup { return s }
+
+func (s sqlSource) Detail(ctx context.Context, tx pgx.Tx, _ uuid.UUID, _ alerts.Subject) (string, error) {
+	_, err := tx.Exec(ctx, `SELECT 1 / 0`)
+	if err == nil {
+		return "", errors.New("SELECT 1 / 0 succeeded")
 	}
-	return "", errors.New("SELECT 1 / 0 succeeded")
+	if s.swallow {
+		return "timeout", nil
+	}
+	return "", err
 }
 
 func TestAFailingLookupLeavesTheTransactionUsable(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		src     sqlSource
+		wantLog string
+	}{
+		{"the lookup reports the error", sqlSource{}, "division by zero"},
+		{"the lookup swallows the error", sqlSource{swallow: true}, "release savepoint"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testdb.Open(t)
+			org, host := seedHost(t, d)
+			st := alerts.NewSQLStore(d)
+			ctx := context.Background()
+			var log bytes.Buffer
+			svc := alerts.NewService(st, time.Now)
+			svc.SetDetailSource(tc.src, slog.New(slog.NewTextHandler(&log, nil)))
+
+			tx := beginTx(t, d)
+			at := time.Now().UTC().Truncate(time.Microsecond)
+			in := rules.AlertInput{
+				OrgID: org, HostID: host, At: at,
+				States: []rules.TupleState{{Tuple: rules.Tuple{CheckKey: "web", Metric: "http.up"}, State: rules.StateCrit, Since: at, EvaluatedAt: at}},
+				Host:   rules.HostState{HostID: host, State: rules.StateCrit, Since: at, EvaluatedAt: at},
+			}
+			if err := svc.Apply(ctx, tx, in); err != nil {
+				t.Fatalf("Apply: %v — a failing lookup must not fail the evaluation", err)
+			}
+			// The transaction is still usable: a statement after Apply
+			// runs, and the commit keeps the alert.
+			if _, err := tx.Exec(ctx, `SELECT 1`); err != nil {
+				t.Fatalf("statement after Apply: %v", err)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			views, _, err := svc.List(ctx, org, alerts.Filter{}, "", 10)
+			if err != nil || len(views) != 1 {
+				t.Fatalf("List: %v / %d alerts, want the opened one", err, len(views))
+			}
+			if views[0].Detail != "" {
+				t.Errorf("detail = %q, want none", views[0].Detail)
+			}
+			if !strings.Contains(log.String(), tc.wantLog) {
+				t.Errorf("log = %q, want %q", log.String(), tc.wantLog)
+			}
+		})
+	}
+}
+
+// A severity change whose capture failed keeps the alert's detail and
+// writes none on its event; one that found nothing clears it.
+func TestExecuteKeepsTheDetailWhenTheCaptureFailed(t *testing.T) {
 	d := testdb.Open(t)
 	org, host := seedHost(t, d)
 	st := alerts.NewSQLStore(d)
 	ctx := context.Background()
-	var log bytes.Buffer
-	svc := alerts.NewService(st, time.Now)
-	svc.SetDetailSource(failingSource{}, slog.New(slog.NewTextHandler(&log, nil)))
-
 	tx := beginTx(t, d)
 	at := time.Now().UTC().Truncate(time.Microsecond)
-	in := rules.AlertInput{
-		OrgID: org, HostID: host, At: at,
-		States: []rules.TupleState{{Tuple: rules.Tuple{CheckKey: "web", Metric: "http.up"}, State: rules.StateCrit, Since: at, EvaluatedAt: at}},
-		Host:   rules.HostState{HostID: host, State: rules.StateCrit, Since: at, EvaluatedAt: at},
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionOpen, Subject: tuple(host, "web", "", "http.up"), At: at, Severity: rules.StateWarn, Detail: "timeout"},
+	}); err != nil {
+		t.Fatalf("open: %v", err)
 	}
-	if err := svc.Apply(ctx, tx, in); err != nil {
-		t.Fatalf("Apply: %v — a failing lookup must not fail the evaluation", err)
+	open, err := st.OpenForHost(ctx, tx, org, host)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host: %v / %d", err, len(open))
 	}
-	// The transaction is still usable: a statement after Apply runs, and
-	// the commit keeps the alert.
-	if _, err := tx.Exec(ctx, `SELECT 1`); err != nil {
-		t.Fatalf("statement after Apply: %v", err)
+	id := open[0].ID
+
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: at.Add(time.Minute), Severity: rules.StateCrit, KeepDetail: true},
+	}); err != nil {
+		t.Fatalf("raise: %v", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit: %v", err)
+	if got := alertDetail(t, tx, id); got != "timeout" {
+		t.Errorf("alert detail after a failed capture = %q, want the previous timeout", got)
 	}
-	views, _, err := svc.List(ctx, org, alerts.Filter{}, "", 10)
-	if err != nil || len(views) != 1 {
-		t.Fatalf("List: %v / %d alerts, want the opened one", err, len(views))
+	if got := eventDetails(t, tx, id)["severity_raised"]; got != "<nil>" {
+		t.Errorf("severity_raised detail after a failed capture = %q, want none", got)
 	}
-	if views[0].Detail != "" {
-		t.Errorf("detail = %q, want none", views[0].Detail)
+
+	if err := st.Execute(ctx, tx, org, []alerts.Action{
+		{Kind: alerts.ActionSeverity, AlertID: id, At: at.Add(2 * time.Minute), Severity: rules.StateWarn},
+	}); err != nil {
+		t.Fatalf("fall: %v", err)
 	}
-	if !strings.Contains(log.String(), "division by zero") {
-		t.Errorf("log = %q, want the lookup's error", log.String())
+	if got := alertDetail(t, tx, id); got != "<nil>" {
+		t.Errorf("alert detail after a capture that found nothing = %q, want NULL", got)
 	}
 }

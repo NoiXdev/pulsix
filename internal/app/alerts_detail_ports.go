@@ -41,13 +41,51 @@ func NewAlertDetails(store *checks.SQLStore, svc *checks.Service) alerts.DetailS
 	return alertDetails{labels: store, checks: svc}
 }
 
+// Lookup implements alerts.DetailSource: one Apply's lookups, which
+// resolve the host's checks at most once however many assertions changed
+// in the evaluation — the resolution reads the organization's definitions
+// and groups and expands their selectors, all while the evaluator holds
+// the host's cursor lock.
+func (a alertDetails) Lookup() alerts.DetailLookup {
+	return &hostDetails{alertDetails: a, resolved: map[hostKey]resolvedHost{}}
+}
+
+// hostDetails is one Apply's lookups, with the host's resolved checks
+// memoised. Every subject of one Apply belongs to one host; the memo is
+// keyed by organization and host anyway, so a caller that broke that
+// promise would get a fresh resolution, never another host's checks. A
+// failed resolution is memoised too: asking again inside the same
+// evaluation would only repeat the cost.
+type hostDetails struct {
+	alertDetails
+	resolved map[hostKey]resolvedHost
+}
+
+type hostKey struct{ org, host uuid.UUID }
+
+type resolvedHost struct {
+	set checks.ResolvedSet
+	err error
+}
+
+// resolve is ResolveHostWithLocal, memoised per host.
+func (h *hostDetails) resolve(ctx context.Context, orgID, hostID uuid.UUID) (checks.ResolvedSet, error) {
+	k := hostKey{orgID, hostID}
+	r, ok := h.resolved[k]
+	if !ok {
+		r.set, r.err = h.checks.ResolveHostWithLocal(db.WithOrgScope(ctx, orgID), orgID, hostID)
+		h.resolved[k] = r
+	}
+	return r.set, r.err
+}
+
 // The metrics the detail reads.
 const (
 	metricAssertion       = "http.assertion"
 	metricAssertionActual = "http.assertion_actual"
 )
 
-// Detail implements alerts.DetailSource:
+// Detail implements alerts.DetailLookup:
 //
 //   - <plugin>.up of a synthetic plugin: the current <plugin>.failure label
 //     of the same host, check key and item, unless it is none;
@@ -57,23 +95,23 @@ const (
 //     when it is not there;
 //   - anything else: nothing.
 //
-// The current values are read on tx, the executor's savepoint, so they are
-// the values this tick evaluated. The check definitions resolve on an
+// The current values are read on tx, inside the executor's savepoint, so
+// they are the values this tick evaluated. The check definitions resolve on an
 // org-scoped context of their own, the way the evaluation's load resolves
 // them (rulesHostChecks.ContextForHost): the resolution reads through
 // several stores that rely on the organization binding, which the
 // evaluator's unscoped transaction does not carry. Every part comes from
 // the descriptor's fixed vocabulary, a cleaned probe label or the
 // operator's own check definition — never from a library's error text.
-func (a alertDetails) Detail(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
+func (h *hostDetails) Detail(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
 	if sub.Metric == metricAssertion {
-		return a.assertion(ctx, tx, orgID, sub)
+		return h.assertion(ctx, tx, orgID, sub)
 	}
 	plugin, rest, ok := strings.Cut(sub.Metric, ".")
 	if !ok || rest != "up" || !checks.IsSynthetic(plugin) {
 		return "", nil
 	}
-	label, err := a.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, plugin+".failure")
+	label, err := h.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, plugin+".failure")
 	if err != nil || label == probe.FailureNone {
 		return "", err
 	}
@@ -81,12 +119,12 @@ func (a alertDetails) Detail(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, su
 }
 
 // assertion is Detail for http.assertion.
-func (a alertDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
-	actual, err := a.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, metricAssertionActual)
+func (h *hostDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
+	actual, err := h.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, metricAssertionActual)
 	if err != nil {
 		return "", err
 	}
-	set, err := a.checks.ResolveHostWithLocal(db.WithOrgScope(ctx, orgID), orgID, sub.HostID)
+	set, err := h.resolve(ctx, orgID, sub.HostID)
 	if err != nil {
 		return "", fmt.Errorf("resolve the host's checks: %w", err)
 	}

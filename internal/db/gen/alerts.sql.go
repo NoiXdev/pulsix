@@ -821,7 +821,7 @@ func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateCha
 const raiseAlertSeverity = `-- name: RaiseAlertSeverity :one
 WITH prev AS (
   SELECT a.id, a.severity AS prev_severity FROM alerts a
-  WHERE a.id = $7 AND a.org_id = $8
+  WHERE a.id = $8 AND a.org_id = $9
   FOR UPDATE
 )
 UPDATE alerts SET severity = $1,
@@ -831,7 +831,7 @@ UPDATE alerts SET severity = $1,
   snooze_until_change = CASE WHEN $3::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN $4::boolean THEN NULL ELSE acknowledged_severity END,
   severity_changed_at = $5,
-  detail = $6
+  detail = CASE WHEN $6::boolean THEN alerts.detail ELSE $7 END
 FROM prev WHERE alerts.id = prev.id
 RETURNING prev.prev_severity
 `
@@ -842,6 +842,7 @@ type RaiseAlertSeverityParams struct {
 	ClearsSnooze bool      `json:"clears_snooze"`
 	VoidsAck     bool      `json:"voids_ack"`
 	At           time.Time `json:"at"`
+	KeepDetail   bool      `json:"keep_detail"`
 	Detail       *string   `json:"detail"`
 	ID           uuid.UUID `json:"id"`
 	OrgID        uuid.UUID `json:"org_id"`
@@ -915,7 +916,8 @@ type RaiseAlertSeverityParams struct {
 //
 // detail (backlog 3.13b) is the latest reason the executor captured, so it
 // is replaced on every severity change, rise or fall — NULL when this
-// change has none.
+// change has none — unless @keep_detail says the capture failed, in which
+// case the alert keeps the reason it had.
 func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) (string, error) {
 	row := q.db.QueryRow(ctx, raiseAlertSeverity,
 		arg.Severity,
@@ -923,6 +925,7 @@ func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverity
 		arg.ClearsSnooze,
 		arg.VoidsAck,
 		arg.At,
+		arg.KeepDetail,
 		arg.Detail,
 		arg.ID,
 		arg.OrgID,

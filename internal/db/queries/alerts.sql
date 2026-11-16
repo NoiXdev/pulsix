@@ -137,7 +137,8 @@ RETURNING id;
 --
 -- detail (backlog 3.13b) is the latest reason the executor captured, so it
 -- is replaced on every severity change, rise or fall — NULL when this
--- change has none.
+-- change has none — unless @keep_detail says the capture failed, in which
+-- case the alert keeps the reason it had.
 WITH prev AS (
   SELECT a.id, a.severity AS prev_severity FROM alerts a
   WHERE a.id = @id AND a.org_id = @org_id
@@ -150,7 +151,7 @@ UPDATE alerts SET severity = @severity,
   snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END,
   severity_changed_at = @at,
-  detail = sqlc.narg(detail)
+  detail = CASE WHEN @keep_detail::boolean THEN alerts.detail ELSE sqlc.narg(detail) END
 FROM prev WHERE alerts.id = prev.id
 RETURNING prev.prev_severity;
 

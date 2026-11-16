@@ -16,59 +16,58 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
-// fakeTx is the slice of pgx.Tx Apply's capture touches: Begin (the
-// savepoint), Commit and Rollback. Anything else panics through the nil
-// embedded interface, which is the point — the capture must not issue
-// statements of its own.
+// fakeTx is the slice of pgx.Tx Apply's capture touches: Exec, for the
+// savepoint statements. It records them, and fails the one named in fail.
+// Anything else panics through the nil embedded interface, which is the
+// point — the capture must not issue statements of its own.
 type fakeTx struct {
 	pgx.Tx
-	parent              *fakeTx
-	begun               int
-	committed, rolledBk int
-	beginErr            error
+	stmts []string
+	fail  map[string]error
 }
 
-func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
-	if t.beginErr != nil {
-		return nil, t.beginErr
-	}
-	t.begun++
-	return &fakeTx{parent: t}, nil
+func (t *fakeTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+	t.stmts = append(t.stmts, sql)
+	return pgconn.CommandTag{}, t.fail[sql]
 }
 
-func (t *fakeTx) Commit(context.Context) error {
-	t.parent.committed++
-	return nil
-}
+const (
+	setSP      = "SAVEPOINT alert_detail"
+	releaseSP  = "RELEASE SAVEPOINT alert_detail"
+	rollbackSP = "ROLLBACK TO SAVEPOINT alert_detail"
+)
 
-func (t *fakeTx) Rollback(context.Context) error {
-	t.parent.rolledBk++
-	return nil
-}
-
-// detailCall is one Detail call, with whether it ran on a savepoint of the
-// outer transaction rather than the transaction itself.
+// detailCall is one Detail call, with whether it ran inside the savepoint
+// (the last statement on the transaction before it was SAVEPOINT).
 type detailCall struct {
 	sub         alerts.Subject
-	onSavepoint bool
+	inSavepoint bool
 }
 
-// fakeDetails answers every subject with the same detail, or err.
+// fakeDetails answers every subject with the same detail, or err, and
+// counts how many lookups Apply started.
 type fakeDetails struct {
-	outer  *fakeTx
-	detail string
-	err    error
-	calls  []detailCall
+	outer   *fakeTx
+	detail  string
+	err     error
+	calls   []detailCall
+	lookups int
+}
+
+func (f *fakeDetails) Lookup() alerts.DetailLookup {
+	f.lookups++
+	return f
 }
 
 func (f *fakeDetails) Detail(_ context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
-	sp, _ := tx.(*fakeTx)
-	f.calls = append(f.calls, detailCall{sub: sub, onSavepoint: sp != nil && sp.parent == f.outer && sp != f.outer})
+	in := tx == f.outer && len(f.outer.stmts) > 0 && f.outer.stmts[len(f.outer.stmts)-1] == setSP
+	f.calls = append(f.calls, detailCall{sub: sub, inSavepoint: in})
 	if orgID != input().OrgID {
 		return "", errors.New("wrong organization")
 	}
@@ -79,6 +78,13 @@ func detailService(store *fakeStore, src alerts.DetailSource, log *bytes.Buffer)
 	svc := alerts.NewService(store, clockAt(t0))
 	svc.SetDetailSource(src, slog.New(slog.NewTextHandler(log, nil)))
 	return svc
+}
+
+func stmtsEqual(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	if strings.Join(got, "; ") != strings.Join(want, "; ") {
+		t.Errorf("statements = %q, want %q", got, want)
+	}
 }
 
 func TestApplyCapturesTheDetailOfAnOpening(t *testing.T) {
@@ -95,12 +101,10 @@ func TestApplyCapturesTheDetailOfAnOpening(t *testing.T) {
 	if len(acts) != 1 || acts[0].Kind != alerts.ActionOpen || acts[0].Detail != "timeout" {
 		t.Fatalf("executed = %+v, want one ActionOpen with detail timeout", acts)
 	}
-	if len(src.calls) != 1 || src.calls[0].sub != sub || !src.calls[0].onSavepoint {
-		t.Fatalf("Detail calls = %+v, want one for %+v on a savepoint", src.calls, sub)
+	if len(src.calls) != 1 || src.calls[0].sub != sub || !src.calls[0].inSavepoint {
+		t.Fatalf("Detail calls = %+v, want one for %+v inside the savepoint", src.calls, sub)
 	}
-	if tx.begun != 1 || tx.committed != 1 || tx.rolledBk != 0 {
-		t.Errorf("savepoint begun/committed/rolled back = %d/%d/%d, want 1/1/0", tx.begun, tx.committed, tx.rolledBk)
-	}
+	stmtsEqual(t, tx.stmts, setSP, releaseSP)
 }
 
 // A severity action carries only the alert's id (Reconcile's own
@@ -161,13 +165,14 @@ func TestApplyAsksNothingForClosesFlapsAndTheHostAlert(t *testing.T) {
 	if !kinds[alerts.ActionClose] || !kinds[alerts.ActionFlapped] || !kinds[alerts.ActionOpen] {
 		t.Fatalf("executed = %+v, want a close, a flap and the host-scope open", store.executed[0])
 	}
-	if len(src.calls) != 0 || tx.begun != 0 {
-		t.Errorf("Detail called %d times, %d savepoints, want none", len(src.calls), tx.begun)
+	if len(src.calls) != 0 || len(tx.stmts) != 0 || src.lookups != 0 {
+		t.Errorf("Detail called %d times, statements %q, %d lookups, want none", len(src.calls), tx.stmts, src.lookups)
 	}
 }
 
-// A failing lookup rolls back its savepoint, logs, and leaves the detail
-// empty; Apply still executes the action and succeeds.
+// A failing lookup rolls back to its savepoint and releases it, logs, and
+// leaves the detail empty; Apply still executes the action and succeeds.
+// On an opening there is nothing to keep.
 func TestApplyToleratesAFailingLookup(t *testing.T) {
 	store := newFakeStore()
 	tx := &fakeTx{}
@@ -179,22 +184,72 @@ func TestApplyToleratesAFailingLookup(t *testing.T) {
 	if err := svc.Apply(ctx, tx, input(stateAt(sub, rules.StateCrit, t0))); err != nil {
 		t.Fatalf("Apply: %v — a failing lookup must never fail the evaluation", err)
 	}
-	if acts := store.executed[0]; len(acts) != 1 || acts[0].Detail != "" {
-		t.Fatalf("executed = %+v, want one action without detail", acts)
+	if acts := store.executed[0]; len(acts) != 1 || acts[0].Detail != "" || acts[0].KeepDetail {
+		t.Fatalf("executed = %+v, want one opening without detail", acts)
 	}
-	if tx.begun != 1 || tx.rolledBk != 1 || tx.committed != 0 {
-		t.Errorf("savepoint begun/committed/rolled back = %d/%d/%d, want 1/0/1", tx.begun, tx.committed, tx.rolledBk)
-	}
+	stmtsEqual(t, tx.stmts, setSP, rollbackSP, releaseSP)
 	if !strings.Contains(log.String(), "relation does not exist") {
 		t.Errorf("log = %q, want the lookup's error", log.String())
 	}
 }
 
-// A savepoint that cannot even be taken is the same: logged, no detail,
-// the action still executes.
-func TestApplyToleratesASavepointThatCannotBeTaken(t *testing.T) {
+// A lookup that swallowed an SQL error returns success on an aborted
+// transaction, so the RELEASE fails: Apply still rolls back to the
+// savepoint (which clears the aborted state) and releases it, and the
+// detail is dropped as a failure.
+func TestApplyRollsBackWhenTheReleaseFails(t *testing.T) {
 	store := newFakeStore()
-	tx := &fakeTx{beginErr: errors.New("conn busy")}
+	tx := &fakeTx{fail: map[string]error{releaseSP: errors.New("current transaction is aborted")}}
+	src := &fakeDetails{outer: tx, detail: "timeout"}
+	var log bytes.Buffer
+	svc := detailService(store, src, &log)
+
+	if err := svc.Apply(ctx, tx, input(stateAt(tupleSubject("web", "", "http.up"), rules.StateCrit, t0))); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if acts := store.executed[0]; len(acts) != 1 || acts[0].Detail != "" {
+		t.Fatalf("executed = %+v, want one action without detail", acts)
+	}
+	stmtsEqual(t, tx.stmts, setSP, releaseSP, rollbackSP, releaseSP)
+	if !strings.Contains(log.String(), "current transaction is aborted") {
+		t.Errorf("log = %q, want the release's error", log.String())
+	}
+}
+
+// On a severity change a failed lookup is not "no detail": the action
+// keeps the alert's previous detail (KeepDetail), while a lookup that
+// found nothing replaces it with none.
+func TestApplyKeepsTheDetailWhenASeverityLookupFails(t *testing.T) {
+	sub := tupleSubject("web", "home", "http.assertion")
+	for _, tc := range []struct {
+		name string
+		err  error
+		keep bool
+	}{
+		{"failed", errors.New("boom"), true},
+		{"found nothing", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			store.open[hostID] = []alerts.Alert{openAlert(sub, rules.StateWarn, t0)}
+			tx := &fakeTx{}
+			svc := detailService(store, &fakeDetails{outer: tx, err: tc.err}, &bytes.Buffer{})
+			if err := svc.Apply(ctx, tx, input(stateAt(sub, rules.StateCrit, t0))); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			a := store.executed[0][0]
+			if a.Kind != alerts.ActionSeverity || a.Detail != "" || a.KeepDetail != tc.keep {
+				t.Errorf("action = %+v, want a severity change with KeepDetail %v", a, tc.keep)
+			}
+		})
+	}
+}
+
+// A savepoint that cannot even be set is the same: logged, no detail, the
+// action still executes, and the lookup is never asked.
+func TestApplyToleratesASavepointThatCannotBeSet(t *testing.T) {
+	store := newFakeStore()
+	tx := &fakeTx{fail: map[string]error{setSP: errors.New("conn busy")}}
 	src := &fakeDetails{outer: tx, detail: "timeout"}
 	var log bytes.Buffer
 	svc := detailService(store, src, &log)
@@ -207,6 +262,26 @@ func TestApplyToleratesASavepointThatCannotBeTaken(t *testing.T) {
 	}
 	if len(src.calls) != 0 || !strings.Contains(log.String(), "conn busy") {
 		t.Errorf("calls = %d, log = %q", len(src.calls), log.String())
+	}
+}
+
+// All subjects of one Apply share a host, so Apply starts one lookup for
+// them all — the adapter memoises what it reads about the host on it.
+func TestApplyStartsOneLookupPerEvaluation(t *testing.T) {
+	store := newFakeStore()
+	tx := &fakeTx{}
+	src := &fakeDetails{outer: tx, detail: "x"}
+	svc := detailService(store, src, &bytes.Buffer{})
+	in := input(
+		stateAt(tupleSubject("shop", "a", "http.assertion"), rules.StateCrit, t0),
+		stateAt(tupleSubject("shop", "b", "http.assertion"), rules.StateWarn, t0),
+		stateAt(tupleSubject("shop", "", "http.up"), rules.StateCrit, t0),
+	)
+	if err := svc.Apply(ctx, tx, in); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(src.calls) != 3 || src.lookups != 1 {
+		t.Errorf("Detail calls = %d, lookups = %d; want 3 calls on one lookup", len(src.calls), src.lookups)
 	}
 }
 
@@ -228,7 +303,7 @@ func TestApplyCutsTheDetail(t *testing.T) {
 }
 
 // Without a source (every Service a test builds with NewService alone)
-// Apply takes no savepoint at all — the nil tx below would panic if it did.
+// Apply sets no savepoint at all — the nil tx below would panic if it did.
 func TestApplyWithoutADetailSourceTakesNoSavepoint(t *testing.T) {
 	store := newFakeStore()
 	svc := alerts.NewService(store, clockAt(t0))

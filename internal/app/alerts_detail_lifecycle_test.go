@@ -1,4 +1,4 @@
-package alerts_test
+package app
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alerts"
-	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -21,15 +22,24 @@ import (
 
 // TestEvaluationCapturesWhyAnAlertFired drives the alert detail through
 // the production path (backlog 3.13b): a real ticker, a real alerts.Service
-// with internal/app's own DetailSource over the real checks store and
+// with this package's DetailSource over the real checks store and
 // service, an http check with an assertion whose key is not the plugin's
 // name. The down check's alert carries its failure reason, the failed
 // assertion's alert its expression and the value seen, and a severity
 // change re-captures it while an alert whose severity holds keeps its own.
 func TestEvaluationCapturesWhyAnAlertFired(t *testing.T) {
 	d := testdb.Open(t)
-	org, host := seedHost(t, d)
 	ctx := context.Background()
+	org := seedOrg(t, d, "app-alert-detail")
+	zone, err := gen.New(d.Pool()).CreateZone(ctx, gen.CreateZoneParams{ID: uuid.Must(uuid.NewV7()), OrgID: org, Slug: "z", Name: "z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := gen.New(d.Pool()).CreateHost(ctx, gen.CreateHostParams{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "shop", Facts: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := h.ID
 	if _, err := d.Pool().Exec(ctx, `UPDATE hosts SET monitored = true WHERE id = $1`, host); err != nil {
 		t.Fatal(err)
 	}
@@ -37,16 +47,16 @@ func TestEvaluationCapturesWhyAnAlertFired(t *testing.T) {
 	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
 	checksStore := checks.NewSQLStore(d)
 	checksSvc := checks.NewService(checksStore,
-		checks.WithMatcher(app.NewChecksHostMatcher(hostsSvc)),
-		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
+		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
+		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)))
 	rulesSvc := rules.NewService(rules.NewSQLStore(d))
 	itemsStore := items.NewSQLStore(d)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	clock := func() time.Time { return now }
 	alertsSvc := alerts.NewService(alerts.NewSQLStore(d), clock)
-	alertsSvc.SetDetailSource(app.NewAlertDetails(checksStore, checksSvc), quiet)
+	alertsSvc.SetDetailSource(NewAlertDetails(checksStore, checksSvc), quiet)
 	ticker := rules.NewTicker(
-		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), itemsStore, agents.StaleAfter, quiet),
+		rules.NewEvalSQLStore(d, NewRulesHostChecks(checksSvc), itemsStore, agents.StaleAfter, quiet),
 		alertsSvc, rules.WithTickerClock(clock), rules.WithTickerLogger(quiet))
 
 	scoped := db.WithOrgScope(ctx, org)

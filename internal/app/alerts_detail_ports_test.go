@@ -94,7 +94,7 @@ func TestAlertDetailsSaysWhyAnAlertFired(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := alertDetails{labels: &fakeLabels{labels: labels}, checks: &fakeHostChecks{set: set}}
-			got, err := src.Detail(context.Background(), detailTx{}, org, tc.sub)
+			got, err := src.Lookup().Detail(context.Background(), detailTx{}, org, tc.sub)
 			if err != nil || got != tc.want {
 				t.Fatalf("Detail = %q, %v; want %q", got, err, tc.want)
 			}
@@ -109,7 +109,7 @@ func TestAlertDetailsAssertionWithoutAnActual(t *testing.T) {
 	hc := &fakeHostChecks{set: checks.ResolvedSet{Synthetic: []checks.Resolved{httpCheck("shop", "home=status in 200..299")}}}
 	src := alertDetails{labels: &fakeLabels{}, checks: hc}
 	for item, want := range map[string]string{"home": "status in 200..299", "other": ""} {
-		got, err := src.Detail(context.Background(), detailTx{}, uuid.Must(uuid.NewV7()),
+		got, err := src.Lookup().Detail(context.Background(), detailTx{}, uuid.Must(uuid.NewV7()),
 			alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "shop", Item: item, Metric: "http.assertion"})
 		if err != nil || got != want {
 			t.Errorf("item %s: Detail = %q, %v; want %q", item, got, err, want)
@@ -122,7 +122,7 @@ func TestAlertDetailsReadsAStringList(t *testing.T) {
 	c := httpCheck("shop")
 	c.Params["assertions"] = []string{"home=status == 204"}
 	src := alertDetails{labels: &fakeLabels{}, checks: &fakeHostChecks{set: checks.ResolvedSet{Synthetic: []checks.Resolved{c}}}}
-	got, err := src.Detail(context.Background(), detailTx{}, uuid.Must(uuid.NewV7()),
+	got, err := src.Lookup().Detail(context.Background(), detailTx{}, uuid.Must(uuid.NewV7()),
 		alerts.Subject{Scope: alerts.ScopeTuple, CheckKey: "shop", Item: "home", Metric: "http.assertion"})
 	if err != nil || got != "status == 204" {
 		t.Fatalf("Detail = %q, %v", got, err)
@@ -138,7 +138,7 @@ func TestAlertDetailsReadsOnTheSavepointAndResolvesScoped(t *testing.T) {
 	labels := &fakeLabels{labels: map[labelKey]string{{"shop", "home", "http.assertion_actual"}: "503"}}
 	hc := &fakeHostChecks{set: checks.ResolvedSet{Synthetic: []checks.Resolved{httpCheck("shop", "home=status == 200")}}}
 	src := alertDetails{labels: labels, checks: hc}
-	if _, err := src.Detail(context.Background(), tx, org,
+	if _, err := src.Lookup().Detail(context.Background(), tx, org,
 		alerts.Subject{Scope: alerts.ScopeTuple, CheckKey: "shop", Item: "home", Metric: "http.assertion"}); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestAlertDetailsReadsOnTheSavepointAndResolvesScoped(t *testing.T) {
 
 	// An up alert resolves nothing.
 	hc.calls = 0
-	if _, err := src.Detail(context.Background(), tx, org, alerts.Subject{Scope: alerts.ScopeTuple, CheckKey: "ping", Metric: "icmp.up"}); err != nil {
+	if _, err := src.Lookup().Detail(context.Background(), tx, org, alerts.Subject{Scope: alerts.ScopeTuple, CheckKey: "ping", Metric: "icmp.up"}); err != nil {
 		t.Fatal(err)
 	}
 	if hc.calls != 0 {
@@ -167,14 +167,46 @@ func TestAlertDetailsReportsFailures(t *testing.T) {
 	assertion := alerts.Subject{Scope: alerts.ScopeTuple, CheckKey: "shop", Item: "home", Metric: "http.assertion"}
 
 	src := alertDetails{labels: &fakeLabels{err: boom}, checks: &fakeHostChecks{}}
-	if _, err := src.Detail(ctx, detailTx{}, uuid.Nil, up); !errors.Is(err, boom) {
+	if _, err := src.Lookup().Detail(ctx, detailTx{}, uuid.Nil, up); !errors.Is(err, boom) {
 		t.Errorf("up with a failing label read: err = %v", err)
 	}
-	if _, err := src.Detail(ctx, detailTx{}, uuid.Nil, assertion); !errors.Is(err, boom) {
+	if _, err := src.Lookup().Detail(ctx, detailTx{}, uuid.Nil, assertion); !errors.Is(err, boom) {
 		t.Errorf("assertion with a failing label read: err = %v", err)
 	}
 	src = alertDetails{labels: &fakeLabels{}, checks: &fakeHostChecks{err: boom}}
-	if _, err := src.Detail(ctx, detailTx{}, uuid.Nil, assertion); !errors.Is(err, boom) {
+	if _, err := src.Lookup().Detail(ctx, detailTx{}, uuid.Nil, assertion); !errors.Is(err, boom) {
 		t.Errorf("assertion with a failing resolve: err = %v", err)
+	}
+}
+
+// One lookup resolves the host's checks once, however many assertions it
+// is asked about; a failed resolution is not retried inside it. A new
+// lookup (the next evaluation) resolves afresh.
+func TestAlertDetailsResolvesOncePerLookup(t *testing.T) {
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hc := &fakeHostChecks{set: checks.ResolvedSet{Synthetic: []checks.Resolved{httpCheck("shop", "a=status == 200", "b=status == 201")}}}
+	src := alertDetails{labels: &fakeLabels{}, checks: hc}
+	lookup := src.Lookup()
+	for item, want := range map[string]string{"a": "status == 200", "b": "status == 201"} {
+		got, err := lookup.Detail(context.Background(), detailTx{}, org,
+			alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "shop", Item: item, Metric: "http.assertion"})
+		if err != nil || got != want {
+			t.Errorf("item %s: Detail = %q, %v; want %q", item, got, err, want)
+		}
+	}
+	if hc.calls != 1 {
+		t.Errorf("resolved %d times in one lookup, want 1", hc.calls)
+	}
+
+	hc.calls, hc.err = 0, errors.New("boom")
+	lookup = src.Lookup()
+	for range 2 {
+		if _, err := lookup.Detail(context.Background(), detailTx{}, org,
+			alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "shop", Item: "a", Metric: "http.assertion"}); err == nil {
+			t.Error("a failed resolution reported no error")
+		}
+	}
+	if hc.calls != 1 {
+		t.Errorf("a failed resolution was retried: %d calls in one lookup, want 1", hc.calls)
 	}
 }
