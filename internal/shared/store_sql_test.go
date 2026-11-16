@@ -1281,6 +1281,40 @@ func TestDeleteTemplateWithProjectionsRefusesWhileAJobTriggerExists(t *testing.T
 	}
 }
 
+func TestDeleteTemplateWithProjectionsRefusesWhileAFollowUpExists(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-tpl-delete-follow-up")
+	repoDef := seedSharedRepoDef(t, d, "infra-for-tpl-delete-follow-up")
+
+	def, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateTemplateWithProjections: %v", err)
+	}
+	projID, _, _, _ := templateProjectionRow(t, d, org, def.ID)
+	referrer := seedOtherTemplate(t, d, org, "first")
+	if _, err := d.Exec(db.WithOrgScope(ctx, org),
+		`INSERT INTO job_template_follow_ups (org_id, template_id, follow_up_template_id, position) VALUES ($1, $2, $3, 0)`,
+		org, referrer, projID); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.DeleteTemplateWithProjections(ctx, def.ID)
+	var inUse *shared.InUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("DeleteTemplateWithProjections() error = %v, want *InUseError", err)
+	}
+	if inUse.OrgID != org || !containsString(inUse.Reasons, "a follow-up") {
+		t.Fatalf("InUseError = %+v, want org %v with reason %q", inUse, org, "a follow-up")
+	}
+	if !templateProjectionExists(t, d, org, def.ID) {
+		t.Fatal("projection gone after a refused delete")
+	}
+}
+
 // TestDeleteTemplateWithProjectionsSucceedsWithAVaultCredentialBinding is
 // the brief's own required proof: a projection WITH vault identities still
 // deletes — job_template_vault_credentials is deliberately absent from the

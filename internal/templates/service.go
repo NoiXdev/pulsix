@@ -133,6 +133,9 @@ type Template struct {
 	// (ReplaceVaultCredentials); 4b resolves it against the repository's set
 	// at run time through ToVaultIdentity and repos.ResolveVaultIdentities.
 	VaultCredentials []VaultCredential
+	// FollowUps are the templates started, in this order, after a
+	// successful run of this one (backlog 2.116).
+	FollowUps []FollowUp
 	// Revision moves on with every write (If-Match / ETag at the API).
 	Revision int64
 	// VarsMode, VarsSourceRev and VarsAppliedAt say whether and how the
@@ -210,6 +213,7 @@ type Store interface {
 	// the organization in one call, keyed by template id (backlog 2.94):
 	// List calls this once instead of once per row.
 	ListOrgVaultCredentials(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultCredential, error)
+	FollowUpStore
 	VarsStore
 }
 
@@ -255,6 +259,7 @@ type CreateInput struct {
 	ExtraVarsSchema  *schema.Schema
 	CredentialID     *uuid.UUID
 	VaultCredentials []VaultCredential
+	FollowUps        []uuid.UUID
 }
 
 // UpdateInput fully replaces a template's fields (PUT semantics).
@@ -271,7 +276,9 @@ type UpdateInput struct {
 	ExtraVarsSchema  *schema.Schema
 	CredentialID     *uuid.UUID
 	VaultCredentials []VaultCredential
-	IfRevision       *int64
+	// FollowUps nil keeps the stored list; an empty slice clears it.
+	FollowUps  *[]uuid.UUID
+	IfRevision *int64
 }
 
 // Create validates the input and stores a new template, then its own
@@ -298,6 +305,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		}
 		if err := s.store.ReplaceVaultCredentials(ctx, orgID, created.ID, in.VaultCredentials); err != nil {
 			return fmt.Errorf("store template vault credentials: %w", err)
+		}
+		if created.FollowUps, err = s.setFollowUps(ctx, orgID, created.ID, created.Name, in.FollowUps); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -358,9 +368,20 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	var updated Template
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
+		// The graph lock and the follow-up validation come before the write:
+		// they read the graph this save then changes.
+		var followUps []FollowUp
+		if in.FollowUps != nil {
+			if followUps, err = s.setFollowUps(ctx, orgID, id, t.Name, *in.FollowUps); err != nil {
+				return err
+			}
+		} else if followUps, err = s.store.ListFollowUps(ctx, orgID, id); err != nil {
+			return fmt.Errorf("list template follow-ups: %w", err)
+		}
 		if updated, err = s.store.Update(ctx, t, readRevision(in.IfRevision, cur)); err != nil {
 			return err
 		}
+		updated.FollowUps = followUps
 		if in.PlaybookID != cur.PlaybookID {
 			if next, ok := unlinkedFromPlaybook(updated); ok {
 				if updated, err = s.store.SetVarsLink(ctx, next); err != nil {
@@ -391,6 +412,9 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Template, error
 		return Template{}, fmt.Errorf("list template vault credentials: %w", err)
 	}
 	t.VaultCredentials = items
+	if t.FollowUps, err = s.store.ListFollowUps(ctx, orgID, id); err != nil {
+		return Template{}, fmt.Errorf("list template follow-ups: %w", err)
+	}
 	return masked(t), nil
 }
 
@@ -415,6 +439,15 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	if cur.SharedTemplateID != nil {
 		return fmt.Errorf("%w: this template is a projection of an installation-owned definition and cannot be deleted from inside an organization", ErrForbidden)
 	}
+	referrers, err := s.store.FollowUpReferrers(ctx, orgID, id)
+	if err != nil {
+		return fmt.Errorf("list follow-up referrers: %w", err)
+	}
+	if len(referrers) > 0 {
+		return &InUseError{Referrers: referrers}
+	}
+	// The foreign key stays the backstop: the store maps its violation to
+	// the same error when a follow-up lands between the check and the delete.
 	return s.store.Delete(ctx, orgID, id)
 }
 

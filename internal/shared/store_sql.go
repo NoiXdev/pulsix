@@ -583,6 +583,10 @@ func (s *SQLStore) UpdateTemplateAndPropagate(ctx context.Context, def TemplateD
 //     EXPLICITLY, via JobTemplateHasTrigger, beside JobTemplateHasSchedule —
 //     the same reasoning git_repos' own job-trigger check gives, for a
 //     webhook that runs this template instead of syncing a repository.
+//   - job_template_follow_ups (migration 00105): the follow-up side is
+//     NO ACTION, so the delete would fail on its own; checked EXPLICITLY,
+//     via JobTemplateIsFollowUp, so the refusal names "a follow-up". The
+//     projection's own follow-ups (template side) cascade with it.
 //   - job_template_vault_credentials (migration 00059): ON DELETE CASCADE,
 //     and left to cascade ON PURPOSE — the one table deliberately NOT
 //     checked here. A labelled vault password binding is PART OF the
@@ -622,6 +626,13 @@ func (s *SQLStore) DeleteTemplateWithProjections(ctx context.Context, id uuid.UU
 			}
 			if hasTrigger {
 				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a job trigger"}}
+			}
+			isFollowUp, err := q.JobTemplateIsFollowUp(ctx, gen.JobTemplateIsFollowUpParams{OrgID: p.OrgID, TemplateID: p.ID})
+			if err != nil {
+				return fmt.Errorf("check follow-ups in organization %s: %w", p.OrgID, err)
+			}
+			if isFollowUp {
+				return &InUseError{OrgID: p.OrgID, Reasons: []string{"a follow-up"}}
 			}
 		}
 

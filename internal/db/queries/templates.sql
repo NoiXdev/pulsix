@@ -113,6 +113,15 @@ JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.follow_up_template_id
 WHERE f.org_id = @org_id AND f.template_id = @template_id
 ORDER BY f.position, t.name;
 
+-- name: ListOrgTemplateFollowUps :many
+-- Every follow-up of every template of the organization, in start order,
+-- with the follow-up template's name: List fills all rows from one query.
+SELECT f.template_id, f.follow_up_template_id, t.name AS follow_up_name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.follow_up_template_id
+WHERE f.org_id = @org_id
+ORDER BY f.template_id, f.position, t.name;
+
 -- name: ListOrgFollowUpEdges :many
 -- Every follow-up edge of the organization, for the cycle check.
 SELECT template_id, follow_up_template_id

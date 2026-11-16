@@ -68,9 +68,14 @@ func (s *Service) listed(ctx context.Context, orgID uuid.UUID, list []Template) 
 	if err != nil {
 		return nil, fmt.Errorf("list template vault credentials: %w", err)
 	}
+	followUps, err := s.store.ListOrgFollowUps(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list template follow-ups: %w", err)
+	}
 	out := make([]Template, len(list))
 	for i, t := range list {
 		t.VaultCredentials = byTemplate[t.ID]
+		t.FollowUps = followUps[t.ID]
 		out[i] = masked(t)
 	}
 	return out, nil

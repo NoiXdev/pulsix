@@ -739,6 +739,25 @@ func (q *Queries) JobTemplateHasTrigger(ctx context.Context, arg JobTemplateHasT
 	return exists, err
 }
 
+const jobTemplateIsFollowUp = `-- name: JobTemplateIsFollowUp :one
+SELECT EXISTS (SELECT 1 FROM job_template_follow_ups WHERE org_id = $1::uuid AND follow_up_template_id = $2::uuid)
+`
+
+type JobTemplateIsFollowUpParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	TemplateID uuid.UUID `json:"template_id"`
+}
+
+// Whether another template names one organization's projection as a
+// follow-up. The follow-up reference is NO ACTION, so the delete would fail
+// anyway; DeleteTemplateWithProjections checks it explicitly to say why.
+func (q *Queries) JobTemplateIsFollowUp(ctx context.Context, arg JobTemplateIsFollowUpParams) (bool, error) {
+	row := q.db.QueryRow(ctx, jobTemplateIsFollowUp, arg.OrgID, arg.TemplateID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listCheckDefinitionKeysAtOrgScopeExcludingDefinition = `-- name: ListCheckDefinitionKeysAtOrgScopeExcludingDefinition :many
 SELECT org_id, key FROM check_definitions
 WHERE binding_kind = 'org' AND group_id IS NULL AND host_id IS NULL

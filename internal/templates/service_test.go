@@ -37,6 +37,8 @@ type fakeStore struct {
 	// RecordSourceRev calls.
 	sourceWrites int
 	revRecords   int
+	// follow holds each template's follow-up template ids, in order.
+	follow map[uuid.UUID][]uuid.UUID
 }
 
 func (f *fakeStore) raceOnce() {
@@ -48,7 +50,7 @@ func (f *fakeStore) raceOnce() {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{byID: map[uuid.UUID]templates.Template{}, vault: map[uuid.UUID][]templates.VaultCredential{},
-		playbookRepo: map[uuid.UUID]uuid.UUID{}}
+		playbookRepo: map[uuid.UUID]uuid.UUID{}, follow: map[uuid.UUID][]uuid.UUID{}}
 }
 
 // ReplaceVaultCredentials and ListVaultCredentials stand in for the real

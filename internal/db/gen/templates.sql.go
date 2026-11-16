@@ -329,6 +329,42 @@ func (q *Queries) ListOrgFollowUpEdges(ctx context.Context, orgID uuid.UUID) ([]
 	return items, nil
 }
 
+const listOrgTemplateFollowUps = `-- name: ListOrgTemplateFollowUps :many
+SELECT f.template_id, f.follow_up_template_id, t.name AS follow_up_name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.follow_up_template_id
+WHERE f.org_id = $1
+ORDER BY f.template_id, f.position, t.name
+`
+
+type ListOrgTemplateFollowUpsRow struct {
+	TemplateID         uuid.UUID `json:"template_id"`
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+	FollowUpName       string    `json:"follow_up_name"`
+}
+
+// Every follow-up of every template of the organization, in start order,
+// with the follow-up template's name: List fills all rows from one query.
+func (q *Queries) ListOrgTemplateFollowUps(ctx context.Context, orgID uuid.UUID) ([]ListOrgTemplateFollowUpsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgTemplateFollowUps, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgTemplateFollowUpsRow
+	for rows.Next() {
+		var i ListOrgTemplateFollowUpsRow
+		if err := rows.Scan(&i.TemplateID, &i.FollowUpTemplateID, &i.FollowUpName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplateFollowUps = `-- name: ListTemplateFollowUps :many
 SELECT f.follow_up_template_id, f.condition, f.position, t.name AS follow_up_name
 FROM job_template_follow_ups f

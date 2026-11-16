@@ -375,6 +375,12 @@ SELECT EXISTS (SELECT 1 FROM schedules WHERE org_id = @org_id::uuid AND template
 -- has.
 SELECT EXISTS (SELECT 1 FROM job_triggers WHERE org_id = @org_id::uuid AND template_id = @template_id::uuid);
 
+-- name: JobTemplateIsFollowUp :one
+-- Whether another template names one organization's projection as a
+-- follow-up. The follow-up reference is NO ACTION, so the delete would fail
+-- anyway; DeleteTemplateWithProjections checks it explicitly to say why.
+SELECT EXISTS (SELECT 1 FROM job_template_follow_ups WHERE org_id = @org_id::uuid AND follow_up_template_id = @template_id::uuid);
+
 -- name: UpdateProjectedTemplate :execrows
 -- One organization's projection, propagating the definition's new shared
 -- columns AND re-resolving playbook_id against this organization's own

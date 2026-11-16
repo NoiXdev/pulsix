@@ -167,6 +167,13 @@ func encodeVars(t Template) (vars, schemaRaw []byte, err error) {
 func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	n, err := s.q.DeleteTemplate(ctx, gen.DeleteTemplateParams{OrgID: orgID, ID: id})
 	if err != nil {
+		if db.IsForeignKeyViolation(err) {
+			// A follow-up landed after the service's check: the foreign key
+			// is the backstop and says the same thing.
+			if names, rerr := s.FollowUpReferrers(ctx, orgID, id); rerr == nil && len(names) > 0 {
+				return &InUseError{Referrers: names}
+			}
+		}
 		return fmt.Errorf("delete template: %w", err)
 	}
 	if n == 0 {

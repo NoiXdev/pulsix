@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -362,5 +363,168 @@ func TestUpdateTemplateHonoursRevision(t *testing.T) {
 	read, err := store.Get(scoped, org, created.ID)
 	if err != nil || read.Revision != 4 || read.VarsMode != templates.ModeManual || read.VarsSourceRev != "c1" {
 		t.Fatalf("Get = %+v, %v", read, err)
+	}
+}
+
+// followUpService is the real service over the real store, for the
+// follow-up tests.
+func followUpService(t *testing.T, d *db.DB) *templates.Service {
+	t.Helper()
+	return templates.NewService(templates.NewSQLStore(d), playbookStoreLookup{playbooks.NewSQLStore(d)}, nil, nil,
+		credentials.NewSQLStore(d), crypto.NewBox(testBoxKey("tmpl-follow-up-key-1234")))
+}
+
+// TestFollowUpsRoundTripKeepsOrder stores follow-ups in a non-alphabetical
+// order and reads them back through Get and List in that order; a delete of
+// a referenced template is refused with the referrer's name, and a clear
+// frees it.
+func TestFollowUpsRoundTripKeepsOrder(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedTemplatesOrg(t, gen.New(d.Pool()), "follow-up-org")
+	playbookID := seedEditorPlaybook(t, d, org)
+	svc := followUpService(t, d)
+	scoped := db.WithOrgScope(ctx, org)
+
+	mk := func(name string, followUps ...uuid.UUID) templates.Template {
+		tpl, err := svc.Create(scoped, org, templates.CreateInput{Name: name, PlaybookID: playbookID, FollowUps: followUps})
+		if err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+		return tpl
+	}
+	zeta, alpha, mid := mk("zeta"), mk("alpha"), mk("mid")
+	root := mk("root", zeta.ID, alpha.ID)
+
+	want := []string{"zeta", "alpha"}
+	check := func(label string, got []templates.FollowUp) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s: %+v, want %v", label, got, want)
+		}
+		for i := range got {
+			if got[i].Name != want[i] {
+				t.Fatalf("%s: %+v, want %v", label, got, want)
+			}
+		}
+	}
+	check("created", root.FollowUps)
+	got, err := svc.Get(scoped, org, root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("Get", got.FollowUps)
+	list, err := svc.List(scoped, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tpl := range list {
+		if tpl.ID == root.ID {
+			check("List", tpl.FollowUps)
+		} else if len(tpl.FollowUps) != 0 {
+			t.Fatalf("List: %s has follow-ups %+v", tpl.Name, tpl.FollowUps)
+		}
+	}
+
+	// A nil list keeps, a new order replaces.
+	upd, err := svc.Update(scoped, org, root.ID, templates.UpdateInput{Name: "root", PlaybookID: playbookID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("kept by Update", upd.FollowUps)
+	want = []string{"alpha", "mid", "zeta"}
+	upd, err = svc.Update(scoped, org, root.ID, templates.UpdateInput{Name: "root", PlaybookID: playbookID, FollowUps: &[]uuid.UUID{alpha.ID, mid.ID, zeta.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("reordered", upd.FollowUps)
+
+	err = svc.Delete(scoped, org, alpha.ID)
+	var inUse *templates.InUseError
+	if !errors.As(err, &inUse) || len(inUse.Referrers) != 1 || inUse.Referrers[0] != "root" {
+		t.Fatalf("Delete referenced = %v, want *InUseError{root}", err)
+	}
+	// The store's own Delete is the backstop: it maps the foreign key.
+	err = templates.NewSQLStore(d).Delete(scoped, org, alpha.ID)
+	if !errors.As(err, &inUse) {
+		t.Fatalf("store Delete referenced = %v, want *InUseError", err)
+	}
+	if _, err := svc.Update(scoped, org, root.ID, templates.UpdateInput{Name: "root", PlaybookID: playbookID, FollowUps: &[]uuid.UUID{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(scoped, org, alpha.ID); err != nil {
+		t.Fatalf("Delete after clearing: %v", err)
+	}
+}
+
+// TestConcurrentSavesCannotCloseACycle races a→[b] against b→[a] for many
+// independent pairs. Without the follow-up graph lock both saves read a
+// graph without the other's edge and both commit; with it exactly one of
+// each pair is refused as a cycle and the stored graph stays acyclic.
+func TestConcurrentSavesCannotCloseACycle(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedTemplatesOrg(t, gen.New(d.Pool()), "follow-up-race")
+	playbookID := seedEditorPlaybook(t, d, org)
+	svc := followUpService(t, d)
+	scoped := db.WithOrgScope(ctx, org)
+
+	const pairs = 24
+	type pair struct{ a, b templates.Template }
+	ps := make([]pair, pairs)
+	for i := range ps {
+		suffix := uuid.Must(uuid.NewV7()).String()[24:]
+		a, err := svc.Create(scoped, org, templates.CreateInput{Name: "a-" + suffix, PlaybookID: playbookID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := svc.Create(scoped, org, templates.CreateInput{Name: "b-" + suffix, PlaybookID: playbookID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps[i] = pair{a, b}
+	}
+
+	var wg sync.WaitGroup
+	errsA, errsB := make([]error, pairs), make([]error, pairs)
+	start := make(chan struct{})
+	for i, p := range ps {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errsA[i] = svc.Update(scoped, org, p.a.ID, templates.UpdateInput{Name: p.a.Name, PlaybookID: playbookID, FollowUps: &[]uuid.UUID{p.b.ID}})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errsB[i] = svc.Update(scoped, org, p.b.ID, templates.UpdateInput{Name: p.b.Name, PlaybookID: playbookID, FollowUps: &[]uuid.UUID{p.a.ID}})
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for i := range ps {
+		aFailed, bFailed := errors.Is(errsA[i], templates.ErrFollowUpCycle), errors.Is(errsB[i], templates.ErrFollowUpCycle)
+		if (errsA[i] != nil && !aFailed) || (errsB[i] != nil && !bFailed) {
+			t.Fatalf("pair %d: unexpected errors %v / %v", i, errsA[i], errsB[i])
+		}
+		if aFailed == bFailed {
+			t.Fatalf("pair %d: want exactly one save refused as a cycle, got %v / %v", i, errsA[i], errsB[i])
+		}
+	}
+
+	stored, err := templates.NewSQLStore(d).ListOrgFollowUps(scoped, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		for _, from := range []uuid.UUID{p.a.ID, p.b.ID} {
+			for _, fu := range stored[from] {
+				for _, back := range stored[fu.TemplateID] {
+					if back.TemplateID == from {
+						t.Fatalf("a cycle between %s and %s was committed", from, fu.TemplateID)
+					}
+				}
+			}
+		}
 	}
 }
