@@ -80,13 +80,29 @@ func (s *SQLStore) PlanFollowUps(ctx context.Context, orgID, groupID, templateID
 	})
 }
 
-// CopyFollowUps implements jobs.FollowUpPlanner.
-func (s *SQLStore) CopyFollowUps(ctx context.Context, orgID, fromGroupID, toGroupID uuid.UUID, configuredBy *uuid.UUID) error {
+// CopyFollowUps implements jobs.FollowUpPlanner. A nil only copies every
+// row, a non-nil one only the rows of the listed templates.
+func (s *SQLStore) CopyFollowUps(ctx context.Context, orgID, fromGroupID, toGroupID uuid.UUID, configuredBy *uuid.UUID, only *[]uuid.UUID) error {
+	var templateIDs []uuid.UUID // nil is SQL NULL: no filter
+	if only != nil {
+		templateIDs = append([]uuid.UUID{}, *only...) // empty, not nil: copies none
+	}
 	return s.inOrgTx(ctx, orgID, func(q *gen.Queries) error {
 		if _, err := q.CopyRunFollowUps(ctx, gen.CopyRunFollowUpsParams{
-			OrgID: orgID, FromGroup: fromGroupID, ToGroup: toGroupID, ConfiguredBy: db.NullUUID(configuredBy),
+			OrgID: orgID, FromGroup: fromGroupID, ToGroup: toGroupID, ConfiguredBy: db.NullUUID(configuredBy), TemplateIds: templateIDs,
 		}); err != nil {
 			return fmt.Errorf("copy follow-ups: %w", err)
+		}
+		return nil
+	})
+}
+
+// ClearUnstarted deletes the group's rows that never started a run
+// (pending or skipped).
+func (s *SQLStore) ClearUnstarted(ctx context.Context, orgID, groupID uuid.UUID) error {
+	return s.inOrgTx(ctx, orgID, func(q *gen.Queries) error {
+		if _, err := q.ClearUnstartedRunFollowUps(ctx, gen.ClearUnstartedRunFollowUpsParams{OrgID: orgID, ParentGroupID: groupID}); err != nil {
+			return fmt.Errorf("clear unstarted follow-ups: %w", err)
 		}
 		return nil
 	})

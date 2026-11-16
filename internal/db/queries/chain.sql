@@ -28,7 +28,14 @@ SELECT gen_random_uuid(), r.org_id, @to_group, r.template_id, r.condition, r.pos
        r.root_trigger, r.root_ref, r.depth, r.path, sqlc.narg(configured_by)
 FROM run_follow_ups r
 WHERE r.org_id = @org_id AND r.parent_group_id = @from_group
+  AND (sqlc.narg(template_ids)::uuid[] IS NULL OR r.template_id = ANY(sqlc.narg(template_ids)::uuid[]))
 ON CONFLICT (parent_group_id, template_id) DO NOTHING;
+
+-- name: ClearUnstartedRunFollowUps :execrows
+-- Drops a group's rows that never started a run, so a re-approval can plan
+-- the group's follow-ups afresh; due, started and dismissed rows stay.
+DELETE FROM run_follow_ups
+WHERE org_id = @org_id AND parent_group_id = @parent_group_id AND state IN ('pending', 'skipped');
 
 -- name: ListRunFollowUps :many
 -- A group's follow-ups with the template's current name (empty once the

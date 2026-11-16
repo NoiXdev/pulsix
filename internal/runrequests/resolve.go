@@ -35,9 +35,9 @@ type (
 	}
 	JobRunner interface {
 		RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
-		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, []uuid.UUID, error)
+		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID, followUps *[]uuid.UUID) ([]jobs.Job, error)
 	}
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
@@ -94,7 +94,7 @@ func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID,
 
 // ValidateRetry implements Validator with the retry's own checks.
 func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (uuid.UUID, int64, error) {
-	templateID, _, err := r.src.Jobs.RetryTargets(ctx, orgID, jobID)
+	templateID, _, _, err := r.src.Jobs.RetryTargets(ctx, orgID, jobID)
 	if err != nil {
 		if errors.Is(err, jobs.ErrNothingToRetry) || errors.Is(err, jobs.ErrNotRunning) || errors.Is(err, jobs.ErrInvalidInput) {
 			return uuid.Nil, 0, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
@@ -118,7 +118,7 @@ func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHos
 
 // RetryFailed implements Enqueuer through the retry path.
 func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID) error {
-	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group)
+	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group, nil)
 	return err
 }
 
@@ -190,7 +190,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, p *Picture) ([]uuid.UUID, error) {
 	switch {
 	case req.Kind == KindRetryFailed && req.JobID != nil:
-		_, failed, err := r.src.Jobs.RetryTargets(ctx, orgID, *req.JobID)
+		_, _, failed, err := r.src.Jobs.RetryTargets(ctx, orgID, *req.JobID)
 		if err != nil {
 			// A retry that can no longer run still shows; approving it fails
 			// in the retry path itself.

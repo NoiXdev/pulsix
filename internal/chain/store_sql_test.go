@@ -178,7 +178,7 @@ func TestCopyFollowUps(t *testing.T) {
 	}
 	user := newID()
 	for range 2 {
-		if err := e.store.CopyFollowUps(e.scoped, e.org, from, to, &user); err != nil {
+		if err := e.store.CopyFollowUps(e.scoped, e.org, from, to, &user, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -191,6 +191,71 @@ func TestCopyFollowUps(t *testing.T) {
 			r.Depth != 2 || !slices.Equal(r.Path, cc.Path) || r.ConfiguredBy == nil || *r.ConfiguredBy != user || r.ID == e.rows(from)[i].ID {
 			t.Fatalf("copy %d = %+v", i, r)
 		}
+	}
+}
+
+func TestCopyFollowUpsFiltered(t *testing.T) {
+	setup := func() (e *env, from, to, b, c uuid.UUID) {
+		e = newEnv(t)
+		b, c = e.template("b"), e.template("c")
+		a := e.template("a", b, c)
+		from, to = newID(), newID()
+		if err := e.store.PlanFollowUps(e.scoped, e.org, from, a, nil, jobs.ChainContext{RootTrigger: "manual", Depth: 1, Path: []uuid.UUID{a}}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t.Run("only listed", func(t *testing.T) {
+		e, from, to, b, _ := setup()
+		only := []uuid.UUID{b}
+		if err := e.store.CopyFollowUps(e.scoped, e.org, from, to, nil, &only); err != nil {
+			t.Fatal(err)
+		}
+		if rows := e.rows(to); len(rows) != 1 || rows[0].TemplateID != b {
+			t.Fatalf("copied %+v, want only the row of %s", rows, b)
+		}
+	})
+	t.Run("empty list copies none", func(t *testing.T) {
+		e, from, to, _, _ := setup()
+		only := []uuid.UUID{}
+		if err := e.store.CopyFollowUps(e.scoped, e.org, from, to, nil, &only); err != nil {
+			t.Fatal(err)
+		}
+		if rows := e.rows(to); len(rows) != 0 {
+			t.Fatalf("copied %d rows, want none", len(rows))
+		}
+	})
+}
+
+func TestClearUnstarted(t *testing.T) {
+	e := newEnv(t)
+	group, other := newID(), newID()
+	states := []string{"pending", "skipped", "due", "started", "dismissed"}
+	var tpls []uuid.UUID
+	for _, st := range states {
+		tpls = append(tpls, e.template("t-"+st))
+	}
+	root := e.template("root")
+	e.plan(group, root, &tpls)
+	for i, st := range states {
+		if _, err := e.d.Pool().Exec(ctx, `UPDATE run_follow_ups SET state = $1 WHERE parent_group_id = $2 AND template_id = $3`, st, group, tpls[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.plan(other, root, &[]uuid.UUID{tpls[0]})
+	if err := e.store.ClearUnstarted(e.scoped, e.org, group); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range e.rows(group) {
+		got = append(got, string(r.State))
+	}
+	slices.Sort(got)
+	if want := []string{"dismissed", "due", "started"}; !slices.Equal(got, want) {
+		t.Fatalf("states left = %v, want %v", got, want)
+	}
+	if rows := e.rows(other); len(rows) != 1 || rows[0].State != chain.StatePending {
+		t.Fatalf("other group = %+v, want its pending row untouched", rows)
 	}
 }
 

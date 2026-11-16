@@ -41,8 +41,10 @@ type FollowUpPlanner interface {
 	// context of the run being planned for.
 	PlanFollowUps(ctx context.Context, orgID, groupID, templateID uuid.UUID, override *[]uuid.UUID, c ChainContext) error
 	// CopyFollowUps gives toGroupID the follow-ups fromGroupID was planned
-	// with, as a retry of the original run.
-	CopyFollowUps(ctx context.Context, orgID, fromGroupID, toGroupID uuid.UUID, configuredBy *uuid.UUID) error
+	// with, as a retry of the original run. A nil only copies every
+	// follow-up, a non-nil one only those of the listed templates (empty
+	// copies none).
+	CopyFollowUps(ctx context.Context, orgID, fromGroupID, toGroupID uuid.UUID, configuredBy *uuid.UUID, only *[]uuid.UUID) error
 }
 
 // SetFollowUpPlanner wires the planner; unwired, runs plan no follow-ups.

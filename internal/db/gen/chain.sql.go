@@ -41,6 +41,26 @@ func (q *Queries) BumpFollowUpAttempt(ctx context.Context, arg BumpFollowUpAttem
 	return attempts, err
 }
 
+const clearUnstartedRunFollowUps = `-- name: ClearUnstartedRunFollowUps :execrows
+DELETE FROM run_follow_ups
+WHERE org_id = $1 AND parent_group_id = $2 AND state IN ('pending', 'skipped')
+`
+
+type ClearUnstartedRunFollowUpsParams struct {
+	OrgID         uuid.UUID `json:"org_id"`
+	ParentGroupID uuid.UUID `json:"parent_group_id"`
+}
+
+// Drops a group's rows that never started a run, so a re-approval can plan
+// the group's follow-ups afresh; due, started and dismissed rows stay.
+func (q *Queries) ClearUnstartedRunFollowUps(ctx context.Context, arg ClearUnstartedRunFollowUpsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearUnstartedRunFollowUps, arg.OrgID, arg.ParentGroupID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const copyRunFollowUps = `-- name: CopyRunFollowUps :execrows
 INSERT INTO run_follow_ups (id, org_id, parent_group_id, template_id, condition, position,
                             root_trigger, root_ref, depth, path, configured_by)
@@ -48,6 +68,7 @@ SELECT gen_random_uuid(), r.org_id, $1, r.template_id, r.condition, r.position,
        r.root_trigger, r.root_ref, r.depth, r.path, $2
 FROM run_follow_ups r
 WHERE r.org_id = $3 AND r.parent_group_id = $4
+  AND ($5::uuid[] IS NULL OR r.template_id = ANY($5::uuid[]))
 ON CONFLICT (parent_group_id, template_id) DO NOTHING
 `
 
@@ -56,6 +77,7 @@ type CopyRunFollowUpsParams struct {
 	ConfiguredBy pgtype.UUID `json:"configured_by"`
 	OrgID        uuid.UUID   `json:"org_id"`
 	FromGroup    uuid.UUID   `json:"from_group"`
+	TemplateIds  []uuid.UUID `json:"template_ids"`
 }
 
 // A rerun or retry inherits the source group's follow-up configuration as
@@ -66,6 +88,7 @@ func (q *Queries) CopyRunFollowUps(ctx context.Context, arg CopyRunFollowUpsPara
 		arg.ConfiguredBy,
 		arg.OrgID,
 		arg.FromGroup,
+		arg.TemplateIds,
 	)
 	if err != nil {
 		return 0, err

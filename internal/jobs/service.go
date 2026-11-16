@@ -1086,13 +1086,15 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, s.newID())
+	return s.RetryFailedInto(ctx, orgID, id, actor, s.newID(), nil)
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:
 // an approved run request passes its own id (spec 2026-11-16 assistant
-// access), so a claim of the retry finds the request.
-func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID) ([]Job, error) {
+// access), so a claim of the retry finds the request. followUps narrows the
+// follow-ups copied from the original run: nil copies all, a list only
+// those templates, an empty one none.
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID, followUps *[]uuid.UUID) ([]Job, error) {
 	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
 		return nil, err
@@ -1102,7 +1104,7 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 		return nil, err
 	}
 	if s.followUps != nil {
-		if err := s.followUps.CopyFollowUps(ctx, orgID, j.RunGroupID, group, actor); err != nil {
+		if err := s.followUps.CopyFollowUps(ctx, orgID, j.RunGroupID, group, actor, followUps); err != nil {
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
@@ -1112,13 +1114,14 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 // RetryTargets is RetryFailed's checks without the enqueue: the template
 // and the host ids a retry of the finished run id would target. A run
 // request for a retry is validated with it (spec 2026-11-16 assistant
-// access).
-func (s *Service) RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, []uuid.UUID, error) {
+// access). It also returns the finished job's own run group, whose
+// follow-ups a retry copies.
+func (s *Service) RetryTargets(ctx context.Context, orgID, id uuid.UUID) (templateID, runGroupID uuid.UUID, hosts []uuid.UUID, err error) {
 	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
-		return uuid.Nil, nil, err
+		return uuid.Nil, uuid.Nil, nil, err
 	}
-	return *j.TemplateID, retry, nil
+	return *j.TemplateID, j.RunGroupID, retry, nil
 }
 
 // retryTarget is RetryTargets returning the finished job itself, whose run

@@ -27,6 +27,7 @@ type planCall struct {
 type copyCall struct {
 	org, from, to uuid.UUID
 	by            *uuid.UUID
+	only          *[]uuid.UUID
 	jobsAtCall    int
 }
 
@@ -51,8 +52,8 @@ func (f *fakePlanner) PlanFollowUps(_ context.Context, org, group, tpl uuid.UUID
 	return f.planErr
 }
 
-func (f *fakePlanner) CopyFollowUps(_ context.Context, org, from, to uuid.UUID, by *uuid.UUID) error {
-	f.copies = append(f.copies, copyCall{org, from, to, by, f.count()})
+func (f *fakePlanner) CopyFollowUps(_ context.Context, org, from, to uuid.UUID, by *uuid.UUID, only *[]uuid.UUID) error {
+	f.copies = append(f.copies, copyCall{org, from, to, by, only, f.count()})
 	return f.copyErr
 }
 
@@ -332,7 +333,7 @@ func TestApprovedRunRequestPlansFollowUpsInItsGroup(t *testing.T) {
 			TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: grp,
 			Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
 		}}
-		got, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request)
+		got, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -342,10 +343,32 @@ func TestApprovedRunRequestPlansFollowUpsInItsGroup(t *testing.T) {
 		if len(f.planner.copies) != 1 || len(f.planner.plans) != 0 {
 			t.Fatalf("copies = %d plans = %d", len(f.planner.copies), len(f.planner.plans))
 		}
-		if c := f.planner.copies[0]; c.from != grp || c.to != request || c.by == nil || *c.by != actor {
+		if c := f.planner.copies[0]; c.from != grp || c.to != request || c.by == nil || *c.by != actor || c.only != nil {
 			t.Fatalf("copy = %+v, want from %s to the request's group %s", c, grp, request)
 		}
 	})
+}
+
+// TestRetryFailedIntoFiltersFollowUps: the follow-up list a retry is given
+// reaches the planner untouched.
+func TestRetryFailedIntoFiltersFollowUps(t *testing.T) {
+	f := newChainFixture(t)
+	orig, grp, request, actor, x := id7(), id7(), id7(), id7(), id7()
+	f.store.jobs[orig] = storedJob{j: jobs.Job{
+		ID: orig, OrgID: f.org, Kind: jobs.KindRun, Status: jobs.StatusFailed,
+		TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: grp,
+		Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
+	}}
+	only := []uuid.UUID{x}
+	if _, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request, &only); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.planner.copies) != 1 {
+		t.Fatalf("copies = %d, want 1", len(f.planner.copies))
+	}
+	if got := f.planner.copies[0].only; got == nil || !slices.Equal(*got, only) {
+		t.Fatalf("only = %v, want %v", got, only)
+	}
 }
 
 type countSink struct {
