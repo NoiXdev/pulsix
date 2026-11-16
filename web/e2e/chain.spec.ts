@@ -80,8 +80,9 @@ test('a run starts its follow-up and the two runs link to each other', async ({ 
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
   const parentUrl = page.url();
 
-  // The parent succeeds (a failure reads as such, not as a timeout below),
-  // then its follow-up is started.
+  // The parent succeeds, then its follow-up is started. A failed parent
+  // times out here, waiting for "succeeded", before the follow-up is
+  // looked at.
   await expectRunStatus(page, 'succeeded', 60_000);
   const chain = page.locator('#chain');
   const row = chain.locator('li', { hasText: 'chain-b' });
