@@ -59,8 +59,10 @@ type decision struct {
 
 // decide applies the spec's per-row rules in order: depth, cycle, no host,
 // an earlier start whose write-back was lost, deleted template, active run,
-// maintenance, then the enqueue.
-func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decision {
+// maintenance, then the enqueue. The active-run check and the enqueue run
+// under the batch's lock on the template, so two managers never both see
+// no active run and start it twice.
+func (s *Starter) decide(ctx context.Context, batch DueBatch, f FollowUp, now time.Time) decision {
 	scoped := db.WithOrgScope(ctx, f.OrgID)
 	if f.Depth >= maxDepth {
 		return s.skip(scoped, f, now, "", ReasonChainTooLong, NoticeFailure)
@@ -83,11 +85,17 @@ func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decisio
 	case err != nil:
 		return s.retry(scoped, f, now, "", fmt.Errorf("read the template: %w", err))
 	}
-	active, err := s.runs.HasActiveRun(scoped, f.OrgID, f.TemplateID)
-	switch {
-	case err != nil:
-		return s.retry(scoped, f, now, name, fmt.Errorf("check for an active run: %w", err))
-	case active:
+	locked, err := batch.TryLockTemplate(ctx, f.OrgID, f.TemplateID)
+	if err != nil {
+		return s.retry(scoped, f, now, name, err)
+	}
+	active := !locked // another manager is starting it right now
+	if locked {
+		if active, err = s.runs.HasActiveRun(scoped, f.OrgID, f.TemplateID); err != nil {
+			return s.retry(scoped, f, now, name, fmt.Errorf("check for an active run: %w", err))
+		}
+	}
+	if active {
 		// Never counted, never timed out: an active run always ends.
 		return decision{Outcome: Outcome{State: StateDue, Reason: fmt.Sprintf(reasonWaiting, name), At: now, NextAttemptAt: now.Add(s.tick)}, name: name}
 	}

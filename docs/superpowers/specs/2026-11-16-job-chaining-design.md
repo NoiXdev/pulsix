@@ -285,7 +285,10 @@ tick 5 s), each tick:
       Dropping the follow-up would leave the host without the second step;
       enqueueing it at once could run the same playbook twice on one host at the
       same time, because the queue does not serialise runs of one template.
-      **(Claude's call)**
+      **(Claude's call)** The check and the enqueue run under the batch's
+      transaction-scoped try-lock on (organization, template), held until the
+      batch commits: a second manager starting the same template meanwhile
+      does not get the lock and waits the same way.
    5. Enqueue through `EnqueueRunWith` with `Trigger: chain`,
       `TriggerRef: parent group`, `Actor: nil`, `OnlyHosts: row.host_ids` (new,
       below), `IdempotencyKey: "chain:<row id>"`.

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
@@ -52,6 +53,29 @@ func (b *sqlBatch) Commit(ctx context.Context) error {
 }
 
 func (b *sqlBatch) Rollback(ctx context.Context) error { return b.tx.Rollback(ctx) }
+
+// templateLockPrefix namespaces the starter's per-template lock within
+// hashtext's output, apart from the other advisory locks.
+const templateLockPrefix = "chain-start:"
+
+// TryLockTemplate implements DueBatch. The lock is taken in a savepoint that
+// is released, so it stays with the batch transaction until Commit, and a
+// failure leaves the batch usable.
+func (b *sqlBatch) TryLockTemplate(ctx context.Context, orgID, templateID uuid.UUID) (bool, error) {
+	sp, err := b.tx.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin template lock savepoint: %w", err)
+	}
+	defer sp.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once released
+	locked, err := gen.New(sp).TryLockFollowUpTemplate(ctx, templateLockPrefix+orgID.String()+":"+templateID.String())
+	if err != nil {
+		return false, fmt.Errorf("lock the follow-up template: %w", err)
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return false, fmt.Errorf("release template lock savepoint: %w", err)
+	}
+	return locked, nil
+}
 
 // Write implements DueBatch. A failure or a panic rolls back only this
 // row's savepoint (the deferred rollbacks are no-ops once committed); the

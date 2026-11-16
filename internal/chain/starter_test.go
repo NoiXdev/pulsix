@@ -26,6 +26,10 @@ type fakeStarterStore struct {
 	rows       map[uuid.UUID]*chain.FollowUp
 	sweeps     int
 	failWrites int // the next writes fail this many times
+	// busy templates are being started by another manager's batch.
+	busy    map[uuid.UUID]bool
+	lockErr error
+	locks   int
 }
 
 func (s *fakeStarterStore) SweepStale(context.Context, time.Time, int) (int, error) {
@@ -52,6 +56,16 @@ type fakeBatch struct {
 }
 
 func (b *fakeBatch) Rows() []chain.FollowUp { return b.rows }
+
+func (b *fakeBatch) TryLockTemplate(_ context.Context, _, tmpl uuid.UUID) (bool, error) {
+	b.store.mu.Lock()
+	defer b.store.mu.Unlock()
+	b.store.locks++
+	if b.store.lockErr != nil {
+		return false, b.store.lockErr
+	}
+	return !b.store.busy[tmpl], nil
+}
 
 func (b *fakeBatch) Write(ctx context.Context, f chain.FollowUp, o chain.Outcome, notify func(context.Context, pgx.Tx) error) error {
 	b.store.mu.Lock()
@@ -663,6 +677,35 @@ func TestStarterReplayGivesUpOnTheStartThatExists(t *testing.T) {
 	f.runs.groups = map[string]uuid.UUID{"chain:" + r.ID.String(): earlier}
 	f.tick()
 	if len(f.runs.reqs) != 0 || r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != earlier || r.Attempts != 4 {
+		t.Fatalf("row = %+v, enqueues = %d", r, len(f.runs.reqs))
+	}
+}
+
+// Another manager's open batch is starting the template: the row waits like
+// for an active run, without counting an attempt.
+func TestStarterWaitsWhileAnotherManagerStartsTheTemplate(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row()
+	f.store.busy = map[uuid.UUID]bool{f.tmpl: true}
+	f.tick()
+	if r.State != chain.StateDue || r.Reason != "waiting for the active run of listmonk" || r.Attempts != 0 ||
+		!r.NextAttemptAt.Equal(f.now.Add(testTick)) || len(f.runs.reqs) != 0 || len(f.audit.all()) != 0 {
+		t.Fatalf("row = %+v, enqueues = %d", r, len(f.runs.reqs))
+	}
+	f.store.busy = nil
+	f.now = f.now.Add(testTick)
+	f.tick()
+	if r.State != chain.StateStarted || f.store.locks != 2 {
+		t.Fatalf("row = %+v, locks = %d", r, f.store.locks)
+	}
+}
+
+func TestStarterRetriesAFailedTemplateLock(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row()
+	f.store.lockErr = errors.New("lock: connection reset")
+	f.tick()
+	if r.State != chain.StateDue || r.Attempts != 1 || r.Reason != "could not start: lock: connection reset" || len(f.runs.reqs) != 0 {
 		t.Fatalf("row = %+v, enqueues = %d", r, len(f.runs.reqs))
 	}
 }

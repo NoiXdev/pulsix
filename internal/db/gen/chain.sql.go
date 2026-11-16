@@ -684,3 +684,20 @@ func (q *Queries) RunGroupOutcome(ctx context.Context, arg RunGroupOutcomeParams
 	err := row.Scan(&i.Jobs, &i.FailedOrError, &i.Cancelled)
 	return i, err
 }
+
+const tryLockFollowUpTemplate = `-- name: TryLockFollowUpTemplate :one
+SELECT pg_try_advisory_xact_lock(hashtext($1::text))::bool AS locked
+`
+
+// The starter's per-template start lock, taken in its batch transaction and
+// held until the batch commits, after the enqueue it guards has committed.
+// A second manager starting the same template in the meantime does not get
+// it, and once it does, the active-run check sees the first one's run. The
+// try variant never waits: two batches locking two templates in opposite
+// orders cannot deadlock.
+func (q *Queries) TryLockFollowUpTemplate(ctx context.Context, lockKey string) (bool, error) {
+	row := q.db.QueryRow(ctx, tryLockFollowUpTemplate, lockKey)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
+}

@@ -105,6 +105,10 @@ type StarterStore interface {
 // DueBatch is one locked batch of due follow-ups.
 type DueBatch interface {
 	Rows() []FollowUp
+	// TryLockTemplate takes the batch's lock on starting templateID in
+	// orgID, held until the batch commits; false means another manager's
+	// open batch is starting that template.
+	TryLockTemplate(ctx context.Context, orgID, templateID uuid.UUID) (bool, error)
 	// Write records o for f in a savepoint of its own and, when notify is
 	// not nil, runs it in a nested savepoint whose failure keeps the outcome.
 	Write(ctx context.Context, f FollowUp, o Outcome, notify func(ctx context.Context, tx pgx.Tx) error) error
@@ -226,7 +230,7 @@ func (s *Starter) processRow(ctx context.Context, batch DueBatch, f FollowUp, no
 			s.log.ErrorContext(context.WithoutCancel(ctx), "follow-up row panicked; leaving it due", "follow_up", f.ID, "org", f.OrgID, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
-	d := s.decide(ctx, f, now)
+	d := s.decide(ctx, batch, f, now)
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rowWriteTimeout)
 	defer cancel()
 	var notify func(context.Context, pgx.Tx) error

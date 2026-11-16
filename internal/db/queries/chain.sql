@@ -114,6 +114,15 @@ ORDER BY next_attempt_at, id
 LIMIT @lim
 FOR NO KEY UPDATE SKIP LOCKED;
 
+-- name: TryLockFollowUpTemplate :one
+-- The starter's per-template start lock, taken in its batch transaction and
+-- held until the batch commits, after the enqueue it guards has committed.
+-- A second manager starting the same template in the meantime does not get
+-- it, and once it does, the active-run check sees the first one's run. The
+-- try variant never waits: two batches locking two templates in opposite
+-- orders cannot deadlock.
+SELECT pg_try_advisory_xact_lock(hashtext(@lock_key::text))::bool AS locked;
+
 -- name: ListStalePendingFollowUps :many
 -- The sweep's scan (raw pool, bypass policy): pending rows older than the
 -- cutoff whose parent group has no unfinished run job any more, i.e. the

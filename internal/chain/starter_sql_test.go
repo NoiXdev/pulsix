@@ -349,3 +349,71 @@ func TestStarterReplayHonoursTheMaintenanceExclusion(t *testing.T) {
 		t.Fatalf("row = %+v, want started with %s", r, child)
 	}
 }
+
+// oneRowStore hands each batch at most one due row.
+type oneRowStore struct{ *chain.SQLStore }
+
+func (s oneRowStore) LockDue(ctx context.Context, now time.Time, _ int) (chain.DueBatch, error) {
+	return s.SQLStore.LockDue(ctx, now, 1)
+}
+
+// Two managers, each with a different due row for the same template, tick
+// at once. HasActiveRun cannot see a run another manager is still
+// enqueueing; the per-template lock lets only one of them start it.
+func TestStarterTwoStartersOneTemplateStartOnce(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	h1 := newID()
+	now := time.Now().Truncate(time.Microsecond)
+	groups := []uuid.UUID{newID(), newID()}
+	for _, g := range groups {
+		e.plan(g, a, nil)
+		e.job(g, "succeeded", []uuid.UUID{h1}, map[string][]uuid.UUID{"ok_hosts": {h1}})
+		if err := e.store.ResolveGroup(e.scoped, e.org, g, jobs.StatusSucceeded, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := jobs.NewService(jobs.NewSQLStore(e.d), nil, envTemplates{org: e.org}, oneZone{zone: e.zone, hosts: []uuid.UUID{h1}}, nil, nil, nil, time.Now, rand.Reader)
+	var finished atomic.Int32
+	runs := &heldRuns{Runs: svc, finished: &finished}
+	clock := func() time.Time { return now.Add(time.Second) }
+	names := fakeNames{names: map[uuid.UUID]string{b: "b"}}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range 2 {
+		st := chain.NewStarter(oneRowStore{e.store}, runs, names, nil, nil, &fakeAuditor{}, clock, quietLog)
+		wg.Go(func() {
+			<-start
+			errs[i] = st.Tick(ctx)
+			finished.Add(1)
+		})
+	}
+	close(start)
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var total int
+	if err := e.d.Pool().QueryRow(ctx, `SELECT count(*) FROM jobs WHERE org_id = $1 AND trigger = 'chain' AND template_id = $2`, e.org, b).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if n := runs.calls.Load(); n != 1 || total != 1 {
+		t.Fatalf("enqueues = %d, chained jobs = %d, want 1 and 1", n, total)
+	}
+	states := map[chain.State]string{}
+	for _, g := range groups {
+		r := e.rows(g)[0]
+		states[r.State] = r.Reason
+	}
+	if reason, ok := states[chain.StateDue]; !ok || reason != "waiting for the active run of b" {
+		t.Fatalf("states = %v, want one started and one waiting", states)
+	}
+	if _, ok := states[chain.StateStarted]; !ok {
+		t.Fatalf("states = %v, want one started", states)
+	}
+}
