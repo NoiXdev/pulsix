@@ -61,6 +61,7 @@ func sampleEvent() Event {
 		Categories: []Category{CategoryFailure, CategoryChange},
 		Schedule:   &NamedRef{ID: id, Name: "Nightly OS patching"},
 		Template:   &NamedRef{ID: id, Name: "patch-all"},
+		FollowUpOf: &NamedRef{ID: id, Name: "backup-all"},
 		Run: &RunSummary{
 			ID: id, Result: "failed", Hosts: 12, HostsOK: 11, HostsChanged: 9, HostsFailed: 1,
 			StartedAt: &started, FinishedAt: &finished, DurationSeconds: 252,
@@ -103,6 +104,14 @@ func renderEmail(ev Event) (subject, body string) {
 		}
 		return r.Name
 	}
+	// followUp is the one line a chained run adds under its template; it
+	// is a sentence rather than a labelled value, as the label would be
+	// wider than the column.
+	followUp := func() {
+		if n := name(ev.FollowUpOf); n != "" {
+			fmt.Fprintf(&b, "Follow-up of %s\n", n)
+		}
+	}
 	switch ev.Kind {
 	case EventRunFinished:
 		result := "succeeded"
@@ -115,6 +124,7 @@ func renderEmail(ev Event) (subject, body string) {
 		}
 		line("Schedule", name(ev.Schedule))
 		line("Template", name(ev.Template))
+		followUp()
 		if r := ev.Run; r != nil {
 			line("Result", r.Result)
 			hosts := fmt.Sprintf("%d (ok %d, changed %d, failed %d)", r.Hosts, r.HostsOK, r.HostsChanged, r.HostsFailed)
@@ -147,6 +157,7 @@ func renderEmail(ev Event) (subject, body string) {
 		subject = fmt.Sprintf("[Pulsix] %s: %s", name(ev.Schedule), verb)
 		line("Schedule", name(ev.Schedule))
 		line("Template", name(ev.Template))
+		followUp()
 		if d := ev.Decision; d != nil {
 			line("Outcome", d.Outcome)
 			line("Reason", d.Reason)

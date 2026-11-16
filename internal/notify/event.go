@@ -50,12 +50,16 @@ const (
 // fields. It deliberately has no field for log output, variables or
 // secrets. Nil sections are absent for the kind.
 type Event struct {
-	Kind       EventKind        `json:"kind"`
-	At         time.Time        `json:"at"`
-	Org        OrgRef           `json:"org"`
-	Categories []Category       `json:"categories,omitempty"`
-	Schedule   *NamedRef        `json:"schedule,omitempty"`
-	Template   *NamedRef        `json:"template,omitempty"`
+	Kind       EventKind  `json:"kind"`
+	At         time.Time  `json:"at"`
+	Org        OrgRef     `json:"org"`
+	Categories []Category `json:"categories,omitempty"`
+	Schedule   *NamedRef  `json:"schedule,omitempty"`
+	Template   *NamedRef  `json:"template,omitempty"`
+	// FollowUpOf is set on the events of a chained run: Template is then the
+	// follow-up template and FollowUpOf the template of the run that started
+	// it. Schedule is the chain's root schedule.
+	FollowUpOf *NamedRef        `json:"follow_up_of,omitempty"`
 	Run        *RunSummary      `json:"run,omitempty"`
 	Decision   *DecisionSummary `json:"decision,omitempty"`
 	Digest     *DigestSummary   `json:"digest,omitempty"`

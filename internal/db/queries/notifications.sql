@@ -186,6 +186,18 @@ JOIN organizations AS o ON o.id = s.org_id
 JOIN job_templates AS t ON t.org_id = s.org_id AND t.id = s.template_id
 WHERE s.org_id = @org_id AND s.id = @schedule_id;
 
+-- name: NotifyFollowUpContext :one
+-- The names a follow-up message carries: the chain's root schedule, the
+-- follow-up template and the parent template. A template deleted meanwhile
+-- reads as an empty name rather than losing the message.
+SELECT o.slug AS org_slug, o.name AS org_name, s.name AS schedule_name,
+       COALESCE(ft.name, '')::text AS template_name, COALESCE(pt.name, '')::text AS parent_template_name
+FROM schedules AS s
+JOIN organizations AS o ON o.id = s.org_id
+LEFT JOIN job_templates AS ft ON ft.org_id = s.org_id AND ft.id = @template_id
+LEFT JOIN job_templates AS pt ON pt.org_id = s.org_id AND pt.id = @parent_template_id
+WHERE s.org_id = @org_id AND s.id = @schedule_id;
+
 -- name: NotifyOrgContext :one
 SELECT slug, name FROM organizations WHERE id = @org_id;
 

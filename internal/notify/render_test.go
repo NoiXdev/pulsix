@@ -772,3 +772,30 @@ func TestTheBodySaysWhenHostsWereExcludedForMaintenance(t *testing.T) {
 		t.Fatalf("webhook body = %s", out)
 	}
 }
+
+func TestRenderFollowUpOfLine(t *testing.T) {
+	ev := sampleEvent()
+	ev.FollowUpOf = nil
+	if _, body := renderEmail(ev); strings.Contains(body, "Follow-up of") {
+		t.Fatalf("a plain run mentions a parent: %s", body)
+	}
+	ev.FollowUpOf = &NamedRef{ID: ev.Template.ID, Name: "backup-all"}
+	for _, kind := range []EventKind{EventRunFinished, EventScheduleSkipped, EventScheduleFailed} {
+		ev.Kind = kind
+		if _, body := renderEmail(ev); !strings.Contains(body, "Follow-up of backup-all\n") {
+			t.Fatalf("%s email lacks the follow-up line:\n%s", kind, body)
+		}
+	}
+	body, err := renderWebhookBody("{{ follow_up_of.name }}|{{ follow_up_of.id }}", ev)
+	if err != nil || string(body) != "backup-all|"+ev.Template.ID.String() {
+		t.Fatalf("placeholders = %q, %v", body, err)
+	}
+	js, err := renderWebhookBody("", ev)
+	if err != nil || !strings.Contains(string(js), `"follow_up_of":{"id":`) {
+		t.Fatalf("webhook json = %s, %v", js, err)
+	}
+	ev.FollowUpOf = nil
+	if js, _ = renderWebhookBody("", ev); strings.Contains(string(js), "follow_up_of") {
+		t.Fatalf("follow_up_of is not omitted: %s", js)
+	}
+}

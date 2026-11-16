@@ -84,13 +84,74 @@ type Decision struct {
 	DueAt, DecidedAt         time.Time
 }
 
+// FollowUpDecision is a follow-up of a scheduled run that was decided
+// without starting a run (spec: job chaining, "Notifications"). The
+// schedule is the chain's root schedule; Category is skipped or failure.
+type FollowUpDecision struct {
+	OrgID, ScheduleID, RowID, TemplateID, ParentTemplateID uuid.UUID
+	Category                                               Category
+	Reason                                                 string
+	DecidedAt                                              time.Time
+}
+
+// eventContext holds the names an event carries, read when it is enqueued.
+// ParentTemplateName is empty for an event that is not a follow-up's.
+type eventContext struct {
+	OrgSlug, OrgName, ScheduleName string
+	TemplateID                     uuid.UUID
+	TemplateName                   string
+	ParentTemplateName             string
+}
+
 // RunGroupFinished implements jobs.RunGroupSink: a scheduled run group
 // that finished is reported to the channels its schedule's rules name for
 // the run's categories. ctx carries the finishing transaction.
 func (o *Outbox) RunGroupFinished(ctx context.Context, r jobs.RunGroupResult) error {
+	if r.Trigger == jobs.TriggerChain {
+		return o.chainedRunFinished(ctx, r)
+	}
 	if r.Trigger != jobs.TriggerSchedule || r.TriggerRef == nil {
 		return nil
 	}
+	sp, err := o.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification savepoint: %w", err)
+	}
+	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
+		return o.queueRunFinished(ctx, q, r, *r.TriggerRef, nil)
+	})
+}
+
+// chainedRunFinished reports a follow-up's run group under the chain's root
+// schedule, when the chain was started by a schedule that still exists. A
+// chain started by hand, by a webhook or by the system notifies nothing,
+// as its first run does not.
+func (o *Outbox) chainedRunFinished(ctx context.Context, r jobs.RunGroupResult) error {
+	sp, err := o.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification savepoint: %w", err)
+	}
+	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
+		row, err := q.GetFollowUpByChild(ctx, gen.GetFollowUpByChildParams{OrgID: r.OrgID, ChildGroupID: db.NullUUID(&r.GroupID)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read follow-up of run group: %w", err)
+		}
+		if row.RootTrigger != jobs.TriggerSchedule || !row.RootRef.Valid || len(row.Path) == 0 {
+			return nil
+		}
+		return o.queueRunFinished(ctx, q, r, uuid.UUID(row.RootRef.Bytes), &followUpRef{template: row.TemplateID, parent: row.Path[len(row.Path)-1]})
+	})
+}
+
+// followUpRef names the templates of a chained run.
+type followUpRef struct{ template, parent uuid.UUID }
+
+// queueRunFinished queues the run.finished event of r under scheduleID's
+// rules; fu is set for a chained run.
+func (o *Outbox) queueRunFinished(ctx context.Context, q *gen.Queries, r jobs.RunGroupResult, scheduleID uuid.UUID, fu *followUpRef) error {
 	result := "succeeded"
 	switch r.Status {
 	case jobs.StatusFailed, jobs.StatusError:
@@ -98,32 +159,27 @@ func (o *Outbox) RunGroupFinished(ctx context.Context, r jobs.RunGroupResult) er
 	case jobs.StatusCancelled:
 		result = "cancelled"
 	}
-	sp, err := o.db.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin notification savepoint: %w", err)
-	}
-	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
-		return o.enqueueSchedule(ctx, q, r.OrgID, *r.TriggerRef, "run:"+r.GroupID.String(), runCategories(result, r.HostsChanged),
-			func(sc gen.NotifyScheduleContextRow, cats []Category) Event {
-				run := &RunSummary{
-					ID: r.FirstJobID, Result: result, Hosts: r.Hosts, HostsOK: r.HostsOK(), HostsChanged: r.HostsChanged,
-					HostsFailed: r.HostsFailed, HostsNoResult: r.HostsNoResult, HostsExcluded: r.HostsExcluded,
-					StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-				}
-				if r.StartedAt != nil && r.FinishedAt != nil {
-					run.DurationSeconds = int64(r.FinishedAt.Sub(*r.StartedAt).Round(time.Second) / time.Second)
-				}
-				at := o.now()
-				if r.FinishedAt != nil {
-					at = *r.FinishedAt
-				}
-				return Event{
-					Kind: EventRunFinished, At: at, Org: OrgRef{ID: r.OrgID, Slug: sc.OrgSlug, Name: sc.OrgName}, Categories: cats,
-					Schedule: &NamedRef{ID: *r.TriggerRef, Name: sc.ScheduleName}, Template: &NamedRef{ID: sc.TemplateID, Name: sc.TemplateName},
-					Run: run, URL: o.publicURL + "/o/" + sc.OrgSlug + "/runs/" + r.FirstJobID.String(),
-				}
-			})
-	})
+	return o.enqueueSchedule(ctx, q, r.OrgID, scheduleID, "run:"+r.GroupID.String(), runCategories(result, r.HostsChanged), fu,
+		func(sc eventContext, cats []Category) Event {
+			run := &RunSummary{
+				ID: r.FirstJobID, Result: result, Hosts: r.Hosts, HostsOK: r.HostsOK(), HostsChanged: r.HostsChanged,
+				HostsFailed: r.HostsFailed, HostsNoResult: r.HostsNoResult, HostsExcluded: r.HostsExcluded,
+				StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
+			}
+			if r.StartedAt != nil && r.FinishedAt != nil {
+				run.DurationSeconds = int64(r.FinishedAt.Sub(*r.StartedAt).Round(time.Second) / time.Second)
+			}
+			at := o.now()
+			if r.FinishedAt != nil {
+				at = *r.FinishedAt
+			}
+			return Event{
+				Kind: EventRunFinished, At: at, Org: OrgRef{ID: r.OrgID, Slug: sc.OrgSlug, Name: sc.OrgName}, Categories: cats,
+				Schedule: &NamedRef{ID: scheduleID, Name: sc.ScheduleName}, Template: &NamedRef{ID: sc.TemplateID, Name: sc.TemplateName},
+				FollowUpOf: sc.followUpOf(fu),
+				Run:        run, URL: o.publicURL + "/o/" + sc.OrgSlug + "/runs/" + r.FirstJobID.String(),
+			}
+		})
 }
 
 // EnqueueDecision reports a decision that started no run (skipped,
@@ -140,13 +196,47 @@ func (o *Outbox) EnqueueDecision(ctx context.Context, tx pgx.Tx, d Decision) err
 		return fmt.Errorf("begin notification savepoint: %w", err)
 	}
 	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
-		return o.enqueueSchedule(ctx, q, d.OrgID, d.ScheduleID, "decision:"+d.RunID.String(), []Category{cat},
-			func(sc gen.NotifyScheduleContextRow, cats []Category) Event {
+		return o.enqueueSchedule(ctx, q, d.OrgID, d.ScheduleID, "decision:"+d.RunID.String(), []Category{cat}, nil,
+			func(sc eventContext, cats []Category) Event {
 				return Event{
 					Kind: kind, At: d.DecidedAt, Org: OrgRef{ID: d.OrgID, Slug: sc.OrgSlug, Name: sc.OrgName}, Categories: cats,
 					Schedule: &NamedRef{ID: d.ScheduleID, Name: sc.ScheduleName}, Template: &NamedRef{ID: sc.TemplateID, Name: sc.TemplateName},
 					Decision: &DecisionSummary{Outcome: d.Outcome, Reason: d.Reason, DueAt: d.DueAt},
 					URL:      o.publicURL + "/o/" + sc.OrgSlug + "/schedules?id=" + d.ScheduleID.String(),
+				}
+			})
+	})
+}
+
+// FollowUpDecision reports a follow-up of a scheduled run that was decided
+// without starting a run, inside tx (the chain starter's row savepoint):
+// skipped or failure under the chain's root schedule's rules. Any other
+// category queues nothing.
+func (o *Outbox) FollowUpDecision(ctx context.Context, tx pgx.Tx, d FollowUpDecision) error {
+	var kind EventKind
+	var outcome string
+	switch d.Category {
+	case CategorySkipped:
+		kind, outcome = EventScheduleSkipped, "follow_up_skipped"
+	case CategoryFailure:
+		kind, outcome = EventScheduleFailed, "follow_up_failed"
+	default:
+		return nil
+	}
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin notification savepoint: %w", err)
+	}
+	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
+		return o.enqueueSchedule(ctx, q, d.OrgID, d.ScheduleID, "chain:"+d.RowID.String(), []Category{d.Category},
+			&followUpRef{template: d.TemplateID, parent: d.ParentTemplateID},
+			func(sc eventContext, cats []Category) Event {
+				return Event{
+					Kind: kind, At: d.DecidedAt, Org: OrgRef{ID: d.OrgID, Slug: sc.OrgSlug, Name: sc.OrgName}, Categories: cats,
+					Schedule: &NamedRef{ID: d.ScheduleID, Name: sc.ScheduleName}, Template: &NamedRef{ID: sc.TemplateID, Name: sc.TemplateName},
+					FollowUpOf: &NamedRef{ID: d.ParentTemplateID, Name: sc.ParentTemplateName},
+					Decision:   &DecisionSummary{Outcome: outcome, Reason: d.Reason, DueAt: d.DecidedAt},
+					URL:        o.publicURL + "/o/" + sc.OrgSlug + "/schedules?id=" + d.ScheduleID.String(),
 				}
 			})
 	})
@@ -166,9 +256,10 @@ func (o *Outbox) inSavepoint(ctx context.Context, sp pgx.Tx, fn func(q *gen.Quer
 
 // enqueueSchedule queues ev for every enabled channel the schedule's
 // rules route any of cats to. A schedule deleted meanwhile (its rules go
-// with it) enqueues nothing.
-func (o *Outbox) enqueueSchedule(ctx context.Context, q *gen.Queries, orgID, scheduleID uuid.UUID, key string, cats []Category,
-	build func(sc gen.NotifyScheduleContextRow, cats []Category) Event) error {
+// with it) enqueues nothing. fu is set for a chain's follow-up: the names
+// then come from the follow-up and parent templates, not the schedule's own.
+func (o *Outbox) enqueueSchedule(ctx context.Context, q *gen.Queries, orgID, scheduleID uuid.UUID, key string, cats []Category, fu *followUpRef,
+	build func(sc eventContext, cats []Category) Event) error {
 	names := make([]string, len(cats))
 	for i, c := range cats {
 		names[i] = string(c)
@@ -180,7 +271,7 @@ func (o *Outbox) enqueueSchedule(ctx context.Context, q *gen.Queries, orgID, sch
 	if len(channels) == 0 {
 		return nil
 	}
-	sc, err := q.NotifyScheduleContext(ctx, gen.NotifyScheduleContextParams{OrgID: orgID, ScheduleID: scheduleID})
+	sc, err := o.loadContext(ctx, q, orgID, scheduleID, fu)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -188,6 +279,25 @@ func (o *Outbox) enqueueSchedule(ctx context.Context, q *gen.Queries, orgID, sch
 		return fmt.Errorf("read notification context: %w", err)
 	}
 	return o.insert(ctx, q, orgID, key, build(sc, cats), channels)
+}
+
+// loadContext reads the names an event carries; pgx.ErrNoRows when the
+// schedule is gone.
+func (o *Outbox) loadContext(ctx context.Context, q *gen.Queries, orgID, scheduleID uuid.UUID, fu *followUpRef) (eventContext, error) {
+	if fu == nil {
+		sc, err := q.NotifyScheduleContext(ctx, gen.NotifyScheduleContextParams{OrgID: orgID, ScheduleID: scheduleID})
+		return eventContext{OrgSlug: sc.OrgSlug, OrgName: sc.OrgName, ScheduleName: sc.ScheduleName, TemplateID: sc.TemplateID, TemplateName: sc.TemplateName}, err
+	}
+	sc, err := q.NotifyFollowUpContext(ctx, gen.NotifyFollowUpContextParams{OrgID: orgID, ScheduleID: scheduleID, TemplateID: fu.template, ParentTemplateID: fu.parent})
+	return eventContext{OrgSlug: sc.OrgSlug, OrgName: sc.OrgName, ScheduleName: sc.ScheduleName, TemplateID: fu.template, TemplateName: sc.TemplateName, ParentTemplateName: sc.ParentTemplateName}, err
+}
+
+// followUpOf is the event's FollowUpOf for fu: nil for a plain run.
+func (c eventContext) followUpOf(fu *followUpRef) *NamedRef {
+	if fu == nil {
+		return nil
+	}
+	return &NamedRef{ID: fu.parent, Name: c.ParentTemplateName}
 }
 
 // EnqueueDigest queues a weekly digest for the organization's enabled

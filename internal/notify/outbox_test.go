@@ -312,3 +312,124 @@ func TestEnqueueIsTheExportedDoor(t *testing.T) {
 		t.Errorf("deliveries = %d, want 1", n)
 	}
 }
+
+// seedFollowUp inserts a started follow-up row whose child group is group:
+// the chain's root is (rootTrigger, rootRef), the parent run played
+// parentTmpl and the follow-up template is a new one named name.
+func (w *outboxWorld) seedFollowUp(t *testing.T, name, rootTrigger string, rootRef *uuid.UUID, parentTmpl, group uuid.UUID) (rowID, followTmpl uuid.UUID) {
+	t.Helper()
+	q := gen.New(w.d.Pool())
+	inline := "- hosts: all\n  tasks: []\n"
+	pb, err := q.CreatePlaybook(ctx, gen.CreatePlaybookParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Inline: &inline, Source: "editor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := q.InsertTemplate(ctx, gen.InsertTemplateParams{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Name: name, PlaybookID: db.NullUUID(&pb.ID), Scope: []byte(`{}`), ExtraVars: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowID = uuid.Must(uuid.NewV7())
+	if _, err := w.d.Pool().Exec(ctx, `INSERT INTO run_follow_ups (id, org_id, parent_group_id, template_id, state, child_group_id, root_trigger, root_ref, depth, path)
+		VALUES ($1, $2, $3, $4, 'started', $5, $6, $7, 1, ARRAY[$8]::uuid[])`,
+		rowID, w.org, uuid.Must(uuid.NewV7()), tmpl.ID, group, rootTrigger, rootRef, parentTmpl); err != nil {
+		t.Fatal(err)
+	}
+	return rowID, tmpl.ID
+}
+
+func (w *outboxWorld) rootTemplate(t *testing.T) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := w.d.Pool().QueryRow(ctx, `SELECT template_id FROM schedules WHERE id = $1`, w.schedule).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestOutboxNotifiesChainedRunUnderRootSchedule(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-chain")
+	group := uuid.Must(uuid.NewV7())
+	_, followTmpl := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, w.rootTemplate(t), group)
+	start := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
+	end := start.Add(time.Minute)
+	first := uuid.Must(uuid.NewV7())
+	r := jobs.RunGroupResult{
+		OrgID: w.org, GroupID: group, FirstJobID: first, Trigger: jobs.TriggerChain, TriggerRef: &w.schedule,
+		Status: jobs.StatusFailed, Jobs: 1, Hosts: 2, HostsFailed: 1, StartedAt: &start, FinishedAt: &end,
+	}
+	w.finish(t, r)
+	w.finish(t, r)
+	got := w.queued(t)
+	if len(got) != 2 {
+		t.Fatalf("queued = %+v, want one failure message each for A and B", got)
+	}
+	ev := got[0].ev
+	if got[0].key != "run:"+group.String() || ev.Kind != notify.EventRunFinished || ev.Schedule.ID != w.schedule || ev.Schedule.Name != "Nightly" ||
+		ev.Template.ID != followTmpl || ev.Template.Name != "restart-services" || ev.FollowUpOf == nil || ev.FollowUpOf.Name != "patch-all" ||
+		ev.URL != "https://pulsix.example.test/o/outbox-chain/runs/"+first.String() {
+		t.Fatalf("event = %+v key %q", ev, got[0].key)
+	}
+}
+
+func TestOutboxIgnoresChainedRunOfManualRoot(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-chain-manual")
+	group := uuid.Must(uuid.NewV7())
+	w.seedFollowUp(t, "restart-services", "manual", nil, w.rootTemplate(t), group)
+	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: group, Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
+	// A group with no follow-up row at all, and a deleted root schedule, queue nothing either.
+	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
+	group2 := uuid.Must(uuid.NewV7())
+	w.seedFollowUp(t, "other", "schedule", &w.schedule, w.rootTemplate(t), group2)
+	if _, err := w.d.Pool().Exec(ctx, `DELETE FROM schedules WHERE id = $1`, w.schedule); err != nil {
+		t.Fatal(err)
+	}
+	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: group2, Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
+	if got := w.queued(t); len(got) != 0 {
+		t.Fatalf("queued = %+v", got)
+	}
+}
+
+func TestOutboxFollowUpDecisionCategories(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-chain-decision")
+	parent := w.rootTemplate(t)
+	row, followTmpl := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, parent, uuid.Must(uuid.NewV7()))
+	decide := func(id uuid.UUID, cat notify.Category, reason string) {
+		t.Helper()
+		tx, err := w.d.Pool().Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+		at := time.Date(2026, 9, 22, 3, 0, 0, 0, time.UTC)
+		if err := w.outbox.FollowUpDecision(ctx, tx, notify.FollowUpDecision{
+			OrgID: w.org, ScheduleID: w.schedule, RowID: id, TemplateID: followTmpl, ParentTemplateID: parent,
+			Category: cat, Reason: reason, DecidedAt: at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decide(row, notify.CategorySkipped, "every host is in a maintenance window")
+	decide(row, notify.CategorySkipped, "every host is in a maintenance window") // idempotent per row
+	got := w.queued(t)
+	if len(got) != 1 || got[0].channel != w.chA.ID || got[0].key != "chain:"+row.String() || got[0].ev.Kind != notify.EventScheduleSkipped ||
+		got[0].ev.Decision.Outcome != "follow_up_skipped" || got[0].ev.Decision.Reason != "every host is in a maintenance window" ||
+		got[0].ev.Template.Name != "restart-services" || got[0].ev.FollowUpOf == nil || got[0].ev.FollowUpOf.Name != "patch-all" {
+		t.Fatalf("skipped = %+v, want one message to A", got)
+	}
+	row2 := uuid.Must(uuid.NewV7())
+	decide(row2, notify.CategoryFailure, "the template was deleted")
+	got = w.queued(t)
+	if len(got) != 3 {
+		t.Fatalf("a failure decision reaches A and B, queued = %d", len(got))
+	}
+	if ev := got[2].ev; ev.Kind != notify.EventScheduleFailed || ev.Decision.Outcome != "follow_up_failed" || !ev.Decision.DueAt.Equal(time.Date(2026, 9, 22, 3, 0, 0, 0, time.UTC)) {
+		t.Fatalf("failure event = %+v", ev)
+	}
+	decide(uuid.Must(uuid.NewV7()), notify.CategoryChange, "x") // not a decision category: nothing
+	if got := w.queued(t); len(got) != 3 {
+		t.Fatalf("an unsupported category queued %d", len(got))
+	}
+}

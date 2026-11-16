@@ -229,6 +229,11 @@ var placeholderFields = map[string]func(Event) (any, bool){
 	},
 	"template.name": func(ev Event) (any, bool) { return refField(ev.Template, func(r NamedRef) any { return r.Name }) },
 
+	"follow_up_of.id": func(ev Event) (any, bool) {
+		return refField(ev.FollowUpOf, func(r NamedRef) any { return r.ID.String() })
+	},
+	"follow_up_of.name": func(ev Event) (any, bool) { return refField(ev.FollowUpOf, func(r NamedRef) any { return r.Name }) },
+
 	"run.id":     func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.ID.String() }) },
 	"run.result": func(ev Event) (any, bool) { return runField(ev.Run, func(r RunSummary) any { return r.Result }) },
 	"run.url": func(ev Event) (any, bool) {
@@ -392,16 +397,16 @@ func sampleEventForKind(kind EventKind) Event {
 	case EventScheduleSkipped, EventScheduleFailed:
 		ev.Run, ev.Digest, ev.Alerts = nil, nil, nil
 	case EventDigest:
-		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Alerts = nil, nil, nil, nil, nil
+		ev.Schedule, ev.Template, ev.FollowUpOf, ev.Run, ev.Decision, ev.Alerts = nil, nil, nil, nil, nil, nil
 	case EventAlertBatch:
 		// An alert batch carries no schedule, template, run or decision —
 		// the follower builds it from alert events and the organization,
 		// and nothing else (alertroutes.Follower.enqueue). Categories are
 		// run outcomes, so they are absent too.
-		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil
+		ev.Schedule, ev.Template, ev.FollowUpOf, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil, nil
 		ev.Categories = nil
 	case EventTest:
-		ev.Schedule, ev.Template, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil
+		ev.Schedule, ev.Template, ev.FollowUpOf, ev.Run, ev.Decision, ev.Digest = nil, nil, nil, nil, nil, nil
 		ev.Alerts, ev.Categories, ev.URL = nil, nil, ""
 	}
 	return ev
@@ -420,6 +425,9 @@ func hostileSampleEventForKind(kind EventKind) Event {
 	}
 	if ev.Template != nil {
 		ev.Template.Name = hostile
+	}
+	if ev.FollowUpOf != nil {
+		ev.FollowUpOf.Name = hostile
 	}
 	if ev.Run != nil {
 		ev.Run.Result = hostile

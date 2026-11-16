@@ -751,6 +751,52 @@ func (q *Queries) LockDueDigests(ctx context.Context, arg LockDueDigestsParams) 
 	return items, nil
 }
 
+const notifyFollowUpContext = `-- name: NotifyFollowUpContext :one
+SELECT o.slug AS org_slug, o.name AS org_name, s.name AS schedule_name,
+       COALESCE(ft.name, '')::text AS template_name, COALESCE(pt.name, '')::text AS parent_template_name
+FROM schedules AS s
+JOIN organizations AS o ON o.id = s.org_id
+LEFT JOIN job_templates AS ft ON ft.org_id = s.org_id AND ft.id = $1
+LEFT JOIN job_templates AS pt ON pt.org_id = s.org_id AND pt.id = $2
+WHERE s.org_id = $3 AND s.id = $4
+`
+
+type NotifyFollowUpContextParams struct {
+	TemplateID       uuid.UUID `json:"template_id"`
+	ParentTemplateID uuid.UUID `json:"parent_template_id"`
+	OrgID            uuid.UUID `json:"org_id"`
+	ScheduleID       uuid.UUID `json:"schedule_id"`
+}
+
+type NotifyFollowUpContextRow struct {
+	OrgSlug            string `json:"org_slug"`
+	OrgName            string `json:"org_name"`
+	ScheduleName       string `json:"schedule_name"`
+	TemplateName       string `json:"template_name"`
+	ParentTemplateName string `json:"parent_template_name"`
+}
+
+// The names a follow-up message carries: the chain's root schedule, the
+// follow-up template and the parent template. A template deleted meanwhile
+// reads as an empty name rather than losing the message.
+func (q *Queries) NotifyFollowUpContext(ctx context.Context, arg NotifyFollowUpContextParams) (NotifyFollowUpContextRow, error) {
+	row := q.db.QueryRow(ctx, notifyFollowUpContext,
+		arg.TemplateID,
+		arg.ParentTemplateID,
+		arg.OrgID,
+		arg.ScheduleID,
+	)
+	var i NotifyFollowUpContextRow
+	err := row.Scan(
+		&i.OrgSlug,
+		&i.OrgName,
+		&i.ScheduleName,
+		&i.TemplateName,
+		&i.ParentTemplateName,
+	)
+	return i, err
+}
+
 const notifyOrgContext = `-- name: NotifyOrgContext :one
 SELECT slug, name FROM organizations WHERE id = $1
 `
