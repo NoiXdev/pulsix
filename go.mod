@@ -33,6 +33,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/moby/moby/client v0.6.2
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pquerna/otp v1.5.0
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/shirou/gopsutil/v4 v4.26.10
@@ -75,6 +76,7 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
@@ -100,6 +102,8 @@ require (
 	github.com/philhofer/fwd v1.2.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260805114148-88456608a4f6 // indirect
 	github.com/rs/xid v1.6.0 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
@@ -107,6 +111,7 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -117,8 +122,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 )

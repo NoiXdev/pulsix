@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agents"
@@ -31,6 +32,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/mcp"
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
@@ -506,6 +508,15 @@ func New(deps Deps) (http.Handler, error) {
 	hapi := humachi.New(r, cfg)
 	registerRoutes(hapi, deps)
 
+	// The assistant endpoint (spec 2026-11-16 assistant access): MCP over
+	// stateless Streamable HTTP. Its tools dispatch back into r itself, so
+	// every call passes the same middleware, authorization and audit as a
+	// REST request.
+	r.Handle("/api/mcp", mcp.New(mcp.Deps{
+		Router: r, Tokens: deps.Tokens, Assistant: deps.Assistant, Orgs: orgSlugs{deps.Tenancy},
+		Version: managerVersion(deps), PublicURL: deps.PublicURL,
+	}))
+
 	// Anything chi did not match above — every SPA route (/, /login,
 	// /o/{org}/hosts, ...) and any /api/... path that is not a real
 	// endpoint — falls through to the built frontend. web.Handler serves
@@ -515,6 +526,17 @@ func New(deps Deps) (http.Handler, error) {
 	// for it (see its own doc comment).
 	r.NotFound(web.Handler().ServeHTTP)
 	return r, nil
+}
+
+// orgSlugs adapts the tenancy service to mcp.OrgSlugs.
+type orgSlugs struct{ t *tenancy.Service }
+
+func (o orgSlugs) SlugOf(ctx context.Context, orgID uuid.UUID) (string, error) {
+	org, err := o.t.GetOrgByID(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	return org.Slug, nil
 }
 
 // requireMFAForExplorer gates the API explorer page, the OpenAPI spec it
