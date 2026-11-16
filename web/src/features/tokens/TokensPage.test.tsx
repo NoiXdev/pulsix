@@ -317,3 +317,17 @@ describe('TokensPage assistant tokens', () => {
     expect(screen.getByText('Inventory: write · Jobs: read')).toBeInTheDocument();
   });
 });
+
+describe('TokensPage API explorer hint', () => {
+  it('points to the API explorer, opened in a new tab', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+
+    renderPage(qc);
+
+    const link = await screen.findByRole('link', { name: /API explorer/ });
+    expect(link).toHaveAttribute('href', '/api/explorer');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+});

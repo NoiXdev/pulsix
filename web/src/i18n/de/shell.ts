@@ -32,6 +32,8 @@ export const deShell: Messages['shell'] = {
   accountMenu: 'Kontomenü',
   accountSecurity: 'Kontosicherheit',
   logOut: 'Abmelden',
+  apiExplorer: 'API-Explorer',
+  opensInNewTab: '(öffnet in einem neuen Tab)',
   notifications: 'Benachrichtigungen',
   version: 'Pulsix-Version',
   crumbs: {

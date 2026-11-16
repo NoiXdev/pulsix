@@ -211,6 +211,18 @@ describe('AppShell', () => {
     await user.click(screen.getByRole('button', { name: 'Log out' }));
     expect(onLogout).toHaveBeenCalledOnce();
   });
+
+  it('the footer menu opens the API explorer in a new tab', async () => {
+    const user = userEvent.setup();
+    renderShellAt('/o/acme/hosts');
+
+    await user.click(await screen.findByRole('button', { name: 'Account menu' }));
+    // The explorer is a page the server serves, not an SPA route.
+    const link = screen.getByRole('link', { name: /API explorer/ });
+    expect(link).toHaveAttribute('href', '/api/explorer');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
 });
 
 /**

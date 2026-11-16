@@ -15,6 +15,8 @@ export const deTokens: Messages['tokens'] = {
   revoked: (name: string) => `Token ${name} widerrufen`,
   revokeFailed: 'Token konnte nicht widerrufen werden',
   createFailed: 'Token konnte nicht erstellt werden',
+  explorerHint: 'Alle Endpunkte mit ihren Schemas, dazu eine Konsole für Anfragen mit der aktuellen Sitzung:',
+  explorerLink: 'API-Explorer',
   empty: 'Noch keine Tokens.',
   shownOnce: 'Dieses Token jetzt kopieren – es wird genau einmal angezeigt und kann nicht erneut abgerufen werden.',
   copy: 'Kopieren',

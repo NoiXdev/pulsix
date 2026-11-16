@@ -16,6 +16,8 @@ export const enTokens = {
   revokeFailed: 'failed to revoke token',
   createFailed: 'failed to create token',
   empty: 'No tokens yet.',
+  explorerHint: 'Every endpoint with its schema, and a console for requests with the current session:',
+  explorerLink: 'API explorer',
   shownOnce: 'Copy this token now — it is shown exactly once and cannot be retrieved again.',
   copy: 'Copy',
   done: 'Done',

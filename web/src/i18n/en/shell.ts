@@ -35,6 +35,9 @@ export const enShell = {
   accountMenu: 'Account menu',
   accountSecurity: 'Account security',
   logOut: 'Log out',
+  // The explorer the server serves at /api/explorer (backlog 1.8, 3.91).
+  apiExplorer: 'API explorer',
+  opensInNewTab: '(opens in a new tab)',
   notifications: 'Notifications',
   version: 'Pulsix version',
   /** Breadcrumb labels, keyed by the URL segment they stand for. */

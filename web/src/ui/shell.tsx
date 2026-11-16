@@ -329,6 +329,17 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, on
               >
                 {t.shell.accountSecurity}
               </Link>
+              {/* Served by the manager, not an SPA route: a plain link. It
+                  answers only an MFA-complete session, like the shell. */}
+              <a
+                href="/api/explorer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-background"
+              >
+                {t.shell.apiExplorer}
+                <span className="sr-only"> {t.shell.opensInNewTab}</span>
+              </a>
               <button
                 type="button"
                 onClick={onLogout}

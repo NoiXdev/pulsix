@@ -81,6 +81,13 @@ export function TokensPage() {
       <span className="text-[13px] text-muted-foreground">
         {tokens.data ? t.tokens.count((tokens.data.tokens ?? []).length) : t.common.loading}
       </span>
+      <p className="text-[13px] text-muted-foreground">
+        {t.tokens.explorerHint}{' '}
+        <a href="/api/explorer" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2">
+          {t.tokens.explorerLink}
+          <span className="sr-only"> {t.shell.opensInNewTab}</span>
+        </a>
+      </p>
 
       <Card>
         <GridHeader columns={COLUMNS}>

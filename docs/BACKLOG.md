@@ -510,6 +510,7 @@ message.
 | 3.88 | Stale current-value rows when a metric stops being reported | planned | From 3.13b (pre-existing, widened by it). A `check_current` row is never deleted, so a metric a changed configuration no longer reports stays at its last value: removing `body_contains` leaves `http.body_match` stale, changing a URL from a name to an IP leaves `http.dns_ms` stale |
 | 3.89 | Assertion items listed as generic value rows on the host page | planned | From 3.13b. Assertion items also show as generic value rows next to the assertion table; fold their rule, decision and forget actions into the table |
 | 3.90 | CSS sibling combinators and more pseudo-classes for html assertions | planned | From 3.13b. `+` and `~` and further pseudo-classes for `html(...)`, with a bounded matcher like the current one |
+| 3.91 | A way to find the API explorer in the GUI | done | The explorer (1.8, `/api/explorer`, behind an MFA-complete session) had no link anywhere in the SPA. The account menu in the sidebar footer now opens it in a new tab, and the API tokens page points to it under its title. Both are plain links to the page the manager serves; the server gate is unchanged |
 
 ## v0.4 · Alerting
 
