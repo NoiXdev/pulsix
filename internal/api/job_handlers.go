@@ -422,7 +422,8 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, FollowUps: override,
 		})
 		if err != nil {
-			if override != nil && errors.Is(err, jobs.ErrInvalidInput) {
+			var fe *jobs.FollowUpsError
+			if errors.As(err, &fe) {
 				return nil, huma.Error422UnprocessableEntity(err.Error(), &huma.ErrorDetail{Location: "body.follow_ups", Message: err.Error()})
 			}
 			return nil, mapJobsErr(ctx, err)

@@ -26,10 +26,11 @@ type ChainReader interface {
 
 // chainParentDTO is the run a chained run is the follow-up of.
 type chainParentDTO struct {
-	GroupID      string `json:"group_id"`
-	FirstJobID   string `json:"first_job_id" doc:"The parent run's first job, where its run view lives"`
-	TemplateID   string `json:"template_id,omitempty"`
-	TemplateName string `json:"template_name" doc:"(deleted) when the template no longer exists"`
+	_            struct{} `nullable:"true"`
+	GroupID      string   `json:"group_id"`
+	FirstJobID   string   `json:"first_job_id" doc:"The parent run's first job, where its run view lives"`
+	TemplateID   string   `json:"template_id,omitempty"`
+	TemplateName string   `json:"template_name" doc:"(deleted) when the template no longer exists"`
 }
 
 // chainFollowUpDTO is one follow-up of the run.
@@ -38,6 +39,7 @@ type chainFollowUpDTO struct {
 	TemplateID      string   `json:"template_id"`
 	TemplateName    string   `json:"template_name" doc:"(deleted) when the template no longer exists"`
 	State           string   `json:"state" enum:"pending,due,started,skipped,dismissed"`
+	Depth           int      `json:"depth" doc:"How many runs deep the chain is at this follow-up (1 = follows the root run)"`
 	Reason          string   `json:"reason" doc:"Why the follow-up was skipped, dismissed or waits; empty otherwise"`
 	ChildFirstJobID string   `json:"child_first_job_id,omitempty" doc:"The follow-up run's first job, once it started"`
 	Hosts           []string `json:"hosts" doc:"The hosts the follow-up runs on: the ones the parent run played on"`
@@ -56,7 +58,7 @@ func toChainFollowUpDTO(f chain.FollowUp) chainFollowUpDTO {
 	}
 	out := chainFollowUpDTO{
 		ID: f.ID.String(), TemplateID: f.TemplateID.String(), TemplateName: name,
-		State: string(f.State), Reason: f.Reason, Hosts: make([]string, len(f.HostIDs)),
+		State: string(f.State), Depth: f.Depth, Reason: f.Reason, Hosts: make([]string, len(f.HostIDs)),
 	}
 	for i, h := range f.HostIDs {
 		out.Hosts[i] = h.String()
@@ -84,21 +86,15 @@ func runChain(ctx context.Context, deps Deps, orgID uuid.UUID, j jobs.Job) (chai
 	if parent == nil {
 		return out, nil
 	}
-	siblings, _, err := deps.Jobs.List(ctx, orgID, jobs.Filter{RunGroupID: &parent.ParentGroupID}, "", jobs.MaxListLimit)
+	sums, err := deps.Jobs.GroupSummaries(ctx, orgID, []uuid.UUID{parent.ParentGroupID})
 	if err != nil {
-		return out, fmt.Errorf("list parent run: %w", err)
+		return out, fmt.Errorf("summarise parent run: %w", err)
 	}
-	if len(siblings) == 0 {
+	sum, ok := sums[parent.ParentGroupID]
+	if !ok {
 		return out, nil
 	}
-	first := siblings[0]
-	for _, s := range siblings[1:] {
-		if s.CreatedAt.Before(first.CreatedAt) {
-			first = s
-		}
-	}
-	// The list rows carry no template name; the detail read does.
-	first, err = deps.Jobs.Get(ctx, orgID, first.ID)
+	first, err := deps.Jobs.Get(ctx, orgID, sum.FirstJobID)
 	if err != nil {
 		return out, fmt.Errorf("read parent run: %w", err)
 	}
@@ -134,15 +130,11 @@ func registerChainRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
-		group, _, err := deps.Jobs.List(ctx, scope.OrgID, jobs.Filter{RunGroupID: &j.RunGroupID}, "", jobs.MaxListLimit)
+		sums, err := deps.Jobs.GroupSummaries(ctx, scope.OrgID, []uuid.UUID{j.RunGroupID})
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
-		finished := true
-		for _, g := range group {
-			finished = finished && g.Status.Terminal()
-		}
-		if finished {
+		if sum, ok := sums[j.RunGroupID]; !ok || sum.Status.Terminal() {
 			return nil, huma.Error409Conflict("this run has finished; its follow-ups can no longer be dismissed")
 		}
 		n, err := deps.Chain.Dismiss(ctx, scope.OrgID, j.RunGroupID, "dismissed by "+actorName(ctx, deps), time.Now())

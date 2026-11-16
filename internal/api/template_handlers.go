@@ -80,6 +80,7 @@ type templateDTO struct {
 type templateFollowUpDTO struct {
 	TemplateID   string `json:"template_id"`
 	TemplateName string `json:"template_name"`
+	Position     int    `json:"position"`
 }
 
 // templateFollowUpInput is one follow-up as a create or update sends it.
@@ -90,7 +91,7 @@ type templateFollowUpInput struct {
 func toTemplateFollowUpDTOs(items []templates.FollowUp) []templateFollowUpDTO {
 	out := make([]templateFollowUpDTO, len(items))
 	for i, f := range items {
-		out[i] = templateFollowUpDTO{TemplateID: f.TemplateID.String(), TemplateName: f.Name}
+		out[i] = templateFollowUpDTO{TemplateID: f.TemplateID.String(), TemplateName: f.Name, Position: i}
 	}
 	return out
 }

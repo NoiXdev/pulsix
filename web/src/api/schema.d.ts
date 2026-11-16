@@ -4051,6 +4051,11 @@ export interface components {
         ChainFollowUpDTO: {
             /** @description The follow-up run's first job, once it started */
             child_first_job_id?: string;
+            /**
+             * Format: int64
+             * @description How many runs deep the chain is at this follow-up (1 = follows the root run)
+             */
+            depth: number;
             /** @description The hosts the follow-up runs on: the ones the parent run played on */
             hosts: string[] | null;
             id: string;
@@ -4069,7 +4074,7 @@ export interface components {
             template_id?: string;
             /** @description (deleted) when the template no longer exists */
             template_name: string;
-        };
+        } | null;
         Change: {
             attr: string;
             new?: unknown;
@@ -7447,6 +7452,8 @@ export interface components {
             template: components["schemas"]["TemplateDTO"];
         };
         TemplateFollowUpDTO: {
+            /** Format: int64 */
+            position: number;
             template_id: string;
             template_name: string;
         };

@@ -3,11 +3,14 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/templates"
 )
 
 // followUpRows reads the run_follow_ups rows of a parent run group as
@@ -47,6 +50,7 @@ type chainDetail struct {
 				TemplateID      string   `json:"template_id"`
 				TemplateName    string   `json:"template_name"`
 				State           string   `json:"state"`
+				Depth           int      `json:"depth"`
 				Reason          string   `json:"reason"`
 				ChildFirstJobID string   `json:"child_first_job_id"`
 				Hosts           []string `json:"hosts"`
@@ -106,6 +110,9 @@ func TestRunFollowUpOverrideRejects(t *testing.T) {
 	resp := postJSON(t, f.operatorC, f.runURL(), map[string]any{"follow_ups": []string{f.templateID.String()}})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("self: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if body := mustReadBody(t, resp); !strings.Contains(body, `"location":"body.follow_ups"`) {
+		t.Fatalf("self: want the error at body.follow_ups: %s", body)
 	}
 	resp = postJSON(t, f.operatorC, f.runURL(), map[string]any{"follow_ups": []string{uuid.NewString()}})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
@@ -194,5 +201,53 @@ func TestDismissFollowUps(t *testing.T) {
 	finishJob(t, f.s, f.zoneA, uuid.MustParse(parent.ID), jobs.StatusSucceeded, nil, "")
 	if resp := postJSON(t, f.operatorC, url, nil); resp.StatusCode != http.StatusConflict {
 		t.Fatalf("terminal: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// The parent's first job is the lowest id among jobs sharing created_at,
+// the order the rest of the system uses (created_at, id).
+func TestJobDetailParentFirstJobBreaksTiesByLowestID(t *testing.T) {
+	f := newRunFixture(t, "chain-tie")
+	b := f.followUpTemplate(t, "notify")
+	parentTmpl, err := f.s.Deps.Templates.Create(db.WithOrgScope(context.Background(), f.orgID), f.orgID, templates.CreateInput{
+		Name: "build", PlaybookID: f.playbook, Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA, f.hostB}}, FollowUps: []uuid.UUID{b},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := runJob(t, f.operatorC, f.runURLFor(parentTmpl.ID))
+	if len(created) != 2 {
+		t.Fatalf("want one job per zone, got %d", len(created))
+	}
+	if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE jobs SET created_at = now() WHERE run_group_id = $1`, uuid.MustParse(created[0].RunGroupID)); err != nil {
+		t.Fatal(err)
+	}
+	lowest := created[0].ID
+	for _, j := range created {
+		if j.ID < lowest {
+			lowest = j.ID
+		}
+	}
+	for _, j := range created {
+		zone := f.zoneA
+		if j.ZoneID == f.zoneB.String() {
+			zone = f.zoneB
+		}
+		host := f.hostA
+		if zone == f.zoneB {
+			host = f.hostB
+		}
+		finishJob(t, f.s, zone, uuid.MustParse(j.ID), jobs.StatusSucceeded, map[string]any{"ok_hosts": []string{host.String()}}, "")
+	}
+	if err := f.s.ChainStarter.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	parent := f.chainDetail(t, created[0].ID)
+	child := f.chainDetail(t, parent.Job.Chain.FollowUps[0].ChildFirstJobID)
+	if p := child.Job.Chain.Parent; p == nil || p.FirstJobID != lowest {
+		t.Fatalf("parent first job = %+v, want the lowest id %s", p, lowest)
+	}
+	if d := parent.Job.Chain.FollowUps[0].Depth; d != 1 {
+		t.Fatalf("depth = %d, want 1", d)
 	}
 }

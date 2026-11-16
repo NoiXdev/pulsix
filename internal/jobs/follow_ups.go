@@ -48,6 +48,17 @@ type FollowUpPlanner interface {
 // SetFollowUpPlanner wires the planner; unwired, runs plan no follow-ups.
 func (s *Service) SetFollowUpPlanner(p FollowUpPlanner) { s.followUps = p }
 
+// FollowUpsError says a run's follow-up override is the problem. It is also
+// an ErrInvalidInput; the API places it at the request's follow_ups field.
+type FollowUpsError struct{ err error }
+
+func (e *FollowUpsError) Error() string { return e.err.Error() }
+func (e *FollowUpsError) Unwrap() error { return e.err }
+
+func invalidFollowUps(format string, args ...any) error {
+	return &FollowUpsError{err: fmt.Errorf("%w: "+format, append([]any{ErrInvalidInput}, args...)...)}
+}
+
 // planFollowUps validates a run's follow-up override and hands the run to
 // the planner. It runs before the run's jobs exist, so a job can never
 // finish before its follow-ups are recorded; a group that never gets jobs
@@ -86,15 +97,15 @@ type TemplateExistence interface {
 // Whether a follow-up can start is the starter's concern, later.
 func (s *Service) checkFollowUpOverride(ctx context.Context, orgID, self uuid.UUID, ids []uuid.UUID) error {
 	if len(ids) > MaxFollowUps {
-		return fmt.Errorf("%w: at most %d follow-ups per run", ErrInvalidInput, MaxFollowUps)
+		return invalidFollowUps("at most %d follow-ups per run", MaxFollowUps)
 	}
 	seen := make(map[uuid.UUID]bool, len(ids))
 	for _, id := range ids {
 		switch {
 		case id == self:
-			return fmt.Errorf("%w: a template cannot follow itself", ErrInvalidInput)
+			return invalidFollowUps("a template cannot follow itself")
 		case seen[id]:
-			return fmt.Errorf("%w: follow-up template %s is listed twice", ErrInvalidInput, id)
+			return invalidFollowUps("follow-up template %s is listed twice", id)
 		}
 		seen[id] = true
 	}
@@ -104,7 +115,7 @@ func (s *Service) checkFollowUpOverride(ctx context.Context, orgID, self uuid.UU
 			return fmt.Errorf("check follow-up template %s: %w", id, err)
 		}
 		if !exists {
-			return fmt.Errorf("%w: follow-up template %s does not exist", ErrInvalidInput, id)
+			return invalidFollowUps("follow-up template %s does not exist", id)
 		}
 	}
 	return nil
