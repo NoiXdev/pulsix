@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,21 +86,29 @@ func probeSpecsOf(as []probes.Assignment) ([]probeconfig.Spec, error) {
 
 // probeIngest is what one ProbeResults message did. Malformed and
 // Implausible are the check-results contract's own counts
-// (checks.SanitizeObservations); Unassigned counts results for a (target,
-// check key) not assigned to this agent — or a target that is not a
-// canonical host id — and ForeignMetric results whose metric the slot's
-// plugin does not report. Both are ordinary for an agent one refresh
-// behind its assignments and are dropped without an error to the agent.
+// (checks.SanitizeObservations). The others are results outside what the
+// agent was asked to report, each dropped without an error to the agent,
+// which may simply be one refresh behind its assignments:
+//
+//   - Unassigned: the (target, check key) is not assigned to this agent, the
+//     target is not a canonical host id, or the slot's plugin is unknown or
+//     snmp (never sent to an agent);
+//   - ForeignMetric: the slot's plugin does not report the metric;
+//   - UnaskedItem: the slot's params do not ask for the item (a plugin
+//     without items reports only on "");
+//   - WrongKind: a numeric metric carrying a label, or a discrete one a value.
 type probeIngest struct {
 	Accepted      int
 	Unassigned    int
 	ForeignMetric int
+	UnaskedItem   int
+	WrongKind     int
 	Malformed     int
 	Implausible   int
 }
 
 func (p probeIngest) dropped() int {
-	return p.Unassigned + p.ForeignMetric + p.Malformed + p.Implausible
+	return p.Unassigned + p.ForeignMetric + p.UnaskedItem + p.WrongKind + p.Malformed + p.Implausible
 }
 
 type probeSlot struct {
@@ -112,16 +121,17 @@ type probeSlot struct {
 // (checks.SanitizeObservations): a batch over its bounds is refused with
 // errCheckResultsRejected, which the stream answers InvalidArgument, and
 // malformed or implausible results are counted and left out. What remains
-// is kept only when it names a slot of the agent's current assignments —
-// one read per message — and a metric of that slot's plugin; everything
-// else is counted and dropped (Review Focus 1: never recorded). The kept
-// results are stored per target host, vantage = the agent's host id. A
-// store fault is the manager's and fails the stream like a check-results
-// store fault; the agent replays the batch after reconnecting.
+// is kept only when it fits a slot of the agent's current assignments —
+// one read per message — by probeFit; everything else is counted and
+// dropped (Review Focus 1: never recorded). The kept results are stored in
+// ONE RecordVantage call (one transaction across targets), vantage = the
+// agent's host id, so a message is stored whole or not at all and the
+// agent's replay after a fault cannot duplicate a part. A store fault is
+// the manager's and fails the stream like a check-results store fault.
 func (s *Service) recordProbeResults(ctx context.Context, agent agents.AgentIdentity, results *agentpb.ProbeResults) (probeIngest, error) {
 	var res probeIngest
 	if s.deps.Probes == nil {
-		slog.WarnContext(ctx, "agent probe results received but no probes store is wired; dropping",
+		s.logger().WarnContext(ctx, "agent probe results received but no probes store is wired; dropping",
 			"serial", agent.Serial, "host_id", agent.HostID)
 		return res, nil
 	}
@@ -142,36 +152,71 @@ func (s *Service) recordProbeResults(ctx context.Context, agent agents.AgentIden
 	if err != nil {
 		return res, fmt.Errorf("read agent probe assignments: %w", err)
 	}
-	metrics := make(map[probeSlot]map[string]bool, len(as))
+	slots := make(map[probeSlot]probes.Assignment, len(as))
 	for _, a := range as {
-		metrics[probeSlot{a.TargetHostID, a.CheckKey}] = pluginMetrics(a.Plugin)
+		slots[probeSlot{a.TargetHostID, a.CheckKey}] = a
 	}
-	byTarget := map[uuid.UUID][]checks.Observation{}
-	var targets []uuid.UUID
+	kept := make([]checks.Observation, 0, len(valid))
 	for _, o := range valid {
-		known, assigned := metrics[probeSlot{o.HostID, o.CheckKey}]
-		switch {
-		case o.HostID == uuid.Nil || !assigned:
+		a, assigned := slots[probeSlot{o.HostID, o.CheckKey}]
+		if o.HostID == uuid.Nil || !assigned {
 			res.Unassigned++
 			continue
-		case !known[o.Metric]:
-			res.ForeignMetric++
+		}
+		if !probeFit(a, o, &res) {
 			continue
 		}
-		if _, seen := byTarget[o.HostID]; !seen {
-			targets = append(targets, o.HostID)
-		}
-		byTarget[o.HostID] = append(byTarget[o.HostID], o)
+		kept = append(kept, o)
 	}
-	vantage := agent.HostID.String()
-	for _, target := range targets {
-		if err := s.deps.Probes.RecordVantage(ctx, agent.OrgID, vantage, byTarget[target]); err != nil {
+	if len(kept) > 0 {
+		if err := s.deps.Probes.RecordVantage(ctx, agent.OrgID, agent.HostID.String(), kept); err != nil {
 			return res, fmt.Errorf("record probe results: %w", err)
 		}
-		res.Accepted += len(byTarget[target])
+		res.Accepted = len(kept)
 	}
 	s.logProbeIngest(ctx, agent, res)
 	return res, nil
+}
+
+// probeFit reports whether o fits its assigned slot a, counting the reason
+// in res when it does not: the slot's plugin is known and not snmp (snmp
+// never goes to an agent, and with interfaces set its items are anything
+// the device names); the metric is one the plugin reports, of its kind —
+// a value for a numeric metric, a label for a discrete one, an error for
+// either; and the item is one the slot asks for ("" for a plugin without
+// items, checkplugins.AsksForItem otherwise).
+func probeFit(a probes.Assignment, o checks.Observation, res *probeIngest) bool {
+	d, ok := checkplugins.Get(a.Plugin)
+	if !ok || a.Plugin == "snmp" {
+		res.Unassigned++
+		return false
+	}
+	i := slices.IndexFunc(d.Metrics, func(m checkplugins.MetricSpec) bool { return m.Name == o.Metric })
+	if i < 0 {
+		res.ForeignMetric++
+		return false
+	}
+	switch d.Metrics[i].Kind {
+	case checkplugins.Numeric:
+		if o.Label != nil {
+			res.WrongKind++
+			return false
+		}
+	case checkplugins.Discrete:
+		if o.Value != nil {
+			res.WrongKind++
+			return false
+		}
+	}
+	asked := o.Item == ""
+	if d.ItemParam != "" {
+		asked = checkplugins.AsksForItem(a.Plugin, a.Params, o.Item)
+	}
+	if !asked {
+		res.UnaskedItem++
+		return false
+	}
+	return true
 }
 
 // probeObservations maps wire results to observations keyed by their
@@ -203,20 +248,6 @@ func probeObservations(items []*agentpb.ProbeResult) []checks.Observation {
 	return obs
 }
 
-// pluginMetrics is the set of metric names plugin reports; empty for a
-// plugin the manager does not know.
-func pluginMetrics(plugin string) map[string]bool {
-	d, ok := checkplugins.Get(plugin)
-	if !ok {
-		return map[string]bool{}
-	}
-	out := make(map[string]bool, len(d.Metrics))
-	for _, m := range d.Metrics {
-		out[m.Name] = true
-	}
-	return out
-}
-
 // logProbeIngest logs what a message dropped, counts only. A malformed or
 // implausible result is a broken agent build or a skewed clock and is
 // warned about, as for check results; a result outside the assignment is
@@ -236,7 +267,8 @@ func (s *Service) logProbeIngest(ctx context.Context, agent agents.AgentIdentity
 	s.logger().Log(ctx, level, msg,
 		"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID,
 		"accepted", res.Accepted, "dropped_unassigned", res.Unassigned,
-		"dropped_foreign_metric", res.ForeignMetric, "dropped_malformed", res.Malformed,
+		"dropped_foreign_metric", res.ForeignMetric, "dropped_unasked_item", res.UnaskedItem,
+		"dropped_wrong_kind", res.WrongKind, "dropped_malformed", res.Malformed,
 		"dropped_implausible_at", res.Implausible)
 }
 

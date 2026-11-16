@@ -130,7 +130,15 @@ var (
 func httpSlot(agentHost, target uuid.UUID) probes.Assignment {
 	return probes.Assignment{
 		OrgID: testOrg, AgentHostID: agentHost, TargetHostID: target, CheckKey: "web", Plugin: "http",
-		Params: map[string]any{"url": "https://example.test/", "timeout_ms": float64(3000)}, Interval: time.Minute, Address: "10.0.0.10",
+		Params:   map[string]any{"url": "https://example.test/", "timeout_ms": float64(3000), "json_values": []any{"status=$.status"}},
+		Interval: time.Minute, Address: "10.0.0.10",
+	}
+}
+
+func snmpSlot(agentHost, target uuid.UUID) probes.Assignment {
+	return probes.Assignment{
+		OrgID: testOrg, AgentHostID: agentHost, TargetHostID: target, CheckKey: "switch", Plugin: "snmp",
+		Params: map[string]any{"interfaces": true}, Interval: time.Minute, Address: "10.0.0.12",
 	}
 }
 
@@ -153,7 +161,7 @@ func TestHeartbeatProbeConfigRidesTheAckOnlyOnMismatch(t *testing.T) {
 		t.Fatal("a capable agent without a probe version must receive its set")
 	}
 	want := []probeconfig.Spec{
-		{TargetHostID: targetA, CheckKey: "web", Plugin: "http", ParamsJSON: `{"timeout_ms":3000,"url":"https://example.test/"}`, IntervalSeconds: 60, Address: "10.0.0.10"},
+		{TargetHostID: targetA, CheckKey: "web", Plugin: "http", ParamsJSON: `{"json_values":["status=$.status"],"timeout_ms":3000,"url":"https://example.test/"}`, IntervalSeconds: 60, Address: "10.0.0.10"},
 		{TargetHostID: targetB, CheckKey: "ssh", Plugin: "tcp", ParamsJSON: `{"port":22}`, IntervalSeconds: 30, Address: "10.0.0.11"},
 	}
 	if cfg.GetVersion() != probeconfig.Version(want) {
@@ -265,21 +273,15 @@ func TestProbeResultsStoredAsTheAgentsVantage(t *testing.T) {
 			At: timestamppb.New(at), Observation: &agentpb.ProbeResult_Error{Error: "refused"}},
 	))
 	calls := h.probes.vantageCalls()
-	if len(calls) != 2 {
-		t.Fatalf("RecordVantage calls = %d, want one per target", len(calls))
+	if len(calls) != 1 {
+		t.Fatalf("RecordVantage calls = %d, want one per message", len(calls))
+	}
+	if c := calls[0]; c.org != testOrg || c.vantage != agentHost.String() {
+		t.Fatalf("call org %s vantage %q, want %s %q", c.org, c.vantage, testOrg, agentHost)
 	}
 	byTarget := map[uuid.UUID][]checks.Observation{}
-	for _, c := range calls {
-		if c.org != testOrg || c.vantage != agentHost.String() {
-			t.Fatalf("call org %s vantage %q, want %s %q", c.org, c.vantage, testOrg, agentHost)
-		}
-		target := c.obs[0].HostID
-		for _, o := range c.obs {
-			if o.HostID != target {
-				t.Fatalf("one call mixes targets: %+v", c.obs)
-			}
-		}
-		byTarget[target] = c.obs
+	for _, o := range calls[0].obs {
+		byTarget[o.HostID] = append(byTarget[o.HostID], o)
 	}
 	a, b := byTarget[targetA], byTarget[targetB]
 	if len(a) != 2 || a[0].Metric != "http.up" || *a[0].Value != 1 || !a[0].At.Equal(at) ||
@@ -288,6 +290,70 @@ func TestProbeResultsStoredAsTheAgentsVantage(t *testing.T) {
 	}
 	if len(b) != 2 || *b[0].Value != 0 || b[1].Err != "refused" || b[0].CheckKey != "ssh" {
 		t.Fatalf("target B observations = %+v", b)
+	}
+}
+
+// TestProbeResultsOnlyForAskedItems: an item is kept only when the slot's
+// plugin asks for it — "" for a plugin without items, a json_values name
+// for http — and nothing of an snmp slot is ever kept (snmp never goes to
+// an agent, and its interfaces option asks for any item).
+func TestProbeResultsOnlyForAskedItems(t *testing.T) {
+	h := newHarnessWithProbes(t)
+	agentHost := uuid.New()
+	targetC := uuid.MustParse("0198f0a1-7c2d-7000-8000-00000000000c")
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA), tcpSlot(agentHost, targetB), snmpSlot(agentHost, targetC))
+	agent := agents.AgentIdentity{OrgID: testOrg, HostID: agentHost, Serial: "s1"}
+	now := h.clock()
+	label := func(target uuid.UUID, key, item, metric, l string) *agentpb.ProbeResult {
+		return &agentpb.ProbeResult{TargetHostId: target.String(), CheckKey: key, Item: item, Metric: metric,
+			At: timestamppb.New(now), Observation: &agentpb.ProbeResult_Label{Label: l}}
+	}
+	res, err := h.svc.recordProbeResults(t.Context(), agent, &agentpb.ProbeResults{Results: []*agentpb.ProbeResult{
+		probeValue(targetB, "ssh", "", "tcp.up", now, 1),                // kept
+		probeValue(targetB, "ssh", "x", "tcp.up", now, 1),               // tcp has no items
+		label(targetA, "web", "status", "http.json.text", "ok"),         // kept: a json_values name
+		probeValue(targetA, "web", "status", "http.json.value", now, 1), // kept
+		probeValue(targetA, "web", "other", "http.json.value", now, 1),  // not a json_values name
+		probeValue(targetA, "web", "", "http.up", now, 1),               // kept: the whole-check item
+		probeValue(targetC, "switch", "", "snmp.up", now, 1),            // snmp never from an agent
+		probeValue(targetC, "switch", "eth0", "snmp.if.in_octets", now, 1),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (probeIngest{Accepted: 4, UnaskedItem: 2, Unassigned: 2}); res != want {
+		t.Fatalf("ingest = %+v, want %+v", res, want)
+	}
+	for _, o := range h.probes.vantageCalls()[0].obs {
+		if o.Item == "x" || o.Item == "other" || o.HostID == targetC {
+			t.Fatalf("recorded an unasked item: %+v", o)
+		}
+	}
+}
+
+// TestProbeResultsOfTheWrongKindAreDropped: a numeric metric carries a
+// value or an error, a discrete one a label or an error; anything else is
+// dropped and counted.
+func TestProbeResultsOfTheWrongKindAreDropped(t *testing.T) {
+	h := newHarnessWithProbes(t)
+	agentHost := uuid.New()
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
+	agent := agents.AgentIdentity{OrgID: testOrg, HostID: agentHost, Serial: "s1"}
+	now := h.clock()
+	res, err := h.svc.recordProbeResults(t.Context(), agent, &agentpb.ProbeResults{Results: []*agentpb.ProbeResult{
+		{TargetHostId: targetA.String(), CheckKey: "web", Metric: "http.up", At: timestamppb.New(now),
+			Observation: &agentpb.ProbeResult_Label{Label: "up"}}, // numeric with a label
+		probeValue(targetA, "web", "status", "http.json.text", now, 1), // discrete with a value
+		{TargetHostId: targetA.String(), CheckKey: "web", Item: "status", Metric: "http.json.text", At: timestamppb.New(now),
+			Observation: &agentpb.ProbeResult_Error{Error: "no body"}}, // kept: an error fits either kind
+		{TargetHostId: targetA.String(), CheckKey: "web", Metric: "http.up", At: timestamppb.New(now),
+			Observation: &agentpb.ProbeResult_Error{Error: "refused"}}, // kept
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (probeIngest{Accepted: 2, WrongKind: 2}); res != want {
+		t.Fatalf("ingest = %+v, want %+v", res, want)
 	}
 }
 
@@ -410,6 +476,35 @@ func TestProbeResultsStoreFaultFailsTheStream(t *testing.T) {
 	}
 	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
 		t.Fatalf("err = %v, want Internal", err)
+	}
+}
+
+// TestProbeResultsAreStoredInOneCall: a message's kept results, across
+// targets, reach the store in one RecordVantage call — one transaction —
+// so a store fault records none of them and the replay cannot duplicate
+// samples of a part that was stored.
+func TestProbeResultsAreStoredInOneCall(t *testing.T) {
+	h := newHarnessWithProbes(t)
+	agentHost := uuid.New()
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA), tcpSlot(agentHost, targetB))
+	agent := agents.AgentIdentity{OrgID: testOrg, HostID: agentHost, Serial: "s1"}
+	msg := &agentpb.ProbeResults{Results: []*agentpb.ProbeResult{
+		probeValue(targetA, "web", "", "http.up", h.clock(), 1),
+		probeValue(targetB, "ssh", "", "tcp.up", h.clock(), 1),
+	}}
+	h.probes.recordErr = errors.New("db down")
+	if _, err := h.svc.recordProbeResults(t.Context(), agent, msg); err == nil {
+		t.Fatal("a store fault was swallowed")
+	}
+	if calls := h.probes.vantageCalls(); len(calls) != 0 {
+		t.Fatalf("a failed message recorded %+v", calls)
+	}
+	h.probes.recordErr = nil
+	if _, err := h.svc.recordProbeResults(t.Context(), agent, msg); err != nil {
+		t.Fatal(err)
+	}
+	if calls := h.probes.vantageCalls(); len(calls) != 1 || len(calls[0].obs) != 2 {
+		t.Fatalf("calls = %+v, want one call with both targets", calls)
 	}
 }
 
