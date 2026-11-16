@@ -42,7 +42,7 @@ func TestObservationAssertions(t *testing.T) {
 	}
 	probetest.WantOnly(t, []probe.Observation{probe.Value("x.up", 0)}, "x.up", 0)
 	probetest.WantDown(t, probe.Down("x", probe.FailureTimeout), "x", probe.FailureTimeout)
-	up := probetest.WantUp(t, []probe.Observation{probe.Value("x.up", 1), probe.Up("x"), probe.Text("x.issuer", "R11")}, "x")
+	up := probetest.WantUp(t, append(probe.Up("x"), probe.Text("x.issuer", "R11")), "x")
 	if got := probetest.WantLabel(t, up, "x.issuer"); got != "R11" {
 		t.Fatalf("WantLabel = %q", got)
 	}

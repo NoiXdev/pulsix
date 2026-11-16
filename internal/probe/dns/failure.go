@@ -46,8 +46,10 @@ func lookupFailure(err error, connLabel string) string {
 
 // ioFailure notes the last failure of the connections to a dns server as
 // a label. The resolver may use several connections, one after another.
-// A failure Classify does not know (a connection the resolver closed) is
-// not noted, so it cannot hide one it does.
+// Only labels of the dns vocabulary are noted (refused, unreachable,
+// timeout): a reset or early close of the TCP fallback, or a failure
+// Classify does not know (a connection the resolver closed), is not, so
+// it cannot hide one that is.
 type ioFailure struct {
 	mu   sync.Mutex
 	last string
@@ -58,7 +60,7 @@ func (f *ioFailure) note(err error) {
 		return
 	}
 	l := probe.Classify(err)
-	if l == probe.FailureError {
+	if l != probe.FailureRefused && l != probe.FailureUnreachable && l != probe.FailureTimeout {
 		return
 	}
 	f.mu.Lock()

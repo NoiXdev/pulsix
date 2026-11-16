@@ -59,7 +59,7 @@ func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	}
 	// An invalid chain is no failure: the handshake completed, and
 	// tls.cert_valid says the rest.
-	obs := []probe.Observation{probe.Value("tls.up", 1), probe.Up("tls"), probe.Value("tls.handshake_ms", probe.Millis(time.Since(start)))}
+	obs := append(probe.Up("tls"), probe.Value("tls.handshake_ms", probe.Millis(time.Since(start))))
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {

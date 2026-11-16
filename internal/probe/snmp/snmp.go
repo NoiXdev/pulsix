@@ -138,7 +138,7 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	if rtt <= 0 {
 		rtt = time.Since(start)
 	}
-	obs = append(obs, probe.Value("snmp.up", 1), probe.Up("snmp"), probe.Value("snmp.response_ms", probe.Millis(rtt)))
+	obs = append(probe.Up("snmp"), probe.Value("snmp.response_ms", probe.Millis(rtt)))
 
 	cur := sample{}
 	vars, batchErr := answers(pkt, first)

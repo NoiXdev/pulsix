@@ -87,7 +87,7 @@ func probeDNS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 		return probe.Down("dns", lookupFailure(err, connFailed.label()))
 	}
 	// An answer that does not match is no failure: the name resolved.
-	obs := []probe.Observation{probe.Value("dns.up", 1), probe.Up("dns"), probe.Value("dns.resolve_ms", probe.Millis(elapsed))}
+	obs := append(probe.Up("dns"), probe.Value("dns.resolve_ms", probe.Millis(elapsed)))
 	if expect != "" {
 		obs = append(obs, probe.BoolValue("dns.answer_match", answerMatches(answers, expect)))
 	}

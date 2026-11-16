@@ -27,6 +27,13 @@ func (h *hopTrace) trace() *httptrace.ClientTrace {
 			defer h.mu.Unlock()
 			h.connected, h.tlsErr = false, nil
 		},
+		// GotConn fires for a new connection and for a reused one, which
+		// has no ConnectDone of its own.
+		GotConn: func(httptrace.GotConnInfo) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.connected = true
+		},
 		ConnectDone: func(_, _ string, err error) {
 			if err != nil {
 				return

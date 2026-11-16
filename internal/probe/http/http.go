@@ -96,12 +96,10 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	_ = resp.Body.Close()
 
 	// A status code is no failure: a response arrived.
-	obs := []probe.Observation{
-		probe.Value("http.up", 1),
-		probe.Up("http"),
+	obs := append(probe.Up("http"),
 		probe.Value("http.status_code", float64(resp.StatusCode)),
 		probe.Value("http.response_ms", probe.Millis(elapsed)),
-	}
+	)
 	if bodyContains != "" {
 		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body, []byte(bodyContains))))
 	}

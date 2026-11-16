@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"sync/atomic"
@@ -160,8 +161,16 @@ func TestHopTraceReason(t *testing.T) {
 		})
 	}
 
+	// A hop on a reused connection is connected without a dial.
+	h := &hopTrace{}
+	h.trace().GetConn("x:80")
+	h.trace().GotConn(httptrace.GotConnInfo{Reused: true})
+	if got := h.reason(malformed); got != probe.FailureProtocol {
+		t.Fatalf("reused connection: reason = %q, want protocol", got)
+	}
+
 	// A new hop forgets the previous hop's state.
-	h := &hopTrace{connected: true, tlsErr: errors.New("x")}
+	h = &hopTrace{connected: true, tlsErr: errors.New("x")}
 	h.trace().GetConn("x:443")
 	if h.connected || h.tlsErr != nil {
 		t.Fatalf("GetConn kept the previous hop: %+v", h)

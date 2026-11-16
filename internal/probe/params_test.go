@@ -51,9 +51,12 @@ func TestDown(t *testing.T) {
 }
 
 func TestUp(t *testing.T) {
-	o := probe.Up("dns")
-	if o.Metric != "dns.failure" || o.Label == nil || *o.Label != probe.FailureNone || o.Value != nil || o.Err != "" {
-		t.Fatalf("Up(dns) = %+v, want dns.failure = none", o)
+	obs := probe.Up("dns")
+	if len(obs) != 2 || obs[0].Metric != "dns.up" || obs[0].Value == nil || *obs[0].Value != 1 || obs[0].Label != nil || obs[0].Err != "" {
+		t.Fatalf("Up(dns) = %+v, want dns.up = 1 and dns.failure = none", obs)
+	}
+	if o := obs[1]; o.Metric != "dns.failure" || o.Label == nil || *o.Label != probe.FailureNone || o.Value != nil || o.Err != "" {
+		t.Fatalf("Up(dns) failure = %+v, want dns.failure = none", o)
 	}
 }
 

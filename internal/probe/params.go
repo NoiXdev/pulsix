@@ -46,10 +46,10 @@ func Down(plugin, reason string) []Observation {
 	return []Observation{Value(plugin+".up", 0), Text(plugin+".failure", reason)}
 }
 
-// Up is the failure reason of a successful attempt: <plugin>.failure =
-// FailureNone.
-func Up(plugin string) Observation {
-	return Text(plugin+".failure", FailureNone)
+// Up is the start of a successful attempt's result: <plugin>.up = 1 and
+// <plugin>.failure = FailureNone; the plugin appends its measurements.
+func Up(plugin string) []Observation {
+	return []Observation{Value(plugin+".up", 1), Text(plugin+".failure", FailureNone)}
 }
 
 // FailAll is the result of an attempt that could not be made: one error per

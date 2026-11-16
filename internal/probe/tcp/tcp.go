@@ -53,7 +53,7 @@ func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	defer func() { _ = conn.Close() }()
 
 	// A banner that does not match is no failure: the port was up.
-	obs := []probe.Observation{probe.Value("tcp.up", 1), probe.Up("tcp"), probe.Value("tcp.connect_ms", probe.Millis(connect))}
+	obs := append(probe.Up("tcp"), probe.Value("tcp.connect_ms", probe.Millis(connect)))
 	if send == "" && expect == "" {
 		return obs
 	}
@@ -71,6 +71,8 @@ func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, addres
 		_, _ = conn.Write([]byte(send))
 	}
 	if expect != "" {
+		// A reset or close during the banner read stays up: the port
+		// accepted the connection, and banner_match = 0 says the rest.
 		obs = append(obs, probe.BoolValue("tcp.banner_match", readContains(conn, expect, tcpBannerLimit)))
 	}
 	return obs

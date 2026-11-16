@@ -104,12 +104,10 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 		}
 		return append(probe.Down("icmp", reason), probe.Value("icmp.loss_pct", 100))
 	}
-	return []probe.Observation{
-		probe.Value("icmp.up", 1),
-		probe.Up("icmp"),
+	return append(probe.Up("icmp"),
 		probe.Value("icmp.loss_pct", float64(len(r.sent)-r.replies)*100/float64(len(r.sent))),
 		probe.Value("icmp.rtt_ms", probe.Millis(r.rtt)/float64(r.replies)),
-	}
+	)
 }
 
 func icmpSocketError(err error) string {

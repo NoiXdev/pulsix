@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -347,6 +348,23 @@ func TestHTTPFailureReasons(t *testing.T) {
 			probetest.WantDown(t, obs, "http", tc.want)
 		})
 	}
+}
+
+// TestHTTPSameHostRedirectNotHTTPIsProtocol: a redirect to the same host
+// whose answer is not HTTP fails as protocol, like a first hop would.
+func TestHTTPSameHostRedirectNotHTTPIsProtocol(t *testing.T) {
+	var hits atomic.Int32
+	addr := rawServer(t, func(c net.Conn) {
+		readRequest(c)
+		if hits.Add(1) == 1 {
+			_, _ = c.Write([]byte("HTTP/1.1 302 Found\r\nLocation: /bad\r\nContent-Length: 0\r\n\r\n"))
+			// Keep the connection for a client that reuses it.
+			readRequest(c)
+		}
+		_, _ = c.Write([]byte("SSH-2.0-OpenSSH\r\n\r\n"))
+	})
+	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams("http://"+addr+"/", map[string]any{"timeout_s": float64(3)}), "")
+	probetest.WantDown(t, obs, "http", probe.FailureProtocol)
 }
 
 // TestHTTPRedirectHopFailureIsItsOwn: a hop after a redirect that fails

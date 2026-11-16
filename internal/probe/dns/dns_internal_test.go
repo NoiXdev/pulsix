@@ -2,9 +2,11 @@ package dns
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/netip"
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/probe"
@@ -106,6 +108,22 @@ func TestLookupFailure(t *testing.T) {
 		if got := lookupFailure(tc.err, tc.conn); got != tc.want {
 			t.Errorf("%s: lookupFailure = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestIOFailureStaysInTheDNSVocabulary: a reset or an early close of the
+// TCP fallback is no dns label, so it is not noted.
+func TestIOFailureStaysInTheDNSVocabulary(t *testing.T) {
+	var f ioFailure
+	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, &net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNRESET)}} {
+		f.note(err)
+	}
+	if f.label() != "" {
+		t.Fatalf("label = %q, want none noted", f.label())
+	}
+	f.note(&net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNREFUSED)})
+	if f.label() != probe.FailureRefused {
+		t.Fatalf("label = %q, want refused", f.label())
 	}
 }
 
