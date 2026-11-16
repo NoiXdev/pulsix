@@ -14,6 +14,7 @@ import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
 import { may } from '../../lib/roles.ts';
+import { RunWithFollowUpsDialog } from './RunWithFollowUpsDialog.tsx';
 import { TemplateDialog } from './TemplateDialog.tsx';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import { ReviewBadges } from './variables/ReviewBadges.tsx';
@@ -47,6 +48,7 @@ export function TemplatesPage() {
 
   const [dialog, setDialog] = useState<'new' | Template | null>(null);
   const [triggers, setTriggers] = useState<Template | null>(null);
+  const [runWithFollowUps, setRunWithFollowUps] = useState<Template | null>(null);
 
   const guard = useQueryGuard(templates);
   if (guard) return guard;
@@ -68,11 +70,17 @@ export function TemplatesPage() {
     return p.source === 'repo' ? t.templates.playbook.repo(p.path ?? '') : p.summary || t.templates.playbook.editor;
   };
 
+  async function opened(tpl: Template, jobs: { id: string }[]) {
+    toast.show(t.templates.list.started(tpl.name));
+    if (jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
+  }
+
   async function run(tpl: Template) {
+    // A template with follow-ups asks first, so they can be changed for this run.
+    if ((tpl.follow_ups ?? []).length > 0) return setRunWithFollowUps(tpl);
     try {
       const { jobs } = await runTemplate.mutateAsync({ id: tpl.id });
-      toast.show(t.templates.list.started(tpl.name));
-      if (jobs && jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
+      await opened(tpl, jobs ?? []);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.templates.list.startFailed, 'destructive');
     }
@@ -154,6 +162,14 @@ export function TemplatesPage() {
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.templates.list.empty}</p>}
       </Card>
+      {runWithFollowUps && (
+        <RunWithFollowUpsDialog
+          org={org}
+          template={runWithFollowUps}
+          onStarted={(jobs) => opened(runWithFollowUps, jobs)}
+          onClose={() => setRunWithFollowUps(null)}
+        />
+      )}
       {triggers && (
         <TriggersDialog
           org={org}

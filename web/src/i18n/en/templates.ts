@@ -73,6 +73,15 @@ export const enTemplates = {
     save: 'Save template',
     create: 'Create template',
   },
+  followUps: {
+    label: 'Follow-ups on success',
+    help: 'Started on the same hosts when a run of this template succeeds.',
+    placeholder: 'Add a follow-up',
+    chosen: 'Chosen follow-ups',
+    runTitle: (name: string) => `Run ${name}`,
+    run: 'Run',
+    runFailed: 'Starting the template failed',
+  },
   playbookPicker: {
     source: 'Playbook source',
     inline: 'Inline playbooks',

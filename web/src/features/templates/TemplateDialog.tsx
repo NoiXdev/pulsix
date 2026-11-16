@@ -25,6 +25,7 @@ import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
 import { echoedVars } from './vars.ts';
 import { mergeScope, mergeSetting, mergeVaultRows } from './rebase.ts';
+import { FollowUpsField } from './FollowUpsField.tsx';
 import { existingOf, type Existing } from './existing.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
 
@@ -147,6 +148,8 @@ function TemplateForm({
   const [limit, setLimit] = useState(existing?.limit ?? '');
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
   const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(existing?.vaultIdentities ?? []);
+  const [followUps, setFollowUps] = useState<string[]>(existing?.followUps ?? []);
+  const [followUpsError, setFollowUpsError] = useState<string | null>(null);
   const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
   // null = closed. One mount point for the Default SSH credential field and
   // every row of the Vault identities list, since only one AddCredentialDialog
@@ -186,6 +189,7 @@ function TemplateForm({
     setLimit((d) => mergeSetting(d, base.limit, fresh.limit));
     setCredentialId((d) => mergeSetting(d, base.credentialId, fresh.credentialId));
     setVaultRows((d) => mergeVaultRows(d, base.vaultIdentities, fresh.vaultIdentities));
+    setFollowUps((d) => mergeSetting(d, base.followUps, fresh.followUps));
     setLoaded(fresh);
     setStale(false);
   }
@@ -193,6 +197,7 @@ function TemplateForm({
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setFollowUpsError(null);
     const identityErrors = vaultIdentityErrors(vaultRows, t);
     setVaultErrors(identityErrors);
     if (Object.keys(identityErrors).length > 0) return;
@@ -207,6 +212,7 @@ function TemplateForm({
       extra_vars_schema: loaded?.schema,
       credential_id: credentialId || undefined,
       vault_identities: identitiesForBody(vaultRows),
+      follow_ups: followUps.map((template_id) => ({ template_id })),
     };
     try {
       if (loaded) await update.mutateAsync({ body, revision: loaded.revision });
@@ -215,6 +221,9 @@ function TemplateForm({
       onClose();
     } catch (err) {
       if (errorStatus(err) === 412) return setStale(true);
+      // A refused follow-up list (a cycle, too many) is shown at its field.
+      const followUpPs = problemsFromError(err, 'body.follow_ups');
+      if (followUpPs.length > 0) return setFollowUpsError(followUpPs.map((p) => p.message).join('; '));
       // The extra vars are not edited here: a value the server refuses is
       // fixed on the variables page, so its problems are named here.
       const varPs = [...problemsFromError(err, 'body.extra_vars'), ...problemsFromError(err, 'body.extra_vars_schema')];
@@ -296,6 +305,22 @@ function TemplateForm({
           onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
           help={t.templates.dialog.vaultHelp}
         />
+        <div className="flex flex-col gap-1">
+          <FollowUpsField
+            org={org}
+            id="template-follow-ups"
+            value={followUps}
+            onChange={setFollowUps}
+            excludeId={existing?.id}
+            invalid={followUpsError !== null}
+            describedBy={followUpsError ? 'template-follow-ups-error' : undefined}
+          />
+          {followUpsError && (
+            <p id="template-follow-ups-error" role="alert" className="text-xs text-destructive">
+              {followUpsError}
+            </p>
+          )}
+        </div>
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}

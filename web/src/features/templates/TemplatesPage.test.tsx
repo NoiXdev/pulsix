@@ -110,6 +110,7 @@ describe('TemplatesPage', () => {
       scope: { group_id: 'g1', host_ids: ['h1'] },
       extra_vars: {},
       credential_id: 'c1',
+      follow_ups: [],
     });
   });
 
@@ -185,6 +186,32 @@ describe('TemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Run deploy-site' }));
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+  });
+
+  it('asks before running a template that has follow-ups, and runs one without directly', async () => {
+    const user = userEvent.setup();
+    let posted: unknown = 'none';
+    const withFollowUps = template({ follow_ups: [{ template_id: 't2', template_name: 'patch-all', position: 0 }] });
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [withFollowUps, template({ id: 't2', name: 'patch-all' })] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'POST /api/v1/orgs/acme/job-templates/t1/run': (req: MockRequest) => {
+        posted = req.body ?? null;
+        return { jobs: [{ id: 'job-9', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg1', trigger: 'manual', created_at: '' }] };
+      },
+      'POST /api/v1/orgs/acme/job-templates/t2/run': { jobs: [{ id: 'job-8', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg2', trigger: 'manual', created_at: '' }] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Run deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Run deploy-site' });
+    expect(posted).toBe('none');
+    await within(dialog).findByText('patch-all');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+    expect(posted).toBeNull();
   });
 
   // Backlog 2.56: useDeleteTemplate (useTemplates.ts) existed with nothing
@@ -311,6 +338,7 @@ describe('TemplatesPage', () => {
       extra_vars: { region: 'eu', token: { $secret: 'keep', from: 'token' } },
       extra_vars_schema: schema,
       credential_id: 'c1',
+      follow_ups: [],
     });
   });
 

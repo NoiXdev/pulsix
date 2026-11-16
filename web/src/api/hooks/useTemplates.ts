@@ -59,15 +59,17 @@ export function useDeleteTemplate(org: string) {
  * per involved zone sharing a run group) so the SPA can navigate to the run
  * view. With `hostId` the run is narrowed to that one host; the field is
  * left out of the body when unset, because the server refuses an empty
- * `host_id`. */
+ * `host_id`. `followUps` replaces the template's own follow-ups for this
+ * run (an empty list starts none); left undefined, the template's list
+ * applies and the field is not sent. */
 export function useRunTemplateById(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, hostId }: { id: string; hostId?: string }) =>
+    mutationFn: ({ id, hostId, followUps }: { id: string; hostId?: string; followUps?: string[] }) =>
       unwrap(
         api.POST('/api/v1/orgs/{org}/job-templates/{id}/run', {
           params: { path: { org, id } },
-          body: hostId ? { host_id: hostId } : undefined,
+          body: hostId || followUps ? { host_id: hostId, follow_ups: followUps } : undefined,
         }),
       ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['jobs', org] }),

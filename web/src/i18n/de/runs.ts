@@ -6,6 +6,7 @@ export const deRuns: Messages['runs'] = {
     schedule: 'Zeitplan',
     webhook: 'Webhook',
     system: 'System',
+    chain: 'Folge-Lauf',
   },
   kind: {
     run: 'Lauf',

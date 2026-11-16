@@ -8,6 +8,8 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
 import type { Host } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { FollowUpsField } from '../templates/FollowUpsField.tsx';
+import { followUpIds, sameIds } from '../templates/followUps.ts';
 
 /**
  * RunTemplateDialog runs one of the organization's job templates on a
@@ -25,6 +27,8 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
   const templates = useTemplates(org);
   const run = useRunTemplateById(org);
   const [templateId, setTemplateId] = useState('');
+  // The follow-ups of this run; reset to the chosen template's own list.
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Set from the first press until the run failed or the dialog closed: a
   // run that succeeded leaves the dialog open while the route changes, and
@@ -34,13 +38,20 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
   const list = templates.data?.templates ?? [];
   const empty = !!templates.data && list.length === 0;
 
+  const chosen = list.find((x) => x.id === templateId);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!templateId || submitting) return;
     setError(null);
     setSubmitting(true);
     try {
-      const { jobs } = await run.mutateAsync({ id: templateId, hostId: host.id });
+      const { jobs } = await run.mutateAsync({
+        id: templateId,
+        hostId: host.id,
+        // Sent only when it differs from the template's own list.
+        followUps: chosen && !sameIds(followUps, followUpIds(chosen)) ? followUps : undefined,
+      });
       toast.show(t.templates.list.started(list.find((x) => x.id === templateId)?.name ?? ''));
       if (jobs && jobs.length > 0) {
         await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
@@ -63,6 +74,8 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
             value={templateId}
             onChange={(id) => {
               setTemplateId(id);
+              const tpl = list.find((x) => x.id === id);
+              setFollowUps(tpl ? followUpIds(tpl) : []);
               setError(null);
             }}
             placeholder={t.runs.templateRun.choose}
@@ -70,6 +83,7 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
           />
           {empty && <span className="text-[11px] text-muted-foreground">{t.runs.templateRun.none}</span>}
         </div>
+        {chosen && <FollowUpsField org={org} id="run-follow-ups" value={followUps} onChange={setFollowUps} excludeId={chosen.id} />}
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}

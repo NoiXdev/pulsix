@@ -77,6 +77,15 @@ export const deTemplates: Messages['templates'] = {
     save: 'Vorlage speichern',
     create: 'Vorlage anlegen',
   },
+  followUps: {
+    label: 'Folge-Läufe bei Erfolg',
+    help: 'Startet auf denselben Hosts, wenn ein Lauf dieses Templates erfolgreich war.',
+    placeholder: 'Folge-Lauf hinzufügen',
+    chosen: 'Gewählte Folge-Läufe',
+    runTitle: (name: string) => `${name} ausführen`,
+    run: 'Ausführen',
+    runFailed: 'Das Starten der Vorlage ist fehlgeschlagen',
+  },
   playbookPicker: {
     source: 'Herkunft des Playbooks',
     inline: 'Inline-Playbooks',

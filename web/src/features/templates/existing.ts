@@ -1,6 +1,7 @@
 import type { Template } from '../../api/types.ts';
 import type { Vars } from '../variables/types.ts';
 import { rowsFromIdentities, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
+import { followUpIds } from './followUps.ts';
 import type { Scope } from './ScopePicker.tsx';
 
 /** An existing template as the template dialog edits it, and the base its
@@ -17,6 +18,7 @@ export function existingOf(tpl: Template): Existing {
     vars: tpl.extra_vars ?? {},
     credentialId: tpl.credential_id ?? '',
     vaultIdentities: rowsFromIdentities(tpl.vault_identities),
+    followUps: followUpIds(tpl),
     sharedTemplateId: tpl.shared_template_id,
   };
 }
@@ -34,6 +36,8 @@ export interface Existing {
   vars: Vars;
   credentialId: string;
   vaultIdentities: VaultIdentityRow[];
+  /** The ids of the templates started after a successful run, in order. */
+  followUps: string[];
   /** Set when this template is a projection of an installation-owned
    * definition (spec v0.2f decisions 1, 2). Its presence, not its value, is
    * what the form acts on: name, playbook, limit and the extra-vars schema

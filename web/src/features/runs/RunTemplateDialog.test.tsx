@@ -82,6 +82,30 @@ describe('RunTemplateDialog', () => {
     expect(closed).toBe(true);
   });
 
+  it('shows the chosen template\'s follow-ups, preselected, and posts a changed list', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    const withFollowUps = { ...template('t1', 'deploy-site'), follow_ups: [{ template_id: 't2', template_name: 'patch-all', position: 0 }] };
+    mockApi({
+      'GET /api/v1/orgs/acme/job-templates': { templates: [withFollowUps, template('t2', 'patch-all')] },
+      'POST /api/v1/orgs/acme/job-templates/t1/run': (req: MockRequest) => {
+        posted = req.body;
+        return new Response(JSON.stringify({ jobs: [job] }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+    renderDialog();
+
+    const dialog = await screen.findByRole('dialog', { name: 'Run template on web-01' });
+    expect(within(dialog).queryByLabelText('Follow-ups on success')).not.toBeInTheDocument();
+    await pickOption(within(dialog), 'Template', 'deploy-site');
+    const list = await within(dialog).findByRole('list', { name: 'Chosen follow-ups' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['patch-all']);
+    await user.click(within(dialog).getByRole('button', { name: 'Remove patch-all' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    await screen.findByText('RUN VIEW');
+    expect(posted).toEqual({ host_id: 'h1', follow_ups: [] });
+  });
+
   it('shows a refusal inline and stays open, and Run can be pressed again', async () => {
     const user = userEvent.setup();
     let closed = false;

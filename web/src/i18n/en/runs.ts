@@ -6,6 +6,7 @@ export const enRuns = {
     schedule: 'Schedule',
     webhook: 'Webhook',
     system: 'System',
+    chain: 'Follow-up',
   },
   kind: {
     run: 'run',

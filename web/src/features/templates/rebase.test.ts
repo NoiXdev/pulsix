@@ -54,3 +54,11 @@ describe('mergeVaultRows', () => {
     expect(mergeVaultRows(draft, base, now)).toBe(draft);
   });
 });
+
+describe('mergeSetting on follow-ups', () => {
+  it('keeps a changed list and takes the current one when unchanged; order counts', () => {
+    expect(mergeSetting(['a', 'b'], ['a'], ['c'])).toEqual(['a', 'b']);
+    expect(mergeSetting(['a'], ['a'], ['c'])).toEqual(['c']);
+    expect(mergeSetting(['b', 'a'], ['a', 'b'], ['c'])).toEqual(['b', 'a']);
+  });
+});
