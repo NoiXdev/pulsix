@@ -181,11 +181,11 @@ func TestLoopRereadsTheSecretsFileOnTheHeartbeat(t *testing.T) {
 	lt.withIdentity()
 	var clockMu sync.Mutex
 	now := time.Now()
-	lt.now = func() time.Time {
+	lt.setNow(func() time.Time {
 		clockMu.Lock()
 		defer clockMu.Unlock()
 		return now
-	}
+	})
 	writeSecretsFile(t, lt.cfg.SecretsPath, twoSecrets)
 	stream := newFakeStream()
 	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}

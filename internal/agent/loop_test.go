@@ -52,7 +52,9 @@ type loopTest struct {
 	// cadence test counts on.
 	lookTicks *fakeTickers
 	facts     Collector
-	now       func() time.Time
+	// clock is the loop's time source; setNow swaps it under mu because
+	// tests move it while the loop runs.
+	clock func() time.Time
 
 	mu     sync.Mutex
 	sleeps []time.Duration
@@ -102,7 +104,7 @@ func newLoopTest(t *testing.T) *loopTest {
 	}
 	return &loopTest{
 		t: t, dir: dir, cfg: cfg, dialer: &fakeDialer{},
-		ticks: &fakeTickers{}, lookTicks: &fakeTickers{}, facts: &fakeCollector{}, now: time.Now,
+		ticks: &fakeTickers{}, lookTicks: &fakeTickers{}, facts: &fakeCollector{}, clock: time.Now,
 	}
 }
 
@@ -132,6 +134,21 @@ func (lt *loopTest) options() []LoopOption {
 		// the test user owns. The data dir rules have their own tests.
 		withProtector(&fakeProtector{}),
 	}
+}
+
+// now is the harness's current time, read through the clock setNow set.
+func (lt *loopTest) now() time.Time {
+	lt.mu.Lock()
+	clock := lt.clock
+	lt.mu.Unlock()
+	return clock()
+}
+
+// setNow replaces the harness's clock, also while the loop runs.
+func (lt *loopTest) setNow(clock func() time.Time) {
+	lt.mu.Lock()
+	lt.clock = clock
+	lt.mu.Unlock()
 }
 
 func (lt *loopTest) recordSleep(ctx context.Context, d time.Duration) error {
@@ -419,7 +436,7 @@ func TestLoopRenewsAtConnectWhenDue(t *testing.T) {
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	// The clock sits in the renewal window: less than a third of the
 	// lifetime is left.
-	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+	lt.setNow(func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) })
 
 	renewedCSR, err := MakeCSR(id.Signer().(*ecdsa.PrivateKey), testAgentName)
 	if err != nil {
@@ -586,7 +603,7 @@ func TestLoopRenewalDueDuringStreamEndsSession(t *testing.T) {
 	// outer loop then renews and reconnects).
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	base := leaf.NotBefore.Add(time.Hour)
-	lt.now = func() time.Time { return base }
+	lt.setNow(func() time.Time { return base })
 
 	// Renewal response signed with the SAME key.
 	renewedCSR, err := MakeCSR(id.Signer().(*ecdsa.PrivateKey), testAgentName)
@@ -607,7 +624,7 @@ func TestLoopRenewalDueDuringStreamEndsSession(t *testing.T) {
 	waitFor(t, 2*time.Second, func() bool { return len(stream1.sentMessages()) > 0 })
 
 	// Time passes into the renewal window; the heartbeat tick fires.
-	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+	lt.setNow(func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) })
 	intervals, tickers := lt.waitForTickers(3)
 	if len(intervals) != 3 {
 		t.Fatalf("ticker intervals = %v, want 3", intervals)
@@ -716,7 +733,7 @@ func TestEveryBackoffPathIsJittered(t *testing.T) {
 		id := lt.withIdentity()
 		leaf := id.Leaf()
 		lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
-		lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+		lt.setNow(func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) })
 		lt.setJitter(1)
 		lt.dialer.agentConn = &fakeAgentConn{renewErr: status.Error(codes.Unavailable, "manager restarting")}
 

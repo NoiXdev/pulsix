@@ -98,7 +98,7 @@ func bufferLen(l *Loop) int {
 func TestUnencodableChunkIsDroppedNotRebuffered(t *testing.T) {
 	lt := newLoopTest(t)
 	base := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	lt.now = func() time.Time { return base }
+	lt.setNow(func() time.Time { return base })
 	l := lt.newLoop()
 	srv := &countingAgentServer{}
 	client := startCountingAgentServer(t, srv)
@@ -240,7 +240,7 @@ func TestHandleResultsDropsResultsWithInvalidUTF8(t *testing.T) {
 
 	t.Run("buffered while disconnected", func(t *testing.T) {
 		lt := newLoopTest(t)
-		lt.now = func() time.Time { return at }
+		lt.setNow(func() time.Time { return at })
 		l := lt.newLoop()
 
 		l.handleResults(mixed())
@@ -256,7 +256,7 @@ func TestHandleResultsDropsResultsWithInvalidUTF8(t *testing.T) {
 
 	t.Run("sent while connected", func(t *testing.T) {
 		lt := newLoopTest(t)
-		lt.now = func() time.Time { return at }
+		lt.setNow(func() time.Time { return at })
 		l := lt.newLoop()
 		stream := &chunkingStream{}
 		l.sender = newStreamSender(stream)
@@ -301,7 +301,7 @@ func TestHandleResultsDropsResultsWithInvalidUTF8(t *testing.T) {
 func TestHandleResultsWarnsAboutInvalidUTF8AtMostOncePerMinute(t *testing.T) {
 	lt := newLoopTest(t)
 	now := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	lt.now = func() time.Time { return now }
+	lt.setNow(func() time.Time { return now })
 	l := lt.newLoop()
 	bad := func() []checks.Result {
 		return []checks.Result{

@@ -171,7 +171,7 @@ func containsAll(s string, subs ...string) bool {
 func TestProbeRoundReachesTheStreamInChunks(t *testing.T) {
 	lt := newLoopTest(t)
 	clock := &settableClock{now: time.Now()}
-	lt.now = clock.Now
+	lt.setNow(clock.Now)
 	lt.withIdentity()
 	stream := newFakeStream()
 	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
@@ -340,7 +340,7 @@ func TestProbeRingIsTheChecksWindow(t *testing.T) {
 	lt := newLoopTest(t)
 	base := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
 	now := base
-	lt.now = func() time.Time { return now }
+	lt.setNow(func() time.Time { return now })
 	l := lt.newLoop()
 	l.handleProbeResults(manyProbeResults(1, base))
 	now = base.Add(bufferWindow + time.Second)

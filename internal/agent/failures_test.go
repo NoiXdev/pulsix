@@ -192,7 +192,7 @@ func TestRenewFailureBacksOff(t *testing.T) {
 	id := lt.withIdentity()
 	leaf := id.Leaf()
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
-	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+	lt.setNow(func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) })
 
 	// The manager is restarting during the renewal: the loop backs off and
 	// retries — never a re-enrollment, never an error exit.
@@ -214,7 +214,7 @@ func TestRenewRejectsWrongKeyCertificate(t *testing.T) {
 	id := lt.withIdentity()
 	leaf := id.Leaf()
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
-	lt.now = func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) }
+	lt.setNow(func() time.Time { return leaf.NotBefore.Add(2 * lifetime / 3).Add(time.Hour) })
 
 	// The manager returns a certificate for a DIFFERENT key: the loop
 	// refuses it and keeps the still-valid current certificate.

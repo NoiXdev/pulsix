@@ -174,7 +174,7 @@ func TestLoopAppliedCheckFiresAndResultsReachTheStream(t *testing.T) {
 func TestLoopHandleResultsBuffersWhenDisconnectedAndReplaysInOrder(t *testing.T) {
 	lt := newLoopTest(t)
 	base := time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)
-	lt.now = func() time.Time { return base }
+	lt.setNow(func() time.Time { return base })
 	l := lt.newLoop()
 
 	// Disconnected: no sender has ever been activated.
@@ -510,7 +510,7 @@ func TestActivateSenderReturnsOnlyTheUnreplayedRemainder(t *testing.T) {
 func TestActivateSenderLogsWhatTheFailedReplayDropped(t *testing.T) {
 	lt := newLoopTest(t)
 	base := time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)
-	lt.now = func() time.Time { return base }
+	lt.setNow(func() time.Time { return base })
 	l := lt.newLoop()
 
 	n := 3 * maxResultsPerMessage
@@ -518,7 +518,7 @@ func TestActivateSenderLogsWhatTheFailedReplayDropped(t *testing.T) {
 
 	// The reconnect comes long after the ring's own window: everything in
 	// it is older than bufferWindow by the time the replay is attempted.
-	lt.now = func() time.Time { return base.Add(bufferWindow + time.Minute) }
+	lt.setNow(func() time.Time { return base.Add(bufferWindow + time.Minute) })
 
 	stream := &chunkingStream{failAfter: 1}
 	if err := l.activateSender(newStreamSender(stream)); err == nil {

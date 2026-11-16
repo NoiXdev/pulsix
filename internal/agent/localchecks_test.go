@@ -125,7 +125,7 @@ func TestLoopFollowsTheLocalChecksWithoutAStream(t *testing.T) {
 	lt := newLoopTest(t)
 	lt.withIdentity()
 	clock := &testClock{now: time.Now()}
-	lt.now = clock.Now
+	lt.setNow(clock.Now)
 	writeSecretsFile(t, lt.cfg.SecretsPath, "checks:\n  local-cpu:\n    plugin: cpu\n    interval_seconds: 30\n")
 	l := lt.unreachableManager()
 
@@ -226,7 +226,7 @@ func TestLoopHeartbeatAppliesAnEditedLocalCheck(t *testing.T) {
 	lt := newLoopTest(t)
 	lt.withIdentity()
 	clock := &testClock{now: time.Now()}
-	lt.now = clock.Now
+	lt.setNow(clock.Now)
 	writeSecretsFile(t, lt.cfg.SecretsPath, "checks:\n  local-cpu:\n    plugin: cpu\n    interval_seconds: 120\n")
 	stream := newFakeStream()
 	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
