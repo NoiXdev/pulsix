@@ -639,6 +639,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Templates: templatesSvc, Playbooks: playbooksSvc, Repos: reposSvc, Jobs: jobsSvc,
 		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc, Inventory: renderer,
 	})
+	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
+		time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	// An approved run stays bound to what the person approved until a
+	// worker claims it: the claim recomputes the run picture.
+	jobsQueue.SetClaimGuard(runRequestsSvc)
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Accounts: accountsSvc,
@@ -650,10 +655,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Credentials:   credsSvc, SSH: sshSvc, OrgSecrets: orgSecretsSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
-		Assistant: assistant.NewService(assistant.NewSQLStore(appDB)),
-		RunRequests: runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
-			time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) }),
-		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
+		Assistant:   assistant.NewService(assistant.NewSQLStore(appDB)),
+		RunRequests: runRequestsSvc,
+		Jobs:        jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry
 		// the gRPC enrollment surface writes (agentapi above).

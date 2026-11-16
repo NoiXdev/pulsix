@@ -71,8 +71,12 @@ type Request struct {
 	DecidedBy        *uuid.UUID
 	DecidedAt        *time.Time
 	RunGroupID       *uuid.UUID
-	ExpiresAt        time.Time
-	CreatedAt        time.Time
+	// ApprovedFingerprint is the fingerprint the approving person saw;
+	// empty unless the request is approved. The claim of one of its jobs
+	// recomputes the fingerprint and compares (CheckRunClaim).
+	ApprovedFingerprint string
+	ExpiresAt           time.Time
+	CreatedAt           time.Time
 }
 
 // CreateInput is what Create takes.
@@ -93,8 +97,11 @@ type Store interface {
 	// List returns every request of orgID, newest first.
 	List(ctx context.Context, orgID uuid.UUID) ([]Request, error)
 	// Decide moves a pending request to to; false when it was not pending.
-	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time) (bool, error)
-	SetRunGroup(ctx context.Context, orgID, id, group uuid.UUID) error
+	// An approval records fingerprint and sets the run group to the
+	// request's own id, in the same write.
+	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string) (bool, error)
+	// RevertToPending undoes an approval whose enqueue failed; the run
+	// group stays, the fingerprint goes.
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
@@ -107,8 +114,9 @@ type Pictures interface {
 
 // Enqueuer starts what an approval allows, through the existing run paths.
 type Enqueuer interface {
-	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string) (runGroup uuid.UUID, err error)
-	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID) (runGroup uuid.UUID, err error)
+	// Run and RetryFailed enqueue into the run group group.
+	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string, group uuid.UUID) error
+	RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID) error
 }
 
 // Validator checks a request the way the run and retry routes would check
@@ -203,9 +211,12 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]
 }
 
 // Approve enqueues what the request asks for, if fingerprint still matches
-// the request's current run picture. The decision is recorded first, so a
-// concurrent second approval loses; the enqueue carries an idempotency key
-// for runs; a failing enqueue puts the request back to pending.
+// the request's current run picture. The decision is recorded first, with
+// the fingerprint and the run group (the request's id), so a concurrent
+// second approval loses and every job's claim finds the request; the
+// enqueue carries an idempotency key for runs; a failing enqueue puts the
+// request back to pending. What runs stays bound to fingerprint until the
+// claim: see CheckRunClaim.
 func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string) (Request, error) {
 	r, _, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
@@ -222,18 +233,18 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		return Request{}, ErrChanged
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint)
 	if err != nil {
 		return Request{}, fmt.Errorf("decide run request: %w", err)
 	}
 	if !ok {
 		return Request{}, ErrDecided
 	}
-	var group uuid.UUID
+	group := r.ID
 	if r.Kind == KindRetryFailed {
-		group, err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by)
+		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group)
 	} else {
-		group, err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String())
+		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group)
 	}
 	if err != nil {
 		if rerr := s.store.RevertToPending(ctx, orgID, id); rerr != nil {
@@ -241,12 +252,43 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		}
 		return Request{}, err
 	}
-	if err := s.store.SetRunGroup(ctx, orgID, id, group); err != nil {
-		// The run is enqueued; only the link back is missing.
-		slog.ErrorContext(ctx, "run request: record run group", "err", err, "request_id", id)
-	}
-	r.Status, r.DecidedBy, r.DecidedAt, r.RunGroupID = StatusApproved, &by, &at, &group
+	r.Status, r.DecidedBy, r.DecidedAt, r.RunGroupID, r.ApprovedFingerprint = StatusApproved, &by, &at, &group, fingerprint
 	return r, nil
+}
+
+// ErrChangedAfterApproval fails the claim of an approved run whose run
+// picture no longer matches the one the person approved.
+var ErrChangedAfterApproval = errors.New("what the run uses changed after it was approved; ask for the run again")
+
+// errRequestNotApproved fails the claim of a job whose run group belongs
+// to a request that is not approved (a failed enqueue put it back).
+var errRequestNotApproved = errors.New("the run's request is not approved")
+
+// CheckRunClaim is the claim guard of approved runs (jobs.ClaimGuard): a
+// run group that belongs to no request passes; one that belongs to a
+// request passes only while that request is approved and its run picture
+// still has the fingerprint the person approved. Anything else, a failed
+// lookup included, refuses the claim, and the queue fails the job with the
+// reason.
+func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error {
+	r, err := s.store.ByRunGroup(ctx, orgID, runGroupID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up the run's request: %w", err)
+	}
+	if r.Status != StatusApproved || r.ApprovedFingerprint == "" {
+		return errRequestNotApproved
+	}
+	p, err := s.pictures.Picture(ctx, orgID, r)
+	if err != nil {
+		return fmt.Errorf("resolve the approved run: %w", err)
+	}
+	if Fingerprint(r.ID, p) != r.ApprovedFingerprint {
+		return ErrChangedAfterApproval
+	}
+	return nil
 }
 
 // Reject refuses a pending request.
@@ -263,7 +305,7 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "")
 	if err != nil {
 		return Request{}, fmt.Errorf("decide run request: %w", err)
 	}

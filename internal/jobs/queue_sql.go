@@ -92,6 +92,11 @@ type SQLQueue struct {
 	// host key guard — TestNilBastionGuardFailsClaimsClosed pins it. The
 	// enqueue-side rotation guard skips by design; the claim enforces.
 	bastionGuard BastionKeyGuardSource
+	// claimGuard re-checks a run job at its claim before any payload is
+	// built (SetClaimGuard): the run requests service, which refuses the
+	// jobs of an approved run request whose run picture changed after the
+	// approval. Nil checks nothing — internal/app always sets it.
+	claimGuard ClaimGuard
 	// test is the optional sink a finished connection_test job's outcome is
 	// recorded through (SetTestSink, the same post-construction wiring the
 	// sync sink has; the concrete sink is the hosts service).
@@ -165,6 +170,19 @@ func (q *SQLQueue) SetRepoSource(source RepoSource) { q.repos = source }
 // run actually receives (see the vaultResolver field for why the claim
 // path cannot compute this itself).
 func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
+
+// ClaimGuard is checked at the claim of every run job, after the claim
+// committed and before the payload is built. An error fails the job with
+// the error as its reason, and the claim reports an empty queue, as a
+// payload that cannot be built does. It is a port because the guard's
+// owner (internal/runrequests) imports this package.
+type ClaimGuard interface {
+	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error
+}
+
+// SetClaimGuard injects the claim guard of run jobs (see the claimGuard
+// field).
+func (q *SQLQueue) SetClaimGuard(g ClaimGuard) { q.claimGuard = g }
 
 // SetKeyPins injects the host-key fingerprint source the claim needs. A
 // nil source makes every connection_test claim fail closed (see the pins
@@ -267,6 +285,14 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		return nil, fmt.Errorf("commit claim: %w", err)
 	}
 	claim := &Claim{Token: ""}
+	if job.Kind == KindRun && q.claimGuard != nil {
+		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID); err != nil {
+			if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
+				return nil, fmt.Errorf("fail guarded job %s (guard: %v): %w", job.ID, err, failErr)
+			}
+			return nil, nil
+		}
+	}
 	if err := q.buildPayload(db.WithOrgScope(ctx, job.OrgID), job, &claim.Job); err != nil {
 		if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
 			return nil, fmt.Errorf("fail unbuildable job %s (payload: %v): %w", job.ID, err, failErr)

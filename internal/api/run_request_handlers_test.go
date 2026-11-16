@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -333,3 +334,71 @@ func newTestClock() *testClock {
 
 func (c *testClock) Now() time.Time          { return time.Unix(0, c.nanos.Load()) }
 func (c *testClock) advance(d time.Duration) { c.nanos.Add(int64(d)) }
+
+// TestApprovedRunStaysBoundUntilClaim: what a worker claims is still what
+// the person approved. A change after the approval but before the claim
+// (the assistant may still hold write areas) fails the job instead of
+// running something nobody saw; an unchanged approved run claims normally.
+func TestApprovedRunStaysBoundUntilClaim(t *testing.T) {
+	cases := map[string]func(t *testing.T, f runRequestFixture){
+		"template limit": func(t *testing.T, f runRequestFixture) {
+			updateTemplate(t, f, func(in *templates.UpdateInput) { in.Limit = "web-*" })
+		},
+		"host address": func(t *testing.T, f runRequestFixture) {
+			h, err := f.s.Deps.Hosts.GetHost(f.scoped, f.orgID, f.hostA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.s.Deps.Hosts.UpdateHost(f.scoped, f.orgID, f.hostA, h.Revision, hosts.HostInput{Name: h.Name, Address: "203.0.113.9", ZoneID: h.ZoneID, Managed: true}); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"nothing": nil,
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRunRequestFixture(t, "rr-claim-"+strings.ReplaceAll(name, " ", "-"))
+			created := f.request(t, map[string]any{"reason": "x"})
+			resp := f.approve(t, f.adminC, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+			}
+			if change != nil {
+				change(t, f)
+			}
+			group := uuid.MustParse(f.detail(t, created.Request.ID).Request.RunGroupID)
+			list, _, err := f.s.Deps.Jobs.List(f.scoped, f.orgID, jobs.Filter{RunGroupID: &group}, "", 10)
+			if err != nil || len(list) == 0 {
+				t.Fatalf("jobs of the approved run: %v %v", list, err)
+			}
+			claims := 0
+			for range list {
+				c, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{f.zoneA, f.zoneB}, "v1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if c != nil {
+					claims++
+				}
+			}
+			if change == nil {
+				if claims != len(list) {
+					t.Fatalf("an unchanged approved run claimed %d of %d jobs", claims, len(list))
+				}
+				return
+			}
+			if claims != 0 {
+				t.Fatalf("a run changed after its approval was claimed %d times", claims)
+			}
+			for _, j := range list {
+				got, err := f.s.Deps.Jobs.Get(f.scoped, f.orgID, j.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status != jobs.StatusError || !strings.Contains(got.Error, "changed after it was approved") {
+					t.Fatalf("job after a change = %s %q, want error naming the change", got.Status, got.Error)
+				}
+			}
+		})
+	}
+}

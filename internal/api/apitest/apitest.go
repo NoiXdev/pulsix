@@ -322,7 +322,10 @@ func WithAuthRateLimit(n int) Option {
 // WithRunRequestClock rebuilds the run request service on the test's
 // clock, so a test can let a request expire.
 func WithRunRequestClock(now func() time.Time) Option {
-	return func(s *Server) { s.Deps.RunRequests = newRunRequests(s.DB, s.Deps, now) }
+	return func(s *Server) {
+		s.Deps.RunRequests = newRunRequests(s.DB, s.Deps, now)
+		s.Queue.SetClaimGuard(s.Deps.RunRequests)
+	}
 }
 
 // newRunRequests wires the run request service exactly as app.Build does.
@@ -756,6 +759,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		PublicURL: publicURL,
 	}
 	s.Deps.RunRequests = newRunRequests(d, s.Deps, time.Now)
+	s.Queue.SetClaimGuard(s.Deps.RunRequests)
 	for _, opt := range opts {
 		opt(s)
 	}

@@ -57,20 +57,20 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Request, error)
 }
 
 // Decide implements Store.
-func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time) (bool, error) {
+func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string) (bool, error) {
+	var fp *string
+	if fingerprint != "" {
+		fp = &fingerprint
+	}
 	n, err := s.q.DecideRunRequest(ctx, gen.DecideRunRequestParams{
 		OrgID: orgID, ID: id, Status: string(to),
 		DecidedBy: pgtype.UUID{Bytes: by, Valid: true}, DecidedAt: pgtype.Timestamptz{Time: at, Valid: true},
+		ApprovedFingerprint: fp,
 	})
 	if err != nil {
 		return false, err
 	}
 	return n == 1, nil
-}
-
-// SetRunGroup implements Store.
-func (s *SQLStore) SetRunGroup(ctx context.Context, orgID, id, group uuid.UUID) error {
-	return s.q.SetRunRequestRunGroup(ctx, gen.SetRunRequestRunGroupParams{OrgID: orgID, ID: id, RunGroupID: pgtype.UUID{Bytes: group, Valid: true}})
 }
 
 // RevertToPending implements Store.
@@ -101,6 +101,9 @@ func fromRow(r gen.RunRequest) Request {
 	if r.DecidedAt.Valid {
 		at := r.DecidedAt.Time
 		out.DecidedAt = &at
+	}
+	if r.ApprovedFingerprint != nil {
+		out.ApprovedFingerprint = *r.ApprovedFingerprint
 	}
 	return out
 }

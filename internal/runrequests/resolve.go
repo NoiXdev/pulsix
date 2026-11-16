@@ -37,7 +37,7 @@ type (
 		RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID) ([]jobs.Job, error)
 	}
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
@@ -109,30 +109,17 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 }
 
 // Run implements Enqueuer through the manual run path.
-func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, key string) (uuid.UUID, error) {
-	created, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, templateID, jobs.RunRequest{
-		Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, IdempotencyKey: key,
+func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID) error {
+	_, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, templateID, jobs.RunRequest{
+		Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, IdempotencyKey: key, RunGroupID: group,
 	})
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return runGroupOf(created)
+	return err
 }
 
 // RetryFailed implements Enqueuer through the retry path.
-func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID) (uuid.UUID, error) {
-	created, err := r.src.Jobs.RetryFailed(ctx, orgID, jobID, &actor)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return runGroupOf(created)
-}
-
-func runGroupOf(created []jobs.Job) (uuid.UUID, error) {
-	if len(created) == 0 {
-		return uuid.Nil, errors.New("the run created no job")
-	}
-	return created[0].RunGroupID, nil
+func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID) error {
+	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group)
+	return err
 }
 
 // Picture implements Pictures: everything the run would use now.

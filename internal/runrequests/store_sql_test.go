@@ -62,25 +62,25 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 	if err != nil || got.TemplateRevision != 3 || got.RequestedByToken == nil || *got.RequestedByToken != tok || got.Status != runrequests.StatusPending || !got.ExpiresAt.Equal(r.ExpiresAt) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
-	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now)
+	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1")
 	if err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
-	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now); ok {
+	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, ""); ok {
 		t.Fatal("a decided request was decided again")
 	}
-	group := uuid.Must(uuid.NewV7())
-	if err := store.SetRunGroup(f.ctx, f.org, r.ID, group); err != nil {
-		t.Fatal(err)
-	}
-	if byGroup, err := store.ByRunGroup(f.ctx, f.org, group); err != nil || byGroup.ID != r.ID {
+	// An approval takes the request's own id as its run group and keeps
+	// the approved fingerprint.
+	byGroup, err := store.ByRunGroup(f.ctx, f.org, r.ID)
+	if err != nil || byGroup.ID != r.ID || byGroup.ApprovedFingerprint != "fp-1" || byGroup.RunGroupID == nil || *byGroup.RunGroupID != r.ID {
 		t.Fatalf("ByRunGroup = %+v %v", byGroup, err)
 	}
 	if err := store.RevertToPending(f.ctx, f.org, r.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The run group stays (jobs may point at it), the fingerprint goes.
 	got, _ = store.Get(f.ctx, f.org, r.ID)
-	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.RunGroupID != nil {
+	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil {
 		t.Fatalf("after revert = %+v", got)
 	}
 	list, err := store.List(f.ctx, f.org)

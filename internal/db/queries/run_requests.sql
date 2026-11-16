@@ -14,15 +14,20 @@ SELECT * FROM run_requests WHERE org_id = $1 AND id = $2;
 SELECT * FROM run_requests WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 500;
 
 -- name: DecideRunRequest :execrows
--- Only a pending row moves; zero rows means it was already decided.
-UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at)
+-- Only a pending row moves; zero rows means it was already decided. An
+-- approval records the fingerprint the person approved and takes the
+-- request's own id as the run group, before anything is enqueued, so a
+-- claim of one of its jobs always finds it (migration 00103).
+UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
+  approved_fingerprint = sqlc.narg(approved_fingerprint),
+  run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' THEN id ELSE run_group_id END
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND status = 'pending';
 
--- name: SetRunRequestRunGroup :exec
-UPDATE run_requests SET run_group_id = $3 WHERE org_id = $1 AND id = $2;
-
 -- name: RevertRunRequest :exec
-UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, run_group_id = NULL
+-- A failed enqueue puts the request back to pending. run_group_id stays:
+-- jobs the enqueue did create keep pointing at this request, and its
+-- claim guard refuses them while the request is not approved.
+UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetRunRequestByRunGroup :one

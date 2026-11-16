@@ -1049,6 +1049,13 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
+	return s.RetryFailedInto(ctx, orgID, id, actor, s.newID())
+}
+
+// RetryFailedInto is RetryFailed with the run group the retry's jobs join:
+// an approved run request passes its own id (spec 2026-11-16 assistant
+// access), so a claim of the retry finds the request.
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID) ([]Job, error) {
 	templateID, retry, err := s.RetryTargets(ctx, orgID, id)
 	if err != nil {
 		return nil, err
@@ -1057,7 +1064,7 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, s.newID(), nil)
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, group, nil)
 }
 
 // RetryTargets is RetryFailed's checks without the enqueue: the template

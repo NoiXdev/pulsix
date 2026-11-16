@@ -40,26 +40,23 @@ func (m *memStore) List(_ context.Context, orgID uuid.UUID) ([]runrequests.Reque
 	return out, nil
 }
 
-func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time) (bool, error) {
+func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string) (bool, error) {
 	r, ok := m.rows[id]
 	if !ok || r.OrgID != orgID || r.Status != runrequests.StatusPending {
 		return false, nil
 	}
-	r.Status, r.DecidedBy, r.DecidedAt = to, &by, &at
+	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint = to, &by, &at, fingerprint
+	if to == runrequests.StatusApproved {
+		group := r.ID
+		r.RunGroupID = &group
+	}
 	m.rows[id] = r
 	return true, nil
 }
 
-func (m *memStore) SetRunGroup(_ context.Context, orgID, id, group uuid.UUID) error {
-	r := m.rows[id]
-	r.RunGroupID = &group
-	m.rows[id] = r
-	return nil
-}
-
 func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {
 	r := m.rows[id]
-	r.Status, r.DecidedBy, r.DecidedAt = runrequests.StatusPending, nil, nil
+	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint = runrequests.StatusPending, nil, nil, ""
 	m.rows[id] = r
 	return nil
 }
@@ -84,23 +81,23 @@ type fakeEnqueuer struct {
 	retries []uuid.UUID
 	actor   uuid.UUID
 	err     error
-	group   uuid.UUID
+	group   uuid.UUID // the run group the last enqueue was given
 }
 
-func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string) (uuid.UUID, error) {
+func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID) error {
 	if f.err != nil {
-		return uuid.Nil, f.err
+		return f.err
 	}
-	f.runs, f.actor = append(f.runs, key), actor
-	return f.group, nil
+	f.runs, f.actor, f.group = append(f.runs, key), actor, group
+	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID) (uuid.UUID, error) {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor, group uuid.UUID) error {
 	if f.err != nil {
-		return uuid.Nil, f.err
+		return f.err
 	}
-	f.retries, f.actor = append(f.retries, jobID), actor
-	return f.group, nil
+	f.retries, f.actor, f.group = append(f.retries, jobID), actor, group
+	return nil
 }
 
 type fakeValidator struct {
@@ -345,5 +342,41 @@ func TestFingerprintCoversEveryField(t *testing.T) {
 		if runrequests.Fingerprint(id, p) == fp {
 			t.Errorf("%s does not change the fingerprint", name)
 		}
+	}
+}
+
+// TestCheckRunClaim: the claim of an approved run passes only while the
+// run picture is the one the person approved; a run group of no request
+// passes; a request put back to pending refuses its jobs.
+func TestCheckRunClaim(t *testing.T) {
+	w := newWiring()
+	ctx := context.Background()
+	if err := w.svc.CheckRunClaim(ctx, w.org, uuid.Must(uuid.NewV7())); err != nil {
+		t.Fatalf("a run group of no request = %v, want nil", err)
+	}
+	r := w.create(t)
+	_, _, fp, err := w.svc.Get(ctx, w.org, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp); err != nil {
+		t.Fatal(err)
+	}
+	if w.enq.group != r.ID {
+		t.Fatalf("enqueued into run group %s, want the request's id %s", w.enq.group, r.ID)
+	}
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); err != nil {
+		t.Fatalf("an unchanged approved run = %v", err)
+	}
+	w.pics.p.Limit = "web-*"
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
+		t.Fatalf("a changed approved run = %v, want ErrChangedAfterApproval", err)
+	}
+	if err := w.store.RevertToPending(ctx, w.org, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.pics.p.Limit = "web"
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); err == nil {
+		t.Fatal("a reverted request's job passed the claim check")
 	}
 }

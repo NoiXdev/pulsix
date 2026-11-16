@@ -83,6 +83,11 @@ type RunRequest struct {
 	// delivered twice in the same instant — needs its own, or needs the
 	// claim and the inserts moved into one transaction.
 	IdempotencyKey string
+	// RunGroupID, when not zero, is the run group the jobs join instead of
+	// a new one (and the candidate an IdempotencyKey reserves). An approved
+	// run request passes its own id, so a claim of any of its jobs finds
+	// the request (spec 2026-11-16 assistant access).
+	RunGroupID uuid.UUID
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -116,6 +121,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		return nil, err
 	}
 	group := s.newID()
+	if req.RunGroupID != uuid.Nil {
+		group = req.RunGroupID
+	}
 	var alreadyDone []Job
 	if req.IdempotencyKey != "" {
 		claimed, won, err := s.store.ReserveRunGroup(ctx, orgID, req.IdempotencyKey, group)

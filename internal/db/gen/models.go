@@ -903,22 +903,23 @@ type RotationGroup struct {
 }
 
 type RunRequest struct {
-	ID               uuid.UUID          `json:"id"`
-	OrgID            uuid.UUID          `json:"org_id"`
-	Kind             string             `json:"kind"`
-	TemplateID       uuid.UUID          `json:"template_id"`
-	TemplateRevision int64              `json:"template_revision"`
-	HostID           pgtype.UUID        `json:"host_id"`
-	JobID            pgtype.UUID        `json:"job_id"`
-	Reason           string             `json:"reason"`
-	RequestedByUser  uuid.UUID          `json:"requested_by_user"`
-	RequestedByToken pgtype.UUID        `json:"requested_by_token"`
-	Status           string             `json:"status"`
-	DecidedBy        pgtype.UUID        `json:"decided_by"`
-	DecidedAt        pgtype.Timestamptz `json:"decided_at"`
-	RunGroupID       pgtype.UUID        `json:"run_group_id"`
-	ExpiresAt        time.Time          `json:"expires_at"`
-	CreatedAt        time.Time          `json:"created_at"`
+	ID                  uuid.UUID          `json:"id"`
+	OrgID               uuid.UUID          `json:"org_id"`
+	Kind                string             `json:"kind"`
+	TemplateID          uuid.UUID          `json:"template_id"`
+	TemplateRevision    int64              `json:"template_revision"`
+	HostID              pgtype.UUID        `json:"host_id"`
+	JobID               pgtype.UUID        `json:"job_id"`
+	Reason              string             `json:"reason"`
+	RequestedByUser     uuid.UUID          `json:"requested_by_user"`
+	RequestedByToken    pgtype.UUID        `json:"requested_by_token"`
+	Status              string             `json:"status"`
+	DecidedBy           pgtype.UUID        `json:"decided_by"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	RunGroupID          pgtype.UUID        `json:"run_group_id"`
+	ExpiresAt           time.Time          `json:"expires_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	ApprovedFingerprint *string            `json:"approved_fingerprint"`
 }
 
 type Schedule struct {

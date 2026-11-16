@@ -326,11 +326,12 @@ and a probing agent carries up to 200 assignments, four probes at once. The prot
 change is additive (`buf breaking` clean). A downgrade needs the usual restore of a
 backup from before the upgrade (see Downgrading).
 
-Assistant access (backlog 2.116) adds four migrations and no proto change.
+Assistant access (backlog 2.116) adds five migrations and no proto change.
 Migration 00099 adds `api_tokens.kind` (`api` for every existing token) and
 `api_tokens.areas`, with a CHECK that an assistant token has areas and an API token
 has none; 00100 adds `org_assistant_settings` (no row means off); 00101 the nullable
-`audit_events.actor_token_id`; 00102 `run_requests` (with row-level security).
+`audit_events.actor_token_id`; 00102 `run_requests` (with row-level security);
+00103 `run_requests.approved_fingerprint`, which the claim of an approved run checks.
 Nothing is dropped or rewritten, and the switch is off for every organization. An
 older manager that is still running while the new version migrates ignores `kind`
 and would accept an assistant token at the REST API: **stop every manager instance
