@@ -31,6 +31,15 @@ func wantAbsent(t *testing.T, m map[string]probe.Observation, metrics ...string)
 	}
 }
 
+// wantPositive fails unless metric is a value above zero: its hooks
+// fired (a loopback connect or lookup still takes microseconds).
+func wantPositive(t *testing.T, m map[string]probe.Observation, metric string) {
+	t.Helper()
+	if v := probetest.WantValue(t, m, metric); v <= 0 {
+		t.Fatalf("%s = %v, want above 0", metric, v)
+	}
+}
+
 // wantAtLeast fails unless metric is a value of at least floor.
 func wantAtLeast(t *testing.T, m map[string]probe.Observation, metric string, floor float64) float64 {
 	t.Helper()
@@ -53,7 +62,7 @@ func TestHTTPBreakdownOverPlainHTTP(t *testing.T) {
 	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), ""), "http")
 
 	wantAbsent(t, m, "http.dns_ms", "http.tls_ms", "http.cert_expiry_days", "http.cert_issuer")
-	wantAtLeast(t, m, "http.connect_ms", 0)
+	wantPositive(t, m, "http.connect_ms")
 	ttfb := wantAtLeast(t, m, "http.ttfb_ms", 150)
 	transfer := wantAtLeast(t, m, "http.transfer_ms", 0)
 	if r := probetest.WantValue(t, m, "http.response_ms"); r < ttfb+transfer {
@@ -67,7 +76,7 @@ func TestHTTPBreakdownOverPlainHTTP(t *testing.T) {
 	}
 }
 
-// TestHTTPBreakdownResolvesANameOnce: a URL with a name reports the
+// TestHTTPBreakdownResolvesAName: a URL with a name reports the
 // lookup.
 func TestHTTPBreakdownResolvesAName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -76,7 +85,8 @@ func TestHTTPBreakdownResolvesAName(t *testing.T) {
 	defer srv.Close()
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(fmt.Sprintf("http://localhost:%d/", port), nil), ""), "http")
-	wantAtLeast(t, m, "http.dns_ms", 0)
+	wantPositive(t, m, "http.dns_ms")
+	wantPositive(t, m, "http.connect_ms")
 	wantAbsent(t, m, "http.tls_ms")
 }
 

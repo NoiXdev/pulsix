@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -320,7 +321,7 @@ func TestHTTPFailAll(t *testing.T) {
 		"url": "http://x/", "body_contains": "ok", "json_values": values("a=$.a", "b=$.b"),
 	}, "boom"))
 	want := []mi{{"http.body_match", ""}, {"http.json.value", "a"}, {"http.json.value", "b"}}
-	for _, metric := range failAllHostMetrics {
+	for _, metric := range failAllNamedMetrics {
 		want = append(want, mi{metric, ""})
 	}
 	if len(m) != len(want) {
@@ -333,8 +334,40 @@ func TestHTTPFailAll(t *testing.T) {
 	}
 
 	m = byItem(t, httpprobe.FailAll(map[string]any{"url": "http://x/"}, "boom"))
-	if len(m) != len(failAllHostMetrics) {
-		t.Fatalf("FailAll without body_contains or json_values = %+v, want the host metrics %v", m, failAllHostMetrics)
+	if len(m) != len(failAllNamedMetrics) {
+		t.Fatalf("FailAll without body_contains or json_values = %+v, want the host metrics %v", m, failAllNamedMetrics)
+	}
+}
+
+// TestHTTPFailAllOnlyWhatTheURLAlwaysReports: an attempt that could not be
+// made errors only the metrics every up attempt of its URL reports, since
+// an error row the URL never overwrites would keep the host unknown:
+// dns_ms for a name, tls_ms for https, never the certificate's metrics
+// (the final hop may be http).
+func TestHTTPFailAllOnlyWhatTheURLAlwaysReports(t *testing.T) {
+	base := []string{"http.up", "http.failure", "http.status_code", "http.response_ms", "http.connect_ms",
+		"http.ttfb_ms", "http.transfer_ms", "http.redirects", "http.content_bytes"}
+	with := func(extra ...string) []string { return append(slices.Clone(base), extra...) }
+	for _, tc := range []struct {
+		url  string
+		want []string
+	}{
+		{"http://192.0.2.1/", base},
+		{"http://[2001:db8::1]:8080/", base},
+		{"http://{address}/", base},
+		{"https://{address}:8443/health", with("http.tls_ms")},
+		{"http://name/", with("http.dns_ms")},
+		{"https://name/", with("http.dns_ms", "http.tls_ms")},
+		{"HTTPS://Name.Example/", with("http.dns_ms", "http.tls_ms")},
+		{"https://192.0.2.1/", with("http.tls_ms")},
+		{"ftp://name/", base},
+		{"not a url", base},
+		{"", base},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			obs := httpprobe.FailAll(map[string]any{"url": tc.url}, "boom")
+			probetest.WantErrors(t, obs, "boom", tc.want...)
+		})
 	}
 }
 

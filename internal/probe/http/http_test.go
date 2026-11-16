@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -150,7 +151,7 @@ func TestHTTPEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams("http://{address}/", map[string]any{"body_contains": "x"}), "")
-	probetest.WantErrors(t, obs, "host has no address", append(failAllHostMetrics, "http.body_match")...)
+	probetest.WantErrors(t, obs, "host has no address", append(slices.Clone(failAllHostMetrics), "http.body_match")...)
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
 	if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "http.up"); v != 1 {
@@ -179,10 +180,10 @@ func TestHTTPRefusedTargetIsAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	for _, u := range []string{srv.URL, fmt.Sprintf("http://localhost:%d/", port)} {
+	for u, metrics := range map[string][]string{srv.URL: failAllHostMetrics, fmt.Sprintf("http://localhost:%d/", port): failAllNamedMetrics} {
 		t.Run(u, func(t *testing.T) {
 			obs := run(context.Background(), probe.NewGuard(nil, nil), httpParams(u, map[string]any{"body_contains": "x"}), "")
-			probetest.WantErrors(t, obs, "target address not allowed", append(failAllHostMetrics, "http.body_match")...)
+			probetest.WantErrors(t, obs, "target address not allowed", append(slices.Clone(metrics), "http.body_match")...)
 		})
 	}
 }
@@ -206,7 +207,7 @@ func TestHTTPRefusedRedirectIsAnError(t *testing.T) {
 		}))
 		g := probe.NewGuardForTest(true, []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
 		obs := run(context.Background(), g, httpParams(srv.URL, map[string]any{"body_contains": "x"}), "")
-		probetest.WantErrors(t, obs, "target address not allowed", append(failAllHostMetrics, "http.body_match")...)
+		probetest.WantErrors(t, obs, "target address not allowed", append(slices.Clone(failAllHostMetrics), "http.body_match")...)
 	})
 }
 

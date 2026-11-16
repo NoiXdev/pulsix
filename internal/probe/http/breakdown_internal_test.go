@@ -56,6 +56,9 @@ func TestHTTPSBreakdownSumsHandshakesOverHops(t *testing.T) {
 	if v := probetest.WantValue(t, m, "http.cert_expiry_days"); v < 1.99 || v > 2 {
 		t.Fatalf("http.cert_expiry_days = %v, want just under 2", v)
 	}
+	if v := probetest.WantValue(t, m, "http.connect_ms"); v <= 0 {
+		t.Fatalf("http.connect_ms = %v, want the three connects", v)
+	}
 	if l := probetest.WantLabel(t, m, "http.cert_issuer"); l != "probe test CA" {
 		t.Fatalf("http.cert_issuer = %q, want the CA's common name", l)
 	}
@@ -79,17 +82,17 @@ func TestHTTPSExpiredCertificateWithoutVerification(t *testing.T) {
 
 // TestHTTPSRedirectToHTTPHasNoCertificate: the certificate metrics are the
 // final hop's, so an https hop that redirects to http reports its
-// handshake but no certificate.
+// handshake (at least 40 ms here) but no certificate.
 func TestHTTPSRedirectToHTTPHasNoCertificate(t *testing.T) {
 	ca := probetest.NewCA(t)
 	now := time.Now()
 	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(plain.Close)
-	secure := slowTLSServer(t, ca.Leaf(t, now.Add(-time.Hour), now.Add(time.Hour)), 0, http.RedirectHandler(plain.URL, http.StatusFound))
+	secure := slowTLSServer(t, ca.Leaf(t, now.Add(-time.Hour), now.Add(time.Hour)), 40*time.Millisecond, http.RedirectHandler(plain.URL, http.StatusFound))
 	params := map[string]any{"url": secure.URL, "timeout_s": float64(5)}
 	m := probetest.WantUp(t, probeHTTP(context.Background(), loopbackOnly(), NewJSONGate(1), params, "", nil, ca.Pool), "http")
-	if v := probetest.WantValue(t, m, "http.tls_ms"); v < 0 {
-		t.Fatalf("http.tls_ms = %v, want the first hop's handshake", v)
+	if v := probetest.WantValue(t, m, "http.tls_ms"); v < 40 {
+		t.Fatalf("http.tls_ms = %v, want the first hop's 40 ms handshake", v)
 	}
 	for _, absent := range []string{"http.cert_expiry_days", "http.cert_issuer"} {
 		if o, ok := m[absent]; ok {

@@ -56,7 +56,8 @@ func httpPlugin() Descriptor {
 			{Name: "http.ttfb_ms", Kind: Numeric},
 			{Name: "http.transfer_ms", Kind: Numeric},
 			{Name: "http.redirects", Kind: Numeric},
-			// The body's bytes, counted to 16 MiB; past that an error.
+			// The body's bytes as read (after the transport's transparent
+			// gzip decoding), counted to 16 MiB; past that an error.
 			{Name: "http.content_bytes", Kind: Numeric},
 			// The final hop's leaf certificate; absent over http.
 			{Name: "http.cert_expiry_days", Kind: Numeric},

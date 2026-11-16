@@ -111,7 +111,17 @@ All on item `""`:
   `http.cert_issuer`), reported whenever a leaf certificate was received.
 - A failed attempt (`http.up` 0) reports `http.failure` and none of the
   new metrics; an attempt that could not be made puts the error on every
-  metric including the new ones (`FailAll`).
+  metric the URL is certain to report on an up attempt (`FailAll`):
+  `up`, `failure`, `status_code`, `response_ms`, `connect_ms`, `ttfb_ms`,
+  `transfer_ms`, `redirects`, `content_bytes` (plus `body_match` and the
+  `json_values` items as before); `dns_ms` only when the URL's host is a
+  name (not an IP literal, not `{address}`, which `FailAll` cannot
+  resolve); `tls_ms` only for an https URL; never `cert_expiry_days` or
+  `cert_issuer` (the final hop may be http). (Amended in review, Claude's
+  call.) Why: a `check_current` row is never deleted and an error row
+  reads unknown, so an error on a metric the URL never reports again would
+  keep the host unknown after it recovers; a metric left out only goes
+  stale during the outage and is refreshed by the next up attempt.
 
 ## 3. Assertions (`http` only)
 

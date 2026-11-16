@@ -80,8 +80,7 @@ func TestUnknownPluginYieldsItsMetricsAsErrors(t *testing.T) {
 		{"plugin's own fail-all", "http", `{"url":"http://{address}/","body_contains":"ok"}`,
 			[]string{
 				"http.up", "http.failure", "http.status_code", "http.response_ms",
-				"http.dns_ms", "http.connect_ms", "http.tls_ms", "http.ttfb_ms", "http.transfer_ms",
-				"http.redirects", "http.content_bytes", "http.cert_expiry_days", "http.cert_issuer",
+				"http.connect_ms", "http.ttfb_ms", "http.transfer_ms", "http.redirects", "http.content_bytes",
 				"http.body_match",
 			}},
 		// Nothing anywhere knows it.

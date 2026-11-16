@@ -307,10 +307,12 @@ func TestSecretStoreErrorAtShutdownIsNotLogged(t *testing.T) {
 // row appears for a check that does not ask for them.
 func TestUnavailableSecretOfAnHTTPCheck(t *testing.T) {
 	type mi struct{ metric, item string }
+	// The whole-host metrics every up attempt of an https URL of a name
+	// reports (the certificate's are not certain: the final hop may be http).
 	host := []mi{
 		{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
 		{"http.dns_ms", ""}, {"http.connect_ms", ""}, {"http.tls_ms", ""}, {"http.ttfb_ms", ""}, {"http.transfer_ms", ""},
-		{"http.redirects", ""}, {"http.content_bytes", ""}, {"http.cert_expiry_days", ""}, {"http.cert_issuer", ""},
+		{"http.redirects", ""}, {"http.content_bytes", ""},
 	}
 	for name, tc := range map[string]struct {
 		params map[string]any

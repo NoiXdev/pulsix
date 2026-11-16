@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -46,9 +47,10 @@ var (
 // the system roots.
 func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
 	w := wantsOf(params)
-	fail := func(msg string) []probe.Observation { return failAll(w, msg) }
+	rawURL := probe.StrParam(params, "url", "")
+	fail := func(msg string) []probe.Observation { return failAll(rawURL, w, msg) }
 
-	target, err := httpURL(probe.StrParam(params, "url", ""), address)
+	target, err := httpURL(rawURL, address)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -124,28 +126,55 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 }
 
 // FailAll is the result of an http probe of params that could not be
-// attempted, msg on every metric the params would have produced: the
-// whole-host metrics, http.body_match when body_contains is set and each
-// json_values entry's item. The runner reports it for a secret it cannot
-// hand over.
+// attempted, msg on every metric the params would surely have produced
+// (certainHostMetrics), on http.body_match when body_contains is set and
+// on each json_values entry's item. The runner reports it for a secret it
+// cannot hand over.
 func FailAll(params map[string]any, msg string) []probe.Observation {
-	return failAll(wantsOf(params), msg)
+	return failAll(probe.StrParam(params, "url", ""), wantsOf(params), msg)
 }
 
-// hostMetrics are the whole-host metrics an attempt can report. Which of
-// http.dns_ms, http.tls_ms and the certificate's an attempt reports
-// depends on the hops it makes, so an attempt that could not be made
-// puts its error on all of them.
-var hostMetrics = []string{
-	"http.up", "http.failure", "http.status_code", "http.response_ms",
-	"http.dns_ms", "http.connect_ms", "http.tls_ms", "http.ttfb_ms", "http.transfer_ms",
-	"http.redirects", "http.content_bytes", "http.cert_expiry_days", "http.cert_issuer",
+// certainHostMetrics are the whole-host metrics every up attempt of
+// rawURL reports, the ones an attempt that could not be made puts its
+// error on. A check_current row is never deleted and an error row reads
+// unknown, so an error on a metric the URL never reports again would keep
+// the host unknown after it recovers; a metric left out only goes stale
+// for the outage. Hence http.dns_ms only for a literal name (not an IP
+// literal, not {address}, which FailAll cannot resolve), http.tls_ms only
+// for https, and never the certificate's metrics: the final hop may be
+// http.
+func certainHostMetrics(rawURL string) []string {
+	resolves, secured := urlShape(rawURL)
+	metrics := []string{"http.up", "http.failure", "http.status_code", "http.response_ms"}
+	if resolves {
+		metrics = append(metrics, "http.dns_ms")
+	}
+	metrics = append(metrics, "http.connect_ms")
+	if secured {
+		metrics = append(metrics, "http.tls_ms")
+	}
+	return append(metrics, "http.ttfb_ms", "http.transfer_ms", "http.redirects", "http.content_bytes")
 }
 
-// failAll is msg on the whole-host metrics, on http.body_match when
-// body_contains is set and on each entry's http.json.value.
-func failAll(w wants, msg string) []probe.Observation {
-	obs := probe.FailAll(msg, hostMetrics...)
+// urlShape reports whether rawURL's host is a name to look up (neither
+// an IP literal nor {address}) and whether its scheme is https; a URL
+// that does not parse is neither.
+func urlShape(rawURL string) (resolves, secured bool) {
+	if strings.Contains(rawURL, probe.AddressPlaceholder) {
+		return false, strings.HasPrefix(strings.ToLower(rawURL), "https://")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return false, false
+	}
+	_, ipErr := netip.ParseAddr(u.Hostname())
+	return ipErr != nil, u.Scheme == "https"
+}
+
+// failAll is msg on rawURL's certain host metrics, on http.body_match
+// when body_contains is set and on each entry's http.json.value.
+func failAll(rawURL string, w wants, msg string) []probe.Observation {
+	obs := probe.FailAll(msg, certainHostMetrics(rawURL)...)
 	if w.bodyContains != "" {
 		obs = append(obs, probe.Observation{Metric: "http.body_match", Err: msg})
 	}

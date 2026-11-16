@@ -23,10 +23,17 @@ func runWith(ctx context.Context, g *probe.Guard, params map[string]any, address
 // content_bytes.
 const upHostMetrics = 9
 
-// failAllHostMetrics are the whole-host metrics an attempt that could not
-// be made puts its error on.
+// failAllHostMetrics are the whole-host metrics an attempt at an http URL
+// of an IP literal or {address} that could not be made puts its error on:
+// those every up attempt of that URL reports.
 var failAllHostMetrics = []string{
 	"http.up", "http.failure", "http.status_code", "http.response_ms",
-	"http.dns_ms", "http.connect_ms", "http.tls_ms", "http.ttfb_ms", "http.transfer_ms",
-	"http.redirects", "http.content_bytes", "http.cert_expiry_days", "http.cert_issuer",
+	"http.connect_ms", "http.ttfb_ms", "http.transfer_ms", "http.redirects", "http.content_bytes",
+}
+
+// failAllNamedMetrics is failAllHostMetrics for an http URL of a name,
+// which every up attempt looks up.
+var failAllNamedMetrics = []string{
+	"http.up", "http.failure", "http.status_code", "http.response_ms",
+	"http.dns_ms", "http.connect_ms", "http.ttfb_ms", "http.transfer_ms", "http.redirects", "http.content_bytes",
 }
