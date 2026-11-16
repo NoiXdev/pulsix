@@ -273,7 +273,7 @@ Per assertion, item = its name:
 
 ### Rules
 
-Migration 00099 (and `rules.SeedRules()`) seeds seven org rules, each on
+Migration 00104 (and `rules.SeedRules()`) seeds seven org rules, each on
 the check key of its plugin (matching every check of the plugin since
 3.13e):
 
@@ -294,7 +294,7 @@ check into a crit alert on the first evaluation after the migration;
 
 ## 4. Alert detail
 
-- Migration 00099 adds `alerts.detail text` and `alert_events.detail
+- Migration 00104 adds `alerts.detail text` and `alert_events.detail
   text` (nullable, additive).
 - When the alerts executor opens a tuple alert or changes its severity
   (`ActionOpen`, `ActionSeverity`), it captures a detail for the subject
@@ -380,7 +380,7 @@ report the new metrics; `docs/upgrades.md` notes the skew.
 ## Documentation
 
 `docs/BACKLOG.md` (3.13b done, 3.13f noted as delivered by it; new rows
-for the split-out items), `docs/upgrades.md` (migration 00099; skew
+for the split-out items), `docs/upgrades.md` (migration 00104; skew
 note; no new dependency since review); noix-docs on a new branch
 `docs/pulsix-web-assertions` from `docs/pulsix-probe-vantages`: check
 plugins reference (failure reasons, new http/tls metrics, assertions

@@ -50,7 +50,7 @@ ORDER BY scope, check_key, item, metric;
 -- predates the column: a brand new alert's severity has never changed, so
 -- the moment it last did is the moment it opened.
 --
--- detail (backlog 3.13b, migration 00099) is why the alert fired, as the
+-- detail (backlog 3.13b, migration 00104) is why the alert fired, as the
 -- executor captured it for this opening (internal/alerts' captureDetails);
 -- NULL when there is none.
 INSERT INTO alerts (

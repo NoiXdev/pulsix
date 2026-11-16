@@ -14,7 +14,7 @@
 
 - Values verbatim from the spec: failure vocabulary table; 32 assertions, 512 bytes per entry, 256 bytes per regex or selector; 1 MiB kept body, 16 MiB counted; 128 bytes per actual/issuer label; 512 bytes per alert detail; the seven seeded rule names, rules and severities.
 - No error text from a library leaves a probe (failure labels only); `Set-Cookie` actual is `(hidden)`; no secret value in errors or logs.
-- Migration 00099 only, additive (seed rows + `alerts.detail`, `alert_events.detail`); sqlc regenerated with the repo's target; `docs/upgrades.md` rules apply. No proto change.
+- Migration 00104 only, additive (seed rows + `alerts.detail`, `alert_events.detail`); sqlc regenerated with the repo's target; `docs/upgrades.md` rules apply. No proto change.
 - Repo English; public docs never name the tech stack.
 - Never `go test ./...`; per package `go test -race -timeout 900s` (`internal/api` `-timeout 1800s`); `golangci-lint run` clean; for code under `internal/probe` or `internal/agent` also `GOOS=windows golangci-lint run ./internal/probe/... ./internal/agent/...` and `GOOS=linux|darwin|windows go vet` on the same.
 - Every descriptor change follows the "Adding a plugin" note in `internal/agent/checks/plugins/registry.go` (goldens, catalogue table, SPA fixture `-update-spa-fixture`, `web/scripts/api-gen.sh`, en/de texts).
@@ -60,9 +60,9 @@
 - [ ] Implement; PASS as Task 1's list plus `internal/agent/...` (binary still builds; note its size change in the report).
 - [ ] Commit `feat(probe): assertions on http checks`.
 
-### Task 4: Migration 00099 and seeded rules
+### Task 4: Migration 00104 and seeded rules
 
-**Files:** `internal/db/migrations/00099_web_assertions.sql` (the seven rules' backfill between the `rules-seed-backfill` markers, like 00097; `alerts.detail text`, `alert_events.detail text`), `internal/rules/seed.go`, the seed tests modelled on 00097's (`TestRulesBackfillMatchesSeedRules` coverage, a per-org comparison test), sqlc regeneration.
+**Files:** `internal/db/migrations/00104_web_assertions.sql` (the seven rules' backfill between the `rules-seed-backfill` markers, like 00097; `alerts.detail text`, `alert_events.detail text`), `internal/rules/seed.go`, the seed tests modelled on 00097's (`TestRulesBackfillMatchesSeedRules` coverage, a per-org comparison test), sqlc regeneration.
 
 - [ ] Failing tests: backfill equals `SeedRules()`; per-org rows equal `SeedForOrg`; an org holding a rule of one of the names keeps it and gets no duplicate; migration down removes only seed rows of the seven names.
 - [ ] Implement; PASS `internal/db/...`, `internal/rules`, `internal/checks`, WHOLE `internal/api` (seed counts in API tests may move).
