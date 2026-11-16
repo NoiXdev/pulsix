@@ -296,6 +296,58 @@ func TestRetryCopiesFollowUps(t *testing.T) {
 	}
 }
 
+// TestApprovedRunRequestPlansFollowUpsInItsGroup: an approved run request
+// (spec 2026-11-16 assistant access) enqueues into its own id as the run
+// group, as a manual run or as a retry. Its follow-ups must be planned, or
+// copied, for that group, the one the run-group sink later finishes, and
+// the chain's root is the manual trigger run_follow_ups.root_trigger
+// accepts.
+func TestApprovedRunRequestPlansFollowUpsInItsGroup(t *testing.T) {
+	t.Run("run", func(t *testing.T) {
+		f := newChainFixture(t)
+		request, actor := id7(), id7()
+		got, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{
+			Trigger: jobs.TriggerManual, Actor: &actor, IdempotencyKey: "run-request:" + request.String(), RunGroupID: request,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 || got[0].RunGroupID != request {
+			t.Fatalf("jobs = %+v, want them in the request's group %s", got, request)
+		}
+		if len(f.planner.plans) != 1 {
+			t.Fatalf("plans = %d, want 1", len(f.planner.plans))
+		}
+		p := f.planner.plans[0]
+		if p.group != request || p.template != f.tpl || p.chain.RootTrigger != jobs.TriggerManual || p.chain.Depth != 1 ||
+			p.chain.ConfiguredBy == nil || *p.chain.ConfiguredBy != actor {
+			t.Fatalf("plan = %+v, want the request's group, a manual root and the actor", p)
+		}
+	})
+	t.Run("retry", func(t *testing.T) {
+		f := newChainFixture(t)
+		orig, grp, request, actor := id7(), id7(), id7(), id7()
+		f.store.jobs[orig] = storedJob{j: jobs.Job{
+			ID: orig, OrgID: f.org, Kind: jobs.KindRun, Status: jobs.StatusFailed,
+			TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: grp,
+			Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
+		}}
+		got, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 || got[0].RunGroupID != request {
+			t.Fatalf("jobs = %+v, want them in the request's group %s", got, request)
+		}
+		if len(f.planner.copies) != 1 || len(f.planner.plans) != 0 {
+			t.Fatalf("copies = %d plans = %d", len(f.planner.copies), len(f.planner.plans))
+		}
+		if c := f.planner.copies[0]; c.from != grp || c.to != request || c.by == nil || *c.by != actor {
+			t.Fatalf("copy = %+v, want from %s to the request's group %s", c, grp, request)
+		}
+	})
+}
+
 type countSink struct {
 	calls int
 	err   error
