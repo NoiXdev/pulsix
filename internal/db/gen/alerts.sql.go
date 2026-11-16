@@ -237,7 +237,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 const insertAlert = `-- name: InsertAlert :one
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping, severity_changed_at
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
   $7, $8, $8,
@@ -246,7 +246,7 @@ INSERT INTO alerts (
      WHERE $3::text = 'tuple' AND s.org_id = $1 AND s.host_id = $2
        AND s.check_key = $4 AND s.item = $5 AND s.metric = $6),
     false),
-  $7
+  $7, $9
 )
 RETURNING id
 `
@@ -260,6 +260,7 @@ type InsertAlertParams struct {
 	Metric   string    `json:"metric"`
 	OpenedAt time.Time `json:"opened_at"`
 	Severity string    `json:"severity"`
+	Detail   *string   `json:"detail"`
 }
 
 // ActionOpen: a brand new row, never an update of a closed one — the
@@ -288,6 +289,10 @@ type InsertAlertParams struct {
 // same reading that migration's own backfill gives every row that
 // predates the column: a brand new alert's severity has never changed, so
 // the moment it last did is the moment it opened.
+//
+// detail (backlog 3.13b, migration 00099) is why the alert fired, as the
+// executor captured it for this opening (internal/alerts' captureDetails);
+// NULL when there is none.
 func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertAlert,
 		arg.OrgID,
@@ -298,6 +303,7 @@ func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.
 		arg.Metric,
 		arg.OpenedAt,
 		arg.Severity,
+		arg.Detail,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -334,8 +340,8 @@ func (q *Queries) InsertAlertActorEvent(ctx context.Context, arg InsertAlertActo
 }
 
 const insertAlertEvent = `-- name: InsertAlertEvent :exec
-INSERT INTO alert_events (org_id, alert_id, at, kind)
-VALUES ($1, $2, $3, $4)
+INSERT INTO alert_events (org_id, alert_id, at, kind, detail)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertAlertEventParams struct {
@@ -343,18 +349,22 @@ type InsertAlertEventParams struct {
 	AlertID uuid.UUID `json:"alert_id"`
 	At      time.Time `json:"at"`
 	Kind    string    `json:"kind"`
+	Detail  *string   `json:"detail"`
 }
 
 // Every event Execute writes is system-caused (opened, severity_raised,
 // ack_voided, closed) — actor_id is left NULL, the acknowledge/snooze
 // events a human causes belong to Task 6's Service, not here. payload is
 // always the default '{}'::jsonb: nothing downstream reads one yet.
+// detail (backlog 3.13b) is set on the events of an opening or a severity
+// change only; a close carries none.
 func (q *Queries) InsertAlertEvent(ctx context.Context, arg InsertAlertEventParams) error {
 	_, err := q.db.Exec(ctx, insertAlertEvent,
 		arg.OrgID,
 		arg.AlertID,
 		arg.At,
 		arg.Kind,
+		arg.Detail,
 	)
 	return err
 }
@@ -811,7 +821,7 @@ func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateCha
 const raiseAlertSeverity = `-- name: RaiseAlertSeverity :one
 WITH prev AS (
   SELECT a.id, a.severity AS prev_severity FROM alerts a
-  WHERE a.id = $6 AND a.org_id = $7
+  WHERE a.id = $7 AND a.org_id = $8
   FOR UPDATE
 )
 UPDATE alerts SET severity = $1,
@@ -820,7 +830,8 @@ UPDATE alerts SET severity = $1,
     THEN $1 ELSE peak_severity END,
   snooze_until_change = CASE WHEN $3::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN $4::boolean THEN NULL ELSE acknowledged_severity END,
-  severity_changed_at = $5
+  severity_changed_at = $5,
+  detail = $6
 FROM prev WHERE alerts.id = prev.id
 RETURNING prev.prev_severity
 `
@@ -831,6 +842,7 @@ type RaiseAlertSeverityParams struct {
 	ClearsSnooze bool      `json:"clears_snooze"`
 	VoidsAck     bool      `json:"voids_ack"`
 	At           time.Time `json:"at"`
+	Detail       *string   `json:"detail"`
 	ID           uuid.UUID `json:"id"`
 	OrgID        uuid.UUID `json:"org_id"`
 }
@@ -900,6 +912,10 @@ type RaiseAlertSeverityParams struct {
 // regardless — it is honest data about the alert, true on its own terms —
 // but nothing outside the alerts store's own row mapping
 // (internal/alerts/store_sql.go) reads it today.
+//
+// detail (backlog 3.13b) is the latest reason the executor captured, so it
+// is replaced on every severity change, rise or fall — NULL when this
+// change has none.
 func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverityParams) (string, error) {
 	row := q.db.QueryRow(ctx, raiseAlertSeverity,
 		arg.Severity,
@@ -907,6 +923,7 @@ func (q *Queries) RaiseAlertSeverity(ctx context.Context, arg RaiseAlertSeverity
 		arg.ClearsSnooze,
 		arg.VoidsAck,
 		arg.At,
+		arg.Detail,
 		arg.ID,
 		arg.OrgID,
 	)

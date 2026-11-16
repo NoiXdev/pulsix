@@ -108,6 +108,15 @@ SELECT count(*) FROM check_current WHERE org_id = sqlc.arg(org_id) AND host_id =
 SELECT * FROM check_current WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
 ORDER BY check_key, item, metric;
 
+-- name: GetCheckCurrentLabel :one
+-- One tuple's current discrete label (NULL for a numeric value or an
+-- error), for the alert detail (backlog 3.13b): run on the alerts
+-- executor's own transaction, so it names org_id itself rather than
+-- leaning on row-level security.
+SELECT label FROM check_current
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item) AND metric = sqlc.arg(metric);
+
 -- name: SeriesForHost :many
 -- One metric's samples for one host, downsampled server-side: bucket_seconds
 -- is the caller's own (to-from)/buckets, turned into an interval through

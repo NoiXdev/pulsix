@@ -332,6 +332,10 @@ func (f *Follower) deliverEscalation(ctx context.Context, tx pgx.Tx, orgID uuid.
 		Severity: string(d.chain.Severity), Event: "escalated", At: now,
 		URL:          base + "/alerts?host=" + d.alert.Subject.HostID.String(),
 		NotSeenSince: alerts.NotSeenSince(d.alert),
+		// The alert's latest detail (backlog 3.13b): an escalation is
+		// about the alert as it stands, not about one of its events, and
+		// the escalated event RecordEscalation writes stores none.
+		Detail: d.alert.Detail,
 	}
 	ev := notify.Event{
 		Kind: notify.EventAlertBatch, At: now,

@@ -328,7 +328,7 @@ func (q *Queries) GetAlertRoute(ctx context.Context, arg GetAlertRouteParams) (A
 
 const heldAlertEvents = `-- name: HeldAlertEvents :many
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
-       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at, ae.detail,
        s.state AS ledger_state
 FROM alert_notify_state s
 JOIN alert_events ae ON ae.id = s.alert_event_id AND ae.org_id = s.org_id
@@ -355,6 +355,7 @@ type HeldAlertEventsRow struct {
 	Severity    string    `json:"severity"`
 	Kind        string    `json:"kind"`
 	At          time.Time `json:"at"`
+	Detail      *string   `json:"detail"`
 	LedgerState string    `json:"ledger_state"`
 }
 
@@ -401,6 +402,7 @@ func (q *Queries) HeldAlertEvents(ctx context.Context, arg HeldAlertEventsParams
 			&i.Severity,
 			&i.Kind,
 			&i.At,
+			&i.Detail,
 			&i.LedgerState,
 		); err != nil {
 			return nil, err
@@ -705,7 +707,7 @@ func (q *Queries) RecordAlertNotifyState(ctx context.Context, arg RecordAlertNot
 
 const undecidedAlertEvents = `-- name: UndecidedAlertEvents :many
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
-       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at, ae.detail
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 JOIN hosts h ON h.id = a.host_id
@@ -734,6 +736,7 @@ type UndecidedAlertEventsRow struct {
 	Severity string    `json:"severity"`
 	Kind     string    `json:"kind"`
 	At       time.Time `json:"at"`
+	Detail   *string   `json:"detail"`
 }
 
 // The follower's forward pass (spec "The follower"): every event in org
@@ -782,6 +785,7 @@ func (q *Queries) UndecidedAlertEvents(ctx context.Context, arg UndecidedAlertEv
 			&i.Severity,
 			&i.Kind,
 			&i.At,
+			&i.Detail,
 		); err != nil {
 			return nil, err
 		}

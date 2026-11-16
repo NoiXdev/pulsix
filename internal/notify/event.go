@@ -171,6 +171,12 @@ type AlertItem struct {
 	// 3.57: the host-scope alert at severity warn): its agent's last
 	// contact, read when the message is built. Absent on every other item.
 	NotSeenSince *time.Time `json:"not_seen_since,omitempty"`
+	// Detail is why the alert fired, as of the event the item is about
+	// (backlog 3.13b): a synthetic check's failure reason, or a failed web
+	// assertion and the value it saw. An escalation takes the alert's
+	// latest. Absent when there is none. Part of it can come from the
+	// monitored site, so the text renderings defuse it (agentText).
+	Detail string `json:"detail,omitempty"`
 }
 
 // runCategories maps a finished run group to the categories it belongs

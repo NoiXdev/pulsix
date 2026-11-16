@@ -93,17 +93,19 @@ func changedOne(n int64, err error) error {
 
 // open is ActionOpen: a brand new row (InsertAlert's own comment explains
 // why this is always an INSERT, never an update of a closed row), plus
-// the one event every newly opened alert gets.
+// the one event every newly opened alert gets; both carry a.Detail.
 func (s *SQLStore) open(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
 	id, err := q.InsertAlert(ctx, gen.InsertAlertParams{
 		OrgID: orgID, HostID: a.Subject.HostID, Scope: string(a.Subject.Scope),
 		CheckKey: a.Subject.CheckKey, Item: a.Subject.Item, Metric: a.Subject.Metric,
-		OpenedAt: a.At, Severity: string(a.Severity),
+		OpenedAt: a.At, Severity: string(a.Severity), Detail: nullDetail(a.Detail),
 	})
 	if err != nil {
 		return fmt.Errorf("insert alert: %w", err)
 	}
-	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{OrgID: orgID, AlertID: id, At: a.At, Kind: eventOpened})
+	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{
+		OrgID: orgID, AlertID: id, At: a.At, Kind: eventOpened, Detail: nullDetail(a.Detail),
+	})
 }
 
 // raiseAlertSeverityRank is RaiseAlertSeverity's own @severity_rank
@@ -135,6 +137,9 @@ func raiseAlertSeverityRank(s rules.State) int32 { return int32(rules.StateRank(
 // disagreeing with the ack_voided event this function writes right below
 // it for the very same action.
 //
+// a.Detail (backlog 3.13b) replaces the alert's detail — the latest
+// capture, NULL when this change has none — and goes on both events.
+//
 // The severity this replaced comes back from the UPDATE itself (backlog
 // 4.25). It used to be a GetAlertSeverity SELECT issued immediately
 // before — two statements, so two readings of a row another transaction
@@ -145,6 +150,7 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 	before, err := q.RaiseAlertSeverity(ctx, gen.RaiseAlertSeverityParams{
 		Severity: string(a.Severity), SeverityRank: raiseAlertSeverityRank(a.Severity),
 		ClearsSnooze: a.ClearsSnoozeUntilChange, VoidsAck: a.VoidsAck, At: a.At, ID: a.AlertID, OrgID: orgID,
+		Detail: nullDetail(a.Detail),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// This organization has no such alert. The same ANSWER the other
@@ -160,19 +166,27 @@ func (s *SQLStore) raiseSeverity(ctx context.Context, q *gen.Queries, orgID uuid
 
 	if rules.StateRank(a.Severity) > rules.StateRank(rules.State(before)) {
 		if err := q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{
-			OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventSeverityRaised,
+			OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventSeverityRaised, Detail: nullDetail(a.Detail),
 		}); err != nil {
 			return fmt.Errorf("insert severity_raised event: %w", err)
 		}
 	}
 	if a.VoidsAck {
 		if err := q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{
-			OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventAckVoided,
+			OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventAckVoided, Detail: nullDetail(a.Detail),
 		}); err != nil {
 			return fmt.Errorf("insert ack_voided event: %w", err)
 		}
 	}
 	return nil
+}
+
+// nullDetail is an action's detail as its column stores it: NULL for none.
+func nullDetail(d string) *string {
+	if d == "" {
+		return nil
+	}
+	return &d
 }
 
 // close is ActionClose: the row closes with the action's own reason and

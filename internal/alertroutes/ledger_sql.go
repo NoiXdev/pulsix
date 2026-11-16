@@ -101,6 +101,9 @@ type PendingEvent struct {
 	Severity rules.State
 	Kind     alerts.EventKind
 	At       time.Time
+	// Detail is the event's own detail (backlog 3.13b): why the alert
+	// fired as of this event, "" when it carries none.
+	Detail string
 
 	Ledger LedgerState
 }
@@ -108,12 +111,16 @@ type PendingEvent struct {
 // toPendingEvent converts either ledger query's row shape — the two are
 // identical column-for-column, but sqlc gives each :many statement its
 // own row type even when they agree — into the package's own PendingEvent.
-func toPendingEvent(eventID, alertID, hostID uuid.UUID, hostName, checkKey, item, metric, severity, kind string, at time.Time) PendingEvent {
-	return PendingEvent{
+func toPendingEvent(eventID, alertID, hostID uuid.UUID, hostName, checkKey, item, metric, severity, kind string, at time.Time, detail *string) PendingEvent {
+	ev := PendingEvent{
 		EventID: eventID, AlertID: alertID, HostID: hostID,
 		HostName: hostName, CheckKey: checkKey, Item: item, Metric: metric,
 		Severity: rules.State(severity), Kind: alerts.EventKind(kind), At: at,
 	}
+	if detail != nil {
+		ev.Detail = *detail
+	}
+	return ev
 }
 
 // UndecidedEvents is the follower's forward pass: every event in org with
@@ -131,7 +138,7 @@ func (s *Store) UndecidedEvents(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 	}
 	out := make([]PendingEvent, len(rows))
 	for i, r := range rows {
-		out[i] = toPendingEvent(r.EventID, r.AlertID, r.HostID, r.HostName, r.CheckKey, r.Item, r.Metric, r.Severity, r.Kind, r.At)
+		out[i] = toPendingEvent(r.EventID, r.AlertID, r.HostID, r.HostName, r.CheckKey, r.Item, r.Metric, r.Severity, r.Kind, r.At, r.Detail)
 	}
 	return out, nil
 }
@@ -151,7 +158,7 @@ func (s *Store) CatchUpEvents(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, l
 	}
 	out := make([]PendingEvent, len(rows))
 	for i, r := range rows {
-		out[i] = toPendingEvent(r.EventID, r.AlertID, r.HostID, r.HostName, r.CheckKey, r.Item, r.Metric, r.Severity, r.Kind, r.At)
+		out[i] = toPendingEvent(r.EventID, r.AlertID, r.HostID, r.HostName, r.CheckKey, r.Item, r.Metric, r.Severity, r.Kind, r.At, r.Detail)
 		out[i].Ledger = LedgerState(r.LedgerState)
 	}
 	return out, nil

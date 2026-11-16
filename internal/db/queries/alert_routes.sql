@@ -217,7 +217,7 @@ ORDER BY route_id;
 -- hazard here (see ListRouteSelections' own doc comment for what that
 -- looks like when it does bite).
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
-       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at, ae.detail
 FROM alert_events ae
 JOIN alerts a ON a.id = ae.alert_id
 JOIN hosts h ON h.id = a.host_id
@@ -264,7 +264,7 @@ LIMIT @lim;
 -- maintenance window opens over it, and a catch-up pass that wrote nothing
 -- whenever the event was still held would leave the stale reason behind.
 SELECT ae.id AS event_id, ae.alert_id, a.host_id, h.name AS host_name,
-       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at,
+       a.check_key, a.item, a.metric, a.severity, ae.kind, ae.at, ae.detail,
        s.state AS ledger_state
 FROM alert_notify_state s
 JOIN alert_events ae ON ae.id = s.alert_event_id AND ae.org_id = s.org_id

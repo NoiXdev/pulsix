@@ -435,6 +435,7 @@ func hostileSampleEventForKind(kind EventKind) Event {
 		for i := range items {
 			items[i].HostName, items[i].CheckKey, items[i].Item = hostile, hostile, hostile
 			items[i].Metric, items[i].Severity, items[i].Event = hostile, hostile, hostile
+			items[i].Detail = hostile
 		}
 		ev.Alerts = &AlertBatch{Count: ev.Alerts.Count, Items: items}
 	}

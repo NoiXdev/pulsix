@@ -323,7 +323,7 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 		AlertID: ev.AlertID, HostID: ev.HostID, HostName: ev.HostName,
 		CheckKey: ev.CheckKey, Item: ev.Item, Metric: ev.Metric,
 		Severity: string(ev.Severity), Event: string(ev.Kind), At: ev.At,
-		NotSeenSince: alerts.NotSeenSince(a),
+		NotSeenSince: alerts.NotSeenSince(a), Detail: ev.Detail,
 	})
 	if err := f.claimBases(ctx, tx, r.orgID, ev.AlertID, routed.routeIDs, r.now); err != nil {
 		return err

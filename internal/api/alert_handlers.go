@@ -75,6 +75,12 @@ type AlertDTO struct {
 	// now rather than stored on the alert. The GUI words "not seen since
 	// …" from it; the server builds no alert titles.
 	NotSeenSince *time.Time `json:"not_seen_since,omitempty" doc:"Set only on an open absent warning (scope host, severity warn): when the client's agent was last seen"`
+
+	// Detail is alerts.Alert.Detail (backlog 3.13b): why the alert fired,
+	// as last captured — a synthetic check's failure reason, or a failed
+	// web assertion and the value it saw. Plain text, part of which comes
+	// from the monitored site; the GUI renders it as text.
+	Detail string `json:"detail,omitempty" maxLength:"512" doc:"Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none"`
 }
 
 // toAlertDTO flattens one alerts.Alert, its host's name and its
@@ -95,6 +101,7 @@ func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression, notSeen
 		WasFlapping: a.WasFlapping,
 		Muted:       sup.Muted, MuteReason: string(sup.Reason), MutedUntil: sup.Until,
 		NotSeenSince: notSeenSince,
+		Detail:       a.Detail,
 	}
 	if a.AckBy != nil {
 		dto.AckBy = a.AckBy.String()
@@ -134,6 +141,7 @@ type alertEventDTO struct {
 	ActorID              string    `json:"actor_id,omitempty"`
 	EscalationPosition   int       `json:"escalation_position,omitempty" doc:"The ladder step that fired; only set for kind escalated"`
 	EscalationChannelIDs []string  `json:"escalation_channel_ids" doc:"The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded"`
+	Detail               string    `json:"detail,omitempty" maxLength:"512" doc:"Why the alert fired as of this event; set on opened, severity_raised and ack_voided events that captured one"`
 }
 
 // alertStateChangeDTO is one alerts.StateChange (a check_state_changes row
@@ -181,7 +189,7 @@ func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
 	for i, e := range d.Timeline {
 		entry := alertTimelineEntryDTO{At: e.At, Kind: string(e.Kind)}
 		if e.Event != nil {
-			ev := alertEventDTO{ID: e.Event.ID.String(), At: e.Event.At, Kind: e.Event.Kind}
+			ev := alertEventDTO{ID: e.Event.ID.String(), At: e.Event.At, Kind: e.Event.Kind, Detail: e.Event.Detail}
 			if e.Event.ActorID != nil {
 				ev.ActorID = e.Event.ActorID.String()
 			}

@@ -103,7 +103,7 @@ func TestBuildReconcilesZonelessOrganizations(t *testing.T) {
 // TestBuildSeedsRuleSetOnOrgCreation is Task 5's own coverage of
 // ChainOrgCreatedHooks' production composition (app.go): completing the
 // first-run wizard must leave the new organization with exactly the
-// nine-row starter rule set rules.Service.SeedForOrg writes, each stamped
+// sixteen-row starter rule set rules.Service.SeedForOrg writes, each stamped
 // origin "seed" and scope "org" — and with its check_definitions seed set
 // still in place, proving rulesSvc.SeedForOrg was appended to the same
 // chained hook rather than replacing checksSvc.SeedForOrg. A failing rule
@@ -168,8 +168,8 @@ func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 9 {
-		t.Fatalf("check_rules for the new org = %+v, want exactly 9 rows", got)
+	if len(got) != 16 {
+		t.Fatalf("check_rules for the new org = %+v, want exactly the 16 seed rows", got)
 	}
 	seen := map[string]bool{}
 	for _, r := range got {
@@ -178,7 +178,8 @@ func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
 		}
 		seen[r.metric+"/"+r.severity] = true
 	}
-	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn", "script.status/crit", "script.status/warn", "snmp.up/crit", "snmp.if.status/warn"} {
+	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn", "script.status/crit", "script.status/warn", "snmp.up/crit", "snmp.if.status/warn",
+		"http.assertion/warn", "http.assertion/crit", "icmp.up/crit", "tcp.up/crit", "http.up/crit", "tls.up/crit", "dns.up/crit"} {
 		if !seen[want] {
 			t.Fatalf("seed set missing %q, got %+v", want, got)
 		}

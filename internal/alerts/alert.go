@@ -100,6 +100,11 @@ type Alert struct {
 	SnoozeUntilChange bool
 
 	WasFlapping bool
+
+	// Detail is why the alert fired, as last captured (backlog 3.13b): set
+	// by an opening or a severity change of a tuple alert, through Apply's
+	// DetailSource; "" when there was nothing to say.
+	Detail string
 }
 
 // AlertWithHost pairs an Alert with its host's name — Get and List's own
@@ -168,6 +173,12 @@ type Action struct {
 	ClearsSnoozeUntilChange bool // ActionSeverity only: a severity change ends an unbounded snooze
 
 	Reason CloseReason // ActionClose only
+
+	// Detail is why the subject fired (ActionOpen, ActionSeverity only),
+	// filled by Service.Apply through its DetailSource after Reconcile —
+	// which never sets it, staying pure — and written by Execute to the
+	// alert and to the action's events.
+	Detail string
 }
 
 // EventKind is one row of alert_events.kind. The eight constants below

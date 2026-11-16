@@ -13,6 +13,7 @@ package alerts
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -96,6 +97,10 @@ type Service struct {
 	store  Store
 	clock  func() time.Time
 	ledger NotifyLedger
+	// details and log are SetDetailSource's (detail.go): nil captures no
+	// alert detail.
+	details DetailSource
+	log     *slog.Logger
 }
 
 // SetNotifyLedger wires the ledger port Get reads Detail.NotificationHold
@@ -119,10 +124,10 @@ func NewService(store Store, clock func() time.Time) *Service {
 
 // Apply is the lifecycle's whole composition for one host's evaluation:
 // OpenForHost loads what is already open, Reconcile (pure) decides what
-// must change, Execute carries it out — all on tx, the evaluator's own
-// per-host transaction (store_sql.go's own doc comment on why). It adds
-// no decision of its own, and does nothing at all when Reconcile returns
-// no actions.
+// must change, captureDetails (detail.go) says why an alert opens or moves,
+// Execute carries it out — all on tx, the evaluator's own per-host
+// transaction (store_sql.go's own doc comment on why). It adds no decision
+// of its own, and does nothing at all when Reconcile returns no actions.
 func (s *Service) Apply(ctx context.Context, tx pgx.Tx, in rules.AlertInput) error {
 	open, err := s.store.OpenForHost(ctx, tx, in.OrgID, in.HostID)
 	if err != nil {
@@ -132,6 +137,7 @@ func (s *Service) Apply(ctx context.Context, tx pgx.Tx, in rules.AlertInput) err
 	if len(actions) == 0 {
 		return nil
 	}
+	s.captureDetails(ctx, tx, in.OrgID, open, actions)
 	if err := s.store.Execute(ctx, tx, in.OrgID, actions); err != nil {
 		return fmt.Errorf("apply: execute actions: %w", err)
 	}

@@ -282,6 +282,37 @@ func (q *Queries) DeleteMonitoringGroup(ctx context.Context, arg DeleteMonitorin
 	return result.RowsAffected(), nil
 }
 
+const getCheckCurrentLabel = `-- name: GetCheckCurrentLabel :one
+SELECT label FROM check_current
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4 AND metric = $5
+`
+
+type GetCheckCurrentLabelParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// One tuple's current discrete label (NULL for a numeric value or an
+// error), for the alert detail (backlog 3.13b): run on the alerts
+// executor's own transaction, so it names org_id itself rather than
+// leaning on row-level security.
+func (q *Queries) GetCheckCurrentLabel(ctx context.Context, arg GetCheckCurrentLabelParams) (*string, error) {
+	row := q.db.QueryRow(ctx, getCheckCurrentLabel,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	var label *string
+	err := row.Scan(&label)
+	return label, err
+}
+
 const getCheckDefinition = `-- name: GetCheckDefinition :one
 SELECT id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id, created_by, created_at, updated_at, shared_definition_id FROM check_definitions WHERE org_id = $1 AND id = $2
 `

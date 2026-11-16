@@ -3453,6 +3453,8 @@ export interface components {
             closed_at?: string;
             /** @enum {string} */
             closed_reason?: "resolved" | "stale" | "forgotten";
+            /** @description Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none */
+            detail?: string;
             host_id: string;
             host_name: string;
             id: string;
@@ -3498,6 +3500,8 @@ export interface components {
             closed_at?: string;
             /** @enum {string} */
             closed_reason?: "resolved" | "stale" | "forgotten";
+            /** @description Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none */
+            detail?: string;
             host_id: string;
             host_name: string;
             id: string;
@@ -3538,6 +3542,8 @@ export interface components {
             actor_id?: string;
             /** Format: date-time */
             at: string;
+            /** @description Why the alert fired as of this event; set on opened, severity_raised and ack_voided events that captured one */
+            detail?: string;
             /** @description The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded */
             escalation_channel_ids: string[] | null;
             /**

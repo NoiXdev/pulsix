@@ -292,6 +292,7 @@ func toAlert(r gen.Alert) Alert {
 		SnoozeUntilChange: r.SnoozeUntilChange,
 
 		WasFlapping: r.WasFlapping,
+		Detail:      derefOr(r.Detail, ""),
 	}
 }
 
@@ -334,6 +335,7 @@ func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
 			SnoozeUntilChange: r.SnoozeUntilChange,
 
 			WasFlapping: r.WasFlapping,
+			Detail:      derefOr(r.Detail, ""),
 		},
 		HostName:         r.HostName,
 		AgentLastContact: unlessEpoch(r.AgentLastContact),
@@ -366,6 +368,7 @@ func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
 			SnoozeUntilChange: r.SnoozeUntilChange,
 
 			WasFlapping: r.WasFlapping,
+			Detail:      derefOr(r.Detail, ""),
 		},
 		HostName:         r.HostName,
 		AgentLastContact: unlessEpoch(r.AgentLastContact),

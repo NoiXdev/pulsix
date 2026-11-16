@@ -49,9 +49,13 @@ ORDER BY scope, check_key, item, metric;
 -- same reading that migration's own backfill gives every row that
 -- predates the column: a brand new alert's severity has never changed, so
 -- the moment it last did is the moment it opened.
+--
+-- detail (backlog 3.13b, migration 00099) is why the alert fired, as the
+-- executor captured it for this opening (internal/alerts' captureDetails);
+-- NULL when there is none.
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping, severity_changed_at
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail
 ) VALUES (
   @org_id, @host_id, @scope, @check_key, @item, @metric,
   @opened_at, @severity, @severity,
@@ -60,7 +64,7 @@ INSERT INTO alerts (
      WHERE @scope::text = 'tuple' AND s.org_id = @org_id AND s.host_id = @host_id
        AND s.check_key = @check_key AND s.item = @item AND s.metric = @metric),
     false),
-  @opened_at
+  @opened_at, sqlc.narg(detail)
 )
 RETURNING id;
 
@@ -130,6 +134,10 @@ RETURNING id;
 -- regardless — it is honest data about the alert, true on its own terms —
 -- but nothing outside the alerts store's own row mapping
 -- (internal/alerts/store_sql.go) reads it today.
+--
+-- detail (backlog 3.13b) is the latest reason the executor captured, so it
+-- is replaced on every severity change, rise or fall — NULL when this
+-- change has none.
 WITH prev AS (
   SELECT a.id, a.severity AS prev_severity FROM alerts a
   WHERE a.id = @id AND a.org_id = @org_id
@@ -141,7 +149,8 @@ UPDATE alerts SET severity = @severity,
     THEN @severity ELSE peak_severity END,
   snooze_until_change = CASE WHEN @clears_snooze::boolean THEN false ELSE snooze_until_change END,
   acknowledged_severity = CASE WHEN @voids_ack::boolean THEN NULL ELSE acknowledged_severity END,
-  severity_changed_at = @at
+  severity_changed_at = @at,
+  detail = sqlc.narg(detail)
 FROM prev WHERE alerts.id = prev.id
 RETURNING prev.prev_severity;
 
@@ -166,8 +175,10 @@ WHERE id = @id AND org_id = @org_id;
 -- ack_voided, closed) — actor_id is left NULL, the acknowledge/snooze
 -- events a human causes belong to Task 6's Service, not here. payload is
 -- always the default '{}'::jsonb: nothing downstream reads one yet.
-INSERT INTO alert_events (org_id, alert_id, at, kind)
-VALUES (@org_id, @alert_id, @at, @kind);
+-- detail (backlog 3.13b) is set on the events of an opening or a severity
+-- change only; a close carries none.
+INSERT INTO alert_events (org_id, alert_id, at, kind, detail)
+VALUES (@org_id, @alert_id, @at, @kind, sqlc.narg(detail));
 
 -- name: SweepStaleAlerts :execrows
 -- The design doc's own UPDATE, driven by open alerts rather than by

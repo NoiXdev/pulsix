@@ -343,11 +343,17 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// what each agent last reported in its heartbeat. agentsSvc itself is
 	// built further down, once the CA is; this read needs none of its
 	// ports, so a plain agents.Service over the same database serves it.
-	checksSvc := checks.NewService(checks.NewSQLStore(appDB),
+	checksStore := checks.NewSQLStore(appDB)
+	checksSvc := checks.NewService(checksStore,
 		checks.WithAlertCloser(alertsSvc),
 		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)),
 		checks.WithLocalChecks(NewChecksLocalChecks(agents.NewService(agents.NewSQLStore(appDB)))))
+	// Why an alert fired (backlog 3.13b): the executor asks the checks
+	// store and service through this port, which is why it is wired only
+	// now, after checksSvc — the same post-construction shape as
+	// SetNotifyLedger below.
+	alertsSvc.SetDetailSource(NewAlertDetails(checksStore, checksSvc), slog.Default())
 	// The rule engine's starter set (v0.3b-2, Task 5): rulesSvc needs no
 	// host ports of its own — SeedForOrg only ever writes org-scoped rows —
 	// so it is built here for the sole purpose of the hook right below,

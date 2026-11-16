@@ -78,8 +78,8 @@ func sampleEvent() Event {
 		// the sample (the note carries a non-ASCII ellipsis, which is
 		// exactly the kind of character that check exists to catch).
 		Alerts: &AlertBatch{Count: 3, Items: []AlertItem{
-			{AlertID: id, HostID: id, HostName: "db-1", CheckKey: "disk", Item: "/var", Metric: "used_percent",
-				Severity: "crit", Event: "opened", At: finished,
+			{AlertID: id, HostID: id, HostName: "shop-1", CheckKey: "shop", Item: "home", Metric: "http.assertion",
+				Severity: "crit", Event: "opened", At: finished, Detail: "status == 200 — saw 503",
 				URL: "https://pulsix.example/o/example/alerts?host=" + id.String()},
 			{AlertID: id, HostID: id, HostName: "web-2", CheckKey: "cpu", Metric: "used_percent",
 				Severity: "warn", Event: "severity_raised", At: finished,
@@ -212,7 +212,8 @@ func digestTruncationNote(d DigestSummary) string {
 }
 
 // alertItemsText is a batch's item list as plain text, one alert per
-// line: severity, host, what happened, and the subject it happened to.
+// line: severity, host, what happened, the subject it happened to, and —
+// after a colon — why, when the item carries a detail (backlog 3.13b).
 // The e-mail body and the alerts.items placeholder share it, so a webhook
 // template and a mail about the same batch cannot describe it
 // differently. No trailing newline — the callers decide what follows.
@@ -220,11 +221,17 @@ func digestTruncationNote(d DigestSummary) string {
 // Every field passes through oneLine: check keys, items and metrics come
 // from a host's agent, so a line break in one would let the host forge
 // alert rows or phishing lines (backlog 7.13). Ingest refuses them, and this
-// keeps a row stored before that from breaking the format.
+// keeps a row stored before that from breaking the format. The detail goes
+// through agentText: an assertion's actual is what the monitored site
+// served, and a check's definition is free text too.
 func alertItemsText(items []AlertItem) string {
 	lines := make([]string, len(items))
 	for i, it := range items {
-		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), alertSubjectText(it))
+		what := alertSubjectText(it)
+		if it.Detail != "" {
+			what += ": " + agentText(it.Detail)
+		}
+		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), what)
 	}
 	return strings.Join(lines, "\n")
 }

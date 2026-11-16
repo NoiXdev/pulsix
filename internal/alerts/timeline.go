@@ -31,6 +31,9 @@ type Event struct {
 	Kind    string
 	ActorID *uuid.UUID
 	Payload []byte
+	// Detail is why the alert fired as of this event (backlog 3.13b): set
+	// on the events of an opening or a severity change, "" otherwise.
+	Detail string
 }
 
 // EscalatedPayload is the EventEscalated event's own payload shape: the
