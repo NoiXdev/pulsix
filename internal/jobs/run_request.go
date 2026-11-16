@@ -58,6 +58,16 @@ type RunRequest struct {
 	// job targeting only this host, and its sealed limit intersects the
 	// effective limit with the host name (narrowLimit).
 	OnlyHost *uuid.UUID
+	// OnlyHosts keeps just these hosts of the resolved targets (a chained
+	// run plays only on the hosts its parent played on). Whatever the scope
+	// does not select is dropped; when nothing is left the enqueue fails
+	// with ErrHostNotInScope.
+	OnlyHosts []uuid.UUID
+	// FollowUps overrides the template's follow-ups for this run (manual
+	// runs only); nil keeps the template's own list, an empty list none.
+	FollowUps *[]uuid.UUID
+	// Chain is where a chained run sits in its chain (chain runs only).
+	Chain *ChainContext
 	// IdempotencyKey, when not empty, makes this enqueue a no-op replay of
 	// whatever run group an earlier call with the same (org, key) already
 	// created (migration 00067, backlog 2.60): the schedule ticker sets one
@@ -104,8 +114,18 @@ func (r RunRequest) validate() error {
 		if r.TriggerRef == nil {
 			return fmt.Errorf("%w: trigger %q requires a trigger reference", ErrInvalidInput, r.Trigger)
 		}
+	case TriggerChain:
+		if r.TriggerRef == nil || r.Chain == nil {
+			return fmt.Errorf("%w: trigger %q requires a trigger reference and a chain context", ErrInvalidInput, r.Trigger)
+		}
 	default:
 		return fmt.Errorf("%w: unknown trigger %q", ErrInvalidInput, r.Trigger)
+	}
+	if r.FollowUps != nil && r.Trigger != TriggerManual {
+		return fmt.Errorf("%w: only a manual run takes follow-ups", ErrInvalidInput)
+	}
+	if r.Chain != nil && r.Trigger != TriggerChain {
+		return fmt.Errorf("%w: only a chain run carries a chain context", ErrInvalidInput)
 	}
 	return nil
 }
@@ -171,6 +191,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.planFollowUps(ctx, orgID, group, tmpl, req); err != nil {
+		return nil, err
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, gate, req, group, alreadyDone)
 }

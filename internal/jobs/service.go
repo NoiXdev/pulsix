@@ -427,6 +427,7 @@ type CancelRecorder interface {
 // CRUD surface; this task reads the row directly.
 type TemplateRow struct {
 	ID    uuid.UUID
+	Name  string
 	OrgID uuid.UUID
 	// PlaybookID references the playbooks row; the playbook fields below
 	// come from that row in the same lookup.
@@ -526,6 +527,9 @@ type Service struct {
 	// handed to the queue after construction (SetEventBroker) so the
 	// append path feeds it. Subscribe is the only reader.
 	broker *Broker
+	// followUps plans a run's follow-ups at enqueue time (SetFollowUpPlanner);
+	// unwired, nothing is planned.
+	followUps FollowUpPlanner
 }
 
 // NewService wires the store, the claim queue, the template source, the
@@ -687,7 +691,7 @@ func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope 
 		err = ErrEmptyScope
 	}
 	if err != nil {
-		if req.OnlyHost != nil && errors.Is(err, ErrEmptyScope) {
+		if (req.OnlyHost != nil || len(req.OnlyHosts) > 0) && errors.Is(err, ErrEmptyScope) {
 			// A scope that selects nothing does not select the one host either.
 			return nil, 0, ErrHostNotInScope
 		}
@@ -695,6 +699,11 @@ func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope 
 	}
 	if req.OnlyHost != nil {
 		if targets = onlyHost(targets, *req.OnlyHost); len(targets) == 0 {
+			return nil, 0, ErrHostNotInScope
+		}
+	}
+	if len(req.OnlyHosts) > 0 {
+		if targets = onlyHosts(targets, req.OnlyHosts); len(targets) == 0 {
 			return nil, 0, ErrHostNotInScope
 		}
 	}
@@ -736,6 +745,24 @@ func onlyHost(targets []ZoneTargets, id uuid.UUID) []ZoneTargets {
 		}
 	}
 	return nil
+}
+
+// onlyHosts keeps just the given hosts of the per-zone targets; a zone left
+// without hosts is dropped.
+func onlyHosts(targets []ZoneTargets, keep []uuid.UUID) []ZoneTargets {
+	out := make([]ZoneTargets, 0, len(targets))
+	for _, t := range targets {
+		var kept []uuid.UUID
+		for _, id := range t.HostIDs {
+			if slices.Contains(keep, id) {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) > 0 {
+			out = append(out, ZoneTargets{ZoneID: t.ZoneID, HostIDs: kept})
+		}
+	}
+	return out
 }
 
 // zoneTargetIDs collects the deduplicated host ids across the per-zone
@@ -1056,13 +1083,18 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 // an approved run request passes its own id (spec 2026-11-16 assistant
 // access), so a claim of the retry finds the request.
 func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID) ([]Job, error) {
-	templateID, retry, err := s.RetryTargets(ctx, orgID, id)
+	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
+	tmpl, err := s.templates.TemplateLookup(ctx, orgID, *j.TemplateID)
 	if err != nil {
 		return nil, err
+	}
+	if s.followUps != nil {
+		if err := s.followUps.CopyFollowUps(ctx, orgID, j.RunGroupID, group, actor); err != nil {
+			return nil, fmt.Errorf("copy follow-ups: %w", err)
+		}
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, group, nil)
 }
@@ -1072,27 +1104,37 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 // request for a retry is validated with it (spec 2026-11-16 assistant
 // access).
 func (s *Service) RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, []uuid.UUID, error) {
-	j, err := s.store.GetJob(ctx, orgID, id)
+	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
+	return *j.TemplateID, retry, nil
+}
+
+// retryTarget is RetryTargets returning the finished job itself, whose run
+// group a retry copies the follow-ups from (spec 2026-11-16 job chaining).
+func (s *Service) retryTarget(ctx context.Context, orgID, id uuid.UUID) (Job, []uuid.UUID, error) {
+	j, err := s.store.GetJob(ctx, orgID, id)
+	if err != nil {
+		return Job{}, nil, err
+	}
 	if j.Kind != KindRun {
-		return uuid.Nil, nil, fmt.Errorf("%w: only run jobs can be retried", ErrInvalidInput)
+		return Job{}, nil, fmt.Errorf("%w: only run jobs can be retried", ErrInvalidInput)
 	}
 	if !j.Status.Terminal() {
-		return uuid.Nil, nil, fmt.Errorf("%w: job has not finished yet", ErrNotRunning)
+		return Job{}, nil, fmt.Errorf("%w: job has not finished yet", ErrNotRunning)
 	}
 	if j.Status != StatusFailed && j.Status != StatusError {
-		return uuid.Nil, nil, fmt.Errorf("%w: only failed or errored runs can be retried", ErrNothingToRetry)
+		return Job{}, nil, fmt.Errorf("%w: only failed or errored runs can be retried", ErrNothingToRetry)
 	}
 	if j.TemplateID == nil {
-		return uuid.Nil, nil, fmt.Errorf("%w: job carries no template", ErrInvalidInput)
+		return Job{}, nil, fmt.Errorf("%w: job carries no template", ErrInvalidInput)
 	}
 	retry := failedHostIDs(j.Stats, j.HostIDs)
 	if len(retry) == 0 {
-		return uuid.Nil, nil, ErrNothingToRetry
+		return Job{}, nil, ErrNothingToRetry
 	}
-	return *j.TemplateID, retry, nil
+	return j, retry, nil
 }
 
 // failedHostIDs intersects the stats' failed/unreachable host ids with the

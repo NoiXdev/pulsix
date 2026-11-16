@@ -114,7 +114,7 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 		vaultIdentities[i] = jobs.VaultIdentity{CredentialID: v.CredentialID, Label: v.Label, FromTemplate: v.FromTemplate}
 	}
 	return jobs.TemplateRow{
-		ID: t.ID, OrgID: t.OrgID, PlaybookID: t.PlaybookID,
+		ID: t.ID, Name: t.Name, OrgID: t.OrgID, PlaybookID: t.PlaybookID,
 		PlaybookRepo: p.RepoID, PlaybookPath: playbookText(p.Path), PlaybookInline: playbookText(p.Inline),
 		Scope: scope, Limit: t.Limit,
 		ExtraVars: vars, ExtraVarsSchema: schemaRaw, CredentialID: t.CredentialID,

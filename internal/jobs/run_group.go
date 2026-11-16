@@ -73,6 +73,21 @@ type RunGroupSink interface {
 	RunGroupFinished(ctx context.Context, r RunGroupResult) error
 }
 
+// RunGroupSinks fans a finished run group out to several sinks. Every sink
+// is called even when an earlier one fails (each keeps its own savepoint, so
+// one failing does not undo another); the errors are joined.
+type RunGroupSinks []RunGroupSink
+
+func (ss RunGroupSinks) RunGroupFinished(ctx context.Context, r RunGroupResult) error {
+	var errs []error
+	for _, s := range ss {
+		if err := s.RunGroupFinished(ctx, r); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // SetRunGroupSink injects the finished-run-group port (the notification
 // outbox), the same post-construction wiring the other sinks use. Nil
 // reports nothing and takes no group lock for run jobs.
