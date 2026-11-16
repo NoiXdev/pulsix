@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/chain"
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
@@ -153,8 +154,12 @@ type Server struct {
 	// Finish / AppendEvent directly (the claim-driven flows the API
 	// cannot reach): fixture-only, exactly like Q.
 	Queue *jobs.SQLQueue
-	Deps  api.Deps
-	HTTP  *httptest.Server
+	// ChainStarter is the job-chaining follow-up starter, wired like
+	// production but not started: a test calls Tick to launch the due
+	// follow-ups.
+	ChainStarter *chain.Starter
+	Deps         api.Deps
+	HTTP         *httptest.Server
 	// BackupDir is the folder the default Deps.Backups writes its backups
 	// to (backup.DestinationFolder), a fresh temporary directory.
 	BackupDir string
@@ -682,7 +687,12 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Oncall = oncall.NewService(oncall.NewSQLStore(d), time.Now, uuid.New)
 	// A finished scheduled run group queues its notifications, as in
 	// production; the dispatcher is not started here (like the reaper).
-	jobsQueue.SetRunGroupSink(notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil))
+	outbox := notify.NewOutbox(d, publicURL, time.Now, rand.Reader, nil)
+	chainStore := chain.NewSQLStore(d)
+	jobsSvc.SetFollowUpPlanner(chainStore)
+	jobsQueue.SetRunGroupSink(jobs.RunGroupSinks{outbox, chain.NewSink(chainStore, time.Now, nil)})
+	s.ChainStarter = chain.NewStarter(chainStore, jobsSvc, app.NewChainTemplateNames(templatesSvc), maintenanceSvc, app.NewChainScheduleGuards(schedulesSvc), auditRec, time.Now, nil)
+	s.ChainStarter.SetNotifier(app.NewChainNotifier(outbox))
 	s.Queue = jobsQueue
 	agentsSvc := agents.NewService(agents.NewSQLStore(d), agents.WithProvisioner(app.NewAgentHostProvisioner(hostsSvc)),
 		agents.WithCA(testCA))
@@ -715,6 +725,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Assistant:   assistant.NewService(assistant.NewSQLStore(d)),
 		// RunRequests is set below, once the services it reads exist on
 		// s.Deps (newRunRequests).
+		Chain:     chainStore,
 		Schedules: schedulesSvc,
 		Triggers:  triggersSvc,
 		Workers:   workersSvc,

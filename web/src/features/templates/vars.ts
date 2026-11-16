@@ -162,4 +162,7 @@ export const TEMPLATE_BODY_FIELDS: Record<Exclude<TemplateBodyKey, TemplateBodyI
   extra_vars_schema: true,
   credential_id: true,
   vault_identities: true,
+  // The form does not edit follow-ups yet; a PUT without the field keeps the
+  // stored list, so listing it here wipes nothing.
+  follow_ups: true,
 };

@@ -45,7 +45,7 @@ type jobDTO struct {
 	Status     string    `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	TemplateID string    `json:"template_id,omitempty"`
 	RunGroupID string    `json:"run_group_id"`
-	Trigger    string    `json:"trigger" enum:"manual,schedule,webhook,system"`
+	Trigger    string    `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
 	TriggerRef string    `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -94,7 +94,7 @@ type jobDetailDTO struct {
 	Status     string                 `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
 	Template   *jobTemplateSummaryDTO `json:"template"`
 	RunGroupID string                 `json:"run_group_id"`
-	Trigger    string                 `json:"trigger" enum:"manual,schedule,webhook,system"`
+	Trigger    string                 `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
 	TriggerRef string                 `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
 	ActorName  string                 `json:"actor_name,omitempty"`
 	WorkerName string                 `json:"worker_name,omitempty"`
@@ -131,7 +131,10 @@ type jobDetailDTO struct {
 	// job stops the play on the worker (backlog 2.113). The run view keeps
 	// its stronger warning on a cancelled run without it: an older worker,
 	// or one without the play supervisor, only stops following the play.
-	CancelStopsPlay bool `json:"cancel_stops_play" doc:"Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker"`
+	// Chain is the job chaining block: the run this one follows up and the
+	// follow-ups it is planned with.
+	Chain           chainDTO `json:"chain"`
+	CancelStopsPlay bool     `json:"cancel_stops_play" doc:"Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker"`
 }
 
 // jobVaultIdentityDTO is one vault id the run detail shows, and whether it
@@ -269,7 +272,7 @@ type jobListInput struct {
 	Kind       string `query:"kind"`
 	TemplateID string `query:"template_id"`
 	Group      string `query:"group"`
-	Trigger    string `query:"trigger" doc:"manual, schedule, webhook or system"`
+	Trigger    string `query:"trigger" doc:"manual, schedule, webhook, system or chain"`
 	TriggerRef string `query:"trigger_ref" doc:"Only the runs this schedule or webhook trigger started"`
 	HostID     string `query:"host_id" doc:"Only the runs that targeted this host (the host was one of the run's target hosts)"`
 	Cursor     string `query:"cursor"`
@@ -300,6 +303,9 @@ type templateRunInput struct {
 	Body *struct {
 		_      struct{} `nullable:"true"`
 		HostID string   `json:"host_id,omitempty" minLength:"1" doc:"Run on this one host only; it must be among the template's targets"`
+		// FollowUps replaces the template's follow-ups for this run: omitted
+		// keeps them, an empty list runs none.
+		FollowUps *[]string `json:"follow_ups,omitempty" maxItems:"10" doc:"Template ids to start after this run succeeds, instead of the template's own follow-ups; an empty list starts none"`
 	}
 }
 
@@ -401,16 +407,32 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 			}
 			onlyHost = &hostID
 		}
+		var override *[]uuid.UUID
+		if in.Body != nil && in.Body.FollowUps != nil {
+			ids := make([]uuid.UUID, len(*in.Body.FollowUps))
+			for i, raw := range *in.Body.FollowUps {
+				if ids[i], err = parseUUID(raw, "follow_ups"); err != nil {
+					return nil, err
+				}
+			}
+			override = &ids
+		}
 		actor := scope.UserID
 		created, err := deps.Jobs.EnqueueRunWith(ctx, scope.OrgID, id, jobs.RunRequest{
-			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost,
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, FollowUps: override,
 		})
 		if err != nil {
+			if override != nil && errors.Is(err, jobs.ErrInvalidInput) {
+				return nil, huma.Error422UnprocessableEntity(err.Error(), &huma.ErrorDetail{Location: "body.follow_ups", Message: err.Error()})
+			}
 			return nil, mapJobsErr(ctx, err)
 		}
 		summary := fmt.Sprintf("started run of job template %s (%d job(s))", id, len(created))
 		if onlyHost != nil {
 			summary = fmt.Sprintf("started run of job template %s on host %s (%d job(s))", id, *onlyHost, len(created))
+		}
+		if override != nil {
+			summary += " with follow-ups " + followUpNames(ctx, deps, scope.OrgID, *override)
 		}
 		setAuditObject(ctx, id.String(), summary)
 		return jobStart(created), nil
@@ -517,6 +539,10 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		out.Body.Job = toJobDetailDTO(j, group)
 		out.Body.Job.VaultIdentities = vaultIdentities
 		out.Body.Job.VaultIdentitiesSource = vaultSource
+		if out.Body.Job.Chain, err = runChain(ctx, deps, scope.OrgID, j); err != nil {
+			slog.ErrorContext(ctx, "read run chain", "job_id", j.ID, "err", err)
+			return nil, huma.Error500InternalServerError("internal error")
+		}
 		return out, nil
 	})
 
@@ -542,6 +568,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 	})
 
 	registerJobStreamRoute(hapi, deps)
+	registerChainRoutes(hapi, deps)
 }
 
 // jobStart shapes an enqueue response from the jobs the action created.
@@ -599,10 +626,10 @@ func parseTriggerFilter(kind, ref string) (*string, *uuid.UUID, error) {
 	var k *string
 	switch kind {
 	case "":
-	case jobs.TriggerManual, jobs.TriggerSchedule, jobs.TriggerWebhook, jobs.TriggerSystem:
+	case jobs.TriggerManual, jobs.TriggerSchedule, jobs.TriggerWebhook, jobs.TriggerSystem, jobs.TriggerChain:
 		k = &kind
 	default:
-		return nil, nil, huma.Error400BadRequest("invalid trigger: must be one of manual, schedule, webhook, system")
+		return nil, nil, huma.Error400BadRequest("invalid trigger: must be one of manual, schedule, webhook, system, chain")
 	}
 	if ref == "" {
 		return k, nil, nil

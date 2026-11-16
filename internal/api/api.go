@@ -116,6 +116,9 @@ type Deps struct {
 	// RunRequests are the run requests an assistant makes and a person
 	// approves (spec 2026-11-16 assistant access).
 	RunRequests *runrequests.Service
+	// Chain reads and dismisses a run's follow-ups (job chaining); see
+	// registerChainRoutes and the run detail's chain block.
+	Chain ChainReader
 	// Schedules fires job templates on a timetable; see
 	// registerScheduleRoutes.
 	Schedules *schedules.Service
@@ -350,6 +353,9 @@ func (d Deps) validate() error {
 	}
 	if d.Jobs == nil {
 		missing = append(missing, "Jobs")
+	}
+	if d.Chain == nil {
+		missing = append(missing, "Chain")
 	}
 	if d.Schedules == nil {
 		missing = append(missing, "Schedules")

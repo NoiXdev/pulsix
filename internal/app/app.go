@@ -33,6 +33,7 @@ import (
 	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/chain"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
@@ -89,6 +90,9 @@ type App struct {
 	stopReaper func()
 	stopRetest func()
 	stopTicker func()
+	// stopChain stops the follow-up starter (job chaining), waiting for a
+	// batch in flight.
+	stopChain func()
 	// stopAuthReaper stops the expired-ceremony and expired-session reaper
 	// (backlog 1.21), waiting until its goroutine has returned.
 	stopAuthReaper func()
@@ -190,6 +194,9 @@ func (a *App) Close() {
 	}
 	if a.stopTicker != nil {
 		a.stopTicker()
+	}
+	if a.stopChain != nil {
+		a.stopChain()
 	}
 	if a.stopDispatch != nil {
 		a.stopDispatch()
@@ -485,6 +492,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	jobsQueue := jobs.NewSQLQueue(appDB, box, renderer, credsSvc, templateLookup, sshSvc, time.Now, rand.Reader)
 	resolver := jobs.NewScopeResolver(inventorySvc, inventorySvc, hostsSvc)
 	jobsSvc := jobs.NewService(jobs.NewSQLStore(appDB), jobsQueue, templateLookup, resolver, hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	// Job chaining: the planner records a run's follow-ups at launch.
+	chainStore := chain.NewSQLStore(appDB)
+	jobsSvc.SetFollowUpPlanner(chainStore)
 	reposSvc := repos.NewService(repos.NewSQLStore(appDB), credsSvc, jobsSvc)
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, sharedSvc)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, box)
@@ -663,7 +673,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Assistant:   assistant.NewService(assistant.NewSQLStore(appDB)),
 		RunRequests: runRequestsSvc,
-		Jobs:        jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
+		Jobs:        jobsSvc, Chain: chainStore, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry
 		// the gRPC enrollment surface writes (agentapi above).
@@ -761,10 +771,16 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// reported from inside its terminal transaction, a skipped, missed or
 	// failed decision from inside the ticker's row savepoint.
 	outbox := notify.NewOutbox(appDB, cfg.PublicURL, time.Now, rand.Reader, slog.Default())
-	jobsQueue.SetRunGroupSink(outbox)
+	// The chain sink resolves a finished run group's follow-ups next to the
+	// outbox, inside the same finishing transaction; the starter loop below
+	// launches the due ones.
+	jobsQueue.SetRunGroupSink(jobs.RunGroupSinks{outbox, chain.NewSink(chainStore, time.Now, slog.Default())})
 	dueStore := schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default())
 	dueStore.SetOutbox(outbox)
 	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, dueStore, cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
+	chainStarter := chain.NewStarter(chainStore, jobsSvc, NewChainTemplateNames(templatesSvc), maintenanceSvc, NewChainScheduleGuards(schedulesSvc), auditRec, time.Now, slog.Default(), chain.WithTick(o.chainTick))
+	chainStarter.SetNotifier(NewChainNotifier(outbox))
+	chainStop := startLoop(chainStarter.Run)
 
 	// The notification dispatcher (spec §5): one per manager; the claim's
 	// SKIP LOCKED and lease make several safe. Stopped in Close and on
@@ -848,6 +864,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			retentionPurgeStop()
 			authReaperStop()
 			tickerStop()
+			chainStop()
 			dispatchStop()
 			digestStop()
 			evalStop()
@@ -874,6 +891,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				retentionPurgeStop()
 				authReaperStop()
 				tickerStop()
+				chainStop()
 				dispatchStop()
 				digestStop()
 				evalStop()
@@ -897,7 +915,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

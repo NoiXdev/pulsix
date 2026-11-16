@@ -14,6 +14,10 @@ type buildOptions struct {
 	// keeps monitorsettings.RetentionPurgeInterval); a test seam like
 	// authReaperInterval.
 	retentionPurgeInterval time.Duration
+	// chainTick overrides the follow-up starter's interval (0 keeps
+	// chain.DefaultTick); a test seam so an end-to-end test sees a chain
+	// continue without waiting seconds.
+	chainTick time.Duration
 }
 
 // Option customizes Build.
@@ -35,4 +39,10 @@ func WithAuthReaperInterval(d time.Duration) Option {
 // test seam; production passes no option and keeps the hourly default.
 func WithRetentionPurgeInterval(d time.Duration) Option {
 	return func(o *buildOptions) { o.retentionPurgeInterval = d }
+}
+
+// WithChainTick overrides the follow-up starter's interval — a test seam;
+// production passes no option and keeps the 5 s default.
+func WithChainTick(d time.Duration) Option {
+	return func(o *buildOptions) { o.chainTick = d }
 }

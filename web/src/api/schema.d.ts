@@ -1985,6 +1985,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/jobs/{id}/follow-ups/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org jobs by ID follow ups dismiss */
+        post: operations["dismissFollowUps"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/jobs/{id}/retry-failed": {
         parameters: {
             query?: never;
@@ -4025,6 +4042,34 @@ export interface components {
             /** @description Go duration, 1m to 24h (default 1h) */
             window?: string;
         };
+        ChainDTO: {
+            /** @description This run's follow-ups in start order */
+            follow_ups: components["schemas"]["ChainFollowUpDTO"][] | null;
+            /** @description Set when this run is the follow-up of another run */
+            parent: components["schemas"]["ChainParentDTO"];
+        };
+        ChainFollowUpDTO: {
+            /** @description The follow-up run's first job, once it started */
+            child_first_job_id?: string;
+            /** @description The hosts the follow-up runs on: the ones the parent run played on */
+            hosts: string[] | null;
+            id: string;
+            /** @description Why the follow-up was skipped, dismissed or waits; empty otherwise */
+            reason: string;
+            /** @enum {string} */
+            state: "pending" | "due" | "started" | "skipped" | "dismissed";
+            template_id: string;
+            /** @description (deleted) when the template no longer exists */
+            template_name: string;
+        };
+        ChainParentDTO: {
+            /** @description The parent run's first job, where its run view lives */
+            first_job_id: string;
+            group_id: string;
+            template_id?: string;
+            /** @description (deleted) when the template no longer exists */
+            template_name: string;
+        };
         Change: {
             attr: string;
             new?: unknown;
@@ -4637,6 +4682,19 @@ export interface components {
              * @description Hosts in the filtered set currently warn
              */
             warn: number;
+        };
+        FollowUpsDismissOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/FollowUpsDismissOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description How many pending follow-ups were dismissed
+             */
+            dismissed: number;
         };
         ForgotPasswordInputBody: {
             /**
@@ -5436,7 +5494,7 @@ export interface components {
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
             template_id?: string;
             /** @enum {string} */
-            trigger: "manual" | "schedule" | "webhook" | "system";
+            trigger: "manual" | "schedule" | "webhook" | "system" | "chain";
             /** @description The schedule or webhook trigger that started the job */
             trigger_ref?: string;
             zone_id: string;
@@ -5450,6 +5508,7 @@ export interface components {
             attempts: number;
             /** @description Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker */
             cancel_stops_play: boolean;
+            chain: components["schemas"]["ChainDTO"];
             /** Format: date-time */
             created_at: string;
             error?: string;
@@ -5471,7 +5530,7 @@ export interface components {
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
             template: components["schemas"]["JobTemplateSummaryDTO"];
             /** @enum {string} */
-            trigger: "manual" | "schedule" | "webhook" | "system";
+            trigger: "manual" | "schedule" | "webhook" | "system" | "chain";
             /** @description The schedule or webhook trigger that started the job */
             trigger_ref?: string;
             vault_identities: components["schemas"]["JobVaultIdentityDTO"][] | null;
@@ -7294,6 +7353,7 @@ export interface components {
             };
             /** @description The optional typed schema the extra vars must satisfy */
             extra_vars_schema?: components["schemas"]["Schema"];
+            follow_ups?: components["schemas"]["TemplateFollowUpInput"][];
             /** @description Free-form ansible limit pattern */
             limit?: string;
             name: string;
@@ -7309,6 +7369,7 @@ export interface components {
                 [key: string]: unknown;
             };
             extra_vars_schema?: components["schemas"]["Schema"];
+            follow_ups: components["schemas"]["TemplateFollowUpDTO"][] | null;
             id: string;
             limit: string;
             name: string;
@@ -7385,6 +7446,14 @@ export interface components {
             readonly $schema?: string;
             template: components["schemas"]["TemplateDTO"];
         };
+        TemplateFollowUpDTO: {
+            template_id: string;
+            template_name: string;
+        };
+        TemplateFollowUpInput: {
+            /** @description The template to start after a successful run of this one */
+            template_id: string;
+        };
         TemplateListOutputBody: {
             /**
              * Format: uri
@@ -7401,6 +7470,8 @@ export interface components {
              * @example https://example.com/schemas/TemplateRunInputBody.json
              */
             readonly $schema?: string;
+            /** @description Template ids to start after this run succeeds, instead of the template's own follow-ups; an empty list starts none */
+            follow_ups?: string[];
             /** @description Run on this one host only; it must be among the template's targets */
             host_id?: string;
         } | null;
@@ -7427,6 +7498,7 @@ export interface components {
             };
             /** @description The optional typed schema the extra vars must satisfy */
             extra_vars_schema?: components["schemas"]["Schema"];
+            follow_ups?: components["schemas"]["TemplateFollowUpInput"][];
             /** @description Free-form ansible limit pattern */
             limit?: string;
             name: string;
@@ -13215,7 +13287,7 @@ export interface operations {
                 kind?: string;
                 template_id?: string;
                 group?: string;
-                /** @description manual, schedule, webhook or system */
+                /** @description manual, schedule, webhook, system or chain */
                 trigger?: string;
                 /** @description Only the runs this schedule or webhook trigger started */
                 trigger_ref?: string;
@@ -13338,6 +13410,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobEventsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    dismissFollowUps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowUpsDismissOutputBody"];
                 };
             };
             /** @description Error */

@@ -65,12 +65,54 @@ type templateDTO struct {
 	// repository's base set, never the repository's own. 4b resolves the
 	// two against each other on a run.
 	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
-	Revision        int64              `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
-	VarsMode        string             `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
+	// FollowUps are the templates started after a successful run of this
+	// one, in start order.
+	FollowUps []templateFollowUpDTO `json:"follow_ups"`
+	Revision  int64                 `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
+	VarsMode  string                `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
 	// VariablesReview is set by the list for a linked template.
 	VariablesReview *templateVariablesReviewDTO `json:"variables_review,omitempty" doc:"What a linked template's variables leave for a person to review (the list only)"`
 	CreatedAt       time.Time                   `json:"created_at"`
 	UpdatedAt       time.Time                   `json:"updated_at"`
+}
+
+// templateFollowUpDTO is one follow-up as the read form carries it.
+type templateFollowUpDTO struct {
+	TemplateID   string `json:"template_id"`
+	TemplateName string `json:"template_name"`
+}
+
+// templateFollowUpInput is one follow-up as a create or update sends it.
+type templateFollowUpInput struct {
+	TemplateID string `json:"template_id" doc:"The template to start after a successful run of this one"`
+}
+
+func toTemplateFollowUpDTOs(items []templates.FollowUp) []templateFollowUpDTO {
+	out := make([]templateFollowUpDTO, len(items))
+	for i, f := range items {
+		out[i] = templateFollowUpDTO{TemplateID: f.TemplateID.String(), TemplateName: f.Name}
+	}
+	return out
+}
+
+// parseFollowUps reads the ids of a follow-up list.
+func parseFollowUps(in []templateFollowUpInput) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, len(in))
+	for i, f := range in {
+		id, err := parseUUID(f.TemplateID, "follow-up template id")
+		if err != nil {
+			return nil, err
+		}
+		out[i] = id
+	}
+	return out, nil
+}
+
+// requireFollowUpRun adds jobs.run to a follow-up change: a follow-up
+// starts runs, so it takes the right to start one.
+func requireFollowUpRun(ctx context.Context, deps Deps, org string) error {
+	_, err := requireOrg(ctx, deps, org, tenancy.PermJobsRun)
+	return err
 }
 
 // toTemplateVaultCredentialDTOs converts a template's own added vault
@@ -116,6 +158,7 @@ func toTemplateDTO(t templates.Template) templateDTO {
 		Scope: toScopeDTO(t.Scope), Limit: t.Limit,
 		ExtraVars: t.ExtraVars, ExtraVarsSchema: t.ExtraVarsSchema,
 		VaultIdentities: toTemplateVaultCredentialDTOs(t.VaultCredentials),
+		FollowUps:       toTemplateFollowUpDTOs(t.FollowUps),
 		Revision:        t.Revision, VarsMode: string(t.VarsMode),
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
@@ -177,6 +220,8 @@ type templateCreateInput struct {
 	Body struct {
 		Name       string `json:"name" minLength:"1" maxLength:"63"`
 		PlaybookID string `json:"playbook_id"`
+		// FollowUps are started, in this order, after a successful run.
+		FollowUps []templateFollowUpInput `json:"follow_ups,omitempty" maxItems:"10" nullable:"false"`
 		TemplateBody
 	}
 }
@@ -188,6 +233,9 @@ type templateUpdateInput struct {
 	Body    struct {
 		Name       string `json:"name" minLength:"1" maxLength:"63"`
 		PlaybookID string `json:"playbook_id"`
+		// FollowUps replaces the follow-ups: omitted keeps them, an empty
+		// list clears them.
+		FollowUps *[]templateFollowUpInput `json:"follow_ups,omitempty" maxItems:"10" nullable:"false"`
 		TemplateBody
 	}
 }
@@ -227,8 +275,18 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		var followUps []uuid.UUID
+		if len(in.Body.FollowUps) > 0 {
+			if err := requireFollowUpRun(ctx, deps, in.Org); err != nil {
+				return nil, err
+			}
+			if followUps, err = parseFollowUps(in.Body.FollowUps); err != nil {
+				return nil, err
+			}
+		}
 		t, err := deps.Templates.Create(ctx, scope.OrgID, templates.CreateInput{
-			Name: in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
+			FollowUps: followUps,
+			Name:      in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
 			VaultCredentials: vaultCredentials,
 		})
@@ -294,8 +352,20 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		var followUps *[]uuid.UUID
+		if in.Body.FollowUps != nil {
+			if err := requireFollowUpRun(ctx, deps, in.Org); err != nil {
+				return nil, err
+			}
+			ids, err := parseFollowUps(*in.Body.FollowUps)
+			if err != nil {
+				return nil, err
+			}
+			followUps = &ids
+		}
 		t, err := deps.Templates.Update(ctx, scope.OrgID, id, templates.UpdateInput{
-			Name: in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
+			FollowUps: followUps,
+			Name:      in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
 			VaultCredentials: vaultCredentials, IfRevision: ifRevision,
 		})
@@ -350,6 +420,14 @@ func mapTemplatesErr(ctx context.Context, err error) error {
 			details[i] = &huma.ErrorDetail{Location: loc, Message: p.Message}
 		}
 		return huma.Error422UnprocessableEntity("validation failed", details...)
+	}
+	var cycle *templates.CycleError
+	if errors.As(err, &cycle) {
+		return huma.Error422UnprocessableEntity(cycle.Error(), &huma.ErrorDetail{Location: "body.follow_ups", Message: cycle.Error()})
+	}
+	var inUse *templates.InUseError
+	if errors.As(err, &inUse) {
+		return huma.Error409Conflict(inUse.Error())
 	}
 	switch {
 	case errors.Is(err, templates.ErrUnmanagedHost):
