@@ -4064,7 +4064,7 @@ export interface components {
             /** @enum {string} */
             state: "pending" | "due" | "started" | "skipped" | "dismissed";
             template_id: string;
-            /** @description (deleted) when the template no longer exists */
+            /** @description empty when the template no longer exists */
             template_name: string;
         };
         ChainParentDTO: {
@@ -4072,7 +4072,7 @@ export interface components {
             first_job_id: string;
             group_id: string;
             template_id?: string;
-            /** @description (deleted) when the template no longer exists */
+            /** @description empty when the template no longer exists */
             template_name: string;
         } | null;
         Change: {

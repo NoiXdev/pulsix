@@ -86,6 +86,26 @@ describe('RunChainSection', () => {
     expect(await within(region).findByText('Started', undefined, { timeout: 4000 })).toBeInTheDocument();
   }, 8000);
 
+  it('labels a deleted follow-up template as the API sends it (empty name), in German too', async () => {
+    mockApi(routes({
+      [`GET ${JOB_PATH}`]: job({ status: 'succeeded' }, { follow_ups: [followUp({ template_name: '', state: 'skipped', reason: 'the template was deleted' })] }),
+    }));
+    renderRunPage(JOB_ID, 'de');
+    const region = await screen.findByRole('region', { name: 'Folge-Läufe' });
+    expect(within(region).getByText('(gelöschtes Template)')).toBeInTheDocument();
+    expect(within(region).queryByText('(deleted)')).not.toBeInTheDocument();
+  });
+
+  it('renders no link for a started row without a child run', async () => {
+    mockApi(routes({
+      [`GET ${JOB_PATH}`]: job({ status: 'succeeded' }, { follow_ups: [followUp({ state: 'started' })] }),
+    }));
+    renderRunPage(JOB_ID);
+    const region = await screen.findByRole('region', { name: 'Follow-ups' });
+    expect(within(region).getByText('Started')).toBeInTheDocument();
+    expect(within(region).queryByRole('link')).not.toBeInTheDocument();
+  });
+
   it('shows no section and no nav entry without follow-ups', async () => {
     mockApi(routes());
     renderRunPage(JOB_ID);

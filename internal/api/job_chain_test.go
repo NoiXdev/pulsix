@@ -251,3 +251,28 @@ func TestJobDetailParentFirstJobBreaksTiesByLowestID(t *testing.T) {
 		t.Fatalf("depth = %d, want 1", d)
 	}
 }
+
+// TestJobDetailChainNamesDeletedTemplateEmpty: the chain fields carry the
+// template name, so a deleted template is "" (the SPA owns the label).
+func TestJobDetailChainNamesDeletedTemplateEmpty(t *testing.T) {
+	f := newRunFixture(t, "chain-deleted-parent")
+	b := f.followUpTemplate(t, "notify")
+	parentTmpl := f.followUpTemplate(t, "build", b)
+
+	parent := runJob(t, f.operatorC, f.runURLFor(parentTmpl))[0]
+	finishJob(t, f.s, f.zoneA, uuid.MustParse(parent.ID), jobs.StatusSucceeded, map[string]any{"ok_hosts": []string{f.hostA.String()}}, "")
+	if err := f.s.ChainStarter.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	childID := f.chainDetail(t, parent.ID).Job.Chain.FollowUps[0].ChildFirstJobID
+
+	resp := requestJSON(t, f.operatorC, http.MethodDelete,
+		f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/job-templates/"+parentTmpl.String(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete template: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	p := f.chainDetail(t, childID).Job.Chain.Parent
+	if p == nil || p.TemplateName != "" || p.FirstJobID != parent.ID {
+		t.Fatalf("parent of the child = %+v, want an empty template name", p)
+	}
+}

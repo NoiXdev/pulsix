@@ -3,6 +3,7 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { Card } from '../../ui/table.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
 import type { JobDetail } from '../../api/types.ts';
+import { chainTemplateName } from './chainTemplateName.ts';
 import { useT } from '../../i18n/useT.ts';
 
 type FollowUp = NonNullable<NonNullable<JobDetail['chain']>['follow_ups']>[number];
@@ -22,11 +23,12 @@ export function RunChainSection({ org, followUps }: { org: string; followUps: Fo
           {followUps.map((f) => {
             const hosts = f.hosts ?? [];
             const label = c.state[f.state];
+            const name = chainTemplateName(f.template_name, t);
             const active = f.state === 'pending' || f.state === 'due' || f.state === 'started';
             return (
               <li key={f.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2.5 last:border-b-0">
                 {active ? <Pill tone="accent">{label}</Pill> : <Tag>{label}</Tag>}
-                <span className="font-mono text-[13px]">{f.template_name || c.deletedTemplate}</span>
+                <span className="font-mono text-[13px]">{name}</span>
                 <span className="text-xs text-muted-foreground">{c.hosts(hosts.length)}</span>
                 {f.reason && <span className="min-w-0 flex-1 text-xs text-muted-foreground">{f.reason}</span>}
                 {f.state === 'started' && f.child_first_job_id && (
@@ -34,7 +36,7 @@ export function RunChainSection({ org, followUps }: { org: string; followUps: Fo
                     to="/o/$org/runs/$id"
                     params={{ org, id: f.child_first_job_id }}
                     className="ml-auto text-xs hover:text-primary"
-                    aria-label={`${c.viewRun}: ${f.template_name || c.deletedTemplate}`}
+                    aria-label={`${c.viewRun}: ${name}`}
                   >
                     {c.viewRun}
                   </Link>

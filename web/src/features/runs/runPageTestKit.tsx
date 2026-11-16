@@ -1,5 +1,6 @@
 import { act } from '@testing-library/react';
 import { renderRoutes } from '../../test/renderRoutes.tsx';
+import type { Locale } from '../../i18n/types.ts';
 import { RunDetailPage } from './RunDetailPage.tsx';
 
 /**
@@ -38,12 +39,14 @@ export class FakeEventSource {
 }
 
 /** Renders the run page at /o/acme/runs/<id>, next to a stub runs list. */
-export function renderRunPage(id: string) {
+export function renderRunPage(id: string, locale?: Locale) {
   return renderRoutes(
     [
       { path: '/runs', component: () => <div>RUNS LIST</div> },
       { path: '/runs/$id', component: RunDetailPage },
     ],
     `/o/acme/runs/${id}`,
+    undefined,
+    locale,
   );
 }

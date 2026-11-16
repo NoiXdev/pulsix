@@ -8,6 +8,7 @@ import { useDismissFollowUps, useRetryFailedJobs, isTerminal } from '../../api/h
 import { useZones } from '../../api/hooks/useHosts.ts';
 import type { JobDetail } from '../../api/types.ts';
 import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusTone, zoneSlug } from './status.ts';
+import { chainTemplateName } from './chainTemplateName.ts';
 import { triggerLabel } from './trigger.ts';
 import { useCancelRun } from './useCancelRun.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -85,7 +86,7 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
         <p className="text-xs text-muted-foreground">
           {t.runs.detail.chain.parentOf}{' '}
           <Link to="/o/$org/runs/$id" params={{ org, id: parent.first_job_id }} className="font-mono hover:text-primary">
-            {parent.template_name || t.runs.detail.chain.deletedTemplate}
+            {chainTemplateName(parent.template_name, t)}
           </Link>
         </p>
       )}

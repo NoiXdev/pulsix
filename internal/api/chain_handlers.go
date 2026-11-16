@@ -30,14 +30,14 @@ type chainParentDTO struct {
 	GroupID      string   `json:"group_id"`
 	FirstJobID   string   `json:"first_job_id" doc:"The parent run's first job, where its run view lives"`
 	TemplateID   string   `json:"template_id,omitempty"`
-	TemplateName string   `json:"template_name" doc:"(deleted) when the template no longer exists"`
+	TemplateName string   `json:"template_name" doc:"empty when the template no longer exists"`
 }
 
 // chainFollowUpDTO is one follow-up of the run.
 type chainFollowUpDTO struct {
 	ID              string   `json:"id"`
 	TemplateID      string   `json:"template_id"`
-	TemplateName    string   `json:"template_name" doc:"(deleted) when the template no longer exists"`
+	TemplateName    string   `json:"template_name" doc:"empty when the template no longer exists"`
 	State           string   `json:"state" enum:"pending,due,started,skipped,dismissed"`
 	Depth           int      `json:"depth" doc:"How many runs deep the chain is at this follow-up (1 = follows the root run)"`
 	Reason          string   `json:"reason" doc:"Why the follow-up was skipped, dismissed or waits; empty otherwise"`
@@ -52,12 +52,8 @@ type chainDTO struct {
 }
 
 func toChainFollowUpDTO(f chain.FollowUp) chainFollowUpDTO {
-	name := f.TemplateName
-	if name == "" {
-		name = "(deleted)"
-	}
 	out := chainFollowUpDTO{
-		ID: f.ID.String(), TemplateID: f.TemplateID.String(), TemplateName: name,
+		ID: f.ID.String(), TemplateID: f.TemplateID.String(), TemplateName: f.TemplateName,
 		State: string(f.State), Depth: f.Depth, Reason: f.Reason, Hosts: make([]string, len(f.HostIDs)),
 	}
 	for i, h := range f.HostIDs {
@@ -101,9 +97,6 @@ func runChain(ctx context.Context, deps Deps, orgID uuid.UUID, j jobs.Job) (chai
 	p := &chainParentDTO{GroupID: parent.ParentGroupID.String(), FirstJobID: first.ID.String(), TemplateName: first.TemplateName}
 	if first.TemplateID != nil {
 		p.TemplateID = first.TemplateID.String()
-		if p.TemplateName == "" {
-			p.TemplateName = "(deleted)"
-		}
 	}
 	out.Parent = p
 	return out, nil
