@@ -673,7 +673,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Assistant:   assistant.NewService(assistant.NewSQLStore(appDB)),
 		RunRequests: runRequestsSvc,
-		Jobs:        jobsSvc, Chain: chainStore, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
+		Jobs:        jobsSvc, Chain: chainStore, ChainDismisser: chain.NewDismisser(jobsSvc, chainStore, time.Now), Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry
 		// the gRPC enrollment surface writes (agentapi above).

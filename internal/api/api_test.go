@@ -214,7 +214,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
-		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(), Chain: &chain.SQLStore{},
+		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(), Chain: &chain.SQLStore{}, ChainDismisser: &chain.Dismisser{},
 		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
 		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
 		// v0.3b-3's own two required dependencies. Zero-valued and

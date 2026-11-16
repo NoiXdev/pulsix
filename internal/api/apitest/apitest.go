@@ -725,10 +725,12 @@ func New(t *testing.T, opts ...Option) *Server {
 		Assistant:   assistant.NewService(assistant.NewSQLStore(d)),
 		// RunRequests is set below, once the services it reads exist on
 		// s.Deps (newRunRequests).
-		Chain:     chainStore,
-		Schedules: schedulesSvc,
-		Triggers:  triggersSvc,
-		Workers:   workersSvc,
+		Chain: chainStore,
+		// ChainDismisser is wired as app.Build wires it.
+		ChainDismisser: chain.NewDismisser(jobsSvc, chainStore, time.Now),
+		Schedules:      schedulesSvc,
+		Triggers:       triggersSvc,
+		Workers:        workersSvc,
 		// The agent registry, wired exactly as app.Build wires it (the
 		// same store and host provisioner), so the API tests exercise the
 		// real thing rather than a stand-in.

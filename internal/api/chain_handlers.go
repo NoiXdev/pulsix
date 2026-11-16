@@ -2,10 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -16,12 +16,16 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
-// ChainReader is the follow-up store the run detail and the dismiss route
-// read through (chain.SQLStore).
+// ChainReader is the follow-up store the run detail reads through
+// (chain.SQLStore).
 type ChainReader interface {
 	ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
 	ParentOf(ctx context.Context, orgID, parentGroupID, templateID uuid.UUID) (*chain.FollowUp, error)
-	Dismiss(ctx context.Context, orgID, groupID uuid.UUID, reason string, now time.Time) (int, error)
+}
+
+// ChainDismisser dismisses a run's pending follow-ups (chain.Dismisser).
+type ChainDismisser interface {
+	DismissFollowUps(ctx context.Context, orgID, jobID uuid.UUID, userName string) (int, error)
 }
 
 // chainParentDTO is the run a chained run is the follow-up of.
@@ -122,19 +126,11 @@ func registerChainRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		j, err := deps.Jobs.Get(ctx, scope.OrgID, id)
-		if err != nil {
-			return nil, mapJobsErr(ctx, err)
-		}
-		sums, err := deps.Jobs.GroupSummaries(ctx, scope.OrgID, []uuid.UUID{j.RunGroupID})
-		if err != nil {
-			return nil, mapJobsErr(ctx, err)
-		}
-		if sum, ok := sums[j.RunGroupID]; !ok || sum.Status.Terminal() {
-			return nil, huma.Error409Conflict("this run has finished; its follow-ups can no longer be dismissed")
-		}
-		n, err := deps.Chain.Dismiss(ctx, scope.OrgID, j.RunGroupID, "dismissed by "+actorName(ctx, deps), time.Now())
-		if err != nil {
+		n, err := deps.ChainDismisser.DismissFollowUps(ctx, scope.OrgID, id, actorName(ctx, deps))
+		switch {
+		case errors.Is(err, chain.ErrRunFinished):
+			return nil, huma.Error409Conflict(err.Error())
+		case err != nil:
 			return nil, mapJobsErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("dismissed %d pending follow-up(s) of job %s", n, id))
