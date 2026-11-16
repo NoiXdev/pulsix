@@ -288,3 +288,64 @@ func TestStarterNotifierPanicLeavesTheRowDue(t *testing.T) {
 		t.Fatalf("next tick: row = %+v, audit = %d", r, len(aud.all()))
 	}
 }
+
+// zonesOf resolves every scope to one zone per entry, with its hosts.
+type zonesOf []jobs.ZoneTargets
+
+func (z zonesOf) Resolve(context.Context, uuid.UUID, render.Scope, string) ([]jobs.ZoneTargets, error) {
+	return z, nil
+}
+
+// An earlier start reached zone A only and its write-back was lost; zone B
+// is now wholly in a maintenance window under the root schedule's
+// exclude_hosts guard. The replay completes the run group without zone B
+// and the row records why.
+func TestStarterReplayHonoursTheMaintenanceExclusion(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	zoneB := newID()
+	if _, err := e.d.Pool().Exec(ctx, `INSERT INTO zones (id, org_id, slug, name) VALUES ($1,$2,'zb','zb')`, zoneB, e.org); err != nil {
+		t.Fatal(err)
+	}
+	group, hA, hB := newID(), newID(), newID()
+	e.plan(group, a, nil)
+	e.job(group, "succeeded", []uuid.UUID{hA, hB}, map[string][]uuid.UUID{"ok_hosts": {hA, hB}})
+	now := time.Now().Truncate(time.Microsecond)
+	if err := e.store.ResolveGroup(e.scoped, e.org, group, jobs.StatusSucceeded, now); err != nil {
+		t.Fatal(err)
+	}
+	schedule := newID()
+	if _, err := e.d.Pool().Exec(ctx, `UPDATE run_follow_ups SET root_trigger = 'schedule', root_ref = $1 WHERE parent_group_id = $2`, schedule, group); err != nil {
+		t.Fatal(err)
+	}
+	row := e.rows(group)[0]
+	svc := jobs.NewService(jobs.NewSQLStore(e.d), nil, envTemplates{org: e.org},
+		zonesOf{{ZoneID: e.zone, HostIDs: []uuid.UUID{hA}}, {ZoneID: zoneB, HostIDs: []uuid.UUID{hB}}}, nil, nil, nil, time.Now, rand.Reader)
+	// The earlier start: the key is reserved and zone A has its job.
+	parent := row.ParentGroupID
+	if _, err := svc.EnqueueRunWith(e.scoped, e.org, b, jobs.RunRequest{
+		Trigger: jobs.TriggerChain, TriggerRef: &parent, OnlyHosts: []uuid.UUID{hA}, IdempotencyKey: "chain:" + row.ID.String(),
+		Chain: &jobs.ChainContext{RootTrigger: jobs.TriggerSchedule, RootRef: &schedule, Depth: row.Depth, Path: row.Path},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := chain.NewStarter(e.store, svc, fakeNames{names: map[uuid.UUID]string{b: "b"}}, &fakeMaint{in: map[uuid.UUID]bool{hB: true}},
+		&fakeGuards{mode: "exclude_hosts", found: true}, &fakeAuditor{}, func() time.Time { return now.Add(time.Second) }, quietLog)
+	if err := st.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var inB, total int
+	var child uuid.UUID
+	if err := e.d.Pool().QueryRow(ctx, `SELECT count(*) FILTER (WHERE zone_id = $2), count(*), min(run_group_id::text)::uuid FROM jobs
+		WHERE trigger = 'chain' AND trigger_ref = $1`, group, zoneB).Scan(&inB, &total, &child); err != nil {
+		t.Fatal(err)
+	}
+	if inB != 0 || total != 1 {
+		t.Fatalf("chained jobs = %d, %d of them in the excluded zone", total, inB)
+	}
+	r := e.rows(group)[0]
+	if r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != child || r.Reason != "1 host(s) left out for maintenance" {
+		t.Fatalf("row = %+v, want started with %s", r, child)
+	}
+}

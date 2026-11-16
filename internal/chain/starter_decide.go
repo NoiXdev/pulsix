@@ -123,21 +123,37 @@ func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decisio
 // row write or commit, a manager restart): the row's idempotency key already
 // names a run group with jobs. Without this the row would wait on its own
 // child run and stay unlinked from it. The replay enqueue creates whatever
-// zones the earlier one did not reach; the row is started with that group
-// whatever the replay answers, because the group's jobs exist.
+// zones the earlier one did not reach, under the same maintenance decision
+// as a first start: hosts in a window are left out, and a guard that stops
+// the follow-up stops the replay, so no zone in a window gets a job. The
+// row is started with that group whatever the replay answers, because the
+// group's jobs exist.
 func (s *Starter) replayLostStart(ctx context.Context, f FollowUp, now time.Time) (decision, bool) {
-	req := s.request(f, nil)
-	group, err := s.runs.StartedRunGroup(ctx, f.OrgID, req.IdempotencyKey)
+	key := s.request(f, nil).IdempotencyKey
+	group, err := s.runs.StartedRunGroup(ctx, f.OrgID, key)
 	if err != nil {
 		return s.retry(ctx, f, now, "", fmt.Errorf("look up an earlier start: %w", err)), true
 	}
 	if group == nil {
 		return decision{}, false
 	}
-	if _, err := s.runs.EnqueueRunWith(ctx, f.OrgID, f.TemplateID, req); err != nil {
+	exclude, reason, stop, err := s.maintenance(ctx, f, now, "")
+	switch {
+	case err != nil:
+		d := s.retry(ctx, f, now, "", err)
+		if d.State == StateSkipped {
+			// Giving up on completing the group: the jobs it has run.
+			return started(now, "", *group, ""), true
+		}
+		return d, true
+	case stop != nil:
+		// The group's jobs exist and run; the zones it lacks stay out.
+		return started(now, "", *group, stop.Reason), true
+	}
+	if _, err := s.runs.EnqueueRunWith(ctx, f.OrgID, f.TemplateID, s.request(f, exclude)); err != nil {
 		s.log.WarnContext(ctx, "follow-up replay could not complete its run group; recording the start that exists", "follow_up", f.ID, "org", f.OrgID, "group", *group, "err", err)
 	}
-	return started(now, "", *group, ""), true
+	return started(now, "", *group, reason), true
 }
 
 // request is the chained run of f. Chain carries the row's own depth and

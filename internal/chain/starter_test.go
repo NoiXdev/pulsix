@@ -172,12 +172,13 @@ func (m *fakeMaint) HostsInMaintenance(_ context.Context, _ uuid.UUID, hostIDs [
 type fakeGuards struct {
 	mode  string
 	found bool
+	err   error
 	calls int
 }
 
 func (g *fakeGuards) MaintenanceMode(context.Context, uuid.UUID, uuid.UUID) (string, bool, error) {
 	g.calls++
-	return g.mode, g.found, nil
+	return g.mode, g.found, g.err
 }
 
 type fakeAuditor struct {
@@ -603,5 +604,65 @@ func TestStarterRecoversALostWriteBack(t *testing.T) {
 	}
 	if ev := f.audit.all(); len(ev) != 1 || ev[0].Meta["child_group_id"] != first.String() {
 		t.Fatalf("audit = %+v", ev)
+	}
+}
+
+// An earlier start whose write-back was lost, and the root schedule's guard
+// now stops the follow-up: the row records the start that exists, with the
+// guard's reason, and nothing is enqueued again.
+func TestStarterReplayStopsForMaintenance(t *testing.T) {
+	for _, tc := range []struct{ mode, reason string }{
+		{"skip", "1 host(s) in a maintenance window"},
+		{"exclude_hosts", "every host is in a maintenance window"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			f := newStarterFixture(t)
+			r := f.row(f.fromSchedule)
+			f.guards.mode, f.guards.found = tc.mode, true
+			f.maint.in[f.h2] = true
+			if tc.mode == "exclude_hosts" {
+				f.maint.in[f.h1] = true
+			}
+			earlier := newID()
+			f.runs.groups = map[string]uuid.UUID{"chain:" + r.ID.String(): earlier}
+			f.tick()
+			if len(f.runs.reqs) != 0 {
+				t.Fatalf("re-enqueued in a window: %+v", f.runs.reqs)
+			}
+			if r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != earlier || r.Reason != tc.reason {
+				t.Fatalf("row = %+v, want started with %s and %q", r, earlier, tc.reason)
+			}
+			if len(f.notes.notices) != 0 {
+				t.Fatalf("a started follow-up notified a skip: %+v", f.notes.notices)
+			}
+			if ev := f.audit.all(); len(ev) != 1 || ev[0].Meta["outcome"] != "started" || ev[0].Meta["reason"] != tc.reason {
+				t.Fatalf("audit = %+v", ev)
+			}
+		})
+	}
+}
+
+func TestStarterReplayRetriesAMaintenanceError(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row(f.fromSchedule)
+	f.guards.err = errors.New("schedules are down")
+	f.runs.groups = map[string]uuid.UUID{"chain:" + r.ID.String(): newID()}
+	f.tick()
+	if len(f.runs.reqs) != 0 || r.State != chain.StateDue || r.Attempts != 1 ||
+		r.Reason != "could not start: read the schedule's maintenance guard: schedules are down" {
+		t.Fatalf("row = %+v, enqueues = %d", r, len(f.runs.reqs))
+	}
+}
+
+// Giving up on the replay still records the start that exists.
+func TestStarterReplayGivesUpOnTheStartThatExists(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row(func(r *chain.FollowUp) { f.fromSchedule(r); r.Attempts = 4 })
+	f.guards.err = errors.New("schedules are down")
+	earlier := newID()
+	f.runs.groups = map[string]uuid.UUID{"chain:" + r.ID.String(): earlier}
+	f.tick()
+	if len(f.runs.reqs) != 0 || r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != earlier || r.Attempts != 4 {
+		t.Fatalf("row = %+v, enqueues = %d", r, len(f.runs.reqs))
 	}
 }
