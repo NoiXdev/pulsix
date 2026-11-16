@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
@@ -104,4 +105,112 @@ func secretPaths(prefix string, fields []schema.Field) []string {
 		}
 	}
 	return out
+}
+
+// newSecretPaths lists the fields secret-typed in updated but not in old,
+// in updated's order.
+func newSecretPaths(old, updated []schema.Field) []string {
+	was := map[string]bool{}
+	for _, p := range secretPaths("", old) {
+		was[p] = true
+	}
+	var out []string
+	for _, p := range secretPaths("", updated) {
+		if !was[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// checkNewSecretsEmpty refuses to make a field secret while any of stored
+// holds a value at it: the value was written as a plain one, so keeping
+// it under the secret type would let the assistant choose a secret (spec
+// 2026-11-16 assistant access, "Secrets never go in"). A field that holds
+// nothing may become secret; a person fills it in.
+func checkNewSecretsEmpty(old, updated []schema.Field, stored ...map[string]any) error {
+	for _, p := range newSecretPaths(old, updated) {
+		for _, doc := range stored {
+			for _, v := range valuesAt(doc, p) {
+				if v != nil {
+					return fmt.Errorf("a field becomes secret only while it holds no value; clear %s first, or let a person change it in Pulsix", p)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// valuesAt returns the values a secretPaths path names in doc: "a.b"
+// inside objects, "a[]" for every item of a list.
+func valuesAt(doc any, path string) []any {
+	nodes := []any{doc}
+	for _, seg := range strings.Split(path, ".") {
+		nodes = step(nodes, seg)
+	}
+	return nodes
+}
+
+// step follows one path segment from every node: the object key, and for
+// "name[]" every item of the list under it.
+func step(nodes []any, seg string) []any {
+	name, each := strings.CutSuffix(seg, "[]")
+	var next []any
+	for _, n := range nodes {
+		m, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+		v, ok := m[name]
+		if !ok {
+			continue
+		}
+		if !each {
+			next = append(next, v)
+			continue
+		}
+		if items, ok := v.([]any); ok {
+			next = append(next, items...)
+		}
+	}
+	return next
+}
+
+// withoutPaths returns a copy of doc with the values at paths removed (a
+// list of secret items goes as a whole); doc itself is left as it is.
+func withoutPaths(doc map[string]any, paths []string) map[string]any {
+	out, _ := deepCopy(doc).(map[string]any)
+	for _, p := range paths {
+		segs := strings.Split(p, ".")
+		parents := []any{out}
+		for _, seg := range segs[:len(segs)-1] {
+			parents = step(parents, seg)
+		}
+		last := strings.TrimSuffix(segs[len(segs)-1], "[]")
+		for _, n := range parents {
+			if m, ok := n.(map[string]any); ok {
+				delete(m, last)
+			}
+		}
+	}
+	return out
+}
+
+func deepCopy(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[k] = deepCopy(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = deepCopy(x)
+		}
+		return out
+	default:
+		return v
+	}
 }

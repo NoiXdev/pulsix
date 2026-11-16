@@ -207,3 +207,66 @@ func TestWriteToolsNeedTheirArea(t *testing.T) {
 	_ = json.Valid
 	_ = context.Background
 }
+
+// TestFieldBecomesSecretOnlyWhileEmpty: the assistant cannot choose a
+// secret's value by writing a plain value first and marking the field
+// secret afterwards — through group vars, membership vars or template
+// extra vars. A field that holds no value may still become secret.
+func TestFieldBecomesSecretOnlyWhileEmpty(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	g := f.group.String()
+	plain := map[string]any{"fields": []any{
+		map[string]any{"name": "x", "type": "string"},
+		map[string]any{"name": "y", "type": "string", "scope": "host"},
+		map[string]any{"name": "z", "type": "string"},
+	}}
+	callOK(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": plain}, nil)
+	callOK(t, cs, "set_group_vars", map[string]any{"group_id": g, "vars": map[string]any{"x": "chosen-by-assistant"}}, nil)
+	callOK(t, cs, "add_group_member", map[string]any{"group_id": g, "host_id": f.host.String(), "vars": map[string]any{"y": "chosen-by-assistant"}}, nil)
+	flip := func(name string) map[string]any {
+		fields := []any{}
+		for _, n := range []string{"x", "y", "z"} {
+			fd := map[string]any{"name": n, "type": "string"}
+			if n == "y" {
+				fd["scope"] = "host"
+			}
+			if n == name {
+				fd["type"] = "secret"
+			}
+			fields = append(fields, fd)
+		}
+		return map[string]any{"group_id": g, "schema": map[string]any{"fields": fields}}
+	}
+	for _, name := range []string{"x", "y"} {
+		if text, isErr := call(t, cs, "set_group_schema", flip(name)); !isErr || !strings.Contains(text, "holds no value") {
+			t.Errorf("marking %s secret while it holds the assistant's value = %v %s", name, isErr, text)
+		}
+	}
+	gv, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.org, f.group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fd := range gv.Schema.Fields {
+		if fd.Type == schema.TypeSecret {
+			t.Fatalf("a refused change still made %s secret", fd.Name)
+		}
+	}
+	// z holds nothing: it may become secret.
+	callOK(t, cs, "set_group_schema", flip("z"), nil)
+
+	tmpl := f.template.String()
+	callOK(t, cs, "update_job_template", map[string]any{"template_id": tmpl, "fields": map[string]any{
+		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "pw", "type": "string"}}},
+		"extra_vars":        map[string]any{"pw": "chosen-by-assistant"}}}, nil)
+	text, isErr := call(t, cs, "update_job_template", map[string]any{"template_id": tmpl, "fields": map[string]any{
+		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "pw", "type": "secret"}}},
+		"extra_vars":        map[string]any{"pw": map[string]any{"$secret": "keep"}}}})
+	if !isErr || !strings.Contains(text, "holds no value") {
+		t.Fatalf("marking a template var secret while it holds the assistant's value = %v %s", isErr, text)
+	}
+	// Cleared first, it may become secret.
+	callOK(t, cs, "update_job_template", map[string]any{"template_id": tmpl, "fields": map[string]any{"extra_vars": map[string]any{}}}, nil)
+	callOK(t, cs, "update_job_template", map[string]any{"template_id": tmpl, "fields": map[string]any{
+		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "pw", "type": "secret"}}}}}, nil)
+}

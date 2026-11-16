@@ -174,7 +174,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "group", groupKeys, in.updateArgs, nil, true, "/inventory/groups/%s", in.GroupID)
 			}),
-		define("set_group_schema", "Set group schema", "Replace a group's variable schema. Variables need a schema field first. Fields may be added and new ones marked secret (a person fills them in); a secret field keeps its type.",
+		define("set_group_schema", "Set group schema", "Replace a group's variable schema. Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupSchemaArgs) (any, error) {
 				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -191,7 +191,37 @@ func writeTools() []toolDef {
 				if err := checkSchemaChange(old, updated); err != nil {
 					return nil, err
 				}
-				return send(ctx, c, http.MethodPut, map[string]any{"schema": in.Schema}, ifMatch(in.Revision, cur), "/inventory/groups/%s/schema", in.GroupID)
+				members, err := groupMembers(ctx, c, in.GroupID)
+				if err != nil {
+					return nil, err
+				}
+				stored := []map[string]any{asObject(cur["vars"])}
+				for _, m := range members {
+					stored = append(stored, m.Vars)
+				}
+				if err := checkNewSecretsEmpty(old, updated, stored...); err != nil {
+					return nil, err
+				}
+				res, err := send(ctx, c, http.MethodPut, map[string]any{"schema": in.Schema}, ifMatch(in.Revision, cur), "/inventory/groups/%s/schema", in.GroupID)
+				if err != nil {
+					return nil, err
+				}
+				// Group vars are serialized with the schema by the group's
+				// revision; a membership is not. One written between the
+				// check above and the change holds a plain value under a
+				// field that is secret now: it is taken out again.
+				if fresh := newSecretPaths(old, updated); len(fresh) > 0 {
+					members, err := groupMembers(ctx, c, in.GroupID)
+					if err != nil {
+						return nil, fmt.Errorf("check the memberships after the schema change: %w", err)
+					}
+					for _, m := range members {
+						if err := clearNewSecrets(ctx, c, in.GroupID, m.HostID, m.Vars, updated, fresh); err != nil {
+							return nil, err
+						}
+					}
+				}
+				return res, nil
 			}),
 		define("set_group_vars", "Set group variables", "Replace a group's values (only keys its schema declares). Secret fields take only {\"$secret\": \"keep\"}.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupVarsArgs) (any, error) {
@@ -223,7 +253,25 @@ func writeTools() []toolDef {
 				if err != nil {
 					return nil, err
 				}
-				return send(ctx, c, http.MethodPut, map[string]any{"vars": vars}, "", "/inventory/groups/%s/members/%s", in.GroupID, in.HostID)
+				res, err := send(ctx, c, http.MethodPut, map[string]any{"vars": vars}, "", "/inventory/groups/%s/members/%s", in.GroupID, in.HostID)
+				if err != nil {
+					return nil, err
+				}
+				// A schema change that landed between the check above and
+				// the write may have made one of these values' fields
+				// secret: such a value is taken out again.
+				after, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
+				if err != nil {
+					return nil, fmt.Errorf("check the schema after the write: %w", err)
+				}
+				afterFields, err := schemaOf(after["schema"])
+				if err != nil {
+					return nil, err
+				}
+				if err := clearNewSecrets(ctx, c, in.GroupID, in.HostID, vars, afterFields, newSecretPaths(fields, afterFields)); err != nil {
+					return nil, err
+				}
+				return res, nil
 			}),
 		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberRemoveArgs) (any, error) {
@@ -280,6 +328,9 @@ func templateSecrets(cur, body map[string]any) error {
 		return err
 	}
 	if err := checkSchemaChange(old, updated); err != nil {
+		return err
+	}
+	if err := checkNewSecretsEmpty(old, updated, asObject(cur["extra_vars"])); err != nil {
 		return err
 	}
 	vars, _ := body["extra_vars"].(map[string]any)
@@ -360,6 +411,59 @@ func getObject(ctx context.Context, c *caller, key, format string, ids ...string
 		return nil, errors.New("unexpected response from Pulsix")
 	}
 	return obj, nil
+}
+
+// member is one membership as GET .../members returns it.
+type member struct {
+	HostID string         `json:"host_id"`
+	Vars   map[string]any `json:"vars"`
+}
+
+// groupMembers reads a group's memberships with their vars.
+func groupMembers(ctx context.Context, c *caller, groupID string) ([]member, error) {
+	path, err := c.orgPath("/inventory/groups/%s/members", groupID)
+	if err != nil {
+		return nil, err
+	}
+	var body struct {
+		Members []member `json:"members"`
+	}
+	if _, err := c.get(ctx, path, nil, &body); err != nil {
+		return nil, err
+	}
+	return body.Members, nil
+}
+
+// clearNewSecrets takes a membership's values at paths (fields that just
+// became secret) out again, keeping its stored secrets, and reports that
+// it did. Nothing at those paths, nothing to do.
+func clearNewSecrets(ctx context.Context, c *caller, groupID, hostID string, vars map[string]any, fields []schema.Field, paths []string) error {
+	var held []string
+	for _, p := range paths {
+		for _, v := range valuesAt(vars, p) {
+			if v != nil {
+				held = append(held, p)
+				break
+			}
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	kept, err := checkValues([][]schema.Field{fields}, withoutPaths(vars, held), keepGroup)
+	if err != nil {
+		return err
+	}
+	if _, err := send(ctx, c, http.MethodPut, map[string]any{"vars": kept}, "", "/inventory/groups/%s/members/%s", groupID, hostID); err != nil {
+		return fmt.Errorf("take out the values of fields that became secret: %w", err)
+	}
+	return fmt.Errorf("the group's schema changed meanwhile and made %s secret; that value was taken out again, a person sets it in Pulsix", strings.Join(held, ", "))
+}
+
+// asObject is v as a JSON object, or nil.
+func asObject(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }
 
 // send writes body to an org route and returns the response body.

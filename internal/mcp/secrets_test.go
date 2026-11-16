@@ -89,3 +89,36 @@ func TestCheckSchemaChange(t *testing.T) {
 		t.Errorf("removing a nested secret field = %v", err)
 	}
 }
+
+func TestValuesAtAndWithoutPaths(t *testing.T) {
+	doc := map[string]any{
+		"a":    "1",
+		"obj":  map[string]any{"pw": "2", "keep": "k"},
+		"list": []any{map[string]any{"pw": "3"}, map[string]any{"other": "o"}},
+	}
+	for path, want := range map[string]int{"a": 1, "obj.pw": 1, "list[].pw": 1, "missing": 0, "obj.missing": 0} {
+		if got := valuesAt(doc, path); len(got) != want {
+			t.Errorf("valuesAt(%q) = %v, want %d values", path, got, want)
+		}
+	}
+	out := withoutPaths(doc, []string{"obj.pw", "list[].pw", "a"})
+	want := map[string]any{
+		"obj":  map[string]any{"keep": "k"},
+		"list": []any{map[string]any{}, map[string]any{"other": "o"}},
+	}
+	if !reflect.DeepEqual(out, want) {
+		t.Fatalf("withoutPaths = %v, want %v", out, want)
+	}
+	if doc["a"] != "1" {
+		t.Fatal("withoutPaths changed its input")
+	}
+}
+
+func TestNewSecretPaths(t *testing.T) {
+	old := []schema.Field{{Name: "a", Type: schema.TypeString}, {Name: "s", Type: schema.TypeSecret}}
+	updated := []schema.Field{{Name: "a", Type: schema.TypeSecret}, {Name: "s", Type: schema.TypeSecret}, {Name: "n", Type: schema.TypeSecret}}
+	got := newSecretPaths(old, updated)
+	if !reflect.DeepEqual(got, []string{"a", "n"}) {
+		t.Fatalf("newSecretPaths = %v", got)
+	}
+}
