@@ -576,7 +576,7 @@ func TestRunRequestFollowUpSettingChangedRefuses(t *testing.T) {
 // selects, not what the failed one planned.
 func TestRunRequestReapprovalUsesItsOwnSelection(t *testing.T) {
 	f := newRunRequestFixture(t, "rr-fu-reapprove")
-	f.withFollowUp(t, "listmonk")
+	fu := f.withFollowUp(t, "listmonk")
 	f.setFollowUpsStart(t, true)
 	created := f.request(t, map[string]any{"reason": "x"})
 
@@ -599,6 +599,11 @@ func TestRunRequestReapprovalUsesItsOwnSelection(t *testing.T) {
 	if st := f.detail(t, created.Request.ID).Request.Status; st != "pending" {
 		t.Fatalf("status after the failed enqueue = %s, want pending", st)
 	}
+	// The failed approval left its planned follow-up in the request's run
+	// group, so the re-approval below must clear it to start nothing.
+	if rows := f.followUpRows(t, created.Request.ID); len(rows) != 1 || rows[fu] != "pending" {
+		t.Fatalf("follow-ups left by the failed approval = %v, want listmonk pending", rows)
+	}
 
 	requirePins(false)
 	if resp := f.approveWith(t, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint, []string{}); resp.StatusCode != http.StatusOK {
@@ -606,5 +611,65 @@ func TestRunRequestReapprovalUsesItsOwnSelection(t *testing.T) {
 	}
 	if rows := f.runFollowUps(t, created.Request.ID); len(rows) != 0 {
 		t.Fatalf("follow-ups of the re-approval with none selected = %v", rows)
+	}
+}
+
+// retryRequest files the assistant's request to retry the failed hosts of
+// job.
+func (f runRequestFixture) retryRequest(t *testing.T, job string) runRequestDetail {
+	t.Helper()
+	resp := f.s.AssistantDo(t, http.MethodPost, f.tok, f.orgPath()+"/jobs/"+job+"/retry-requests", "", map[string]any{"reason": "retry the failed host"})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("create retry request = %d %s", resp.Code, resp.Body)
+	}
+	var out runRequestDetail
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestRunRequestRetryFollowUps: a retry request shows the follow-ups the
+// failed run had planned; approved with the setting off its retry plans
+// none, with it on it plans the ones the approval chose.
+func TestRunRequestRetryFollowUps(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-fu-retry")
+	fu := f.withFollowUp(t, "listmonk")
+	failed := runJob(t, f.operatorC, f.runURLFor(f.templateID))[0]
+	if rows := f.followUpRows(t, failed.RunGroupID); len(rows) != 1 || rows[fu] != "pending" {
+		t.Fatalf("follow-ups of the run to retry = %v", rows)
+	}
+	finishJob(t, f.s, f.zoneA, mustUUID(t, failed.ID), jobs.StatusFailed, map[string]any{
+		jobs.StatsFailedHosts: []any{f.hostA.String()}, jobs.StatsUnreachableHosts: []any{},
+	}, "playbook failed")
+
+	off := f.retryRequest(t, failed.ID)
+	d := f.detail(t, off.Request.ID)
+	got := d.followUps(t)
+	if got == nil || got.Start || len(got.Templates) != 1 || got.Templates[0].TemplateID != fu.String() ||
+		got.Templates[0].TemplateName != "listmonk" || got.Templates[0].TemplateRevision != 0 {
+		t.Fatalf("retry picture follow-ups, setting off = %+v (%s)", got, d.Picture)
+	}
+	if resp := f.approve(t, f.adminC, off.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve the retry, setting off = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, off.Request.ID); len(rows) != 0 {
+		t.Fatalf("follow-ups of a retry approved with the setting off = %v", rows)
+	}
+
+	f.setFollowUpsStart(t, true)
+	on := f.retryRequest(t, failed.ID)
+	d = f.detail(t, on.Request.ID)
+	got = d.followUps(t)
+	rev := f.getTemplate(t, fu).Template.Revision
+	if got == nil || !got.Start || len(got.Templates) != 1 || got.Templates[0].TemplateID != fu.String() ||
+		got.Templates[0].TemplateRevision != rev || got.Templates[0].Stop != "" {
+		t.Fatalf("retry picture follow-ups, setting on = %+v (%s), want listmonk at revision %d", got, d.Picture, rev)
+	}
+	if resp := f.approve(t, f.adminC, on.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve the retry, setting on = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, on.Request.ID); len(rows) != 1 || rows[fu.String()] != "pending" {
+		t.Fatalf("follow-ups of a retry approved with the setting on = %v, want listmonk pending", rows)
 	}
 }
