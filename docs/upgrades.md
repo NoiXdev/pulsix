@@ -350,6 +350,14 @@ the new `<plugin>.up < 1` rules now exist; an organization that does not want th
 deletes or disables the rule. A downgrade needs the usual restore of a backup from
 before the upgrade (see Downgrading).
 
+The same release changes two probe behaviours. An snmp check whose v3 credentials the
+device refuses now reads `snmp.up = 0` with `snmp.failure = auth` (it was an error on
+every reading); its `oids` items go stale instead of erroring. Every `http` check now
+reads response bodies up to 16 MiB (counted after transfer decoding) to report
+`http.content_bytes`; only the first 1 MiB is kept, as before. There is no new Go
+dependency. Skew: an agent of 3.13a, which exists only in development, probes without
+the new metrics (failure reason, breakdown, assertions); the manager accepts that.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
