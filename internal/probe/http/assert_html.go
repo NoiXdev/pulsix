@@ -19,8 +19,9 @@ const (
 	// so this is about a quarter of a second of CPU. Ordinary selectors
 	// on a real 800 KiB page (20 000 elements) take 140 000 to 420 000.
 	htmlSelectBudget = 15_000_000
-	// htmlCheckBudget bounds all of a check's html assertions together:
-	// about a second of CPU, like the JSON stage's budget.
+	// htmlCheckBudget bounds all of a check's html assertions together,
+	// their walks and the text they read (collapsedText): about a second
+	// of CPU, like the JSON stage's budget.
 	htmlCheckBudget = 60_000_000
 )
 
@@ -35,7 +36,8 @@ func (d *parsedDocs) htmlDoc(ctx context.Context) (*html.Node, string) {
 
 // judgeHTML: the selector's matches; count is how many, the text subject
 // the first match's text content with its whitespace collapsed, absent
-// without a match.
+// without a match. The walk and reading the text both come out of the
+// check's html budget.
 func (d *parsedDocs) judgeHTML(ctx context.Context, a assert.Assertion) verdict {
 	doc, problem := d.htmlDoc(ctx)
 	if problem != "" {
@@ -51,16 +53,26 @@ func (d *parsedDocs) judgeHTML(ctx context.Context, a assert.Assertion) verdict 
 	if len(matches) == 0 {
 		return d.work.text(a, "", false)
 	}
-	return d.work.text(a, strings.Join(strings.Fields(textContent(matches[0])), " "), true)
+	text, ok := collapsedText(matches[0], &d.htmlLeft)
+	if !ok {
+		return failed(errHTMLTooMuch)
+	}
+	return d.work.text(a, text, true)
 }
 
-// textContent is the text of n and its descendants, in document order;
-// it walks with its own stack, so a deeply nested page cannot exhaust the
+// collapsedText is the text of n and its descendants, in document order,
+// with its whitespace collapsed. It costs one step of left per node and
+// one per byte of text, taken as it goes; false when left runs out. It
+// walks with its own stack, so a deeply nested page cannot exhaust the
 // goroutine's.
-func textContent(n *html.Node) string {
+func collapsedText(n *html.Node, left *int64) (string, bool) {
 	var b strings.Builder
 	stack := []*html.Node{n}
 	for len(stack) > 0 {
+		if *left < 1 {
+			return "", false
+		}
+		*left--
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if cur.Type == html.TextNode {
@@ -72,5 +84,10 @@ func textContent(n *html.Node) string {
 			stack = append(stack, c)
 		}
 	}
-	return b.String()
+	text := b.String()
+	if int64(len(text)) > *left {
+		return "", false
+	}
+	*left -= int64(len(text))
+	return strings.Join(strings.Fields(text), " "), true
 }

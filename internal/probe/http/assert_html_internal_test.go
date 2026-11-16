@@ -224,3 +224,41 @@ func TestSelectAllSharesTheCheckBudgetAndStopsAtTheDeadline(t *testing.T) {
 		t.Fatalf("an ended probe = %q, want %q", problem, errOutOfTime)
 	}
 }
+
+// TestHTMLTextIsChargedToTheCheckBudget: reading the first match's text
+// (one step per node below it and one per byte of its text) comes out of
+// the check's html budget after the selector's walk, so a text assertion
+// on a large element is bounded by the same budget.
+func TestHTMLTextIsChargedToTheCheckBudget(t *testing.T) {
+	page := "<div>" + strings.Repeat("<p>ab  c</p>", 100) + "</div>"
+	a, err := assert.Parse(`t=html("div") contains "zz"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	walk := int64(htmlCheckBudget)
+	if _, problem := selectAll(context.Background(), htmlOf(t, page), a.Selector(), htmlSelectBudget, &walk); problem != "" {
+		t.Fatal(problem)
+	}
+	selected := htmlCheckBudget - walk
+	// The div, 100 p and 100 text nodes; 100 texts of 5 bytes.
+	const text = 201 + 500
+
+	d := parsedDocs{body: []byte(page), htmlLeft: htmlCheckBudget, work: &regexWork{left: regexCheckBudget}}
+	if v := d.judgeHTML(context.Background(), a); v.err != "" || v.holds {
+		t.Fatalf("verdict = %+v, want a judged failure", v)
+	}
+	if used := htmlCheckBudget - d.htmlLeft; used != selected+text {
+		t.Fatalf("the assertion used %d, want the walk's %d and the text's %d", used, selected, text)
+	}
+
+	for _, left := range []int64{selected, selected + 201, selected + text - 1} {
+		d = parsedDocs{body: []byte(page), htmlLeft: left, work: &regexWork{left: regexCheckBudget}}
+		if v := d.judgeHTML(context.Background(), a); v.err != errHTMLTooMuch {
+			t.Fatalf("with %d left: verdict = %+v, want %q", left, v, errHTMLTooMuch)
+		}
+	}
+	d = parsedDocs{body: []byte(page), htmlLeft: selected + text, work: &regexWork{left: regexCheckBudget}}
+	if v := d.judgeHTML(context.Background(), a); v.err != "" {
+		t.Fatalf("with exactly enough: verdict = %+v, want it judged", v)
+	}
+}
