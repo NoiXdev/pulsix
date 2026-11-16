@@ -335,6 +335,36 @@ func TestFingerprintCoversEveryField(t *testing.T) {
 		"extra vars":     func(p *runrequests.Picture) { p.ExtraVars = map[string]any{"a": 2} },
 		"vars digest":    func(p *runrequests.Picture) { p.VarsDigest = "d2" },
 		"retry":          func(p *runrequests.Picture) { p.Retry = &runrequests.PictureRetry{JobID: "j"} },
+		"follow-ups added": func(p *runrequests.Picture) {
+			p.FollowUps = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{{TemplateID: "a", TemplateName: "a", TemplateRevision: 1}}}
+		},
+	}
+	withFollowUps := base
+	withFollowUps.FollowUps = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{
+		{TemplateID: "a", TemplateName: "a", TemplateRevision: 1}, {TemplateID: "b", TemplateName: "b", TemplateRevision: 2},
+	}}
+	fuFP := runrequests.Fingerprint(id, withFollowUps)
+	fuMutations := map[string]func(f *runrequests.PictureFollowUps){
+		"start":    func(f *runrequests.PictureFollowUps) { f.Start = false },
+		"revision": func(f *runrequests.PictureFollowUps) { f.Templates[0].TemplateRevision = 9 },
+		"order": func(f *runrequests.PictureFollowUps) {
+			f.Templates[0], f.Templates[1] = f.Templates[1], f.Templates[0]
+		},
+		"child": func(f *runrequests.PictureFollowUps) {
+			f.Templates[0].FollowUps = []runrequests.PictureFollowUp{{TemplateID: "c"}}
+		},
+		"truncated": func(f *runrequests.PictureFollowUps) { f.Truncated = true },
+		"stop":      func(f *runrequests.PictureFollowUps) { f.Templates[1].Stop = runrequests.StopInChain },
+	}
+	for name, mutate := range fuMutations {
+		p := base
+		f := *withFollowUps.FollowUps
+		f.Templates = append([]runrequests.PictureFollowUp(nil), f.Templates...)
+		mutate(&f)
+		p.FollowUps = &f
+		if runrequests.Fingerprint(id, p) == fuFP {
+			t.Errorf("follow-ups %s does not change the fingerprint", name)
+		}
 	}
 	for name, mutate := range mutations {
 		p := base

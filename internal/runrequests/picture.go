@@ -29,6 +29,33 @@ type Picture struct {
 	ExtraVars        map[string]any  `json:"extra_vars"`
 	Retry            *PictureRetry   `json:"retry,omitempty"`
 	VarsDigest       string          `json:"vars_digest"`
+	// FollowUps is nil when the request has no direct follow-ups, so the
+	// canonical JSON of such a picture is unchanged.
+	FollowUps *PictureFollowUps `json:"follow_ups,omitempty"`
+}
+
+// PictureFollowUps is what an approval does about the template's follow-ups.
+type PictureFollowUps struct {
+	// Start is the organization setting: true when an approval starts them.
+	Start bool `json:"start"`
+	// Templates are the direct follow-ups in start order.
+	Templates []PictureFollowUp `json:"templates"`
+	// Truncated is set when the tree had more than MaxPictureFollowUps nodes;
+	// an approval can then start none of them.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// PictureFollowUp is one follow-up template and, when Start is set, the
+// follow-ups its own run would start.
+type PictureFollowUp struct {
+	TemplateID       string `json:"template_id"`
+	TemplateName     string `json:"template_name"`
+	TemplateRevision int64  `json:"template_revision,omitempty"`
+	// Stop says why this follow-up would not start: "deleted" (the template
+	// is gone, retry only), "in_chain" (already on the chain's path),
+	// "too_deep" (past the chain's depth limit).
+	Stop      string            `json:"stop,omitempty"`
+	FollowUps []PictureFollowUp `json:"follow_ups,omitempty"`
 }
 
 // PicturePlaybook names the playbook a run uses.
