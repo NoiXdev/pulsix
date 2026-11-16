@@ -366,6 +366,26 @@ Content-Length, or is an error on that assertion alone without one. There is no 
 dependency. Skew: an agent of 3.13a, which exists only in development, probes without
 the new metrics (failure reason, breakdown, assertions); the manager accepts that.
 
+Job chaining (backlog 2.121) adds migration 00105 and no proto change. Two new
+tables, `job_template_follow_ups` (the follow-ups configured on a template) and
+`run_follow_ups` (each run group's follow-ups and what became of them), both with
+row-level security, and `jobs_trigger_check` widened by `chain`. Nothing is dropped
+or rewritten, and no template has follow-ups until someone sets them, so runs behave
+as before. Skew: an older manager still running during the rollout knows nothing of
+follow-ups. It claims, runs and lists a `chain` run like any other (the trigger is a
+plain string to it, and its SPA shows the raw `chain`), but its runs list refuses the
+filter `trigger=chain` with 400. It plans no follow-ups for the runs it enqueues
+(manual, schedule, webhook), so those runs start none. It has no follow-up starter and
+leaves the rows to a new manager: the follow-ups of a run group that finishes on it
+stay `pending` until a new manager's sweep resolves them (after about a minute). A
+chained run of a scheduled chain that finishes on it sends no notification, and
+deleting a template that another one names as a follow-up fails there with a 500 (the
+foreign key refuses it, nothing is lost). **Set up follow-ups only once every manager
+instance runs this version.** Workers and agents are not affected: a claim carries no
+trigger, so an older worker runs a `chain` job like any other. A backup carries both
+tables; after a restore, a follow-up that was due when the backup was taken is
+started again by the starter.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
