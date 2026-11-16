@@ -304,6 +304,24 @@ only one whose probe deadline passes while it waits (more JSON responses due at 
 that, each slow to read) reports "the manager was too busy to read the JSON response", on
 its JSON values only (backlog 3.71).
 
+Probe vantage points (backlog 3.13a) add one migration, additive proto fields and
+a version skew that only limits the feature. Migration 00098 adds three tables
+(`probe_assignments`, `probe_current`, `probe_samples`, the last a hypertable with
+90-day retention, all with row-level security) and one column
+(`host_agents.probes_supported boolean NOT NULL DEFAULT false`); nothing is dropped
+or rewritten, and no rule is seeded. A check that names no vantage group behaves and
+writes exactly as before. **Only agents of this release probe**: they report
+`probes_supported` in the heartbeat, and only those are ever assigned a probe. An
+older agent keeps working unchanged, is never assigned and never receives a probe
+configuration; a check whose groups contain only older agents is probed from the
+other vantages only (the manager, when enabled; with none left the check reports
+unknown until agents are updated). An older manager ignores the new heartbeat fields,
+so a new agent under it simply probes nothing. The agent binary grows by about
+4.4 % (the SNMP library is linked in although agents never run `snmp`, backlog 3.78),
+and a probing agent carries up to 200 assignments, four probes at once. The proto
+change is additive (`buf breaking` clean). A downgrade needs the usual restore of a
+backup from before the upgrade (see Downgrading).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
