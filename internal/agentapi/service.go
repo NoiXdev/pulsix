@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
+	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/versioncompat"
 )
 
@@ -87,6 +88,18 @@ type ChecksPort interface {
 	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (checks.Ingest, error)
 }
 
+// ProbesPort is the slice of the probe store the stream needs (backlog
+// 3.13a): the slots one agent probes for other hosts, read once per
+// heartbeat of a capable agent and once per ProbeResults message, and the
+// per-vantage store its results land in. *probes.SQLStore is the
+// production implementation. Nil, the posture of FactsSink and
+// ChecksPort, sends no ProbeConfig and drops ProbeResults with a server
+// log, both still acknowledged.
+type ProbesPort interface {
+	AgentAssignments(ctx context.Context, orgID, agentHostID uuid.UUID) ([]probes.Assignment, error)
+	RecordVantage(ctx context.Context, orgID uuid.UUID, vantage string, obs []checks.Observation) error
+}
+
 // Deps wires the service's dependencies.
 type Deps struct {
 	// CA signs the agent's certificate requests and supplies the CA PEM
@@ -107,6 +120,10 @@ type Deps struct {
 	// Checks resolves check configuration and records reported results;
 	// nil drops both (see ChecksPort's own doc comment).
 	Checks ChecksPort
+	// Probes reads an agent's probe assignments and stores its probe
+	// results (backlog 3.13a); nil sends no ProbeConfig and drops probe
+	// results with a server log (see ProbesPort).
+	Probes ProbesPort
 	// Clock drives the enrollment rate limit; nil uses time.Now.
 	Clock func() time.Time
 	// Sleep waits for d or until ctx ends, returning ctx's error in that

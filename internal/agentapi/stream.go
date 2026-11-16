@@ -4,9 +4,10 @@
 // manager acknowledges every processed message and, on a heartbeat whose
 // reported configuration version disagrees with what the host resolves
 // to today, rides the current CheckConfig along with that same
-// acknowledgement. A revocation ends the stream with Unauthenticated
-// (StreamRegistry) — the same shape the worker RunEvents stream is cut
-// by.
+// acknowledgement — and a capable agent's ProbeConfig the same way, while
+// its probe results are stored as its own vantage (probes.go). A
+// revocation ends the stream with Unauthenticated (StreamRegistry) — the
+// same shape the worker RunEvents stream is cut by.
 package agentapi
 
 import (
@@ -100,21 +101,22 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		if err != nil {
 			return err // transport-level failure: pass the status through
 		}
-		// Check results are paced against the agent's ingest budget before
-		// they are stored (backlog 7.111), outside the processing lock so
-		// a revocation never waits on the pacing.
-		if results := msg.GetCheckResults(); results != nil && s.deps.Checks != nil {
-			if err := s.pace(ctx, agent, pacer, len(results.GetResults())); err != nil {
+		// Check and probe results are paced against the agent's one
+		// ingest budget before they are stored (backlog 7.111, 3.13a),
+		// outside the processing lock so a revocation never waits on the
+		// pacing.
+		if n, ok := s.pacedResults(msg); ok {
+			if err := s.pace(ctx, agent, pacer, n); err != nil {
 				if errors.Is(err, errCheckResultsRejected) {
 					return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
 				}
 				return status.FromContextError(err).Err()
 			}
 		}
-		var cfg *agentpb.CheckConfig
+		var rep reply
 		done, err := tracked.store(func() error {
 			var procErr error
-			cfg, procErr = s.process(ctx, agent, msg)
+			rep, procErr = s.process(ctx, agent, msg)
 			return procErr
 		})
 		if err != nil {
@@ -130,24 +132,46 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		if !done {
 			continue
 		}
-		// ack and cfg are independent fields on ManagerMessage (not a
-		// oneof): a heartbeat's response always acknowledges and may
-		// additionally carry a CheckConfig; nothing here ever needs to
-		// choose between the two.
-		if err := tracked.send(&agentpb.ManagerMessage{Ack: true, CheckConfig: cfg}); err != nil {
+		// ack and the two configurations are independent fields on
+		// ManagerMessage (not a oneof): a heartbeat's response always
+		// acknowledges and may additionally carry a CheckConfig, a
+		// ProbeConfig or both; nothing here ever needs to choose.
+		if err := tracked.send(&agentpb.ManagerMessage{Ack: true, CheckConfig: rep.checkConfig, ProbeConfig: rep.probeConfig}); err != nil {
 			return err
 		}
 	}
 }
 
+// reply is what processing one message adds to its acknowledgement: the
+// configurations a heartbeat answers a mismatch with, each nil when the
+// agent's reported version is current (or nothing was compared).
+type reply struct {
+	checkConfig *agentpb.CheckConfig
+	probeConfig *agentpb.ProbeConfig
+}
+
+// pacedResults reports whether msg is a results message charged against
+// the ingest budget, and how many observations it carries: check results
+// when a checks port is wired, probe results when a probes port is.
+func (s *Service) pacedResults(msg *agentpb.AgentMessage) (int, bool) {
+	if r := msg.GetCheckResults(); r != nil && s.deps.Checks != nil {
+		return len(r.GetResults()), true
+	}
+	if r := msg.GetProbeResults(); r != nil && s.deps.Probes != nil {
+		return len(r.GetResults()), true
+	}
+	return 0, false
+}
+
 // process applies one agent message: a heartbeat touches the registry and
 // answers a configuration mismatch (processHeartbeat); facts flow to the
 // FactsSink (a nil sink drops them with a server log — Task 8 wires the
-// facts service); check results flow to the ChecksPort (a nil port drops
-// them with a server log the same way, so this package can ship ahead of
-// or without it). An unknown body (the proto union is deliberately open
-// for future manager messages) is a no-op that is still acknowledged.
-func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *agentpb.AgentMessage) (*agentpb.CheckConfig, error) {
+// facts service); check results flow to the ChecksPort and probe results
+// to the ProbesPort (a nil port drops them with a server log the same way,
+// so this package can ship ahead of or without it). An unknown body (the
+// proto union is deliberately open for future manager messages) is a no-op
+// that is still acknowledged.
+func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *agentpb.AgentMessage) (reply, error) {
 	switch body := msg.GetBody().(type) {
 	case *agentpb.AgentMessage_Heartbeat:
 		return s.processHeartbeat(ctx, agent, body.Heartbeat)
@@ -155,13 +179,16 @@ func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *
 		if s.deps.Facts == nil {
 			slog.WarnContext(ctx, "agent facts received but no facts sink is wired; dropping",
 				"serial", agent.Serial, "host_id", agent.HostID)
-			return nil, nil
+			return reply{}, nil
 		}
-		return nil, s.deps.Facts.RecordFacts(ctx, agent.OrgID, agent.HostID, body.Facts.GetValues())
+		return reply{}, s.deps.Facts.RecordFacts(ctx, agent.OrgID, agent.HostID, body.Facts.GetValues())
 	case *agentpb.AgentMessage_CheckResults:
-		return nil, s.recordCheckResults(ctx, agent, body.CheckResults)
+		return reply{}, s.recordCheckResults(ctx, agent, body.CheckResults)
+	case *agentpb.AgentMessage_ProbeResults:
+		_, err := s.recordProbeResults(ctx, agent, body.ProbeResults)
+		return reply{}, err
 	default:
-		return nil, nil
+		return reply{}, nil
 	}
 }
 
@@ -202,23 +229,37 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 // comparison is also stored for the GUI (recordConfigCheck). The agent's
 // configuration re-assert (PULSIX_CONFIG_INTERVAL) is an ordinary
 // heartbeat, so it reaches this same comparison and is recorded the same
-// way.
-func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (*agentpb.CheckConfig, error) {
+// way. The heartbeat's probes_supported flag is recorded too, and a capable
+// agent's probe_config_version is compared the same way against its probe
+// assignments (probeConfigFor, backlog 3.13a), whose ProbeConfig rides the
+// same acknowledgement on a mismatch.
+func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (reply, error) {
 	if err := s.deps.Agents.Heartbeat(ctx, agent.Serial, heartbeatReportOf(hb)); err != nil {
-		return nil, err
+		return reply{}, err
 	}
 	s.noteVersion(ctx, agent, hb.GetVersion())
-	if s.deps.Checks == nil {
-		return nil, nil
+	s.recordProbesSupported(ctx, agent, hb.GetProbesSupported())
+	wantsProbes := s.deps.Probes != nil && hb.GetProbesSupported()
+	if s.deps.Checks == nil && !wantsProbes {
+		return reply{}, nil
 	}
 	// At most one resolve per heartbeatResolveInterval and agent (backlog
 	// 7.25): inside it the heartbeat is acknowledged and nothing more. A
 	// mismatch it would have answered is answered by the next heartbeat
 	// outside it, which is the same convergence a failed resolve below
 	// relies on; a cached answer instead could be older than a push the
-	// agent already applied, and would move it back.
+	// agent already applied, and would move it back. The probe
+	// assignment read shares the interval: it is one indexed query, but a
+	// heartbeat loop must not buy one per message either.
 	if !s.streams.allowResolve(agent.Serial, s.deps.Clock()) {
-		return nil, nil
+		return reply{}, nil
+	}
+	var rep reply
+	if wantsProbes {
+		rep.probeConfig = s.probeConfigFor(ctx, agent, hb.GetProbeConfigVersion())
+	}
+	if s.deps.Checks == nil {
+		return rep, nil
 	}
 	resolved, err := s.deps.Checks.ResolveHost(ctx, agent.OrgID, agent.HostID)
 	if err != nil {
@@ -240,17 +281,18 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		// the registry itself is gone.
 		slog.ErrorContext(ctx, "resolve host checks for heartbeat; the agent keeps its stream and the next heartbeat retries",
 			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "err", err)
-		return nil, nil
+		return rep, nil
 	}
 	s.recordConfigCheck(ctx, agent, hb.GetConfigVersion(), resolved.Version)
 	if resolved.Version == hb.GetConfigVersion() {
-		return nil, nil
+		return rep, nil
 	}
 	cfg, err := checkConfigFor(resolved)
 	if err != nil {
-		return nil, fmt.Errorf("encode check configuration: %w", err)
+		return reply{}, fmt.Errorf("encode check configuration: %w", err)
 	}
-	return cfg, nil
+	rep.checkConfig = cfg
+	return rep, nil
 }
 
 // heartbeatReportOf hands a heartbeat's fields to the agents service as

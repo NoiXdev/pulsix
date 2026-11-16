@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
@@ -369,4 +370,80 @@ func TestRegisterAgentServiceServer(t *testing.T) {
 	unimplemented := grpc.NewServer()
 	agentpb.RegisterAgentServiceServer(unimplemented, agentpb.UnimplementedAgentServiceServer{})
 	unimplemented.Stop()
+}
+
+// TestProbeFieldNumbers pins the wire numbers of the probe vantage fields
+// (backlog 3.13a). They are the contract with every agent build; a manager
+// and an agent of different releases must agree on them.
+func TestProbeFieldNumbers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		msg   proto.Message
+		field string
+		num   int32
+	}{
+		{&agentpb.Heartbeat{}, "probes_supported", 7},
+		{&agentpb.Heartbeat{}, "probe_config_version", 8},
+		{&agentpb.ManagerMessage{}, "probe_config", 3},
+		{&agentpb.AgentMessage{}, "probe_results", 4},
+		{&agentpb.ProbeConfig{}, "version", 1},
+		{&agentpb.ProbeConfig{}, "probes", 2},
+		{&agentpb.ProbeSpec{}, "target_host_id", 1},
+		{&agentpb.ProbeSpec{}, "check_key", 2},
+		{&agentpb.ProbeSpec{}, "plugin", 3},
+		{&agentpb.ProbeSpec{}, "params_json", 4},
+		{&agentpb.ProbeSpec{}, "interval_seconds", 5},
+		{&agentpb.ProbeSpec{}, "address", 6},
+		{&agentpb.ProbeResults{}, "results", 1},
+		{&agentpb.ProbeResult{}, "target_host_id", 1},
+		{&agentpb.ProbeResult{}, "check_key", 2},
+		{&agentpb.ProbeResult{}, "item", 3},
+		{&agentpb.ProbeResult{}, "metric", 4},
+		{&agentpb.ProbeResult{}, "at", 5},
+		{&agentpb.ProbeResult{}, "value", 6},
+		{&agentpb.ProbeResult{}, "label", 7},
+		{&agentpb.ProbeResult{}, "error", 8},
+	}
+	for _, tc := range cases {
+		desc := tc.msg.ProtoReflect().Descriptor()
+		f := desc.Fields().ByName(protoreflect.Name(tc.field))
+		if f == nil {
+			t.Errorf("%s.%s missing", desc.Name(), tc.field)
+			continue
+		}
+		if int32(f.Number()) != tc.num {
+			t.Errorf("%s.%s = %d, want %d", desc.Name(), tc.field, f.Number(), tc.num)
+		}
+	}
+}
+
+// TestProbeMessagesRoundTrip marshals a ProbeConfig on a ManagerMessage and
+// ProbeResults on an AgentMessage with every field set.
+func TestProbeMessagesRoundTrip(t *testing.T) {
+	t.Parallel()
+	msgs := []proto.Message{
+		&agentpb.ManagerMessage{Ack: true, ProbeConfig: &agentpb.ProbeConfig{Version: "v", Probes: []*agentpb.ProbeSpec{{
+			TargetHostId: "0198f0a1-7c2d-7000-8000-000000000001", CheckKey: "web", Plugin: "http",
+			ParamsJson: `{"url":"https://x"}`, IntervalSeconds: 60, Address: "10.0.0.1",
+		}}}},
+		&agentpb.AgentMessage{Body: &agentpb.AgentMessage_ProbeResults{ProbeResults: &agentpb.ProbeResults{Results: []*agentpb.ProbeResult{
+			{TargetHostId: "t", CheckKey: "web", Item: "i", Metric: "http.up", At: timestamppb.Now(), Observation: &agentpb.ProbeResult_Value{Value: 1}},
+			{TargetHostId: "t", CheckKey: "web", Metric: "http.json.text", Observation: &agentpb.ProbeResult_Label{Label: "ok"}},
+			{TargetHostId: "t", CheckKey: "web", Metric: "http.up", Observation: &agentpb.ProbeResult_Error{Error: "refused"}},
+		}}}},
+		&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{ProbesSupported: true, ProbeConfigVersion: "v"}}},
+	}
+	for _, m := range msgs {
+		b, err := proto.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := m.ProtoReflect().New().Interface()
+		if err := proto.Unmarshal(b, got); err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(m, got) {
+			t.Errorf("round trip differs:\nwant %v\ngot  %v", m, got)
+		}
+	}
 }

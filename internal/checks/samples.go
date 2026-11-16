@@ -370,21 +370,56 @@ func (s *Service) RecordProbeObservations(ctx context.Context, orgID uuid.UUID, 
 // recordObservations is the body of both entry points; measureClock says
 // whether the batch's timestamps came from the hosts' clocks.
 func (s *Service) recordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation, measureClock bool) (Ingest, error) {
-	var res Ingest
 	if len(obs) == 0 {
+		return Ingest{}, nil
+	}
+	now := s.now()
+	valid, res, err := SanitizeObservations(obs, now)
+	if err != nil {
+		return Ingest{}, err
+	}
+	if len(valid) == 0 {
 		return res, nil
 	}
+	// What the batch says about the agent's clock, measured before the
+	// store is reached: this is the only moment the manager ever holds an
+	// agent's own timestamps next to its own clock, and nothing persists
+	// the comparison (skew.go explains what is kept and why here).
+	if measureClock {
+		s.offsets.note(valid, now)
+	}
+	stored, err := s.store.RecordObservations(ctx, orgID, valid)
+	if err != nil {
+		return Ingest{}, fmt.Errorf("record observations: %w", err)
+	}
+	res.Accepted, res.UnknownHost, res.OverCap = stored.Accepted, stored.UnknownHost, stored.OverCap
+	return res, nil
+}
+
+// SanitizeObservations applies the check-results contract to obs as of now,
+// without storing anything: the batch and identifying-string bounds refuse
+// the whole batch with ErrInvalidInput (MaxObservationsPerBatch's comment
+// says why), every error text is cleaned (cleanErr), and an observation
+// that is not well shaped or whose At is outside the plausibility window is
+// counted (Ingest.Malformed, Ingest.Implausible) and left out. valid is
+// what may be stored, in input order; the caller's slice is not changed.
+// RecordObservations runs it before its store, and the agent's probe-result
+// ingest (internal/agentapi, backlog 3.13a) runs it before its own, so both
+// apply one contract.
+func SanitizeObservations(obs []Observation, now time.Time) (valid []Observation, res Ingest, err error) {
+	if len(obs) == 0 {
+		return nil, res, nil
+	}
 	if len(obs) > MaxObservationsPerBatch {
-		return res, fmt.Errorf("%w: at most %d observations per batch, got %d",
+		return nil, Ingest{}, fmt.Errorf("%w: at most %d observations per batch, got %d",
 			ErrInvalidInput, MaxObservationsPerBatch, len(obs))
 	}
 	for _, o := range obs {
 		if err := withinContract(o); err != nil {
-			return Ingest{}, err
+			return nil, Ingest{}, err
 		}
 	}
-	now := s.now()
-	valid := make([]Observation, 0, len(obs))
+	valid = make([]Observation, 0, len(obs))
 	for _, o := range obs {
 		// An error text is cleaned before the shape check: one made only
 		// of NUL bytes is empty afterwards and must count as malformed,
@@ -404,22 +439,7 @@ func (s *Service) recordObservations(ctx context.Context, orgID uuid.UUID, obs [
 			valid = append(valid, o)
 		}
 	}
-	if len(valid) == 0 {
-		return res, nil
-	}
-	// What the batch says about the agent's clock, measured before the
-	// store is reached: this is the only moment the manager ever holds an
-	// agent's own timestamps next to its own clock, and nothing persists
-	// the comparison (skew.go explains what is kept and why here).
-	if measureClock {
-		s.offsets.note(valid, now)
-	}
-	stored, err := s.store.RecordObservations(ctx, orgID, valid)
-	if err != nil {
-		return Ingest{}, fmt.Errorf("record observations: %w", err)
-	}
-	res.Accepted, res.UnknownHost, res.OverCap = stored.Accepted, stored.UnknownHost, stored.OverCap
-	return res, nil
+	return valid, res, nil
 }
 
 // CurrentForHost returns hostID's latest known value per (check_key,

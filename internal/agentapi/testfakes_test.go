@@ -134,6 +134,9 @@ type fakeAgentStore struct {
 	registerErr       error // Register fault
 	faultNextLookup   bool  // arm: the next lookup proceeds, the one after fails
 	faultAfterNext    bool
+
+	probesSupported    []probesSupportedCall // per SetProbesSupported call
+	probesSupportedErr error
 }
 
 func newFakeAgentStore() *fakeAgentStore {
@@ -760,6 +763,7 @@ type harness struct {
 	sink     *fakeFacts
 	audit    *fakeAuditor
 	checks   *fakeChecks
+	probes   *fakeProbes
 	agentSvc *agents.Service
 	svc      *Service
 	gs       *grpc.Server
@@ -859,16 +863,22 @@ func newHarnessOpts(t *testing.T, withFacts bool, checksPort *fakeChecks) *harne
 // for — a fake port returning a canned error would prove only the
 // mapping, which is a different (and already pinned) claim.
 func newHarnessPort(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort) *harness {
-	return newHarnessFull(t, withFacts, checksPort, realPort, "")
+	return newHarnessFull(t, withFacts, checksPort, realPort, nil, "")
 }
 
 // newHarnessVersion is newHarness for a manager that reports version as
 // its own build version.
 func newHarnessVersion(t *testing.T, version string) *harness {
-	return newHarnessFull(t, true, nil, nil, version)
+	return newHarnessFull(t, true, nil, nil, nil, version)
 }
 
-func newHarnessFull(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort, version string) *harness {
+// newHarnessWithProbes wires the checks fake and a probes fake (h.probes)
+// for the probe-assignment and probe-result tests.
+func newHarnessWithProbes(t *testing.T) *harness {
+	return newHarnessFull(t, true, newFakeChecks(), nil, newFakeProbes(), "")
+}
+
+func newHarnessFull(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort, probesPort *fakeProbes, version string) *harness {
 	t.Helper()
 	h := &harness{
 		t:     t,
@@ -903,6 +913,10 @@ func newHarnessFull(t *testing.T, withFacts bool, checksPort *fakeChecks, realPo
 	}
 	if realPort != nil {
 		deps.Checks = realPort
+	}
+	if probesPort != nil {
+		h.probes = probesPort
+		deps.Probes = probesPort
 	}
 	h.svc, err = New(deps)
 	if err != nil {
@@ -1024,7 +1038,25 @@ func keyPEMOf(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
 }
 
-func (f *fakeAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+// probesSupportedCall is one SetProbesSupported call.
+type probesSupportedCall struct {
+	host      uuid.UUID
+	supported bool
+}
+
+func (f *fakeAgentStore) SetProbesSupported(_ context.Context, host uuid.UUID, supported bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probesSupported = append(f.probesSupported, probesSupportedCall{host, supported})
+	return f.probesSupportedErr
+}
+
+func (f *fakeAgentStore) probesSupportedCalls() []probesSupportedCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.probesSupported)
+}
+
 func (f *fakeAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
 	return nil, nil
 }

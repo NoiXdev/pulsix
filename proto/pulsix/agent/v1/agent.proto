@@ -44,6 +44,8 @@ message AgentMessage {
     Heartbeat heartbeat = 1; // periodic liveness signal
     Facts facts = 2; // gathered host facts
     CheckResults check_results = 3; // check measurement results
+    // Results of the probes the manager assigned to this agent (ProbeConfig).
+    ProbeResults probe_results = 4;
   }
 }
 
@@ -65,6 +67,12 @@ message Heartbeat {
   // ("line N: <reason>", line order), then each key a check from the
   // manager shadows. At most 32 entries.
   repeated string local_check_problems = 6;
+  // Whether this agent probes other hosts' synthetic checks on the
+  // manager's assignment (ProbeConfig). False from an agent older than
+  // probe vantage points; such an agent is never assigned a probe.
+  bool probes_supported = 7;
+  // The ProbeConfig.version the agent currently runs; "" when it has none.
+  string probe_config_version = 8;
 }
 
 // LocalCheck is a check defined in the agent's own configuration file.
@@ -98,6 +106,10 @@ message CheckResult {
 message ManagerMessage {
   bool ack = 1;
   optional CheckConfig check_config = 2;
+  // The probes this agent runs for other hosts, sent on a heartbeat's ack
+  // when the agent reports probes_supported and a probe_config_version
+  // other than the manager's.
+  optional ProbeConfig probe_config = 3;
 }
 
 message CheckConfig {
@@ -110,4 +122,42 @@ message CheckSpec {
   string plugin = 2;
   string params_json = 3; // canonical JSON, as the version hashes it
   int32 interval_seconds = 4;
+}
+
+// ProbeConfig is the complete set of probes one agent runs for other hosts'
+// synthetic checks. version is the hex SHA-256 of the specs' canonical
+// encoding (internal/probeconfig.Version); the empty set has the version of
+// the empty encoding.
+message ProbeConfig {
+  string version = 1;
+  repeated ProbeSpec probes = 2;
+}
+
+// ProbeSpec is one assigned slot: probe target_host_id's check check_key.
+message ProbeSpec {
+  string target_host_id = 1; // canonical lower-case UUID
+  string check_key = 2;
+  string plugin = 3;
+  string params_json = 4; // canonical JSON, without the vantage parameters
+  int32 interval_seconds = 5;
+  string address = 6; // the target's address the probe dials
+}
+
+message ProbeResults {
+  repeated ProbeResult results = 1;
+}
+
+// ProbeResult is a CheckResult for an assigned probe: the same fields,
+// numbered after target_host_id, which names the probed host.
+message ProbeResult {
+  string target_host_id = 1; // canonical lower-case UUID
+  string check_key = 2;
+  string item = 3; // "" for whole-check metrics
+  string metric = 4;
+  google.protobuf.Timestamp at = 5;
+  oneof observation {
+    double value = 6;
+    string label = 7;
+    string error = 8; // the probe failed; no sample is stored
+  }
 }

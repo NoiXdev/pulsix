@@ -561,7 +561,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	agentSvc, err := agentapi.New(agentapi.Deps{
 		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
 		Streams: agentStreams, Facts: agentsSvc, Checks: checksSvc,
-		Clock: time.Now, Version: cfg.Version, Log: slog.Default(),
+		// Probe vantage points (backlog 3.13a): capable agents read their
+		// assignments and store their results through the probe store.
+		Probes: probes.NewSQLStore(appDB),
+		Clock:  time.Now, Version: cfg.Version, Log: slog.Default(),
 	})
 	if err != nil {
 		appDB.Close()
