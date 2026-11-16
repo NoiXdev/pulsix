@@ -52,7 +52,16 @@ async function createTemplate(page: Page, name: string, followUp?: string): Prom
   await toast(page, `Template ${name} created`);
 }
 
+/** expectRunStatus waits for the run page's status pill, scoped to the
+ * page's sidebar like ansible.spec.ts does. */
+async function expectRunStatus(page: Page, status: string, timeout?: number): Promise<void> {
+  await expect(page.locator('main aside').getByText(status, { exact: true })).toBeVisible({ timeout });
+}
+
 test('a run starts its follow-up and the two runs link to each other', async ({ page }) => {
+  // Creating a playbook and two templates, two real runs and the starter's
+  // tick come to more than the suite's 60 s default.
+  test.setTimeout(240_000);
   await page.goto(`${base}/playbooks`);
   await page.getByRole('button', { name: 'New editor playbook' }).click();
   const editor = page.getByRole('dialog', { name: 'New editor playbook' });
@@ -71,10 +80,12 @@ test('a run starts its follow-up and the two runs link to each other', async ({ 
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
   const parentUrl = page.url();
 
-  // The parent succeeds, then its follow-up is started.
+  // The parent succeeds (a failure reads as such, not as a timeout below),
+  // then its follow-up is started.
+  await expectRunStatus(page, 'succeeded', 60_000);
   const chain = page.locator('#chain');
   const row = chain.locator('li', { hasText: 'chain-b' });
-  await expect(chain.getByRole('heading', { name: 'Follow-ups' })).toBeVisible({ timeout: 60_000 });
+  await expect(chain.getByRole('heading', { name: 'Follow-ups' })).toBeVisible();
   await expect(row.getByText('Started', { exact: true })).toBeVisible({ timeout: 90_000 });
 
   await row.getByRole('link', { name: 'View run: chain-b' }).click();
