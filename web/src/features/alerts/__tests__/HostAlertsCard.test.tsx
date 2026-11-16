@@ -232,6 +232,35 @@ describe('HostAlertsCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('says why each alert fired under its subject, and per event in its timeline (backlog 3.13b)', async () => {
+    const user = userEvent.setup();
+    const fired = alert({ check_key: 'web', item: '', metric: 'http.up', severity: 'crit', peak_severity: 'crit', detail: 'timeout' });
+    mockApi({
+      'GET /api/v1/orgs/acme/alerts': { alerts: [fired] },
+      'GET /api/v1/orgs/acme/alerts/a1': {
+        alert: {
+          ...fired,
+          timeline: [
+            { at: '2026-10-01T00:00:00Z', kind: 'event', event: { id: 'e1', at: '2026-10-01T00:00:00Z', kind: 'opened', detail: 'dns', escalation_channel_ids: null } },
+            { at: '2026-10-01T00:05:00Z', kind: 'event', event: { id: 'e2', at: '2026-10-01T00:05:00Z', kind: 'severity_raised', detail: 'timeout', escalation_channel_ids: null } },
+            { at: '2026-10-01T00:06:00Z', kind: 'event', event: { id: 'e3', at: '2026-10-01T00:06:00Z', kind: 'acknowledged', escalation_channel_ids: null } },
+          ],
+        },
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByTestId('alert-detail')).toHaveTextContent('timed out');
+    await user.click(screen.getByRole('button', { name: /show timeline/i }));
+    await screen.findByText(/alert opened/i);
+    const entries = screen.getAllByTestId('timeline-entry');
+    expect(entries.map((e) => e.querySelector('[data-testid="timeline-detail"]')?.textContent ?? null)).toEqual([
+      'name did not resolve',
+      'timed out',
+      null,
+    ]);
+  });
+
   it('snoozes one of the host\'s open alerts from the host page (spec 1.2: open alerts with snooze)', async () => {
     const user = userEvent.setup();
     let sentBody: unknown;

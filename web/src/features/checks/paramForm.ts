@@ -37,6 +37,12 @@ export function takesEscapes(plugin: string, param: string): boolean {
   return ESCAPED.has(`${plugin}.${param}`);
 }
 
+/** isAssertions: the http check's assertions (backlog 3.13b), which the
+ * forms edit with AssertionEditor rather than a plain textarea. */
+export function isAssertions(plugin: string, param: string): boolean {
+  return plugin === 'http' && param === 'assertions';
+}
+
 /** The vantage-point parameters every synthetic plugin takes (backlog
  * 3.13a). The organization's check dialog edits them as their own section
  * (VantageFields); the instance's shared check form, which knows no

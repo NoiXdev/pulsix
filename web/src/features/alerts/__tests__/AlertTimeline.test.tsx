@@ -176,3 +176,23 @@ describe('timelineEntryLabel', () => {
     expect(timelineEntryLabel(entry, '', en).label).toMatch(/escalated/i);
   });
 });
+
+describe('AlertTimeline — why the alert fired (backlog 3.13b)', () => {
+  it('shows each event\'s detail beside it, in words', () => {
+    const at = '2026-10-01T00:00:00Z';
+    render(
+      <AlertTimeline
+        closedReason=""
+        entries={[
+          { at, kind: 'event', event: { id: 'e1', at, kind: 'opened', detail: 'json("$.ok") == "true" — saw absent', escalation_channel_ids: null } },
+          change(at, 'warn', 'crit'),
+          { at, kind: 'event', event: { id: 'e2', at, kind: 'severity_raised', detail: 'certificate', escalation_channel_ids: null } },
+          closed(at),
+        ]}
+      />,
+    );
+    const details = screen.getAllByTestId('timeline-entry').map((e) => e.querySelector('[data-testid="timeline-detail"]')?.textContent ?? null);
+    expect(details).toEqual(['json("$.ok") == "true" — saw absent', null, 'certificate did not verify', null]);
+  });
+});
+

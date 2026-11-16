@@ -14,8 +14,9 @@ import type {
 } from '../../api/types.ts';
 import { HostPicker } from './HostPicker.tsx';
 import { ParamFields, PluginsPending, ServerKeyHint } from './ParamFields.tsx';
+import { entriesOf, entryNamedBy } from './assertionRows.ts';
 import {
-  findPlugin, keyAfterPluginChange, paramsFrom, paramValuesFrom, runsOnServer, validateParams, type ParamValues,
+  findPlugin, isAssertions, keyAfterPluginChange, paramsFrom, paramValuesFrom, runsOnServer, validateParams, type ParamValues,
 } from './paramForm.ts';
 
 export interface CheckDialogProps {
@@ -168,6 +169,15 @@ function CheckForm({ org, check, copy = false, groups, onClose, plugins }: Check
     }
   }
 
+  // An API error about one assertion entry is shown under that entry
+  // (AssertionEditor) rather than here as well.
+  const assertions = values.assertions;
+  const errorOnEntry =
+    descriptor !== undefined &&
+    descriptor.params.some((p) => isAssertions(descriptor.name, p.name)) &&
+    typeof assertions === 'string' &&
+    entryNamedBy(entriesOf(assertions), error) >= 0;
+
   // A group the list does not hold: either the list failed to load or the
   // binding names a group this page has not been told about. Either way the
   // definition's own binding stays selectable and savable.
@@ -234,6 +244,7 @@ function CheckForm({ org, check, copy = false, groups, onClose, plugins }: Check
             errors={fieldErrors}
             disabled={shared}
             groups={groups}
+            serverError={error}
             onChange={setValues}
           />
         )}
@@ -300,7 +311,7 @@ function CheckForm({ org, check, copy = false, groups, onClose, plugins }: Check
           <Switch id="check-enabled" checked={enabled} onCheckedChange={setEnabled} />
           <label htmlFor="check-enabled">{t.checks.enabledField}</label>
         </div>
-        {error && (
+        {error && !errorOnEntry && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {error}
           </p>

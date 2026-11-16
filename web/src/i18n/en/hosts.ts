@@ -357,6 +357,17 @@ export const enHosts = {
     failed: 'Forgetting this item failed',
   },
   /** A synthetic check's probing points (backlog 3.13a). */
+  /** An http check's latest timing breakdown and its assertions (backlog
+   * 3.13b), under the check's values. */
+  http: {
+    timingTitle: (check: string) => `Timing of ${check}`,
+    phases: { dns: 'DNS', connect: 'connect', tls: 'TLS', ttfb: 'first byte', transfer: 'transfer' },
+    assertionsTitle: (check: string) => `Assertions of ${check}`,
+    columns: { name: 'Name', expression: 'Assertion', severity: 'Severity', status: 'Status', actual: 'Seen', age: 'Last result' },
+    noResult: 'no result',
+    notEvaluated: 'not evaluated',
+    staleAge: (age: string) => `${age} (stale)`,
+  },
   vantages: {
     title: (check: string) => `Probing points of ${check}`,
     server: 'Pulsix server',

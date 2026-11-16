@@ -6,8 +6,9 @@ import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { CheckPluginDescriptor, CheckPluginParam, MonitoringGroup } from '../../api/types.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
-import { paramText, placeholderOf, takesEscapes, VANTAGE_PARAMS, type ParamValues } from './paramForm.ts';
+import { isAssertions, paramText, placeholderOf, takesEscapes, VANTAGE_PARAMS, type ParamValues } from './paramForm.ts';
 import { VantageFields } from './VantageFields.tsx';
+import { AssertionEditor } from './AssertionEditor.tsx';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
@@ -33,6 +34,7 @@ export function ParamFields({
   errors,
   disabled,
   groups,
+  serverError,
   onChange,
 }: {
   /** Prefixes every input's id, so two forms never share one. */
@@ -44,6 +46,9 @@ export function ParamFields({
   /** The organization's monitoring groups, for the vantage points; absent
    * leaves those parameters out. */
   groups?: readonly MonitoringGroup[];
+  /** The API's refusal of the last save: the http check's assertion
+   * editor shows it on the entry it names. */
+  serverError?: string | null;
   onChange: (values: ParamValues) => void;
 }) {
   const t = useT();
@@ -113,6 +118,22 @@ export function ParamFields({
         const id = `${idPrefix}-${spec.name}`;
         const value = values[spec.name];
         const hint = text(spec)?.hint;
+        if (isAssertions(plugin.name, spec.name)) {
+          return (
+            <AssertionEditor
+              key={spec.name}
+              id={id}
+              label={label(spec)}
+              hint={hint}
+              placeholder={placeholderOf(spec, text(spec))}
+              value={typeof value === 'string' ? value : ''}
+              error={errors[spec.name]}
+              serverError={serverError}
+              disabled={disabled}
+              onChange={(next) => set(spec.name, next)}
+            />
+          );
+        }
         return (
           <div key={spec.name} className="flex flex-col gap-1">
             <Label htmlFor={id}>{label(spec)}</Label>

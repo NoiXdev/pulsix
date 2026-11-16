@@ -178,6 +178,50 @@ export const enChecks = {
       error: 'other failure',
     },
   },
+  /** The http check's assertion editor (backlog 3.13b): one row per
+   * entry of `assertions`, or the raw list behind the text toggle. The
+   * subjects and operators are the grammar's own words. */
+  assertionEditor: {
+    columns: { name: 'Name', subject: 'Subject', op: 'Operator', value: 'Value', severity: 'Severity' },
+    name: (n: number) => `Name of assertion ${n}`,
+    subject: (n: number) => `Subject of assertion ${n}`,
+    arg: (n: number) => `Argument of assertion ${n}`,
+    op: (n: number) => `Operator of assertion ${n}`,
+    operand: (n: number) => `Value of assertion ${n}`,
+    from: (n: number) => `Lowest value of assertion ${n}`,
+    to: (n: number) => `Highest value of assertion ${n}`,
+    severity: (n: number) => `Severity of assertion ${n}`,
+    remove: (n: number) => `Remove assertion ${n}`,
+    add: 'Add assertion',
+    editText: 'Edit as text',
+    editRows: 'Edit as rows',
+    empty: 'No assertions: the check reports up or down only.',
+    subjects: {
+      status: 'status (status code)',
+      response_ms: 'response_ms (response time, ms)',
+      ttfb_ms: 'ttfb_ms (time to first byte, ms)',
+      size: 'size (body bytes)',
+      redirects: 'redirects (redirects followed)',
+      cert_days: 'cert_days (days until the certificate expires)',
+      cert_issuer: 'cert_issuer (certificate issuer)',
+      body: 'body (response text)',
+      header: 'header (a response header)',
+      json: 'json (a JSON value)',
+      html: 'html (text of an HTML element)',
+      'html count': 'html count (number of HTML elements)',
+    },
+    argPlaceholders: { header: 'Content-Type', json: '$.status', html: 'h1.title' },
+    numberPlaceholder: '200',
+    textPlaceholder: 'text',
+    rowInvalid: 'Not a complete assertion yet: it needs a name (letters, digits and . _ -), an argument where the subject takes one and a value.',
+    cannotParse: (line: number) => `Line ${line} is not an assertion. Correct it here before switching to rows.`,
+    selectorHint:
+      'html(…) takes a CSS selector from this subset: element names and *, #id, .class, [attr], [attr="v"], [attr~="v"], [attr^="v"], [attr$="v"], [attr*="v"], combined with a space (descendant) or > (child), several selectors separated by commas, and :first-child, :last-child and :nth-child(n, odd or even).',
+  },
+  /** An assertion's result (http.assertion) and the two words its value
+   * seen (http.assertion_actual) can be instead of a value. */
+  assertionResults: { pass: 'pass', warn: 'warn', crit: 'crit' },
+  assertionActual: { absent: 'absent', hidden: '(hidden)' },
   /** Where a synthetic check is probed from (backlog 3.13a); the four
    * parameters' own labels are vantageParamTexts above. */
   vantage: {

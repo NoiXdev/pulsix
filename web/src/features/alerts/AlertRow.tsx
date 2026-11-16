@@ -2,7 +2,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
-import { closeReasonLabel, isAckCovering, muteLabel, subjectLabel, type AlertRowAlert } from './alertRow.ts';
+import { closeReasonLabel, detailText, isAckCovering, muteLabel, subjectLabel, type AlertRowAlert } from './alertRow.ts';
 
 /** The grid this row renders into — exported so AlertsPage's own
  * GridHeader lines up with it exactly, the same pairing FleetPage's own
@@ -76,6 +76,7 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
   const covering = isAckCovering(alert);
   const overtaken = alert.ackAt !== null && !covering;
   const mute = muteLabel(alert, t, fmt);
+  const detail = detailText(alert.detail, t);
 
   return (
     <div className="grid items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0" style={{ gridTemplateColumns: ALERTS_COLUMNS }}>
@@ -85,6 +86,12 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
       <span className="flex min-w-0 flex-col" title={alert.hostId} data-testid="alert-host">
         <span className="truncate text-[13px] font-medium">{alert.hostName}</span>
         <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert, t, fmt)}</span>
+        {/* Backlog 3.13b: why it fired, under what it is about. */}
+        {detail && (
+          <span data-testid="alert-detail" className="truncate text-[11px] text-foreground" title={detail}>
+            {detail}
+          </span>
+        )}
       </span>
       <span data-testid="alert-peak">
         <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{t.alerts.severity[alert.peakSeverity]}</Pill>

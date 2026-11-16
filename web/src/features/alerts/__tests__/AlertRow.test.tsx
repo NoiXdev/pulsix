@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { en } from '../../../i18n/en/index.ts';
 import { de } from '../../../i18n/de/index.ts';
 import { formatter } from '../../../i18n/format.ts';
 import { AlertRow } from '../AlertRow.tsx';
-import { alertToRowAlert, isAckCovering, muteLabel, severityRank, subjectLabel, type AlertRowAlert } from '../alertRow.ts';
+import { alertToRowAlert, detailText, isAckCovering, muteLabel, severityRank, subjectLabel, type AlertRowAlert } from '../alertRow.ts';
+import { I18nProvider } from '../../../i18n/I18nProvider.tsx';
 import type { Alert } from '../../../api/types.ts';
 
 const open: AlertRowAlert = {
@@ -32,6 +33,7 @@ const open: AlertRowAlert = {
   muteReason: '',
   mutedUntil: null,
   notSeenSince: null,
+  detail: '',
 };
 
 describe('AlertRow', () => {
@@ -365,3 +367,60 @@ describe('alertRow pure helpers', () => {
     expect(muteLabel({ ...open, muted: true, muteReason: 'snooze', mutedUntil: null }, en, formatter('en'))).toMatch(/state changes/i);
   });
 });
+
+describe('why an alert fired (backlog 3.13b)', () => {
+  const http: AlertRowAlert = { ...open, checkKey: 'web', item: 'ok', metric: 'http.assertion', severity: 'crit', peakSeverity: 'crit' };
+
+  it('shows the detail under the subject', () => {
+    render(<AlertRow alert={{ ...http, detail: 'status in 200..299 — saw 503' }} />);
+    const cell = screen.getByTestId('alert-host');
+    expect(cell).toHaveTextContent('web · ok · http.assertion');
+    expect(within(cell).getByTestId('alert-detail')).toHaveTextContent('status in 200..299 — saw 503');
+  });
+
+  it('shows nothing without a detail', () => {
+    render(<AlertRow alert={http} />);
+    expect(screen.queryByTestId('alert-detail')).not.toBeInTheDocument();
+  });
+
+  it('words a failure reason and the value seen in German', () => {
+    render(
+      <I18nProvider locale="de">
+        <AlertRow alert={{ ...open, checkKey: 'site', item: '', metric: 'tcp.up', detail: 'refused' }} />
+        <AlertRow alert={{ ...http, id: 'a2', detail: 'header("X-Id") exists — saw absent' }} />
+      </I18nProvider>,
+    );
+    expect(screen.getAllByTestId('alert-detail').map((d) => d.textContent)).toEqual([
+      'Verbindung abgelehnt',
+      'header("X-Id") exists — gesehen: nicht vorhanden',
+    ]);
+  });
+
+  it.each([
+    ['timeout', 'timed out'],
+    ['status == 200 — saw 503', 'status == 200 — saw 503'],
+    ['saw (hidden)', 'saw (hidden)'],
+    ['status == 200', 'status == 200'],
+    // The value seen comes from the site and may hold the separator.
+    ['body contains "a — saw b" — saw "x — saw y"', 'body contains "a — saw b" — saw "x — saw y"'],
+    ['something else', 'something else'],
+  ])('detailText words %j', (detail, want) => {
+    expect(detailText(detail, en)).toBe(want);
+  });
+
+  it('detailText finds the expression even where the value seen holds the separator', () => {
+    expect(detailText('body contains "a — saw b" — saw absent', de)).toBe('body contains "a — saw b" — gesehen: nicht vorhanden');
+    expect(detailText('', en)).toBeNull();
+    expect(detailText(undefined, en)).toBeNull();
+  });
+
+  it('alertToRowAlert carries detail, and an empty string when it is absent', () => {
+    const dto: Alert = {
+      id: 'a1', host_id: 'h1', host_name: 'web-1', scope: 'tuple', check_key: 'web', item: '', metric: 'http.up', opened_at: '2026-11-12T00:00:00Z',
+      severity: 'crit', peak_severity: 'crit', snooze_until_change: false, was_flapping: false, muted: false, detail: 'timeout',
+    };
+    expect(alertToRowAlert(dto).detail).toBe('timeout');
+    expect(alertToRowAlert({ ...dto, detail: undefined }).detail).toBe('');
+  });
+});
+

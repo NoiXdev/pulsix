@@ -35,6 +35,12 @@ export const enAlerts = {
     crit: 'crit',
     unknown: 'unknown',
   },
+  /** Why an alert fired (backlog 3.13b): a failed web assertion's
+   * expression and the value it saw. */
+  detail: {
+    saw: (expression: string, actual: string) => `${expression} — saw ${actual}`,
+    sawOnly: (actual: string) => `saw ${actual}`,
+  },
   closeReason: {
     resolved: 'resolved',
     stale: 'stale',

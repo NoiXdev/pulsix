@@ -354,6 +354,15 @@ export const deHosts: Messages['hosts'] = {
     done: (item: string) => `${item} vergessen`,
     failed: 'Dieses Element konnte nicht vergessen werden',
   },
+  http: {
+    timingTitle: (check: string) => `Zeitaufteilung von ${check}`,
+    phases: { dns: 'DNS', connect: 'Verbindung', tls: 'TLS', ttfb: 'erstes Byte', transfer: 'Übertragung' },
+    assertionsTitle: (check: string) => `Zusicherungen von ${check}`,
+    columns: { name: 'Name', expression: 'Zusicherung', severity: 'Schweregrad', status: 'Status', actual: 'Gesehen', age: 'Letztes Ergebnis' },
+    noResult: 'kein Ergebnis',
+    notEvaluated: 'nicht ausgewertet',
+    staleAge: (age: string) => `${age} (veraltet)`,
+  },
   vantages: {
     title: (check: string) => `Prüfpunkte von ${check}`,
     server: 'Pulsix-Server',

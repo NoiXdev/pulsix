@@ -1,6 +1,8 @@
 import type { Format } from '../../i18n/format.ts';
 import type { Messages } from '../../i18n/types.ts';
 import type { Alert, AlertCloseReason, AlertMuteReason, AlertScope, AlertSeverity } from '../../api/types.ts';
+import { parseAssertion } from '../checks/assertionFormat.ts';
+import { assertionActualText, failureText, isFailureLabel } from '../checks/syntheticLabels.ts';
 
 /**
  * The pure reading rules behind AlertRow, kept beside it rather than inside
@@ -59,6 +61,10 @@ export interface AlertRowAlert {
   /** Backlog 3.57: when the client's agent was last seen, set by the server
    * only on an open absent warning (scope host, severity warn). */
   notSeenSince: string | null;
+
+  /** Backlog 3.13b: why the alert fired, as of its opening or latest
+   * severity change — '' when the server captured none. */
+  detail: string;
 }
 
 /** alertToRowAlert flattens one Alert (the wire DTO) into the camelCase
@@ -90,6 +96,7 @@ export function alertToRowAlert(a: Alert): AlertRowAlert {
     muteReason: a.mute_reason ?? '',
     mutedUntil: a.muted_until ?? null,
     notSeenSince: a.not_seen_since ?? null,
+    detail: a.detail ?? '',
   };
 }
 
@@ -166,4 +173,33 @@ export function muteLabel(a: AlertRowAlert, t: Messages, fmt: Format): string | 
   const reason = a.muteReason === 'silence' ? 'silence' : a.muteReason === 'maintenance' ? 'maintenance' : 'snooze';
   if (!a.mutedUntil) return t.alerts.mute[`${reason}Open` as const];
   return t.alerts.mute[reason](fmt.dateTime(a.mutedUntil, { dateStyle: 'medium', timeStyle: 'short' }));
+}
+
+/** The server's separator between a failed assertion's expression and
+ * the value it saw (internal/app alerts_detail_ports.go). */
+const SAW = ' — saw ';
+
+/**
+ * detailText words an alert's (or an alert event's) detail, or returns
+ * null when there is none (backlog 3.13b). The server captures one of two
+ * shapes: a synthetic check's failure reason — a bare label of the
+ * failure vocabulary, translated here — or a failed assertion's
+ * "<expression> — saw <actual>" (either part may be missing), whose
+ * connecting word is translated and whose `absent`/`(hidden)` are. The
+ * expression and the value seen are data: the value comes from the
+ * monitored site, so the split takes the first separator after which the
+ * part before it is a whole expression, and anything else is shown as it
+ * came.
+ */
+export function detailText(detail: string | null | undefined, t: Messages): string | null {
+  if (!detail) return null;
+  if (isFailureLabel(t, detail)) return failureText(t, detail);
+  if (detail.startsWith('saw ')) return t.alerts.detail.sawOnly(assertionActualText(t, detail.slice('saw '.length)));
+  for (let at = detail.indexOf(SAW); at >= 0; at = detail.indexOf(SAW, at + 1)) {
+    const expression = detail.slice(0, at);
+    if (parseAssertion(`x=${expression}`)) {
+      return t.alerts.detail.saw(expression, assertionActualText(t, detail.slice(at + SAW.length)));
+    }
+  }
+  return detail;
 }

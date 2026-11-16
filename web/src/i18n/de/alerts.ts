@@ -31,6 +31,10 @@ export const deAlerts: Messages['alerts'] = {
     crit: 'kritisch',
     unknown: 'unbekannt',
   },
+  detail: {
+    saw: (expression: string, actual: string) => `${expression} — gesehen: ${actual}`,
+    sawOnly: (actual: string) => `gesehen: ${actual}`,
+  },
   closeReason: {
     resolved: 'behoben',
     stale: 'veraltet',

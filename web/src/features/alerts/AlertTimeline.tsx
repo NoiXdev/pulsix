@@ -2,6 +2,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { notificationHoldLabel, timelineEntryAt, timelineEntryLabel } from './alertTimeline.ts';
+import { detailText } from './alertRow.ts';
 import type { AlertCloseReason, AlertNotificationHold, AlertTimelineEntry } from '../../api/types.ts';
 
 export interface AlertTimelineProps {
@@ -72,10 +73,17 @@ export function AlertTimeline({ entries, closedReason, notificationHold = '' }: 
         <ol className="flex flex-col gap-1.5">
           {entries.map((entry, i) => {
             const { label, tone } = timelineEntryLabel(entry, closedReason, t);
+            // Backlog 3.13b: why the alert fired as of this event.
+            const detail = detailText(entry.event?.detail, t);
             return (
               <li key={`${entry.kind}-${entry.at}-${i}`} className="flex items-center gap-2.5 text-xs" data-testid="timeline-entry">
                 <span className="w-[150px] shrink-0 text-muted-foreground">{timelineEntryAt(entry.at, fmt)}</span>
                 <Pill tone={tone}>{label}</Pill>
+                {detail && (
+                  <span data-testid="timeline-detail" className="min-w-0 truncate text-muted-foreground" title={detail}>
+                    {detail}
+                  </span>
+                )}
               </li>
             );
           })}

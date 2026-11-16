@@ -19,6 +19,8 @@ import { ItemDecisionButton } from './ItemDecisionButton.tsx';
 import { MetricGraphPanel } from './MetricGraphPanel.tsx';
 import { vantageOptions } from './vantages.ts';
 import { importMetricChart } from './metricChartImport.ts';
+import { failureBeside } from './httpCheck.ts';
+import { discreteText } from '../checks/syntheticLabels.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { EffectiveRule, HostCheck, HostCheckValue, MonitoringGroup } from '../../api/types.ts';
 
@@ -81,6 +83,8 @@ export function HostCheckValueRow({
   const decidedBy = value.decided_by;
 
   const st = verdictLabel(value.state, value.ignored, t);
+  // Backlog 3.13b: why a synthetic check is down, beside its up value.
+  const failure = failureBeside(check, value, t);
   // Backlog 3.12b: an item whose every value is stale can be forgotten,
   // from its first row only (offersForget). Whole-host rows (item '') never
   // carry it — the automatic expiry handles a removed check's values — and
@@ -167,8 +171,17 @@ export function HostCheckValueRow({
         ) : (
           <>
             <span className="font-mono text-foreground">
-              {value.label ?? (value.value !== undefined ? formatNumber(value.value) : '—')}
+              {value.label !== undefined
+                ? discreteText(t, check.plugin, value.metric, value.label)
+                : value.value !== undefined
+                  ? formatNumber(value.value)
+                  : '—'}
             </span>
+            {failure && (
+              <span data-testid="failure-reason" className="text-[var(--px-crit)]">
+                {failure}
+              </span>
+            )}
             {value.stale && (
               <span title={t.hosts.value.lastReading(seenLabel(value.at, new Date(), t))}>
                 <Pill tone="warn">{t.hosts.value.stale}</Pill>
