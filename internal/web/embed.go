@@ -42,19 +42,25 @@ func Handler() http.Handler {
 //  1. "/api" or anything under "/api/" always 404s — a typo'd or removed
 //     API route must never look like "page not found" instead of
 //     "endpoint not found" (finding "Important 9").
-//  2. The root path "/" serves index.html directly.
-//  3. A path that names a real file is served as that file — unless it
+//  2. Any method but GET and HEAD gets 405: the SPA is only ever read,
+//     and a client that POSTs to a path it guessed (an MCP client's OAuth
+//     fallback "POST /register") must not get the index page as a 200.
+//  3. The root path "/" serves index.html directly.
+//  4. A path that names a real file is served as that file — unless it
 //     names a directory (e.g. "/assets/" with no index.html in it), which
 //     404s rather than producing a directory listing (finding
 //     "Important 9").
-//  4. A path with no matching file: an extension-less path (a
+//  5. A path with no matching file: an extension-less path (a
 //     client-side app route with no dot in its last segment) falls back
 //     to index.html, the SPA's history-mode entry point. A path under
 //     "/assets/" or one that has a file extension 404s instead — a
 //     missing hashed asset (e.g. a stale chunk after a redeploy) must
 //     come back as a real 404, not a 200 carrying the index page, or the
 //     browser will try to parse HTML as JavaScript and white-screen
-//     (finding "Important 9").
+//     (finding "Important 9"). A path under "/.well-known/" 404s too: it
+//     is a protocol's discovery path, never an app route, and a client
+//     that looks for OAuth metadata there (an MCP client meeting a 401
+//     at /api/mcp) must learn there is none instead of parsing HTML.
 func HandlerFS(fsys fs.FS) http.Handler {
 	files := http.FS(fsys)
 	fileServer := http.FileServer(files)
@@ -63,6 +69,12 @@ func HandlerFS(fsys fs.FS) http.Handler {
 
 		if path == "/api" || strings.HasPrefix(path, "/api/") {
 			http.NotFound(w, r)
+			return
+		}
+
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -84,7 +96,7 @@ func HandlerFS(fsys fs.FS) http.Handler {
 			return
 		}
 
-		if strings.HasPrefix(path, "/assets/") || hasExtension(path) {
+		if strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/.well-known/") || hasExtension(path) {
 			http.NotFound(w, r)
 			return
 		}

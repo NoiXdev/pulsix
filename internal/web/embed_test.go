@@ -72,6 +72,57 @@ func TestHandlerAPIPathsAlways404(t *testing.T) {
 	}
 }
 
+// TestHandlerWellKnownPathsAre404 pins that a protocol discovery path
+// never gets the index page: an MCP client that meets a 401 at /api/mcp
+// looks for OAuth metadata under /.well-known/, and a 200 carrying HTML
+// there made Claude Code fail with "JSON Parse error: Unrecognized token
+// '<'" instead of reporting the refused token.
+func TestHandlerWellKnownPathsAre404(t *testing.T) {
+	h := HandlerFS(testFS())
+
+	for _, path := range []string{"/.well-known/oauth-protected-resource/api/mcp", "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+			if rec.Code != 404 {
+				t.Fatalf("GET %s: status = %d, want 404", path, rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "<html") {
+				t.Errorf("GET %s: 404 body looks like the SPA index page", path)
+			}
+		})
+	}
+}
+
+// TestHandlerServesOnlyGetAndHead: the SPA is read, never written to, so
+// any other method is refused instead of answered with the index page. An
+// MCP client without a valid token falls back to OAuth's default
+// "POST /register"; a 200 with HTML there was parsed as JSON.
+func TestHandlerServesOnlyGetAndHead(t *testing.T) {
+	h := HandlerFS(testFS())
+
+	for _, tc := range []struct{ method, path string }{{"POST", "/register"}, {"POST", "/"}, {"PUT", "/o/acme/hosts"}, {"DELETE", "/robots.txt"}} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			if rec.Code != 405 {
+				t.Fatalf("%s %s: status = %d, want 405", tc.method, tc.path, rec.Code)
+			}
+			if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Errorf("Allow = %q, want \"GET, HEAD\"", got)
+			}
+			if strings.Contains(rec.Body.String(), "<html") {
+				t.Errorf("%s %s: body looks like the SPA index page", tc.method, tc.path)
+			}
+		})
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("HEAD", "/o/acme/hosts", nil))
+	if rec.Code != 200 {
+		t.Fatalf("HEAD of an app route = %d, want 200", rec.Code)
+	}
+}
+
 // TestHandlerServesRealStaticAsset guards the other branch of Handler's
 // logic — a path that does exist in the fs must be served as itself, not
 // silently rewritten to index.html.
