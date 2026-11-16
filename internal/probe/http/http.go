@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -78,6 +79,9 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	req.Header.Set("User-Agent", httpUserAgent)
 	cred.apply(req)
 
+	var hop hopTrace
+	req = req.WithContext(httptrace.WithClientTrace(ctx, hop.trace()))
+
 	start := time.Now()
 	resp, err := client.Do(req)
 	if refused.Load() {
@@ -85,14 +89,16 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	}
 	if err != nil {
 		// The client's error is never passed on: it quotes the URL.
-		return probe.Down("http")
+		return probe.Down("http", hop.reason(err))
 	}
 	body, over, readErr := readBody(resp.Body, bodyContains != "" || len(entries) > 0, httpBodyLimit)
 	elapsed := time.Since(start)
 	_ = resp.Body.Close()
 
+	// A status code is no failure: a response arrived.
 	obs := []probe.Observation{
 		probe.Value("http.up", 1),
+		probe.Up("http"),
 		probe.Value("http.status_code", float64(resp.StatusCode)),
 		probe.Value("http.response_ms", probe.Millis(elapsed)),
 	}
@@ -114,7 +120,7 @@ func FailAll(params map[string]any, msg string) []probe.Observation {
 // failAll is msg on the whole-host metrics, on http.body_match when
 // bodyMatch and on each entry's http.json.value.
 func failAll(bodyMatch bool, entries []jsonEntry, msg string) []probe.Observation {
-	metrics := []string{"http.up", "http.status_code", "http.response_ms"}
+	metrics := []string{"http.up", "http.failure", "http.status_code", "http.response_ms"}
 	if bodyMatch {
 		metrics = append(metrics, "http.body_match")
 	}

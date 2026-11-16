@@ -32,10 +32,12 @@ type Registry map[string]Func
 // Run probes address with plugin and params, already validated by
 // internal/checks. It never returns a Go error: every outcome is in the
 // observations. A failed attempt (refused, timed out, no answer) is
-// `<plugin>.up = 0` alone, except that icmp also reports a measured
-// `icmp.loss_pct = 100` when its requests went out and none came back. An
-// attempt that could not be made is one error observation per metric the
-// params would have produced.
+// `<plugin>.up = 0` and `<plugin>.failure` naming why (Down), except that
+// icmp also reports a measured `icmp.loss_pct = 100` when its requests
+// went out and none came back; a successful one reports `<plugin>.failure
+// = none` (Up). An attempt that could not be made is one error
+// observation per metric the params would have produced,
+// `<plugin>.failure` included.
 //
 // The probe's timeout is its params' timeout_s (or the plugin's default),
 // cut to ctx's deadline when that is earlier.

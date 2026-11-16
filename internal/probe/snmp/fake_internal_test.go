@@ -2,7 +2,6 @@ package snmp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -32,9 +31,11 @@ type fakeDevice struct {
 	pduError gosnmp.SNMPError
 	// walkErr fails the walk of a root.
 	walkErr map[string]error
-	// replied is what answered reports; rtt what roundTrip does.
-	replied bool
-	rtt     time.Duration
+	// replied is what answered reports; rtt what roundTrip does;
+	// sockFailure what socketFailure does.
+	replied     bool
+	rtt         time.Duration
+	sockFailure string
 
 	gets   [][]string
 	walked []string
@@ -86,6 +87,8 @@ func (f *fakeDevice) walk(root string, fn gosnmp.WalkFunc) error {
 func (f *fakeDevice) answered() bool { return f.replied }
 
 func (f *fakeDevice) roundTrip() time.Duration { return f.rtt }
+
+func (f *fakeDevice) socketFailure() string { return f.sockFailure }
 
 func (f *fakeDevice) close() {
 	f.mu.Lock()
@@ -228,4 +231,6 @@ func wantAbsent(t *testing.T, m map[key]probe.Observation, metric, item string) 
 	}
 }
 
-var errFakeTimeout = errors.New("request timeout (after 1 retries)")
+// errFakeTimeout is gosnmp's error for a request and its retries that
+// were not answered.
+var errFakeTimeout = fmt.Errorf("request timeout (after 1 retries): %w", gosnmp.ErrMaxRetriesExceeded)

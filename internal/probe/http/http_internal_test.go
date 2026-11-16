@@ -3,8 +3,11 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -129,4 +132,38 @@ func TestJSONValuesBoundMatchesTheDescriptor(t *testing.T) {
 		}
 	}
 	t.Fatal("the http descriptor has no json_values")
+}
+
+// TestHopTraceReason: what a hop got to decides how its error reads.
+func TestHopTraceReason(t *testing.T) {
+	malformed := errors.New(`net/http: HTTP/1.x transport connection broken: malformed HTTP response "x"`)
+	for _, tc := range []struct {
+		name      string
+		connected bool
+		tlsErr    error
+		err       error
+		want      string
+	}{
+		{"too many redirects", true, nil, &url.Error{Op: "Get", URL: "http://x/", Err: errTooManyRedirects}, probe.FailureRedirects},
+		{"not connected", false, nil, malformed, probe.FailureError},
+		{"connected, not http", true, nil, malformed, probe.FailureProtocol},
+		{"connected, deadline", true, nil, context.DeadlineExceeded, probe.FailureTimeout},
+		{"connected, cancelled", true, nil, context.Canceled, probe.FailureError},
+		{"connected, eof", true, nil, io.EOF, probe.FailureReset},
+		{"handshake", true, errors.New("tls: unsupported version"), malformed, probe.FailureTLS},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &hopTrace{connected: tc.connected, tlsErr: tc.tlsErr}
+			if got := h.reason(tc.err); got != tc.want {
+				t.Fatalf("reason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// A new hop forgets the previous hop's state.
+	h := &hopTrace{connected: true, tlsErr: errors.New("x")}
+	h.trace().GetConn("x:443")
+	if h.connected || h.tlsErr != nil {
+		t.Fatalf("GetConn kept the previous hop: %+v", h)
+	}
 }

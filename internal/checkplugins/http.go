@@ -41,6 +41,9 @@ func httpPlugin() Descriptor {
 		Check:               httpCheck,
 		Metrics: []MetricSpec{
 			{Name: "http.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "http.failure", Kind: Discrete},
 			{Name: "http.status_code", Kind: Numeric},
 			{Name: "http.response_ms", Kind: Numeric},
 			{Name: "http.body_match", Kind: Numeric},

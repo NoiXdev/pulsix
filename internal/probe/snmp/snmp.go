@@ -12,7 +12,6 @@ package snmp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"sync"
 	"time"
@@ -23,7 +22,7 @@ import (
 )
 
 // hostMetrics are the metrics on the whole-host item.
-var hostMetrics = []string{"snmp.up", "snmp.response_ms", "snmp.uptime_seconds"}
+var hostMetrics = []string{"snmp.up", "snmp.failure", "snmp.response_ms", "snmp.uptime_seconds"}
 
 // Info is what a poll tells its caller beyond the observations.
 type Info struct {
@@ -68,11 +67,11 @@ func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address s
 // Poll polls the device at address with params (validated by
 // internal/checks) and the fields of the check's secret. It never returns
 // a Go error: every outcome is in the observations, as probe.Func
-// describes. A device that does not answer the first request is
-// snmp.up = 0 alone; params or a secret that cannot be used, a target the
-// guard refuses or a v3 device refusing the credentials is an error on
-// snmp.up, snmp.response_ms, snmp.uptime_seconds and each oids entry's
-// snmp.value.
+// describes. A device that does not answer the first request, or a v3
+// device refusing the credentials, is snmp.up = 0 and snmp.failure alone
+// (FailureAuth for the credentials); params or a secret that cannot be
+// used, or a target the guard refuses, is an error on every host metric
+// and each oids entry's snmp.value.
 //
 // Each request waits timeout_seconds and is retried once; ctx bounds the
 // whole poll.
@@ -101,13 +100,13 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 		return fail(probe.ErrNotAllowed.Error()), Info{}
 	}
 	if err != nil {
-		return probe.Down("snmp"), Info{}
+		return probe.Down("snmp", probe.Classify(err)), Info{}
 	}
 	target := netip.AddrPortFrom(ip, uint16(s.port)) //nolint:gosec // parseSettings bounds the port to 1..65535.
 
 	c, err := p.dial(ctx, g, target, s.timeout, creds)
 	if err != nil {
-		return failed(classify(err), s, fail), Info{}
+		return failed(classify(err), downReason(ctx, err, ""), fail), Info{}
 	}
 	defer c.close()
 
@@ -133,13 +132,13 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	start := time.Now()
 	pkt, err := c.get(first)
 	if err != nil {
-		return failed(classifyFirst(err, creds.version == gosnmp.Version3, c.answered()), s, fail), Info{}
+		return failed(classifyFirst(err, creds.version == gosnmp.Version3, c.answered()), downReason(ctx, err, c.socketFailure()), fail), Info{}
 	}
 	rtt := c.roundTrip()
 	if rtt <= 0 {
 		rtt = time.Since(start)
 	}
-	obs = append(obs, probe.Value("snmp.up", 1), probe.Value("snmp.response_ms", probe.Millis(rtt)))
+	obs = append(obs, probe.Value("snmp.up", 1), probe.Up("snmp"), probe.Value("snmp.response_ms", probe.Millis(rtt)))
 
 	cur := sample{}
 	vars, batchErr := answers(pkt, first)
@@ -195,16 +194,35 @@ func failAll(s settings, msg string) []probe.Observation {
 	return obs
 }
 
-// failed is the result of a dial or first request that failed. The
+// failed is the result of a dial or first request that failed, sorted as
+// f; reason is the failure label of a device that did not answer. The
 // previous poll stays: the next answer's rates span both intervals.
-func failed(f failure, s settings, fail func(string) []probe.Observation) []probe.Observation {
+func failed(f failure, reason string, fail func(string) []probe.Observation) []probe.Observation {
 	switch f {
 	case failRefused:
 		return fail(probe.ErrNotAllowed.Error())
 	case failCredentials:
-		return fail(fmt.Sprintf(errCredentialsFmt, s.secret))
+		return probe.Down("snmp", probe.FailureAuth)
 	}
-	return probe.Down("snmp")
+	return probe.Down("snmp", reason)
+}
+
+// downReason is the failure label of a device that did not answer with
+// err; socket is the session socket's own failure (socketFailure), which
+// wins. gosnmp reports a request unanswered after its retries as
+// ErrMaxRetriesExceeded and the poll's deadline as itself; a socket the
+// cancel closed reads as the context's end.
+func downReason(ctx context.Context, err error, socket string) string {
+	if socket != "" {
+		return socket
+	}
+	if errors.Is(err, gosnmp.ErrMaxRetriesExceeded) {
+		return probe.FailureTimeout
+	}
+	if l := probe.Classify(err); l != probe.FailureError || ctx.Err() == nil {
+		return l
+	}
+	return probe.Classify(ctx.Err())
 }
 
 // pollInterfaces reads the interface table into cur and returns its

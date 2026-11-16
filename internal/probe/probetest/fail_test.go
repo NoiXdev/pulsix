@@ -17,6 +17,8 @@ const failCaseEnv = "PROBETEST_FAIL_CASE"
 
 func value(v float64) *float64 { return &v }
 
+func label(s string) *string { return &s }
+
 // failCases are calls that must fail the test, each with a fragment of the
 // message it must fail with.
 var failCases = map[string]struct {
@@ -28,10 +30,34 @@ var failCases = map[string]struct {
 	}, `metric "x.up" reported twice`},
 	"value and error": {func(t *testing.T) {
 		probetest.ByMetric(t, []probe.Observation{{Metric: "x.up", Value: value(1), Err: "boom"}})
-	}, "must carry a value xor an error"},
+	}, "must carry exactly one of a value, a label and an error"},
+	"value and label": {func(t *testing.T) {
+		probetest.ByMetric(t, []probe.Observation{{Metric: "x.up", Value: value(1), Label: label("a")}})
+	}, "must carry exactly one of a value, a label and an error"},
 	"neither value nor error": {func(t *testing.T) {
 		probetest.ByMetric(t, []probe.Observation{{Metric: "x.up"}})
-	}, "must carry a value xor an error"},
+	}, "must carry exactly one of a value, a label and an error"},
+	"label missing": {func(t *testing.T) {
+		probetest.WantLabel(t, map[string]probe.Observation{}, "x.failure")
+	}, `metric "x.failure" missing`},
+	"label is a value": {func(t *testing.T) {
+		probetest.WantLabel(t, probetest.ByMetric(t, []probe.Observation{probe.Value("x.failure", 1)}), "x.failure")
+	}, `metric "x.failure" has value`},
+	"down: up": {func(t *testing.T) {
+		probetest.WantDown(t, []probe.Observation{probe.Value("x.up", 1), probe.Text("x.failure", "timeout")}, "x", "timeout")
+	}, "x.up = 1, want 0"},
+	"down: other reason": {func(t *testing.T) {
+		probetest.WantDown(t, probe.Down("x", probe.FailureRefused), "x", "timeout")
+	}, `x.failure = "refused", want "timeout"`},
+	"down: more": {func(t *testing.T) {
+		probetest.WantDown(t, append(probe.Down("x", "timeout"), probe.Value("x.ms", 1)), "x", "timeout")
+	}, "want only x.up=0 and x.failure=timeout"},
+	"up: down": {func(t *testing.T) {
+		probetest.WantUp(t, probe.Down("x", probe.FailureRefused), "x")
+	}, "x.up = 0, want 1"},
+	"up: failure": {func(t *testing.T) {
+		probetest.WantUp(t, []probe.Observation{probe.Value("x.up", 1), probe.Text("x.failure", "timeout")}, "x")
+	}, `x.failure = "timeout", want none`},
 	"value missing": {func(t *testing.T) {
 		probetest.WantValue(t, map[string]probe.Observation{}, "x.up")
 	}, `metric "x.up" missing`},
@@ -42,7 +68,7 @@ var failCases = map[string]struct {
 		probetest.WantOnly(t, []probe.Observation{probe.Value("x.up", 0), probe.Value("x.time_ms", 1)}, "x.up", 0)
 	}, "want only x.up=0"},
 	"only: other value": {func(t *testing.T) {
-		probetest.WantOnly(t, probe.Down("x"), "x.up", 1)
+		probetest.WantOnly(t, []probe.Observation{probe.Value("x.up", 0)}, "x.up", 1)
 	}, "x.up = 0, want 1"},
 	"errors: other count": {func(t *testing.T) {
 		probetest.WantErrors(t, probe.FailAll("boom", "x.up"), "boom", "x.up", "x.time_ms")

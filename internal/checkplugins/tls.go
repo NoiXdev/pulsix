@@ -14,9 +14,14 @@ func tlsPlugin() Descriptor {
 		},
 		Metrics: []MetricSpec{
 			{Name: "tls.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "tls.failure", Kind: Discrete},
 			{Name: "tls.handshake_ms", Kind: Numeric},
 			{Name: "tls.cert_valid", Kind: Numeric},
 			{Name: "tls.cert_expiry_days", Kind: Numeric},
+			// The leaf's issuer: common name, else organization, else DN.
+			{Name: "tls.cert_issuer", Kind: Discrete},
 		},
 	}
 }

@@ -57,7 +57,7 @@ func listenICMP(network, address string) (packetConn, error) {
 // probeICMP sends count echo requests to address and reports how many came
 // back and their average round trip.
 func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, address string, open icmpOpener) []probe.Observation {
-	metrics := []string{"icmp.up", "icmp.loss_pct", "icmp.rtt_ms"}
+	metrics := []string{"icmp.up", "icmp.failure", "icmp.loss_pct", "icmp.rtt_ms"}
 
 	host, err := probe.TargetHost(address)
 	if err != nil {
@@ -76,7 +76,7 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 	}
 	if err != nil {
-		return probe.Down("icmp")
+		return probe.Down("icmp", probe.Classify(err))
 	}
 
 	r := newEchoRound(target, int(count))
@@ -93,14 +93,20 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 	if r.replies == 0 {
 		if r.sent[0].IsZero() {
 			// Cancelled before the first request: nothing was measured.
-			return probe.Down("icmp")
+			return probe.Down("icmp", probe.Classify(ctx.Err()))
 		}
 		// Requests went out and none came back: the loss is measured, a
-		// round trip is not.
-		return []probe.Observation{probe.Value("icmp.up", 0), probe.Value("icmp.loss_pct", 100)}
+		// round trip is not. Requests the network refused to send for
+		// want of a route were lost as unreachable.
+		reason := probe.FailureTimeout
+		if r.sendFailure == probe.FailureUnreachable {
+			reason = r.sendFailure
+		}
+		return append(probe.Down("icmp", reason), probe.Value("icmp.loss_pct", 100))
 	}
 	return []probe.Observation{
 		probe.Value("icmp.up", 1),
+		probe.Up("icmp"),
 		probe.Value("icmp.loss_pct", float64(len(r.sent)-r.replies)*100/float64(len(r.sent))),
 		probe.Value("icmp.rtt_ms", probe.Millis(r.rtt)/float64(r.replies)),
 	}
@@ -127,6 +133,9 @@ type echoRound struct {
 	seen    []bool
 	replies int
 	rtt     time.Duration
+	// sendFailure is the failure label of the last request that could not
+	// be sent, "" when every one was.
+	sendFailure string
 }
 
 func newEchoRound(target netip.Addr, count int) *echoRound {
@@ -170,7 +179,9 @@ func (r *echoRound) run(ctx context.Context, conn packetConn) {
 		}
 		r.sent[seq] = time.Now()
 		// A request that cannot be sent counts as lost.
-		_, _ = conn.WriteTo(msg, dst)
+		if _, err := conn.WriteTo(msg, dst); err != nil {
+			r.sendFailure = probe.Classify(err)
+		}
 
 		until := deadline
 		if seq < len(r.sent)-1 {

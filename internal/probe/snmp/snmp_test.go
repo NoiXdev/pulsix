@@ -107,6 +107,9 @@ func TestProbeOverTheWire(t *testing.T) {
 	if o := got["snmp.up/"]; o.Value == nil || *o.Value != 1 {
 		t.Fatalf("snmp.up: %+v (all %+v)", o, obs)
 	}
+	if o := got["snmp.failure/"]; o.Label == nil || *o.Label != probe.FailureNone {
+		t.Fatalf("snmp.failure: %+v", o)
+	}
 	if o := got["snmp.uptime_seconds/"]; o.Value == nil || *o.Value != 42 {
 		t.Fatalf("snmp.uptime_seconds: %+v", o)
 	}
@@ -124,11 +127,27 @@ func TestProbeOverTheWire(t *testing.T) {
 	}
 }
 
+// TestProbeWrongCommunityIsDown: a v2c device ignores a request with
+// another community, so the request times out.
 func TestProbeWrongCommunityIsDown(t *testing.T) {
 	port := agent(t, map[string]gosnmp.SnmpPDU{})
 	obs := snmp.Probe(context.Background(), probetest.LoopbackGuard(), wireParams(port, 1, "x=1.3.6.1.2.1.1.5.0"),
 		"127.0.0.1", map[string]string{"community": "not-the-community"})
-	probetest.WantOnly(t, obs, "snmp.up", 0)
+	probetest.WantDown(t, obs, "snmp", probe.FailureTimeout)
+}
+
+// TestProbeClosedPortIsRefused: nothing listens on the device's port, so
+// the request is answered by an ICMP port unreachable.
+func TestProbeClosedPortIsRefused(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	_ = pc.Close()
+	obs := snmp.Probe(context.Background(), probetest.LoopbackGuard(), wireParams(port, 1, "x=1.3.6.1.2.1.1.5.0"),
+		"127.0.0.1", map[string]string{"community": testCommunity})
+	probetest.WantDown(t, obs, "snmp", probe.FailureRefused)
 }
 
 // TestProbeTimeout: a device that never answers is down after the request
@@ -138,7 +157,7 @@ func TestProbeTimeout(t *testing.T) {
 	start := time.Now()
 	obs := snmp.Probe(context.Background(), probetest.LoopbackGuard(), wireParams(port, 1, "x=1.3.6.1.2.1.1.5.0"),
 		"127.0.0.1", map[string]string{"community": testCommunity})
-	probetest.WantOnly(t, obs, "snmp.up", 0)
+	probetest.WantDown(t, obs, "snmp", probe.FailureTimeout)
 	if d := time.Since(start); d < 1500*time.Millisecond || d > 4*time.Second {
 		t.Fatalf("took %v, want about two requests of 1 s", d)
 	}
@@ -153,7 +172,8 @@ func TestProbeEndsWithItsContext(t *testing.T) {
 	start := time.Now()
 	obs := snmp.Probe(ctx, probetest.LoopbackGuard(), wireParams(port, 10, "x=1.3.6.1.2.1.1.5.0"),
 		"127.0.0.1", map[string]string{"community": testCommunity})
-	probetest.WantOnly(t, obs, "snmp.up", 0)
+	// Cancelled, not timed out: the manager stopped the probe.
+	probetest.WantDown(t, obs, "snmp", probe.FailureError)
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("took %v after a cancel at 300 ms", d)
 	}
@@ -166,7 +186,7 @@ func TestProbeGuardRefusal(t *testing.T) {
 	for _, address := range []string{"127.0.0.1", "localhost", "::ffff:127.0.0.1"} {
 		obs := snmp.Probe(context.Background(), probe.NewGuard(nil, nil), wireParams(port, 1, "x=1.3.6.1.2.1.1.5.0"),
 			address, map[string]string{"community": testCommunity})
-		if len(obs) != 4 {
+		if len(obs) != 5 {
 			t.Fatalf("%s: %+v", address, obs)
 		}
 		for _, o := range obs {

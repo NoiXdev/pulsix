@@ -26,7 +26,8 @@ import (
 func LoopbackGuard() *probe.Guard { return probe.NewGuardForTest(true, nil) }
 
 // ByMetric indexes observations by metric and fails on a duplicate or on an
-// observation that carries both a value and an error.
+// observation that does not carry exactly one of a value, a label and an
+// error.
 func ByMetric(t *testing.T, obs []probe.Observation) map[string]probe.Observation {
 	t.Helper()
 	m := make(map[string]probe.Observation, len(obs))
@@ -34,10 +35,59 @@ func ByMetric(t *testing.T, obs []probe.Observation) map[string]probe.Observatio
 		if _, dup := m[o.Metric]; dup {
 			t.Fatalf("metric %q reported twice: %+v", o.Metric, obs)
 		}
-		if (o.Value == nil) == (o.Err == "") {
-			t.Fatalf("observation %q must carry a value xor an error: %+v", o.Metric, o)
+		n := 0
+		for _, set := range []bool{o.Value != nil, o.Label != nil, o.Err != ""} {
+			if set {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("observation %q must carry exactly one of a value, a label and an error: %+v", o.Metric, o)
 		}
 		m[o.Metric] = o
+	}
+	return m
+}
+
+// WantLabel fails unless metric is present with a label, and returns it.
+func WantLabel(t *testing.T, m map[string]probe.Observation, metric string) string {
+	t.Helper()
+	o, ok := m[metric]
+	if !ok {
+		t.Fatalf("metric %q missing from %+v", metric, m)
+	}
+	if o.Label == nil {
+		t.Fatalf("metric %q has value %v, error %q; want a label", metric, o.Value, o.Err)
+	}
+	return *o.Label
+}
+
+// WantDown fails unless the observations are exactly a failed attempt of
+// plugin: <plugin>.up = 0 and <plugin>.failure = reason.
+func WantDown(t *testing.T, obs []probe.Observation, plugin, reason string) {
+	t.Helper()
+	m := ByMetric(t, obs)
+	if len(m) != 2 {
+		t.Fatalf("want only %s.up=0 and %s.failure=%s, got %+v", plugin, plugin, reason, obs)
+	}
+	if got := WantValue(t, m, plugin+".up"); got != 0 {
+		t.Fatalf("%s.up = %v, want 0", plugin, got)
+	}
+	if got := WantLabel(t, m, plugin+".failure"); got != reason {
+		t.Fatalf("%s.failure = %q, want %q", plugin, got, reason)
+	}
+}
+
+// WantUp fails unless the observations hold <plugin>.up = 1 and
+// <plugin>.failure = none, and returns them by metric.
+func WantUp(t *testing.T, obs []probe.Observation, plugin string) map[string]probe.Observation {
+	t.Helper()
+	m := ByMetric(t, obs)
+	if got := WantValue(t, m, plugin+".up"); got != 1 {
+		t.Fatalf("%s.up = %v, want 1 (%+v)", plugin, got, obs)
+	}
+	if got := WantLabel(t, m, plugin+".failure"); got != probe.FailureNone {
+		t.Fatalf("%s.failure = %q, want none", plugin, got)
 	}
 	return m
 }

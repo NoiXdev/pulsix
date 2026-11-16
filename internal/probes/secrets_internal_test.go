@@ -169,7 +169,7 @@ func TestUnavailableSecretFailsEveryMetric(t *testing.T) {
 				t.Fatalf("batches = %+v, want one", b)
 			}
 			type mi struct{ metric, item string }
-			want := []mi{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "name"}}
+			want := []mi{{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "name"}}
 			if len(b[0].obs) != len(want) {
 				t.Fatalf("observations = %+v, want %v", b[0].obs, want)
 			}
@@ -312,12 +312,12 @@ func TestUnavailableSecretOfAnHTTPCheck(t *testing.T) {
 	}{
 		"json values": {
 			params: map[string]any{"url": "https://api.example.com/health", "json_values": []any{"status=$.status", "depth=$.queue.depth"}},
-			want: []mi{{"http.up", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
+			want: []mi{{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
 				{"http.json.value", "status"}, {"http.json.value", "depth"}},
 		},
 		"plain": {
 			params: map[string]any{"url": "https://api.example.com/health"},
-			want:   []mi{{"http.up", ""}, {"http.status_code", ""}, {"http.response_ms", ""}},
+			want:   []mi{{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

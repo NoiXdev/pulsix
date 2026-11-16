@@ -20,12 +20,9 @@ func tcpParams(port int, extra map[string]any) map[string]any {
 func TestTCPBannerMatch(t *testing.T) {
 	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "SSH-2.0-test\r\n")
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(port, map[string]any{"expect": "SSH-2.0"}), "127.0.0.1")
-	m := probetest.ByMetric(t, obs)
-	if len(m) != 3 {
-		t.Fatalf("want up, connect_ms and banner_match, got %+v", obs)
-	}
-	if v := probetest.WantValue(t, m, "tcp.up"); v != 1 {
-		t.Fatalf("tcp.up = %v, want 1", v)
+	m := probetest.WantUp(t, obs, "tcp")
+	if len(m) != 4 {
+		t.Fatalf("want up, failure, connect_ms and banner_match, got %+v", obs)
 	}
 	if v := probetest.WantValue(t, m, "tcp.connect_ms"); v < 0 {
 		t.Fatalf("tcp.connect_ms = %v, want >= 0", v)
@@ -39,10 +36,8 @@ func TestTCPBannerMismatch(t *testing.T) {
 	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "SSH-2.0-test\r\n")
 	start := time.Now()
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(port, map[string]any{"expect": "nope", "timeout_s": float64(1)}), "127.0.0.1")
-	m := probetest.ByMetric(t, obs)
-	if v := probetest.WantValue(t, m, "tcp.up"); v != 1 {
-		t.Fatalf("tcp.up = %v, want 1", v)
-	}
+	// A banner that does not match is no failure: the port was up.
+	m := probetest.WantUp(t, obs, "tcp")
 	if v := probetest.WantValue(t, m, "tcp.banner_match"); v != 0 {
 		t.Fatalf("tcp.banner_match = %v, want 0", v)
 	}
@@ -54,23 +49,31 @@ func TestTCPBannerMismatch(t *testing.T) {
 func TestTCPWithoutExpectReportsNoBannerMatch(t *testing.T) {
 	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "")
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(port, nil), "127.0.0.1")
-	m := probetest.ByMetric(t, obs)
-	if len(m) != 2 {
-		t.Fatalf("want up and connect_ms only, got %+v", obs)
-	}
-	if v := probetest.WantValue(t, m, "tcp.up"); v != 1 {
-		t.Fatalf("tcp.up = %v, want 1", v)
+	m := probetest.WantUp(t, obs, "tcp")
+	if len(m) != 3 {
+		t.Fatalf("want up, failure and connect_ms only, got %+v", obs)
 	}
 }
 
 func TestTCPClosedPortIsDown(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(probetest.ClosedPort(t), map[string]any{"expect": "x"}), "127.0.0.1")
-	probetest.WantOnly(t, obs, "tcp.up", 0)
+	probetest.WantDown(t, obs, "tcp", probe.FailureRefused)
 }
 
 func TestTCPUnresolvableHostIsDown(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(22, nil), "no-such-host.invalid")
-	probetest.WantOnly(t, obs, "tcp.up", 0)
+	probetest.WantDown(t, obs, "tcp", probe.FailureDNS)
+}
+
+// TestTCPConnectTimeoutIsDown: a connect still pending at the deadline
+// timed out (here the deadline has passed before the dial starts).
+func TestTCPConnectTimeoutIsDown(t *testing.T) {
+	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	obs := run(ctx, probetest.LoopbackGuard(), tcpParams(port, nil), "127.0.0.1")
+	probetest.WantDown(t, obs, "tcp", probe.FailureTimeout)
 }
 
 func TestTCPSendReachesListener(t *testing.T) {
@@ -92,25 +95,25 @@ func TestTCPSendReachesListener(t *testing.T) {
 func TestTCPRefusedTargetIsAnError(t *testing.T) {
 	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "SSH-2.0-test\r\n")
 	obs := run(context.Background(), probe.NewGuard(nil, nil), tcpParams(port, map[string]any{"expect": "SSH-2.0"}), "127.0.0.1")
-	probetest.WantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.connect_ms", "tcp.banner_match")
+	probetest.WantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.failure", "tcp.connect_ms", "tcp.banner_match")
 }
 
 func TestTCPRefusedHostnameIsAnError(t *testing.T) {
 	// localhost resolves to loopback only, so every dial is refused.
 	port, _ := probetest.TCPServer(t, "tcp", "127.0.0.1:0", "")
 	obs := run(context.Background(), probe.NewGuard(nil, nil), tcpParams(port, nil), "localhost")
-	probetest.WantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.connect_ms")
+	probetest.WantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.failure", "tcp.connect_ms")
 }
 
 func TestTCPEmptyAddressIsAnError(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(22, map[string]any{"expect": "x"}), "")
-	probetest.WantErrors(t, obs, "host has no address", "tcp.up", "tcp.connect_ms", "tcp.banner_match")
+	probetest.WantErrors(t, obs, "host has no address", "tcp.up", "tcp.failure", "tcp.connect_ms", "tcp.banner_match")
 }
 
 func TestTCPUnparsableAddressIsAnError(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(22, nil), "host:22")
 	m := probetest.ByMetric(t, obs)
-	if len(m) != 2 || m["tcp.up"].Err == "" || m["tcp.connect_ms"].Err == "" {
+	if len(m) != 3 || m["tcp.up"].Err == "" || m["tcp.failure"].Err == "" || m["tcp.connect_ms"].Err == "" {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}
 }
@@ -120,10 +123,7 @@ func TestTCPIPv6(t *testing.T) {
 	for _, addr := range []string{"::1", "[::1]"} {
 		t.Run(addr, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(), tcpParams(port, map[string]any{"expect": "SSH-2.0"}), addr)
-			m := probetest.ByMetric(t, obs)
-			if v := probetest.WantValue(t, m, "tcp.up"); v != 1 {
-				t.Fatalf("tcp.up = %v, want 1", v)
-			}
+			m := probetest.WantUp(t, obs, "tcp")
 			if v := probetest.WantValue(t, m, "tcp.banner_match"); v != 1 {
 				t.Fatalf("tcp.banner_match = %v, want 1", v)
 			}

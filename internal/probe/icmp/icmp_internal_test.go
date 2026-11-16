@@ -24,6 +24,9 @@ import (
 type echoConn struct {
 	v6   bool
 	drop map[int]bool
+	// writeErr fails every request written, as a network without a route
+	// to the target does.
+	writeErr error
 
 	mu       sync.Mutex
 	deadline time.Time
@@ -46,6 +49,9 @@ func newEchoConn(v6 bool, drop ...int) *echoConn {
 }
 
 func (c *echoConn) WriteTo(b []byte, dst net.Addr) (int, error) {
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
 	proto, replyType := 1, icmp.Type(ipv4.ICMPTypeEchoReply)
 	if c.v6 {
 		proto, replyType = 58, ipv6.ICMPTypeEchoReply
@@ -118,10 +124,10 @@ func TestICMPSocketNotPermittedNamesTheSysctl(t *testing.T) {
 			refused := os.NewSyscallError("socket", errno)
 			obs := probeICMP(context.Background(), probe.NewGuardForTest(true, nil), nil, "127.0.0.1", opener(nil, refused, nil))
 			m := probetest.ByMetric(t, obs)
-			if len(m) != 3 {
+			if len(m) != 4 {
 				t.Fatalf("want one error per metric, got %+v", obs)
 			}
-			for _, metric := range []string{"icmp.up", "icmp.loss_pct", "icmp.rtt_ms"} {
+			for _, metric := range []string{"icmp.up", "icmp.failure", "icmp.loss_pct", "icmp.rtt_ms"} {
 				if !strings.Contains(m[metric].Err, "net.ipv4.ping_group_range") {
 					t.Fatalf("%s: err %q does not name net.ipv4.ping_group_range", metric, m[metric].Err)
 				}
@@ -134,7 +140,7 @@ func TestICMPOtherSocketErrorIsAnError(t *testing.T) {
 	obs := probeICMP(context.Background(), probe.NewGuardForTest(true, nil), nil, "127.0.0.1",
 		opener(nil, os.NewSyscallError("socket", syscall.EMFILE), nil))
 	m := probetest.ByMetric(t, obs)
-	if len(m) != 3 || m["icmp.up"].Err == "" || strings.Contains(m["icmp.up"].Err, "ping_group_range") {
+	if len(m) != 4 || m["icmp.up"].Err == "" || m["icmp.failure"].Err == "" || strings.Contains(m["icmp.up"].Err, "ping_group_range") {
 		t.Fatalf("want a plain error per metric, got %+v", obs)
 	}
 }
@@ -164,12 +170,9 @@ func TestICMPCountsReplies(t *testing.T) {
 			if network != tc.wantNet {
 				t.Fatalf("opened %q, want %q", network, tc.wantNet)
 			}
-			m := probetest.ByMetric(t, obs)
-			if len(m) != 3 {
-				t.Fatalf("want up, loss_pct and rtt_ms, got %+v", obs)
-			}
-			if v := *m["icmp.up"].Value; v != 1 {
-				t.Fatalf("icmp.up = %v, want 1", v)
+			m := probetest.WantUp(t, obs, "icmp")
+			if len(m) != 4 {
+				t.Fatalf("want up, failure, loss_pct and rtt_ms, got %+v", obs)
 			}
 			if v := *m["icmp.loss_pct"].Value; v != tc.wantLoss {
 				t.Fatalf("icmp.loss_pct = %v, want %v", v, tc.wantLoss)
@@ -210,15 +213,35 @@ func TestICMPIgnoresForeignReplies(t *testing.T) {
 	wantNoReply(t, obs)
 }
 
-// wantNoReply fails unless obs is exactly icmp.up=0 and icmp.loss_pct=100:
-// requests went out and none came back, so the loss was measured but no
-// round trip was.
+// TestICMPNoRouteIsUnreachable: requests the network could not send
+// because it has no route are lost as unreachable, not as a timeout.
+func TestICMPNoRouteIsUnreachable(t *testing.T) {
+	for _, errno := range []error{syscall.EHOSTUNREACH, syscall.ENETUNREACH} {
+		conn := newEchoConn(false)
+		conn.writeErr = &net.OpError{Op: "write", Net: "udp4", Err: os.NewSyscallError("sendto", errno)}
+		obs := probeICMP(context.Background(), probe.NewGuard(nil, nil),
+			map[string]any{"count": float64(2), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
+		wantLost(t, obs, probe.FailureUnreachable)
+	}
+}
+
+// wantNoReply fails unless obs is exactly icmp.up=0, icmp.failure=timeout
+// and icmp.loss_pct=100: requests went out and none came back, so the loss
+// was measured but no round trip was.
 func wantNoReply(t *testing.T, obs []probe.Observation) {
+	t.Helper()
+	wantLost(t, obs, probe.FailureTimeout)
+}
+
+func wantLost(t *testing.T, obs []probe.Observation, reason string) {
 	t.Helper()
 	m := probetest.ByMetric(t, obs)
 	up, loss := m["icmp.up"], m["icmp.loss_pct"]
-	if len(m) != 2 || up.Value == nil || *up.Value != 0 || loss.Value == nil || *loss.Value != 100 {
-		t.Fatalf("want exactly icmp.up=0 and icmp.loss_pct=100, got %+v", obs)
+	if len(m) != 3 || up.Value == nil || *up.Value != 0 || loss.Value == nil || *loss.Value != 100 {
+		t.Fatalf("want exactly icmp.up=0, icmp.failure and icmp.loss_pct=100, got %+v", obs)
+	}
+	if got := probetest.WantLabel(t, m, "icmp.failure"); got != reason {
+		t.Fatalf("icmp.failure = %q, want %q", got, reason)
 	}
 }
 
@@ -231,4 +254,14 @@ func TestICMPCancelReturnsPromptly(t *testing.T) {
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("probe took %v after cancel", d)
 	}
+}
+
+// TestICMPDeadlineBeforeTheFirstRequestIsATimeout: nothing was sent, so
+// nothing was measured but the reason.
+func TestICMPDeadlineBeforeTheFirstRequestIsATimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	obs := probeICMP(ctx, probe.NewGuard(nil, nil), map[string]any{"count": float64(1)}, "192.0.2.1", opener(newEchoConn(false), nil, nil))
+	probetest.WantDown(t, obs, "icmp", probe.FailureTimeout)
 }

@@ -16,6 +16,9 @@ func dnsPlugin() Descriptor {
 		},
 		Metrics: []MetricSpec{
 			{Name: "dns.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "dns.failure", Kind: Discrete},
 			{Name: "dns.resolve_ms", Kind: Numeric},
 			{Name: "dns.answer_match", Kind: Numeric},
 		},

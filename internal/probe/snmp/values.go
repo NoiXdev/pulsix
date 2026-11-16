@@ -27,7 +27,6 @@ const (
 	errMalformed        = "the device answered with a malformed response"
 	errNoStatus         = "the device did not report the interface's status"
 	errNoInterfaceTable = "the device's interface table could not be read"
-	errCredentialsFmt   = "the device did not accept the credentials of secret %q"
 )
 
 // errorStatus is the error for a whole answer whose error-status is set;

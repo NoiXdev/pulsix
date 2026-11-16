@@ -40,6 +40,15 @@ describe('the German catalogue', () => {
   });
 });
 
+describe('the failure reasons of the synthetic checks', () => {
+  // The <plugin>.failure vocabulary of internal/probe (failure.go,
+  // FailureLabels), in its order; a label added there needs a text here.
+  const VOCABULARY = ['none', 'dns', 'refused', 'timeout', 'unreachable', 'reset', 'tls', 'certificate', 'protocol', 'redirects', 'nxdomain', 'servfail', 'auth', 'error'];
+  it.each([['English', en], ['German', de]])('have a text for every label in the %s catalogue', (_name, catalogue) => {
+    expect(Object.keys(catalogue.checks.synthetic.failures)).toEqual(VOCABULARY);
+  });
+});
+
 describe('the save-failure messages of the settings pages', () => {
   // Shown as a toast on their own, so they start like a sentence.
   const PATHS = ['settings.general.saveFailed', 'language.account.saveFailed', 'language.instance.saveFailed'];

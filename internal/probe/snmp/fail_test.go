@@ -20,17 +20,17 @@ func TestFailAll(t *testing.T) {
 		"entries": {
 			params: map[string]any{"secret": "sw", "oids": []any{"name=1.3.6.1.2.1.1.5.0", "bad=3.6.1.2"}, "interfaces": true},
 			want: []want{
-				{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""},
+				{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""},
 				{"snmp.value", "name"}, {"snmp.value", "bad"},
 			},
 		},
 		"no entries": {
 			params: map[string]any{"secret": "sw"},
-			want:   []want{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}},
+			want:   []want{{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}},
 		},
 		"unreadable params": {
 			params: map[string]any{"secret": "sw", "version": "v1", "oids": []any{"name=1.3.6.1.2.1.1.5.0"}},
-			want:   []want{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}},
+			want:   []want{{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

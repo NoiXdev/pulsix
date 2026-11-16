@@ -32,9 +32,13 @@ func TestTLSCertValidAgainstInjectedRoots(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := probetest.ByMetric(t, probeTLS(context.Background(), loopbackOnly(), tc.params, "127.0.0.1", ca.Pool))
-			if len(m) != 4 || m["tls.up"].Value == nil || *m["tls.up"].Value != 1 {
-				t.Fatalf("want tls up with four metrics, got %+v", m)
+			// An invalid chain is no failure: the handshake completed.
+			m := probetest.WantUp(t, probeTLS(context.Background(), loopbackOnly(), tc.params, "127.0.0.1", ca.Pool), "tls")
+			if len(m) != 6 {
+				t.Fatalf("want tls up with six metrics, got %+v", m)
+			}
+			if got := probetest.WantLabel(t, m, "tls.cert_issuer"); got != "probe test CA" {
+				t.Fatalf("tls.cert_issuer = %q, want the CA's common name", got)
 			}
 			if v := m["tls.cert_valid"].Value; v == nil || *v != tc.want {
 				t.Fatalf("tls.cert_valid = %v, want %v", v, tc.want)

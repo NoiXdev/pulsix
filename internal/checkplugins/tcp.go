@@ -16,6 +16,9 @@ func tcpPlugin() Descriptor {
 		},
 		Metrics: []MetricSpec{
 			{Name: "tcp.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "tcp.failure", Kind: Discrete},
 			{Name: "tcp.connect_ms", Kind: Numeric},
 			{Name: "tcp.banner_match", Kind: Numeric},
 		},

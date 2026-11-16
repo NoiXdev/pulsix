@@ -159,6 +159,24 @@ export const enChecks = {
     pluginHint: 'runs from the Pulsix server',
     runsFromServer: 'Runs from the Pulsix server, not on the host.',
     rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply to every check of this type, whatever its key.`,
+    /** Why an attempt failed: the labels of the <plugin>.failure metric
+     * (internal/probe failure.go, backlog 3.13b), in its order. */
+    failures: {
+      none: 'no failure',
+      dns: 'name did not resolve',
+      refused: 'connection refused',
+      timeout: 'timed out',
+      unreachable: 'network or host unreachable',
+      reset: 'connection reset or closed early',
+      tls: 'TLS handshake failed',
+      certificate: 'certificate did not verify',
+      protocol: 'response was not valid HTTP',
+      redirects: 'too many redirects',
+      nxdomain: 'name does not exist',
+      servfail: 'DNS server answered with an error',
+      auth: 'credentials refused',
+      error: 'other failure',
+    },
   },
   /** Where a synthetic check is probed from (backlog 3.13a); the four
    * parameters' own labels are vantageParamTexts above. */

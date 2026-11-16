@@ -2,7 +2,9 @@ package dns
 
 import (
 	"context"
+	"net"
 	"net/netip"
+	"os"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/probe"
@@ -64,7 +66,7 @@ func TestAnswerMatches(t *testing.T) {
 
 func TestDNSUnsupportedTypeIsAnError(t *testing.T) {
 	obs := probeDNS(context.Background(), probe.NewGuardForTest(true, nil), map[string]any{"name": "example.test", "type": "SRV"}, "", probe.NewGuardForTest(true, nil).Dialer)
-	if len(obs) != 2 || obs[0].Err == "" || obs[1].Err == "" {
+	if len(obs) != 3 || obs[0].Err == "" || obs[1].Err == "" || obs[2].Err == "" {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}
 }
@@ -75,12 +77,47 @@ func TestDNSDialRefusalIsAnError(t *testing.T) {
 	// time. Go's resolver hides the dial error, so the probe must remember it.
 	params := map[string]any{"name": "example.test", "server": "127.0.0.1:53", "expect": "192.0.2.7", "timeout_s": float64(2)}
 	obs := probeDNS(context.Background(), probe.NewGuardForTest(true, nil), params, "", probe.NewGuard(nil, nil).Dialer)
-	if len(obs) != 3 {
+	if len(obs) != 4 {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}
 	for _, o := range obs {
 		if o.Value != nil || o.Err != probe.ErrNotAllowed.Error() {
 			t.Fatalf("%s: value %v, err %q; want err %q", o.Metric, o.Value, o.Err, probe.ErrNotAllowed)
 		}
+	}
+}
+
+func TestLookupFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		conn string
+		want string
+	}{
+		{"no answer without an error", nil, "", probe.FailureNXDomain},
+		{"not found", &net.DNSError{Err: "no such host", IsNotFound: true}, probe.FailureTimeout, probe.FailureNXDomain},
+		{"error code", &net.DNSError{Err: "server misbehaving", IsTemporary: true}, "", probe.FailureServFail},
+		{"connection refused", &net.DNSError{Err: "read udp: connection refused", IsTemporary: true}, probe.FailureRefused, probe.FailureRefused},
+		{"timed out", &net.DNSError{Err: "i/o timeout", IsTimeout: true}, "", probe.FailureTimeout},
+		{"wrapped deadline", &net.DNSError{Err: "x", UnwrapErr: context.DeadlineExceeded}, "", probe.FailureTimeout},
+		{"unparsable answer", &net.DNSError{Err: "cannot unmarshal DNS message"}, "", probe.FailureError},
+		{"no DNSError", context.DeadlineExceeded, "", probe.FailureTimeout},
+	} {
+		if got := lookupFailure(tc.err, tc.conn); got != tc.want {
+			t.Errorf("%s: lookupFailure = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestIOFailureKeepsKnownLabels(t *testing.T) {
+	var f ioFailure
+	f.note(nil)
+	if f.label() != "" {
+		t.Fatalf("label after nil = %q", f.label())
+	}
+	f.note(os.ErrDeadlineExceeded)
+	f.note(net.ErrClosed)
+	if f.label() != probe.FailureTimeout {
+		t.Fatalf("label = %q, want timeout kept over an unknown failure", f.label())
 	}
 }

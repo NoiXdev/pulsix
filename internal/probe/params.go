@@ -34,9 +34,22 @@ func BoolValue(metric string, b bool) Observation {
 	return Value(metric, 0)
 }
 
-// Down is the whole result of a failed attempt.
-func Down(plugin string) []Observation {
-	return []Observation{Value(plugin+".up", 0)}
+// Text is a discrete observation of metric, carrying label as it is: the
+// caller cleans text a target sent (Label, ShortLabel).
+func Text(metric, label string) Observation {
+	return Observation{Metric: metric, Label: &label}
+}
+
+// Down is the whole result of a failed attempt: <plugin>.up = 0 and
+// <plugin>.failure = reason, one of the Failure labels.
+func Down(plugin, reason string) []Observation {
+	return []Observation{Value(plugin+".up", 0), Text(plugin+".failure", reason)}
+}
+
+// Up is the failure reason of a successful attempt: <plugin>.failure =
+// FailureNone.
+func Up(plugin string) Observation {
+	return Text(plugin+".failure", FailureNone)
 }
 
 // FailAll is the result of an attempt that could not be made: one error per

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +35,12 @@ type client interface {
 	// v3 engine discovery gosnmp may have sent before it. 0 when no
 	// answer came.
 	roundTrip() time.Duration
+	// socketFailure is the failure label of the session socket's last
+	// error that was neither a timeout nor unknown (a refused or
+	// unreachable request), "" when there was none. gosnmp returns only
+	// its last error, and a retry that timed out would hide the ICMP port
+	// unreachable the request before it got.
+	socketFailure() string
 	close()
 }
 
@@ -44,11 +51,51 @@ type dialFunc func(ctx context.Context, g *probe.Guard, target netip.AddrPort, t
 // gosnmpClient is a client over gosnmp.
 type gosnmpClient struct {
 	x    *gosnmp.GoSNMP
-	conn net.Conn
+	conn *watchedConn
 	stop func() bool
 	// timing is written by gosnmp's send hooks, which run on the
 	// goroutine calling get, and read by that goroutine after it.
 	timing *timing
+}
+
+// watchedConn is the session's socket, noting its failures for
+// socketFailure. A plain net.Conn, not a PacketConn: gosnmp then reads
+// and writes the connected socket with Read and Write.
+type watchedConn struct {
+	net.Conn
+	mu      sync.Mutex
+	failure string
+}
+
+func (c *watchedConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.note(err)
+	return n, err
+}
+
+func (c *watchedConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	c.note(err)
+	return n, err
+}
+
+func (c *watchedConn) note(err error) {
+	if err == nil {
+		return
+	}
+	l := probe.Classify(err)
+	if l == probe.FailureTimeout || l == probe.FailureError {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failure = l
+}
+
+func (c *watchedConn) last() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.failure
 }
 
 // timing records the session's sends and receives.
@@ -93,7 +140,8 @@ func dialDevice(ctx context.Context, g *probe.Guard, target netip.AddrPort, time
 	if err := x.Connect(); err != nil {
 		return nil, err
 	}
-	conn := x.Conn
+	conn := &watchedConn{Conn: x.Conn}
+	x.Conn = conn
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	return &gosnmpClient{x: x, conn: conn, stop: stop, timing: tm}, nil
 }
@@ -106,6 +154,8 @@ func (c *gosnmpClient) answered() bool { return c.timing.received.Load() }
 
 func (c *gosnmpClient) roundTrip() time.Duration { return c.timing.rtt }
 
+func (c *gosnmpClient) socketFailure() string { return c.conn.last() }
+
 // close ends the session; the socket may already be closed by a cancel,
 // so gosnmp's second close is ignored.
 func (c *gosnmpClient) close() {
@@ -117,13 +167,13 @@ func (c *gosnmpClient) close() {
 type failure int
 
 const (
-	// failDown: the device did not answer; snmp.up = 0.
+	// failDown: the device did not answer; snmp.up = 0 with the reason.
 	failDown failure = iota
 	// failRefused: the guard refused the target; an error on every metric.
 	failRefused
 	// failCredentials: a v3 device answered, but refused the user, its
-	// digest or its security level, or could not decrypt the request; an
-	// error on every metric naming the secret.
+	// digest or its security level, or could not decrypt the request;
+	// snmp.up = 0 with probe.FailureAuth.
 	failCredentials
 )
 

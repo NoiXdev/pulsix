@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -55,12 +56,9 @@ func TestHTTPUpWithBodyMatch(t *testing.T) {
 	}))
 	defer srv.Close()
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"body_contains": "healthy"}), "")
-	m := probetest.ByMetric(t, obs)
-	if len(m) != 4 {
-		t.Fatalf("want up, status_code, response_ms and body_match, got %+v", obs)
-	}
-	if v := probetest.WantValue(t, m, "http.up"); v != 1 {
-		t.Fatalf("http.up = %v, want 1", v)
+	m := probetest.WantUp(t, obs, "http")
+	if len(m) != 5 {
+		t.Fatalf("want up, failure, status_code, response_ms and body_match, got %+v", obs)
 	}
 	if v := probetest.WantValue(t, m, "http.status_code"); v != 200 {
 		t.Fatalf("http.status_code = %v, want 200", v)
@@ -85,8 +83,8 @@ func TestHTTPBodyMismatchAndNoBodyContains(t *testing.T) {
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
 	m := probetest.ByMetric(t, obs)
-	if _, ok := m["http.body_match"]; ok || len(m) != 3 {
-		t.Fatalf("want up, status_code and response_ms only, got %+v", obs)
+	if _, ok := m["http.body_match"]; ok || len(m) != 4 {
+		t.Fatalf("want up, failure, status_code and response_ms only, got %+v", obs)
 	}
 }
 
@@ -95,10 +93,8 @@ func TestHTTPServerErrorIsUp(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	m := probetest.ByMetric(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), ""))
-	if v := probetest.WantValue(t, m, "http.up"); v != 1 {
-		t.Fatalf("http.up = %v, want 1", v)
-	}
+	// A status code is no failure: a response arrived.
+	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), ""), "http")
 	if v := probetest.WantValue(t, m, "http.status_code"); v != 503 {
 		t.Fatalf("http.status_code = %v, want 503", v)
 	}
@@ -153,7 +149,7 @@ func TestHTTPEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams("http://{address}/", map[string]any{"body_contains": "x"}), "")
-	probetest.WantErrors(t, obs, "host has no address", "http.up", "http.status_code", "http.response_ms", "http.body_match")
+	probetest.WantErrors(t, obs, "host has no address", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
 	if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "http.up"); v != 1 {
@@ -166,7 +162,7 @@ func TestHTTPUnparsableURLIsAnError(t *testing.T) {
 		t.Run(u, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(u, nil), "127.0.0.1")
 			m := probetest.ByMetric(t, obs)
-			if len(m) != 3 || m["http.up"].Err == "" || m["http.status_code"].Err == "" || m["http.response_ms"].Err == "" {
+			if len(m) != 4 || m["http.up"].Err == "" || m["http.failure"].Err == "" || m["http.status_code"].Err == "" || m["http.response_ms"].Err == "" {
 				t.Fatalf("want one error per metric, got %+v", obs)
 			}
 		})
@@ -180,7 +176,7 @@ func TestHTTPRefusedTargetIsAnError(t *testing.T) {
 	for _, u := range []string{srv.URL, fmt.Sprintf("http://localhost:%d/", port)} {
 		t.Run(u, func(t *testing.T) {
 			obs := run(context.Background(), probe.NewGuard(nil, nil), httpParams(u, map[string]any{"body_contains": "x"}), "")
-			probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.status_code", "http.response_ms", "http.body_match")
+			probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
 		})
 	}
 }
@@ -194,7 +190,7 @@ func TestHTTPRefusedRedirectIsAnError(t *testing.T) {
 		}))
 		defer srv.Close()
 		obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
-		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.status_code", "http.response_ms")
+		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms")
 	})
 	t.Run("denied loopback port", func(t *testing.T) {
 		target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
@@ -204,7 +200,7 @@ func TestHTTPRefusedRedirectIsAnError(t *testing.T) {
 		}))
 		g := probe.NewGuardForTest(true, []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
 		obs := run(context.Background(), g, httpParams(srv.URL, map[string]any{"body_contains": "x"}), "")
-		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.status_code", "http.response_ms", "http.body_match")
+		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
 	})
 }
 
@@ -226,7 +222,7 @@ func TestHTTPRedirects(t *testing.T) {
 	}
 
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL+"/r/11", map[string]any{"body_contains": "done"}), "")
-	probetest.WantOnly(t, obs, "http.up", 0)
+	probetest.WantDown(t, obs, "http", probe.FailureRedirects)
 }
 
 func TestHTTPSelfSignedCertificate(t *testing.T) {
@@ -234,12 +230,9 @@ func TestHTTPSelfSignedCertificate(t *testing.T) {
 	defer srv.Close()
 
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"body_contains": "x"}), "")
-	probetest.WantOnly(t, obs, "http.up", 0)
+	probetest.WantDown(t, obs, "http", probe.FailureCertificate)
 
-	m := probetest.ByMetric(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"verify_tls": false}), ""))
-	if v := probetest.WantValue(t, m, "http.up"); v != 1 {
-		t.Fatalf("verify_tls false: http.up = %v, want 1", v)
-	}
+	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"verify_tls": false}), ""), "http")
 	if v := probetest.WantValue(t, m, "http.status_code"); v != 200 {
 		t.Fatalf("verify_tls false: http.status_code = %v, want 200", v)
 	}
@@ -289,7 +282,82 @@ func TestHTTPBodyReadIsCapped(t *testing.T) {
 func TestHTTPConnectionRefusedIsDown(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(),
 		httpParams(fmt.Sprintf("http://127.0.0.1:%d/", probetest.ClosedPort(t)), map[string]any{"body_contains": "x"}), "")
-	probetest.WantOnly(t, obs, "http.up", 0)
+	probetest.WantDown(t, obs, "http", probe.FailureRefused)
+}
+
+// rawServer accepts connections on loopback and hands each to serve.
+func rawServer(t *testing.T, serve func(net.Conn)) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = c.Close() }()
+				serve(c)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// readRequest reads a request's head, so the client is done writing.
+func readRequest(c net.Conn) {
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	r := bufio.NewReader(c)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil || line == "\r\n" {
+			return
+		}
+	}
+}
+
+// TestHTTPFailureReasons: each way a request can fail is reported as its
+// label, never as the client's error text.
+func TestHTTPFailureReasons(t *testing.T) {
+	notHTTP := rawServer(t, func(c net.Conn) {
+		readRequest(c)
+		_, _ = c.Write([]byte("SSH-2.0-OpenSSH\r\n\r\n"))
+	})
+	closed := rawServer(t, func(c net.Conn) {
+		readRequest(c)
+		_ = c.(*net.TCPConn).SetLinger(0)
+	})
+	banner := rawServer(t, func(c net.Conn) {
+		_, _ = c.Write([]byte("SSH-2.0-OpenSSH\r\n"))
+		readRequest(c)
+	})
+	for _, tc := range []struct {
+		name, url, want string
+	}{
+		{"not http", "http://" + notHTTP + "/?token=s3cret", probe.FailureProtocol},
+		{"closed early", "http://" + closed + "/", probe.FailureReset},
+		{"https to a server not speaking tls", "https://" + banner + "/", probe.FailureTLS},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(tc.url, map[string]any{"timeout_s": float64(3)}), "")
+			probetest.WantDown(t, obs, "http", tc.want)
+		})
+	}
+}
+
+// TestHTTPRedirectHopFailureIsItsOwn: a hop after a redirect that fails
+// reports that hop's reason, not the first hop's success.
+func TestHTTPRedirectHopFailureIsItsOwn(t *testing.T) {
+	closed := probetest.ClosedPort(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, fmt.Sprintf("http://127.0.0.1:%d/", closed), http.StatusFound)
+	}))
+	defer srv.Close()
+	probetest.WantDown(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), ""), "http", probe.FailureRefused)
 }
 
 func TestHTTPHonoursContextDeadline(t *testing.T) {
@@ -309,5 +377,5 @@ func TestHTTPHonoursContextDeadline(t *testing.T) {
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("probe took %v, beyond the context deadline", d)
 	}
-	probetest.WantOnly(t, obs, "http.up", 0)
+	probetest.WantDown(t, obs, "http", probe.FailureTimeout)
 }

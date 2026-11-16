@@ -41,9 +41,26 @@ func TestValueDoesNotAlias(t *testing.T) {
 }
 
 func TestDown(t *testing.T) {
-	obs := probe.Down("tcp")
-	if len(obs) != 1 || obs[0].Metric != "tcp.up" || obs[0].Value == nil || *obs[0].Value != 0 || obs[0].Err != "" {
-		t.Fatalf("Down(tcp) = %+v, want only tcp.up = 0", obs)
+	obs := probe.Down("tcp", probe.FailureRefused)
+	if len(obs) != 2 || obs[0].Metric != "tcp.up" || obs[0].Value == nil || *obs[0].Value != 0 || obs[0].Err != "" || obs[0].Label != nil {
+		t.Fatalf("Down(tcp) = %+v, want tcp.up = 0 and tcp.failure", obs)
+	}
+	if o := obs[1]; o.Metric != "tcp.failure" || o.Label == nil || *o.Label != "refused" || o.Value != nil || o.Err != "" || o.Item != "" {
+		t.Fatalf("Down(tcp) failure = %+v, want tcp.failure = refused", o)
+	}
+}
+
+func TestUp(t *testing.T) {
+	o := probe.Up("dns")
+	if o.Metric != "dns.failure" || o.Label == nil || *o.Label != probe.FailureNone || o.Value != nil || o.Err != "" {
+		t.Fatalf("Up(dns) = %+v, want dns.failure = none", o)
+	}
+}
+
+func TestText(t *testing.T) {
+	o := probe.Text("tls.cert_issuer", "R11")
+	if o.Metric != "tls.cert_issuer" || o.Label == nil || *o.Label != "R11" || o.Value != nil || o.Err != "" {
+		t.Fatalf("Text = %+v", o)
 	}
 }
 

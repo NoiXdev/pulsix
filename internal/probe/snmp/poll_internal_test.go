@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,6 +66,7 @@ func TestPollReadsEveryValueType(t *testing.T) {
 	}
 
 	wantValue(t, m, "snmp.up", "", 1)
+	wantLabel(t, m, "snmp.failure", "", probe.FailureNone)
 	if o := m[key{"snmp.response_ms", ""}]; o.Value == nil || *o.Value < 0 {
 		t.Fatalf("snmp.response_ms: %+v", o)
 	}
@@ -84,8 +88,8 @@ func TestPollReadsEveryValueType(t *testing.T) {
 	for _, item := range []string{"inst", "end", "missing"} {
 		wantErr(t, m, "snmp.value", item, errNoSuchObject)
 	}
-	if len(m) != 3+len(oids) {
-		t.Fatalf("want 3 host metrics and one per oid, got %d: %+v", len(m), obs)
+	if len(m) != 4+len(oids) {
+		t.Fatalf("want 4 host metrics and one per oid, got %d: %+v", len(m), obs)
 	}
 
 	if len(fp.dialed) != 1 {
@@ -129,37 +133,40 @@ func TestPollFirstRequestUnansweredIsDown(t *testing.T) {
 	dev.getErr = errFakeTimeout
 	fp := newFakePoller(dev)
 	obs, _ := poll(fp, params(map[string]any{"oids": []any{"x=1.3.6.1.9.1"}, "interfaces": true}), v2cSecret)
-	probetest.WantOnly(t, obs, "snmp.up", 0)
+	probetest.WantDown(t, obs, "snmp", probe.FailureTimeout)
 	if len(dev.walked) != 0 {
 		t.Fatalf("walked after no answer: %v", dev.walked)
 	}
 }
 
-// TestPollRefusedCredentialsAreAnError: a v3 device that answers with a
-// report refusing the user, digest or security level answered, but the
-// poll could not be made; it is an error naming the secret, not up = 0.
-func TestPollRefusedCredentialsAreAnError(t *testing.T) {
+// TestPollRefusedRequestIsRefused: a request the socket saw refused
+// (an ICMP port unreachable) is refused even when gosnmp's last error is
+// the retry's timeout.
+func TestPollRefusedRequestIsRefused(t *testing.T) {
+	dev := newFakeDevice()
+	dev.getErr, dev.sockFailure = errFakeTimeout, probe.FailureRefused
+	obs, _ := poll(newFakePoller(dev), params(map[string]any{"interfaces": true}), v2cSecret)
+	probetest.WantDown(t, obs, "snmp", probe.FailureRefused)
+}
+
+// TestPollRefusedCredentialsAreAuth: a v3 device that answers with a
+// report refusing the user, digest or security level is down for want of
+// credentials it accepts: snmp.up = 0 and snmp.failure = auth.
+func TestPollRefusedCredentialsAreAuth(t *testing.T) {
 	v3 := map[string]string{"username": "u", "auth_protocol": "SHA", "auth_password": "auth-pass-value"}
 	for _, err := range []error{gosnmp.ErrUnknownUsername, gosnmp.ErrWrongDigest, gosnmp.ErrUnknownSecurityLevel, gosnmp.ErrDecryption, fmt.Errorf("wrapped: %w", gosnmp.ErrWrongDigest)} {
 		dev := newFakeDevice()
 		dev.getErr = err
 		fp := newFakePoller(dev)
 		obs, _ := poll(fp, params(map[string]any{"version": "v3", "oids": []any{"x=1.3.6.1.9.1"}}), v3)
-		m := byKey(t, obs)
-		want := `the device did not accept the credentials of secret "core-switch"`
-		for _, k := range []key{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "x"}} {
-			wantErr(t, m, k.metric, k.item, want)
-		}
-		if len(m) != 4 {
-			t.Fatalf("%v: %+v", err, obs)
-		}
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
 	}
 }
 
 // TestPollV3AnswerNotAcceptedIsRefusedCredentials: a v3 device that
 // answered a request that still failed refused the credentials (gosnmp
 // discards its unauthenticated report); a v2c device in the same case, or
-// a v3 device that did not answer, is down.
+// a v3 device that did not answer, timed out.
 func TestPollV3AnswerNotAcceptedIsRefusedCredentials(t *testing.T) {
 	v3 := map[string]string{"username": "u", "auth_protocol": "SHA", "auth_password": "auth-pass-value"}
 	for _, tc := range []struct {
@@ -177,10 +184,10 @@ func TestPollV3AnswerNotAcceptedIsRefusedCredentials(t *testing.T) {
 		dev.getErr, dev.replied = errors.New("incoming packet is not authentic, discarding"), tc.answered
 		obs, _ := poll(newFakePoller(dev), params(map[string]any{"version": tc.version, "interfaces": true}), tc.secret)
 		if tc.down {
-			probetest.WantOnly(t, obs, "snmp.up", 0)
+			probetest.WantDown(t, obs, "snmp", probe.FailureError)
 			continue
 		}
-		probetest.WantErrors(t, obs, `the device did not accept the credentials of secret "core-switch"`, hostMetrics...)
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
 	}
 }
 
@@ -233,10 +240,10 @@ func TestPollBadSecretFailsEveryMetricWithoutDialling(t *testing.T) {
 	obs, _ := poll(fp, params(map[string]any{"oids": []any{"x=1.3.6.1.9.1", "y=1.3.6.1.9.2"}}), map[string]string{"username": "nobody"})
 	m := byKey(t, obs)
 	want := `secret "core-switch": field "community" is missing`
-	for _, k := range []key{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "x"}, {"snmp.value", "y"}} {
+	for _, k := range []key{{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "x"}, {"snmp.value", "y"}} {
 		wantErr(t, m, k.metric, k.item, want)
 	}
-	if len(m) != 5 || len(fp.dialed) != 0 {
+	if len(m) != 6 || len(fp.dialed) != 0 {
 		t.Fatalf("observations %+v, dialled %d", obs, len(fp.dialed))
 	}
 }
@@ -244,7 +251,7 @@ func TestPollBadSecretFailsEveryMetricWithoutDialling(t *testing.T) {
 func TestPollBadParamsFailTheHostMetrics(t *testing.T) {
 	fp := newFakePoller(newFakeDevice())
 	obs, _ := poll(fp, map[string]any{}, v2cSecret)
-	probetest.WantErrors(t, obs, errNoSecretParam, "snmp.up", "snmp.response_ms", "snmp.uptime_seconds")
+	probetest.WantErrors(t, obs, errNoSecretParam, "snmp.up", "snmp.failure", "snmp.response_ms", "snmp.uptime_seconds")
 	if len(fp.dialed) != 0 {
 		t.Fatal("dialled with bad params")
 	}
@@ -258,7 +265,7 @@ func TestPollGuardRefusalIsAnError(t *testing.T) {
 	p := params(map[string]any{"oids": []any{"x=1.3.6.1.9.1"}, "interfaces": true})
 	obs, _ := fp.Poll(context.Background(), probe.NewGuard(nil, nil), p, "127.0.0.1", v2cSecret)
 	m := byKey(t, obs)
-	for _, k := range []key{{"snmp.up", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "x"}} {
+	for _, k := range []key{{"snmp.up", ""}, {"snmp.failure", ""}, {"snmp.response_ms", ""}, {"snmp.uptime_seconds", ""}, {"snmp.value", "x"}} {
 		wantErr(t, m, k.metric, k.item, probe.ErrNotAllowed.Error())
 	}
 	if len(fp.dialed) != 0 {
@@ -269,9 +276,9 @@ func TestPollGuardRefusalIsAnError(t *testing.T) {
 	obs, _ = poll(fp, p, v2cSecret)
 	wantErr(t, byKey(t, obs), "snmp.up", "", probe.ErrNotAllowed.Error())
 
-	fp.dialErr = errors.New("network is unreachable")
+	fp.dialErr = &net.OpError{Op: "dial", Net: "udp", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}
 	obs, _ = poll(fp, p, v2cSecret)
-	probetest.WantOnly(t, obs, "snmp.up", 0)
+	probetest.WantDown(t, obs, "snmp", probe.FailureUnreachable)
 }
 
 func TestPollBadAddressFailsEveryMetric(t *testing.T) {

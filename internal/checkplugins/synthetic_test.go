@@ -1,8 +1,11 @@
 package checkplugins_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // TestSyntheticParamsAccepted, ported from internal/checks: every parameter
@@ -122,4 +125,24 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"dns timeout 31", "dns", map[string]any{"timeout_s": 31.0}, false},
 		{"dns unknown key", "dns", map[string]any{"qtype": "A"}, false},
 	})
+}
+
+// TestSyntheticPluginsReportAFailureReason: every synthetic descriptor
+// carries <plugin>.failure, discrete, right after <plugin>.up (backlog
+// 3.13b), and tls its certificate's issuer.
+func TestSyntheticPluginsReportAFailureReason(t *testing.T) {
+	for _, name := range []string{"icmp", "tcp", "http", "tls", "dns", "snmp"} {
+		d, ok := checkplugins.Get(name)
+		if !ok {
+			t.Fatalf("no descriptor %s", name)
+		}
+		if len(d.Metrics) < 2 || d.Metrics[0] != (checkplugins.MetricSpec{Name: name + ".up", Kind: checkplugins.Numeric}) ||
+			d.Metrics[1] != (checkplugins.MetricSpec{Name: name + ".failure", Kind: checkplugins.Discrete}) {
+			t.Fatalf("%s metrics = %v, want %s.up then %s.failure (discrete)", name, d.Metrics, name, name)
+		}
+	}
+	d, _ := checkplugins.Get("tls")
+	if !slices.Contains(d.Metrics, checkplugins.MetricSpec{Name: "tls.cert_issuer", Kind: checkplugins.Discrete}) {
+		t.Fatalf("tls metrics = %v, want tls.cert_issuer (discrete)", d.Metrics)
+	}
 }

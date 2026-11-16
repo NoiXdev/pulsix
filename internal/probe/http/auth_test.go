@@ -122,7 +122,7 @@ func TestHTTPBadCredentials(t *testing.T) {
 			}), "", tc.fields)
 			m := byItem(t, obs)
 			want := []mi{
-				{"http.up", ""}, {"http.status_code", ""}, {"http.response_ms", ""}, {"http.body_match", ""},
+				{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""}, {"http.body_match", ""},
 				{"http.json.value", "a"},
 			}
 			if len(m) != len(want) {

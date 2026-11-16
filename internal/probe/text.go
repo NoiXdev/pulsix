@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"crypto/x509"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -36,12 +37,26 @@ func CleanText(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// ShortLabelLen bounds a label quoting what a target sent where a whole
+// MaxLabelLen would crowd a table or an alert: a certificate's issuer, an
+// assertion's actual value.
+const ShortLabelLen = 128
+
 // Label is s cleaned and cut to MaxLabelLen bytes on a rune boundary, like
 // the script plugin's output; empty becomes EmptyText.
 func Label(s string) string {
+	return cutLabel(s, MaxLabelLen)
+}
+
+// ShortLabel is Label cut to ShortLabelLen bytes.
+func ShortLabel(s string) string {
+	return cutLabel(s, ShortLabelLen)
+}
+
+func cutLabel(s string, maxLen int) string {
 	s = CleanText(s)
-	if len(s) > MaxLabelLen {
-		n := MaxLabelLen
+	if len(s) > maxLen {
+		n := maxLen
 		for n > 0 && !utf8.RuneStart(s[n]) {
 			n--
 		}
@@ -51,6 +66,27 @@ func Label(s string) string {
 		return EmptyText
 	}
 	return s
+}
+
+// IssuerLabel names the issuer of cert: its Common Name, else its first
+// Organization, else its distinguished name, as a ShortLabel. Each is
+// taken only when it is not blank once cleaned; nil, or an issuer without
+// any, is EmptyText.
+func IssuerLabel(cert *x509.Certificate) string {
+	if cert == nil {
+		return EmptyText
+	}
+	candidates := []string{cert.Issuer.CommonName}
+	if len(cert.Issuer.Organization) > 0 {
+		candidates = append(candidates, cert.Issuer.Organization[0])
+	}
+	candidates = append(candidates, cert.Issuer.String())
+	for _, c := range candidates {
+		if CleanText(c) != "" {
+			return ShortLabel(c)
+		}
+	}
+	return EmptyText
 }
 
 // ReportableItem reports whether the manager accepts item: not empty, at

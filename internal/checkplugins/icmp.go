@@ -11,6 +11,9 @@ func icmpPlugin() Descriptor {
 		},
 		Metrics: []MetricSpec{
 			{Name: "icmp.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "icmp.failure", Kind: Discrete},
 			{Name: "icmp.loss_pct", Kind: Numeric},
 			{Name: "icmp.rtt_ms", Kind: Numeric},
 		},

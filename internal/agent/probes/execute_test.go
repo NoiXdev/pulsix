@@ -78,7 +78,7 @@ func TestUnknownPluginYieldsItsMetricsAsErrors(t *testing.T) {
 		{"descriptor fallback", "tls", `{"port":443}`, descriptorMetrics(t, "tls")},
 		// A plugin with its own FailAll: what its params would produce.
 		{"plugin's own fail-all", "http", `{"url":"http://{address}/","body_contains":"ok"}`,
-			[]string{"http.up", "http.status_code", "http.response_ms", "http.body_match"}},
+			[]string{"http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match"}},
 		// Nothing anywhere knows it.
 		{"no descriptor", "gopher", `{}`, []string{"gopher.up"}},
 	}

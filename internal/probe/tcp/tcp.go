@@ -23,7 +23,7 @@ const (
 func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, address string) []probe.Observation {
 	send := probe.StrParam(params, "send", "")
 	expect := probe.StrParam(params, "expect", "")
-	metrics := []string{"tcp.up", "tcp.connect_ms"}
+	metrics := []string{"tcp.up", "tcp.failure", "tcp.connect_ms"}
 	if expect != "" {
 		metrics = append(metrics, "tcp.banner_match")
 	}
@@ -47,12 +47,13 @@ func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, addres
 		if errors.Is(err, probe.ErrNotAllowed) {
 			return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 		}
-		return probe.Down("tcp")
+		return probe.Down("tcp", probe.Classify(err))
 	}
 	connect := time.Since(start)
 	defer func() { _ = conn.Close() }()
 
-	obs := []probe.Observation{probe.Value("tcp.up", 1), probe.Value("tcp.connect_ms", probe.Millis(connect))}
+	// A banner that does not match is no failure: the port was up.
+	obs := []probe.Observation{probe.Value("tcp.up", 1), probe.Up("tcp"), probe.Value("tcp.connect_ms", probe.Millis(connect))}
 	if send == "" && expect == "" {
 		return obs
 	}

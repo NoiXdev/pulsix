@@ -132,6 +132,9 @@ func TestRealDaemon(t *testing.T) {
 		if o := m["snmp.up/"]; o.Value == nil || *o.Value != 1 {
 			t.Fatalf("snmp.up: %+v (all %+v)", o, obs)
 		}
+		if o := m["snmp.failure/"]; o.Label == nil || *o.Label != probe.FailureNone {
+			t.Fatalf("snmp.failure: %+v", o)
+		}
 		// The container started moments ago.
 		if o := m["snmp.uptime_seconds/"]; o.Value == nil || *o.Value <= 0 || *o.Value > 3600 {
 			t.Fatalf("snmp.uptime_seconds: %+v", o)
@@ -198,14 +201,7 @@ func TestRealDaemon(t *testing.T) {
 			{"username": "pulsixpriv", "auth_protocol": "SHA-512", "auth_password": "pulsix-auth-pass", "priv_protocol": "AES-256", "priv_password": "wrong-password"},
 		} {
 			obs := snmp.Probe(ctx, g, daemonParams(port, "v3"), "127.0.0.1", secret)
-			if len(obs) != 6 {
-				t.Fatalf("user %s: %+v", secret["username"], obs)
-			}
-			for _, o := range obs {
-				if o.Err != `the device did not accept the credentials of secret "lab"` {
-					t.Fatalf("user %s: %+v", secret["username"], obs)
-				}
-			}
+			probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
 		}
 	})
 
@@ -231,6 +227,6 @@ func TestRealDaemon(t *testing.T) {
 
 	t.Run("v2c wrong community", func(t *testing.T) {
 		obs := snmp.Probe(ctx, g, daemonParams(port, "v2c"), "127.0.0.1", map[string]string{"community": "wrong"})
-		probetest.WantOnly(t, obs, "snmp.up", 0)
+		probetest.WantDown(t, obs, "snmp", probe.FailureTimeout)
 	})
 }

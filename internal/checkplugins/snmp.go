@@ -43,6 +43,9 @@ func snmpPlugin() Descriptor {
 		Check:               snmpCheck,
 		Metrics: []MetricSpec{
 			{Name: "snmp.up", Kind: Numeric},
+			// The failure reason of an attempt (probe.Failure*): "none" while
+			// up, else why it failed.
+			{Name: "snmp.failure", Kind: Discrete},
 			{Name: "snmp.response_ms", Kind: Numeric},
 			{Name: "snmp.uptime_seconds", Kind: Numeric},
 			// Item: an oids entry's name.

@@ -126,6 +126,7 @@ func TestHTTPDescriptor(t *testing.T) {
 	}
 	metrics := []checkplugins.MetricSpec{
 		{Name: "http.up", Kind: checkplugins.Numeric},
+		{Name: "http.failure", Kind: checkplugins.Discrete},
 		{Name: "http.status_code", Kind: checkplugins.Numeric},
 		{Name: "http.response_ms", Kind: checkplugins.Numeric},
 		{Name: "http.body_match", Kind: checkplugins.Numeric},

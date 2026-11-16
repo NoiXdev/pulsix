@@ -16,9 +16,10 @@ import (
 // dnsStub is a minimal authoritative DNS server on loopback UDP, hand-rolled
 // from the RFC 1035 wire format. It answers A queries for the names in its
 // zone, an empty NOERROR for any other type of a known name, and NXDOMAIN for
-// every unknown name.
+// every unknown name; a name in rcodes is answered with that error code.
 type dnsStub struct {
-	zone map[string][]netip.Addr
+	zone   map[string][]netip.Addr
+	rcodes map[string]uint16
 }
 
 const (
@@ -33,7 +34,7 @@ func startDNSStub(t *testing.T, zone map[string][]netip.Addr) (server string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pc.Close() })
-	s := &dnsStub{zone: zone}
+	s := &dnsStub{zone: zone, rcodes: map[string]uint16{"broken.test": 2, "refusing.test": 5}}
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -84,6 +85,9 @@ func (s *dnsStub) answer(req []byte) []byte {
 	if !known {
 		rcode = 3 // NXDOMAIN
 	}
+	if rc, ok := s.rcodes[name]; ok {
+		known, rcode = false, rc
+	}
 	var answers []netip.Addr
 	if known && qtype == dnsTypeA {
 		answers = addrs
@@ -127,12 +131,9 @@ func dnsParams(server string, extra map[string]any) map[string]any {
 func TestDNSAnswered(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": "example.test"}), "")
-	m := probetest.ByMetric(t, obs)
-	if len(m) != 2 {
-		t.Fatalf("want up and resolve_ms only, got %+v", obs)
-	}
-	if v := probetest.WantValue(t, m, "dns.up"); v != 1 {
-		t.Fatalf("dns.up = %v, want 1", v)
+	m := probetest.WantUp(t, obs, "dns")
+	if len(m) != 3 {
+		t.Fatalf("want up, failure and resolve_ms only, got %+v", obs)
 	}
 	if v := probetest.WantValue(t, m, "dns.resolve_ms"); v < 0 {
 		t.Fatalf("dns.resolve_ms = %v, want >= 0", v)
@@ -152,10 +153,8 @@ func TestDNSExpect(t *testing.T) {
 		t.Run(tc.expect, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(),
 				dnsParams(server, map[string]any{"name": "example.test", "type": "A", "expect": tc.expect}), "")
-			m := probetest.ByMetric(t, obs)
-			if v := probetest.WantValue(t, m, "dns.up"); v != 1 {
-				t.Fatalf("dns.up = %v, want 1", v)
-			}
+			// An answer that does not match is no failure: the name resolved.
+			m := probetest.WantUp(t, obs, "dns")
 			if v := probetest.WantValue(t, m, "dns.answer_match"); v != tc.want {
 				t.Fatalf("dns.answer_match = %v, want %v", v, tc.want)
 			}
@@ -167,14 +166,62 @@ func TestDNSNXDOMAINIsDown(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	obs := run(context.Background(), probetest.LoopbackGuard(),
 		dnsParams(server, map[string]any{"name": "missing.test", "expect": "192.0.2.7"}), "")
-	probetest.WantOnly(t, obs, "dns.up", 0)
+	probetest.WantDown(t, obs, "dns", probe.FailureNXDomain)
 }
 
+// TestDNSNoRecordsIsDown: a name without a record of the type reads like
+// one that does not exist; Go's resolver reports both as not found.
 func TestDNSNoRecordsIsDown(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	obs := run(context.Background(), probetest.LoopbackGuard(),
 		dnsParams(server, map[string]any{"name": "example.test", "type": "AAAA"}), "")
-	probetest.WantOnly(t, obs, "dns.up", 0)
+	probetest.WantDown(t, obs, "dns", probe.FailureNXDomain)
+}
+
+// TestDNSErrorCodeIsServfail: a server answering with an error code
+// (SERVFAIL, REFUSED) failed the lookup.
+func TestDNSErrorCodeIsServfail(t *testing.T) {
+	server := startDNSStub(t, exampleZone())
+	for _, name := range []string{"broken.test", "refusing.test"} {
+		t.Run(name, func(t *testing.T) {
+			obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": name}), "")
+			probetest.WantDown(t, obs, "dns", probe.FailureServFail)
+		})
+	}
+}
+
+// TestDNSClosedServerPortIsRefused: nothing listens on the server's port,
+// so the query is answered by an ICMP port unreachable.
+func TestDNSClosedServerPortIsRefused(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := pc.LocalAddr().String()
+	_ = pc.Close()
+	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": "example.test"}), "")
+	probetest.WantDown(t, obs, "dns", probe.FailureRefused)
+}
+
+// TestDNSSilentServerTimesOut: a server that reads every query and never
+// answers.
+func TestDNSSilentServerTimesOut(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			if _, _, err := pc.ReadFrom(buf); err != nil {
+				return
+			}
+		}
+	}()
+	obs := run(context.Background(), probetest.LoopbackGuard(),
+		dnsParams(pc.LocalAddr().String(), map[string]any{"name": "example.test", "timeout_s": float64(1)}), "")
+	probetest.WantDown(t, obs, "dns", probe.FailureTimeout)
 }
 
 func TestDNSNameSubstitutesAddress(t *testing.T) {
@@ -191,9 +238,7 @@ func TestDNSNameSubstitutesAddress(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, tc.params), tc.address)
-			if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "dns.up"); v != 1 {
-				t.Fatalf("dns.up = %v, want 1", v)
-			}
+			probetest.WantUp(t, obs, "dns")
 		})
 	}
 }
@@ -201,7 +246,7 @@ func TestDNSNameSubstitutesAddress(t *testing.T) {
 func TestDNSEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"expect": "x"}), "")
-	probetest.WantErrors(t, obs, "host has no address", "dns.up", "dns.resolve_ms", "dns.answer_match")
+	probetest.WantErrors(t, obs, "host has no address", "dns.up", "dns.failure", "dns.resolve_ms", "dns.answer_match")
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": "example.test"}), "")
 	if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "dns.up"); v != 1 {
@@ -213,13 +258,13 @@ func TestDNSRefusedServerIsAnError(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	obs := run(context.Background(), probe.NewGuard(nil, nil),
 		dnsParams(server, map[string]any{"name": "example.test", "expect": "192.0.2.7"}), "")
-	probetest.WantErrors(t, obs, "target address not allowed", "dns.up", "dns.resolve_ms", "dns.answer_match")
+	probetest.WantErrors(t, obs, "target address not allowed", "dns.up", "dns.failure", "dns.resolve_ms", "dns.answer_match")
 }
 
 func TestDNSUnparsableServerIsAnError(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams("not-an-ip", map[string]any{"name": "example.test"}), "")
 	m := probetest.ByMetric(t, obs)
-	if len(m) != 2 || m["dns.up"].Err == "" || m["dns.resolve_ms"].Err == "" {
+	if len(m) != 3 || m["dns.up"].Err == "" || m["dns.failure"].Err == "" || m["dns.resolve_ms"].Err == "" {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}
 }
@@ -230,7 +275,7 @@ func TestDNSOtherTypesUnansweredAreDown(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(),
 				dnsParams(server, map[string]any{"name": "missing.test", "type": typ, "expect": "x"}), "")
-			probetest.WantOnly(t, obs, "dns.up", 0)
+			probetest.WantDown(t, obs, "dns", probe.FailureNXDomain)
 		})
 	}
 }
@@ -245,10 +290,10 @@ func TestDNSNameThatIsAnAddressIsAnError(t *testing.T) {
 		address string
 		metrics []string
 	}{
-		{"default name on an ipv4 host", nil, "192.0.2.1", []string{"dns.up", "dns.resolve_ms"}},
-		{"default name on a bracketed ipv6 host", map[string]any{"type": "AAAA"}, "[2001:db8::1]", []string{"dns.up", "dns.resolve_ms"}},
-		{"explicit ipv6 name", map[string]any{"name": "2001:db8::1", "type": "AAAA", "expect": "2001:db8::1"}, "", []string{"dns.up", "dns.resolve_ms", "dns.answer_match"}},
-		{"explicit ipv4 name", map[string]any{"name": "192.0.2.7", "type": "A"}, "", []string{"dns.up", "dns.resolve_ms"}},
+		{"default name on an ipv4 host", nil, "192.0.2.1", []string{"dns.up", "dns.failure", "dns.resolve_ms"}},
+		{"default name on a bracketed ipv6 host", map[string]any{"type": "AAAA"}, "[2001:db8::1]", []string{"dns.up", "dns.failure", "dns.resolve_ms"}},
+		{"explicit ipv6 name", map[string]any{"name": "2001:db8::1", "type": "AAAA", "expect": "2001:db8::1"}, "", []string{"dns.up", "dns.failure", "dns.resolve_ms", "dns.answer_match"}},
+		{"explicit ipv4 name", map[string]any{"name": "192.0.2.7", "type": "A"}, "", []string{"dns.up", "dns.failure", "dns.resolve_ms"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

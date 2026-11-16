@@ -21,9 +21,9 @@ const (
 // probeTLS completes a TLS handshake with address:port without trusting the
 // certificate, then verifies the chain itself against roots (nil: the
 // system roots) and server_name ({address} replaced), so the leaf's expiry
-// is reported for an invalid chain too.
+// and issuer are reported for an invalid chain too.
 func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, address string, roots *x509.CertPool) []probe.Observation {
-	metrics := []string{"tls.up", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days"}
+	metrics := []string{"tls.up", "tls.failure", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days", "tls.cert_issuer"}
 
 	host, err := probe.TargetHost(address)
 	if err != nil {
@@ -48,16 +48,18 @@ func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 		if errors.Is(err, probe.ErrNotAllowed) {
 			return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 		}
-		return probe.Down("tls")
+		return probe.Down("tls", probe.Classify(err))
 	}
 	conn := tls.Client(raw, tlsProbeConfig(serverName))
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
 	if err := conn.HandshakeContext(ctx); err != nil {
-		return probe.Down("tls")
+		return probe.Down("tls", probe.ClassifyHandshake(err))
 	}
-	obs := []probe.Observation{probe.Value("tls.up", 1), probe.Value("tls.handshake_ms", probe.Millis(time.Since(start)))}
+	// An invalid chain is no failure: the handshake completed, and
+	// tls.cert_valid says the rest.
+	obs := []probe.Observation{probe.Value("tls.up", 1), probe.Up("tls"), probe.Value("tls.handshake_ms", probe.Millis(time.Since(start)))}
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
@@ -78,6 +80,7 @@ func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	return append(obs,
 		probe.BoolValue("tls.cert_valid", verr == nil),
 		probe.Value("tls.cert_expiry_days", leaf.NotAfter.Sub(now).Hours()/24),
+		probe.Text("tls.cert_issuer", probe.IssuerLabel(leaf)),
 	)
 }
 

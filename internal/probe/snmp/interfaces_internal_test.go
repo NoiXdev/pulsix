@@ -117,7 +117,7 @@ func TestPollInterfacesAndTheirRates(t *testing.T) {
 			wantAbsent(t, m, metric, item)
 		}
 	}
-	if len(m) != 3+3 {
+	if len(m) != 4+3 {
 		t.Fatalf("first poll: %+v", m)
 	}
 
@@ -191,8 +191,8 @@ func TestPollKeepsAtMost128InterfacesInIndexOrder(t *testing.T) {
 		wantLabel(t, m, "snmp.if.status", fmt.Sprintf("port%d", i), "up")
 	}
 	wantAbsent(t, m, "snmp.if.status", "port129")
-	if len(m) != 3+128 {
-		t.Fatalf("%d observations, want 3 host metrics and 128 statuses", len(m))
+	if len(m) != 4+128 {
+		t.Fatalf("%d observations, want 4 host metrics and 128 statuses", len(m))
 	}
 	// Every column walk stops after the kept interfaces: at most 129 rows
 	// each (the 129th tells the walk to stop), not 1000.
@@ -234,7 +234,7 @@ func TestPollHostileInterfaceRows(t *testing.T) {
 	wantErr(t, m, "snmp.if.status", "odd types", errNoStatus)
 	wantAbsent(t, m, "snmp.if.status", "ghost")
 	wantLabel(t, m, "snmp.if.status", "if4", "up")
-	if len(m) != 3+3 {
+	if len(m) != 4+3 {
 		t.Fatalf("%+v", m)
 	}
 }
@@ -246,7 +246,7 @@ func TestPollInterfaceTableUnreadable(t *testing.T) {
 	m := byKey(t, first(poll(fp, ifParams, v2cSecret)))
 	wantValue(t, m, "snmp.up", "", 1)
 	wantErr(t, m, "snmp.if.status", "", errNoInterfaceTable)
-	if len(m) != 4 {
+	if len(m) != 5 {
 		t.Fatalf("%+v", m)
 	}
 }

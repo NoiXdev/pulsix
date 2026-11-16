@@ -133,6 +133,7 @@ func TestSNMPDescriptor(t *testing.T) {
 	}
 	want := []checkplugins.MetricSpec{
 		{Name: "snmp.up", Kind: checkplugins.Numeric},
+		{Name: "snmp.failure", Kind: checkplugins.Discrete},
 		{Name: "snmp.response_ms", Kind: checkplugins.Numeric},
 		{Name: "snmp.uptime_seconds", Kind: checkplugins.Numeric},
 		{Name: "snmp.value", Kind: checkplugins.Numeric},
