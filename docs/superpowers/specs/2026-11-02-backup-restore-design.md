@@ -82,7 +82,9 @@ web interface and both commands say plainly that the master key must be
 kept separately.
 
 The metric history (`check_samples`) is optional (the setting above;
-`--without-metrics` on the command); the switch covers that one table only.
+`--without-metrics` on the command); the switch covers that one table only
+(amended by backlog 3.13a: and `probe_samples`, the per-vantage history of
+synthetic checks).
 Everything else is always included, run logs (`job_events`) and check state
 history (`check_state_changes`) among them *(implementer's call)*. The
 retention policies come back with the schema, so a restored instance prunes
