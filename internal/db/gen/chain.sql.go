@@ -100,8 +100,16 @@ func (q *Queries) DismissPendingFollowUps(ctx context.Context, arg DismissPendin
 }
 
 const getFollowUpByChild = `-- name: GetFollowUpByChild :one
-SELECT id, org_id, parent_group_id, template_id, condition, position, state, reason, child_group_id, host_ids, root_trigger, root_ref, depth, path, configured_by, attempts, next_attempt_at, created_at, decided_at, started_at FROM run_follow_ups
-WHERE org_id = $1 AND child_group_id = $2
+SELECT r.id, r.org_id, r.parent_group_id, r.template_id, r.condition, r.position, r.state, r.reason, r.child_group_id, r.host_ids, r.root_trigger, r.root_ref, r.depth, r.path, r.configured_by, r.attempts, r.next_attempt_at, r.created_at, r.decided_at, r.started_at,
+       COALESCE(t.name, '')::text AS template_name,
+       COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
+FROM run_follow_ups r
+LEFT JOIN job_templates t ON t.org_id = r.org_id AND t.id = r.template_id
+LEFT JOIN LATERAL (
+  SELECT j.id FROM jobs j
+  WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
+  ORDER BY j.created_at, j.id LIMIT 1) fj ON true
+WHERE r.org_id = $1 AND r.child_group_id = $2
 `
 
 type GetFollowUpByChildParams struct {
@@ -109,9 +117,36 @@ type GetFollowUpByChildParams struct {
 	ChildGroupID pgtype.UUID `json:"child_group_id"`
 }
 
-func (q *Queries) GetFollowUpByChild(ctx context.Context, arg GetFollowUpByChildParams) (RunFollowUp, error) {
+type GetFollowUpByChildRow struct {
+	ID              uuid.UUID          `json:"id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ParentGroupID   uuid.UUID          `json:"parent_group_id"`
+	TemplateID      uuid.UUID          `json:"template_id"`
+	Condition       string             `json:"condition"`
+	Position        int32              `json:"position"`
+	State           string             `json:"state"`
+	Reason          string             `json:"reason"`
+	ChildGroupID    pgtype.UUID        `json:"child_group_id"`
+	HostIds         []uuid.UUID        `json:"host_ids"`
+	RootTrigger     string             `json:"root_trigger"`
+	RootRef         pgtype.UUID        `json:"root_ref"`
+	Depth           int32              `json:"depth"`
+	Path            []uuid.UUID        `json:"path"`
+	ConfiguredBy    pgtype.UUID        `json:"configured_by"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	DecidedAt       pgtype.Timestamptz `json:"decided_at"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	TemplateName    string             `json:"template_name"`
+	ChildFirstJobID uuid.UUID          `json:"child_first_job_id"`
+}
+
+// The follow-up whose start created the given run group, same shape as
+// ListRunFollowUps.
+func (q *Queries) GetFollowUpByChild(ctx context.Context, arg GetFollowUpByChildParams) (GetFollowUpByChildRow, error) {
 	row := q.db.QueryRow(ctx, getFollowUpByChild, arg.OrgID, arg.ChildGroupID)
-	var i RunFollowUp
+	var i GetFollowUpByChildRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -133,8 +168,29 @@ func (q *Queries) GetFollowUpByChild(ctx context.Context, arg GetFollowUpByChild
 		&i.CreatedAt,
 		&i.DecidedAt,
 		&i.StartedAt,
+		&i.TemplateName,
+		&i.ChildFirstJobID,
 	)
 	return i, err
+}
+
+const hasPendingFollowUps = `-- name: HasPendingFollowUps :one
+SELECT EXISTS (
+  SELECT 1 FROM run_follow_ups
+  WHERE org_id = $1 AND parent_group_id = $2 AND state = 'pending')
+`
+
+type HasPendingFollowUpsParams struct {
+	OrgID         uuid.UUID `json:"org_id"`
+	ParentGroupID uuid.UUID `json:"parent_group_id"`
+}
+
+// The sink's cheap gate: most finished groups have no follow-ups at all.
+func (q *Queries) HasPendingFollowUps(ctx context.Context, arg HasPendingFollowUpsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasPendingFollowUps, arg.OrgID, arg.ParentGroupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const insertRunFollowUp = `-- name: InsertRunFollowUp :execrows
@@ -182,9 +238,17 @@ func (q *Queries) InsertRunFollowUp(ctx context.Context, arg InsertRunFollowUpPa
 }
 
 const listRunFollowUps = `-- name: ListRunFollowUps :many
-SELECT id, org_id, parent_group_id, template_id, condition, position, state, reason, child_group_id, host_ids, root_trigger, root_ref, depth, path, configured_by, attempts, next_attempt_at, created_at, decided_at, started_at FROM run_follow_ups
-WHERE org_id = $1 AND parent_group_id = $2
-ORDER BY position, created_at, id
+SELECT r.id, r.org_id, r.parent_group_id, r.template_id, r.condition, r.position, r.state, r.reason, r.child_group_id, r.host_ids, r.root_trigger, r.root_ref, r.depth, r.path, r.configured_by, r.attempts, r.next_attempt_at, r.created_at, r.decided_at, r.started_at,
+       COALESCE(t.name, '')::text AS template_name,
+       COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
+FROM run_follow_ups r
+LEFT JOIN job_templates t ON t.org_id = r.org_id AND t.id = r.template_id
+LEFT JOIN LATERAL (
+  SELECT j.id FROM jobs j
+  WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
+  ORDER BY j.created_at, j.id LIMIT 1) fj ON true
+WHERE r.org_id = $1 AND r.parent_group_id = $2
+ORDER BY r.position, r.created_at, r.id
 `
 
 type ListRunFollowUpsParams struct {
@@ -192,15 +256,43 @@ type ListRunFollowUpsParams struct {
 	ParentGroupID uuid.UUID `json:"parent_group_id"`
 }
 
-func (q *Queries) ListRunFollowUps(ctx context.Context, arg ListRunFollowUpsParams) ([]RunFollowUp, error) {
+type ListRunFollowUpsRow struct {
+	ID              uuid.UUID          `json:"id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ParentGroupID   uuid.UUID          `json:"parent_group_id"`
+	TemplateID      uuid.UUID          `json:"template_id"`
+	Condition       string             `json:"condition"`
+	Position        int32              `json:"position"`
+	State           string             `json:"state"`
+	Reason          string             `json:"reason"`
+	ChildGroupID    pgtype.UUID        `json:"child_group_id"`
+	HostIds         []uuid.UUID        `json:"host_ids"`
+	RootTrigger     string             `json:"root_trigger"`
+	RootRef         pgtype.UUID        `json:"root_ref"`
+	Depth           int32              `json:"depth"`
+	Path            []uuid.UUID        `json:"path"`
+	ConfiguredBy    pgtype.UUID        `json:"configured_by"`
+	Attempts        int32              `json:"attempts"`
+	NextAttemptAt   pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	DecidedAt       pgtype.Timestamptz `json:"decided_at"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	TemplateName    string             `json:"template_name"`
+	ChildFirstJobID uuid.UUID          `json:"child_first_job_id"`
+}
+
+// A group's follow-ups with the template's current name (empty once the
+// template is deleted) and the first job of the child run (the nil uuid when
+// no child run started).
+func (q *Queries) ListRunFollowUps(ctx context.Context, arg ListRunFollowUpsParams) ([]ListRunFollowUpsRow, error) {
 	rows, err := q.db.Query(ctx, listRunFollowUps, arg.OrgID, arg.ParentGroupID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RunFollowUp
+	var items []ListRunFollowUpsRow
 	for rows.Next() {
-		var i RunFollowUp
+		var i ListRunFollowUpsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -222,6 +314,8 @@ func (q *Queries) ListRunFollowUps(ctx context.Context, arg ListRunFollowUpsPara
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.StartedAt,
+			&i.TemplateName,
+			&i.ChildFirstJobID,
 		); err != nil {
 			return nil, err
 		}

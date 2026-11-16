@@ -31,13 +31,34 @@ WHERE r.org_id = @org_id AND r.parent_group_id = @from_group
 ON CONFLICT (parent_group_id, template_id) DO NOTHING;
 
 -- name: ListRunFollowUps :many
-SELECT * FROM run_follow_ups
-WHERE org_id = @org_id AND parent_group_id = @parent_group_id
-ORDER BY position, created_at, id;
+-- A group's follow-ups with the template's current name (empty once the
+-- template is deleted) and the first job of the child run (the nil uuid when
+-- no child run started).
+SELECT r.*,
+       COALESCE(t.name, '')::text AS template_name,
+       COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
+FROM run_follow_ups r
+LEFT JOIN job_templates t ON t.org_id = r.org_id AND t.id = r.template_id
+LEFT JOIN LATERAL (
+  SELECT j.id FROM jobs j
+  WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
+  ORDER BY j.created_at, j.id LIMIT 1) fj ON true
+WHERE r.org_id = @org_id AND r.parent_group_id = @parent_group_id
+ORDER BY r.position, r.created_at, r.id;
 
 -- name: GetFollowUpByChild :one
-SELECT * FROM run_follow_ups
-WHERE org_id = @org_id AND child_group_id = @child_group_id;
+-- The follow-up whose start created the given run group, same shape as
+-- ListRunFollowUps.
+SELECT r.*,
+       COALESCE(t.name, '')::text AS template_name,
+       COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
+FROM run_follow_ups r
+LEFT JOIN job_templates t ON t.org_id = r.org_id AND t.id = r.template_id
+LEFT JOIN LATERAL (
+  SELECT j.id FROM jobs j
+  WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
+  ORDER BY j.created_at, j.id LIMIT 1) fj ON true
+WHERE r.org_id = @org_id AND r.child_group_id = @child_group_id;
 
 -- name: ResolvePendingFollowUps :execrows
 -- The parent group has finished: every pending follow-up becomes due (and is
@@ -140,3 +161,9 @@ RETURNING attempts;
 UPDATE run_follow_ups
 SET state = 'dismissed', reason = @reason, decided_at = @now::timestamptz
 WHERE org_id = @org_id AND parent_group_id = @parent_group_id AND state = 'pending';
+
+-- name: HasPendingFollowUps :one
+-- The sink's cheap gate: most finished groups have no follow-ups at all.
+SELECT EXISTS (
+  SELECT 1 FROM run_follow_ups
+  WHERE org_id = @org_id AND parent_group_id = @parent_group_id AND state = 'pending');
