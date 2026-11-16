@@ -10,11 +10,14 @@ import (
 )
 
 const (
-	// httpCountLimit is how much of a body is read to count
-	// http.content_bytes; a longer body stops the read there.
+	// httpCountLimit is how much of a body a check with a size assertion
+	// reads to count it; without one the read stops past httpBodyLimit,
+	// as before http.content_bytes existed. A longer body stops the read
+	// there.
 	httpCountLimit = 16 << 20
-	// errLargerThanCounted is http.content_bytes past httpCountLimit.
-	errLargerThanCounted = "larger than 16 MiB"
+	// errSizeUnknown is a size assertion on a body that went on past
+	// httpCountLimit and declared no length that covers it.
+	errSizeUnknown = "the response is larger than 16 MiB"
 )
 
 // wants is what a check's params ask of a response beyond the request's
@@ -41,13 +44,25 @@ func (w wants) keepBody() bool {
 	return w.bodyContains != "" || len(w.entries) > 0 || keepsBody(w.assertions)
 }
 
+// readLimit is how much of a body is read: httpCountLimit when a size
+// assertion counts it, else httpBodyLimit. Only the size assertion reads
+// further than what is kept, so a check without one costs no more
+// bandwidth than before http.content_bytes existed.
+func (w wants) readLimit() int64 {
+	if countsBody(w.assertions) {
+		return httpCountLimit
+	}
+	return httpBodyLimit
+}
+
 // bodyRead is what was read of a response body. Nothing read leaves the
 // probe as text.
 type bodyRead struct {
-	// size is the bytes received, at most httpCountLimit; not known when
-	// tooLarge.
+	// size is the bytes received, at most the read's limit; the limit
+	// itself when tooLarge.
 	size int64
-	// tooLarge: the body went on past httpCountLimit and the read stopped.
+	// tooLarge: the body went on past the read's limit and the read
+	// stopped.
 	tooLarge bool
 	// kept is the first httpBodyLimit bytes when they were wanted, else nil;
 	// truncated: the body went on past them (only when kept).
@@ -58,14 +73,14 @@ type bodyRead struct {
 	err error
 }
 
-// readBody reads body to its end or one byte past count, counting what
+// readBody reads body to its end or one byte past limit, counting what
 // arrived and keeping its first keep bytes when wanted; the rest is
 // discarded.
-func readBody(body io.Reader, want bool, keep, count int64) bodyRead {
+func readBody(body io.Reader, want bool, keep, limit int64) bodyRead {
 	w := &keeper{want: want, keep: keep}
-	n, err := io.Copy(w, io.LimitReader(body, count+1))
-	if n > count {
-		return bodyRead{tooLarge: true, kept: w.buf, truncated: w.truncated}
+	n, err := io.Copy(w, io.LimitReader(body, limit+1))
+	if n > limit {
+		return bodyRead{size: limit, tooLarge: true, kept: w.buf, truncated: w.truncated}
 	}
 	return bodyRead{size: n, kept: w.buf, truncated: w.truncated, err: err}
 }
@@ -105,10 +120,27 @@ type response struct {
 	timing    timing
 	redirects int
 	body      bodyRead
+	// declared is the final response's Content-Length, -1 when it sent
+	// none (or the transport decompressed the body).
+	declared int64
 	// leaf is the final hop's leaf certificate, nil over http.
 	leaf *x509.Certificate
 	// at is when the body read ended; the certificate's days count from it.
 	at time.Time
+}
+
+// contentBytes is http.content_bytes: the bytes read; past the read's
+// limit the declared length when it covers what was read (more than the
+// limit), else the limit, which is then not exact.
+func (r *response) contentBytes() (n int64, exact bool) {
+	switch {
+	case !r.body.tooLarge:
+		return r.body.size, true
+	case r.declared > r.body.size:
+		return r.declared, true
+	default:
+		return r.body.size, false
+	}
 }
 
 // redirectsBefore counts the redirects that led to resp: each request a
@@ -131,8 +163,8 @@ func leafOf(resp *http.Response) *x509.Certificate {
 
 // observations are r's whole-host metrics: up, the status, the timings
 // (http.dns_ms only when a hop looked up a name, http.tls_ms only when one
-// shook hands over TLS), the redirects, the size and, over https, the
-// final hop's certificate.
+// shook hands over TLS), the redirects, the size (contentBytes) and, over
+// https, the final hop's certificate.
 func (r *response) observations() []probe.Observation {
 	obs := append(probe.Up("http"),
 		probe.Value("http.status_code", float64(r.status)),
@@ -150,11 +182,9 @@ func (r *response) observations() []probe.Observation {
 		probe.Value("http.transfer_ms", probe.Millis(r.timing.transfer)),
 		probe.Value("http.redirects", float64(r.redirects)),
 	)
-	if r.body.tooLarge {
-		obs = append(obs, probe.Observation{Metric: "http.content_bytes", Err: errLargerThanCounted})
-	} else {
-		obs = append(obs, probe.Value("http.content_bytes", float64(r.body.size)))
-	}
+	// Never an error: past the read's limit an estimate (contentBytes).
+	size, _ := r.contentBytes()
+	obs = append(obs, probe.Value("http.content_bytes", float64(size)))
 	if r.leaf != nil {
 		obs = append(obs,
 			probe.Value("http.cert_expiry_days", r.leaf.NotAfter.Sub(r.at).Hours()/24),

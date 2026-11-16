@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -178,44 +179,111 @@ func TestHTTPHeadReadsNoBody(t *testing.T) {
 	}
 }
 
-// TestHTTPContentBytesCountsTo16MiB: a body of exactly 16 MiB is counted;
-// one byte more makes content_bytes an error and nothing else, the first
-// 1 MiB still read for body_contains.
-func TestHTTPContentBytesCountsTo16MiB(t *testing.T) {
+// sizedServer serves a body of n bytes that starts with "<html>marker",
+// with a Content-Length of declared when it is not 0 (the server lets a
+// large body go out chunked, with none).
+func sizedServer(t *testing.T, n, declared int) *httptest.Server {
+	t.Helper()
 	head := []byte("<html>marker")
-	serve := func(n int) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write(head)
-			_, _ = io.Copy(w, io.LimitReader(zeros{}, int64(n-len(head))))
-		}))
-	}
-
-	exact := serve(countedBytes)
-	defer exact.Close()
-	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(exact.URL, map[string]any{"body_contains": "marker"}), ""), "http")
-	if v := probetest.WantValue(t, m, "http.content_bytes"); v != countedBytes {
-		t.Fatalf("http.content_bytes = %v, want %d", v, countedBytes)
-	}
-
-	over := serve(countedBytes + 1)
-	defer over.Close()
-	m = probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(over.URL, map[string]any{"body_contains": "marker"}), ""), "http")
-	if e := m["http.content_bytes"].Err; e != "larger than 16 MiB" {
-		t.Fatalf("http.content_bytes = %+v, want the error %q", m["http.content_bytes"], "larger than 16 MiB")
-	}
-	for metric, o := range m {
-		if metric != "http.content_bytes" && o.Err != "" {
-			t.Fatalf("%s = %+v, want no error", metric, o)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if declared != 0 {
+			w.Header().Set("Content-Length", strconv.Itoa(declared))
 		}
-	}
-	if v := probetest.WantValue(t, m, "http.body_match"); v != 1 {
-		t.Fatalf("http.body_match = %v, want 1 from the first 1 MiB", v)
+		_, _ = w.Write(head)
+		_, _ = io.Copy(w, io.LimitReader(zeros{}, int64(n-len(head))))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// wantNoError fails when any observation carries an error.
+func wantNoError(t *testing.T, obs []probe.Observation) {
+	t.Helper()
+	for _, o := range obs {
+		if o.Err != "" {
+			t.Fatalf("%s %q = %+v, want no error", o.Metric, o.Item, o)
+		}
 	}
 }
 
-// TestHTTPEndlessBodyStopsAt16MiB: a body that never ends is read only to
-// the count, well before the timeout.
-func TestHTTPEndlessBodyStopsAt16MiB(t *testing.T) {
+// wantUpWithSize fails unless the attempt was up and content_bytes is want.
+func wantUpWithSize(t *testing.T, m map[mi]probe.Observation, want float64) {
+	t.Helper()
+	if o := m[mi{"http.up", ""}]; o.Value == nil || *o.Value != 1 {
+		t.Fatalf("http.up = %+v, want 1", o)
+	}
+	if o := m[mi{"http.content_bytes", ""}]; o.Value == nil || *o.Value != want {
+		t.Fatalf("http.content_bytes = %+v, want %v", o, want)
+	}
+}
+
+// TestHTTPContentBytesWithoutASizeAssertion: without a size assertion the
+// body is read to 1 MiB, as before content_bytes existed. Past that,
+// content_bytes is the declared Content-Length, else 1 MiB, and never an
+// error.
+func TestHTTPContentBytesWithoutASizeAssertion(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		n, declared int
+		want        float64
+	}{
+		{"exactly 1 MiB", keptBytes, 0, keptBytes},
+		{"past 1 MiB, nothing declared", keptBytes + 1, 0, keptBytes},
+		{"past 1 MiB, declared", 3 * keptBytes, 3 * keptBytes, 3 * keptBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := sizedServer(t, tc.n, tc.declared)
+			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"body_contains": "marker"}), "")
+			wantNoError(t, obs)
+			m := probetest.WantUp(t, obs, "http")
+			if v := probetest.WantValue(t, m, "http.content_bytes"); v != tc.want {
+				t.Fatalf("http.content_bytes = %v, want %v", v, tc.want)
+			}
+			if v := probetest.WantValue(t, m, "http.body_match"); v != 1 {
+				t.Fatalf("http.body_match = %v, want 1 from the first 1 MiB", v)
+			}
+		})
+	}
+}
+
+// TestHTTPSizeAssertionCountsTo16MiB: a size assertion reads the body to
+// 16 MiB to count it. Past that, the declared Content-Length is judged;
+// without one the assertion, and nothing else, is an error, and
+// content_bytes reports 16 MiB.
+func TestHTTPSizeAssertionCountsTo16MiB(t *testing.T) {
+	assertions := values("big=size >= "+strconv.Itoa(countedBytes), `hit=body contains "marker"`)
+
+	exact := sizedServer(t, countedBytes, 0)
+	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(exact.URL, map[string]any{"assertions": assertions}), "")
+	wantNoError(t, obs)
+	m := byItem(t, obs)
+	wantUpWithSize(t, m, countedBytes)
+	wantVerdict(t, m, "big", "pass", strconv.Itoa(countedBytes))
+	wantVerdict(t, m, "hit", "pass", "")
+
+	over := sizedServer(t, countedBytes+1, 0)
+	m = byItem(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(over.URL, map[string]any{"assertions": assertions}), ""))
+	wantUpWithSize(t, m, countedBytes)
+	wantAssertionError(t, m, "big", "the response is larger than 16 MiB")
+	wantVerdict(t, m, "hit", "pass", "")
+	for k, o := range m {
+		if k.item != "big" && o.Err != "" {
+			t.Fatalf("%v = %+v, want no error", k, o)
+		}
+	}
+
+	declared := sizedServer(t, countedBytes+1, countedBytes+1)
+	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(declared.URL, map[string]any{"assertions": assertions}), "")
+	wantNoError(t, obs)
+	m = byItem(t, obs)
+	wantUpWithSize(t, m, countedBytes+1)
+	wantVerdict(t, m, "big", "pass", strconv.Itoa(countedBytes+1))
+}
+
+// TestHTTPEndlessBodyStopsAtTheReadLimit: a body that never ends is read
+// only to the limit, 1 MiB or with a size assertion 16 MiB, well before
+// the timeout.
+func TestHTTPEndlessBodyStopsAtTheReadLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := bytes.Repeat([]byte("x"), 64*1024)
 		for r.Context().Err() == nil {
@@ -225,13 +293,23 @@ func TestHTTPEndlessBodyStopsAt16MiB(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	start := time.Now()
-	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"timeout_s": float64(30)}), ""), "http")
-	if d := time.Since(start); d > 20*time.Second {
-		t.Fatalf("the probe took %v, want it to stop at 16 MiB", d)
-	}
-	if e := m["http.content_bytes"].Err; e != "larger than 16 MiB" {
-		t.Fatalf("http.content_bytes = %+v, want the error", m["http.content_bytes"])
+	for _, tc := range []struct {
+		name  string
+		extra map[string]any
+		want  float64
+	}{
+		{"no size assertion", map[string]any{}, keptBytes},
+		{"a size assertion", map[string]any{"assertions": values("big=size > 1")}, countedBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.extra["timeout_s"] = float64(30)
+			start := time.Now()
+			m := byItem(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, tc.extra), ""))
+			if d := time.Since(start); d > 20*time.Second {
+				t.Fatalf("the probe took %v, want it to stop at the limit", d)
+			}
+			wantUpWithSize(t, m, tc.want)
+		})
 	}
 }
 

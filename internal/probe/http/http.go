@@ -20,9 +20,10 @@ import (
 
 const (
 	httpDefaultTimeout = 10 * time.Second
-	// httpBodyLimit is how much of the body is kept, and what body_contains
-	// and json_values look in (httpCountLimit bounds the read). It also caps
-	// the response headers.
+	// httpBodyLimit is how much of the body is read and kept, and what
+	// body_contains, json_values and the body assertions look in (a size
+	// assertion reads on to httpCountLimit). It also caps the response
+	// headers.
 	httpBodyLimit = 1 << 20
 	// httpMaxRedirects is how many redirects are followed; one more is a
 	// failed attempt.
@@ -99,7 +100,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 		// The client's error is never passed on: it quotes the URL.
 		return probe.Down("http", hop.reason(err))
 	}
-	body := readBody(resp.Body, w.keepBody(), httpBodyLimit, httpCountLimit)
+	body := readBody(resp.Body, w.keepBody(), httpBodyLimit, w.readLimit())
 	end := time.Now()
 	_ = resp.Body.Close()
 
@@ -110,6 +111,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 		timing:    phases.timing(end),
 		redirects: redirectsBefore(resp),
 		body:      body,
+		declared:  resp.ContentLength,
 		leaf:      leafOf(resp),
 		at:        end,
 	}

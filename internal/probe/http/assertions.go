@@ -69,6 +69,17 @@ func keepsBody(entries []assertEntry) bool {
 	return false
 }
 
+// countsBody reports whether one of entries is a size assertion, which
+// reads the body past what is kept to count it.
+func countsBody(entries []assertEntry) bool {
+	for _, e := range entries {
+		if e.problem == "" && e.a.Subject() == assert.SubjectSize {
+			return true
+		}
+	}
+	return false
+}
+
 // verdict is what an assertion came to: whether it held and what was
 // seen, or why it could not be evaluated.
 type verdict struct {
@@ -169,10 +180,11 @@ func (j *judge) judge(a assert.Assertion) verdict {
 	case assert.SubjectRedirects:
 		return number(a, float64(r.redirects))
 	case assert.SubjectSize:
-		if r.body.tooLarge {
-			return failed(errLargerThanCounted)
+		size, exact := r.contentBytes()
+		if !exact {
+			return failed(errSizeUnknown)
 		}
-		return number(a, float64(r.body.size))
+		return number(a, float64(size))
 	case assert.SubjectCertDays:
 		if r.leaf == nil {
 			return failed(errAssertNoTLS)

@@ -29,8 +29,8 @@ func TestReadBody(t *testing.T) {
 		{"past what is kept", strings.NewReader("abcdefg"), true, bodyRead{size: 7, kept: []byte("abcd"), truncated: true}},
 		{"past what is kept, not kept", strings.NewReader("abcdefg"), false, bodyRead{size: 7}},
 		{"exactly what is counted", strings.NewReader("0123456789"), true, bodyRead{size: 10, kept: []byte("0123"), truncated: true}},
-		{"past what is counted", strings.NewReader("0123456789x"), true, bodyRead{kept: []byte("0123"), truncated: true, tooLarge: true}},
-		{"past what is counted, not kept", strings.NewReader("0123456789x"), false, bodyRead{tooLarge: true}},
+		{"past the limit", strings.NewReader("0123456789x"), true, bodyRead{size: 10, kept: []byte("0123"), truncated: true, tooLarge: true}},
+		{"past the limit, not kept", strings.NewReader("0123456789x"), false, bodyRead{size: 10, tooLarge: true}},
 		{"broken off", io.MultiReader(strings.NewReader("ab"), iotest.ErrReader(broken)), true, bodyRead{size: 2, kept: []byte("ab"), err: broken}},
 		{"empty", strings.NewReader(""), true, bodyRead{}},
 	} {
@@ -44,9 +44,9 @@ func TestReadBody(t *testing.T) {
 	}
 }
 
-// TestReadBodyStopsPastTheCount: a body that never ends is read only to
-// one byte past the count.
-func TestReadBodyStopsPastTheCount(t *testing.T) {
+// TestReadBodyStopsPastTheLimit: a body that never ends is read only to
+// one byte past the limit.
+func TestReadBodyStopsPastTheLimit(t *testing.T) {
 	r := &countingReader{}
 	if got := readBody(r, false, 4, 1000); !got.tooLarge {
 		t.Fatalf("readBody = %+v, want tooLarge", got)
@@ -78,6 +78,53 @@ func TestWantsKeepBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := wantsOf(tc.params).keepBody(); got != tc.keep {
 				t.Fatalf("keepBody = %v, want %v", got, tc.keep)
+			}
+		})
+	}
+}
+
+// TestWantsReadLimit: only a size assertion reads past what is kept.
+func TestWantsReadLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   int64
+	}{
+		{"nothing", map[string]any{}, httpBodyLimit},
+		{"body_contains", map[string]any{"body_contains": "ok"}, httpBodyLimit},
+		{"other assertions", map[string]any{"assertions": []any{"st=status == 200", `b=body contains "x"`}}, httpBodyLimit},
+		{"a size assertion", map[string]any{"assertions": []any{"st=status == 200", "s=size < 100"}}, httpCountLimit},
+		{"an invalid size assertion", map[string]any{"assertions": []any{"s=size <"}}, httpBodyLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := wantsOf(tc.params).readLimit(); got != tc.want {
+				t.Fatalf("readLimit = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestContentBytes: past the read's limit, the declared length when it
+// covers what was read, else the limit, which is not exact.
+func TestContentBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      bodyRead
+		declared  int64
+		want      int64
+		wantExact bool
+	}{
+		{"read to its end", bodyRead{size: 1234}, -1, 1234, true},
+		{"read to its end, declared otherwise", bodyRead{size: 1234}, 99, 1234, true},
+		{"past the limit, nothing declared", bodyRead{size: 1000, tooLarge: true}, -1, 1000, false},
+		{"past the limit, declared", bodyRead{size: 1000, tooLarge: true}, 5000, 5000, true},
+		{"past the limit, declared one past it", bodyRead{size: 1000, tooLarge: true}, 1001, 1001, true},
+		{"past the limit, declared less than was read", bodyRead{size: 1000, tooLarge: true}, 1000, 1000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := response{body: tc.body, declared: tc.declared}
+			if got, exact := r.contentBytes(); got != tc.want || exact != tc.wantExact {
+				t.Fatalf("contentBytes = %d, %v, want %d, %v", got, exact, tc.want, tc.wantExact)
 			}
 		})
 	}
@@ -151,17 +198,22 @@ func TestResponseObservations(t *testing.T) {
 		}
 	})
 
-	t.Run("a body past the count is an error on content_bytes only", func(t *testing.T) {
+	t.Run("a body past the limit is never an error on content_bytes", func(t *testing.T) {
 		r := base()
-		r.body = bodyRead{tooLarge: true}
+		r.body, r.declared = bodyRead{size: 1 << 20, tooLarge: true}, -1
 		m := probetest.WantUp(t, r.observations(), "http")
-		if e := m["http.content_bytes"].Err; e != "larger than 16 MiB" {
-			t.Fatalf("http.content_bytes = %+v, want the error %q", m["http.content_bytes"], "larger than 16 MiB")
-		}
 		for metric, o := range m {
-			if metric != "http.content_bytes" && o.Err != "" {
+			if o.Err != "" {
 				t.Fatalf("%s = %+v, want no error", metric, o)
 			}
+		}
+		if v := probetest.WantValue(t, m, "http.content_bytes"); v != 1<<20 {
+			t.Fatalf("http.content_bytes = %v, want the limit", v)
+		}
+		r.declared = 5 << 20
+		m = probetest.WantUp(t, r.observations(), "http")
+		if v := probetest.WantValue(t, m, "http.content_bytes"); v != 5<<20 {
+			t.Fatalf("http.content_bytes = %v, want the declared length", v)
 		}
 	})
 }
