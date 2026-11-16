@@ -106,5 +106,8 @@ export default defineConfig({
     // signs the operator in with the original one.
     { name: 'accounts', testMatch: /accounts\.spec\.ts/, dependencies: ['unsaved-guard'] },
     { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['accounts'] },
+    // Job chaining (backlog 2.116): runs a template with a follow-up on the
+    // managed fixture host ansible.spec registers, so it follows it.
+    { name: 'chain', testMatch: /chain\.spec\.ts/, dependencies: ['ansible'] },
   ],
 });
