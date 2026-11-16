@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probeconfig"
 )
@@ -33,6 +35,38 @@ func TestVersionIsEmptyUntilAConfigArrives(t *testing.T) {
 	r.Apply(nil)
 	if v := r.Version(); v != probeconfig.Version(nil) {
 		t.Fatalf("Version of the empty set = %q, want the empty encoding's %q", v, probeconfig.Version(nil))
+	}
+}
+
+// TestFirstRunIsWithinAMinuteForLongIntervals: the first-run window is
+// min(interval, firstRunWindow), so a slot reassigned to a new agent
+// reports within a minute even with an hourly or daily interval, still
+// spread by the slot inside that window.
+func TestFirstRunIsWithinAMinuteForLongIntervals(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		interval, window time.Duration
+	}{
+		{10 * time.Second, 10 * time.Second},
+		{30 * time.Second, 30 * time.Second},
+		{time.Minute, time.Minute},
+		{time.Hour, time.Minute},
+		{24 * time.Hour, time.Minute},
+	} {
+		seen := map[time.Duration]bool{}
+		for _, slot := range []struct {
+			target uuid.UUID
+			key    string
+		}{{targetA, "web"}, {targetB, "web"}, {targetA, "dns"}, {targetB, "dns"}} {
+			off := firstOffset(slot.target, slot.key, tc.interval)
+			if off < 0 || off >= tc.window {
+				t.Fatalf("interval %s: offset %s outside [0, %s)", tc.interval, off, tc.window)
+			}
+			seen[off] = true
+		}
+		if len(seen) < 2 {
+			t.Fatalf("interval %s: offsets do not depend on the slot: %v", tc.interval, seen)
+		}
 	}
 }
 

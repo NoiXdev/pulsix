@@ -211,14 +211,22 @@ func newSlot(sp probeconfig.Spec, now time.Time) *slot {
 	}
 }
 
-// firstOffset spreads a slot's first run over [0, interval) by a hash of
-// (target host id, check key), so a new set does not probe everything at
-// the same instant and a slot lands on the same phase on every apply.
+// firstRunWindow caps the window a slot's first run is spread over: a
+// slot reassigned to this agent (another vantage left its group, or a new
+// slot appeared) reports within a minute even with an hourly interval,
+// rather than leaving its vantage without a result for up to one interval.
+const firstRunWindow = time.Minute
+
+// firstOffset spreads a slot's first run over [0, min(interval,
+// firstRunWindow)) by a hash of (target host id, check key), so a new set
+// does not probe everything at the same instant and a slot lands on the
+// same phase on every apply.
 func firstOffset(target uuid.UUID, key string, interval time.Duration) time.Duration {
+	window := min(interval, firstRunWindow)
 	h := fnv.New64a()
 	_, _ = h.Write(target[:])
 	_, _ = h.Write([]byte(key))
-	return time.Duration(h.Sum64() % uint64(interval))
+	return time.Duration(h.Sum64() % uint64(window))
 }
 
 // poke wakes Run without blocking.
