@@ -316,7 +316,11 @@ older agent keeps working unchanged, is never assigned and never receives a prob
 configuration; a check whose groups contain only older agents is probed from the
 other vantages only (the manager, when enabled; with none left the check reports
 unknown until agents are updated). An older manager ignores the new heartbeat fields,
-so a new agent under it simply probes nothing. The agent binary grows by about
+so a new agent that only ever talked to older managers probes nothing. During a
+rolling upgrade of several managers, an agent that already received assignments
+from an upgraded manager keeps probing; results that reach a not-yet-upgraded
+manager are dropped, so that vantage may read "no result" until all managers are
+upgraded. The agent binary grows by about
 4.4 % (the SNMP library is linked in although agents never run `snmp`, backlog 3.78),
 and a probing agent carries up to 200 assignments, four probes at once. The proto
 change is additive (`buf breaking` clean). A downgrade needs the usual restore of a

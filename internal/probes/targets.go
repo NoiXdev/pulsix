@@ -35,7 +35,14 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 // previous targets like one that cannot be read, so the in-memory
 // expected vantages stay those the agents were told. At the end the
 // per-vantage rows of vantages no longer expected are deleted
-// (pruneVantages).
+// (pruneVantages). A refresh that hits the tick's deadline after writing
+// some organizations' assignments returns with the in-memory targets
+// unchanged, so for those organizations the database (and the agents it
+// answers) is ahead of what the runner expects: an agent that has just
+// been assigned is not yet an expected vantage, and one just unassigned
+// still is while its results are no longer accepted. This heals itself:
+// the next successful refresh writes the assignments again and adopts
+// them as its targets.
 func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	orgs, err := r.orgs.ListOrgIDs(ctx)
 	if err != nil {
