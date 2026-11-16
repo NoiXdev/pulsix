@@ -233,6 +233,7 @@ function CheckForm({ org, check, copy = false, groups, onClose, plugins }: Check
             values={values}
             errors={fieldErrors}
             disabled={shared}
+            groups={groups}
             onChange={setValues}
           />
         )}

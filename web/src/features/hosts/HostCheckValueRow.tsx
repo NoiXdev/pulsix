@@ -17,6 +17,7 @@ import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
 import { ForgetItemButton } from './ForgetItemButton.tsx';
 import { ItemDecisionButton } from './ItemDecisionButton.tsx';
 import { MetricGraphPanel } from './MetricGraphPanel.tsx';
+import { vantageOptions } from './vantages.ts';
 import { importMetricChart } from './metricChartImport.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { EffectiveRule, HostCheck, HostCheckValue, MonitoringGroup } from '../../api/types.ts';
@@ -289,7 +290,16 @@ export function HostCheckValueRow({
           <EffectiveRuleEntries entries={rulesForTuple} groups={groups} showTuple={false} />
         </div>
       )}
-      {isOpen && <MetricGraphPanel org={org} hostId={hostId} label={`${check.key} ${name}`} selection={open} onRange={onOpen} />}
+      {isOpen && (
+        <MetricGraphPanel
+          org={org}
+          hostId={hostId}
+          label={`${check.key} ${name}`}
+          selection={open}
+          vantages={vantageOptions(check, t)}
+          onRange={onOpen}
+        />
+      )}
     </li>
   );
 }

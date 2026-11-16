@@ -4,9 +4,10 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
-import type { CheckPluginDescriptor, CheckPluginParam } from '../../api/types.ts';
+import type { CheckPluginDescriptor, CheckPluginParam, MonitoringGroup } from '../../api/types.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
-import { paramText, placeholderOf, takesEscapes, type ParamValues } from './paramForm.ts';
+import { paramText, placeholderOf, takesEscapes, VANTAGE_PARAMS, type ParamValues } from './paramForm.ts';
+import { VantageFields } from './VantageFields.tsx';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
@@ -19,6 +20,11 @@ const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background 
  * select, a bool a switch. A field the user never touched holds no value,
  * shows the server's default (a placeholder, a preselection, a switch's
  * position) and is not sent (paramsFrom).
+ *
+ * A synthetic plugin's vantage points (backlog 3.13a) are their own
+ * section (VantageFields) when the form knows the organization's
+ * monitoring groups (`groups`), and left out when it does not — the
+ * instance's shared check form, whose checks are probed from the server.
  */
 export function ParamFields({
   idPrefix,
@@ -26,6 +32,7 @@ export function ParamFields({
   values,
   errors,
   disabled,
+  groups,
   onChange,
 }: {
   /** Prefixes every input's id, so two forms never share one. */
@@ -34,15 +41,19 @@ export function ParamFields({
   values: ParamValues;
   errors: Record<string, string>;
   disabled?: boolean;
+  /** The organization's monitoring groups, for the vantage points; absent
+   * leaves those parameters out. */
+  groups?: readonly MonitoringGroup[];
   onChange: (values: ParamValues) => void;
 }) {
   const t = useT();
   const set = (name: string, value: string | boolean) => onChange({ ...values, [name]: value });
   const text = (spec: CheckPluginParam) => paramText(t, plugin.name, spec.name);
   const label = (spec: CheckPluginParam) => text(spec)?.label ?? spec.name;
-  const lists = plugin.params.filter((p) => p.type === 'list');
-  const inputs = plugin.params.filter((p) => p.type !== 'list' && p.type !== 'bool');
-  const switches = plugin.params.filter((p) => p.type === 'bool');
+  const own = plugin.params.filter((p) => !VANTAGE_PARAMS.has(p.name));
+  const lists = own.filter((p) => p.type === 'list');
+  const inputs = own.filter((p) => p.type !== 'list' && p.type !== 'bool');
+  const switches = own.filter((p) => p.type === 'bool');
   if (plugin.params.length === 0 && plugin.runs !== 'server') return null;
 
   function control(spec: CheckPluginParam, id: string) {
@@ -151,6 +162,18 @@ export function ParamFields({
           </div>
         );
       })}
+      {groups && (
+        <VantageFields
+          idPrefix={idPrefix}
+          plugin={plugin}
+          groups={groups}
+          values={values}
+          errors={errors}
+          disabled={disabled}
+          onChange={onChange}
+          control={control}
+        />
+      )}
     </div>
   );
 }

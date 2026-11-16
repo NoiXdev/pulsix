@@ -37,6 +37,25 @@ export function takesEscapes(plugin: string, param: string): boolean {
   return ESCAPED.has(`${plugin}.${param}`);
 }
 
+/** The vantage-point parameters every synthetic plugin takes (backlog
+ * 3.13a). The organization's check dialog edits them as their own section
+ * (VantageFields); the instance's shared check form, which knows no
+ * organization's monitoring groups, leaves them out, so a shared check is
+ * probed from the Pulsix server. */
+export const VANTAGE_MANAGER = 'vantage_manager';
+export const VANTAGE_GROUPS = 'vantage_groups';
+export const VANTAGE_AGENTS_PER_GROUP = 'agents_per_group';
+export const VANTAGE_FAIL_POLICY = 'fail_policy';
+export const VANTAGE_PARAMS: ReadonlySet<string> = new Set([
+  VANTAGE_MANAGER, VANTAGE_GROUPS, VANTAGE_AGENTS_PER_GROUP, VANTAGE_FAIL_POLICY,
+]);
+
+/** vantageGroupsOf is the monitoring group ids the form holds, in order. */
+export function vantageGroupsOf(values: ParamValues): string[] {
+  const value = values[VANTAGE_GROUPS];
+  return typeof value === 'string' ? lines(value) : [];
+}
+
 /** findPlugin is the descriptor of the plugin called name, if the list
  * has one. */
 export function findPlugin(plugins: readonly CheckPluginDescriptor[], name: string): CheckPluginDescriptor | undefined {

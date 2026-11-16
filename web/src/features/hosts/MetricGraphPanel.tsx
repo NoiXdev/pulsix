@@ -6,6 +6,7 @@
  */
 import { lazy, Suspense } from 'react';
 import { Button } from '../../ui/button.tsx';
+import { Select, type SelectOption } from '../../ui/Select.tsx';
 import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useMonitoringSettings } from '../../api/hooks/useMonitoringSettings.ts';
 import { useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
@@ -34,12 +35,17 @@ export function MetricGraphPanel({
   hostId,
   label,
   selection,
+  vantages,
   onRange,
 }: {
   org: string;
   hostId: string;
   label: string;
   selection: MetricSelection;
+  /** The series a check probed from several places offers (backlog
+   * 3.13a): the combined one (value '') and each probing point's own.
+   * Absent for any other check, which has only its own series. */
+  vantages?: SelectOption[];
   onRange: (selection: MetricSelection) => void;
 }) {
   const t = useT();
@@ -54,7 +60,7 @@ export function MetricGraphPanel({
 
   return (
     <div className="rounded-md border border-border p-2">
-      <div className="mb-2 flex items-center gap-1">
+      <div className="mb-2 flex flex-wrap items-center gap-1">
         {ranges.map((value) => (
           <Button
             key={value}
@@ -66,6 +72,19 @@ export function MetricGraphPanel({
             {t.hosts.graph.ranges[value]}
           </Button>
         ))}
+        {vantages && (
+          <div className="ml-auto w-48">
+            <Select
+              aria-label={t.hosts.vantages.graphVantage}
+              options={vantages}
+              value={active.vantage ?? ''}
+              onChange={(v) => {
+                const combined: MetricSelection = { check: active.check, item: active.item, metric: active.metric, range: active.range };
+                onRange(v === '' ? combined : { ...combined, vantage: v });
+              }}
+            />
+          </div>
+        )}
       </div>
       {series.isError && (
         <p role="alert" className="text-xs text-destructive">
@@ -82,7 +101,7 @@ export function MetricGraphPanel({
           // Stable by value, and it changes exactly when the operator asks
           // for a different series or window — so a chart that throws on
           // one input does not wedge the panel for the next.
-          resetKey={`${selection.check}:${selection.item}:${selection.metric}:${active.range}`}
+          resetKey={`${selection.check}:${selection.item}:${selection.metric}:${active.range}:${active.vantage ?? ''}`}
           fallback={
             <p role="alert" className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
               {t.hosts.graph.chartFailed}

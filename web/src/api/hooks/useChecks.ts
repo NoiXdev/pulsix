@@ -149,6 +149,10 @@ export interface MetricSelection {
   item: string;
   metric: string;
   range: MetricRange;
+  /** One probing point's own series of a check probed from several
+   * (backlog 3.13a): "manager" or an agent's host id. Absent reads the
+   * check's combined series. */
+  vantage?: string;
 }
 
 /**
@@ -212,13 +216,13 @@ export function useHostMetric(org: string, hostId: string, selection: MetricSele
   return useQuery({
     queryKey: ['host-metric', org, hostId, selection],
     queryFn: () => {
-      const { check, item, metric, range } = selection!;
+      const { check, item, metric, range, vantage } = selection!;
       return unwrap(
         api.GET('/api/v1/orgs/{org}/hosts/{id}/metrics', {
           // `item` is omitted, not sent empty, for a whole-host metric —
           // the route documents it as "omit for a whole-host metric", and
           // `item=` would be a second spelling of the same question.
-          params: { path: { org, id: hostId }, query: { check, metric, range, ...(item ? { item } : {}) } },
+          params: { path: { org, id: hostId }, query: { check, metric, range, ...(item ? { item } : {}), ...(vantage ? { vantage } : {}) } },
         }),
       );
     },

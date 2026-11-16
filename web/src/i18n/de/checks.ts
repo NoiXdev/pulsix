@@ -142,6 +142,12 @@ export const deChecks: Messages['checks'] = {
     runsFromServer: 'Läuft auf dem Pulsix-Server, nicht auf dem Host.',
     rulesKey: (plugin: string) => `Alarmregeln für ${plugin}.*-Metriken gelten für jeden Check dieses Typs, unabhängig von seinem Schlüssel.`,
   },
+  vantage: {
+    title: 'Prüfpunkte',
+    chosenGroups: 'Gewählte Gruppen',
+    addGroup: 'Gruppe hinzufügen',
+    secretOnlyServer: 'Checks mit einem Secret werden nur vom Pulsix-Server aus geprüft.',
+  },
   params: {
     disk: {
       mounts: { label: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)', placeholder: '/\n/var' },

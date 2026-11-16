@@ -8,6 +8,9 @@ export const deUi: Messages['ui'] = {
     noMatch: 'Kein Treffer',
     unavailable: (value: string) => `${value} (nicht verfügbar)`,
   },
+  multiSelect: {
+    remove: (label: string) => `${label} entfernen`,
+  },
   picker: {
     calendar: 'Datum wählen',
     today: 'Heute',

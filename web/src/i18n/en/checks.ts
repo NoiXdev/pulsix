@@ -160,6 +160,14 @@ export const enChecks = {
     runsFromServer: 'Runs from the Pulsix server, not on the host.',
     rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply to every check of this type, whatever its key.`,
   },
+  /** Where a synthetic check is probed from (backlog 3.13a); the four
+   * parameters' own labels are vantageParamTexts above. */
+  vantage: {
+    title: 'Probing points',
+    chosenGroups: 'Chosen groups',
+    addGroup: 'Add a group',
+    secretOnlyServer: 'Checks with a secret are probed only from the Pulsix server.',
+  },
   /** Every check plugin's parameter fields, keyed by plugin and parameter
    * as GET /check-plugins names them (backlog 3.54), shared by the check
    * dialog and the instance's shared check form. Every parameter a

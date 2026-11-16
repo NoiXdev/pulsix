@@ -12,6 +12,9 @@ export const enUi = {
     noMatch: 'No match',
     unavailable: (value: string) => `${value} (unavailable)`,
   },
+  multiSelect: {
+    remove: (label: string) => `Remove ${label}`,
+  },
   picker: {
     calendar: 'Choose a date',
     today: 'Today',

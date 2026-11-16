@@ -7,6 +7,7 @@ import { useCheckPlugins } from '../../api/hooks/useCheckPlugins.ts';
 import { intervalLabel } from '../checks/interval.ts';
 import { clockSkewLabel, metricKinds, missingSecretText, sourceLabel, type TupleKey } from './hostChecks.ts';
 import { HostCheckValueRow } from './HostCheckValueRow.tsx';
+import { HostCheckVantages } from './HostCheckVantages.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 export interface HostChecksCardProps {
@@ -173,6 +174,9 @@ export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false 
                     )}
                   </ul>
                 )}
+                {/* Backlog 3.13a: where a check probed from several
+                    places was probed from, below its combined values. */}
+                {monitored && c.vantages && <HostCheckVantages check={c} plugins={plugins.data} />}
               </li>
             ))}
           </ul>

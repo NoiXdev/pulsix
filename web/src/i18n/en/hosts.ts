@@ -356,6 +356,22 @@ export const enHosts = {
     done: (item: string) => `${item} forgotten`,
     failed: 'Forgetting this item failed',
   },
+  /** A synthetic check's probing points (backlog 3.13a). */
+  vantages: {
+    title: (check: string) => `Probing points of ${check}`,
+    server: 'Pulsix server',
+    combined: 'Combined',
+    graphVantage: 'Probing point',
+    none: 'No probing point is assigned yet.',
+    policy: {
+      any: 'Down when any probing point sees it down.',
+      majority: 'Down when most probing points see it down.',
+      all: 'Down when every probing point sees it down.',
+    },
+    columns: { name: 'Probing point', status: 'Status', response: 'Response time', age: 'Last result' },
+    states: { up: 'up', down: 'down', none: 'no result' },
+    ms: (value: string) => `${value} ms`,
+  },
   graph: {
     ranges: {
       '1h': '1 h',

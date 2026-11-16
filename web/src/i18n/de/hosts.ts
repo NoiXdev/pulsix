@@ -354,6 +354,21 @@ export const deHosts: Messages['hosts'] = {
     done: (item: string) => `${item} vergessen`,
     failed: 'Dieses Element konnte nicht vergessen werden',
   },
+  vantages: {
+    title: (check: string) => `Prüfpunkte von ${check}`,
+    server: 'Pulsix-Server',
+    combined: 'Zusammengefasst',
+    graphVantage: 'Prüfpunkt',
+    none: 'Noch ist kein Prüfpunkt zugeteilt.',
+    policy: {
+      any: 'Ausgefallen, wenn ein Prüfpunkt ihn als ausgefallen sieht.',
+      majority: 'Ausgefallen, wenn die meisten Prüfpunkte ihn als ausgefallen sehen.',
+      all: 'Ausgefallen, wenn jeder Prüfpunkt ihn als ausgefallen sieht.',
+    },
+    columns: { name: 'Prüfpunkt', status: 'Status', response: 'Antwortzeit', age: 'Letztes Ergebnis' },
+    states: { up: 'erreichbar', down: 'ausgefallen', none: 'kein Ergebnis' },
+    ms: (value: string) => `${value} ms`,
+  },
   graph: {
     ranges: {
       '1h': '1 Std.',
