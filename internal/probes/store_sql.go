@@ -196,12 +196,14 @@ func (s *SQLStore) SlotAgents(ctx context.Context, org, host uuid.UUID, key stri
 // non-error one also adds a probe_samples row — an error is a current
 // value only, like check_current. obs are validated by the caller; the
 // target host of each is obs.HostID. A vantage other than "manager" or a
-// canonical host id is refused by the table's CHECK.
+// canonical host id is refused by the table's CHECK. A target host that
+// no longer exists fails the host foreign key and is ErrTargetGone, the
+// whole call rolled back.
 func (s *SQLStore) RecordVantage(ctx context.Context, org uuid.UUID, vantage string, obs []checks.Observation) error {
 	if len(obs) == 0 {
 		return nil
 	}
-	return s.d.WithOrg(ctx, org, func(tx pgx.Tx) error {
+	err := s.d.WithOrg(ctx, org, func(tx pgx.Tx) error {
 		q := gen.New(tx)
 		for _, o := range obs {
 			var errText *string
@@ -227,6 +229,10 @@ func (s *SQLStore) RecordVantage(ctx context.Context, org uuid.UUID, vantage str
 		}
 		return nil
 	})
+	if db.IsForeignKeyViolation(err) {
+		return fmt.Errorf("%w: %w", ErrTargetGone, err)
+	}
+	return err
 }
 
 // VantageCurrent is every vantage's current rows of one check on one host,

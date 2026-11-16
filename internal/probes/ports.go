@@ -2,6 +2,7 @@ package probes
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 
@@ -83,6 +84,11 @@ type Groups interface {
 	GetGroup(ctx context.Context, orgID, id uuid.UUID) (checks.Group, error)
 	Preview(ctx context.Context, orgID uuid.UUID, sel string) ([]uuid.UUID, error)
 }
+
+// ErrTargetGone is RecordVantage naming a target host that no longer
+// exists — deleted after the caller read the assignments that named it.
+// Nothing of the call is stored.
+var ErrTargetGone = errors.New("probe target host no longer exists")
 
 // VantageStore keeps probe assignments and per-vantage results: SQLStore.
 type VantageStore interface {

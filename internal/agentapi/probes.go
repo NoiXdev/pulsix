@@ -126,7 +126,11 @@ type probeSlot struct {
 // dropped (Review Focus 1: never recorded). The kept results are stored in
 // ONE RecordVantage call (one transaction across targets), vantage = the
 // agent's host id, so a message is stored whole or not at all and the
-// agent's replay after a fault cannot duplicate a part. A store fault is
+// agent's replay after a fault cannot duplicate a part. A target host
+// deleted between the assignment read and the write (probes.ErrTargetGone)
+// drops the whole message, its kept results counted as unassigned — the
+// target's slots went with it, and the agent's next refresh no longer
+// names it; the other targets miss one round. Any other store fault is
 // the manager's and fails the stream like a check-results store fault.
 func (s *Service) recordProbeResults(ctx context.Context, agent agents.AgentIdentity, results *agentpb.ProbeResults) (probeIngest, error) {
 	var res probeIngest
@@ -169,10 +173,15 @@ func (s *Service) recordProbeResults(ctx context.Context, agent agents.AgentIden
 		kept = append(kept, o)
 	}
 	if len(kept) > 0 {
-		if err := s.deps.Probes.RecordVantage(ctx, agent.OrgID, agent.HostID.String(), kept); err != nil {
+		err := s.deps.Probes.RecordVantage(ctx, agent.OrgID, agent.HostID.String(), kept)
+		switch {
+		case errors.Is(err, probes.ErrTargetGone):
+			res.Unassigned += len(kept)
+		case err != nil:
 			return res, fmt.Errorf("record probe results: %w", err)
+		default:
+			res.Accepted = len(kept)
 		}
-		res.Accepted = len(kept)
 	}
 	s.logProbeIngest(ctx, agent, res)
 	return res, nil

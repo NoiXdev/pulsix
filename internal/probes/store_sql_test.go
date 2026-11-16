@@ -2,6 +2,7 @@ package probes_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -232,6 +233,31 @@ func TestRecordVantageRefusesBadVantage(t *testing.T) {
 		[]checks.Observation{{HostID: target, CheckKey: "k", Metric: "m", At: time.Now(), Value: &v}})
 	if err == nil {
 		t.Fatal("a malformed vantage was stored")
+	}
+}
+
+// TestRecordVantageReportsAGoneTarget: a target host that no longer
+// exists (deleted after the caller read its assignments; never created
+// here, which fails the same foreign key) is ErrTargetGone, and nothing of
+// the call is stored.
+func TestRecordVantageReportsAGoneTarget(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	store := probes.NewSQLStore(d)
+	org, host := seedStoreOrg(t, d, "pv-gone")
+	target, agent := host("t"), host("a")
+	gone := uuid.Must(uuid.NewV7())
+	v := 1.0
+	err := store.RecordVantage(db.WithOrgScope(ctx, org), org, agent.String(), []checks.Observation{
+		{HostID: target, CheckKey: "k", Metric: "tcp.up", At: time.Now(), Value: &v},
+		{HostID: gone, CheckKey: "k", Metric: "tcp.up", At: time.Now(), Value: &v},
+	})
+	if !errors.Is(err, probes.ErrTargetGone) {
+		t.Fatalf("err = %v, want ErrTargetGone", err)
+	}
+	var n int
+	if err := d.Pool().QueryRow(ctx, `SELECT (SELECT count(*) FROM probe_current) + (SELECT count(*) FROM probe_samples)`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("probe tables hold %d rows, want 0 (%v)", n, err)
 	}
 }
 

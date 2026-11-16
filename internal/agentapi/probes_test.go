@@ -8,6 +8,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -477,6 +478,38 @@ func TestProbeResultsStoreFaultFailsTheStream(t *testing.T) {
 	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
 		t.Fatalf("err = %v, want Internal", err)
 	}
+}
+
+// TestProbeResultsForAGoneTargetAreDroppedNotFatal: a target host deleted
+// between the assignment read and the store write (probes.ErrTargetGone)
+// drops the message, counting its results as unassigned, and never fails
+// the stream: the agent's next refresh no longer names the host.
+func TestProbeResultsForAGoneTargetAreDroppedNotFatal(t *testing.T) {
+	h := newHarnessWithProbes(t)
+	agentHost := uuid.New()
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA), tcpSlot(agentHost, targetB))
+	agent := agents.AgentIdentity{OrgID: testOrg, HostID: agentHost, Serial: "s1"}
+	msg := &agentpb.ProbeResults{Results: []*agentpb.ProbeResult{
+		probeValue(targetA, "web", "", "http.up", h.clock(), 1),
+		probeValue(targetB, "ssh", "", "tcp.up", h.clock(), 1),
+	}}
+	h.probes.recordErr = fmt.Errorf("record: %w", probes.ErrTargetGone)
+	res, err := h.svc.recordProbeResults(t.Context(), agent, msg)
+	if err != nil {
+		t.Fatalf("a gone target failed the message: %v", err)
+	}
+	if res.Accepted != 0 || res.Unassigned != 2 {
+		t.Fatalf("ingest = %+v, want both results dropped as unassigned", res)
+	}
+}
+
+// TestProbeResultsForAGoneTargetKeepTheStream: over the stream, the same
+// message is acknowledged.
+func TestProbeResultsForAGoneTargetKeepTheStream(t *testing.T) {
+	h, agentHost, stream := probeAgent(t)
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
+	h.probes.recordErr = probes.ErrTargetGone
+	sendAndAck(t, stream, probeResultsMsg(probeValue(targetA, "web", "", "http.up", h.clock(), 1)))
 }
 
 // TestProbeResultsAreStoredInOneCall: a message's kept results, across
