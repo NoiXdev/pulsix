@@ -15,6 +15,18 @@
 # (scripts/release-agent-assets.sh) comes from the workflow's own commit
 # (main), so tags cut before it existed can be backfilled. A published asset
 # is never replaced: identical bytes are skipped, different bytes fail the run.
+#
+# Recovery from "already on release ... with different bytes": when the
+# published asset is the broken one (a bad build, or an upload cut off
+# half-way), remove it with `gh release delete-asset <tag> <name>` and run
+# this again. When the published asset is sound and a rebuild of the tag
+# genuinely differs, the tag's inputs have changed: cut a new release
+# instead of replacing bytes others may already have verified.
+#
+# The assets go up after the release is published (the release job creates
+# and publishes it, this job runs afterwards). Enabling immutable releases
+# on the repository or the organization would therefore make every upload
+# here fail; that switch needs this job reworked first.
 name: release-agents
 run-name: Agent binaries for ${{ inputs.tag }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
@@ -73,11 +85,41 @@ jobs:
           fi
 
       # A live run builds the tag itself; a dry run has no tag, so it builds
-      # the commit the guard job checked.
+      # the commit the guard job checked. The tag goes in as refs/tags/...:
+      # a bare name loses to a branch of the same name, and the full ref is
+      # also what the provenance check below resolves. No credentials stay
+      # in .git/config while the tag's own scripts and go build run.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.dry_run && inputs.ref || inputs.tag }}
+          ref: ${{ inputs.dry_run && inputs.ref || format('refs/tags/{0}', inputs.tag) }}
           fetch-depth: 1
+          persist-credentials: false
+
+      # The build below must start from exactly the tag's commit (the
+      # guard's commit on a dry run) in a clean tree. The binaries cannot
+      # prove it themselves any more: they carry no VCS stamp (see the
+      # build step).
+      - name: The checkout must be the tag's commit, unmodified
+        env:
+          TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF: ${{ inputs.ref }}
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ "$DRY_RUN" = "true" ]; then
+            want="$REF"
+          else
+            want=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
+          fi
+          if [ -z "$want" ] || [ "$head" != "$want" ]; then
+            echo "::error::checked out $head, expected '$want'" >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::the checkout is not clean" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
 
       # The toolchain the manager image builds with, so the released binaries
       # come from the same Go as everything else in the release.
@@ -96,25 +138,35 @@ jobs:
           go-version: ${{ steps.go.outputs.version }}
           cache: false
 
+      # -buildvcs=false: the manager image builds from a context without
+      # .git/ (.dockerignore), so Go stamps no vcs.* build info into the
+      # agents it embeds. Built here in a git checkout, the stamp would make
+      # every binary, and its checksum, differ from what the manager serves.
+      # go build reads GOFLAGS itself, so this reaches the agent-binaries.sh
+      # of every tag, old ones included.
       - name: Build the agent binaries
         env:
           TAG: ${{ inputs.tag }}
+          GOFLAGS: -buildvcs=false
         run: scripts/agent-binaries.sh "$TAG"
 
-      # Proves what is about to be published came from this checkout. With
-      # -trimpath Go leaves -ldflags out of the build info, so the version
-      # stamp cannot be read back as main.version; the VCS stamp proves the
-      # source instead, and a plain search proves the version string landed.
-      # The search is not prefix-exact (Go packs string data), so rc.1 would
-      # also match inside rc.10; the checkout of the tag makes that moot.
+      # Proves the binaries were built the way the manager image builds its
+      # own: no VCS stamp, -trimpath, static, and the Go the Dockerfile
+      # names. With -trimpath Go leaves -ldflags out of the build info, so
+      # the version stamp cannot be read back as main.version; a plain
+      # search proves the version string landed. The search is not
+      # prefix-exact (Go packs string data), so rc.1 would also match inside
+      # rc.10; the provenance check above makes that moot.
       - name: Verify the binaries
         env:
           TAG: ${{ inputs.tag }}
+          GO_VERSION: ${{ steps.go.outputs.version }}
         run: |
           dist=internal/agentdist/dist
-          rev=$(git rev-parse HEAD)
           found=0
           for f in "$dist"/pulsix-agent-*; do
+            # An unmatched glob stays literal; the count below reports it.
+            [ -e "$f" ] || continue
             case "$f" in *.sha256) continue ;; esac
             found=$((found + 1))
             if [ ! -f "$f.sha256" ]; then
@@ -122,14 +174,20 @@ jobs:
               exit 1
             fi
             info=$(go version -m "$f")
-            if ! printf '%s\n' "$info" | grep -Fq "vcs.revision=$rev"; then
-              echo "::error::$f was not built from $rev" >&2
+            if [ "$(printf '%s\n' "$info" | head -n 1)" != "$f: go$GO_VERSION" ]; then
+              echo "::error::$f was not built with go$GO_VERSION" >&2
               exit 1
             fi
-            if ! printf '%s\n' "$info" | grep -Fq "vcs.modified=false"; then
-              echo "::error::$f was built from a modified tree" >&2
+            if printf '%s\n' "$info" | grep -Eq '^[[:space:]]+build[[:space:]]+vcs'; then
+              echo "::error::$f carries a VCS stamp the manager's copy lacks" >&2
               exit 1
             fi
+            for want in -trimpath=true CGO_ENABLED=0; do
+              if ! printf '%s\n' "$info" | grep -Eq "^[[:space:]]+build[[:space:]]+$want\$"; then
+                echo "::error::$f was not built with $want" >&2
+                exit 1
+              fi
+            done
             if ! grep -a -F -q -- "$TAG" "$f"; then
               echo "::error::$f does not carry the version $TAG" >&2
               exit 1
@@ -144,6 +202,39 @@ jobs:
             sha256sum -c "$s"
           done
 
+      # The docs promise these assets are identical to what the manager
+      # serves, so prove it against the published image before anything is
+      # attached: embed.FS stores files raw, so every binary and checksum
+      # must occur byte for byte inside the manager binary. The image name
+      # is fixed (vars.DOCKERHUB_IMAGE, see release.yml) and public, so no
+      # secret is needed; the shared release workflow tags images without
+      # the leading "v". Each platform's image cross-compiles the same dist
+      # (both matched by hand for v0.1.0-rc.3), so linux/amd64, the runner's
+      # own, is enough.
+      - name: The binaries must be the ones the manager image serves
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          image="docker.io/noixdev/pulsix-manager:${TAG#v}"
+          docker pull --platform linux/amd64 "$image"
+          id=$(docker create --platform linux/amd64 "$image")
+          docker cp "$id:/pulsix-manager" "$RUNNER_TEMP/pulsix-manager"
+          docker rm "$id" >/dev/null
+          cd internal/agentdist/dist
+          python3 -I -c '
+          import sys
+          with open(sys.argv[1], "rb") as f:
+              manager = f.read()
+          missing = 0
+          for name in sys.argv[2:]:
+              with open(name, "rb") as f:
+                  if manager.find(f.read()) == -1:
+                      print("::error::" + name + " differs from the copy the manager image embeds", file=sys.stderr)
+                      missing += 1
+          sys.exit(1 if missing else 0)
+          ' "$RUNNER_TEMP/pulsix-manager" pulsix-agent-*
+
       # The uploader comes from this workflow's own commit, not the tag:
       # tags cut before it existed do not contain it. Checked out after the
       # verify step so it cannot dirty the tree the binaries were built from.
@@ -152,6 +243,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: release-tools
+          persist-credentials: false
           sparse-checkout: scripts/release-agent-assets.sh
           sparse-checkout-cone-mode: false
 

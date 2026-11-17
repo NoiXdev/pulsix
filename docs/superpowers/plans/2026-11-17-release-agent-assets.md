@@ -24,7 +24,7 @@
 ## Review Focus
 
 - A re-run after a partial upload (binary uploaded, its `.sha256` not): must complete, not fail on the existing asset.
-- A tag with a prefix sibling (`v0.1.0-rc.1` vs `v0.1.0-rc.10`): the version self-check must match the whole tag, not a prefix. (As built: `-trimpath` drops `-ldflags` from the build info, so the check is `vcs.revision` = tag commit plus `vcs.modified=false`, and a whole-tag grep of the binary; not `main.version`.)
+- A tag with a prefix sibling (`v0.1.0-rc.1` vs `v0.1.0-rc.10`): the version self-check must match the whole tag, not a prefix. (As built: `-trimpath` drops `-ldflags` from the build info, so the check is a whole-tag grep of the binary, not `main.version`; the source is proven by a provenance check before the build, since the final review's fixes build with `-buildvcs=false` and the binaries carry no `vcs.*` stamp.)
 - An empty dist (the script found nothing, only `.placeholder`): must fail, not "upload nothing" green.
 - A tag that is not a release yet (dispatch with a typo, or a tag without a release): must fail before building.
 - A dist file name with a space or glob character must not reach `gh release download --pattern` unquoted; the script only accepts names matching `pulsix-agent-[a-z0-9]*-[a-z0-9]*` (with optional `.sha256`) and fails on anything else.
@@ -73,10 +73,10 @@
 
 - [ ] **Step 1: Write `release-agents.yml`** — `permissions: contents: read` at the top; one job `agents`, `ubuntu-latest`, `timeout-minutes: 30`, `permissions: contents: write`, steps:
   1. Validate the tag against the Global Constraints pattern; on dispatch also `gh release view "$TAG"` must succeed (`GH_REPO: ${{ github.repository }}`).
-  2. Checkout `ref: inputs.dry_run && inputs.ref || inputs.tag` — on a live run the tag, `fetch-depth: 1`.
+  2. Checkout `ref: inputs.dry_run && inputs.ref || inputs.tag` — on a live run the tag, `fetch-depth: 1`. *(As built after the final review: `refs/tags/<tag>` on live and backfill runs, so a same-named branch cannot win; `persist-credentials: false` on both checkouts; then a provenance step: `HEAD` equals `refs/tags/$TAG^{commit}` (dry run: `inputs.ref`) and `git status --porcelain` is empty.)*
   3. Go version: `sed -n 's/^FROM golang:\([0-9][0-9.]*\)-alpine.*/\1/p' deploy/docker/Dockerfile.manager | head -n 1`, empty fails; to `$GITHUB_OUTPUT`; `setup-go` with it (`cache: false` — no `go.sum` caching concerns on a release build).
-  4. `scripts/agent-binaries.sh "$TAG"`.
-  5. Self-check: for every non-`.sha256` file in `internal/agentdist/dist/pulsix-agent-*`, `go version -m` output contains `main.version=$TAG"` (closing quote included, so `rc.1` does not match `rc.10`); also `sha256sum -c` of each `.sha256` from inside the dist. *(As built: `go version -m` has no `main.version` under `-trimpath`; the check is `vcs.revision` = tag commit, `vcs.modified=false`, the tag string found in the binary, and `sha256sum -c`.)*
+  4. `scripts/agent-binaries.sh "$TAG"`. *(As built after the final review: with `GOFLAGS=-buildvcs=false`. The manager image builds from a context without `.git/`, so its embedded agents carry no VCS stamp; built in a git checkout, the released bytes and checksums would differ from what the manager serves.)*
+  5. Self-check: for every non-`.sha256` file in `internal/agentdist/dist/pulsix-agent-*`, `go version -m` output contains `main.version=$TAG"` (closing quote included, so `rc.1` does not match `rc.10`); also `sha256sum -c` of each `.sha256` from inside the dist. *(As built: `go version -m` has no `main.version` under `-trimpath`. After the final review the check per binary is: first line `go<ver>` from the Dockerfile, no `vcs` build line, `-trimpath=true` and `CGO_ENABLED=0`, the tag string found in the binary, a `.sha256` next to it, and `sha256sum -c`; an empty dist fails. On a non-dry run a further step pulls `docker.io/noixdev/pulsix-manager:<tag without v>` for linux/amd64, copies `/pulsix-manager` out and requires every dist file's bytes to occur in it (embed.FS stores files raw), so the assets are proven identical to what the manager serves.)*
   6. *(As built: the uploader comes from a second sparse checkout of the workflow's own commit, not the tag's checkout, so old tags can be backfilled.)* If not dry run: `scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist` with `GH_TOKEN`, `GH_REPO`.
   Header comment: what it does, why separate from the shared workflow (owner decision 2026-11-17, spec link), backfill usage.
 
