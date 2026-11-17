@@ -162,6 +162,8 @@ export const deRuns: Messages['runs'] = {
     cancelledHosts: 'Hosts des abgebrochenen Laufs',
     polling: '(Abfrage)',
     pollingTitle: 'Der Live-Stream hat Frames verloren; der Verlauf wird abgefragt',
+    follow: 'Mitscrollen',
+    followLabel: 'Protokoll mitscrollen',
   },
   requests: {
     title: 'Laufanfragen',

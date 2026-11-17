@@ -159,6 +159,8 @@ export const enRuns = {
     cancelledHosts: 'Cancelled run hosts',
     polling: '(polling)',
     pollingTitle: 'live stream dropped frames; polling the history',
+    follow: 'Follow',
+    followLabel: 'Follow the log',
   },
   /** Run requests: runs an assistant asked for, which a person approves
    * or rejects against what the page shows. */

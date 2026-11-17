@@ -7,6 +7,8 @@ import { useJob, useRunLog, isTerminal } from '../../api/hooks/useJobs.ts';
 import { may } from '../../lib/roles.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { EventLog } from './EventLog.tsx';
+import { useFollowLog } from './useFollowLog.ts';
+import { Switch } from '../../ui/switch.tsx';
 import { RunSidebar } from './RunSidebar.tsx';
 import { RunResultSection } from './RunResultSection.tsx';
 import { RunGroupSection } from './RunGroupSection.tsx';
@@ -42,6 +44,11 @@ export function RunDetailPage() {
   const log = useRunLog(org, id);
   const orgInfo = useOrg(org);
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
+  // Called before the guards below (a hook cannot follow an early return);
+  // until the run is known it counts as finished, so nothing scrolls.
+  const knownStatus = log.status ?? job.data?.job.status;
+  const live = knownStatus !== undefined && !isTerminal(knownStatus);
+  const { follow, setFollow, logRef } = useFollowLog({ live, count: log.events.length });
 
   const guard = useQueryGuard(job);
   if (guard) return guard;
@@ -75,18 +82,28 @@ export function RunDetailPage() {
         id="log"
         title={s.log}
         actions={
-          log.transport === 'poll' && (
-            <span className="text-[11px] text-muted-foreground" title={t.runs.detail.pollingTitle}>
-              {t.runs.detail.polling}
-            </span>
-          )
+          <span className="flex items-center gap-3">
+            {log.transport === 'poll' && (
+              <span className="text-[11px] text-muted-foreground" title={t.runs.detail.pollingTitle}>
+                {t.runs.detail.polling}
+              </span>
+            )}
+            {live && (
+              <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span aria-hidden="true">{t.runs.detail.follow}</span>
+                <Switch checked={follow} onCheckedChange={setFollow} aria-label={t.runs.detail.followLabel} />
+              </span>
+            )}
+          </span>
         }
       >
         {/* No height cap and no inner scroller: the log grows with the page,
             which is the one scroller (EventLog only scrolls long lines
-            sideways). */}
+            sideways). While the run is live it follows the newest event. */}
         <Card>
-          <EventLog events={log.events} />
+          <div ref={logRef}>
+            <EventLog events={log.events} />
+          </div>
         </Card>
       </Section>
     </DetailLayout>

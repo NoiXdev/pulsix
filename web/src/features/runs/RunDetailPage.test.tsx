@@ -171,6 +171,36 @@ describe('RunDetailPage', () => {
     expect(await screen.findByText('Cancellation requested')).toBeInTheDocument();
   });
 
+  it('offers a follow switch on the log of a live run, on by default and remembered', async () => {
+    localStorage.clear();
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ status: 'running' }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [event(1, 'task')] },
+    });
+    renderPage();
+    const toggle = await screen.findByRole('switch', { name: 'Follow the log' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(localStorage.getItem('pulsix.runLog.follow')).toBe('off');
+    localStorage.clear();
+  });
+
+  it('shows no follow switch on a finished run', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail().job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [event(1, 'task')] },
+    });
+    renderPage();
+    await screen.findByRole('list', { name: 'Run events' });
+    expect(screen.queryByRole('switch', { name: 'Follow the log' })).not.toBeInTheDocument();
+  });
+
   it('subscribes to the SSE stream, ends it on the terminal status frame', async () => {
     globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
     mockApi({
