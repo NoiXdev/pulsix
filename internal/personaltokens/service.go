@@ -34,10 +34,10 @@ var (
 	ErrSwitchedOff = errors.New("personal tokens are turned off for this organization")
 	// ErrLimit: the user already holds MaxTokensPerUser personal tokens.
 	ErrLimit = fmt.Errorf("a user holds at most %d personal tokens", MaxTokensPerUser)
-	// ErrBlocked: an organization admin revoked a grant of the user there;
+	// ErrBlocked: an organization admin revoked the user's access there;
 	// the block is per person and organization and sticks, for every token
 	// of theirs, until an admin lifts it.
-	ErrBlocked = errors.New("an organization admin revoked this token's grant there")
+	ErrBlocked = errors.New("an organization admin revoked this person's access there")
 	// ErrAboveRole: a grant's cap is above the user's role in the
 	// organization. It is refused, never silently lowered.
 	ErrAboveRole = errors.New("the role cap is above your role in the organization")

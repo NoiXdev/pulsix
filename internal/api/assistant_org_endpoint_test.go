@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -180,6 +181,38 @@ func TestAssistantPersonalTokenOrganizationSwitches(t *testing.T) {
 	}
 	wantMCP(t, f.s, "/api/mcp/o/asst-sw-a", tok, http.StatusForbidden, "personal tokens are turned off for this organization")
 	wantMCP(t, f.s, "/api/mcp/o/asst-sw-b", tok, http.StatusOK, "")
+}
+
+// TestAssistantPersonalTokenOpenSessionFollowsSwitches: a session connected
+// while both switches are on is refused (403) on its next call once either is
+// turned off, not only at the next connect. A refusal ends the client's
+// session, so each switch gets its own.
+func TestAssistantPersonalTokenOpenSessionFollowsSwitches(t *testing.T) {
+	f := newPersonalFixture(t, "asst-open")
+	a := f.org(t, "asst-open-a", tenancy.RoleOperator)
+	f.s.SetAssistantEnabled(t, a, true)
+	_, tok := f.s.PersonalToken(t, f.user, map[uuid.UUID]tenancy.Role{a: tenancy.RoleOperator}, jobAreas...)
+
+	for name, off := range map[string]func(){
+		"assistant switch": func() { f.s.SetAssistantEnabled(t, a, false) },
+		"personal token switch": func() {
+			if err := f.s.PersonalTokens.SetAllowed(db.WithOrgScope(context.Background(), a), a, false); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		cs := mcpConnect(t, f.s, "/api/mcp/o/asst-open-a", tok)
+		mcpCallOK(t, cs, "list_jobs")
+		off()
+		_, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "list_jobs", Arguments: map[string]any{}})
+		if err == nil || !strings.Contains(err.Error(), "Forbidden") {
+			t.Fatalf("%s: call on the open session: %v", name, err)
+		}
+		f.s.SetAssistantEnabled(t, a, true)
+		if err := f.s.PersonalTokens.SetAllowed(db.WithOrgScope(context.Background(), a), a, true); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestAssistantPersonalTokenFollowsMembership(t *testing.T) {
