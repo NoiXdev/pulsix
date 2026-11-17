@@ -415,6 +415,11 @@ func runGitUploadPack(sess glssh.Session, bare string) {
 // (automation_test.go) uses to keep a job's RunEvents stream open and
 // claimed while it revokes the worker mid-run.
 //
+// An extra var named copy_key_to, when set, names a file the fake copies
+// the run's SSH private key (ansible_ssh_private_key_file) into before
+// anything else, so the assistant suite (assistant_runs_test.go) can sweep
+// tool outputs for the key the run actually logged in with.
+//
 // Before emitting anything it opens ONE real SSH connection to the run's
 // host the way ansible's ssh connection plugin does — ANSIBLE_SSH_ARGS
 // first, then port, identity file and user, then the host's
@@ -465,6 +470,13 @@ cmd += ["-o", "ConnectTimeout=10"]
 cmd += shlex.split(effective("ansible_ssh_common_args"))
 cmd += shlex.split(effective("ansible_ssh_extra_args"))
 cmd += [hv.get("ansible_host", host), "true"]
+
+# copy_key_to (assistant_runs_test.go): a copy of the SSH key the run
+# logs in with, so a test can look for that key in what it reads back.
+copy_key_to = extravars.get("copy_key_to")
+if copy_key_to and "ansible_ssh_private_key_file" in hv:
+    with open(hv["ansible_ssh_private_key_file"]) as src, open(copy_key_to, "w") as dst:
+        dst.write(src.read())
 
 emit("playbook_on_start", {}, "PLAY [all]")
 

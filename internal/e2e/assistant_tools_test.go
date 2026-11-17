@@ -5,21 +5,14 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// refusedHere are the tools the every_tool phase calls where they must be
-// refused, because their successful call needs a run of the token's own
-// approved request: the run_request phase makes those calls and asserts
-// that they succeed.
-var refusedHere = map[string]string{
-	"request_retry": "the connection test job is no failed run; run_request retries a failed run of the token's own request",
-	"cancel_job":    "the connection test job was not started by a request of the token; run_request cancels a job of its own request",
-}
 
 type idOut struct {
 	ID string `json:"id"`
@@ -33,22 +26,18 @@ func (a *assistantSuite) everyTool() {
 	a.repoAndTemplateWrites(cs)
 	a.alertWrites(cs)
 
-	// --- Job tools: a pending request; the refusals of refusedHere ---------
-	var req struct {
-		RequestID   string `json:"request_id"`
-		ApprovalURL string `json:"approval_url"`
-	}
+	// --- Job tools: a pending request and two refusals --------------------
+	// request_retry and cancel_job succeed only on a run of the token's own
+	// approved request, which the run_request phase makes and asserts.
+	// Here they are called where they must be refused.
+	var req requestedRun
 	a.recordOK(cs, "request_run", map[string]any{"template_id": a.seeded.templateA, "reason": "e2e every tool"}, &req)
 	ids["request_id"] = req.RequestID
-	for name := range refusedHere {
-		args := map[string]any{"job_id": ids["job_id"]}
-		if name == "request_retry" {
-			args["reason"] = "e2e every tool"
-		}
-		if text, isErr := a.record(cs, name, args); !isErr {
-			s.t.Errorf("%s on a job outside the token's requests succeeded: %s", name, text)
-		}
+	text, isErr := a.record(cs, "request_retry", map[string]any{"job_id": ids["job_id"], "reason": "e2e every tool"})
+	if want := retryOfNoRunRefusal; !isErr || !strings.Contains(text, want) {
+		s.t.Errorf("request_retry of the connection test job = %v %s, want refused with %q", isErr, text, want)
 	}
+	a.cancelOfOthersRunRefused(cs)
 
 	// --- Every other tool: the reads --------------------------------------
 	var rules struct {
@@ -63,6 +52,39 @@ func (a *assistantSuite) everyTool() {
 
 	if got, want := sortedCopy(keys(a.called)), sortedCopy(a.allTools); !slices.Equal(got, want) {
 		s.t.Fatalf("called tools differ from the all-areas list\nnot called: %v\nnot listed: %v", minus(want, got), minus(got, want))
+	}
+}
+
+// The refusals of request_retry for a job that is no playbook run, and of
+// cancel_job for a run the token did not request: without jobs.run (in no
+// area) only the token's own requests' runs may be cancelled.
+const (
+	retryOfNoRunRefusal   = "only run jobs can be retried"
+	cancelOfOthersRefusal = "the token's areas do not include jobs.run"
+)
+
+// cancelOfOthersRunRefused starts a blocking run in the owner's session,
+// has the token's cancel_job on it refused, and cancels it as the owner.
+func (a *assistantSuite) cancelOfOthersRunRefused(cs *sdk.ClientSession) {
+	s := a.s
+	s.t.Helper()
+	release := filepath.Join(s.t.TempDir(), "release")
+	s.t.Cleanup(func() { _ = os.WriteFile(release, nil, 0o600) })
+	tid := s.createTemplate("asst-owner-block", a.seeded.playbookA, map[string]any{"greeting": s.greeting, "block_until": release})
+	job := s.runTemplate(tid)
+	s.awaitJobRunning(job, chainWait)
+	text, isErr := a.record(cs, "cancel_job", map[string]any{"job_id": job})
+	if !isErr || !strings.Contains(text, cancelOfOthersRefusal) {
+		s.t.Errorf("cancel_job of the owner's running job = %v %s, want refused with %q", isErr, text, cancelOfOthersRefusal)
+	}
+	var running jobDetailOut
+	s.get("/api/v1/"+s.apiPath()+"/jobs/"+job, &running)
+	if running.Job.Status != "running" {
+		s.t.Errorf("the owner's job after the refused cancel_job = %q, want still running", running.Job.Status)
+	}
+	s.post("/api/v1/"+s.apiPath()+"/jobs/"+job+"/cancel", struct{}{}, nil)
+	if done := s.awaitJob(job, "owner's blocking run", chainWait); done.Job.Status != "cancelled" {
+		s.t.Fatalf("the owner's blocking run after its cancel = %q, want cancelled", done.Job.Status)
 	}
 }
 
@@ -285,17 +307,18 @@ func (a *assistantSuite) alertWrites(cs *sdk.ClientSession) {
 
 // reads calls every listed tool not called yet, with the arguments its
 // schema declares from ids (or an explicit set), and checks that each one
-// shows the seeded object named in readShows.
+// shows what its row in shows names; a tool without a row fails.
 func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 	s := a.s
 	s.t.Helper()
 	now := time.Now().UTC()
 	// The tools whose arguments are not just the ids their schema declares
-	// (list_jobs would filter by template A, which has not run yet).
+	// (list_jobs would filter by template A, hiding the connection test job
+	// its row looks for).
 	explicit := map[string]map[string]any{
 		"get_calendar":      {"from": now.Format(time.RFC3339), "to": now.Add(48 * time.Hour).Format(time.RFC3339)},
-		"list_activity":     {"limit": 100},
-		"get_host_metrics":  {"host_id": s.hostID, "check": "cpu", "metric": "usage_percent", "range": "1h"},
+		"list_activity":     {"object_type": "org_settings"},
+		"get_host_metrics":  {"host_id": s.hostID, "check": "cpu", "metric": cpuMetric, "range": "1h"},
 		"preview_inventory": {},
 		"list_jobs":         {},
 	}
@@ -304,7 +327,7 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 		"get_group": {"asst_secrets", "db_password"}, "preview_inventory": {hostName}, "list_zones": {s.zoneID},
 		"get_connection_test": {"host_key"}, "list_repos": {"e2e-asst-repo"}, "get_repo": {s.repoID}, "list_repo_files": {"hello.yml"},
 		"list_playbooks": {a.seeded.playbookA, "hello.yml"}, "get_playbook": {a.seeded.playbookA, "Pulsix greeting"}, "list_job_templates": {"asst-a", "asst-b", "e2e-asst-created"},
-		"get_job_template": {"asst-a", a.seeded.templateB}, "list_schedules": {"asst-yearly"}, "get_schedule": {"asst-yearly"},
+		"get_job_template": {"asst-a", a.seeded.templateB}, "list_schedules": {"asst-yearly"}, "get_schedule": {"asst-yearly", `"paused":true`},
 		"get_calendar": {a.seeded.windowID}, "list_credentials": {"asst-imported", "asst-vault", "host-login"},
 		"list_jobs": {ids["job_id"].(string)}, "get_job": {ids["job_id"].(string)}, "list_run_requests": {ids["request_id"].(string)},
 		"get_run_request": {ids["request_id"].(string)}, "list_agents": {"asst-agent"}, "get_host_agent": {"asst-agent"},
@@ -312,6 +335,8 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 		"list_monitoring_groups": {"asst-tier"}, "get_monitoring_group": {"asst-tier"}, "get_alert_rule": {ids["rule_id"].(string)},
 		"list_alerts": {a.seeded.alertID}, "get_alert": {a.seeded.alertID, "acknowledged", "snoozed"},
 		"list_maintenance_windows": {"asst window"}, "get_maintenance_window": {"asst window"}, "list_activity": {"turned assistant access on"},
+		"get_host_metrics": {"12.5"}, "get_host_effective_rules": {"asst-host-cpu"}, "list_schedule_runs": {a.seeded.scheduledGroup},
+		"get_job_log": {"connection_test"},
 	}
 	props := a.toolProperties(cs)
 	for _, name := range a.allTools {
@@ -332,7 +357,11 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 			s.t.Errorf("%s(%v) failed: %s", name, args, text)
 			continue
 		}
-		for _, want := range shows[name] {
+		wants, ok := shows[name]
+		if !ok {
+			s.t.Errorf("%s has no content check in shows:\n%s", name, text)
+		}
+		for _, want := range wants {
 			if !strings.Contains(text, want) {
 				s.t.Errorf("%s output does not show %q:\n%s", name, want, text)
 			}

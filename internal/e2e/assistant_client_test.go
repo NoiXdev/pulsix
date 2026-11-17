@@ -166,11 +166,14 @@ func rawRequest(client *http.Client, method, url string, header http.Header, bod
 	return resp.StatusCode, resp.Header, raw, err
 }
 
+// bearerClient sends the suite's bearer requests (no cookie jar).
+var bearerClient = &http.Client{Timeout: 30 * time.Second}
+
 // bearer sends one request with token as bearer (no session cookie) and
 // returns its status and body.
 func (s *scenario) bearer(method, path, token string, body any) (int, string) {
 	s.t.Helper()
-	status, _, raw, err := rawRequest(http.DefaultClient, method, s.api.base+path,
+	status, _, raw, err := rawRequest(bearerClient, method, s.api.base+path,
 		http.Header{"Authorization": {"Bearer " + token}}, body)
 	if err != nil {
 		s.t.Fatalf("%s %s: %v", method, path, err)

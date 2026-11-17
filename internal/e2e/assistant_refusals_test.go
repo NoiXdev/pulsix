@@ -4,6 +4,7 @@
 package e2e
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,33 +19,66 @@ var initializeBody = map[string]any{
 	"params": map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "e2e", "version": "1"}},
 }
 
+// The endpoint's and the REST layer's refusal reasons (internal/mcp/
+// server.go, internal/mcp/secrets.go, internal/api/authz.go), and the MCP
+// SDK's refusal of a tool the token's areas did not register.
+const (
+	needsAssistantToken = "this endpoint needs an assistant token"
+	switchedOff         = "assistant access is turned off for this organization"
+	tokenRequired       = "an assistant token is required"
+	secretsByAPerson    = "secrets are set by a person in Pulsix"
+	onlyAtEndpoint      = "assistant tokens work only at the assistant endpoint"
+)
+
+func unknownTool(name string) string { return `unknown tool "` + name + `"` }
+
+// mcpInitialize posts a raw initialize to /api/mcp with token as bearer
+// and returns the status and body.
+func (s *scenario) mcpInitialize(token string) (int, string) {
+	s.t.Helper()
+	status, _, raw, err := rawRequest(bearerClient, http.MethodPost, s.api.base+"/api/mcp", http.Header{
+		"Authorization": {"Bearer " + token}, "Accept": {"application/json, text/event-stream"},
+	}, initializeBody)
+	if err != nil {
+		s.t.Fatalf("POST /api/mcp: %v", err)
+	}
+	return status, string(raw)
+}
+
+// expectRefusal checks a raw response for the status and reason.
+func (s *scenario) expectRefusal(what string, status int, body string, wantStatus int, reason string) {
+	s.t.Helper()
+	if status != wantStatus || !strings.Contains(body, reason) {
+		s.t.Errorf("%s = %d %s, want %d with %q", what, status, body, wantStatus, reason)
+	}
+}
+
+// expectToolRefusal checks a tool call's result for an error with reason.
+func (s *scenario) expectToolRefusal(what, text string, isErr bool, reason string) {
+	s.t.Helper()
+	if !isErr || !strings.Contains(text, reason) {
+		s.t.Errorf("%s = error %v %s, want refused with %q", what, isErr, text, reason)
+	}
+}
+
 func (a *assistantSuite) refusals() {
 	s := a.s
 	s.t.Helper()
 	prefix := "/api/v1/" + s.apiPath()
 
 	// --- An assistant token on a REST route -------------------------------
-	if status, body := s.bearer(http.MethodGet, prefix+"/hosts", a.allToken, nil); status != http.StatusForbidden {
-		s.t.Errorf("assistant token on GET hosts = %d %s, want 403", status, body)
-	}
+	status, body := s.bearer(http.MethodGet, prefix+"/hosts", a.allToken, nil)
+	s.expectRefusal("assistant token on GET hosts", status, body, http.StatusForbidden, onlyAtEndpoint)
 
 	// --- An api token at the assistant endpoint ---------------------------
 	apiTok := s.createToken(map[string]any{"name": "asst-plain-api", "role": "owner"})
-	if status, body := s.bearer(http.MethodPost, "/api/mcp", apiTok.Token, initializeBody); status != http.StatusForbidden {
-		s.t.Errorf("api token at /api/mcp = %d %s, want 403", status, body)
-	}
-	if _, err := a.connect(apiTok.Token); err == nil {
-		s.t.Error("an api token connected to /api/mcp")
-	}
+	status, body = s.mcpInitialize(apiTok.Token)
+	s.expectRefusal("api token at /api/mcp", status, body, http.StatusForbidden, needsAssistantToken)
 
 	// --- The switch off, then on again ------------------------------------
 	s.setAssistantAccess(false)
-	if status, body := s.bearer(http.MethodPost, "/api/mcp", a.allToken, initializeBody); status != http.StatusForbidden {
-		s.t.Errorf("assistant token with the switch off = %d %s, want 403", status, body)
-	}
-	if _, err := a.connect(a.allToken); err == nil {
-		s.t.Error("an assistant token connected with the switch off")
-	}
+	status, body = s.mcpInitialize(a.allToken)
+	s.expectRefusal("assistant token with the switch off", status, body, http.StatusForbidden, switchedOff)
 	s.setAssistantAccess(true)
 	cs := a.mustConnect(a.allToken)
 	if len(a.listTools(cs)) != len(a.allTools) {
@@ -55,30 +89,31 @@ func (a *assistantSuite) refusals() {
 	revoked := s.createAssistantToken("asst-revoked", tenancy.AreaInventoryRead)
 	_ = a.mustConnect(revoked.Token)
 	s.api.do(http.MethodDelete, prefix+"/tokens/"+revoked.ID, nil, nil)
-	if _, err := a.connect(revoked.Token); err == nil {
-		s.t.Error("a revoked token connected")
-	}
+	status, body = s.mcpInitialize(revoked.Token)
+	s.expectRefusal("revoked token at /api/mcp", status, body, http.StatusUnauthorized, tokenRequired)
 
-	// --- An expired token -------------------------------------------------
-	expiry := time.Now().Add(2 * time.Second)
+	// --- An expired token: in before its expiry, refused after ------------
+	expiry := time.Now().Add(4 * time.Second)
 	expiring := s.createToken(map[string]any{
 		"name": "asst-expiring", "role": "owner", "kind": "assistant",
 		"areas": []string{string(tenancy.AreaInventoryRead)}, "expires_at": expiry.Format(time.RFC3339Nano),
 	})
-	if c, err := a.connect(expiring.Token); err == nil {
-		_ = c.Close()
-	} else if time.Now().Before(expiry) {
-		s.t.Errorf("the expiring token was refused before its expiry: %v", err)
+	status, body = s.mcpInitialize(expiring.Token)
+	if !time.Now().Before(expiry) {
+		s.t.Fatalf("creating the expiring token took past its expiry (%s): the before-expiry check could not run", expiry.Format(time.RFC3339Nano))
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	if status != http.StatusOK {
+		s.t.Errorf("the expiring token before its expiry = %d %s, want 200", status, body)
+	}
+	deadline := time.Now().Add(15 * time.Second)
 	for {
-		c, err := a.connect(expiring.Token)
-		if err != nil {
+		status, body = s.mcpInitialize(expiring.Token)
+		if status == http.StatusUnauthorized && strings.Contains(body, tokenRequired) {
 			break
 		}
-		_ = c.Close()
 		if time.Now().After(deadline) {
-			s.t.Fatalf("the token expiring at %s still connects at %s", expiry.Format(time.RFC3339Nano), time.Now().Format(time.RFC3339Nano))
+			s.t.Fatalf("the token expiring at %s, at %s = %d %s, want 401 with %q",
+				expiry.Format(time.RFC3339Nano), time.Now().Format(time.RFC3339Nano), status, body, tokenRequired)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -89,9 +124,8 @@ func (a *assistantSuite) refusals() {
 	if slices.Contains(a.listTools(rcs), "create_group") {
 		s.t.Error("an inventory.read token lists create_group")
 	}
-	if text, isErr := a.call(rcs, "create_group", map[string]any{"name": "asst_refused"}); !isErr {
-		s.t.Errorf("create_group with an inventory.read token succeeded: %s", text)
-	}
+	text, isErr := a.call(rcs, "create_group", map[string]any{"name": "asst_refused"})
+	s.expectToolRefusal("create_group with an inventory.read token", text, isErr, unknownTool("create_group"))
 	var groups struct {
 		Groups []struct {
 			Name string `json:"name"`
@@ -108,9 +142,8 @@ func (a *assistantSuite) refusals() {
 	// ({"$secret":"set"}, the read-back form, counts as keep by design.)
 	for _, v := range []any{"e2e-asst-plain-value", map[string]any{"$secret": "e2e-asst-plain-value"}} {
 		args := map[string]any{"group_id": a.seeded.secretGroupID, "vars": map[string]any{"db_password": v}}
-		if text, isErr := a.call(cs, "set_group_vars", args); !isErr {
-			s.t.Errorf("set_group_vars with db_password %v succeeded: %s", v, text)
-		}
+		text, isErr := a.call(cs, "set_group_vars", args)
+		s.expectToolRefusal(fmt.Sprintf("set_group_vars with db_password %v", v), text, isErr, secretsByAPerson)
 	}
 }
 
@@ -121,9 +154,13 @@ func (a *assistantSuite) secrets() {
 	s := a.s
 	s.t.Helper()
 	markers := a.secretMarkers()
-	if len(a.seeded.pemBody) == 0 {
-		s.t.Fatal("the imported key has no PEM body to look for")
+	if len(a.seeded.pemBody) == 0 || len(a.seeded.usedKeyBody) == 0 {
+		s.t.Fatal("the imported key or the key the runs use has no PEM body to look for")
 	}
+	// The secrets' holders by name or reference: the outputs reached them.
+	// host-login is the credential the runs and connection tests log in
+	// to the fixture host with, the key usedKeyBody is.
+	holders := []string{`"db_password":{"$secret":"set"}`, `"member_token":{"$secret":"set"}`, "asst-api", "asst-imported", "asst-vault", "host-login"}
 	reached := map[string]bool{}
 	for _, o := range a.outputs {
 		for _, m := range markers {
@@ -131,13 +168,16 @@ func (a *assistantSuite) secrets() {
 				s.t.Errorf("%s output contains the secret %q:\n%s", o.tool, m, o.text)
 			}
 		}
-		for _, ref := range []string{`"db_password":{"$secret":"set"}`, "asst-api", "asst-imported", "asst-vault"} {
-			if strings.Contains(o.text, ref) {
+		// Some tools indent their JSON; the holders are matched without
+		// whitespace.
+		compact := strings.Join(strings.Fields(o.text), "")
+		for _, ref := range holders {
+			if strings.Contains(compact, ref) {
 				reached[ref] = true
 			}
 		}
 	}
-	for _, ref := range []string{`"db_password":{"$secret":"set"}`, "asst-api", "asst-imported", "asst-vault"} {
+	for _, ref := range holders {
 		if !reached[ref] {
 			s.t.Errorf("no tool output shows %s: the sweep did not reach that secret's holder", ref)
 		}
@@ -164,9 +204,8 @@ func (a *assistantSuite) edit() {
 
 	// --- Dropping alerts.handle refuses its tool on the open session ------
 	patch(tenancy.AreaMonitoringRead)
-	if text, isErr := a.call(cs, "acknowledge_alert", map[string]any{"alert_id": a.seeded.alertID, "note": "after the edit"}); !isErr {
-		s.t.Errorf("acknowledge_alert after alerts.handle was dropped succeeded: %s", text)
-	}
+	text, isErr := a.call(cs, "acknowledge_alert", map[string]any{"alert_id": a.seeded.alertID, "note": "after the edit"})
+	s.expectToolRefusal("acknowledge_alert after alerts.handle was dropped", text, isErr, unknownTool("acknowledge_alert"))
 	var alert struct {
 		Alert struct {
 			AckAt *time.Time `json:"ack_at"`
@@ -188,9 +227,8 @@ func (a *assistantSuite) edit() {
 	}
 
 	// --- The token cannot edit itself -------------------------------------
-	if status, body := s.bearer(http.MethodPatch, prefix+"/tokens/"+tok.ID, tok.Token, map[string]any{"name": "asst-edit-self"}); status != http.StatusForbidden {
-		s.t.Errorf("PATCH with the assistant token itself = %d %s, want 403", status, body)
-	}
+	status, body := s.bearer(http.MethodPatch, prefix+"/tokens/"+tok.ID, tok.Token, map[string]any{"name": "asst-edit-self"})
+	s.expectRefusal("PATCH with the assistant token itself", status, body, http.StatusForbidden, onlyAtEndpoint)
 
 	// --- The activity log holds both edits with old and new areas ---------
 	var act struct {

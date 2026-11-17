@@ -1,5 +1,6 @@
 // Phase 4 of the assistant suite: a run request through its approval to the
-// run and its follow-up, then the two job tools that act on a run of the
+// run and its follow-up (A's run also hands the secret sweep a copy of the
+// SSH key it logged in with), then the two job tools that act on a run of the
 // token's own request — a retry request of a failed one and the cancel of
 // a running one.
 package e2e
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -36,14 +38,19 @@ func (a *assistantSuite) runRequest() {
 	if done := s.awaitJob(aJob, "approved run", chainWait); done.Job.Status != "succeeded" {
 		s.t.Fatalf("approved run = %q (error %q), want succeeded%s", done.Job.Status, done.Job.Error, s.runnerOutput())
 	}
-	child := s.awaitChainJob(chainWait)
-	if child.TriggerRef != group {
-		s.t.Fatalf("follow-up trigger_ref = %q, want the approved run's group %q", child.TriggerRef, group)
+	// The key the run logged in with, for the secret sweep.
+	used, err := os.ReadFile(a.seeded.usedKeyPath)
+	if err != nil {
+		s.t.Fatalf("the run left no copy of its SSH key: %v%s", err, s.runnerOutput())
 	}
-	if done := s.awaitJob(child.ID, "follow-up", chainWait); done.Job.Status != "succeeded" || done.Job.Template == nil || done.Job.Template.Name != "asst-b" {
+	if a.seeded.usedKeyBody = pemBodyLines(string(used)); len(a.seeded.usedKeyBody) == 0 {
+		s.t.Fatalf("the run's SSH key copy has no PEM body:\n%s", used)
+	}
+	child := s.awaitFollowUpOf(group)
+	if done := s.awaitJob(child, "follow-up", chainWait); done.Job.Status != "succeeded" || done.Job.Template == nil || done.Job.Template.Name != "asst-b" {
 		s.t.Fatalf("follow-up = %+v, want a succeeded run of asst-b%s", done.Job, s.runnerOutput())
 	}
-	for _, id := range []string{aJob, child.ID} {
+	for _, id := range []string{aJob, child} {
 		var log struct {
 			Log string `json:"log"`
 		}
@@ -118,6 +125,26 @@ func (s *scenario) approveRunRequest(id string) string {
 		s.t.Fatalf("approve %s = %+v, want approved with a run group", id, out.Request)
 	}
 	return out.Request.RunGroupID
+}
+
+// awaitFollowUpOf polls until the follow-up starter started a run for the
+// run group and returns its job.
+func (s *scenario) awaitFollowUpOf(group string) string {
+	s.t.Helper()
+	deadline := time.Now().Add(chainWait)
+	for {
+		var out struct {
+			Jobs []idOut `json:"jobs"`
+		}
+		s.get("/api/v1/"+s.apiPath()+"/jobs?trigger=chain&trigger_ref="+group, &out)
+		if len(out.Jobs) > 0 {
+			return out.Jobs[0].ID
+		}
+		if time.Now().After(deadline) {
+			s.t.Fatalf("no follow-up of run group %s started in %s", group, chainWait)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // firstJobOf returns the one job of a run group.
