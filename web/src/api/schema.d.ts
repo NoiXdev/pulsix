@@ -11902,7 +11902,7 @@ export interface operations {
                 q?: string;
                 active_runs?: "true" | "false";
                 cursor?: string;
-                /** @description Page number; when set the list is offset-paged and answers total */
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
                 page?: number;
                 /** @description Rows per page (default 25); page mode only */
                 per_page?: 10 | 25 | 50 | 100;

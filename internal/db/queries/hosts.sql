@@ -101,6 +101,15 @@ DELETE FROM hosts WHERE id = $1 AND org_id = $2;
 -- "(name, id) > (cursor_name, cursor_id)" is the ascending-order mirror of
 -- ListAuditEventsForOrg's "(at, id) < (cursor_at, cursor_id)": it resumes
 -- strictly after the last row of the previous page.
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = sqlc.arg(org_id)
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.* FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
@@ -115,11 +124,7 @@ WHERE h.org_id = sqlc.arg(org_id)
     sqlc.narg(cursor_name)::text IS NULL
     OR (h.name, h.id) > (sqlc.narg(cursor_name)::text, sqlc.narg(cursor_id)::uuid)
   )
-  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ))
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
 LIMIT sqlc.arg(row_limit);
 
@@ -170,6 +175,15 @@ ORDER BY o.slug;
 -- order the (org_id, name) unique index serves, so it stays an index scan.
 -- The filters are ListHosts' own, plus active_runs: true keeps hosts with a
 -- live run, false those without, NULL both.
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = sqlc.arg(org_id)
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.* FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
@@ -180,11 +194,7 @@ WHERE h.org_id = sqlc.arg(org_id)
     OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
     OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
   )
-  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ))
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
 OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
 
@@ -192,15 +202,19 @@ OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
 -- Every other key and direction (backlog 3.97). The sort key is whitelisted
 -- by the caller; each CASE is NULL on every row unless its key is chosen, so
 -- the others drop out. last_seen puts never-seen hosts last in both
--- directions (NULLS LAST), active_runs counts live runs through a lateral
--- subquery, and a tie falls back to name then id so pages are disjoint.
+-- directions (NULLS LAST), active_runs reads the live-run counts of the CTE, and a tie falls back to name then id so pages are disjoint.
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = sqlc.arg(org_id)
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.* FROM hosts h
 JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
-LEFT JOIN LATERAL (
-  SELECT count(*) AS n FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-  WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-) ar ON true
+LEFT JOIN live ON live.host_id = h.id
 WHERE h.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
@@ -210,7 +224,7 @@ WHERE h.org_id = sqlc.arg(org_id)
     OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
     OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
   )
-  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (ar.n > 0))
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (COALESCE(live.n, 0) > 0))
 ORDER BY
   (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND NOT sqlc.arg(sort_desc)::boolean THEN h.name END) ASC,
   (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND sqlc.arg(sort_desc)::boolean THEN h.name END) DESC,
@@ -222,13 +236,22 @@ ORDER BY
   (CASE WHEN sqlc.arg(sort_key)::text = 'monitored' AND sqlc.arg(sort_desc)::boolean THEN h.monitored::int END) DESC,
   (CASE WHEN sqlc.arg(sort_key)::text = 'last_seen' AND NOT sqlc.arg(sort_desc)::boolean THEN h.last_seen_at END) ASC NULLS LAST,
   (CASE WHEN sqlc.arg(sort_key)::text = 'last_seen' AND sqlc.arg(sort_desc)::boolean THEN h.last_seen_at END) DESC NULLS LAST,
-  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND NOT sqlc.arg(sort_desc)::boolean THEN ar.n END) ASC,
-  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND sqlc.arg(sort_desc)::boolean THEN ar.n END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND NOT sqlc.arg(sort_desc)::boolean THEN COALESCE(live.n, 0) END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND sqlc.arg(sort_desc)::boolean THEN COALESCE(live.n, 0) END) DESC,
   h.name ASC, h.id ASC
 OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
 
 -- name: CountHosts :one
 -- ListHostsPage's filters, counted: the total of a paged answer.
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = sqlc.arg(org_id)
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT count(*) FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
@@ -239,17 +262,18 @@ WHERE h.org_id = sqlc.arg(org_id)
     OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
     OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
   )
-  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ));
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (h.id IN (SELECT host_id FROM live)));
 
 -- name: ActiveRunsForHosts :many
 -- Live runs (queued, claimed, running, cancelling) per named host; a host
--- with none is absent. Served by job_hosts_host_idx and jobs_live_idx.
-SELECT jh.host_id, count(*)::int AS runs
-FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-WHERE jh.org_id = sqlc.arg(org_id) AND jh.host_id = ANY(sqlc.arg(ids)::uuid[])
-  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-GROUP BY jh.host_id;
+-- with none is absent. Served by jobs_live_idx.
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = sqlc.arg(org_id)
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
+SELECT host_id, n::int AS runs FROM live WHERE host_id = ANY(sqlc.arg(ids)::uuid[]);

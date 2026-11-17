@@ -12,7 +12,7 @@ import (
 // is exported on purpose: huma skips embedded fields of an unexported type, so
 // an embedded pageQuery would silently drop page, per_page and order.
 type PageQuery struct {
-	Page    int    `query:"page" minimum:"1" doc:"Page number; when set the list is offset-paged and answers total"`
+	Page    int    `query:"page" minimum:"1" maximum:"1000000" doc:"Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total"`
 	PerPage int    `query:"per_page" enum:"10,25,50,100" doc:"Rows per page (default 25); page mode only"`
 	Order   string `query:"order" enum:"asc,desc" doc:"Sort direction; page mode only"`
 }

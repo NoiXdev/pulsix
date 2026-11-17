@@ -13,16 +13,21 @@ import (
 )
 
 const activeRunsForHosts = `-- name: ActiveRunsForHosts :many
-SELECT jh.host_id, count(*)::int AS runs
-FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-WHERE jh.org_id = $1 AND jh.host_id = ANY($2::uuid[])
-  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-GROUP BY jh.host_id
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = $2
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
+SELECT host_id, n::int AS runs FROM live WHERE host_id = ANY($1::uuid[])
 `
 
 type ActiveRunsForHostsParams struct {
-	OrgID uuid.UUID   `json:"org_id"`
 	Ids   []uuid.UUID `json:"ids"`
+	OrgID uuid.UUID   `json:"org_id"`
 }
 
 type ActiveRunsForHostsRow struct {
@@ -31,9 +36,9 @@ type ActiveRunsForHostsRow struct {
 }
 
 // Live runs (queued, claimed, running, cancelling) per named host; a host
-// with none is absent. Served by job_hosts_host_idx and jobs_live_idx.
+// with none is absent. Served by jobs_live_idx.
 func (q *Queries) ActiveRunsForHosts(ctx context.Context, arg ActiveRunsForHostsParams) ([]ActiveRunsForHostsRow, error) {
-	rows, err := q.db.Query(ctx, activeRunsForHosts, arg.OrgID, arg.Ids)
+	rows, err := q.db.Query(ctx, activeRunsForHosts, arg.Ids, arg.OrgID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +85,15 @@ func (q *Queries) BumpHostRevision(ctx context.Context, arg BumpHostRevisionPara
 }
 
 const countHosts = `-- name: CountHosts :one
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = $1
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT count(*) FROM hosts h
 WHERE h.org_id = $1
   AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
@@ -90,11 +104,7 @@ WHERE h.org_id = $1
     OR h.name ILIKE '%' || $5::text || '%'
     OR h.address ILIKE '%' || $5::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ))
+  AND ($6::boolean IS NULL OR $6::boolean = (h.id IN (SELECT host_id FROM live)))
 `
 
 type CountHostsParams struct {
@@ -400,6 +410,15 @@ func (q *Queries) ListHostZones(ctx context.Context, arg ListHostZonesParams) ([
 }
 
 const listHosts = `-- name: ListHosts :many
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = $1
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
 WHERE h.org_id = $1
   AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
@@ -414,11 +433,7 @@ WHERE h.org_id = $1
     $6::text IS NULL
     OR (h.name, h.id) > ($6::text, $7::uuid)
   )
-  AND ($8::boolean IS NULL OR $8::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ))
+  AND ($8::boolean IS NULL OR $8::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
 LIMIT $9
 `
@@ -540,6 +555,15 @@ func (q *Queries) ListHostsByIDs(ctx context.Context, arg ListHostsByIDsParams) 
 }
 
 const listHostsPage = `-- name: ListHostsPage :many
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = $1
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
 WHERE h.org_id = $1
   AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
@@ -550,11 +574,7 @@ WHERE h.org_id = $1
     OR h.name ILIKE '%' || $5::text || '%'
     OR h.address ILIKE '%' || $5::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = EXISTS (
-    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-  ))
+  AND ($6::boolean IS NULL OR $6::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
 OFFSET $7 LIMIT $8
 `
@@ -618,13 +638,18 @@ func (q *Queries) ListHostsPage(ctx context.Context, arg ListHostsPageParams) ([
 }
 
 const listHostsPageSorted = `-- name: ListHostsPageSorted :many
+WITH live AS MATERIALIZED (
+  -- Driven from the live side (jobs_live_idx): the few runs still in flight,
+  -- never each host's whole history.
+  SELECT jh.host_id, count(*) AS n
+  FROM jobs j JOIN job_hosts jh ON jh.org_id = j.org_id AND jh.job_id = j.id
+  WHERE j.org_id = $1
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  GROUP BY jh.host_id
+)
 SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
 JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
-LEFT JOIN LATERAL (
-  SELECT count(*) AS n FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
-  WHERE jh.org_id = h.org_id AND jh.host_id = h.id
-    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
-) ar ON true
+LEFT JOIN live ON live.host_id = h.id
 WHERE h.org_id = $1
   AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
   AND ($3::boolean IS NULL OR h.managed = $3::boolean)
@@ -634,7 +659,7 @@ WHERE h.org_id = $1
     OR h.name ILIKE '%' || $5::text || '%'
     OR h.address ILIKE '%' || $5::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = (ar.n > 0))
+  AND ($6::boolean IS NULL OR $6::boolean = (COALESCE(live.n, 0) > 0))
 ORDER BY
   (CASE WHEN $7::text = 'name' AND NOT $8::boolean THEN h.name END) ASC,
   (CASE WHEN $7::text = 'name' AND $8::boolean THEN h.name END) DESC,
@@ -646,8 +671,8 @@ ORDER BY
   (CASE WHEN $7::text = 'monitored' AND $8::boolean THEN h.monitored::int END) DESC,
   (CASE WHEN $7::text = 'last_seen' AND NOT $8::boolean THEN h.last_seen_at END) ASC NULLS LAST,
   (CASE WHEN $7::text = 'last_seen' AND $8::boolean THEN h.last_seen_at END) DESC NULLS LAST,
-  (CASE WHEN $7::text = 'active_runs' AND NOT $8::boolean THEN ar.n END) ASC,
-  (CASE WHEN $7::text = 'active_runs' AND $8::boolean THEN ar.n END) DESC,
+  (CASE WHEN $7::text = 'active_runs' AND NOT $8::boolean THEN COALESCE(live.n, 0) END) ASC,
+  (CASE WHEN $7::text = 'active_runs' AND $8::boolean THEN COALESCE(live.n, 0) END) DESC,
   h.name ASC, h.id ASC
 OFFSET $9 LIMIT $10
 `
@@ -668,8 +693,7 @@ type ListHostsPageSortedParams struct {
 // Every other key and direction (backlog 3.97). The sort key is whitelisted
 // by the caller; each CASE is NULL on every row unless its key is chosen, so
 // the others drop out. last_seen puts never-seen hosts last in both
-// directions (NULLS LAST), active_runs counts live runs through a lateral
-// subquery, and a tie falls back to name then id so pages are disjoint.
+// directions (NULLS LAST), active_runs reads the live-run counts of the CTE, and a tie falls back to name then id so pages are disjoint.
 func (q *Queries) ListHostsPageSorted(ctx context.Context, arg ListHostsPageSortedParams) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHostsPageSorted,
 		arg.OrgID,

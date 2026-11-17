@@ -188,7 +188,7 @@ func (s *SQLStore) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFil
 		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
 	}
 	zone, query := uuidPtrToPg(f.ZoneID), nilIfEmpty(f.Query)
-	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is bounded by the table
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // paging.Page.Offset is capped at paging.MaxPage*100 and the size is one of paging.Sizes, so both fit an int32
 	var rows []gen.Host
 	var err error
 	if p.Sort == SortName && !p.Desc {

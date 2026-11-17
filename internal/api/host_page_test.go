@@ -216,6 +216,23 @@ func TestHostsPageBeyondEnd(t *testing.T) {
 	}
 }
 
+func TestHostsHugePageIsEmptyNotWrapped(t *testing.T) {
+	f := newHostPageFixture(t, "hostpage-huge", 30)
+	// The highest accepted page times the largest size must not wrap the SQL
+	// offset (a wrapped value answered 500 or the wrong rows).
+	for _, q := range []string{"page=1000000&per_page=100", "page=429496&per_page=10&sort=zone&order=desc"} {
+		resp := requestJSON(t, f.c, http.MethodGet, f.base+"?"+q, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("?%s: status %d: %s", q, resp.StatusCode, mustReadBody(t, resp))
+		}
+		var raw map[string]json.RawMessage
+		decodeInto(t, resp, &raw)
+		if string(raw["hosts"]) != "[]" || string(raw["total"]) != "30" {
+			t.Fatalf("?%s: hosts = %s, total = %s, want [] and 30", q, raw["hosts"], raw["total"])
+		}
+	}
+}
+
 func TestHostsPageRespectsFilters(t *testing.T) {
 	f := newHostPageFixture(t, "hostpage-filter", 30)
 	if got := f.get(t, "page=1&q=h-1"); got.Total == nil || *got.Total != 10 || len(got.Hosts) != 10 {
@@ -241,7 +258,7 @@ func TestHostsPageRespectsFilters(t *testing.T) {
 
 func TestHostsPageRejectsBadParams(t *testing.T) {
 	f := newHostPageFixture(t, "hostpage-bad", 3)
-	for _, q := range []string{"page=1&per_page=20", "page=1&sort=address", "page=1&order=up", "page=0", "page=1&cursor=abc"} {
+	for _, q := range []string{"page=1&per_page=20", "page=1&sort=address", "page=1&order=up", "page=0", "page=1000001", "page=30000000&per_page=100", "page=1&cursor=abc"} {
 		if got := f.status(t, q); got != http.StatusUnprocessableEntity {
 			t.Errorf("?%s: status %d, want 422", q, got)
 		}
