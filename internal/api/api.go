@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/preferences"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/runrequests"
@@ -60,8 +61,10 @@ type Deps struct {
 	// ScreenLock is the session lock and its PIN (backlog 3.93); the gates
 	// read a session's lock from the principal, /auth/me reads the PIN state.
 	ScreenLock *screenlock.Service
-	Passkeys   *auth.Passkeys
-	Tokens     *auth.Tokens
+	// Preferences is the user's own appearance settings (backlog 3.97–3.100).
+	Preferences *preferences.Service
+	Passkeys    *auth.Passkeys
+	Tokens      *auth.Tokens
 	// Enrolment composes confirming a second factor with completing the
 	// session it was pending for, in one transaction (backlog 1.26).
 	Enrolment *auth.Enrolment
@@ -303,6 +306,9 @@ func (d Deps) validate() error {
 	}
 	if d.Tokens == nil {
 		missing = append(missing, "Tokens")
+	}
+	if d.Preferences == nil {
+		missing = append(missing, "Preferences")
 	}
 	if d.Assistant == nil {
 		missing = append(missing, "Assistant")
@@ -610,6 +616,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerHookRoutes(hapi, deps)
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
 	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
+	registerPreferencesRoutes(hapi, deps)    // /auth/me/preferences — the user's own appearance settings, session only
 	registerPasswordRoutes(hapi, deps)       // POST /auth/password — the user's own password
 	registerPasswordResetRoutes(hapi, deps)  // /auth/password/{reset-available,forgot,reset} — public
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only

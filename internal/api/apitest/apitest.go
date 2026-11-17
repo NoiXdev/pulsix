@@ -56,6 +56,7 @@ import (
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/preferences"
 	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -700,14 +701,15 @@ func New(t *testing.T, opts ...Option) *Server {
 		agents.WithCA(testCA))
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys), time.Now), TOTP: totp, Passkeys: passkeys,
-		Tokens:     auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
-		Enrolment:  auth.NewEnrolment(totp, passkeys, s.Sessions, d),
-		ScreenLock: screenlock.NewService(screenlock.NewSQLStore(appQ)),
-		Tenancy:    tenancySvc,
-		Accounts:   accounts.NewService(accounts.NewSQLStore(d), s.Mail, publicURL, time.Now, rand.Reader),
-		Audit:      auditRec,
-		ClientIP:   clientip.New(nil),
-		Setup:      setupSvc,
+		Tokens:      auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
+		Enrolment:   auth.NewEnrolment(totp, passkeys, s.Sessions, d),
+		ScreenLock:  screenlock.NewService(screenlock.NewSQLStore(appQ)),
+		Preferences: preferences.NewService(preferences.NewSQLStore(appQ)),
+		Tenancy:     tenancySvc,
+		Accounts:    accounts.NewService(accounts.NewSQLStore(d), s.Mail, publicURL, time.Now, rand.Reader),
+		Audit:       auditRec,
+		ClientIP:    clientip.New(nil),
+		Setup:       setupSvc,
 		// Wired to the same setup.Service, so POST /admin/settings/smtp/test
 		// exercises whatever a test actually stored through
 		// PUT /admin/settings/smtp — no separate fake needed, since the

@@ -33,6 +33,7 @@ func newInteractiveSessionTestAPI(t *testing.T) humatest.TestAPI {
 	registerPasskeyRoutes(hapi, Deps{})
 	registerMFARoutes(hapi, Deps{})
 	registerLocaleRoutes(hapi, Deps{})
+	registerPreferencesRoutes(hapi, Deps{})
 	return humatest.Wrap(t, hapi)
 }
 

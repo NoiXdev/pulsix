@@ -1,0 +1,142 @@
+package api_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/noixdev/pulsix/internal/api/apitest"
+)
+
+const preferencesPath = "/api/v1/auth/me/preferences"
+
+type prefsBody struct {
+	Density  string                         `json:"density"`
+	PageSize int                            `json:"page_size"`
+	Lists    map[string]map[string][]string `json:"lists"`
+}
+
+func decodePrefs(t *testing.T, raw string) prefsBody {
+	t.Helper()
+	var b prefsBody
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestPreferencesDefaults(t *testing.T) {
+	s := apitest.New(t)
+	c := s.LoginAs(s.SeedUser("prefs-default@example.test", "correct horse battery"))
+	resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+preferencesPath, nil)
+	raw := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET: status %d, body %s", resp.StatusCode, raw)
+	}
+	b := decodePrefs(t, raw)
+	if b.Density != "standard" || b.PageSize != 25 || b.Lists == nil || len(b.Lists) != 0 {
+		t.Fatalf("defaults = %+v (%s)", b, raw)
+	}
+	if !strings.Contains(raw, `"lists":{}`) {
+		t.Fatalf("lists must be an empty object, got %s", raw)
+	}
+}
+
+func TestPutPreferencesRoundTrip(t *testing.T) {
+	s := apitest.New(t)
+	c := s.LoginAs(s.SeedUser("prefs-rt@example.test", "correct horse battery"))
+	in := map[string]any{"density": "compact", "page_size": 50,
+		"lists": map[string]any{"hosts": map[string]any{"columns": []string{"name", "zone"}}}}
+	resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, in)
+	raw := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT: status %d, body %s", resp.StatusCode, raw)
+	}
+	for _, got := range []prefsBody{decodePrefs(t, raw), func() prefsBody {
+		r := requestJSON(t, c, http.MethodGet, s.HTTP.URL+preferencesPath, nil)
+		return decodePrefs(t, mustReadBody(t, r))
+	}()} {
+		cols := got.Lists["hosts"]["columns"]
+		if got.Density != "compact" || got.PageSize != 50 || len(cols) != 2 || cols[0] != "name" || cols[1] != "zone" {
+			t.Fatalf("stored = %+v", got)
+		}
+	}
+	// Users do not see each other's preferences.
+	other := s.LoginAs(s.SeedUser("prefs-other@example.test", "correct horse battery"))
+	r := requestJSON(t, other, http.MethodGet, s.HTTP.URL+preferencesPath, nil)
+	if b := decodePrefs(t, mustReadBody(t, r)); b.Density != "standard" {
+		t.Fatalf("another user sees %+v", b)
+	}
+}
+
+func TestPutPreferencesInvalidIs422(t *testing.T) {
+	s := apitest.New(t)
+	c := s.LoginAs(s.SeedUser("prefs-422@example.test", "correct horse battery"))
+	for name, in := range map[string]map[string]any{
+		"density":    {"density": "dense", "page_size": 25, "lists": map[string]any{}},
+		"page size":  {"density": "standard", "page_size": 20, "lists": map[string]any{}},
+		"list id":    {"density": "standard", "page_size": 25, "lists": map[string]any{"Hosts": map[string]any{"columns": []string{"name"}}}},
+		"duplicates": {"density": "standard", "page_size": 25, "lists": map[string]any{"hosts": map[string]any{"columns": []string{"name", "name"}}}},
+	} {
+		if resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, in); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422; body %s", name, resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	r := requestJSON(t, c, http.MethodGet, s.HTTP.URL+preferencesPath, nil)
+	if b := decodePrefs(t, mustReadBody(t, r)); b.Density != "standard" || b.PageSize != 25 {
+		t.Fatalf("an invalid PUT changed the stored document: %+v", b)
+	}
+}
+
+func TestPreferencesRefuseLockedSession(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("prefs-locked@example.test", "correct horse battery")
+	c, _ := lockedSession(t, s, uid)
+	in := map[string]any{"density": "standard", "page_size": 25, "lists": map[string]any{}}
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		var b any
+		if method == http.MethodPut {
+			b = in
+		}
+		resp := requestJSON(t, c, method, s.HTTP.URL+preferencesPath, b)
+		if resp.StatusCode != http.StatusForbidden || problemDetail(t, resp) != sessionLocked {
+			t.Errorf("%s on a locked session: status %d, want 403 %s", method, resp.StatusCode, sessionLocked)
+		}
+	}
+}
+
+func TestPutPreferencesIsAudited(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("prefs-audit@example.test", "correct horse battery")
+	c := s.LoginAs(uid)
+	in := map[string]any{"density": "compact", "page_size": 100,
+		"lists": map[string]any{"hosts": map[string]any{"columns": []string{"name", "secret_col"}}}}
+	if resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, in); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	n := 0
+	for _, ev := range myActivity(t, s, c) {
+		if ev.Action != "PUT setPreferences" {
+			continue
+		}
+		n++
+		if ev.OrgID != nil {
+			t.Errorf("OrgID = %v, want nil", *ev.OrgID)
+		}
+		if ev.ObjectID != uid.String() || ev.ObjectType != "user" {
+			t.Errorf("object = %s %s, want user %s", ev.ObjectType, ev.ObjectID, uid)
+		}
+		for _, leak := range []string{"secret_col", "name", "compact", "100", "hosts"} {
+			if strings.Contains(ev.Summary, leak) {
+				t.Errorf("summary %q contains %q", ev.Summary, leak)
+			}
+		}
+		if ev.Summary != "changed their appearance settings" {
+			t.Errorf("summary = %q", ev.Summary)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d setPreferences events, want 1", n)
+	}
+}

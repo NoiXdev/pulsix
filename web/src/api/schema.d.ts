@@ -528,6 +528,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 auth me preferences */
+        get: operations["get-api-v1-auth-me-preferences"];
+        /** Put API v1 auth me preferences */
+        put: operations["setPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/passkeys": {
         parameters: {
             query?: never;
@@ -5785,6 +5803,10 @@ export interface components {
             key: string;
             values: components["schemas"]["ValueCountDTO"][] | null;
         };
+        ListPrefBody: {
+            /** @description Column ids in display order. */
+            columns: string[] | null;
+        };
         LocaleSettingsBody: {
             /**
              * Format: uri
@@ -6828,6 +6850,25 @@ export interface components {
             /** @description Editor playbooks: the replacement YAML document */
             inline: string;
             name?: string;
+        };
+        PreferencesBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PreferencesBody.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            density: "comfortable" | "standard" | "compact";
+            /** @description Per list id, the chosen columns. */
+            lists: {
+                [key: string]: components["schemas"]["ListPrefBody"];
+            };
+            /**
+             * Format: int64
+             * @enum {integer}
+             */
+            page_size: 10 | 25 | 50 | 100;
         };
         Preview: {
             added: components["schemas"]["Added"][] | null;
@@ -9554,6 +9595,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnLocaleOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-auth-me-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferencesBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferencesBody"];
                 };
             };
             /** @description Error */

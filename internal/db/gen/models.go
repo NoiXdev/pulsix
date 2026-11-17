@@ -1086,6 +1086,14 @@ type User struct {
 	LockPinPromptedAt     pgtype.Timestamptz `json:"lock_pin_prompted_at"`
 }
 
+type UserPreference struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Density   string    `json:"density"`
+	PageSize  int32     `json:"page_size"`
+	Lists     []byte    `json:"lists"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type WebauthnCeremony struct {
 	ID        uuid.UUID   `json:"id"`
 	Kind      string      `json:"kind"`
