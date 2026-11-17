@@ -114,4 +114,46 @@ describe('EditTokenDialog', () => {
     expect(screen.queryByRole('checkbox', { name: 'Inventory: read' })).not.toBeInTheDocument();
     expect(screen.getByText('Kind and role cannot be changed; create a new token for that.')).toBeInTheDocument();
   });
+
+  it('sends only the name for an assistant token whose areas did not change', async () => {
+    let body: unknown;
+    const user = setup(assistantToken, (req) => {
+      body = req.body;
+      return { token: assistantToken };
+    });
+    const name = screen.getByLabelText('Name');
+    await user.clear(name);
+    await user.type(name, 'helper2');
+    await save(user);
+    expect(await screen.findByText('Token helper2 saved')).toBeInTheDocument();
+    expect(body).toEqual({ name: 'helper2' });
+  });
+
+  it('sends no areas when the selection is reordered but equal', async () => {
+    let body: unknown;
+    const token: TokenRow = { ...assistantToken, areas: ['inventory.read', 'repos.read'] };
+    const user = setup(token, (req) => {
+      body = req.body;
+      return { token };
+    });
+    await user.click(screen.getByRole('checkbox', { name: 'Inventory: read' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Inventory: read' }));
+    const name = screen.getByLabelText('Name');
+    await user.type(name, 'x');
+    await save(user);
+    expect(await screen.findByText('Token helperx saved')).toBeInTheDocument();
+    expect(body).toEqual({ name: 'helperx' });
+  });
+
+  it('shows a field error for an empty name and sends nothing', async () => {
+    let calls = 0;
+    const user = setup(apiToken, () => {
+      calls += 1;
+      return {};
+    });
+    await user.clear(screen.getByLabelText('Name'));
+    await save(user);
+    expect(await screen.findByText('required')).toBeInTheDocument();
+    expect(calls).toBe(0);
+  });
 });

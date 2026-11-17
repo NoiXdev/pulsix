@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
@@ -10,19 +10,21 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useUpdateToken, type UpdateTokenInput } from '../../api/hooks/useTokens.ts';
 import type { components } from '../../api/schema.d.ts';
 import { useT } from '../../i18n/useT.ts';
+import type { Messages } from '../../i18n/types.ts';
 import { roleLabel } from '../../i18n/roleLabel.ts';
 import { AreaGrid } from './AreaGrid.tsx';
 import { allowedAreas, type Area } from './areas.ts';
 
 type TokenRow = components['schemas']['TokenDTO'];
 
-const editSchema = z.object({
-  name: z.string().min(1),
-  expiry: z.string(),
-  never: z.boolean(),
-  areas: z.array(z.custom<Area>()),
-});
-type EditValues = z.infer<typeof editSchema>;
+const editSchema = (t: Messages) =>
+  z.object({
+    name: z.string().min(1, t.validation.required),
+    expiry: z.string(),
+    never: z.boolean(),
+    areas: z.array(z.custom<Area>()),
+  });
+type EditValues = z.infer<ReturnType<typeof editSchema>>;
 
 /** The local calendar day of an instant as YYYY-MM-DD, for a date input. */
 function localDay(iso: string): string {
@@ -59,6 +61,7 @@ export function EditTokenDialog({
   onClose: () => void;
 }) {
   const t = useT();
+  const schema = useMemo(() => editSchema(t), [t]);
   const toast = useToast();
   const update = useUpdateToken(org);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +71,7 @@ export function EditTokenDialog({
   const initialAreas = allowedAreas((token.areas ?? []) as Area[], token.role);
 
   const form = useForm<EditValues>({
-    resolver: zodResolver(editSchema),
+    resolver: zodResolver(schema),
     defaultValues: { name: token.name, expiry: initialDay, never: !token.expires_at, areas: initialAreas },
   });
   const never = useWatch({ control: form.control, name: 'never' });
@@ -100,6 +103,9 @@ export function EditTokenDialog({
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="edit_token_name">{t.tokens.nameLabel}</Label>
           <Input id="edit_token_name" {...form.register('name')} />
+          {form.formState.errors.name && (
+            <span className="text-[11px] text-destructive">{form.formState.errors.name.message}</span>
+          )}
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="text-xs">
