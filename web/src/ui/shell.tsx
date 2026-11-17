@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Activity, Bell, CalendarClock, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, KeyRound, Layers, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Waypoints, Wrench } from 'lucide-react';
+import { Activity, Bell, CalendarClock, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, KeyRound, Layers, Lock, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Waypoints, Wrench } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { NavGroup } from './NavGroup.tsx';
 import { Select } from './Select.tsx';
@@ -33,6 +33,10 @@ export interface AppShellProps {
    * when it is chosen. Only an instance admin may create an organization,
    * so a caller passes it for no one else (backlog 7.74). */
   onCreateOrg?: () => void;
+  /** Adds the lock button to the top bar and calls this when it is pressed
+   * (backlog 3.92). The shell only draws it: locking needs the API, which
+   * src/ui may not import, so the route-connected layout passes it in. */
+  onLockSession?: () => void;
   crumbs: ReactNode;
   user: ShellUser;
   /** Finding "Important 6": there was no logout anywhere in the shell and
@@ -104,7 +108,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, version, pendingRunRequests, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, crumbs, user, onLogout, version, pendingRunRequests, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -378,6 +382,17 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, on
               take a zone filter, the fleet page already has its own, and the
               hosts list now has one too — a control on the page it acts on
               beats a global one that would do nothing on most of them. */}
+          {onLockSession && (
+            <button
+              type="button"
+              aria-label={t.shell.lockSession}
+              title={t.shell.lockSession}
+              onClick={onLockSession}
+              className="flex h-[34px] w-[34px] items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:text-foreground"
+            >
+              <Lock size={16} />
+            </button>
+          )}
           <button
             type="button"
             aria-label={t.shell.notifications}

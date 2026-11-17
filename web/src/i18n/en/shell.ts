@@ -37,6 +37,7 @@ export const enShell = {
   logOut: 'Log out',
   // The explorer the server serves at /api/explorer (backlog 1.8, 3.91).
   apiExplorer: 'API explorer',
+  lockSession: 'Lock session',
   opensInNewTab: '(opens in a new tab)',
   notifications: 'Notifications',
   version: 'Pulsix version',

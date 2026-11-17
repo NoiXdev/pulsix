@@ -41,7 +41,7 @@ import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
  *    three are offered on the TOTP step below.
  */
 export function LoginPage() {
-  const search = useSearch({ strict: false }) as { step?: string };
+  const search = useSearch({ strict: false }) as { step?: string; notice?: string };
   const navigate = useNavigate();
   const toast = useToast();
   const t = useT();
@@ -122,6 +122,11 @@ export function LoginPage() {
         {state.step !== 'totp' ? (
           <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
             <h1 className="text-lg font-semibold">{t.auth.signIn}</h1>
+            {search.notice === 'lock_ended' && (
+              <p role="status" className="text-xs text-muted-foreground">
+                {t.lock.endedAfterFailures}
+              </p>
+            )}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="email">{t.auth.emailAddress}</Label>
               <Input

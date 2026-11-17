@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi, type MockRoute } from '../test/mockApi.ts';
 import { api, unwrap } from '../api/client.ts';
 import { RootLayout } from './RootLayout.tsx';
+import { postSessionMessage } from '../features/lock/lockChannel.ts';
+import { waitFor } from '@testing-library/react';
 
 /** A page that asks for something only a session free of the password
  * flag may have, and shows what it got. */
@@ -13,8 +16,11 @@ function OrgsPage() {
   return <div>{orgs.isError ? `ORGS FAILED: ${orgs.error.message}` : 'ORGS PAGE'}</div>;
 }
 
+let qcRef: QueryClient;
+
 function renderAt(initial: string, routes: Record<string, MockRoute>) {
   mockApi(routes);
+  qcRef = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute({ component: RootLayout });
   const orgsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/orgs', component: OrgsPage });
   const enrolRoute = createRoute({
@@ -35,7 +41,7 @@ function renderAt(initial: string, routes: Record<string, MockRoute>) {
     history: createMemoryHistory({ initialEntries: [initial] }),
   });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qcRef}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
@@ -68,5 +74,57 @@ describe('RootLayout', () => {
     expect(await screen.findByText('ORGS FAILED: password_change_required')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/account/enrol');
     expect(screen.getByText('ENROLMENT')).toBeInTheDocument();
+  });
+
+  describe('session lock', () => {
+    const meBody = (locked: boolean) => ({ locked, lock_pin_set: true, lock_pin_prompt: false, user: { display_name: 'Tim' } });
+
+    it('replaces the page with the lock screen after a session_locked refusal, and drops the cached page data', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(false) });
+      // The page first renders its data; seed a cache entry the lock must drop.
+      qcRef.setQueryData(['orgs', 'secret'], { secret: 1 });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+
+      mockApi({ 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': refusal('session_locked') });
+      await qcRef.invalidateQueries({ queryKey: ['orgs'] });
+
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument();
+      expect(qcRef.getQueryData(['orgs', 'secret'])).toBeUndefined();
+      expect(qcRef.getQueryData(['me'])).toBeDefined();
+    });
+
+    it('shows the lock screen without rendering the page when /auth/me says locked', async () => {
+      const orgs = vi.fn(() => ({ orgs: [] }));
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(true), 'GET /api/v1/orgs': orgs });
+
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument();
+      expect(orgs).not.toHaveBeenCalled();
+    });
+
+    it('follows a lock another tab announces', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+
+      postSessionMessage({ type: 'locked' });
+
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument());
+    });
+
+    it('brings the page back after the right PIN', async () => {
+      renderAt('/orgs', {
+        'GET /api/v1/auth/me': meBody(true),
+        'GET /api/v1/orgs': { orgs: [] },
+        'POST /api/v1/auth/lock/unlock': () => {
+          mockApi({ 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': { orgs: [] }, 'POST /api/v1/auth/lock/unlock': { ok: true } });
+          return { ok: true };
+        },
+      });
+      await userEvent.type(await screen.findByLabelText('PIN'), '1234');
+      await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+    });
   });
 });

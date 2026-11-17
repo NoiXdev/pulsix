@@ -8,6 +8,7 @@ import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { usePasskeys } from '../api/hooks/usePasskeys.ts';
 import { useSignOut } from '../lib/session.ts';
 import { useT } from '../i18n/useT.ts';
+import { useLockAction } from '../features/lock/useLockAction.tsx';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 import { sessionState } from '../lib/sessionState.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
@@ -26,6 +27,7 @@ export function AccountSecurityLayout() {
   const navigate = useNavigate();
   const signOut = useSignOut();
   const t = useT();
+  const lockAction = useLockAction();
   const [creatingOrg, setCreatingOrg] = useState(false);
   const me = useMe({ enabled: true });
   // GET /orgs is refused to a session that is not MFA-complete or must
@@ -58,6 +60,7 @@ export function AccountSecurityLayout() {
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}
       onCreateOrg={me.data.instance_admin ? () => setCreatingOrg(true) : undefined}
+      onLockSession={lockAction.lock}
       crumbs={
         <>
           <span>{t.routes.accountSecurity.crumbAccount}</span>
@@ -72,6 +75,7 @@ export function AccountSecurityLayout() {
       onLogout={signOut}
     >
       <AccountSecurityPage />
+      {lockAction.dialog}
       <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />
     </AppShell>
   );

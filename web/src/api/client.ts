@@ -52,6 +52,9 @@ export async function rejectIfNotOk(response: Response): Promise<Response> {
   if (err.status === 403 && err.message === PASSWORD_CHANGE_REQUIRED) {
     for (const listener of passwordChangeListeners) listener();
   }
+  if (err.status === 403 && err.message === SESSION_LOCKED) {
+    for (const listener of sessionLockedListeners) listener();
+  }
   throw err;
 }
 
@@ -75,6 +78,28 @@ export function onPasswordChangeRequired(listener: () => void): () => void {
   passwordChangeListeners.add(listener);
   return () => {
     passwordChangeListeners.delete(listener);
+  };
+}
+
+/** SESSION_LOCKED is the detail of the 403 the server answers every route
+ * but /auth/me, /auth/logout and /auth/lock/unlock with while the session
+ * is locked behind its PIN (backlog 3.92). A contract, like the one above:
+ * internal/api sends exactly this. */
+export const SESSION_LOCKED = 'session_locked';
+
+const sessionLockedListeners = new Set<() => void>();
+
+/**
+ * onSessionLocked calls `listener` whenever any request is refused with
+ * SESSION_LOCKED — which is also how a tab learns that another tab of the
+ * same browser (same cookie) locked the session — so the app can swap the
+ * page for the lock screen (routes/RootLayout.tsx). The request still
+ * fails as usual. Returns the function that stops listening.
+ */
+export function onSessionLocked(listener: () => void): () => void {
+  sessionLockedListeners.add(listener);
+  return () => {
+    sessionLockedListeners.delete(listener);
   };
 }
 

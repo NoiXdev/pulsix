@@ -11,6 +11,7 @@ import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
+import { useLockAction } from '../features/lock/useLockAction.tsx';
 import { roleLabel } from '../i18n/roleLabel.ts';
 import { sessionState } from '../lib/sessionState.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
@@ -36,6 +37,7 @@ export function OrgLayout() {
   const navigate = useNavigate();
   const signOut = useSignOut();
   const t = useT();
+  const lockAction = useLockAction();
   const [creatingOrg, setCreatingOrg] = useState(false);
 
   const me = useMe({ enabled: true });
@@ -74,6 +76,7 @@ export function OrgLayout() {
         void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } });
       }}
       onCreateOrg={me.data.instance_admin ? () => setCreatingOrg(true) : undefined}
+      onLockSession={lockAction.lock}
       crumbs={
         <>
           {crumbs.map((label, i) => (
@@ -93,6 +96,7 @@ export function OrgLayout() {
       pendingRunRequests={pendingRunRequests}
     >
       <Outlet />
+      {lockAction.dialog}
       <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />
     </AppShell>
   );

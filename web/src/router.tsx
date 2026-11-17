@@ -55,8 +55,10 @@ const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup'
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { step: string | undefined; notice?: string } => ({
     step: typeof search.step === 'string' ? search.step : undefined,
+    // A one-line reason the person landed here, e.g. 'lock_ended' (backlog 3.92).
+    notice: typeof search.notice === 'string' ? search.notice : undefined,
   }),
   component: LoginPage,
 });

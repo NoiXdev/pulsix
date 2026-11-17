@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; version?: string; pendingRunRequests?: number } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; onLockSession?: () => void; version?: string; pendingRunRequests?: number } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -37,6 +37,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
           user={{ displayName: 'Tim R.', subtitle: 'Owner' }}
           onLogout={opts.onLogout ?? (() => {})}
           onCreateOrg={opts.onCreateOrg}
+          onLockSession={opts.onLockSession}
           version={opts.version}
           pendingRunRequests={opts.pendingRunRequests}
         >
@@ -64,6 +65,19 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
 }
 
 describe('AppShell', () => {
+  it('has a lock button in the top bar that calls onLockSession', async () => {
+    const onLockSession = vi.fn();
+    renderShellAt('/o/acme/hosts', { onLockSession });
+    await userEvent.click(await screen.findByRole('button', { name: 'Lock session' }));
+    expect(onLockSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no lock button when the page offers no way to lock', async () => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    expect(screen.queryByRole('button', { name: 'Lock session' })).not.toBeInTheDocument();
+  });
+
   // Final review minor 7: the Workers page needs workers.read (admin and
   // above); the entry must not lead viewers and operators to a no-access
   // page.

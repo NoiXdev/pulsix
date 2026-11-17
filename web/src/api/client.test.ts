@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, onPasswordChangeRequired, rejectIfNotOk, unwrap } from './client.ts';
+import { ApiError, onPasswordChangeRequired, onSessionLocked, rejectIfNotOk, unwrap } from './client.ts';
 
 describe('ApiError', () => {
   it('uses the body\'s "detail" field as the message when present', () => {
@@ -76,6 +76,31 @@ describe('onPasswordChangeRequired', () => {
     await expect(rejectIfNotOk(new Response('{}', { status: 401 }))).rejects.toBeInstanceOf(ApiError);
     stop();
     await expect(rejectIfNotOk(refusal('password_change_required'))).rejects.toBeInstanceOf(ApiError);
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe('onSessionLocked', () => {
+  const refusal = (detail: string) =>
+    new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail }), { status: 403 });
+
+  it('tells its listeners when the server refuses a locked session, and still throws', async () => {
+    const listener = vi.fn();
+    const stop = onSessionLocked(listener);
+    try {
+      await expect(rejectIfNotOk(refusal('session_locked'))).rejects.toMatchObject({ status: 403 });
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it('stays quiet on any other refusal, and after the listener stops', async () => {
+    const listener = vi.fn();
+    const stop = onSessionLocked(listener);
+    await expect(rejectIfNotOk(refusal('password_change_required'))).rejects.toBeInstanceOf(ApiError);
+    stop();
+    await expect(rejectIfNotOk(refusal('session_locked'))).rejects.toBeInstanceOf(ApiError);
     expect(listener).not.toHaveBeenCalled();
   });
 });

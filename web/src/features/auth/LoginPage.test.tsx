@@ -75,7 +75,7 @@ function buildRouter(qc: QueryClient) {
  * for useNavigate/useSearch to work — for tests that don't need
  * RootRedirect's own logic. */
 function renderLoginAt(
-  search: { step?: string } = {},
+  search: { step?: string; notice?: string } = {},
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   locale?: Locale,
 ) {
@@ -83,7 +83,10 @@ function renderLoginAt(
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/login',
-    validateSearch: (s: Record<string, unknown>) => ({ step: typeof s.step === 'string' ? s.step : undefined }),
+    validateSearch: (s: Record<string, unknown>) => ({
+      step: typeof s.step === 'string' ? s.step : undefined,
+      notice: typeof s.notice === 'string' ? s.notice : undefined,
+    }),
     component: LoginPage,
   });
   const indexRoute = createRoute({
@@ -92,7 +95,7 @@ function renderLoginAt(
     component: () => <div>ROOT</div>,
   });
   const routeTree = rootRoute.addChildren([indexRoute, loginRoute]);
-  const initial = search.step ? `/login?step=${search.step}` : '/login';
+  const initial = search.step ? `/login?step=${search.step}` : search.notice ? `/login?notice=${search.notice}` : '/login';
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initial] }) });
 
   const tree = (
@@ -102,6 +105,14 @@ function renderLoginAt(
   );
   render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{tree}</I18nProvider> : tree}</QueryClientProvider>);
 }
+
+describe('LoginPage notice (backlog 3.92)', () => {
+  it('says why the session ended after too many wrong lock PINs', async () => {
+    renderLoginAt({ notice: 'lock_ended' });
+
+    expect(await screen.findByText(/Too many wrong PINs/)).toBeInTheDocument();
+  });
+});
 
 describe('LoginPage forgotten password (backlog 7.74)', () => {
   it('links to /forgot-password from the password step', async () => {

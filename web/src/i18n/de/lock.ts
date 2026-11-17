@@ -1,0 +1,27 @@
+import type { Messages } from '../types.ts';
+
+export const deLock: Messages['lock'] = {
+  title: 'Sitzung gesperrt',
+  intro: 'Diese Sitzung ist gesperrt. Gib deine PIN ein, um fortzufahren.',
+  pinLabel: 'PIN',
+  unlock: 'Entsperren',
+  unlocking: 'Entsperre …',
+  signOut: 'Abmelden',
+  lockFailed: 'Die Sitzung konnte nicht gesperrt werden. Versuche es erneut.',
+  wrongPin: 'Falsche PIN.',
+  attemptsLeft: (n: number) => (n === 1 ? 'Noch 1 Versuch' : `Noch ${n} Versuche`),
+  failed: 'Die Sitzung konnte nicht entsperrt werden. Versuche es erneut.',
+  endedAfterFailures: 'Zu viele falsche PINs: Die Sitzung wurde beendet. Melde dich neu an.',
+  setPin: {
+    title: 'Sperr-PIN festlegen',
+    intro: 'Zum Sperren der Sitzung brauchst du eine PIN. Wer die PIN kennt, kann die Sitzung entsperren – behalte sie für dich.',
+    pinLabel: 'PIN',
+    repeatLabel: 'PIN wiederholen',
+    hint: '4 bis 8 Ziffern.',
+    invalid: 'Die PIN besteht aus 4 bis 8 Ziffern.',
+    mismatch: 'Die beiden PINs stimmen nicht überein.',
+    submit: 'PIN festlegen und sperren',
+    cancel: 'Abbrechen',
+    failed: 'Die PIN konnte nicht festgelegt werden. Versuche es erneut.',
+  },
+};

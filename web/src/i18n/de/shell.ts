@@ -33,6 +33,7 @@ export const deShell: Messages['shell'] = {
   accountSecurity: 'Kontosicherheit',
   logOut: 'Abmelden',
   apiExplorer: 'API-Explorer',
+  lockSession: 'Sitzung sperren',
   opensInNewTab: '(öffnet in einem neuen Tab)',
   notifications: 'Benachrichtigungen',
   version: 'Pulsix-Version',

@@ -14,6 +14,7 @@ import { deHosts } from './hosts.ts';
 import { deInstance } from './instance.ts';
 import { deInventory } from './inventory.ts';
 import { deLanguage } from './language.ts';
+import { deLock } from './lock.ts';
 import { deMaintenance } from './maintenance.ts';
 import { deMembers } from './members.ts';
 import { deNotifications } from './notifications.ts';
@@ -75,6 +76,7 @@ export const de: Messages = {
   instance: deInstance,
   inventory: deInventory,
   language: deLanguage,
+  lock: deLock,
   maintenance: deMaintenance,
   members: deMembers,
   notifications: deNotifications,
