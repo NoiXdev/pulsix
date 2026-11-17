@@ -30,10 +30,51 @@ type memTokenStore struct {
 	touchErr  error
 	touched   []uuid.UUID
 	updated   int // store.Update calls
+
+	// Personal tokens (backlog 3.100), keyed by secret hash like byHash;
+	// revoke covers them too. disabled marks a deactivated owner.
+	personal        map[string]auth.PersonalToken
+	disabled        map[uuid.UUID]bool
+	touchedPersonal []uuid.UUID
 }
 
 func newMemTokenStore() *memTokenStore {
-	return &memTokenStore{byHash: map[string]auth.Token{}, admin: map[uuid.UUID]bool{}, revoke: map[uuid.UUID]bool{}}
+	return &memTokenStore{byHash: map[string]auth.Token{}, admin: map[uuid.UUID]bool{}, revoke: map[uuid.UUID]bool{},
+		personal: map[string]auth.PersonalToken{}, disabled: map[uuid.UUID]bool{}}
+}
+
+// personalUsable mirrors GetPersonalTokenByHash's filter: not revoked, not
+// expired as of now, owner not deactivated.
+func (m *memTokenStore) personalUsable(tok auth.PersonalToken, now time.Time) bool {
+	return !m.revoke[tok.ID] && !m.disabled[tok.UserID] && (tok.ExpiresAt == nil || tok.ExpiresAt.After(now))
+}
+
+func (m *memTokenStore) GetPersonalByHash(_ context.Context, secretHash []byte, now time.Time) (auth.PersonalToken, error) {
+	if m.getErr != nil {
+		return auth.PersonalToken{}, m.getErr
+	}
+	tok, ok := m.personal[string(secretHash)]
+	if !ok || !m.personalUsable(tok, now) {
+		return auth.PersonalToken{}, auth.ErrNotFound
+	}
+	return tok, nil
+}
+
+func (m *memTokenStore) PersonalUsable(_ context.Context, id uuid.UUID, now time.Time) (bool, error) {
+	if m.getErr != nil {
+		return false, m.getErr
+	}
+	for _, tok := range m.personal {
+		if tok.ID == id {
+			return m.personalUsable(tok, now), nil
+		}
+	}
+	return false, nil
+}
+
+func (m *memTokenStore) TouchPersonalLastUsed(_ context.Context, id uuid.UUID) error {
+	m.touchedPersonal = append(m.touchedPersonal, id)
+	return m.touchErr
 }
 
 func (m *memTokenStore) Insert(_ context.Context, t auth.Token, secretHash []byte) error {

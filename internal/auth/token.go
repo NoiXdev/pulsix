@@ -53,11 +53,17 @@ type NewToken struct {
 // authorization takes the lower of Role and the caller's actual membership
 // role in OrgID — a token can only narrow what its owner can already do,
 // never widen it.
+//
+// A personal token (backlog 3.100) has Personal set, a zero OrgID and an
+// empty Role: the organization it may act in and its cap there come from
+// the token's grants, which internal/api looks up per request for the
+// route's organization (spec rule 8).
 type TokenScope struct {
-	OrgID uuid.UUID
-	Role  string
-	Kind  TokenKind
-	Areas []string
+	OrgID    uuid.UUID
+	Role     string
+	Kind     TokenKind
+	Areas    []string
+	Personal bool
 }
 
 // ExpiryChange says what an update does to a token's expiry; the zero value
@@ -133,6 +139,17 @@ type TokenStore interface {
 	// not an authentication decision: Resolve logs it but does not reject
 	// an otherwise-valid token over it (see Resolve).
 	TouchLastUsed(ctx context.Context, id uuid.UUID, at time.Time) error
+
+	// GetPersonalByHash is GetByHash for a personal token (backlog 3.100):
+	// not revoked, not expired as of now, owner not deactivated; otherwise
+	// ErrNotFound, and any other error propagates. It returns no instance-
+	// admin flag: a personal token never acts as an instance administrator.
+	GetPersonalByHash(ctx context.Context, secretHash []byte, now time.Time) (PersonalToken, error)
+	// PersonalUsable is Usable for a personal token.
+	PersonalUsable(ctx context.Context, id uuid.UUID, now time.Time) (bool, error)
+	// TouchPersonalLastUsed is TouchLastUsed for a personal token, stamped
+	// with the database's own now() and throttled to one write per minute.
+	TouchPersonalLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
 // Tokens creates and resolves bearer API tokens.
@@ -214,6 +231,9 @@ func (t *Tokens) CreateWith(ctx context.Context, userID, orgID uuid.UUID, in New
 // length) is rejected by the prefix check and the decode step below,
 // neither of which can panic on arbitrary input.
 func (t *Tokens) Resolve(ctx context.Context, plain string) (Principal, TokenScope, error) {
+	if strings.HasPrefix(plain, personalTokenPrefix) {
+		return t.resolvePersonal(ctx, plain)
+	}
 	if !strings.HasPrefix(plain, tokenPrefix) {
 		return Principal{}, TokenScope{}, ErrUnauthenticated
 	}
@@ -257,8 +277,14 @@ func (t *Tokens) Resolve(ctx context.Context, plain string) (Principal, TokenSco
 // StillUsable reports whether the token id a request was authorised with
 // is still usable. A request that runs for a long time (the job log
 // stream) asks it periodically, so a revocation ends it (backlog 7.22).
+// The id is an organization token's or a personal token's (backlog 3.100).
 func (t *Tokens) StillUsable(ctx context.Context, id uuid.UUID) (bool, error) {
-	return t.store.Usable(ctx, id, t.now())
+	now := t.now()
+	usable, err := t.store.Usable(ctx, id, now)
+	if err != nil || usable {
+		return usable, err
+	}
+	return t.store.PersonalUsable(ctx, id, now)
 }
 
 // List returns every non-revoked token for orgID.

@@ -13,10 +13,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
 -- keeps pagination stable even when several events share the same at
 -- (store_sql.go's cursor always carries id as the tiebreaker).
 -- The token's name comes from a left join (spec 2026-11-16 assistant
--- access, "Audit"): empty for sessions, system events and older rows.
+-- access, "Audit"): empty for sessions, system events and older rows. A
+-- personal token (backlog 3.100) is named from its own table.
 SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
-       e.actor_token_id, COALESCE(t.name, '')::text AS token_name
-FROM audit_events e LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+       e.actor_token_id, COALESCE(t.name, pt.name, '')::text AS token_name
+FROM audit_events e
+LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+LEFT JOIN personal_tokens pt ON pt.id = e.actor_token_id
 WHERE e.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(actor_id)::uuid IS NULL OR e.actor_id = sqlc.narg(actor_id)::uuid)
   AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
@@ -33,10 +36,13 @@ LIMIT sqlc.arg(row_limit);
 -- filtered by actor_id instead of org_id, with the same optional
 -- object_type / since / cursor conditions.
 -- The token's name comes from a left join (spec 2026-11-16 assistant
--- access, "Audit"): empty for sessions, system events and older rows.
+-- access, "Audit"): empty for sessions, system events and older rows. A
+-- personal token (backlog 3.100) is named from its own table.
 SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
-       e.actor_token_id, COALESCE(t.name, '')::text AS token_name
-FROM audit_events e LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+       e.actor_token_id, COALESCE(t.name, pt.name, '')::text AS token_name
+FROM audit_events e
+LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+LEFT JOIN personal_tokens pt ON pt.id = e.actor_token_id
 WHERE e.actor_id = sqlc.arg(actor_id)
   AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
   AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz)
@@ -105,7 +111,12 @@ WHERE e.actor_id = sqlc.arg(actor_id)
   AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz);
 
 -- name: ListAuditTokenNames :many
--- The names of the API tokens a page of events was made with: the one place
--- the activity pages resolve a token's name (the cursor feeds keep their own
--- left join), so a change of where tokens live touches this query only.
-SELECT id, name FROM api_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+-- The names of the tokens a page of events was made with: the one place the
+-- activity pages resolve a token's name (the cursor feeds keep their own
+-- left joins), so a change of where tokens live touches this query only.
+-- Organization tokens are confined by row-level security to the bound
+-- organization; personal tokens (backlog 3.100) belong to a user and are
+-- named from their own table.
+SELECT id, name FROM api_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[])
+UNION ALL
+SELECT id, name FROM personal_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);

@@ -36,6 +36,7 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
+	"github.com/noixdev/pulsix/internal/personaltokens"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/preferences"
 	"github.com/noixdev/pulsix/internal/probes"
@@ -213,7 +214,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
-		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Preferences: preferences.NewService(nil),
+		Assistant: &assistant.Service{}, RunRequests: &runrequests.Service{}, Preferences: preferences.NewService(nil), PersonalTokens: &personaltokens.Service{},
 		Accounts: &accounts.Service{},
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),

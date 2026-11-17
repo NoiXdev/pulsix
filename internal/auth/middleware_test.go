@@ -129,6 +129,13 @@ func (f *fakeBearerStore) Update(context.Context, uuid.UUID, uuid.UUID, string, 
 	return auth.Token{}, auth.ErrNotFound
 }
 func (f *fakeBearerStore) TouchLastUsed(context.Context, uuid.UUID, time.Time) error { return nil }
+func (f *fakeBearerStore) GetPersonalByHash(context.Context, []byte, time.Time) (auth.PersonalToken, error) {
+	return auth.PersonalToken{}, auth.ErrNotFound
+}
+func (f *fakeBearerStore) PersonalUsable(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return false, nil
+}
+func (f *fakeBearerStore) TouchPersonalLastUsed(context.Context, uuid.UUID) error { return nil }
 
 func TestBearerMiddleware(t *testing.T) {
 	store := &fakeBearerStore{}

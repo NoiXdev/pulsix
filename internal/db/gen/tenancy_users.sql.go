@@ -307,6 +307,16 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int
 	return result.RowsAffected(), nil
 }
 
+const revokePersonalTokensForUser = `-- name: RevokePersonalTokensForUser :exec
+UPDATE personal_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
+`
+
+// RevokeTokensForUser for the user's personal tokens (backlog 3.100).
+func (q *Queries) RevokePersonalTokensForUser(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, revokePersonalTokensForUser, userID)
+	return err
+}
+
 const revokeSessionsForUser = `-- name: RevokeSessionsForUser :exec
 UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 `

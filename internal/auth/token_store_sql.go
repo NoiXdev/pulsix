@@ -151,6 +151,34 @@ func (s *SQLTokenStore) TouchLastUsed(ctx context.Context, id uuid.UUID, at time
 	return s.q.TouchAPIToken(ctx, gen.TouchAPITokenParams{ID: id, LastUsedAt: pgtype.Timestamptz{Time: at, Valid: true}})
 }
 
+// GetPersonalByHash maps pgx.ErrNoRows to ErrNotFound and nothing else, as
+// GetByHash does; now is the caller's clock (personal_tokens.sql).
+func (s *SQLTokenStore) GetPersonalByHash(ctx context.Context, secretHash []byte, now time.Time) (PersonalToken, error) {
+	row, err := s.q.GetPersonalTokenByHash(ctx, gen.GetPersonalTokenByHashParams{SecretHash: secretHash, Now: now})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PersonalToken{}, ErrNotFound
+		}
+		return PersonalToken{}, err
+	}
+	return PersonalToken{
+		ID: row.ID, UserID: row.UserID, Name: row.Name, Kind: TokenKind(row.Kind), Areas: row.Areas,
+		ExpiresAt: fromPgTimestamptz(row.ExpiresAt), LastUsedAt: fromPgTimestamptz(row.LastUsedAt), CreatedAt: row.CreatedAt,
+	}, nil
+}
+
+// PersonalUsable is GetPersonalByHash's filter, by id.
+func (s *SQLTokenStore) PersonalUsable(ctx context.Context, id uuid.UUID, now time.Time) (bool, error) {
+	return s.q.PersonalTokenUsable(ctx, gen.PersonalTokenUsableParams{ID: id, Now: now})
+}
+
+// TouchPersonalLastUsed stamps the database's own now(), at most once a
+// minute (the statement's own predicate, as for TouchLastUsed); a throttled
+// touch is success.
+func (s *SQLTokenStore) TouchPersonalLastUsed(ctx context.Context, id uuid.UUID) error {
+	return s.q.TouchPersonalToken(ctx, id)
+}
+
 // kindOrAPI maps the zero kind to TokenKindAPI, so a Token built without
 // a kind (every caller before assistant tokens) stays an api token.
 func kindOrAPI(k TokenKind) TokenKind {

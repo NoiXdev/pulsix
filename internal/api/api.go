@@ -65,6 +65,9 @@ type Deps struct {
 	Preferences *preferences.Service
 	Passkeys    *auth.Passkeys
 	Tokens      *auth.Tokens
+	// PersonalTokens answers what a personal token may do in one
+	// organization (backlog 3.100): its grant's cap and the grant's use.
+	PersonalTokens PersonalTokenAccess
 	// Enrolment composes confirming a second factor with completing the
 	// session it was pending for, in one transaction (backlog 1.26).
 	Enrolment *auth.Enrolment
@@ -309,6 +312,9 @@ func (d Deps) validate() error {
 	}
 	if d.Preferences == nil {
 		missing = append(missing, "Preferences")
+	}
+	if d.PersonalTokens == nil {
+		missing = append(missing, "PersonalTokens")
 	}
 	if d.Assistant == nil {
 		missing = append(missing, "Assistant")

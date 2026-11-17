@@ -132,6 +132,10 @@ UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 -- name: RevokeTokensForUser :exec
 UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
 
+-- name: RevokePersonalTokensForUser :exec
+-- RevokeTokensForUser for the user's personal tokens (backlog 3.100).
+UPDATE personal_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
+
 -- name: ListPendingInvites :many
 -- The open invitations of one organization: those TakeInvite would still
 -- take, issuer condition included (backlog 7.29), newest first.

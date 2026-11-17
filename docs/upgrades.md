@@ -409,6 +409,16 @@ backup carries the columns with `users` and `sessions`. The skew between manager
 the behaviour changes are under "Behaviour changes to check after an upgrade" (3.93 to
 3.95).
 
+Personal tokens (backlog 3.100) add migration 00110, three new tables and nothing
+changed in existing ones: `personal_tokens` (a user's own tokens, no row-level
+security, like `sessions`), `personal_token_grants` (organization and role cap per
+token, row-level security by organization; a foreign key to `org_memberships` deletes
+a member's grants when the membership ends) and `org_token_settings` (the
+"Allow personal tokens" switch, no row meaning on). Workers and agents are not
+affected, and a backup carries the three tables. Skew: a personal token (`pxp_…`) is
+unknown to an older manager, which answers 401 for it; organization tokens work on
+both.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.

@@ -55,6 +55,7 @@ import (
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
+	"github.com/noixdev/pulsix/internal/personaltokens"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/preferences"
 	"github.com/noixdev/pulsix/internal/probes"
@@ -232,6 +233,10 @@ type Server struct {
 	// instance and so are counted too; anything built on its own store is
 	// not. Reset() before the request under test.
 	HostReads *HostReadCounter
+	// PersonalTokens is the personal token store (backlog 3.100) on the
+	// test database, for fixtures: PersonalToken inserts through it, and a
+	// test blocks a grant or turns an organization's switch off with it.
+	PersonalTokens *personaltokens.SQLStore
 	// PublicURL is the test server's own base URL, computed from its
 	// listener before Start() (so it is already known when an Option
 	// runs) — the same value production derives PULSIX_PUBLIC_URL from,
@@ -521,6 +526,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// session (Finding 2, fix round 1).
 	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now, SetupToken())
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
+	s.PersonalTokens = personaltokens.NewSQLStore(d)
 	s.HostReads = &HostReadCounter{}
 	hostsSvc := hosts.NewService(countingHostStore{Store: hosts.NewSQLStore(d), counter: s.HostReads}, time.Now, hosts.WithEvalDirty(rules.NewDirtyMarker(d)))
 	// The monitoring check pipeline, wired exactly as app.Build wires it:
@@ -777,6 +783,8 @@ func New(t *testing.T, opts ...Option) *Server {
 		PublicURL: publicURL,
 	}
 	s.Deps.RunRequests = newRunRequests(d, s.Deps, time.Now)
+	// Personal tokens (backlog 3.100), wired as app.Build wires them.
+	s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, tenancySvc)
 	s.Queue.SetClaimGuard(s.Deps.RunRequests)
 	for _, opt := range opts {
 		opt(s)
@@ -1052,6 +1060,35 @@ func (s *Server) orgWithTokenRole(t *testing.T, role tenancy.Role) (uuid.UUID, s
 		t.Fatal(err)
 	}
 	return org, plain
+}
+
+// PersonalToken stores a personal token of userID through the store
+// (backlog 3.100) with one grant per entry of grants, and returns its id and
+// plaintext. Areas make it an assistant token. Each granted organization
+// must already have userID as a member: the grant's foreign key requires it.
+func (s *Server) PersonalToken(t *testing.T, userID uuid.UUID, grants map[uuid.UUID]tenancy.Role, areas ...tenancy.Area) (uuid.UUID, string) {
+	t.Helper()
+	plain, hash, err := auth.MintPersonalSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := auth.PersonalToken{ID: uuid.Must(uuid.NewV7()), UserID: userID, Name: "laptop", Kind: auth.TokenKindAPI, CreatedAt: time.Now()}
+	if len(areas) > 0 {
+		tok.Kind = auth.TokenKindAssistant
+		for _, a := range areas {
+			tok.Areas = append(tok.Areas, string(a))
+		}
+	}
+	ctx := context.Background()
+	if _, err := s.PersonalTokens.InsertToken(ctx, tok, hash); err != nil {
+		t.Fatal(err)
+	}
+	for org, role := range grants {
+		if err := s.PersonalTokens.InsertGrant(ctx, tok.ID, userID, org, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tok.ID, plain
 }
 
 // OrgWithAssistantToken is OrgWithToken for an assistant token (spec

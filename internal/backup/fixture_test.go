@@ -105,6 +105,9 @@ INSERT INTO org_monitoring_settings (org_id, client_absent_days) VALUES ('000000
 INSERT INTO org_secrets (org_id, name, fields_sealed, field_names) VALUES ('00000000-0000-4000-8000-000000000001', 'fixture', '\x0f', '{community}');
 INSERT INTO rotation_groups (id, org_id, credential_id, targets) VALUES ('00000000-0000-4000-8000-00000000002a', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000005', '[]');
 INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash) VALUES ('00000000-0000-4000-8000-00000000002b', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'ci', 'admin', '\x05');
+INSERT INTO personal_tokens (id, user_id, name, secret_hash, kind, areas) VALUES ('00000000-0000-4000-8000-000000000033', '00000000-0000-4000-8000-000000000002', 'laptop', '\x10', 'assistant', '{jobs.read}');
+INSERT INTO personal_token_grants (token_id, user_id, org_id, role) VALUES ('00000000-0000-4000-8000-000000000033', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'operator');
+INSERT INTO org_token_settings (org_id, personal_tokens_allowed) VALUES ('00000000-0000-4000-8000-000000000001', false);
 INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, at) VALUES ('00000000-0000-4000-8000-00000000002c', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 'user', 'fixture', 'host', 'web-1', E'line one\nline two\ttab \\ backslash', now());
 INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, at) VALUES ('00000000-0000-4000-8000-00000000012c', NULL, NULL, 'system', 'fixture', 'instance', '', 'no org', now());
 INSERT INTO invites (id, org_id, email, role, token_hash, invited_by, expires_at) VALUES ('00000000-0000-4000-8000-00000000002d', '00000000-0000-4000-8000-000000000001', 'new@example.com', 'viewer', '\x06', '00000000-0000-4000-8000-000000000002', now() + interval '1 day');
@@ -115,6 +118,7 @@ INSERT INTO passkeys (id, user_id, name, credential_id, public_key, attestation)
 INSERT INTO recovery_codes (user_id, code_hash) VALUES ('00000000-0000-4000-8000-000000000002', '\x0a');
 INSERT INTO sessions (id, user_id, secret_hash, expires_at) VALUES ('00000000-0000-4000-8000-00000000002f', '00000000-0000-4000-8000-000000000002', '\x0b', now() + interval '1 day');
 INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ('00000000-0000-4000-8000-000000000032', '00000000-0000-4000-8000-000000000002', '\x0e', now() + interval '1 hour');
+INSERT INTO user_preferences (user_id, density, page_size, lists) VALUES ('00000000-0000-4000-8000-000000000002', 'compact', 50, '{"hosts": {"columns": ["name"]}}');
 INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ('00000000-0000-4000-8000-000000000002', '\x0c');
 INSERT INTO webauthn_ceremonies (id, kind, user_id, data, expires_at) VALUES ('00000000-0000-4000-8000-000000000030', 'login', '00000000-0000-4000-8000-000000000002', '\x0d', now() + interval '1 hour');
 `

@@ -802,6 +802,12 @@ type OrgSecret struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+type OrgTokenSetting struct {
+	OrgID                 uuid.UUID `json:"org_id"`
+	PersonalTokensAllowed bool      `json:"personal_tokens_allowed"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
 type Organization struct {
 	ID        uuid.UUID `json:"id"`
 	Slug      string    `json:"slug"`
@@ -830,6 +836,30 @@ type PasswordResetToken struct {
 	CreatedAt time.Time          `json:"created_at"`
 	ExpiresAt time.Time          `json:"expires_at"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
+}
+
+type PersonalToken struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	Name       string             `json:"name"`
+	SecretHash []byte             `json:"secret_hash"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
+type PersonalTokenGrant struct {
+	TokenID    uuid.UUID          `json:"token_id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Role       OrgRole            `json:"role"`
+	BlockedAt  pgtype.Timestamptz `json:"blocked_at"`
+	BlockedBy  pgtype.UUID        `json:"blocked_by"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt  time.Time          `json:"created_at"`
 }
 
 type Playbook struct {

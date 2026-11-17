@@ -3,6 +3,7 @@ package tenancy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -215,8 +216,18 @@ func (s *SQLStore) RevokeSessionsForUser(ctx context.Context, id uuid.UUID) erro
 	return s.q.RevokeSessionsForUser(ctx, id)
 }
 
+// RevokeTokensForUser revokes the user's organization tokens and their
+// personal tokens (backlog 3.100). The two statements need no shared
+// transaction: the lookups already refuse a deactivated user's tokens, so
+// revoking is the second line, and a failure is returned either way.
 func (s *SQLStore) RevokeTokensForUser(ctx context.Context, id uuid.UUID) error {
-	return s.q.RevokeTokensForUser(ctx, id)
+	if err := s.q.RevokeTokensForUser(ctx, id); err != nil {
+		return err
+	}
+	if err := s.q.RevokePersonalTokensForUser(ctx, id); err != nil {
+		return fmt.Errorf("revoke personal tokens: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLStore) InsertInvite(ctx context.Context, inv Invite, tokenHash []byte) error {

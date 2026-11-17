@@ -55,10 +55,14 @@ type Scope struct {
 //  5. A bearer token is present (auth.TokenScopeFromContext) and its scope
 //     names a *different* org than the one being accessed → 403. A token
 //     can never be used to reach an org it wasn't minted for, regardless of
-//     the caller's membership elsewhere.
+//     the caller's membership elsewhere. A personal token (backlog 3.100)
+//     names no organization: its grant for this one is looked up here, and
+//     without a live grant it is refused with the same 403; with the
+//     organization's personal-token switch off, with a 403 saying so.
 //  6. The effective role is the *lower* of the caller's membership role and
-//     the token's own role (tenancy.Lower) — a token can only ever narrow
-//     what its owner could otherwise do, never widen it. For a cookie
+//     the token's own role (tenancy.Lower) — or, for a personal token, the
+//     grant's cap — so a token can only ever narrow what its owner could
+//     otherwise do, never widen it (tokenRole, token_role.go). For a cookie
 //     session (no TokenScope), the effective role is just the membership
 //     role.
 //  7. tenancy.Allows(effective role, perm) — false → 403.
@@ -97,10 +101,19 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	var kind auth.TokenKind
 	ts, hasToken := auth.TokenScopeFromContext(ctx)
 	if hasToken {
-		if ts.OrgID != org.ID {
-			return Scope{}, huma.Error403Forbidden("token is scoped to another organization")
+		if p.TokenID == nil {
+			// A token scope without its token id is a wiring bug.
+			slog.ErrorContext(ctx, "token scope without a token id")
+			return Scope{}, huma.Error500InternalServerError("internal error")
 		}
-		role = tenancy.Lower(role, tenancy.Role(ts.Role))
+		role, err = tokenRole(ctx, deps, ts, *p.TokenID, org.ID, role)
+		if detail, refused := isTokenRefusal(err); refused {
+			return Scope{}, huma.Error403Forbidden(detail)
+		}
+		if err != nil {
+			slog.ErrorContext(ctx, "authorize token", "err", err)
+			return Scope{}, huma.Error500InternalServerError("internal error")
+		}
 		kind = ts.Kind
 	}
 	if !tenancy.Allows(role, perm) {
@@ -132,6 +145,11 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 		if !tenancy.AreasAllow(areas, perm) {
 			return Scope{}, huma.Error403Forbidden("the token's areas do not include " + string(perm))
 		}
+	}
+	if hasToken && ts.Personal {
+		// After every check passed: the grant's last use (bookkeeping,
+		// throttled in the store).
+		deps.PersonalTokens.TouchGrant(ctx, *p.TokenID, org.ID)
 	}
 	// Fills in the request's audit carrier, if it has one (only operations
 	// registered with withAudit do — see audit_middleware.go). Every

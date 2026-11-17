@@ -448,6 +448,12 @@ func TestSQLStoreRevokeSessionsAndTokensForUser(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A personal token (backlog 3.100) is revoked with the rest.
+	if err := q.InsertPersonalToken(ctx, gen.InsertPersonalTokenParams{
+		ID: uuid.Must(uuid.NewV7()), UserID: uid, Name: "laptop", SecretHash: hashOf("personal-secret"), CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := store.RevokeSessionsForUser(ctx, uid); err != nil {
 		t.Fatalf("RevokeSessionsForUser: %v", err)
@@ -468,6 +474,13 @@ func TestSQLStoreRevokeSessionsAndTokensForUser(t *testing.T) {
 	}
 	if revokedTokens != 1 {
 		t.Fatalf("revoked tokens = %d, want 1", revokedTokens)
+	}
+	var revokedPersonal int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM personal_tokens WHERE user_id = $1 AND revoked_at IS NOT NULL`, uid).Scan(&revokedPersonal); err != nil {
+		t.Fatal(err)
+	}
+	if revokedPersonal != 1 {
+		t.Fatalf("revoked personal tokens = %d, want 1", revokedPersonal)
 	}
 }
 

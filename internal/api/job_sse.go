@@ -220,7 +220,19 @@ func streamAccessHeld(ctx context.Context, deps Deps, orgID uuid.UUID) error {
 		return fmt.Errorf("check membership: %w", err)
 	}
 	if ts, ok := auth.TokenScopeFromContext(ctx); ok {
-		role = tenancy.Lower(role, tenancy.Role(ts.Role))
+		if p.TokenID == nil {
+			return fmt.Errorf("%w: token scope without a token", errStreamAccessEnded)
+		}
+		// The token's narrowing, re-checked: for a personal token a
+		// revoked grant or the organization's switch turned off ends the
+		// stream (spec rule 13).
+		role, err = tokenRole(ctx, deps, ts, *p.TokenID, orgID, role)
+		if detail, refused := isTokenRefusal(err); refused {
+			return fmt.Errorf("%w: %s", errStreamAccessEnded, detail)
+		}
+		if err != nil {
+			return fmt.Errorf("check token: %w", err)
+		}
 	}
 	if !tenancy.Allows(role, tenancy.PermJobsRead) {
 		return fmt.Errorf("%w: role no longer allows reading runs", errStreamAccessEnded)

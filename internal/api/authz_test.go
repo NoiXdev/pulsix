@@ -83,6 +83,13 @@ func (f *fixedRoleTokenStore) Update(context.Context, uuid.UUID, uuid.UUID, stri
 func (f *fixedRoleTokenStore) TouchLastUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
 }
+func (f *fixedRoleTokenStore) GetPersonalByHash(context.Context, []byte, time.Time) (auth.PersonalToken, error) {
+	return auth.PersonalToken{}, auth.ErrNotFound
+}
+func (f *fixedRoleTokenStore) PersonalUsable(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return false, nil
+}
+func (f *fixedRoleTokenStore) TouchPersonalLastUsed(context.Context, uuid.UUID) error { return nil }
 
 // TestBearerTokenUnknownRoleIsForbidden proves tenancy.Lower and
 // tenancy.Allows fail closed for a token whose role is not one of the four
