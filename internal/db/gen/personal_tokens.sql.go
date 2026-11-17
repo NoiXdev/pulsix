@@ -13,24 +13,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const blockPersonalTokenGrant = `-- name: BlockPersonalTokenGrant :execrows
-UPDATE personal_token_grants SET blocked_at = now(), blocked_by = $3::uuid
-WHERE token_id = $1 AND org_id = $2 AND blocked_at IS NULL
+const blockPersonalTokenGrantEntry = `-- name: BlockPersonalTokenGrantEntry :one
+UPDATE personal_token_grants g SET blocked_at = now(), blocked_by = $1::uuid
+FROM personal_tokens t, users u
+WHERE g.org_id = $2::uuid AND g.token_id = $3::uuid AND g.blocked_at IS NULL
+  AND t.id = g.token_id AND t.revoked_at IS NULL AND u.id = g.user_id
+RETURNING g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at
 `
 
-type BlockPersonalTokenGrantParams struct {
-	TokenID   uuid.UUID   `json:"token_id"`
-	OrgID     uuid.UUID   `json:"org_id"`
+type BlockPersonalTokenGrantEntryParams struct {
 	BlockedBy pgtype.UUID `json:"blocked_by"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	TokenID   uuid.UUID   `json:"token_id"`
 }
 
-// An organization admin's revocation of one grant: it sticks until lifted.
-func (q *Queries) BlockPersonalTokenGrant(ctx context.Context, arg BlockPersonalTokenGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, blockPersonalTokenGrant, arg.TokenID, arg.OrgID, arg.BlockedBy)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type BlockPersonalTokenGrantEntryRow struct {
+	TokenID      uuid.UUID          `json:"token_id"`
+	Name         string             `json:"name"`
+	Kind         string             `json:"kind"`
+	UserID       uuid.UUID          `json:"user_id"`
+	DisplayName  string             `json:"display_name"`
+	Email        string             `json:"email"`
+	Role         OrgRole            `json:"role"`
+	Blocked      bool               `json:"blocked"`
+	TokenRevoked bool               `json:"token_revoked"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+}
+
+// An organization admin's revocation of one grant of a token that is not
+// revoked, in one statement: two admins racing get one row and one none,
+// and the row names the cap that was blocked.
+func (q *Queries) BlockPersonalTokenGrantEntry(ctx context.Context, arg BlockPersonalTokenGrantEntryParams) (BlockPersonalTokenGrantEntryRow, error) {
+	row := q.db.QueryRow(ctx, blockPersonalTokenGrantEntry, arg.BlockedBy, arg.OrgID, arg.TokenID)
+	var i BlockPersonalTokenGrantEntryRow
+	err := row.Scan(
+		&i.TokenID,
+		&i.Name,
+		&i.Kind,
+		&i.UserID,
+		&i.DisplayName,
+		&i.Email,
+		&i.Role,
+		&i.Blocked,
+		&i.TokenRevoked,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const countLivePersonalTokenGrants = `-- name: CountLivePersonalTokenGrants :one
@@ -191,11 +225,12 @@ func (q *Queries) GetPersonalTokenGrant(ctx context.Context, arg GetPersonalToke
 
 const getPersonalTokenGrantForOrg = `-- name: GetPersonalTokenGrantForOrg :one
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
-       (g.blocked_at IS NOT NULL)::boolean AS blocked, g.last_used_at, t.created_at, t.expires_at
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
 JOIN users u ON u.id = g.user_id
-WHERE g.org_id = $1 AND g.token_id = $2 AND t.revoked_at IS NULL
+WHERE g.org_id = $1 AND g.token_id = $2 AND (t.revoked_at IS NULL OR g.blocked_at IS NOT NULL)
 `
 
 type GetPersonalTokenGrantForOrgParams struct {
@@ -204,17 +239,18 @@ type GetPersonalTokenGrantForOrgParams struct {
 }
 
 type GetPersonalTokenGrantForOrgRow struct {
-	TokenID     uuid.UUID          `json:"token_id"`
-	Name        string             `json:"name"`
-	Kind        string             `json:"kind"`
-	UserID      uuid.UUID          `json:"user_id"`
-	DisplayName string             `json:"display_name"`
-	Email       string             `json:"email"`
-	Role        OrgRole            `json:"role"`
-	Blocked     bool               `json:"blocked"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	CreatedAt   time.Time          `json:"created_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	TokenID      uuid.UUID          `json:"token_id"`
+	Name         string             `json:"name"`
+	Kind         string             `json:"kind"`
+	UserID       uuid.UUID          `json:"user_id"`
+	DisplayName  string             `json:"display_name"`
+	Email        string             `json:"email"`
+	Role         OrgRole            `json:"role"`
+	Blocked      bool               `json:"blocked"`
+	TokenRevoked bool               `json:"token_revoked"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) GetPersonalTokenGrantForOrg(ctx context.Context, arg GetPersonalTokenGrantForOrgParams) (GetPersonalTokenGrantForOrgRow, error) {
@@ -229,6 +265,7 @@ func (q *Queries) GetPersonalTokenGrantForOrg(ctx context.Context, arg GetPerson
 		&i.Email,
 		&i.Role,
 		&i.Blocked,
+		&i.TokenRevoked,
 		&i.LastUsedAt,
 		&i.CreatedAt,
 		&i.ExpiresAt,
@@ -293,31 +330,37 @@ func (q *Queries) InsertPersonalTokenGrant(ctx context.Context, arg InsertPerson
 const listPersonalTokenGrantsForOrg = `-- name: ListPersonalTokenGrantsForOrg :many
 
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
-       (g.blocked_at IS NOT NULL)::boolean AS blocked, g.last_used_at, t.created_at, t.expires_at
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
 JOIN users u ON u.id = g.user_id
-WHERE g.org_id = $1 AND t.revoked_at IS NULL
+WHERE g.org_id = $1 AND (t.revoked_at IS NULL OR g.blocked_at IS NOT NULL)
 ORDER BY t.created_at, t.id
 `
 
 type ListPersonalTokenGrantsForOrgRow struct {
-	TokenID     uuid.UUID          `json:"token_id"`
-	Name        string             `json:"name"`
-	Kind        string             `json:"kind"`
-	UserID      uuid.UUID          `json:"user_id"`
-	DisplayName string             `json:"display_name"`
-	Email       string             `json:"email"`
-	Role        OrgRole            `json:"role"`
-	Blocked     bool               `json:"blocked"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	CreatedAt   time.Time          `json:"created_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	TokenID      uuid.UUID          `json:"token_id"`
+	Name         string             `json:"name"`
+	Kind         string             `json:"kind"`
+	UserID       uuid.UUID          `json:"user_id"`
+	DisplayName  string             `json:"display_name"`
+	Email        string             `json:"email"`
+	Role         OrgRole            `json:"role"`
+	Blocked      bool               `json:"blocked"`
+	TokenRevoked bool               `json:"token_revoked"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 }
 
 // An organization's view (spec rule 6). These run bound to the organization;
 // row-level security admits only its grants, and the statements name the
 // organization as well.
+// Grants of tokens that are not revoked, and every blocked grant: a block
+// keeps its owner out of the organization even after they revoked the
+// token (the block is per person and organization), so the admins must
+// still see it to lift it.
 func (q *Queries) ListPersonalTokenGrantsForOrg(ctx context.Context, orgID uuid.UUID) ([]ListPersonalTokenGrantsForOrgRow, error) {
 	rows, err := q.db.Query(ctx, listPersonalTokenGrantsForOrg, orgID)
 	if err != nil {
@@ -336,6 +379,7 @@ func (q *Queries) ListPersonalTokenGrantsForOrg(ctx context.Context, orgID uuid.
 			&i.Email,
 			&i.Role,
 			&i.Blocked,
+			&i.TokenRevoked,
 			&i.LastUsedAt,
 			&i.CreatedAt,
 			&i.ExpiresAt,
@@ -516,6 +560,28 @@ func (q *Queries) LockPersonalTokenOwner(ctx context.Context, id uuid.UUID) erro
 	return err
 }
 
+const personalTokenOrgBlocked = `-- name: PersonalTokenOrgBlocked :one
+SELECT EXISTS (
+  SELECT 1 FROM personal_token_grants
+  WHERE user_id = $1 AND org_id = $2 AND blocked_at IS NOT NULL
+)::boolean AS blocked
+`
+
+type PersonalTokenOrgBlockedParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	OrgID  uuid.UUID `json:"org_id"`
+}
+
+// Whether an admin blocked any grant of the user in the organization, of
+// any of their tokens, revoked ones included: the block is per person and
+// organization, so no token of theirs gets a grant there until it is lifted.
+func (q *Queries) PersonalTokenOrgBlocked(ctx context.Context, arg PersonalTokenOrgBlockedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, personalTokenOrgBlocked, arg.UserID, arg.OrgID)
+	var blocked bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const personalTokenUsable = `-- name: PersonalTokenUsable :one
 SELECT EXISTS (
   SELECT 1 FROM personal_tokens t JOIN users u ON u.id = t.user_id
@@ -629,19 +695,19 @@ func (q *Queries) TouchPersonalTokenGrant(ctx context.Context, arg TouchPersonal
 	return err
 }
 
-const unblockPersonalTokenGrant = `-- name: UnblockPersonalTokenGrant :execrows
-DELETE FROM personal_token_grants WHERE token_id = $1 AND org_id = $2 AND blocked_at IS NOT NULL
+const unblockPersonalTokenOwner = `-- name: UnblockPersonalTokenOwner :execrows
+DELETE FROM personal_token_grants WHERE org_id = $1 AND user_id = $2 AND blocked_at IS NOT NULL
 `
 
-type UnblockPersonalTokenGrantParams struct {
-	TokenID uuid.UUID `json:"token_id"`
-	OrgID   uuid.UUID `json:"org_id"`
+type UnblockPersonalTokenOwnerParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	UserID uuid.UUID `json:"user_id"`
 }
 
-// Lifting an admin's block deletes the grant: the owner may add the
-// organization again.
-func (q *Queries) UnblockPersonalTokenGrant(ctx context.Context, arg UnblockPersonalTokenGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, unblockPersonalTokenGrant, arg.TokenID, arg.OrgID)
+// Lifting the block deletes every blocked grant of the user in the
+// organization: the owner may add the organization again.
+func (q *Queries) UnblockPersonalTokenOwner(ctx context.Context, arg UnblockPersonalTokenOwnerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unblockPersonalTokenOwner, arg.OrgID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}

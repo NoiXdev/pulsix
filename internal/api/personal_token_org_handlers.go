@@ -18,17 +18,20 @@ import (
 // token page: whose token, its cap here, whether an admin blocked it, and
 // its last use here.
 type personalTokenEntryDTO struct {
-	TokenID    string     `json:"token_id"`
-	Name       string     `json:"name"`
-	Kind       string     `json:"kind" enum:"api,assistant"`
-	OwnerID    string     `json:"owner_id"`
-	OwnerName  string     `json:"owner_name"`
-	OwnerEmail string     `json:"owner_email"`
-	Role       string     `json:"role" enum:"owner,admin,operator,viewer" doc:"The grant's cap here; the owner's membership role may lower it further"`
-	Blocked    bool       `json:"blocked" doc:"An admin revoked the grant; it stays blocked until an admin lifts the block"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty" doc:"The token's last use in this organization"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	TokenID    string `json:"token_id"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind" enum:"api,assistant"`
+	OwnerID    string `json:"owner_id"`
+	OwnerName  string `json:"owner_name"`
+	OwnerEmail string `json:"owner_email"`
+	Role       string `json:"role" enum:"owner,admin,operator,viewer" doc:"The grant's cap here; the owner's membership role may lower it further"`
+	Blocked    bool   `json:"blocked" doc:"An admin revoked the grant; no token of its owner gets a grant here until an admin lifts the block"`
+	// TokenRevoked: the owner revoked the token. Such a grant is listed
+	// only while blocked, since the block outlives the token.
+	TokenRevoked bool       `json:"token_revoked" doc:"The owner revoked the token; listed only while its grant here is blocked"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty" doc:"The token's last use in this organization"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 }
 
 type personalTokenEntriesOutput struct {
@@ -43,8 +46,10 @@ type personalTokenSettingsBody struct {
 
 type personalTokenSettingsOutput struct{ Body personalTokenSettingsBody }
 
-// registerPersonalTokenOrgRoutes wires the organization's side. Seeing and
-// revoking grants needs tokens.manage, as for organization tokens (and,
+// registerPersonalTokenOrgRoutes wires the organization's side. A revoked
+// grant blocks its owner in the organization (per person, for every token
+// of theirs, until lifted); lifting it through any of their blocked
+// entries lifts all of them. Seeing and revoking grants needs tokens.manage, as for organization tokens (and,
 // like revoking an organization token, a token with that right may do
 // it); lifting a block and the switch need an interactive session, so no
 // token can reopen access. No route here takes a cap: an admin can revoke a
@@ -100,7 +105,7 @@ func registerPersonalTokenOrgRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapPersonalTokenErr(ctx, err, nil)
 		}
-		setAuditObject(ctx, id.String(), "lifted the block on personal token "+e.Name+" of "+e.OwnerName)
+		setAuditObject(ctx, id.String(), "lifted the block on personal tokens of "+e.OwnerName+" (blocked with "+e.Name+")")
 		return &okOutput{}, nil
 	}, withAudit("unblockPersonalTokenGrant", "personal_token"))
 
@@ -148,7 +153,7 @@ func readPersonalTokenSettings(ctx context.Context, deps Deps, orgID uuid.UUID) 
 func toPersonalTokenEntryDTO(e personaltokens.OrgEntry) personalTokenEntryDTO {
 	return personalTokenEntryDTO{
 		TokenID: e.TokenID.String(), Name: e.Name, Kind: string(e.Kind), OwnerID: e.OwnerID.String(),
-		OwnerName: e.OwnerName, OwnerEmail: e.OwnerEmail, Role: string(e.Role), Blocked: e.Blocked,
+		OwnerName: e.OwnerName, OwnerEmail: e.OwnerEmail, Role: string(e.Role), Blocked: e.Blocked, TokenRevoked: e.TokenRevoked,
 		LastUsedAt: e.LastUsedAt, CreatedAt: e.CreatedAt, ExpiresAt: e.ExpiresAt,
 	}
 }

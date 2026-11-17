@@ -237,11 +237,12 @@ func (f *fakeStore) RevokeToken(_ context.Context, userID, id uuid.UUID) error {
 func (f *fakeStore) entry(orgID, tokenID uuid.UUID) (personaltokens.OrgEntry, bool) {
 	g, ok := f.grants[grantKey{tokenID, orgID}]
 	t, live := f.tokens[tokenID]
-	if !ok || !live || t.revoked {
+	if !ok || !live || (t.revoked && !g.blocked) {
 		return personaltokens.OrgEntry{}, false
 	}
 	return personaltokens.OrgEntry{TokenID: tokenID, Name: t.tok.Name, Kind: t.tok.Kind, OwnerID: t.tok.UserID,
-		Role: g.role, Blocked: g.blocked, LastUsedAt: g.lastUsed, CreatedAt: t.tok.CreatedAt, ExpiresAt: t.tok.ExpiresAt}, true
+		Role: g.role, Blocked: g.blocked, TokenRevoked: t.revoked, LastUsedAt: g.lastUsed, CreatedAt: t.tok.CreatedAt,
+		ExpiresAt: t.tok.ExpiresAt}, true
 }
 
 func (f *fakeStore) OrgEntries(_ context.Context, orgID uuid.UUID) ([]personaltokens.OrgEntry, error) {
@@ -262,29 +263,44 @@ func (f *fakeStore) OrgEntry(_ context.Context, orgID, tokenID uuid.UUID) (perso
 	return e, nil
 }
 
-func (f *fakeStore) BlockGrant(_ context.Context, tokenID, orgID, _ uuid.UUID) error {
+func (f *fakeStore) BlockGrant(_ context.Context, tokenID, orgID, _ uuid.UUID) (personaltokens.OrgEntry, error) {
 	if f.failErr != nil {
-		return f.failErr
+		return personaltokens.OrgEntry{}, f.failErr
 	}
 	k := grantKey{tokenID, orgID}
 	g, ok := f.grants[k]
-	if !ok || g.blocked {
-		return personaltokens.ErrNotFound
+	if t, live := f.tokens[tokenID]; !ok || g.blocked || !live || t.revoked {
+		return personaltokens.OrgEntry{}, personaltokens.ErrNotFound
 	}
 	g.blocked = true
 	f.grants[k] = g
-	return nil
+	e, _ := f.entry(orgID, tokenID)
+	return e, nil
 }
 
-func (f *fakeStore) UnblockGrant(_ context.Context, tokenID, orgID uuid.UUID) error {
+func (f *fakeStore) OrgBlocked(_ context.Context, userID, orgID uuid.UUID) (bool, error) {
+	for k, g := range f.grants {
+		if t, ok := f.tokens[k.token]; ok && k.org == orgID && g.blocked && t.tok.UserID == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (f *fakeStore) UnblockOwner(_ context.Context, orgID, userID uuid.UUID) error {
 	if f.failErr != nil {
 		return f.failErr
 	}
-	k := grantKey{tokenID, orgID}
-	if g, ok := f.grants[k]; !ok || !g.blocked {
+	n := 0
+	for k, g := range f.grants {
+		if t, ok := f.tokens[k.token]; ok && k.org == orgID && g.blocked && t.tok.UserID == userID {
+			delete(f.grants, k)
+			n++
+		}
+	}
+	if n == 0 {
 		return personaltokens.ErrNotFound
 	}
-	delete(f.grants, k)
 	return nil
 }
 

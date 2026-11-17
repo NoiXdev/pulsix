@@ -15,16 +15,17 @@ import (
 )
 
 type ptEntry struct {
-	TokenID    string  `json:"token_id"`
-	Name       string  `json:"name"`
-	Kind       string  `json:"kind"`
-	OwnerID    string  `json:"owner_id"`
-	OwnerName  string  `json:"owner_name"`
-	OwnerEmail string  `json:"owner_email"`
-	Role       string  `json:"role"`
-	Blocked    bool    `json:"blocked"`
-	LastUsedAt *string `json:"last_used_at"`
-	CreatedAt  string  `json:"created_at"`
+	TokenID      string  `json:"token_id"`
+	Name         string  `json:"name"`
+	Kind         string  `json:"kind"`
+	OwnerID      string  `json:"owner_id"`
+	OwnerName    string  `json:"owner_name"`
+	OwnerEmail   string  `json:"owner_email"`
+	Role         string  `json:"role"`
+	Blocked      bool    `json:"blocked"`
+	TokenRevoked bool    `json:"token_revoked"`
+	LastUsedAt   *string `json:"last_used_at"`
+	CreatedAt    string  `json:"created_at"`
 }
 
 // entries lists slug's personal token entries as client c.
@@ -141,10 +142,6 @@ func TestSwitchOffThenOn(t *testing.T) {
 	settings := "/api/v1/orgs/pt-switch-a/settings/personal-tokens"
 	plain := f.create(t, map[string]any{"name": "plain", "grants": grantsOf("pt-switch-a", "viewer")})
 	blocked := f.create(t, map[string]any{"name": "blocked", "grants": grantsOf("pt-switch-a", "viewer", "pt-switch-b", "viewer")})
-	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-switch-a/personal-tokens/"+blocked.ID, nil); code != http.StatusOK {
-		t.Fatalf("admin revoke: %d (%s)", code, raw)
-	}
-
 	if code, raw := f.call(t, f.c, http.MethodGet, settings, nil); code != http.StatusOK || !strings.Contains(raw, `"allowed":true`) {
 		t.Fatalf("GET settings as an operator: %d (%s)", code, raw)
 	}
@@ -169,6 +166,12 @@ func TestSwitchOffThenOn(t *testing.T) {
 	}
 	if code, raw := f.patch(t, plain.ID, map[string]any{"grants": grantsOf("pt-switch-a", "operator")}); code != http.StatusConflict || rawDetail(t, raw) != "personal_tokens_off" {
 		t.Fatalf("raising a cap while off: %d (%s)", code, raw)
+	}
+
+	// An admin revokes one grant while the switch is off (the block is per
+	// person, so it comes after the owner's checks above).
+	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-switch-a/personal-tokens/"+blocked.ID, nil); code != http.StatusOK {
+		t.Fatalf("admin revoke: %d (%s)", code, raw)
 	}
 
 	if code, raw := f.call(t, admin, http.MethodPut, settings, map[string]any{"allowed": true}); code != http.StatusOK {
@@ -229,4 +232,38 @@ func TestOrgViewListsOnlyOwnGrants(t *testing.T) {
 	if code, _ := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-view-a/personal-tokens/"+f.list(t)[1].ID, nil); code != http.StatusNotFound {
 		t.Fatalf("revoking B's grant through A: %d, want 404", code)
 	}
+}
+
+// TestAdminBlockIsPerPerson (fix round 1): an admin's revocation keeps the
+// person out of the organization with every token — a new one, and one made
+// after revoking the blocked token — until an admin lifts the block, which
+// the admin can still do from the revoked token's entry.
+func TestAdminBlockIsPerPerson(t *testing.T) {
+	f := newPTFixture(t, "pt-person")
+	f.org(t, "pt-person-a", tenancy.RoleOperator)
+	f.org(t, "pt-person-b", tenancy.RoleOperator)
+	admin := f.s.LoginAs(f.owner)
+	tok := f.create(t, map[string]any{"name": "deploy", "grants": grantsOf("pt-person-a", "viewer", "pt-person-b", "viewer")})
+	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-person-b/personal-tokens/"+tok.ID, nil); code != http.StatusOK {
+		t.Fatalf("admin revoke: %d (%s)", code, raw)
+	}
+	newToken := map[string]any{"name": "fresh", "grants": grantsOf("pt-person-b", "viewer")}
+	if code, raw := f.call(t, f.c, http.MethodPost, myTokensPath, newToken); code != http.StatusConflict || rawDetail(t, raw) != "grant_blocked" {
+		t.Fatalf("a new token for B: %d (%s)", code, raw)
+	}
+	if code, raw := f.call(t, f.c, http.MethodDelete, myTokensPath+"/"+tok.ID, nil); code != http.StatusOK {
+		t.Fatalf("owner revoke: %d (%s)", code, raw)
+	}
+	if code, raw := f.call(t, f.c, http.MethodPost, myTokensPath, newToken); code != http.StatusConflict || rawDetail(t, raw) != "grant_blocked" {
+		t.Fatalf("a new token for B after revoking the blocked one: %d (%s)", code, raw)
+	}
+	entries := f.entries(t, admin, "pt-person-b")
+	if len(entries) != 1 || entries[0].TokenID != tok.ID || !entries[0].Blocked || !entries[0].TokenRevoked {
+		t.Fatalf("B entries = %+v", entries)
+	}
+	if code, raw := f.call(t, admin, http.MethodPost, "/api/v1/orgs/pt-person-b/personal-tokens/"+tok.ID+"/unblock", nil); code != http.StatusOK {
+		t.Fatalf("unblock: %d (%s)", code, raw)
+	}
+	fresh := f.create(t, newToken)
+	wantStatus(t, "B with the new token", f.s.Get(t, fresh.Token, "/api/v1/orgs/pt-person-b/hosts"), http.StatusOK)
 }

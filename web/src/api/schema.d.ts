@@ -6986,7 +6986,7 @@ export interface components {
             entries: components["schemas"]["PersonalTokenEntryDTO"][] | null;
         };
         PersonalTokenEntryDTO: {
-            /** @description An admin revoked the grant; it stays blocked until an admin lifts the block */
+            /** @description An admin revoked the grant; no token of its owner gets a grant here until an admin lifts the block */
             blocked: boolean;
             /** Format: date-time */
             created_at: string;
@@ -7009,6 +7009,8 @@ export interface components {
              */
             role: "owner" | "admin" | "operator" | "viewer";
             token_id: string;
+            /** @description The owner revoked the token; listed only while its grant here is blocked */
+            token_revoked: boolean;
         };
         PersonalTokenListOutputBody: {
             /**

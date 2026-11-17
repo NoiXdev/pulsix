@@ -144,8 +144,13 @@ func (s *SQLStore) RevokeToken(ctx context.Context, userID, id uuid.UUID) error 
 	return rowsOrNotFound(s.q.RevokePersonalToken(ctx, gen.RevokePersonalTokenParams{ID: id, UserID: userID}))
 }
 
-// LiveGrants counts tokenID's unblocked grants.
+// LiveGrants counts tokenID's unblocked grants. It reads across
+// organizations, so it fails closed when ctx is bound to one: row-level
+// security would hide the others and turn two grants into one.
 func (s *SQLStore) LiveGrants(ctx context.Context, tokenID uuid.UUID) (uuid.UUID, int, error) {
+	if bound, ok := db.OrgScope(ctx); ok {
+		return uuid.Nil, 0, fmt.Errorf("count grants of %s bound to %s: %w", tokenID, bound, errForeignScope)
+	}
 	r, err := s.q.CountLivePersonalTokenGrants(ctx, tokenID)
 	if err != nil {
 		return uuid.Nil, 0, err
@@ -157,9 +162,9 @@ func (s *SQLStore) LiveGrants(ctx context.Context, tokenID uuid.UUID) (uuid.UUID
 }
 
 func orgEntry(tokenID uuid.UUID, name, kind string, owner uuid.UUID, ownerName, ownerEmail string, role gen.OrgRole,
-	blocked bool, last pgtype.Timestamptz, created time.Time, exp pgtype.Timestamptz) OrgEntry {
+	blocked, revoked bool, last pgtype.Timestamptz, created time.Time, exp pgtype.Timestamptz) OrgEntry {
 	return OrgEntry{TokenID: tokenID, Name: name, Kind: auth.TokenKind(kind), OwnerID: owner, OwnerName: ownerName,
-		OwnerEmail: ownerEmail, Role: tenancy.Role(role), Blocked: blocked, LastUsedAt: db.TimePtr(last),
+		OwnerEmail: ownerEmail, Role: tenancy.Role(role), Blocked: blocked, TokenRevoked: revoked, LastUsedAt: db.TimePtr(last),
 		CreatedAt: created, ExpiresAt: db.TimePtr(exp)}
 }
 
@@ -172,7 +177,7 @@ func (s *SQLStore) OrgEntries(ctx context.Context, orgID uuid.UUID) ([]OrgEntry,
 	}
 	out := make([]OrgEntry, len(rows))
 	for i, r := range rows {
-		out[i] = orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt)
+		out[i] = orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt)
 	}
 	return out, nil
 }
@@ -186,10 +191,21 @@ func (s *SQLStore) OrgEntry(ctx context.Context, orgID, tokenID uuid.UUID) (OrgE
 	if err != nil {
 		return OrgEntry{}, err
 	}
-	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
+	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
 }
 
-// UnblockGrant deletes a blocked grant; ErrNotFound when none is blocked.
-func (s *SQLStore) UnblockGrant(ctx context.Context, tokenID, orgID uuid.UUID) error {
-	return rowsOrNotFound(s.q.UnblockPersonalTokenGrant(ctx, gen.UnblockPersonalTokenGrantParams{TokenID: tokenID, OrgID: orgID}))
+// OrgBlocked reports whether an admin blocked any grant of userID in orgID,
+// of any token of theirs, revoked ones included. It runs at instance level
+// or bound to orgID; bound to another organization it fails closed.
+func (s *SQLStore) OrgBlocked(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
+	if err := refuseForeignScope(ctx, orgID); err != nil {
+		return false, fmt.Errorf("read personal token block: %w", err)
+	}
+	return s.q.PersonalTokenOrgBlocked(ctx, gen.PersonalTokenOrgBlockedParams{UserID: userID, OrgID: orgID})
+}
+
+// UnblockOwner deletes every blocked grant of userID in orgID; ErrNotFound
+// when there is none.
+func (s *SQLStore) UnblockOwner(ctx context.Context, orgID, userID uuid.UUID) error {
+	return rowsOrNotFound(s.q.UnblockPersonalTokenOwner(ctx, gen.UnblockPersonalTokenOwnerParams{OrgID: orgID, UserID: userID}))
 }

@@ -45,11 +45,6 @@ FROM personal_token_grants WHERE token_id = $1 AND org_id = $2;
 UPDATE personal_token_grants SET last_used_at = now()
 WHERE token_id = $1 AND org_id = $2 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
 
--- name: BlockPersonalTokenGrant :execrows
--- An organization admin's revocation of one grant: it sticks until lifted.
-UPDATE personal_token_grants SET blocked_at = now(), blocked_by = sqlc.narg(blocked_by)::uuid
-WHERE token_id = $1 AND org_id = $2 AND blocked_at IS NULL;
-
 -- name: PersonalTokensAllowed :one
 -- The organization's switch; no row means allowed.
 SELECT COALESCE((SELECT personal_tokens_allowed FROM org_token_settings WHERE org_id = $1), true)::boolean AS allowed;
@@ -132,23 +127,50 @@ FROM personal_token_grants WHERE token_id = $1 AND blocked_at IS NULL;
 -- organization as well.
 
 -- name: ListPersonalTokenGrantsForOrg :many
+-- Grants of tokens that are not revoked, and every blocked grant: a block
+-- keeps its owner out of the organization even after they revoked the
+-- token (the block is per person and organization), so the admins must
+-- still see it to lift it.
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
-       (g.blocked_at IS NOT NULL)::boolean AS blocked, g.last_used_at, t.created_at, t.expires_at
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
 JOIN users u ON u.id = g.user_id
-WHERE g.org_id = $1 AND t.revoked_at IS NULL
+WHERE g.org_id = $1 AND (t.revoked_at IS NULL OR g.blocked_at IS NOT NULL)
 ORDER BY t.created_at, t.id;
 
 -- name: GetPersonalTokenGrantForOrg :one
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
-       (g.blocked_at IS NOT NULL)::boolean AS blocked, g.last_used_at, t.created_at, t.expires_at
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
 JOIN users u ON u.id = g.user_id
-WHERE g.org_id = $1 AND g.token_id = $2 AND t.revoked_at IS NULL;
+WHERE g.org_id = $1 AND g.token_id = $2 AND (t.revoked_at IS NULL OR g.blocked_at IS NOT NULL);
 
--- name: UnblockPersonalTokenGrant :execrows
--- Lifting an admin's block deletes the grant: the owner may add the
--- organization again.
-DELETE FROM personal_token_grants WHERE token_id = $1 AND org_id = $2 AND blocked_at IS NOT NULL;
+-- name: BlockPersonalTokenGrantEntry :one
+-- An organization admin's revocation of one grant of a token that is not
+-- revoked, in one statement: two admins racing get one row and one none,
+-- and the row names the cap that was blocked.
+UPDATE personal_token_grants g SET blocked_at = now(), blocked_by = sqlc.narg(blocked_by)::uuid
+FROM personal_tokens t, users u
+WHERE g.org_id = sqlc.arg(org_id)::uuid AND g.token_id = sqlc.arg(token_id)::uuid AND g.blocked_at IS NULL
+  AND t.id = g.token_id AND t.revoked_at IS NULL AND u.id = g.user_id
+RETURNING g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
+       (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       g.last_used_at, t.created_at, t.expires_at;
+
+-- name: PersonalTokenOrgBlocked :one
+-- Whether an admin blocked any grant of the user in the organization, of
+-- any of their tokens, revoked ones included: the block is per person and
+-- organization, so no token of theirs gets a grant there until it is lifted.
+SELECT EXISTS (
+  SELECT 1 FROM personal_token_grants
+  WHERE user_id = $1 AND org_id = $2 AND blocked_at IS NOT NULL
+)::boolean AS blocked;
+
+-- name: UnblockPersonalTokenOwner :execrows
+-- Lifting the block deletes every blocked grant of the user in the
+-- organization: the owner may add the organization again.
+DELETE FROM personal_token_grants WHERE org_id = $1 AND user_id = $2 AND blocked_at IS NOT NULL;

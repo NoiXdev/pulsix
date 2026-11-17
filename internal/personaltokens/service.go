@@ -33,8 +33,9 @@ var (
 	ErrSwitchedOff = errors.New("personal tokens are turned off for this organization")
 	// ErrLimit: the user already holds MaxTokensPerUser personal tokens.
 	ErrLimit = fmt.Errorf("a user holds at most %d personal tokens", MaxTokensPerUser)
-	// ErrBlocked: an organization admin revoked the token's grant there,
-	// and the block sticks until an admin lifts it.
+	// ErrBlocked: an organization admin revoked a grant of the user there;
+	// the block is per person and organization and sticks, for every token
+	// of theirs, until an admin lifts it.
 	ErrBlocked = errors.New("an organization admin revoked this token's grant there")
 	// ErrAboveRole: a grant's cap is above the user's role in the
 	// organization. It is refused, never silently lowered.
@@ -54,7 +55,7 @@ const (
 // Store keeps personal tokens and their grants. Under an organization's
 // database scope row-level security confines every grant read to that
 // organization: the organization methods (OrgEntries, OrgEntry, BlockGrant,
-// UnblockGrant, SetAllowed, and Cap/Allowed/TouchGrant at use) run in that
+// UnblockOwner, SetAllowed, and Cap/Allowed/TouchGrant at use) run in that
 // scope. The owner's methods (CountTokens, Token, Tokens, UserGrants,
 // TokenGrants, the writes and LiveGrants) span every organization a token is
 // granted in, so they run at instance level, with no organization bound.
@@ -105,15 +106,21 @@ type Store interface {
 	OrgEntries(ctx context.Context, orgID uuid.UUID) ([]OrgEntry, error)
 	// OrgEntry is one of them; ErrNotFound when there is none.
 	OrgEntry(ctx context.Context, orgID, tokenID uuid.UUID) (OrgEntry, error)
-	// BlockGrant blocks an unblocked grant; ErrNotFound otherwise. by is
-	// the admin.
-	BlockGrant(ctx context.Context, tokenID, orgID, by uuid.UUID) error
-	// UnblockGrant deletes a blocked grant; ErrNotFound otherwise.
-	UnblockGrant(ctx context.Context, tokenID, orgID uuid.UUID) error
+	// BlockGrant blocks an unblocked grant of a token that is not revoked,
+	// atomically, and returns its entry; ErrNotFound when there is no such
+	// grant. by is the admin.
+	BlockGrant(ctx context.Context, tokenID, orgID, by uuid.UUID) (OrgEntry, error)
+	// OrgBlocked reports whether userID has any blocked grant in orgID, of
+	// any token, revoked ones included (the block is per person).
+	OrgBlocked(ctx context.Context, userID, orgID uuid.UUID) (bool, error)
+	// UnblockOwner deletes every blocked grant of userID in orgID;
+	// ErrNotFound when there is none.
+	UnblockOwner(ctx context.Context, orgID, userID uuid.UUID) error
 	// SetAllowed turns the organization's switch on or off.
 	SetAllowed(ctx context.Context, orgID uuid.UUID, on bool) error
 	// LiveGrants counts tokenID's unblocked grants; orgID is the one
-	// organization when n == 1, uuid.Nil otherwise.
+	// organization when n == 1, uuid.Nil otherwise. Instance level only:
+	// bound to an organization it fails closed.
 	LiveGrants(ctx context.Context, tokenID uuid.UUID) (orgID uuid.UUID, n int, err error)
 }
 

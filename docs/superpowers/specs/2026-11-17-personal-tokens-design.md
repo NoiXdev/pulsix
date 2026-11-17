@@ -31,10 +31,18 @@ personal token never has more rights than its user, and may have fewer.
   organization's settings, **on by default**. Off: no new grants for that
   organization, and existing grants stop working there at once (they come
   back if it is turned on again, unless an admin revoked them).
-- **An admin's revocation sticks**: a grant an admin revoked stays blocked;
-  the owner cannot add that organization to the token again. Only an
-  admin can lift the block (on the organization's token page), after which
-  the owner may add it again.
+- **An admin's revocation sticks**: a grant an admin revoked stays blocked,
+  and the block is **per person and organization**: no token of that user
+  — the same token, another existing one, a new one, or one created after
+  revoking the blocked token — gets a grant for that organization (409
+  `grant_blocked`). Only an admin can lift the block (on the
+  organization's token page, which keeps listing a blocked grant even after
+  its token was revoked); lifting it lifts every blocked grant of that
+  user there, after which the owner may add the organization again.
+  Grants the user's other tokens already held there are not touched by
+  the block; an admin revokes each of them separately. A blocked grant
+  counts toward the token's 50 grants. The block ends with the membership
+  (rule 11).
 
 ## Rules (designer's calls, check when reading)
 

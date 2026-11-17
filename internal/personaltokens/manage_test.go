@@ -551,3 +551,88 @@ func (v *vanishingStore) DeleteGrant(ctx context.Context, tokenID, orgID uuid.UU
 	}
 	return v.fakeStore.DeleteGrant(ctx, tokenID, orgID)
 }
+
+// TestBlockIsPerPersonAndOrganization (fix round 1, the owner's decision
+// "an admin's revocation sticks"): once an admin revoked one of a user's
+// grants in an organization, no token of that user — a new one, another
+// existing one, one made after revoking the blocked token — gets a grant
+// there until an admin lifts the block. Lifting it lifts every block of
+// that user there.
+func TestBlockIsPerPersonAndOrganization(t *testing.T) {
+	w := newWorld()
+	ctx := context.Background()
+	blocked := w.create(t, api(g(w.a, tenancy.RoleOperator), g(w.b, tenancy.RoleViewer)))
+	other := w.create(t, api(g(w.b, tenancy.RoleViewer)))
+	twice := w.create(t, api(g(w.a, tenancy.RoleViewer)))
+	if _, err := w.svc.RevokeGrant(ctx, w.a, blocked.ID, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.RevokeGrant(ctx, w.a, twice.ID, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	wantBlocked := func(what string, err error) {
+		t.Helper()
+		var ge *personaltokens.GrantError
+		if !errors.As(err, &ge) || ge.OrgID != w.a || !errors.Is(err, personaltokens.ErrBlocked) {
+			t.Fatalf("%s: err = %v, want ErrBlocked for A", what, err)
+		}
+	}
+	_, _, err := w.svc.Create(ctx, w.user, api(g(w.a, tenancy.RoleViewer)))
+	wantBlocked("a new token", err)
+	grants := []personaltokens.GrantInput{g(w.b, tenancy.RoleViewer), g(w.a, tenancy.RoleViewer)}
+	_, _, _, err = w.svc.Update(ctx, w.user, other.ID, personaltokens.Change{Grants: &grants})
+	wantBlocked("another token", err)
+	if _, err := w.svc.Revoke(ctx, w.user, blocked.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Revoke(ctx, w.user, twice.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = w.svc.Create(ctx, w.user, api(g(w.a, tenancy.RoleViewer)))
+	wantBlocked("a new token after revoking the blocked one", err)
+
+	// The admin still sees the blocks, revoked tokens included.
+	entries, err := w.svc.ListForOrg(ctx, w.a)
+	if err != nil || len(entries) != 2 || !entries[0].Blocked || !entries[0].TokenRevoked {
+		t.Fatalf("A entries = %+v, %v", entries, err)
+	}
+	// Another user is not affected.
+	stranger := uuid.Must(uuid.NewV7())
+	w.members[grantKey{stranger, w.a}] = tenancy.RoleViewer
+	if _, _, err := w.svc.Create(ctx, stranger, api(g(w.a, tenancy.RoleViewer))); err != nil {
+		t.Fatalf("another user's grant in A: %v", err)
+	}
+
+	if _, err := w.svc.UnblockGrant(ctx, w.a, blocked.ID); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := w.svc.ListForOrg(ctx, w.a); len(entries) != 1 || entries[0].OwnerID != stranger {
+		t.Fatalf("A entries after the unblock = %+v", entries)
+	}
+	if _, _, err := w.svc.Create(ctx, w.user, api(g(w.a, tenancy.RoleViewer))); err != nil {
+		t.Fatalf("a new token after the unblock: %v", err)
+	}
+}
+
+// A blocked grant still counts toward a token's 50 grants: the owner
+// cannot list 50 more organizations beside it.
+func TestUpdateCountsBlockedGrantsTowardLimit(t *testing.T) {
+	w := newWorld()
+	tok := w.create(t, api(g(w.a, tenancy.RoleViewer), g(w.b, tenancy.RoleViewer)))
+	if _, err := w.svc.RevokeGrant(context.Background(), w.a, tok.ID, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	set := []personaltokens.GrantInput{g(w.b, tenancy.RoleViewer)}
+	for range personaltokens.MaxGrantsPerToken - 1 {
+		org := uuid.Must(uuid.NewV7())
+		w.members[grantKey{w.user, org}] = tenancy.RoleViewer
+		set = append(set, g(org, tenancy.RoleViewer))
+	}
+	if _, _, _, err := w.svc.Update(context.Background(), w.user, tok.ID, personaltokens.Change{Grants: &set}); !errors.Is(err, personaltokens.ErrInvalid) {
+		t.Fatalf("50 listed + 1 blocked: err = %v, want ErrInvalid", err)
+	}
+	set = set[:len(set)-1]
+	if _, _, _, err := w.svc.Update(context.Background(), w.user, tok.ID, personaltokens.Change{Grants: &set}); err != nil {
+		t.Fatalf("49 listed + 1 blocked: %v", err)
+	}
+}

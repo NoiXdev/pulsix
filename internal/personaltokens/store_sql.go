@@ -91,13 +91,13 @@ func (s *SQLStore) Cap(ctx context.Context, tokenID, orgID uuid.UUID) (tenancy.R
 // security hides orgID's row, and "no row" would read as allowed; Allowed
 // therefore fails closed with an error instead of answering.
 func (s *SQLStore) Allowed(ctx context.Context, orgID uuid.UUID) (bool, error) {
-	if bound, ok := db.OrgScope(ctx); ok && bound != orgID {
-		return false, fmt.Errorf("read personal token switch of %s bound to %s: %w", orgID, bound, errForeignScope)
+	if err := refuseForeignScope(ctx, orgID); err != nil {
+		return false, fmt.Errorf("read personal token switch: %w", err)
 	}
 	return s.q.PersonalTokensAllowed(ctx, orgID)
 }
 
-// errForeignScope is Allowed's refusal to read under another
+// errForeignScope is the refusal to read across organizations under one
 // organization's scope.
 var errForeignScope = errors.New("organization scope mismatch")
 
@@ -112,17 +112,30 @@ func (s *SQLStore) TouchGrant(ctx context.Context, tokenID, orgID uuid.UUID) err
 	return s.q.TouchPersonalTokenGrant(ctx, gen.TouchPersonalTokenGrantParams{TokenID: tokenID, OrgID: orgID})
 }
 
-// BlockGrant is an organization admin's sticky revocation of one grant.
-// ErrNotFound when no unblocked grant exists (or row-level security hides
-// it). by is the admin; uuid.Nil records no one.
-func (s *SQLStore) BlockGrant(ctx context.Context, tokenID, orgID, by uuid.UUID) error {
-	blockedBy := pgtype.UUID{Bytes: by, Valid: by != uuid.Nil}
-	n, err := s.q.BlockPersonalTokenGrant(ctx, gen.BlockPersonalTokenGrantParams{TokenID: tokenID, OrgID: orgID, BlockedBy: blockedBy})
-	if err != nil {
-		return err
+// BlockGrant is an organization admin's sticky revocation of one grant of
+// a token that is not revoked, in one statement, and returns the entry as
+// blocked. ErrNotFound when no such unblocked grant exists (or row-level
+// security hides it). by is the admin; uuid.Nil records no one.
+func (s *SQLStore) BlockGrant(ctx context.Context, tokenID, orgID, by uuid.UUID) (OrgEntry, error) {
+	r, err := s.q.BlockPersonalTokenGrantEntry(ctx, gen.BlockPersonalTokenGrantEntryParams{
+		OrgID: orgID, TokenID: tokenID, BlockedBy: pgtype.UUID{Bytes: by, Valid: by != uuid.Nil},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrgEntry{}, ErrNotFound
 	}
-	if n == 0 {
-		return ErrNotFound
+	if err != nil {
+		return OrgEntry{}, err
+	}
+	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked,
+		r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
+}
+
+// refuseForeignScope fails closed when ctx is bound to an organization
+// other than orgID: row-level security would hide orgID's rows and a read
+// would answer as if there were none.
+func refuseForeignScope(ctx context.Context, orgID uuid.UUID) error {
+	if bound, ok := db.OrgScope(ctx); ok && bound != orgID {
+		return fmt.Errorf("read of %s bound to %s: %w", orgID, bound, errForeignScope)
 	}
 	return nil
 }

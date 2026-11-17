@@ -2,6 +2,7 @@ package personaltokens
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -23,6 +24,7 @@ type OrgEntry struct {
 	OwnerName, OwnerEmail string
 	Role                  tenancy.Role
 	Blocked               bool
+	TokenRevoked          bool // listed only while its grant here is blocked
 	LastUsedAt            *time.Time
 	CreatedAt             time.Time
 	ExpiresAt             *time.Time
@@ -32,8 +34,9 @@ type OrgEntry struct {
 // orgID, so row-level security confines every grant they read or write to
 // that organization (controller ruling P7).
 
-// ListForOrg lists orgID's grants of personal tokens that are not revoked,
-// blocked ones included so an admin can lift the block.
+// ListForOrg lists orgID's grants of personal tokens that are not
+// revoked, and every blocked grant — of revoked tokens too, since a block
+// keeps its owner out of the organization until an admin lifts it.
 func (s *Service) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]OrgEntry, error) {
 	entries, err := s.store.OrgEntries(ctx, orgID)
 	if err != nil {
@@ -43,29 +46,31 @@ func (s *Service) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]OrgEntry, 
 }
 
 // RevokeGrant is an organization admin's revocation of tokenID's grant for
-// orgID: the grant is blocked, not deleted, so the owner cannot add the
-// organization again until an admin lifts the block (spec, "an admin's
-// revocation sticks"). An already blocked grant is ErrBlocked. It returns
-// the entry as it is afterwards.
+// orgID. The grant is blocked, not deleted, and the block is per person and
+// organization: no token of its owner gets a grant in orgID again until an
+// admin lifts it (spec, "an admin's revocation sticks"). Blocking is one
+// statement, so two admins racing get one success and one ErrBlocked. It
+// returns the entry as blocked, with the cap it blocked.
 func (s *Service) RevokeGrant(ctx context.Context, orgID, tokenID, adminID uuid.UUID) (OrgEntry, error) {
-	e, err := s.store.OrgEntry(ctx, orgID, tokenID)
-	if err != nil {
-		return OrgEntry{}, err
+	e, err := s.store.BlockGrant(ctx, tokenID, orgID, adminID)
+	if !errors.Is(err, ErrNotFound) {
+		return e, err
 	}
-	if e.Blocked {
+	cur, readErr := s.store.OrgEntry(ctx, orgID, tokenID)
+	if readErr == nil && cur.Blocked {
 		return OrgEntry{}, ErrBlocked
 	}
-	if err := s.store.BlockGrant(ctx, tokenID, orgID, adminID); err != nil {
-		return OrgEntry{}, err
+	if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return OrgEntry{}, readErr
 	}
-	e.Blocked = true
-	return e, nil
+	return OrgEntry{}, ErrNotFound
 }
 
-// UnblockGrant lifts an admin's block: the blocked grant is deleted, so
-// the token holds no grant for orgID until its owner adds one again. A
-// grant that is not blocked is ErrNotFound. It returns the entry as it
-// was.
+// UnblockGrant lifts the block of tokenID's owner in orgID: every blocked
+// grant of theirs there is deleted, so no token of theirs holds a grant for
+// orgID until they add one again. tokenID names any of their blocked
+// grants; one that is not blocked is ErrNotFound. It returns the entry as
+// it was.
 func (s *Service) UnblockGrant(ctx context.Context, orgID, tokenID uuid.UUID) (OrgEntry, error) {
 	e, err := s.store.OrgEntry(ctx, orgID, tokenID)
 	if err != nil {
@@ -74,7 +79,7 @@ func (s *Service) UnblockGrant(ctx context.Context, orgID, tokenID uuid.UUID) (O
 	if !e.Blocked {
 		return OrgEntry{}, ErrNotFound
 	}
-	if err := s.store.UnblockGrant(ctx, tokenID, orgID); err != nil {
+	if err := s.store.UnblockOwner(ctx, orgID, e.OwnerID); err != nil {
 		return OrgEntry{}, err
 	}
 	return e, nil
@@ -94,7 +99,8 @@ func (s *Service) SetAllowed(ctx context.Context, orgID uuid.UUID, on bool) erro
 
 // GrantCount counts tokenID's unblocked grants; orgID is the one
 // organization when n == 1 (the assistant endpoint's single-grant rule,
-// spec rule 7). It reads across organizations, so it runs at instance level.
+// spec rule 7). It reads across organizations, so it runs at instance
+// level; bound to an organization it fails closed.
 func (s *Service) GrantCount(ctx context.Context, tokenID uuid.UUID) (orgID uuid.UUID, n int, err error) {
 	return s.store.LiveGrants(ctx, tokenID)
 }

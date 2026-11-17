@@ -93,7 +93,7 @@ func TestPersonalTokenGrantAbsent(t *testing.T) {
 		t.Fatalf("detail = %q", d)
 	}
 	// A blocked grant is no grant.
-	if err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), a), mustTokenID(t, f, a), a, f.owner); err != nil {
+	if _, err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), a), mustTokenID(t, f, a), a, f.owner); err != nil {
 		t.Fatal(err)
 	}
 	wantStatus(t, "GET hosts of A after the grant was revoked", f.s.Get(t, tok, "/api/v1/orgs/pt-absent-a/hosts"), http.StatusForbidden)
@@ -252,7 +252,7 @@ func TestPersonalTokenNeverInstanceAdmin(t *testing.T) {
 func TestJobStreamEndsWhenGrantRevoked(t *testing.T) {
 	cases := map[string]func(f runFixture, tokenID uuid.UUID){
 		"grant revoked": func(f runFixture, tokenID uuid.UUID) {
-			if err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), f.orgID), tokenID, f.orgID, uuid.Nil); err != nil {
+			if _, err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), f.orgID), tokenID, f.orgID, uuid.Nil); err != nil {
 				t.Fatal(err)
 			}
 		},

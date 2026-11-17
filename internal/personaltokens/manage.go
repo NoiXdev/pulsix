@@ -283,9 +283,21 @@ func (s *Service) planGrants(ctx context.Context, userID uuid.UUID, current []Gr
 		existing[g.OrgID] = g
 	}
 	listed := map[uuid.UUID]bool{}
-	caps := make([]tenancy.Role, 0, len(*set))
 	for _, in := range *set {
 		listed[in.OrgID] = true
+	}
+	// Blocked grants stay on the token, so they count toward its limit.
+	total := len(*set)
+	for _, g := range current {
+		if g.State == GrantBlocked && !listed[g.OrgID] {
+			total++
+		}
+	}
+	if total > MaxGrantsPerToken {
+		return nil, invalid(fmt.Sprintf("a personal token holds at most %d organizations, blocked ones included", MaxGrantsPerToken))
+	}
+	caps := make([]tenancy.Role, 0, len(*set))
+	for _, in := range *set {
 		caps = append(caps, in.Role)
 		ex, ok := existing[in.OrgID]
 		if ok && ex.Role == in.Role && ex.State != GrantBlocked {

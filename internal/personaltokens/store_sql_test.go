@@ -135,7 +135,7 @@ func TestGrantRowsInvisibleToOtherOrg(t *testing.T) {
 		t.Fatalf("bound to B: %d grant rows visible, want 1", n)
 	}
 	// A touch or a block through B's scope cannot reach A's grant.
-	if err := f.store.BlockGrant(inB, tok, a, u); !errors.Is(err, personaltokens.ErrNotFound) {
+	if _, err := f.store.BlockGrant(inB, tok, a, u); !errors.Is(err, personaltokens.ErrNotFound) {
 		t.Fatalf("BlockGrant(A) bound to B: err = %v, want ErrNotFound", err)
 	}
 	// Writing a grant for A through B's scope is refused by the policy.
@@ -184,7 +184,7 @@ func TestRemovingMemberDeletesTheirGrants(t *testing.T) {
 	f.grant(t, live, member, b, tenancy.RoleOwner)
 	f.grant(t, blocked, member, a, tenancy.RoleViewer)
 	inA := db.WithOrgScope(context.Background(), a)
-	if err := f.store.BlockGrant(inA, blocked, a, admin); err != nil {
+	if _, err := f.store.BlockGrant(inA, blocked, a, admin); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,13 +263,13 @@ func TestSQLStoreCapAllowedBlockTouch(t *testing.T) {
 	}
 
 	// Blocking sticks and reads back as blocked; a second block is not found.
-	if err := f.store.BlockGrant(scoped, tok, org, u); err != nil {
+	if _, err := f.store.BlockGrant(scoped, tok, org, u); err != nil {
 		t.Fatal(err)
 	}
 	if _, blocked, err := f.store.Cap(scoped, tok, org); err != nil || !blocked {
 		t.Fatalf("after block: blocked = %v, %v", blocked, err)
 	}
-	if err := f.store.BlockGrant(scoped, tok, org, u); !errors.Is(err, personaltokens.ErrNotFound) {
+	if _, err := f.store.BlockGrant(scoped, tok, org, u); !errors.Is(err, personaltokens.ErrNotFound) {
 		t.Fatalf("second block: err = %v, want ErrNotFound", err)
 	}
 }

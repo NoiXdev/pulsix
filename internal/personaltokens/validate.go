@@ -28,8 +28,9 @@ func (e *GrantError) Unwrap() error { return e.Err }
 func invalid(reason string) error { return fmt.Errorf("%w: %s", ErrInvalid, reason) }
 
 // checkGrant checks one grant the owner adds (was == nil) or changes: not a
-// blocked organization, a known cap, a current membership at or above the
-// cap, and — unless the cap is lowered — the organization's switch on.
+// blocked grant, a known cap, a current membership at or above the cap,
+// and — unless the cap is lowered — no admin's block of the user in the
+// organization and the organization's switch on.
 func (s *Service) checkGrant(ctx context.Context, userID uuid.UUID, g GrantInput, was *Grant) error {
 	refuse := func(err error) error { return &GrantError{OrgID: g.OrgID, Err: err} }
 	if was != nil && was.State == GrantBlocked {
@@ -50,6 +51,16 @@ func (s *Service) checkGrant(ctx context.Context, userID uuid.UUID, g GrantInput
 	}
 	if was != nil && tenancy.Lower(was.Role, g.Role) == g.Role {
 		return nil // lowered: allowed even while the switch is off
+	}
+	// The block is per person and organization: an admin's revocation of
+	// any grant of the user there, of any token (revoked ones included),
+	// keeps every token of theirs out until an admin lifts it.
+	blocked, err := s.store.OrgBlocked(ctx, userID, g.OrgID)
+	if err != nil {
+		return fmt.Errorf("read personal token block: %w", err)
+	}
+	if blocked {
+		return refuse(ErrBlocked)
 	}
 	on, err := s.store.Allowed(ctx, g.OrgID)
 	if err != nil {

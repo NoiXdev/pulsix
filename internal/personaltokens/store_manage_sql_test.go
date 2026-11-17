@@ -282,7 +282,7 @@ func TestSQLOwnerCannotTouchBlockedGrant(t *testing.T) {
 	a := f.org(t, "blocked-a", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
 	tok := f.token(t, u)
 	f.grant(t, tok, u, a, tenancy.RoleViewer)
-	if err := f.store.BlockGrant(db.WithOrgScope(ctx, a), tok, a, u); err != nil {
+	if _, err := f.store.BlockGrant(db.WithOrgScope(ctx, a), tok, a, u); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.store.SetGrantRole(ctx, tok, a, tenancy.RoleOwner); !errors.Is(err, personaltokens.ErrNotFound) {
@@ -294,13 +294,134 @@ func TestSQLOwnerCannotTouchBlockedGrant(t *testing.T) {
 	if role, blocked, err := f.store.Cap(ctx, tok, a); err != nil || !blocked || role != tenancy.RoleViewer {
 		t.Fatalf("grant after the owner's writes = %q %v %v", role, blocked, err)
 	}
-	if err := f.store.UnblockGrant(ctx, tok, uuid.Must(uuid.NewV7())); !errors.Is(err, personaltokens.ErrNotFound) {
-		t.Fatalf("UnblockGrant without a grant: %v", err)
+	if err := f.store.UnblockOwner(ctx, uuid.Must(uuid.NewV7()), u); !errors.Is(err, personaltokens.ErrNotFound) {
+		t.Fatalf("UnblockOwner without a block: %v", err)
+	}
+	if blocked, err := f.store.OrgBlocked(db.WithOrgScope(ctx, uuid.Must(uuid.NewV7())), u, a); err == nil || blocked {
+		t.Fatalf("OrgBlocked bound to another organization = %v, %v; want an error", blocked, err)
 	}
 	if _, err := f.store.UpdateToken(ctx, auth.PersonalToken{ID: tok, UserID: uuid.Must(uuid.NewV7()), Name: "x"}); !errors.Is(err, personaltokens.ErrNotFound) {
 		t.Fatalf("UpdateToken of another user's token: %v", err)
 	}
 	if _, err := f.store.OrgEntry(db.WithOrgScope(ctx, a), a, uuid.Must(uuid.NewV7())); !errors.Is(err, personaltokens.ErrNotFound) {
 		t.Fatalf("OrgEntry without a grant: %v", err)
+	}
+}
+
+// TestSQLGrantCountFailsClosedUnderOrgScope (fix round 1): bound to one
+// organization, row-level security would hide the token's other grants and
+// turn two into one; the count refuses instead.
+func TestSQLGrantCountFailsClosedUnderOrgScope(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	u := f.user(t, "count@example.test")
+	a := f.org(t, "count-a", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
+	b := f.org(t, "count-b", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
+	tok := f.token(t, u)
+	f.grant(t, tok, u, a, tenancy.RoleViewer)
+	f.grant(t, tok, u, b, tenancy.RoleViewer)
+	svc := f.sqlService(nil)
+	if org, n, err := svc.GrantCount(db.WithOrgScope(ctx, a), tok); err == nil {
+		t.Fatalf("GrantCount bound to A = %v, %d; want an error", org, n)
+	}
+	if _, n, err := svc.GrantCount(ctx, tok); err != nil || n != 2 {
+		t.Fatalf("GrantCount at instance level = %d, %v; want 2", n, err)
+	}
+}
+
+// TestSQLAdminRevokeIsAtomic (fix round 1): two admins revoking the same
+// grant at once get one success, which names the cap it blocked, and one
+// grant_blocked — never a not-found.
+func TestSQLAdminRevokeIsAtomic(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	u := f.user(t, "atomic@example.test")
+	a := f.org(t, "atomic-a", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
+	tok := f.token(t, u)
+	f.grant(t, tok, u, a, tenancy.RoleOperator)
+	svc := f.sqlService(nil)
+	inA := db.WithOrgScope(ctx, a)
+	type result struct {
+		e   personaltokens.OrgEntry
+		err error
+	}
+	results := make([]result, 2)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e, err := svc.RevokeGrant(inA, a, tok, uuid.Nil)
+			results[i] = result{e, err}
+		}()
+	}
+	wg.Wait()
+	ok, blocked := 0, 0
+	for _, r := range results {
+		switch {
+		case r.err == nil:
+			ok++
+			if !r.e.Blocked || r.e.Role != tenancy.RoleOperator || r.e.OwnerID != u || r.e.Name != "laptop" {
+				t.Fatalf("entry = %+v", r.e)
+			}
+		case errors.Is(r.err, personaltokens.ErrBlocked):
+			blocked++
+		default:
+			t.Fatalf("unexpected error: %v", r.err)
+		}
+	}
+	if ok != 1 || blocked != 1 {
+		t.Fatalf("ok %d, blocked %d; want 1 and 1", ok, blocked)
+	}
+}
+
+// TestSQLBlockIsPerPerson: the block of one token's grant keeps every token
+// of the user out of the organization, the revoked token's block included;
+// lifting it removes every blocked row of the user there.
+func TestSQLBlockIsPerPerson(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	u := f.user(t, "person@example.test")
+	a := f.org(t, "person-a", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
+	svc := f.sqlService(nil)
+	in := personaltokens.NewToken{Name: "t", Grants: []personaltokens.GrantInput{{OrgID: a, Role: tenancy.RoleViewer}}}
+	_, first, err := svc.Create(ctx, u, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, second, err := svc.Create(ctx, u, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inA := db.WithOrgScope(ctx, a)
+	for _, id := range []uuid.UUID{first.ID, second.ID} {
+		if _, err := svc.RevokeGrant(inA, a, id, uuid.Nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.Revoke(ctx, u, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Create(ctx, u, in); !errors.Is(err, personaltokens.ErrBlocked) {
+		t.Fatalf("create while blocked: %v, want ErrBlocked", err)
+	}
+	entries, err := svc.ListForOrg(inA, a)
+	if err != nil || len(entries) != 2 || !entries[0].TokenRevoked || entries[1].TokenRevoked {
+		t.Fatalf("entries = %+v, %v", entries, err)
+	}
+	// Unblocking through the revoked token's entry lifts both blocks.
+	if _, err := svc.UnblockGrant(inA, a, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := svc.ListForOrg(inA, a); len(entries) != 0 {
+		t.Fatalf("entries after the unblock = %+v", entries)
+	}
+	if _, _, err := svc.Create(ctx, u, in); err != nil {
+		t.Fatalf("create after the unblock: %v", err)
+	}
+	// A revoked token's grant that was never blocked is not listed and
+	// cannot be blocked.
+	if _, err := svc.RevokeGrant(inA, a, first.ID, uuid.Nil); !errors.Is(err, personaltokens.ErrNotFound) {
+		t.Fatalf("revoking a lifted grant of a revoked token: %v", err)
 	}
 }
