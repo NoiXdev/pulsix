@@ -498,6 +498,10 @@ the way back is a backup.
    rm -rf "$d"
    ```
 
+   The release page of each version also carries these binaries and their
+   `.sha256` files, identical to what the manager serves; the manager stays the
+   documented source.
+
    The agent keeps its identity (`/etc/pulsix`) and reconnects on its own;
    it needs no new token. Do not run the install script again for an update:
    it asks for an enrollment token, overwrites `/etc/pulsix/agent.env`, and

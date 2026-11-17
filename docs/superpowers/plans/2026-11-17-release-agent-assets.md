@@ -24,7 +24,7 @@
 ## Review Focus
 
 - A re-run after a partial upload (binary uploaded, its `.sha256` not): must complete, not fail on the existing asset.
-- A tag with a prefix sibling (`v0.1.0-rc.1` vs `v0.1.0-rc.10`): the version self-check must match the whole tag, not a prefix.
+- A tag with a prefix sibling (`v0.1.0-rc.1` vs `v0.1.0-rc.10`): the version self-check must match the whole tag, not a prefix. (As built: `-trimpath` drops `-ldflags` from the build info, so the check is `vcs.revision` = tag commit plus `vcs.modified=false`, and a whole-tag grep of the binary; not `main.version`.)
 - An empty dist (the script found nothing, only `.placeholder`): must fail, not "upload nothing" green.
 - A tag that is not a release yet (dispatch with a typo, or a tag without a release): must fail before building.
 - A dist file name with a space or glob character must not reach `gh release download --pattern` unquoted; the script only accepts names matching `pulsix-agent-[a-z0-9]*-[a-z0-9]*` (with optional `.sha256`) and fails on anything else.
@@ -76,8 +76,8 @@
   2. Checkout `ref: inputs.dry_run && inputs.ref || inputs.tag` — on a live run the tag, `fetch-depth: 1`.
   3. Go version: `sed -n 's/^FROM golang:\([0-9][0-9.]*\)-alpine.*/\1/p' deploy/docker/Dockerfile.manager | head -n 1`, empty fails; to `$GITHUB_OUTPUT`; `setup-go` with it (`cache: false` — no `go.sum` caching concerns on a release build).
   4. `scripts/agent-binaries.sh "$TAG"`.
-  5. Self-check: for every non-`.sha256` file in `internal/agentdist/dist/pulsix-agent-*`, `go version -m` output contains `main.version=$TAG"` (closing quote included, so `rc.1` does not match `rc.10`); also `sha256sum -c` of each `.sha256` from inside the dist.
-  6. If not dry run: `scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist` with `GH_TOKEN`, `GH_REPO`.
+  5. Self-check: for every non-`.sha256` file in `internal/agentdist/dist/pulsix-agent-*`, `go version -m` output contains `main.version=$TAG"` (closing quote included, so `rc.1` does not match `rc.10`); also `sha256sum -c` of each `.sha256` from inside the dist. *(As built: `go version -m` has no `main.version` under `-trimpath`; the check is `vcs.revision` = tag commit, `vcs.modified=false`, the tag string found in the binary, and `sha256sum -c`.)*
+  6. *(As built: the uploader comes from a second sparse checkout of the workflow's own commit, not the tag's checkout, so old tags can be backfilled.)* If not dry run: `scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist` with `GH_TOKEN`, `GH_REPO`.
   Header comment: what it does, why separate from the shared workflow (owner decision 2026-11-17, spec link), backfill usage.
 
 - [ ] **Step 2: Add the `agents` job to `release.yml`** — `needs: [guard, release]`, `permissions: contents: write`, `uses: ./.github/workflows/release-agents.yml`, `with: tag: needs.release.outputs.tag, dry_run: inputs.dry_run, ref: needs.guard.outputs.sha`. Header comment of `release.yml` gains one sentence on the agents job.

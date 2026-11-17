@@ -964,7 +964,9 @@ repositories as before. An older worker never asks.
    update: it prompts for an enrollment token (and fails when piped without
    a terminal), overwrites `/etc/pulsix/agent.env`, and ends with
    `systemctl enable --now`, which does not restart an active unit, so the
-   old binary would keep running.
+   old binary would keep running. Each release's page also carries the binaries
+   and `.sha256` files of that version, identical to what the manager serves;
+   the manager stays the documented source.
 
 Because a component one minor behind is accepted, the manager can move to a
 new minor first and the rest follow at the operator's pace. A component that
