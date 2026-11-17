@@ -12,8 +12,6 @@ export const enNotifications = {
   disabled: 'disabled',
   enabledLabel: 'Enabled',
   edit: 'Edit',
-  editAria: (name: string) => `Edit ${name}`,
-  deleteAria: (name: string) => `Delete ${name}`,
   deleteFailed: 'Deleting failed',
   savingFailed: 'Saving failed',
   name: 'Name',

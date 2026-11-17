@@ -8,8 +8,7 @@ interface ConfirmedDeleteBase<Row> {
   message: (row: Row) => string;
   /** The toast when the request fails without a message of its own. */
   failed: string;
-  /** Deletes one row by id (a mutation's `mutateAsync`); a success toast
-   * belongs here, a failure is the hook's. */
+  /** Deletes one row by id (a mutation's `mutateAsync`). */
   remove: (id: string) => Promise<unknown>;
   /** The confirm button's label; "Delete" by default. */
   confirmLabel?: string;

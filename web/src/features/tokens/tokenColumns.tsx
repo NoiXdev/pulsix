@@ -1,10 +1,11 @@
-import { RoleBadge, Tag } from '../../ui/badge.tsx';
+import { Pill, RoleBadge, Tag } from '../../ui/badge.tsx';
 import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import type { components } from '../../api/schema.d.ts';
 import type { Format } from '../../i18n/format.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { roleRank } from '../members/roles.ts';
 import { displayedAreas, type Area } from './areas.ts';
+import { isExpired } from './expiry.ts';
 
 type Token = components['schemas']['TokenDTO'];
 
@@ -70,7 +71,16 @@ export function tokenColumns(t: Messages, fmt: Format): DataListColumn<Token>[] 
       sortKey: 'expires',
       sortValue: (r) => r.expires_at,
       defaultVisible: true,
-      render: (r) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.expires_at ? fmt.date(r.expires_at) : t.common.never}</span>,
+      render: (r) => (
+        <span className={`flex items-center gap-1.5 text-muted-foreground ${CELL_MINOR}`}>
+          {r.expires_at ? fmt.date(r.expires_at) : t.common.never}
+          {isExpired(r.expires_at) && (
+            <span title={t.tokens.expiredHint}>
+              <Pill tone="unknown">{t.tokens.expired}</Pill>
+            </span>
+          )}
+        </span>
+      ),
     },
   ];
 }

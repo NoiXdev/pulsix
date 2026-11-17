@@ -6,8 +6,6 @@ export const deNotifications: Messages['notifications'] = {
   disabled: 'deaktiviert',
   enabledLabel: 'Aktiviert',
   edit: 'Bearbeiten',
-  editAria: (name: string) => `${name} bearbeiten`,
-  deleteAria: (name: string) => `${name} löschen`,
   deleteFailed: 'Löschen fehlgeschlagen',
   savingFailed: 'Speichern fehlgeschlagen',
   name: 'Name',

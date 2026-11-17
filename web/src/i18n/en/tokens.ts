@@ -37,6 +37,8 @@ export const enTokens = {
       'For an AI assistant: works only through the assistant access of this organization, and only in the areas ticked below. Runs it requests need a person to approve them.',
     badge: 'Assistant',
   },
+  expired: 'Expired',
+  expiredHint: 'Expired tokens cannot be changed.',
   edit: {
     title: (name: string) => `Edit token ${name}`,
     neverExpires: 'Never expires',

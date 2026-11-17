@@ -35,6 +35,8 @@ export const deTokens: Messages['tokens'] = {
       'Für einen KI-Assistenten: funktioniert nur über den Assistenten-Zugang dieser Organisation und nur in den Bereichen, die du unten ankreuzt. Läufe, die er anfragt, muss eine Person freigeben.',
     badge: 'Assistent',
   },
+  expired: 'Abgelaufen',
+  expiredHint: 'Abgelaufene Tokens lassen sich nicht ändern.',
   edit: {
     title: (name: string) => `Token ${name} bearbeiten`,
     neverExpires: 'Läuft nie ab',

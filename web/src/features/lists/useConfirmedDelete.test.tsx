@@ -59,13 +59,23 @@ describe('useConfirmedDelete', () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith('b'));
   });
 
-  it('reports the deleted row once the request succeeded, and not after a failure', async () => {
+  it('reports the deleted row once the request succeeded', async () => {
     const user = userEvent.setup();
     const onDone = vi.fn();
     setup(vi.fn().mockResolvedValue(undefined), onDone);
     await user.click(screen.getByRole('button', { name: 'delete beta' }));
     await acceptConfirm(user);
     await waitFor(() => expect(onDone).toHaveBeenCalledWith(ROWS[1]));
+  });
+
+  it('does not report a row whose request failed', async () => {
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    setup(vi.fn().mockRejectedValue(new Error('nope')), onDone);
+    await user.click(screen.getByRole('button', { name: 'delete alpha' }));
+    await acceptConfirm(user);
+    expect(await screen.findByText('nope')).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   it("toasts the server's message when the request fails", async () => {

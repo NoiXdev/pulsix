@@ -6,12 +6,9 @@ import type { RowAction } from '../../ui/data-list/index.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
 import { EditTokenDialog } from './EditTokenDialog.tsx';
+import { isExpired } from './expiry.ts';
 
 type Token = components['schemas']['TokenDTO'];
-
-function isExpired(expiresAt?: string): boolean {
-  return !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
-}
 
 /**
  * useTokenListActions is the organization token list's row menu: Edit (not
