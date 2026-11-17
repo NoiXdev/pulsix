@@ -24,6 +24,25 @@ export function useSetupStatus() {
   return useQuery(setupStatusQuery);
 }
 
+export const versionWatchQueryKey = ['setup-status', 'version-watch'] as const;
+
+/**
+ * The version watcher's own reader of the same endpoint (backlog 3.94), on a
+ * key of its own so the badge's query keeps its cache and timing. It polls
+ * every five minutes and when the tab returns to the foreground; a failed
+ * read leaves `data` at the last good answer.
+ */
+export function useVersionWatch() {
+  return useQuery({
+    queryKey: versionWatchQueryKey,
+    queryFn: setupStatusQueryFn,
+    networkMode: 'always',
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+}
+
 export async function completeSetup(body: SetupCompleteInput) {
   return unwrap(api.POST('/api/v1/setup/complete', { body }));
 }

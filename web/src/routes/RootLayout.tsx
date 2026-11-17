@@ -7,6 +7,7 @@ import { ConfirmProvider } from '../ui/confirm.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { LockScreen } from '../features/lock/LockScreen.tsx';
 import { onSessionMessage } from '../features/lock/lockChannel.ts';
+import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
 import { ExpiryWatcher } from '../features/session/ExpiryWatcher.tsx';
 import { LockStateContext } from '../features/lock/lockState.ts';
 
@@ -123,6 +124,7 @@ export function RootLayout() {
           {/* A session that must change its password cannot renew: the renew
               routes refuse it, so the dialog could only fail. */}
           {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
+          {!publicPage && me.data?.mfa_complete && <VersionWatcher />}
         </ConfirmProvider>
       )}
     </LockStateContext.Provider>
