@@ -13,7 +13,7 @@ import type { Messages } from '../../i18n/types.ts';
  * A migration task adds its list here with its columns.
  */
 const LISTS = {
-  hosts: ['state', 'name', 'zone', 'tags', 'managed', 'monitored', 'last_seen', 'active_runs', 'agent_version', 'os'],
+  hosts: ['name', 'zone', 'tags', 'managed', 'monitored', 'last_seen', 'active_runs', 'agent_version', 'os'],
   runs: ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
   'my-activity': ['at', 'organization', 'action', 'object'],
 } as const satisfies Record<string, readonly string[]>;

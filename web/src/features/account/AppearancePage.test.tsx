@@ -91,7 +91,7 @@ describe('AppearancePage', () => {
     setup({ lists: { hosts: { columns: ['name', 'zone'] }, gone: { columns: ['x'] } } });
 
     const hosts = (await screen.findByText('Hosts')).closest('li') as HTMLElement;
-    await waitFor(() => expect(within(hosts).getByText('2 of 10 columns')).toBeInTheDocument());
+    await waitFor(() => expect(within(hosts).getByText('2 of 9 columns')).toBeInTheDocument());
     const runs = screen.getByText('Runs').closest('li') as HTMLElement;
     expect(within(runs).getByText('Standard')).toBeInTheDocument();
     expect(within(runs).getByRole('button', { name: 'Reset Runs' })).toBeDisabled();

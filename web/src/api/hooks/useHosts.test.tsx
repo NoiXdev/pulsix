@@ -4,7 +4,7 @@ import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi } from '../../test/mockApi.ts';
 import type { Host } from '../types.ts';
-import { useSetHostCapabilities, useUpdateHost } from './useHosts.ts';
+import { useSetCapabilitiesOfHost, useUpdateHost } from './useHosts.ts';
 
 const HOST = { id: 'h1', name: 'web-01', zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, revision: 3, created_at: '' } as Host;
 
@@ -46,14 +46,14 @@ describe('useUpdateHost', () => {
   });
 });
 
-describe('useSetHostCapabilities', () => {
+describe('useSetCapabilitiesOfHost', () => {
   it('puts the PATCH response host into the cached host', async () => {
     mockApi({ 'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': { host: { ...HOST, monitored: true, revision: 4 } } });
     const { wrapper, cached } = setup();
-    const { result } = renderHook(() => useSetHostCapabilities('acme', 'h1'), { wrapper });
+    const { result } = renderHook(() => useSetCapabilitiesOfHost('acme'), { wrapper });
 
     await act(async () => {
-      await result.current.mutateAsync({ monitored: true });
+      await result.current.mutateAsync({ id: 'h1', patch: { monitored: true } });
     });
 
     expect(cached()?.revision).toBe(4);

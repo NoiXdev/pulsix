@@ -35,9 +35,15 @@ async function addHost(
 
 /** The row for one host, scoped so capability/tag assertions never
  * accidentally match another host's cells — the `data-list-row` container
- * holds HostRow's Link (named by the host) and its row menu. */
+ * holds the row's link (named by the host) and its row menu. */
 function hostRow(page: Page, name: string): Locator {
   return page.locator('[data-list-row]', { has: page.getByRole('link', { name, exact: true }) });
+}
+
+/** A filter chip above the list. Its name can equal a sortable column
+ * header's ("Monitored"); only the chip is a toggle button. */
+function chip(page: Page, name: string): Locator {
+  return page.getByRole('button', { name, exact: true }).and(page.locator('[aria-pressed]'));
 }
 
 test('create a zone and hosts, toggle capabilities independently, tag one, then filter and query for it', async ({
@@ -59,14 +65,12 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   await addHost(page, { name: 'cache-01.fra' });
 
   // A screen reader reads the row's name once: the link is named by the
-  // host, and its description (the other cells) leaves the visible name
-  // cell out but still carries the zone.
+  // host; the other cells are the row's own cells.
   const linkA = page.getByRole('link', { name: 'web-04.fra', exact: true });
   await expect(linkA).toHaveAccessibleName('web-04.fra');
-  await expect(linkA).toHaveAccessibleDescription(new RegExp(ZONE.slug));
-  await expect(linkA).not.toHaveAccessibleDescription(/web-04\.fra/);
 
   const rowA = hostRow(page, 'web-04.fra');
+  await expect(rowA.getByRole('cell').filter({ hasText: ZONE.slug })).toHaveCount(1);
   // The list's capabilities are read-only pills; switching is a row menu action.
   await expect(rowA.getByText('not managed')).toBeVisible();
   await expect(rowA.getByText('not monitored')).toBeVisible();
@@ -111,7 +115,7 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
 
   // Filter chips: "Managed" narrows the three hosts down to just the one
   // that is actually managed.
-  await page.getByRole('button', { name: 'Managed', exact: true }).click();
+  await chip(page, 'Managed').click();
   await expect(page.getByRole('link', { name: 'web-04.fra', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'db-02.fra', exact: true })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'cache-01.fra', exact: true })).toHaveCount(0);
@@ -119,12 +123,12 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   // Switch to "Monitored": now both A and B qualify, C (neither
   // capability) is excluded — proves the chip is a real server-side
   // filter, not a coincidence of which chip happens to be on.
-  await page.getByRole('button', { name: 'Managed', exact: true }).click(); // toggle off
-  await page.getByRole('button', { name: 'Monitored', exact: true }).click();
+  await chip(page, 'Managed').click(); // toggle off
+  await chip(page, 'Monitored').click();
   await expect(page.getByRole('link', { name: 'web-04.fra', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'db-02.fra', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'cache-01.fra', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Monitored', exact: true }).click(); // toggle off
+  await chip(page, 'Monitored').click(); // toggle off
 
   // Selector query box: only host A carries role=db.
   await page.getByPlaceholder('selector, e.g. role = db').fill('role = db');

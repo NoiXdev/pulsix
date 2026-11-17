@@ -34,7 +34,13 @@ export const enRuns = {
   },
   list: {
     title: 'Runs',
-    summary: (n: number) => `${n} runs · every job the workers executed for this organization`,
+    subtitle: 'Every job the workers executed for this organization',
+    /** The table's accessible name. */
+    label: 'Runs',
+    count: (n: number) => (n === 1 ? '1 run' : `${n} runs`),
+    /** The status filter's option for the live runs (queued, claimed,
+     * running, cancelling). */
+    statusActive: 'Active',
     filterStatus: 'Filter by status',
     filterKind: 'Filter by kind',
     filterTrigger: 'Filter by trigger',
@@ -54,7 +60,7 @@ export const enRuns = {
       trigger: 'Trigger',
       template: 'Template',
       zone: 'Zone',
-      started: 'Started',
+      created: 'Created',
     },
     empty: 'No runs match.',
   },

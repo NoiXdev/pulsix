@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { AdhocInput, JobEvent } from '../types.ts';
+import type { ServerPageQuery } from './paging.ts';
 
 export const JOBS_PAGE_SIZE = 50;
 
@@ -47,6 +48,43 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
   });
 }
 
+type JobSort = 'created' | 'status' | 'kind' | 'trigger';
+
+/**
+ * useJobsPage is the runs list one numbered page at a time (the API's page
+ * mode, which also answers the total). The previous page stays on screen
+ * while the next one loads. The key keeps the ['jobs', org] prefix the run
+ * mutations invalidate. `status: 'active'` asks for the live runs (queued,
+ * claimed, running, cancelling). `enabled` waits for the list's
+ * preferences (useListView's `ready`).
+ */
+export function useJobsPage(org: string, filter: Omit<JobListFilter, 'limit'>, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['jobs', org, 'page', filter, page],
+    queryFn: () =>
+      unwrap(
+        api.GET('/api/v1/orgs/{org}/jobs', {
+          params: {
+            path: { org },
+            query: {
+              status: filter.status || undefined,
+              kind: filter.kind || undefined,
+              trigger: filter.trigger || undefined,
+              trigger_ref: filter.triggerRef || undefined,
+              host_id: filter.host || undefined,
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as JobSort | undefined,
+              order: page.order,
+            },
+          },
+        }),
+      ),
+    enabled: !!org && (opts.enabled ?? true),
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useJob(
   org: string,
   id: string,
@@ -70,10 +108,12 @@ function useInvalidateJobs(org: string) {
   };
 }
 
-export function useCancelJob(org: string, id: string) {
+/** useCancelJob cancels a run; the run's id travels with the call, so one
+ * hook serves the run page and every row of the runs list. */
+export function useCancelJob(org: string) {
   const invalidate = useInvalidateJobs(org);
   return useMutation({
-    mutationFn: () => unwrap(api.POST('/api/v1/orgs/{org}/jobs/{id}/cancel', { params: { path: { org, id } } })),
+    mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/jobs/{id}/cancel', { params: { path: { org, id } } })),
     onSuccess: invalidate,
   });
 }

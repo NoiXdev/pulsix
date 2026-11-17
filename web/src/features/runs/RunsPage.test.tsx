@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RunsPage } from './RunsPage.tsx';
+import { validateListSearch } from '../lists/listSearch.ts';
 
 const job = (over: Record<string, unknown> = {}) => ({
   id: '0197c0a2-0000-7000-8000-000000000001', zone_id: '0197c0b1-0000-7000-8000-000000000002',
@@ -21,6 +22,7 @@ function renderPage(initial = '/o/acme/runs') {
     getParentRoute: () => orgRoute,
     path: '/runs',
     validateSearch: (s: Record<string, unknown>) => ({
+      ...validateListSearch(s),
       status: typeof s.status === 'string' ? s.status : undefined,
       kind: typeof s.kind === 'string' ? s.kind : undefined,
       trigger: typeof s.trigger === 'string' ? s.trigger : undefined,
@@ -44,6 +46,20 @@ function renderPage(initial = '/o/acme/runs') {
   return router;
 }
 
+const PREFS = { density: 'standard', page_size: 25, lists: {} };
+
+/** n finished runs, newest first, with distinct ids. */
+function manyJobs(n: number) {
+  return Array.from({ length: n }, (_, i) => job({ id: `0197c0a2-0000-7000-8000-${String(i + 1).padStart(12, '0')}` }));
+}
+
+/** The answer for one page of `all`, as the server pages it. */
+function pageOf(all: ReturnType<typeof manyJobs>, req: MockRequest) {
+  const page = Number(req.search.get('page') ?? '1');
+  const perPage = Number(req.search.get('per_page') ?? '25');
+  return { jobs: all.slice((page - 1) * perPage, page * perPage), next_cursor: '', total: all.length };
+}
+
 const ORG_OPERATOR = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const LIVE_ID = '0190abcd-0000-7000-8000-00000000000e';
 const ORG_VIEWER = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
@@ -51,8 +67,9 @@ const ORG_VIEWER = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer',
 describe('RunsPage', () => {
   it('links to the run requests, with the number waiting', async () => {
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_VIEWER,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
       'GET /api/v1/orgs/acme/run-requests': { requests: [{ id: 'a' }] },
     });
     renderPage();
@@ -62,6 +79,7 @@ describe('RunsPage', () => {
 
   it('lists runs with kind, status colours, template, zone and trigger', async () => {
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': {
         jobs: [
@@ -69,6 +87,7 @@ describe('RunsPage', () => {
           job({ id: '0197c0a2-0000-7000-8000-00000000000a', kind: 'connection_test', status: 'failed', template_id: undefined }),
         ],
         next_cursor: '',
+        total: 2,
       },
     });
     renderPage();
@@ -85,10 +104,11 @@ describe('RunsPage', () => {
   it('filters by status through the URL', async () => {
     const seen: string[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: { search: URLSearchParams }) => {
         seen.push(req.search.toString());
-        return { jobs: [], next_cursor: '' };
+        return { jobs: [], next_cursor: '', total: 0 };
       },
     });
     renderPage();
@@ -98,25 +118,132 @@ describe('RunsPage', () => {
     expect(seen.some((q) => q.includes('status=failed'))).toBe(true);
   });
 
-  it('loads the next page through the cursor', async () => {
-    const user = userEvent.setup();
+  it('asks for page 1 at the saved size and shows the total in the footer', async () => {
+    const seen: URLSearchParams[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': (req: { search: URLSearchParams }) =>
-        req.search.get('cursor')
-          ? { jobs: [job({ id: '0197ffff-0000-7000-8000-00000000000b' })], next_cursor: '' }
-          : { jobs: [job()], next_cursor: 'next-token' },
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return pageOf(manyJobs(30), req);
+      },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Load more' }));
-    expect(await screen.findByRole('link', { name: '0197ffff' })).toBeInTheDocument();
+    expect(await screen.findByText('1–25 of 30 runs')).toBeInTheDocument();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].get('page')).toBe('1');
+    expect(seen[0].get('per_page')).toBe('25');
+    expect(seen[0].has('sort')).toBe(false);
+    expect(seen[0].has('cursor')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('labels the created time "Created", sorts by it, and leaves Template unsortable', async () => {
+    const user = userEvent.setup();
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [job()], next_cursor: '', total: 1 };
+      },
+    });
+    const router = renderPage();
+    await screen.findByRole('link', { name: '0197c0a2' });
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toContain('Created');
+    expect(headers).not.toContain('Started');
+    expect(screen.queryByRole('button', { name: 'Template' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Created' }));
+    await waitFor(() => expect(seen.at(-1)?.get('sort')).toBe('created'));
+    expect(seen.at(-1)?.get('order')).toBe('asc');
+    expect(router.state.location.search).toMatchObject({ sort: 'created', order: 'asc' });
+  });
+
+  it.each([
+    ['Status', 'status'],
+    ['Kind', 'kind'],
+    ['Trigger', 'trigger'],
+  ])('sorts by %s on the server', async (header, key) => {
+    const user = userEvent.setup();
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [job()], next_cursor: '', total: 1 };
+      },
+    });
+    renderPage();
+    await screen.findByRole('link', { name: '0197c0a2' });
+    await user.click(screen.getByRole('button', { name: header }));
+    await waitFor(() => expect(seen.at(-1)?.get('sort')).toBe(key));
+  });
+
+  it('offers the live runs as Active in the status filter and asks for status=active', async () => {
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [], next_cursor: '', total: 0 };
+      },
+    });
+    const router = renderPage();
+    await screen.findByLabelText('Filter by status');
+    await pickOption(screen, 'Filter by status', 'Active');
+    await waitFor(() => expect(seen.at(-1)?.get('status')).toBe('active'));
+    expect(router.state.location.search).toMatchObject({ status: 'active' });
+  });
+
+  it('reads a host\'s live runs from the URL, as the hosts list links them', async () => {
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [job({ status: 'running' })], next_cursor: '', total: 1 };
+      },
+      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+    });
+    renderPage('/o/acme/runs?host=h1&status=active');
+    expect(await screen.findByText('Host: web-04.fra')).toBeInTheDocument();
+    expect(seen[0].get('status')).toBe('active');
+    expect(seen[0].get('host_id')).toBe('h1');
+  });
+
+  it('keeps the sort and starts again at page 1 when a filter changes', async () => {
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return pageOf(manyJobs(30), req);
+      },
+    });
+    const router = renderPage('/o/acme/runs?sort=kind&order=desc&page=2');
+    expect(await screen.findByText('26–30 of 30 runs')).toBeInTheDocument();
+    await pickOption(screen, 'Filter by status', { value: 'failed' });
+    await waitFor(() => expect(seen.at(-1)?.get('status')).toBe('failed'));
+    expect(seen.at(-1)?.get('page')).toBe('1');
+    expect(seen.at(-1)?.get('sort')).toBe('kind');
+    expect(seen.at(-1)?.get('order')).toBe('desc');
+    expect(router.state.location.search).toEqual({ sort: 'kind', order: 'desc', status: 'failed' });
   });
 
   it('offers Run command to an operator and opens the ad-hoc dialog', async () => {
     const user = userEvent.setup();
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
       'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' },
     });
     renderPage();
@@ -126,8 +253,9 @@ describe('RunsPage', () => {
 
   it('hides Run command from a viewer', async () => {
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_VIEWER,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
     });
     renderPage();
     await screen.findByText('No runs match.');
@@ -137,10 +265,11 @@ describe('RunsPage', () => {
   it('filters by trigger and, for scheduled runs, by schedule', async () => {
     const seen: string[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
         seen.push(req.search.toString());
-        return { jobs: [job({ trigger: 'schedule' })], next_cursor: '' };
+        return { jobs: [job({ trigger: 'schedule' })], next_cursor: '', total: 1 };
       },
       'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: 's1', name: 'Nightly' }] },
     });
@@ -158,10 +287,11 @@ describe('RunsPage', () => {
     const user = userEvent.setup();
     const seen: string[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
         seen.push(req.search.toString());
-        return { jobs: [job()], next_cursor: '' };
+        return { jobs: [job()], next_cursor: '', total: 1 };
       },
       'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
@@ -177,10 +307,11 @@ describe('RunsPage', () => {
   it('keeps the host filter when another filter changes', async () => {
     const seen: string[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
         seen.push(req.search.toString());
-        return { jobs: [], next_cursor: '' };
+        return { jobs: [], next_cursor: '', total: 0 };
       },
       'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
@@ -192,23 +323,25 @@ describe('RunsPage', () => {
 
   it('each run row is a link to its run', async () => {
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [job()], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job()], next_cursor: '', total: 1 },
     });
     renderPage();
-    const row = await screen.findByRole('link', { name: '0197c0a2' });
-    expect(row).toHaveAttribute('href', '/o/acme/runs/0197c0a2-0000-7000-8000-000000000001');
-    expect(row).toHaveTextContent('succeeded');
-    expect(within(row).queryAllByRole('link')).toEqual([]);
-    expect(within(row).queryAllByRole('button')).toEqual([]);
+    const link = await screen.findByRole('link', { name: '0197c0a2' });
+    expect(link).toHaveAttribute('href', '/o/acme/runs/0197c0a2-0000-7000-8000-000000000001');
+    expect(link.closest('[role="row"]')).toHaveTextContent('succeeded');
+    expect(within(link).queryAllByRole('link')).toEqual([]);
+    expect(within(link).queryAllByRole('button')).toEqual([]);
   });
 
   it('cancels a live run from its row menu without navigating', async () => {
     const user = userEvent.setup();
     const cancelled: string[] = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '', total: 1 },
       [`POST /api/v1/orgs/acme/jobs/${LIVE_ID}/cancel`]: (req: MockRequest) => {
         cancelled.push(req.path);
         return { job: { id: LIVE_ID, status: 'cancelling' } };
@@ -228,8 +361,9 @@ describe('RunsPage', () => {
     let posts = 0;
     let release: () => void = () => undefined;
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '', total: 1 },
       [`POST /api/v1/orgs/acme/jobs/${LIVE_ID}/cancel`]: async () => {
         posts++;
         await new Promise<void>((resolve) => (release = resolve));
@@ -256,8 +390,9 @@ describe('RunsPage', () => {
   it('opens the run from its row menu', async () => {
     const user = userEvent.setup();
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
-      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '', total: 1 },
     });
     const router = renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for 0190abcd' }));
@@ -273,11 +408,12 @@ describe('RunsPage', () => {
     const user = userEvent.setup();
     let orgRead = false;
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': () => {
         orgRead = true;
         return orgBody;
       },
-      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status })], next_cursor: '' },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status })], next_cursor: '', total: 1 },
     });
     renderPage();
     const trigger = await screen.findByRole('button', { name: 'Actions for 0190abcd' });

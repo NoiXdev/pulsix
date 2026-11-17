@@ -171,7 +171,10 @@ const hostsRoute = createRoute({
   // ⌘K search (ui/shell.tsx) navigates here with ?q=..., wired to the
   // /orgs/{org}/hosts?q= filter the API already supports (finding
   // "Important 6": the search box used to be a static span).
+  // The list's sort and page (?sort=&order=&page=, features/lists) sit
+  // beside it.
   validateSearch: (search: Record<string, unknown>) => ({
+    ...validateListSearch(search),
     q: typeof search.q === 'string' ? search.q : undefined,
   }),
   component: HostsListPage,
@@ -246,6 +249,7 @@ const runsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/runs',
   validateSearch: (search: Record<string, unknown>) => ({
+    ...validateListSearch(search),
     status: typeof search.status === 'string' ? search.status : undefined,
     kind: typeof search.kind === 'string' ? search.kind : undefined,
     trigger: typeof search.trigger === 'string' ? search.trigger : undefined,

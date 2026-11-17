@@ -9,6 +9,9 @@
 import type { components } from './schema.d.ts';
 
 export type Host = components['schemas']['HostDTO'];
+/** A host as the hosts list and the tag selector answer it: the host plus
+ * the number of its live runs. */
+export type HostListItem = components['schemas']['HostListItemDTO'];
 export type Zone = components['schemas']['ZoneDTO'];
 export type Tag = components['schemas']['TagDTO'];
 export type Member = components['schemas']['MemberDTO'];

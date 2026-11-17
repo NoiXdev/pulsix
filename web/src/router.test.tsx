@@ -137,6 +137,14 @@ describe('the run request pages', () => {
   });
 });
 
+describe('the server-paged lists', () => {
+  it.each(['/o/acme/hosts', '/o/acme/runs'])('keep the sort, order and page of %s in the matched search', async (path) => {
+    await router.navigate({ to: path, search: { sort: 'name', order: 'desc', page: 3 } } as never);
+    await router.load();
+    expect(router.state.matches.at(-1)?.search).toMatchObject({ sort: 'name', order: 'desc', page: 3 });
+  });
+});
+
 describe('the personal settings area', () => {
   it('sends /account to Security', async () => {
     expect(await settledAt('/account')).toBe('/account/security');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -10,14 +10,23 @@ import { HostsListPage } from './HostsListPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { settled } from '../../test/settled.ts';
+import { validateListSearch } from '../lists/listSearch.ts';
 
 const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
-const HOSTS = {
-  hosts: [
-    { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '203.0.113.4', managed: true, monitored: false, last_seen_at: '2026-03-01T00:00:00Z', facts: {} },
-  ],
+const PREFS = { density: 'standard', page_size: 25, lists: {} };
+const WEB_04 = {
+  id: 'h1',
+  name: 'web-04.fra',
+  zone_id: 'z1',
+  address: '203.0.113.4',
+  managed: true,
+  monitored: false,
+  last_seen_at: '2026-03-01T00:00:00Z',
+  facts: {},
+  active_runs: 0,
 };
-const SECOND_PAGE_HOST = {
+const HOSTS = { hosts: [WEB_04], next_cursor: '', total: 1 };
+const DB_01 = {
   id: 'h2',
   name: 'db-01.fra',
   zone_id: 'z1',
@@ -26,7 +35,24 @@ const SECOND_PAGE_HOST = {
   monitored: true,
   last_seen_at: '2026-03-01T00:00:00Z',
   facts: {},
+  active_runs: 0,
 };
+
+/** n hosts named host-01 … host-nn, ids h1 … hn. */
+function manyHosts(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    ...WEB_04,
+    id: `h${i + 1}`,
+    name: `host-${String(i + 1).padStart(2, '0')}`,
+  }));
+}
+
+/** The answer for one page of `all`, as the server pages it. */
+function pageOf(all: ReturnType<typeof manyHosts>, req: MockRequest) {
+  const page = Number(req.search.get('page') ?? '1');
+  const perPage = Number(req.search.get('per_page') ?? '25');
+  return { hosts: all.slice((page - 1) * perPage, page * perPage), next_cursor: '', total: all.length };
+}
 
 function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
   const rootRoute = createRootRoute();
@@ -34,11 +60,12 @@ function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
   const hostsRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/hosts',
-    validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
+    validateSearch: (s: Record<string, unknown>) => ({ ...validateListSearch(s), q: typeof s.q === 'string' ? s.q : undefined }),
     component: HostsListPage,
   });
   const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
-  const routeTree = rootRoute.addChildren([orgRoute.addChildren([hostsRoute, hostRoute])]);
+  const runsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs', component: () => <div>RUNS PAGE</div> });
+  const routeTree = rootRoute.addChildren([orgRoute.addChildren([hostsRoute, hostRoute, runsRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
 
   const result = render(
@@ -53,21 +80,27 @@ function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
   return { ...result, router };
 }
 
+const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+/** The table row that holds a host's link. */
+function rowOf(name: string): HTMLElement {
+  return screen.getByRole('link', { name }).closest('[role="row"]') as HTMLElement;
+}
+
 describe('HostsListPage', () => {
   it('shows the zone slug, not a uuid prefix (cheap fix)', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({ 'GET /api/v1/orgs/acme/hosts': HOSTS, 'GET /api/v1/orgs/acme/zones': ZONES });
+    mockApi({ 'GET /api/v1/auth/me/preferences': PREFS, 'GET /api/v1/orgs/acme/hosts': HOSTS, 'GET /api/v1/orgs/acme/zones': ZONES });
 
-    renderPage(qc);
+    renderPage(newClient());
 
     expect(await screen.findByText('fra')).toBeInTheDocument();
     expect(screen.queryByText('z1')).not.toBeInTheDocument();
   });
 
   it('reads the initial ?q= from the URL (the shell\'s ⌘K search, Important 6) and applies it as a filter', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let lastQ: string | null = null;
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
         lastQ = req.search.get('q');
         return HOSTS;
@@ -75,7 +108,7 @@ describe('HostsListPage', () => {
       'GET /api/v1/orgs/acme/zones': ZONES,
     });
 
-    renderPage(qc, '/o/acme/hosts?q=web-04');
+    renderPage(newClient(), '/o/acme/hosts?q=web-04');
 
     await screen.findByRole('link', { name: 'web-04.fra' });
     expect(lastQ).toBe('web-04');
@@ -84,18 +117,18 @@ describe('HostsListPage', () => {
 
   it('creates a host through the Add host dialog', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let created: unknown;
     mockApi({
-      'GET /api/v1/orgs/acme/hosts': { hosts: [] },
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '', total: 0 },
       'GET /api/v1/orgs/acme/zones': ZONES,
       'POST /api/v1/orgs/acme/hosts': (req: MockRequest) => {
         created = req.body;
-        return { host: { ...HOSTS.hosts[0], id: 'h2', name: 'web-09.fra' } };
+        return { host: { ...WEB_04, id: 'h2', name: 'web-09.fra' } };
       },
     });
 
-    renderPage(qc);
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: /Add host/ }));
     await user.type(screen.getByPlaceholderText('web-04.fra'), 'web-09.fra');
@@ -107,13 +140,13 @@ describe('HostsListPage', () => {
   });
 
   it('shows the friendly error page instead of "No hosts yet" when the list request fails (Important 7)', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme/hosts': () => new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 }),
       'GET /api/v1/orgs/acme/zones': ZONES,
     });
 
-    renderPage(qc);
+    renderPage(newClient());
 
     expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
     expect(screen.queryByText('No hosts yet. Add one to get started.')).not.toBeInTheDocument();
@@ -121,14 +154,14 @@ describe('HostsListPage', () => {
 
   it('runs the tag selector query and shows the matching hosts', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      'GET /api/v1/orgs/acme/hosts': { hosts: [] },
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '', total: 0 },
       'GET /api/v1/orgs/acme/zones': ZONES,
       'POST /api/v1/orgs/acme/hosts/query': { hosts: HOSTS.hosts },
     });
 
-    renderPage(qc);
+    renderPage(newClient());
 
     await screen.findByText('No hosts yet. Add one to get started.');
     await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
@@ -138,83 +171,185 @@ describe('HostsListPage', () => {
     expect(screen.getByRole('button', { name: 'clear' })).toBeInTheDocument();
   });
 
-  it('loads the next page through "Load more", sending the cursor, and hides the control on the last page (I1)', async () => {
+  it('shows only the selector answer while the tag selector drives the list', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const requests: Array<{ cursor: string | null; limit: string | null }> = [];
     mockApi({
-      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
-        const cursor = req.search.get('cursor');
-        requests.push({ cursor, limit: req.search.get('limit') });
-        if (cursor === 'page-2') return { hosts: [SECOND_PAGE_HOST], next_cursor: '' };
-        return { hosts: HOSTS.hosts, next_cursor: 'page-2' };
-      },
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': HOSTS,
       'GET /api/v1/orgs/acme/zones': ZONES,
+      'POST /api/v1/orgs/acme/hosts/query': { hosts: [DB_01] },
     });
 
-    renderPage(qc);
+    renderPage(newClient());
 
     await screen.findByRole('link', { name: 'web-04.fra' });
-    // A partial list is not presented as the total.
-    expect(screen.getByText('1 hosts loaded, more available')).toBeInTheDocument();
-    expect(requests).toEqual([{ cursor: null, limit: '50' }]);
-
-    await user.click(screen.getByRole('button', { name: 'Load more' }));
-
-    expect(await screen.findByRole('link', { name: 'db-01.fra' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'web-04.fra' })).toBeInTheDocument();
-    expect(requests[1]).toEqual({ cursor: 'page-2', limit: '50' });
-    expect(screen.getByText('2 hosts')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
-  });
-
-  it('starts over from the first page when a filter changes', async () => {
-    const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const requests: Array<{ cursor: string | null; managed: string | null }> = [];
-    mockApi({
-      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
-        const cursor = req.search.get('cursor');
-        const managed = req.search.get('managed');
-        requests.push({ cursor, managed });
-        if (managed === 'true') return { hosts: HOSTS.hosts, next_cursor: '' };
-        if (cursor === 'page-2') return { hosts: [SECOND_PAGE_HOST], next_cursor: '' };
-        return { hosts: HOSTS.hosts, next_cursor: 'page-2' };
-      },
-      'GET /api/v1/orgs/acme/zones': ZONES,
-    });
-
-    renderPage(qc);
-
-    await user.click(await screen.findByRole('button', { name: 'Load more' }));
-    await screen.findByRole('link', { name: 'db-01.fra' });
-
-    await user.click(screen.getByRole('button', { name: 'Managed' }));
-
-    await waitFor(() => expect(screen.queryByRole('link', { name: 'db-01.fra' })).not.toBeInTheDocument());
-    expect(screen.getByRole('link', { name: 'web-04.fra' })).toBeInTheDocument();
-    expect(requests.at(-1)).toEqual({ cursor: null, managed: 'true' });
-    expect(screen.getByText('1 host')).toBeInTheDocument();
-  });
-
-  it('hides "Load more" while the tag selector drives the list', async () => {
-    const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({
-      'GET /api/v1/orgs/acme/hosts': { hosts: HOSTS.hosts, next_cursor: 'page-2' },
-      'GET /api/v1/orgs/acme/zones': ZONES,
-      'POST /api/v1/orgs/acme/hosts/query': { hosts: [SECOND_PAGE_HOST] },
-    });
-
-    renderPage(qc);
-
-    await screen.findByRole('button', { name: 'Load more' });
     await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
     await user.click(screen.getByRole('button', { name: 'Run' }));
 
     expect(await screen.findByRole('link', { name: 'db-01.fra' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'web-04.fra' })).not.toBeInTheDocument();
+  });
+});
+
+describe('hosts paging and sorting (server)', () => {
+  function setup(opts: { total?: number; initial?: string; prefs?: object } = {}) {
+    const all = manyHosts(opts.total ?? 30);
+    const requests: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': { ...PREFS, ...opts.prefs },
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        requests.push(req.search);
+        return pageOf(all, req);
+      },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+    });
+    const { router } = renderPage(newClient(), opts.initial);
+    return { router, requests };
+  }
+
+  it('asks for page 1 at the saved size, with no sort until one is chosen', async () => {
+    const { requests } = setup();
+
+    await screen.findByRole('link', { name: 'host-01' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].get('page')).toBe('1');
+    expect(requests[0].get('per_page')).toBe('25');
+    expect(requests[0].has('sort')).toBe(false);
+    expect(requests[0].has('order')).toBe(false);
+    expect(requests[0].has('cursor')).toBe(false);
+  });
+
+  it('shows the total in the footer, not in the header', async () => {
+    setup();
+
+    expect(await screen.findByText('1–25 of 30 hosts')).toBeInTheDocument();
+    expect(screen.queryByText('30 hosts')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('sorts on the server when the Zone header is pressed', async () => {
+    const user = userEvent.setup();
+    const { router, requests } = setup();
+
+    await screen.findByRole('link', { name: 'host-01' });
+    await user.click(screen.getByRole('button', { name: 'Zone' }));
+
+    await waitFor(() => expect(requests.at(-1)?.get('sort')).toBe('zone'));
+    expect(requests.at(-1)?.get('order')).toBe('asc');
+    expect(router.state.location.search).toMatchObject({ sort: 'zone', order: 'asc' });
+  });
+
+  it('reads sort and page from the URL', async () => {
+    const { requests } = setup({ initial: '/o/acme/hosts?sort=last_seen&order=desc&page=2' });
+
+    expect(await screen.findByRole('link', { name: 'host-26' })).toBeInTheDocument();
+    expect(requests[0].get('page')).toBe('2');
+    expect(requests[0].get('sort')).toBe('last_seen');
+    expect(requests[0].get('order')).toBe('desc');
+  });
+
+  it('moves a page past the end to the last page', async () => {
+    const { router } = setup({ initial: '/o/acme/hosts?page=9' });
+
+    expect(await screen.findByRole('link', { name: 'host-26' })).toBeInTheDocument();
+    expect(router.state.location.search).toMatchObject({ page: 2 });
+    expect(screen.queryByText('No hosts yet. Add one to get started.')).not.toBeInTheDocument();
+  });
+
+  it('sends active_runs=true for the "With active runs" chip and starts again at page 1', async () => {
+    const user = userEvent.setup();
+    const { router, requests } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    await user.click(screen.getByRole('button', { name: 'With active runs' }));
+
+    await waitFor(() => expect(requests.at(-1)?.get('active_runs')).toBe('true'));
+    expect(requests.at(-1)?.get('page')).toBe('1');
+    expect(requests.some((r) => r.get('active_runs') === 'true' && r.get('page') !== '1')).toBe(false);
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty('page'));
+  });
+
+  it('starts again at page 1 for a new ⌘K search', async () => {
+    const { router, requests } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    // Only the search changes; the URL's page stays as it was.
+    await router.navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, q: 'web' }) } as never);
+
+    await waitFor(() => expect(requests.at(-1)?.get('q')).toBe('web'));
+    expect(requests.at(-1)?.get('page')).toBe('1');
+    expect(requests.some((r) => r.get('q') === 'web' && r.get('page') !== '1')).toBe(false);
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty('page'));
+  });
+
+  it('starts again at page 1 when the Managed chip changes', async () => {
+    const user = userEvent.setup();
+    const { requests } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    await user.click(screen.getByRole('button', { name: 'Managed' }));
+
+    await waitFor(() => expect(requests.at(-1)?.get('managed')).toBe('true'));
+    expect(requests.at(-1)?.get('page')).toBe('1');
+  });
+});
+
+describe('hosts in tag-selector mode (paged in the browser)', () => {
+  it('pages and sorts the selector answer without asking the server again', async () => {
+    const user = userEvent.setup();
+    const pageRequests: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        pageRequests.push(req.search);
+        return HOSTS;
+      },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'POST /api/v1/orgs/acme/hosts/query': { hosts: manyHosts(30) },
+    });
+    renderPage(newClient());
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
+    await user.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(await screen.findByText('1–25 of 30 hosts')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'host-25' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'host-26' })).not.toBeInTheDocument();
+    const before = pageRequests.length;
+
+    await user.click(screen.getByRole('button', { name: 'Page 2' }));
+    expect(await screen.findByRole('link', { name: 'host-30' })).toBeInTheDocument();
+    expect(screen.getByText('26–30 of 30 hosts')).toBeInTheDocument();
+
+    // Host: ascending, then descending — page 1 of the descending order.
+    await user.click(screen.getByRole('button', { name: 'Host' }));
+    await user.click(screen.getByRole('button', { name: 'Host' }));
+    await waitFor(() =>
+      expect(screen.getAllByRole('link', { name: /^host-/ }).slice(0, 3).map((a) => a.getAttribute('aria-label'))).toEqual([
+        'host-30',
+        'host-29',
+        'host-28',
+      ]),
+    );
+    expect(pageRequests.length).toBe(before);
+  });
+
+  it('shows the active runs the selector answer carries', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': HOSTS,
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'POST /api/v1/orgs/acme/hosts/query': { hosts: [{ ...DB_01, active_runs: 3 }] },
+    });
+    renderPage(newClient());
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
+    await user.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(await screen.findByRole('link', { name: '3 running' })).toHaveAttribute('href', '/o/acme/runs?host=h2&status=active');
   });
 });
 
@@ -228,14 +363,14 @@ describe('zone filter', () => {
   it('narrows the host request to the chosen zone', async () => {
     const asked: Array<string | null> = [];
     mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme/zones': ZONES,
       'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
         asked.push(req.search.get('zone'));
         return HOSTS;
       },
     });
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    renderPage(qc);
+    renderPage(newClient());
 
     await waitFor(() => expect(asked.length).toBeGreaterThan(0));
     expect(asked[0]).toBeFalsy();
@@ -250,35 +385,109 @@ describe('zone filter', () => {
 });
 
 const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
-const MONITORED_HOST = { ...HOSTS.hosts[0], monitored: true };
+const MONITORED_HOST = { ...WEB_04, monitored: true };
 
-function rowRoutes(role: string, host: Record<string, unknown> = MONITORED_HOST) {
+function rowRoutes(role: string, host: Record<string, unknown> = MONITORED_HOST, prefs: object = PREFS) {
   return {
+    'GET /api/v1/auth/me/preferences': prefs,
     'GET /api/v1/orgs/acme': org(role),
-    'GET /api/v1/orgs/acme/hosts': { hosts: [host] },
+    'GET /api/v1/orgs/acme/hosts': { hosts: [host], next_cursor: '', total: 1 },
     'GET /api/v1/orgs/acme/zones': ZONES,
   };
 }
 
+const AGENT = {
+  host_id: 'h1', host_name: 'web-04.fra', agent_name: 'web-04', status: 'online', last_seen: '2026-03-01T00:00:00Z',
+  created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, local_check_problems: null,
+  version: '0.1.0-rc.4', version_status: 'current',
+};
+
 describe('host rows', () => {
   it('whole row links to the host page', async () => {
     mockApi(rowRoutes('operator'));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     const link = await screen.findByRole('link', { name: 'web-04.fra' });
     expect(link).toHaveAttribute('href', '/o/acme/hosts/h1');
-    expect(link).toHaveTextContent('fra');
-    expect(link).toHaveTextContent('Managed');
-    expect(link).toHaveTextContent('Monitored');
+    const row = rowOf('web-04.fra');
+    expect(row).toHaveTextContent('fra');
+    expect(row).toHaveTextContent('Managed');
+    expect(row).toHaveTextContent('Monitored');
+  });
+
+  it('puts the name first, with the agent state dot in its cell', async () => {
+    mockApi(rowRoutes('operator'));
+    renderPage(newClient());
+
+    const link = await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(screen.getAllByRole('columnheader')[0]).toHaveTextContent('Host');
+    expect(within(link).getByTitle('unknown')).toBeInTheDocument();
+  });
+
+  it('shows the address under the name in the comfortable density', async () => {
+    mockApi(rowRoutes('operator', MONITORED_HOST, { ...PREFS, density: 'comfortable' }));
+    renderPage(newClient());
+
+    const link = await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(within(link).getByText('203.0.113.4')).toBeInTheDocument();
+  });
+
+  it('leaves the address out in the standard density', async () => {
+    mockApi(rowRoutes('operator'));
+    renderPage(newClient());
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(screen.queryByText('203.0.113.4')).not.toBeInTheDocument();
+  });
+
+  it('links a host with active runs to its live runs, and shows a dash for none', async () => {
+    mockApi({
+      ...rowRoutes('operator'),
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ ...MONITORED_HOST, active_runs: 2 }, DB_01], next_cursor: '', total: 2 },
+    });
+    renderPage(newClient());
+
+    const runs = await screen.findByRole('link', { name: '2 running' });
+    expect(runs).toHaveAttribute('href', '/o/acme/runs?host=h1&status=active');
+    expect(runs).toHaveClass('relative', 'z-10');
+    expect(within(rowOf('db-01.fra')).getByText('—')).toBeInTheDocument();
+  });
+
+  it('hides the agent version and the operating system by default', async () => {
+    mockApi({
+      ...rowRoutes('operator', { ...MONITORED_HOST, facts: { os_version: 'debian 13' } }),
+      'GET /api/v1/orgs/acme/agents': { agents: [AGENT] },
+    });
+    renderPage(newClient());
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(screen.queryByText('debian 13')).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Agent version' })).not.toBeInTheDocument();
+  });
+
+  it('shows the agent version and the operating system when they are chosen', async () => {
+    mockApi({
+      ...rowRoutes('operator', { ...MONITORED_HOST, facts: { os_version: 'debian 13' } }, {
+        ...PREFS,
+        lists: { hosts: { columns: ['name', 'agent_version', 'os'] } },
+      }),
+      'GET /api/v1/orgs/acme/agents': { agents: [AGENT] },
+    });
+    renderPage(newClient());
+
+    expect(await screen.findByText('debian 13')).toBeInTheDocument();
+    expect(await screen.findByText('0.1.0-rc.4')).toBeInTheDocument();
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Host', 'Agent version', 'Operating system', 'Actions']);
   });
 
   it('shows muted "not managed" / "not monitored" for a host without the capabilities', async () => {
-    mockApi(rowRoutes('operator', { ...HOSTS.hosts[0], managed: false, monitored: false }));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    mockApi(rowRoutes('operator', { ...WEB_04, managed: false, monitored: false }));
+    renderPage(newClient());
 
-    const link = await screen.findByRole('link', { name: 'web-04.fra' });
-    expect(link).toHaveTextContent('not managed');
-    expect(link).toHaveTextContent('not monitored');
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    const row = rowOf('web-04.fra');
+    expect(row).toHaveTextContent('not managed');
+    expect(row).toHaveTextContent('not monitored');
   });
 
   it('menu toggle does not navigate', async () => {
@@ -291,7 +500,7 @@ describe('host rows', () => {
         return { host: { ...MONITORED_HOST, monitored: false } };
       },
     });
-    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const { router } = renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Switch monitoring off' }));
@@ -305,13 +514,13 @@ describe('host rows', () => {
     const user = userEvent.setup();
     let patched: unknown;
     mockApi({
-      ...rowRoutes('operator', { ...HOSTS.hosts[0], managed: false }),
+      ...rowRoutes('operator', { ...WEB_04, managed: false }),
       'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
         patched = req.body;
-        return { host: HOSTS.hosts[0] };
+        return { host: WEB_04 };
       },
     });
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Switch management on' }));
@@ -319,9 +528,23 @@ describe('host rows', () => {
     await waitFor(() => expect(patched).toEqual({ managed: true }));
   });
 
+  it('says so in a toast when a switch fails', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...rowRoutes('operator'),
+      'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': () => new Response(JSON.stringify({ detail: 'nope' }), { status: 500 }),
+    });
+    renderPage(newClient());
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Switch monitoring off' }));
+
+    expect(await screen.findByText('nope')).toBeInTheDocument();
+  });
+
   it('capabilities in the list are not interactive', async () => {
     mockApi(rowRoutes('admin'));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await screen.findByRole('link', { name: 'web-04.fra' });
     expect(screen.queryAllByRole('switch')).toHaveLength(0);
@@ -332,7 +555,7 @@ describe('host rows', () => {
   it('viewer sees only Open', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('viewer'));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     const items = await screen.findAllByRole('menuitem');
@@ -342,7 +565,7 @@ describe('host rows', () => {
   it('operator sees every item, in order', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('operator'));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     const items = await screen.findAllByRole('menuitem');
@@ -357,10 +580,45 @@ describe('host rows', () => {
     ]);
   });
 
+  it('offers the host\'s active runs in its menu when it has some', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('viewer', { ...MONITORED_HOST, active_runs: 2 }));
+    const { router } = renderPage(newClient());
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual(['Open', 'View active runs (2)']);
+    await user.click(items[1]);
+
+    expect(await screen.findByText('RUNS PAGE')).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({ host: 'h1', status: 'active' });
+  });
+
+  it('opens the same entries on a right-click, after "Open in new tab" and "Copy link"', async () => {
+    mockApi(rowRoutes('operator'));
+    renderPage(newClient());
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    fireEvent.contextMenu(within(rowOf('web-04.fra')).getByText('fra'), { clientX: 200, clientY: 300 });
+
+    const items = within(await screen.findByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual([
+      'Open in new tab',
+      'Copy link',
+      'Open',
+      'Edit',
+      'Run command',
+      'Run template…',
+      'Switch monitoring off',
+      'Switch management off',
+      'Delete…',
+    ]);
+  });
+
   it('offers no Run command for a host that is not managed', async () => {
     const user = userEvent.setup();
-    mockApi(rowRoutes('operator', { ...HOSTS.hosts[0], managed: false }));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    mockApi(rowRoutes('operator', { ...WEB_04, managed: false }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await screen.findAllByRole('menuitem');
@@ -371,7 +629,7 @@ describe('host rows', () => {
   it('Open navigates to the host page', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('viewer'));
-    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const { router } = renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Open' }));
@@ -383,7 +641,7 @@ describe('host rows', () => {
   it('Edit opens the host dialog without leaving the list', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('operator'));
-    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const { router } = renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Edit' }));
@@ -395,7 +653,7 @@ describe('host rows', () => {
   it('Run command opens the ad-hoc dialog with this host selected', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('operator'));
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Run command' }));
@@ -408,7 +666,7 @@ describe('host rows', () => {
   it('Run template opens the template dialog for this host', async () => {
     const user = userEvent.setup();
     mockApi({ ...rowRoutes('operator'), 'GET /api/v1/orgs/acme/job-templates': { templates: [] } });
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Run template…' }));
@@ -426,7 +684,7 @@ describe('host rows', () => {
         return {};
       },
     });
-    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    const { router } = renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
@@ -447,7 +705,7 @@ describe('host rows', () => {
         return {};
       },
     });
-    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    renderPage(newClient());
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
@@ -461,7 +719,7 @@ describe('host rows', () => {
   // a server plus a small "Client" tag; a server stays exactly as it was,
   // its offline agent included.
   describe('client hosts', () => {
-    const hostOf = (id: string, name: string, kind: 'server' | 'client') => ({ ...SECOND_PAGE_HOST, id, name, kind, monitored: true });
+    const hostOf = (id: string, name: string, kind: 'server' | 'client') => ({ ...DB_01, id, name, kind, monitored: true });
     const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
       host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
       secret_names: null, secrets_state: null, local_check_problems: null, version_status: 'current',
@@ -470,8 +728,11 @@ describe('host rows', () => {
 
     function routes() {
       return {
+        'GET /api/v1/auth/me/preferences': PREFS,
         'GET /api/v1/orgs/acme/hosts': {
           hosts: [hostOf('h-off', 'laptop-1', 'client'), hostOf('h-on', 'laptop-2', 'client'), hostOf('h-srv', 'web-1', 'server')],
+          next_cursor: '',
+          total: 3,
         },
         'GET /api/v1/orgs/acme/zones': ZONES,
         'GET /api/v1/orgs/acme/agents': {
@@ -479,29 +740,28 @@ describe('host rows', () => {
         },
       };
     }
-    const row = (name: string) => screen.getByRole('link', { name });
 
     it('shows an offline client as Off with when it was last seen', async () => {
       mockApi(routes());
-      renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+      renderPage(newClient());
       await screen.findByRole('link', { name: 'laptop-1' });
 
-      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
-      expect(within(row('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
-      expect(within(row('laptop-1')).queryByText('Client')).not.toBeInTheDocument();
+      await waitFor(() => expect(within(rowOf('laptop-1')).getByText('Off')).toBeInTheDocument());
+      expect(within(rowOf('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
+      expect(within(rowOf('laptop-1')).queryByText('Client')).not.toBeInTheDocument();
     });
 
     it('tags an online client and leaves a server with an offline agent alone', async () => {
       mockApi(routes());
-      renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+      renderPage(newClient());
       await screen.findByRole('link', { name: 'laptop-1' });
-      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
+      await waitFor(() => expect(within(rowOf('laptop-1')).getByText('Off')).toBeInTheDocument());
 
-      expect(within(row('laptop-2')).getByText('Client')).toBeInTheDocument();
-      expect(within(row('laptop-2')).queryByText('Off')).not.toBeInTheDocument();
-      expect(within(row('web-1')).queryByText('Off')).not.toBeInTheDocument();
-      expect(within(row('web-1')).queryByText('Client')).not.toBeInTheDocument();
-      expect(within(row('web-1')).queryByText(/last seen/)).not.toBeInTheDocument();
+      expect(within(rowOf('laptop-2')).getByText('Client')).toBeInTheDocument();
+      expect(within(rowOf('laptop-2')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(rowOf('web-1')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(rowOf('web-1')).queryByText('Client')).not.toBeInTheDocument();
+      expect(within(rowOf('web-1')).queryByText(/last seen/)).not.toBeInTheDocument();
     });
   });
 });

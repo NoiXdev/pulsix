@@ -34,10 +34,10 @@ export const deRuns: Messages['runs'] = {
   },
   list: {
     title: 'Läufe',
-    summary: (n: number) =>
-      n === 1
-        ? '1 Lauf · jeder Job, den die Worker für diese Organisation ausgeführt haben'
-        : `${n} Läufe · jeder Job, den die Worker für diese Organisation ausgeführt haben`,
+    subtitle: 'Jeder Job, den die Worker für diese Organisation ausgeführt haben',
+    label: 'Läufe',
+    count: (n: number) => (n === 1 ? '1 Lauf' : `${n} Läufe`),
+    statusActive: 'Aktiv',
     filterStatus: 'Nach Status filtern',
     filterKind: 'Nach Art filtern',
     filterTrigger: 'Nach Auslöser filtern',
@@ -57,7 +57,7 @@ export const deRuns: Messages['runs'] = {
       trigger: 'Auslöser',
       template: 'Vorlage',
       zone: 'Zone',
-      started: 'Gestartet',
+      created: 'Erstellt',
     },
     empty: 'Keine passenden Läufe.',
   },

@@ -14,7 +14,7 @@ export function CapabilityCell({ kind, on }: { kind: CapabilityKind; on: boolean
   const t = useT();
   if (on) return <Pill tone="ok">{t.hosts.capability[kind]}</Pill>;
   return (
-    <span className="truncate text-xs text-muted-foreground">
+    <span className="truncate text-muted-foreground">
       {kind === 'managed' ? t.hosts.capability.notManaged : t.hosts.capability.notMonitored}
     </span>
   );

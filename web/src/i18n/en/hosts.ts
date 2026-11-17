@@ -51,8 +51,10 @@ export const enHosts = {
   },
   list: {
     title: 'Hosts',
+    subtitle: 'Servers and clients of this organization',
+    /** The table's accessible name. */
+    label: 'Hosts',
     count: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
-    loadedMore: (n: number) => `${n} hosts loaded, more available`,
     addZone: 'Add zone',
     addHost: 'Add host',
     filterPlaceholder: 'Filter hosts…',
@@ -61,6 +63,9 @@ export const enHosts = {
     selectorPlaceholder: 'selector, e.g. role = db',
     run: 'Run',
     clear: 'clear',
+    withActiveRuns: 'With active runs',
+    /** A host's live runs in the Active runs column; it links to them. */
+    activeRuns: (n: number) => `${n} running`,
     columns: {
       host: 'Host',
       zone: 'Zone',
@@ -68,9 +73,12 @@ export const enHosts = {
       managed: 'Managed · Ansible',
       monitored: 'Monitored',
       seen: 'Seen',
+      activeRuns: 'Active runs',
+      agentVersion: 'Agent version',
+      os: 'Operating system',
     },
-    loadingHosts: 'Loading hosts…',
     empty: 'No hosts yet. Add one to get started.',
+    noMatch: 'No hosts match the filter.',
   },
   dialog: {
     titleAdd: 'Add host',
@@ -116,11 +124,11 @@ export const enHosts = {
     days: (n: number) => `${n} d`,
     agentTitle: (status: string) => `agent ${status}`,
     unknown: 'unknown',
-    actions: (name: string) => `Actions for ${name}`,
     open: 'Open',
     edit: 'Edit',
     runCommand: 'Run command',
     runTemplate: 'Run template…',
+    viewActiveRuns: (n: number) => `View active runs (${n})`,
     monitoringOff: 'Switch monitoring off',
     monitoringOn: 'Switch monitoring on',
     managementOff: 'Switch management off',

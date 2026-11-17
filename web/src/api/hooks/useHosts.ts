@@ -1,6 +1,7 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { HostInput } from '../types.ts';
+import type { ServerPageQuery } from './paging.ts';
 
 export interface HostListFilter {
   zone?: string;
@@ -52,6 +53,49 @@ export function useHosts(org: string, filter: HostListFilter = {}, opts: { keepP
     getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: !!org,
     placeholderData: opts.keepPrevious ? keepPreviousData : undefined,
+  });
+}
+
+/** The hosts list's filters in page mode: the cursor list's, plus "only
+ * hosts with a live run". */
+export interface HostPageFilter extends HostListFilter {
+  activeRuns?: boolean;
+}
+
+type HostSort = 'name' | 'zone' | 'managed' | 'monitored' | 'last_seen' | 'active_runs';
+
+/**
+ * useHostsPage is the hosts list one numbered page at a time (the API's
+ * page mode, which also answers the total and each host's `active_runs`).
+ * The previous page stays on screen while the next one loads. The key
+ * keeps the ['hosts', org] prefix every host mutation invalidates.
+ * `enabled` waits for the list's preferences (useListView's `ready`), and
+ * the tag-selector mode turns it off while it shows its own answer.
+ */
+export function useHostsPage(org: string, filter: HostPageFilter, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['hosts', org, 'page', filter, page],
+    queryFn: () =>
+      unwrap(
+        api.GET('/api/v1/orgs/{org}/hosts', {
+          params: {
+            path: { org },
+            query: {
+              zone: filter.zone || undefined,
+              managed: filter.managed === undefined ? undefined : String(filter.managed),
+              monitored: filter.monitored === undefined ? undefined : String(filter.monitored),
+              q: filter.q || undefined,
+              active_runs: filter.activeRuns ? 'true' : undefined,
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as HostSort | undefined,
+              order: page.order,
+            },
+          },
+        }),
+      ),
+    enabled: !!org && (opts.enabled ?? true),
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -132,12 +176,21 @@ export function useReloadHost(org: string, id: string) {
   };
 }
 
-export function useSetHostCapabilities(org: string, id: string) {
+export interface CapabilityPatch {
+  managed?: boolean;
+  monitored?: boolean;
+}
+
+/** useSetCapabilitiesOfHost switches a host's capabilities. The host's id
+ * travels with the patch, so one hook serves the host page and every row
+ * of the hosts list. The answer is the host, which goes straight into its
+ * cache. */
+export function useSetCapabilitiesOfHost(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (patch: { managed?: boolean; monitored?: boolean }) =>
+    mutationFn: ({ id, patch }: { id: string; patch: CapabilityPatch }) =>
       unwrap(api.PATCH('/api/v1/orgs/{org}/hosts/{id}/capabilities', { params: { path: { org, id } }, body: patch })),
-    onSuccess: (res) => {
+    onSuccess: (res, { id }) => {
       qc.setQueryData(['host', org, id], res);
       void qc.invalidateQueries({ queryKey: ['hosts', org] });
       void qc.invalidateQueries({ queryKey: ['host', org, id] });
