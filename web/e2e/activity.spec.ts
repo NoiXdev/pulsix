@@ -39,8 +39,10 @@ test('earlier actions appear in the feed with the actor\'s name, and filtering b
   await page.getByRole('button', { name: 'invite', exact: true }).click();
   await expect(memberEvent).toBeVisible();
   await expect(hostEvent).toHaveCount(0);
+  const total = async () => Number(/of (\d+)/.exec((await page.getByText(/\d+–\d+ of \d+/).first().textContent()) ?? '')?.[1]);
+  const invites = await total();
 
-  // Back to "all" drops the filter again.
+  // Back to "all" drops the filter: more events than the invitations alone.
   await page.getByRole('button', { name: 'all', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'all', exact: true })).toBeVisible();
+  await expect.poll(total).toBeGreaterThan(invites);
 });

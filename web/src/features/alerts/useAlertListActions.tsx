@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT.ts';
+import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import type { RowAction } from '../../ui/data-list/index.ts';
 import { AcknowledgeDialog } from './AcknowledgeDialog.tsx';
@@ -42,7 +43,14 @@ export function useAlertListActions(
         {dialog.kind === 'snooze' && <SnoozeDialog org={org} alertId={dialog.alert.id} onClose={close} />}
         {dialog.kind === 'timeline' && (
           <Dialog open onClose={close} title={t.alerts.timelineFor(dialog.alert.hostName)}>
-            <AlertTimelinePanel org={org} alertId={dialog.alert.id} />
+            <div className="flex flex-col gap-3">
+              <AlertTimelinePanel org={org} alertId={dialog.alert.id} />
+              <div className="flex justify-end">
+                <Button type="button" variant="ghost" onClick={close}>
+                  {t.common.close}
+                </Button>
+              </div>
+            </div>
           </Dialog>
         )}
       </>

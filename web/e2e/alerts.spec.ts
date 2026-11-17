@@ -171,9 +171,8 @@ async function waitForCpuState(page: Page, hostName: string, want: string, timeo
 }
 
 /** alertRow returns the SINGLE alert row on an already-`?host=`-scoped
- * Alerts page, found by walking up from the one span every row carries
- * (AlertRow.tsx's own `data-testid="alert-open"`) — robust even though
- * AlertRow's own root `<div>` carries no testid or role of its own. */
+ * Alerts page: the list row (`[data-list-row]`) holding the one cell every
+ * row carries (AlertCells.tsx's own `data-testid="alert-open"`). */
 function alertRow(page: Page): Locator {
   return page.locator('[data-list-row]', { has: page.getByTestId('alert-open') });
 }

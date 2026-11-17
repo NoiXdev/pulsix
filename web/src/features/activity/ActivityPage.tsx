@@ -13,7 +13,8 @@ import { ObjectTypeChips } from './ObjectTypeChips.tsx';
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's
- * grouped-by-day list and object-type filter chips. The mockup's right-
+ * object-type filter chips (the feed itself is a paged table, not the
+ * mockup's day groups). The mockup's right-
  * hand "Event detail" and "Actors" panels depend on data (a before/after
  * diff, per-actor totals) the audit API does not expose — see
  * task-15a-report.md — so this page keeps the feed itself and the filter

@@ -3,11 +3,11 @@ import { Link } from '@tanstack/react-router';
 import { useT } from '../../i18n/useT.ts';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
-import { useToast } from '../../ui/toastContext.ts';
-import { useAlert, useAlerts, useUnacknowledgeAlert, useUnsnoozeAlert } from '../../api/hooks/useAlerts.ts';
+import { useAlerts } from '../../api/hooks/useAlerts.ts';
 import { AlertRow } from './AlertRow.tsx';
-import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
-import { AlertTimeline } from './AlertTimeline.tsx';
+import { alertToRowAlert } from './alertRow.ts';
+import { AlertTimelinePanel } from './AlertTimelinePanel.tsx';
+import { useAlertCommands } from './alertActions.ts';
 import { AcknowledgeDialog } from './AcknowledgeDialog.tsx';
 import { SnoozeDialog } from './SnoozeDialog.tsx';
 
@@ -69,34 +69,16 @@ export interface HostAlertsCardProps {
  */
 export function HostAlertsCard({ org, hostId, canRead, canWrite = false }: HostAlertsCardProps) {
   const t = useT();
-  const toast = useToast();
   const alerts = useAlerts(org, { host: hostId, state: 'open' }, canRead);
-  const unacknowledge = useUnacknowledgeAlert(org);
-  const unsnooze = useUnsnoozeAlert(org);
+  const commands = useAlertCommands(org);
   const [open, setOpen] = useState<string | null>(null);
   const [acking, setAcking] = useState<string | null>(null);
   const [snoozing, setSnoozing] = useState<string | null>(null);
 
-  async function onUnacknowledge(a: AlertRowAlert) {
-    try {
-      await unacknowledge.mutateAsync(a.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.alerts.unacknowledgeFailed, 'destructive');
-    }
-  }
-
-  async function onUnsnooze(a: AlertRowAlert) {
-    try {
-      await unsnooze.mutateAsync(a.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.alerts.unsnoozeFailed, 'destructive');
-    }
-  }
-
   // One page is the whole of this card's answer: it asks for open alerts
   // on one host, and a host with more than a page of simultaneously open
   // alerts has a problem no list length fixes. The org-wide page's own
-  // Load more (and its `?host=` link, below) is where the rest lives.
+  // paged list (and its `?host=` link, below) is where the rest lives.
   const rows = (alerts.data?.pages.flatMap((p) => p.alerts ?? []) ?? []).map(alertToRowAlert);
 
   return (
@@ -121,16 +103,20 @@ export function HostAlertsCard({ org, hostId, canRead, canWrite = false }: HostA
                   alert={a}
                   canWrite={canWrite}
                   onAcknowledge={(alert) => setAcking(alert.id)}
-                  onUnacknowledge={(alert) => void onUnacknowledge(alert)}
+                  onUnacknowledge={(alert) => void commands.unacknowledge(alert)}
                   onSnooze={(alert) => setSnoozing(alert.id)}
-                  onUnsnooze={(alert) => void onUnsnooze(alert)}
+                  onUnsnooze={(alert) => void commands.unsnooze(alert)}
                 />
                 <div className="flex justify-end border-t border-border px-4 py-1.5">
                   <Button type="button" variant="ghost" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : a.id)}>
                     {isOpen ? t.alerts.hideTimeline : t.alerts.showTimeline}
                   </Button>
                 </div>
-                {isOpen && <AlertTimelinePanel org={org} alertId={a.id} />}
+                {isOpen && (
+                  <div className="border-t border-border p-3">
+                    <AlertTimelinePanel org={org} alertId={a.id} />
+                  </div>
+                )}
               </li>
             );
           })}
@@ -139,34 +125,6 @@ export function HostAlertsCard({ org, hostId, canRead, canWrite = false }: HostA
       {acking && <AcknowledgeDialog org={org} alertId={acking} onClose={() => setAcking(null)} />}
       {snoozing && <SnoozeDialog org={org} alertId={snoozing} onClose={() => setSnoozing(null)} />}
     </Card>
-  );
-}
-
-/** AlertTimelinePanel is the per-alert disclosure's own body: GET
- * /alerts/{id} for exactly one alert, the only route that carries a
- * timeline at all. Split out of HostAlertsCard so useAlert is only ever
- * mounted (and only ever requests) for an alert whose disclosure is
- * actually open, mirroring HostChecksCard's own GraphPanel. */
-function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) {
-  const t = useT();
-  const detail = useAlert(org, alertId);
-
-  return (
-    <div className="border-t border-border p-3">
-      {detail.isError && (
-        <p role="alert" className="text-xs text-destructive">
-          {detail.error instanceof Error ? detail.error.message : t.alerts.timelineReadFailed}
-        </p>
-      )}
-      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
-      {detail.data && (
-        <AlertTimeline
-          entries={detail.data.alert.timeline ?? []}
-          closedReason={detail.data.alert.closed_reason ?? ''}
-          notificationHold={detail.data.alert.notification_hold ?? ''}
-        />
-      )}
-    </div>
   );
 }
 

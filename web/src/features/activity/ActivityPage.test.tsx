@@ -138,7 +138,7 @@ describe('ActivityPage paging', () => {
     expect(requests.filter((r) => r.get('actor') === 'u1').every((r) => r.get('page') === '1')).toBe(true);
   });
 
-  it('keeps the actor and the time as optional columns the list offers', async () => {
+  it('offers the time, actor, action and object as columns', async () => {
     setup([event()]);
     for (const name of ['When', 'Who', 'What happened', 'Object']) {
       expect(await screen.findByRole('columnheader', { name: new RegExp(name) })).toBeInTheDocument();
