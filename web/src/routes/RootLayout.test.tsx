@@ -181,4 +181,37 @@ describe('RootLayout', () => {
       expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
     });
   });
+  describe('session expiry warning (backlog 3.93)', () => {
+    const soon = () => new Date(Date.now() + 2 * 60 * 1000).toISOString();
+    const meExpiring = (extra: Record<string, unknown>) => ({
+      locked: false,
+      mfa_complete: true,
+      session_expires_at: soon(),
+      user: { display_name: 'Tim' },
+      ...extra,
+    });
+
+    it('warns an unlocked, MFA-complete session inside the last five minutes', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meExpiring({}), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByRole('dialog', { name: 'Your session is about to end' })).toBeInTheDocument();
+    });
+
+    it('does not warn while the session is locked', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meExpiring({ locked: true }), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
+    });
+
+    it('does not warn a session that is not MFA-complete', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meExpiring({ mfa_complete: false }), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
+    });
+
+    it('does not ask /auth/me on a public page, so there is nothing to warn about', async () => {
+      renderAt('/login', { 'GET /api/v1/auth/me': meExpiring({}) });
+      expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
+    });
+  });
 });

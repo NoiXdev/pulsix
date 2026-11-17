@@ -1,7 +1,10 @@
 import {
   beginPasskeyLogin,
+  beginPasskeyReauth,
   beginPasskeyRegistration,
   finishPasskeyLogin,
+  finishPasskeyReauth,
+  finishPasskeyRenew,
   finishPasskeyRegistration,
 } from '../../api/hooks/usePasskeys.ts';
 import { en } from '../../i18n/en/index.ts';
@@ -81,6 +84,30 @@ export async function loginWithPasskey(t: Messages = en): Promise<void> {
     ceremony_id: begin.ceremony_id,
     response: encodeAssertionCredential(credential as PublicKeyCredential),
   });
+}
+
+/**
+ * reauthWithPasskey proves a passkey for the account that is already signed
+ * in (backlog 3.93). It is NOT loginWithPasskey: that one starts a session
+ * and any account's passkey will do, this one is bound to the current
+ * session's account and is what a step-up or a renewal must use. `purpose`
+ * only picks the finish route: 'step_up' refreshes this session's second
+ * factor, 'renew' replaces the session with a fresh one. The cookie the
+ * server sets is the result, so this returns void.
+ */
+export async function reauthWithPasskey(purpose: 'step_up' | 'renew', t: Messages = en): Promise<void> {
+  const begin = await beginPasskeyReauth();
+  const wrapped = begin.options as unknown as PasskeyCeremonyBegin<RequestOptionsJSON>;
+  const options = decodeRequestOptions(wrapped.publicKey);
+
+  const credential = await navigator.credentials.get({ publicKey: options });
+  if (!credential) throw new Error(t.auth.passkey.loginCancelled);
+
+  const body = {
+    ceremony_id: begin.ceremony_id,
+    response: encodeAssertionCredential(credential as PublicKeyCredential),
+  };
+  await (purpose === 'step_up' ? finishPasskeyReauth(body) : finishPasskeyRenew(body));
 }
 
 /** passkeysSupported reports whether the current browser can even attempt

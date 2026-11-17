@@ -18,8 +18,11 @@ function Harness({ action, onError }: { action: () => Promise<void>; onError: (e
   );
 }
 
+let meReads = 0;
+
 function renderHarness(action: () => Promise<void>, onError: (err: unknown) => void) {
-  mockApi({ 'POST /api/v1/auth/totp/verify': {} });
+  meReads = 0;
+  mockApi({ 'POST /api/v1/auth/totp/verify': {}, 'GET /api/v1/auth/me': () => { meReads += 1; return {}; } });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ToastProvider>
@@ -46,6 +49,8 @@ describe('useStepUp', () => {
 
     await vi.waitFor(() => expect(action).toHaveBeenCalledTimes(2));
     expect(onError).not.toHaveBeenCalled();
+    // The proof refreshed the session: /auth/me is read again.
+    await vi.waitFor(() => expect(meReads).toBe(1));
   });
 
   // A retry that is refused again used to be rethrown outside any handler:

@@ -4,7 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { verifyTotp } from '../../api/hooks/useAuth.ts';
-import { loginWithPasskey, passkeysSupported } from '../auth/passkeys.ts';
+import { passkeysSupported, reauthWithPasskey } from '../auth/passkeys.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /**
@@ -63,7 +63,7 @@ export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onPro
         {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
         <div className="flex justify-between gap-2">
           {passkeysSupported() ? (
-            <Button type="button" disabled={busy} onClick={() => void prove(() => loginWithPasskey(t))}>
+            <Button type="button" disabled={busy} onClick={() => void prove(() => reauthWithPasskey('step_up', t))}>
               {t.auth.usePasskey}
             </Button>
           ) : (

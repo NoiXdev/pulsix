@@ -112,6 +112,12 @@ describe('LoginPage notice (backlog 3.92)', () => {
 
     expect(await screen.findByText(/Too many wrong PINs/)).toBeInTheDocument();
   });
+
+  it('says the session has ended when it ran out (backlog 3.93)', async () => {
+    renderLoginAt({ notice: 'session_expired' });
+
+    expect(await screen.findByText('Your session has ended. Sign in again.')).toBeInTheDocument();
+  });
 });
 
 describe('LoginPage forgotten password (backlog 7.74)', () => {

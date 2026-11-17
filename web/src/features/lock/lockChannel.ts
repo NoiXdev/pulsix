@@ -20,8 +20,10 @@ function open(): BroadcastChannel | null {
   return typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(CHANNEL);
 }
 
-/** postSessionMessage tells the other tabs. A channel never delivers to
- * the instance that posted, so the sender is not told about its own news. */
+/** postSessionMessage tells the other tabs. A channel never delivers to the
+ * instance that posted, but each call opens its own instance, so a listener
+ * registered by onSessionMessage in the SAME tab does hear it: a receiver
+ * must tolerate news about what it just did itself. */
 export function postSessionMessage(msg: SessionMessage): void {
   const channel = open();
   if (!channel) return;

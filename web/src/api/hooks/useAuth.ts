@@ -18,3 +18,15 @@ export async function verifyTotp(input: { code: string } | { recoveryCode: strin
 export async function logout() {
   return unwrap(api.POST('/api/v1/auth/logout', {}));
 }
+
+/** renewSession replaces the session with a fresh one for the same account
+ * (backlog 3.93). The server needs the password and a second factor — an
+ * authenticator code or a recovery code — and answers 401 for a wrong one.
+ * The new cookie is the result; the answer carries the new expiry. */
+export async function renewSession(input: { password: string; code: string } | { password: string; recoveryCode: string }) {
+  const body =
+    'recoveryCode' in input
+      ? { password: input.password, recovery_code: input.recoveryCode }
+      : { password: input.password, code: input.code };
+  return unwrap(api.POST('/api/v1/auth/session/renew', { body }));
+}

@@ -24,6 +24,7 @@ import { enRuns } from './runs.ts';
 import { enSchedules } from './schedules.ts';
 import { enSecrets } from './secrets.ts';
 import { enSettings } from './settings.ts';
+import { enSession } from './session.ts';
 import { enSetup } from './setup.ts';
 import { enShell } from './shell.ts';
 import { enTemplates } from './templates.ts';
@@ -63,6 +64,7 @@ export const en = {
   inventory: enInventory,
   language: enLanguage,
   lock: enLock,
+  session: enSession,
   maintenance: enMaintenance,
   members: enMembers,
   notifications: enNotifications,

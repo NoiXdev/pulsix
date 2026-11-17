@@ -127,6 +127,11 @@ export function LoginPage() {
                 {t.lock.endedAfterFailures}
               </p>
             )}
+            {search.notice === 'session_expired' && (
+              <p role="status" className="text-xs text-muted-foreground">
+                {t.session.expired}
+              </p>
+            )}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="email">{t.auth.emailAddress}</Label>
               <Input

@@ -25,6 +25,7 @@ import { deRuns } from './runs.ts';
 import { deSchedules } from './schedules.ts';
 import { deSecrets } from './secrets.ts';
 import { deSettings } from './settings.ts';
+import { deSession } from './session.ts';
 import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
 import { deTemplates } from './templates.ts';
@@ -77,6 +78,7 @@ export const de: Messages = {
   inventory: deInventory,
   language: deLanguage,
   lock: deLock,
+  session: deSession,
   maintenance: deMaintenance,
   members: deMembers,
   notifications: deNotifications,

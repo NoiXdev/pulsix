@@ -7,6 +7,7 @@ import { ConfirmProvider } from '../ui/confirm.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { LockScreen } from '../features/lock/LockScreen.tsx';
 import { onSessionMessage } from '../features/lock/lockChannel.ts';
+import { ExpiryWatcher } from '../features/session/ExpiryWatcher.tsx';
 import { LockStateContext } from '../features/lock/lockState.ts';
 
 /** Where a refusal for a pending password change does not take the person:
@@ -119,6 +120,7 @@ export function RootLayout() {
         // unmounts it (its question resolves false) with the page it came from.
         <ConfirmProvider>
           <Outlet />
+          {!publicPage && me.data?.mfa_complete && <ExpiryWatcher />}
         </ConfirmProvider>
       )}
     </LockStateContext.Provider>

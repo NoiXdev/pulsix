@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { api, unwrap } from '../client.ts';
+import { api } from '../client.ts';
+import { recordServerDate } from '../../lib/serverClock.ts';
 
 export const meQueryKey = ['me'] as const;
-const meQueryFn = () => unwrap(api.GET('/api/v1/auth/me'));
+const meQueryFn = async () => {
+  const { data, response } = await api.GET('/api/v1/auth/me');
+  // The server's clock, for counting down the session expiry (backlog 3.93).
+  recordServerDate(response.headers.get('Date'));
+  return data!;
+};
 
 /** The signed-in principal (src/routes root logic reads `mfa_complete` to
  * decide whether a session still needs its second factor). Disabled

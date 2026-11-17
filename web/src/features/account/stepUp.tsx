@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { refetchMe } from '../../api/hooks/useMe.ts';
 import { StepUpDialog } from './StepUpDialog.tsx';
 
 /** STEP_UP_REQUIRED is what the server answers with (403) when an
@@ -26,6 +28,7 @@ export function isStepUpRequired(err: unknown): boolean {
  * other failures it handles itself.
  */
 export function useStepUp() {
+  const qc = useQueryClient();
   const [pending, setPending] = useState<{ action: () => Promise<void>; onError: (err: unknown) => void } | null>(
     null,
   );
@@ -48,6 +51,10 @@ export function useStepUp() {
       onProved={async () => {
         const { action, onError } = pending;
         setPending(null);
+        // The proof refreshed the session (and a passkey one rotated its
+        // cookie): re-read /auth/me so what the SPA knows about the
+        // session, its expiry included, is the server's.
+        void refetchMe(qc).catch(() => undefined);
         try {
           await action();
         } catch (err) {
