@@ -401,6 +401,14 @@ starts the follow-ups unseen, as before. **Approve run requests with follow-ups 
 once every manager runs this version.** Workers and agents are not affected. A backup
 carries the column with `org_assistant_settings`.
 
+Session lock, expiry warning and version notice (backlog 3.93 to 3.95) add migration
+00107, four columns: `users.lock_pin_hash` and `users.lock_pin_prompted_at` (both
+NULL), `sessions.locked_at` (NULL) and `sessions.unlock_failures` (default 0). Nothing
+is dropped or rewritten, no proto change, and workers and agents are not affected. A
+backup carries the columns with `users` and `sessions`. The skew between managers and
+the behaviour changes are under "Behaviour changes to check after an upgrade" (3.93 to
+3.95).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
@@ -430,6 +438,32 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.93 to 3.95, session lock, expiry warning and version notice:** a person can
+  lock their session behind a PIN (4 to 8 digits; the fifth wrong PIN ends the
+  session), is warned five minutes before the session's 12-hour end and can renew it
+  in place, and an open tab offers a reload once the manager runs a newer version.
+  **Rolling upgrade with several managers:** an older manager knows nothing of
+  `sessions.locked_at`, so a request of a locked session that it serves is answered
+  as if the session were unlocked; **the lock is only reliable once every manager
+  instance runs this version.** The new routes (`/api/v1/auth/lock…`,
+  `/api/v1/auth/session/renew…`, `/api/v1/auth/passkeys/reauth/…`) answer 404 on an
+  older manager, so locking, unlocking, renewing and setting a PIN fail there until
+  it is upgraded. An older manager's second-factor reset does not clear the PIN.
+  **SPA tabs opened before the upgrade** keep the old page code until reloaded: they
+  do not know the `session_locked` refusal (what they already show stays on screen;
+  only new requests fail), they show no expiry warning, they still step up through
+  the discoverable passkey sign-in, and they get no version notice: the notice works
+  only in tabs loaded from this release. **Existing accounts** are offered the "set
+  a lock PIN" step once, at their next visit to `/`; that includes a session that
+  was already signed in before the upgrade and goes back to `/` (accepted: the step
+  can be skipped). An administrator's second-factor reset now also clears the
+  account's lock PIN, and the offer comes back at the next sign-in. A renewal
+  replaces the session with a new one and stamps the account's last sign-in time
+  (`last_sign_in_at`, shown in the account administration), like a sign-in. A locked
+  session still ends at its normal 12-hour end. New audit actions: `setLockPin`,
+  `removeLockPin`, `skipLockPinPrompt`, `lockSession`, `unlockSession`,
+  `unlockSessionFailed`, `unlockSessionExhausted`, `renewSession` and
+  `renewSessionWithPasskey`; the PIN, passwords and codes never appear in them.
 - **3.15, retention per organization:** the new variable `PULSIX_SAMPLE_RETENTION`
   (whole days, 7 to 365, default 90, the previous fixed value) is the longest time
   measurements and state history (`check_samples`, `check_state_changes`) are
