@@ -31,8 +31,12 @@ export function GroupsPage() {
   const bastionName = (id?: string | null) => bastions.data?.bastions?.find((b) => b.id === id)?.name ?? '—';
   const byId = new Map((all ?? []).map((g) => [g.id, g]));
   const parentName = (id: string) => byId.get(byId.get(id)?.parent_id ?? '')?.name ?? '';
-  const sorted = !!validateListSearch(useSearch({ strict: false }) as Record<string, unknown>).sort;
-  const columns = groupColumns({ t, bastionName, depthOf: (id) => depths.get(id) ?? 0, parentName, sorted });
+  // The list sorts only by a key one of its columns offers (useListView ignores
+  // any other `?sort=`), so only such a key flattens the tree.
+  const urlSort = validateListSearch(useSearch({ strict: false }) as Record<string, unknown>).sort;
+  const groupCtx = { t, bastionName, depthOf: (id: string) => depths.get(id) ?? 0, parentName };
+  const sorted = !!urlSort && groupColumns({ ...groupCtx, sorted: false }).some((c) => c.sortKey === urlSort);
+  const columns = groupColumns({ ...groupCtx, sorted });
   const view = useListView('groups', columns, { mode: 'client', rowKey: (g) => g.id });
 
   const guard = useQueryGuard(groups);

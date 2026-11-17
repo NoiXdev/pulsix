@@ -134,7 +134,7 @@ export function ItemsPage() {
         rows={rows}
         rowKey={(d) => d.id}
         rowActions={actions.rowActions}
-        rowLabel={(d) => d.pattern}
+        rowLabel={(d) => `${d.pattern} (${d.scope === 'host' && d.host_id ? d.host_id.slice(0, 8) : t.checks.organization})`}
         loading={!view.ready}
         empty={t.checks.items.empty}
         {...view.listProps(total, t.checks.items.count)}

@@ -219,16 +219,29 @@ describe('ItemsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for /mnt/backup*' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for /mnt/backup* (Organization)' }));
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Edit', 'Delete…']);
     await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
     expect(await screen.findByRole('dialog', { name: 'Edit decision for /mnt/backup*' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await user.click(screen.getByRole('button', { name: 'Actions for /mnt/backup*' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for /mnt/backup* (Organization)' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     await acceptConfirm(user);
     await waitFor(() => expect(deleted).toBe(1));
+  });
+
+  it('tells two rows with the same pattern apart by their target in the row menu name', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/item-decisions': {
+        decisions: [decision({ id: 'd1', pattern: '/var' }), decision({ id: 'd2', pattern: '/var', scope: 'host', host_id: 'h1234567890' })],
+      },
+    });
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Actions for /var (Organization)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for /var (h1234567)' })).toBeInTheDocument();
   });
 
   it('keeps the section tabs when the decisions list fails', async () => {

@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event';
-import { screen, type within as rtlWithin } from '@testing-library/react';
+import { screen, within as rtlWithin } from '@testing-library/react';
 
 type Scope = typeof screen | ReturnType<typeof rtlWithin>;
 
@@ -28,10 +28,15 @@ type Scope = typeof screen | ReturnType<typeof rtlWithin>;
  */
 export async function pickOption(scope: Scope, label: string, option: string | { value: string }): Promise<void> {
   const user = userEvent.setup();
-  await user.click(scope.getByLabelText(label));
-  // A portalled listbox (the list footer's page size) lives on <body>, outside the scope.
-  const inScope = scope.queryAllByRole('option');
-  const rows: HTMLElement[] = inScope.length > 0 ? inScope : screen.getAllByRole('option');
+  const input = scope.getByLabelText(label);
+  await user.click(input);
+  // The listbox is the one the input controls (downshift's aria-controls),
+  // wherever it renders: in scope, or portalled onto <body> (the list
+  // footer's page size). A listbox elsewhere in the document never counts.
+  const listboxId = input.getAttribute('aria-controls');
+  const listbox = listboxId ? document.getElementById(listboxId) : null;
+  if (!listbox) throw new Error(`pickOption: "${label}" controls no listbox (aria-controls=${listboxId})`);
+  const rows = rtlWithin(listbox).queryAllByRole('option');
   // Matching against the label has to read `data-label`, not the row's own
   // textContent: Select.tsx renders a row's hint as a second <span> inside
   // the same <li>, so textContent is the label and the hint concatenated.

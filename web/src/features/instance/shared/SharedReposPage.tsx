@@ -27,7 +27,7 @@ import type { RepoDefinition } from '../../../api/types.ts';
  *
  * A row opens SharedRepoFormPage; Delete… confirms and then deletes
  * (useSharedRowActions, which also shows a refused delete's own message).
-List id `shared-repos`: one request, sorted and paged in the browser.
+ * List id `shared-repos`: one request, sorted and paged in the browser.
  */
 export function SharedReposPage() {
   const { org } = useParams({ strict: false }) as { org: string };

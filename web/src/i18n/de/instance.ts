@@ -48,11 +48,9 @@ export const deInstance: Messages['instance'] = {
     },
   },
   shared: {
-    actions: 'Aktionen',
     name: 'Name',
     open: 'Öffnen',
     deleteItem: 'Löschen…',
-    rowActions: (name: string) => `Aktionen für ${name}`,
     deleteFailed: 'Löschen fehlgeschlagen',
     saveFailed: 'Speichern fehlgeschlagen',
     saveDefinition: 'Definition speichern',

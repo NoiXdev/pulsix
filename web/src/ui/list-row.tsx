@@ -85,35 +85,6 @@ export function ListRowName({ className, style, children }: { className?: string
 }
 
 /**
- * StaticListRow is a row of the same list that opens nothing: the same
- * columns and spacing as ListRow, no link, no hover highlight (it would
- * promise a click). `title`, when given, is shown on hover, to say why it
- * cannot be opened. The optional `menu` sits over the row's last cell exactly
- * as in ListRow: reserve that last column (about 40px) in `columns` and leave
- * its cell empty.
- */
-export function StaticListRow({
-  columns,
-  title,
-  children,
-  menu,
-}: {
-  columns: string;
-  title?: string;
-  children: ReactNode;
-  menu?: ReactNode;
-}) {
-  return (
-    <div data-list-row="" className={cn('relative', ROW_FRAME)}>
-      <div title={title} className={ROW_GRID} style={{ gridTemplateColumns: columns }}>
-        {children}
-      </div>
-      {menu && <div className="absolute top-1/2 right-3 -translate-y-1/2">{menu}</div>}
-    </div>
-  );
-}
-
-/**
  * RowMenu is a small popover menu for a row's secondary actions. The trigger
  * swallows its click (preventDefault and stopPropagation) so a menu placed
  * over a row never also activates the row. The menu itself is MenuPopover:

@@ -97,7 +97,7 @@ describe('AppearancePage', () => {
     expect(within(runs).getByRole('button', { name: 'Reset Runs' })).toBeDisabled();
     // A list this build does not know is shown as its id.
     const gone = (await screen.findByText('gone')).closest('li') as HTMLElement;
-    expect(within(gone).getByText('1 columns')).toBeInTheDocument();
+    expect(within(gone).getByText('1 column')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Reset Hosts' }));
 

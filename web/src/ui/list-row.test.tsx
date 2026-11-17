@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ListRow, ListRowName, RowMenu, RowMenuItem, RowMenuLink, StaticListRow } from './list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem, RowMenuLink } from './list-row.tsx';
 
 function renderRow(onSelect = vi.fn(), onOther = vi.fn()) {
   const rootRoute = createRootRoute();
@@ -426,95 +426,5 @@ describe('RowMenu and the browser menu', () => {
     );
     await userEvent.setup().click(screen.getByRole('button', { name: 'Actions' }));
     expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Restart' }), { button: 2 })).toBe(true);
-  });
-});
-
-describe('StaticListRow', () => {
-  function renderStatic() {
-    const rootRoute = createRootRoute();
-    const list = createRoute({
-      getParentRoute: () => rootRoute,
-      path: '/',
-      component: () => (
-        <>
-          <StaticListRow columns="1fr 1fr" title="Not openable">
-            <span>Globex</span>
-            <span>3</span>
-          </StaticListRow>
-          <ListRow to="/o/$org/hosts/$id" params={{ org: 'acme', id: 'h1' }} columns="1fr 1fr" label="Open web-01">
-            <span>web-01</span>
-            <span>online</span>
-          </ListRow>
-        </>
-      ),
-    });
-    const detail = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org/hosts/$id', component: () => <div /> });
-    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list, detail]), history: createMemoryHistory() })} />);
-  }
-
-  it('is not a link, carries its title and lays its cells out on the columns', async () => {
-    renderStatic();
-    const grid = (await screen.findByText('Globex')).parentElement as HTMLElement;
-    const row = grid.closest('[data-list-row]') as HTMLElement;
-    expect(grid).toHaveAttribute('title', 'Not openable');
-    expect(grid).toHaveStyle({ gridTemplateColumns: '1fr 1fr' });
-    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('link')).toHaveLength(1);
-  });
-
-  it('shares the row classes of ListRow, without its hover highlight', async () => {
-    renderStatic();
-    const row = (await screen.findByText('Globex')).closest('[data-list-row]') as HTMLElement;
-    const linked = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
-    for (const cls of ['border-b', 'border-border', 'last:border-b-0']) {
-      expect(row.className).toContain(cls);
-      expect(linked.className).toContain(cls);
-    }
-    const grid = (await screen.findByText('Globex')).parentElement as HTMLElement;
-    expect(grid.className).toContain('grid');
-    expect(grid.className).toContain('px-4');
-    expect(row.className).not.toContain('hover:');
-  });
-
-  it('renders a menu outside its cells that does not need a title', async () => {
-    const user = userEvent.setup();
-    const spy = vi.fn();
-    const rootRoute = createRootRoute();
-    const list = createRoute({
-      getParentRoute: () => rootRoute,
-      path: '/',
-      component: () => (
-        <StaticListRow
-          columns="1fr 40px"
-          menu={
-            <RowMenu label="Actions for a">
-              <RowMenuItem onSelect={spy}>Go</RowMenuItem>
-            </RowMenu>
-          }
-        >
-          <span>cell a</span>
-          <span />
-        </StaticListRow>
-      ),
-    });
-    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list]), history: createMemoryHistory() })} />);
-    const grid = (await screen.findByText('cell a')).parentElement as HTMLElement;
-    const row = grid.closest('[data-list-row]') as HTMLElement;
-    expect(grid).not.toHaveAttribute('title');
-    const trigger = within(row).getByRole('button', { name: 'Actions for a' });
-    expect(grid).not.toContainElement(trigger);
-    expect(row.className).toContain('relative');
-    await user.click(trigger);
-    await user.click(screen.getByRole('menuitem', { name: 'Go' }));
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
-  it('both row kinds carry data-list-row', async () => {
-    renderStatic();
-    const linked = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
-    const row = (await screen.findByText('Globex')).closest('[data-list-row]');
-    expect(linked).toHaveAttribute('data-list-row', '');
-    expect(row).not.toBeNull();
-    expect(document.querySelectorAll('[data-list-row]')).toHaveLength(2);
   });
 });

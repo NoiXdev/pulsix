@@ -66,7 +66,7 @@ export function HostTags({ org, hostId }: { org: string; hostId: string }) {
  * sits above the row's own link (`relative z-10`). */
 export function ActiveRuns({ org, host }: { org: string; host: HostListItem }) {
   const t = useT();
-  if (host.active_runs <= 0) return <span className={`text-muted-foreground ${CELL_MINOR}`}>—</span>;
+  if (!(host.active_runs > 0)) return <span className={`text-muted-foreground ${CELL_MINOR}`}>—</span>;
   return (
     <Link
       to="/o/$org/runs"

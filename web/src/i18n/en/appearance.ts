@@ -20,7 +20,7 @@ export const enAppearance = {
     title: 'Saved column choices',
     hint: 'Lists remember the columns you show. Reset a list to bring back its default columns.',
     state: (n: number, total: number) => `${n} of ${total} columns`,
-    own: (n: number) => `${n} columns`,
+    own: (n: number) => (n === 1 ? '1 column' : `${n} columns`),
     standard: 'Standard',
     reset: 'Reset',
     resetAria: (list: string) => `Reset ${list}`,

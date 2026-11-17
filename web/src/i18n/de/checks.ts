@@ -533,7 +533,7 @@ export const deChecks: Messages['checks'] = {
     newDecision: 'Neue Entscheidung',
     noMetricsTitle: 'Noch keine Checks für eine Entscheidung',
     noMetricsBody: 'Eine Entscheidung nennt ein Element eines Checks, daher bleibt „Neue Entscheidung“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
-    label: 'Item-Entscheidungen',
+    label: 'Element-Entscheidungen',
     count: (n: number) => (n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`),
     columns: {
       target: 'Ziel',

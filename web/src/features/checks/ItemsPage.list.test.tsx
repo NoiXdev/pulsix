@@ -68,7 +68,7 @@ describe('ItemsPage list', () => {
     setup({ onDelete: () => deleted++ });
     await screen.findByText('1–25 of 30 decisions');
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-    await chooseRowAction(user, 'p30', 'Delete…');
+    await chooseRowAction(user, 'p30 (Organization)', 'Delete…');
     expect(await acceptConfirm(user)).toContain('pattern "p30"');
     await waitFor(() => expect(deleted).toBe(1));
   });

@@ -54,11 +54,9 @@ export const enInstance = {
     },
   },
   shared: {
-    actions: 'Actions',
     name: 'Name',
     open: 'Open',
     deleteItem: 'Delete…',
-    rowActions: (name: string) => `Actions for ${name}`,
     deleteFailed: 'Deleting failed',
     saveFailed: 'Saving failed',
     saveDefinition: 'Save definition',

@@ -39,14 +39,3 @@ export function GridRow({
     </div>
   );
 }
-
-export function GridHeader({ columns, children }: { columns: string; children: ReactNode }) {
-  return (
-    <GridRow
-      columns={columns}
-      className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
-    >
-      {children}
-    </GridRow>
-  );
-}

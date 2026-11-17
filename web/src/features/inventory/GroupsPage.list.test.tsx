@@ -12,7 +12,7 @@ const group = (name: string, extra: Record<string, unknown> = {}) => ({
   id: `id-${name}`, name, description: '', parent_id: null, members: 3, group_fields: 1, host_fields: 0, complete: true, revision: 1, ...extra,
 });
 
-function setup(locale?: 'de', groups: unknown[] = numbered('grp', 30).map((n) => group(n))) {
+function setup(locale?: 'de', groups: unknown[] = numbered('grp', 30).map((n) => group(n)), query = '') {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -20,7 +20,7 @@ function setup(locale?: 'de', groups: unknown[] = numbered('grp', 30).map((n) =>
     'GET /api/v1/orgs/acme/bastions': { bastions: [] },
   });
   return renderListPage({
-    path: '/groups', component: GroupsPage, initial: '/o/acme/groups', locale,
+    path: '/groups', component: GroupsPage, initial: `/o/acme/groups${query}`, locale,
     others: [{ path: '/groups/$id', component: () => <div>GROUP DETAIL</div> }],
   });
 }
@@ -60,6 +60,14 @@ describe('GroupsPage list', () => {
     expect(screen.getByText('in top')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'kid, in top' })).toBeInTheDocument();
     expect(screen.getByText(/^kid/, { selector: 'span.truncate' })).toHaveStyle({ paddingLeft: '0px' });
+  });
+
+  it('keeps the tree indent for a hand-edited sort key no column offers', async () => {
+    setup(undefined, [group('kid', { parent_id: 'id-top' }), group('top')], '?sort=bogus');
+    await screen.findByText('1–2 of 2 groups');
+    expect(firstCells()).toEqual(['top', 'kid']);
+    expect(screen.getByText('kid')).toHaveStyle({ paddingLeft: '16px' });
+    expect(screen.queryByText('in top')).not.toBeInTheDocument();
   });
 
   it('has no row menu and no inline buttons; each row is a link', async () => {
