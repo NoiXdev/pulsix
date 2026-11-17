@@ -1,0 +1,254 @@
+// The assistant suite's seed and its expected-tools table: everything the
+// tools read is created through the owner's REST session first, except the
+// agent and the open alert, which no REST route makes (a real agent push is
+// what agent_test.go and checks_test.go drive): those, and one metric observation, are
+// written by the agents, checks and alerts services on the scenario's own
+// database.
+package e2e
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/alerts"
+	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/rules"
+	"github.com/noixdev/pulsix/internal/tenancy"
+)
+
+// The seeded secret values. None may appear in any tool output.
+const (
+	asstOrgSecret    = "e2e-asst-org-secret"
+	asstGroupSecret  = "e2e-asst-group-secret"
+	asstMemberSecret = "e2e-asst-member-secret"
+	asstVaultPass    = "e2e-asst-vault-password"
+)
+
+// The tools each area lists. A write area lists its read area's tools too.
+var (
+	inventoryReadTools = []string{"get_organization", "list_hosts", "get_host", "list_groups", "get_group",
+		"preview_inventory", "list_zones", "get_connection_test"}
+	inventoryWriteTools = append(clone(inventoryReadTools), "create_host", "update_host", "set_host_ssh",
+		"create_group", "update_group", "set_group_schema", "set_group_vars", "add_group_member",
+		"remove_group_member", "set_host_tags", "start_connection_test")
+	reposReadTools      = []string{"list_repos", "get_repo", "list_repo_files", "list_playbooks", "get_playbook"}
+	reposWriteTools     = append(clone(reposReadTools), "create_repo", "update_repo", "sync_repo", "create_playbook")
+	templatesReadTools  = []string{"list_job_templates", "get_job_template", "list_schedules", "get_schedule", "list_schedule_runs", "get_calendar"}
+	templatesWriteTools = append(clone(templatesReadTools), "create_job_template", "update_job_template")
+	jobsReadTools       = []string{"list_jobs", "get_job", "get_job_log", "list_run_requests", "get_run_request"}
+	jobsRequestTools    = append(clone(jobsReadTools), "request_run", "request_retry", "cancel_job")
+	monitoringReadTools = []string{"list_agents", "get_host_agent", "list_checks", "get_check", "list_host_checks",
+		"get_host_metrics", "list_monitoring_groups", "get_monitoring_group", "list_alert_rules", "get_alert_rule",
+		"get_host_effective_rules", "list_alerts", "get_alert", "list_maintenance_windows", "get_maintenance_window"}
+	alertsHandleTools = append(clone(monitoringReadTools), "acknowledge_alert", "unacknowledge_alert", "snooze_alert", "unsnooze_alert")
+)
+
+// expectedTools is what tools/list shows a token holding exactly one area.
+// Its union is every tool there is: a tool added to the endpoint without a
+// row here fails the all-areas comparison, and one the every_tool phase
+// does not call fails its called check.
+var expectedTools = map[tenancy.Area][]string{
+	tenancy.AreaInventoryRead:    inventoryReadTools,
+	tenancy.AreaInventoryWrite:   inventoryWriteTools,
+	tenancy.AreaReposRead:        reposReadTools,
+	tenancy.AreaReposWrite:       reposWriteTools,
+	tenancy.AreaTemplatesRead:    templatesReadTools,
+	tenancy.AreaTemplatesWrite:   templatesWriteTools,
+	tenancy.AreaCredentialsNames: {"list_credentials"},
+	tenancy.AreaJobsRead:         jobsReadTools,
+	tenancy.AreaJobsRequest:      jobsRequestTools,
+	tenancy.AreaMonitoringRead:   monitoringReadTools,
+	tenancy.AreaAlertsHandle:     alertsHandleTools,
+	tenancy.AreaActivityRead:     {"list_activity"},
+}
+
+func clone(s []string) []string { return append([]string(nil), s...) }
+
+// assistantSeed holds the ids the seed created.
+type assistantSeed struct {
+	orgID uuid.UUID
+
+	templateA, templateB string // A follows up with B
+	playbookA            string
+	scheduleID           string
+	secretGroupID        string
+	checkID              string
+	windowID             string
+	monitoringGroupID    string
+	alertID              string
+	importedKeyCred      string
+	vaultCred            string
+
+	// pemBody is the imported SSH key's PEM body lines.
+	pemBody []string
+}
+
+// seed is phase 1: the switch on with approved follow-ups, template A with
+// follow-up B and a schedule, a group with secret values, an org secret
+// behind an HTTP check, the credentials, a maintenance window, a
+// monitoring group, an agent with one observation and one open alert.
+func (a *assistantSuite) seed() {
+	s := a.s
+	s.t.Helper()
+	prefix := "/api/v1/" + s.apiPath()
+	s.put(prefix+"/settings/assistant", map[string]any{"assistant_enabled": true, "approved_runs_start_follow_ups": true}, nil)
+	var org struct {
+		Org struct {
+			ID string `json:"id"`
+		} `json:"org"`
+	}
+	s.get(prefix, &org)
+	a.seeded.orgID = uuid.MustParse(org.Org.ID)
+	s.pinHostKey()
+
+	// --- Template A with follow-up B, and a schedule on A -----------------
+	bPB := s.createEditorPlaybook("asst-b", greetTemplate(s.t))
+	a.seeded.templateB = s.createTemplateScoped("asst-b", bPB, []string{s.hostID}, nil)
+	a.seeded.playbookA = s.createEditorPlaybook("asst-a", greetTemplate(s.t))
+	a.seeded.templateA = s.createTemplateScoped("asst-a", a.seeded.playbookA, []string{s.hostID}, []string{a.seeded.templateB})
+	var sched struct {
+		Schedule struct {
+			ID string `json:"id"`
+		} `json:"schedule"`
+	}
+	s.post(prefix+"/schedules", map[string]any{
+		"template_id": a.seeded.templateA, "name": "asst-yearly", "mode": "cron", "cron": "0 3 1 1 *", "timezone": "UTC",
+	}, &sched)
+	a.seeded.scheduleID = sched.Schedule.ID
+
+	// --- A group whose schema holds secret fields, with their values ------
+	var grp struct {
+		Group struct {
+			ID string `json:"id"`
+		} `json:"group"`
+	}
+	h := s.ownerSend(http.MethodPost, prefix+"/inventory/groups", nil, map[string]any{"name": "asst_secrets"}, &grp)
+	a.seeded.secretGroupID = grp.Group.ID
+	groupPath := prefix + "/inventory/groups/" + a.seeded.secretGroupID
+	h = s.ownerSend(http.MethodPut, groupPath+"/schema", http.Header{"If-Match": {h.Get("ETag")}}, map[string]any{
+		"schema": map[string]any{"fields": []map[string]any{
+			{"name": "db_password", "type": "secret"},
+			{"name": "member_token", "type": "secret", "scope": "host"},
+		}},
+	}, nil)
+	s.ownerSend(http.MethodPut, groupPath+"/vars", http.Header{"If-Match": {h.Get("ETag")}},
+		map[string]any{"vars": map[string]any{"db_password": asstGroupSecret}}, nil)
+	s.put(groupPath+"/members/"+s.hostID, map[string]any{"vars": map[string]any{"member_token": asstMemberSecret}}, nil)
+
+	// --- An org secret behind an HTTP check on the host -------------------
+	s.put(prefix+"/secrets/asst-api", map[string]any{"fields": map[string]any{"token": asstOrgSecret}}, nil)
+	var check struct {
+		Check struct {
+			ID string `json:"id"`
+		} `json:"check"`
+	}
+	s.post(prefix+"/checks", map[string]any{
+		"key": "asst-http", "plugin": "http", "params": map[string]any{"url": "http://192.0.2.1/", "secret": "asst-api"},
+		"interval_seconds": 86400, "binding_kind": "host", "host_id": s.hostID,
+	}, &check)
+	a.seeded.checkID = check.Check.ID
+
+	// --- An imported SSH key and a vault password -------------------------
+	kp := newKeyPair(s.t)
+	var cred credentialOut
+	s.post(prefix+"/credentials", map[string]any{
+		"name": "asst-imported", "kind": "ssh_key", "username": "deploy", "private_key": kp.pem,
+	}, &cred)
+	a.seeded.importedKeyCred = cred.Credential.ID
+	for _, line := range strings.Split(kp.pem, "\n") {
+		// A short last line could match unrelated text; the full lines
+		// carry the key.
+		if len(line) >= 16 && !strings.HasPrefix(line, "-----") {
+			a.seeded.pemBody = append(a.seeded.pemBody, line)
+		}
+	}
+	a.seeded.vaultCred = s.vaultCredential("asst-vault", asstVaultPass)
+
+	// --- A maintenance window and a monitoring group ----------------------
+	now := time.Now().UTC()
+	var win struct {
+		Window struct {
+			ID string `json:"id"`
+		} `json:"window"`
+	}
+	s.post(prefix+"/maintenance-windows", map[string]any{
+		"name": "asst window", "target_kind": "host", "target_id": s.hostID,
+		"starts_at": now.Add(24 * time.Hour).Format(time.RFC3339), "ends_at": now.Add(25 * time.Hour).Format(time.RFC3339),
+	}, &win)
+	a.seeded.windowID = win.Window.ID
+	var mg struct {
+		Group struct {
+			ID string `json:"id"`
+		} `json:"group"`
+	}
+	s.post(prefix+"/monitoring-groups", map[string]any{"name": "asst-tier", "selector": "role=web"}, &mg)
+	a.seeded.monitoringGroupID = mg.Group.ID
+
+	a.seedAgentAndAlert()
+}
+
+// seedAgentAndAlert registers an agent on the fixture host through the
+// agents service, records one cpu observation for it through the checks
+// service and opens one crit alert on it through the alerts store — the
+// same store write apitest.SeedOpenAlertWithDeferredNotification makes.
+func (a *assistantSuite) seedAgentAndAlert() {
+	s := a.s
+	s.t.Helper()
+	d := testdb.Open(a.root)
+	host := uuid.MustParse(s.hostID)
+	orgID := a.seeded.orgID
+	now := time.Now().UTC()
+	if err := agents.NewService(agents.NewSQLStore(d)).Register(db.WithOrgScope(a.ctx, orgID), agents.Registration{
+		OrgID: orgID, HostID: host, AgentName: "asst-agent", Version: "e2e", Serial: "asst-serial-" + uuid.NewString(),
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
+	}); err != nil {
+		s.t.Fatalf("register agent: %v", err)
+	}
+
+	v := 12.5
+	if _, err := checks.NewService(checks.NewSQLStore(d)).RecordObservations(db.WithOrgScope(a.ctx, orgID), orgID, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-time.Minute), Value: &v},
+	}); err != nil {
+		s.t.Fatalf("record a cpu observation: %v", err)
+	}
+
+	sub := alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: "disk", Item: "/", Metric: "used_pct"}
+	store := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	tx, err := d.Pool().Begin(ctx)
+	if err != nil {
+		s.t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := store.Execute(ctx, tx, orgID, []alerts.Action{{Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateCrit}}); err != nil {
+		s.t.Fatalf("open alert: %v", err)
+	}
+	open, err := store.OpenForHost(ctx, tx, orgID, host)
+	if err != nil {
+		s.t.Fatalf("open alerts of the host: %v", err)
+	}
+	for _, al := range open {
+		if al.Subject == sub {
+			a.seeded.alertID = al.ID.String()
+		}
+	}
+	if a.seeded.alertID == "" {
+		s.t.Fatalf("the opened alert is not among %+v", open)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		s.t.Fatalf("commit alert: %v", err)
+	}
+}
+
+// secretMarkers is every seeded secret value the sweep looks for.
+func (a *assistantSuite) secretMarkers() []string {
+	out := []string{asstOrgSecret, asstGroupSecret, asstMemberSecret, asstVaultPass}
+	return append(out, a.seeded.pemBody...)
+}
