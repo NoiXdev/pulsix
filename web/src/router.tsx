@@ -211,7 +211,12 @@ const alertsRoute = createRoute({
   component: AlertsPage,
 });
 
-const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
+const groupsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/groups',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: GroupsPage,
+});
 /** The section each tab of the former tabbed group page became; Settings
  * became the Edit dialog, so it (like an unknown tab) maps to no hash. */
 const GROUP_TAB_SECTION: Record<string, string> = { schema: 'schema', values: 'values', members: 'members', children: 'children', preview: 'preview' };
@@ -286,8 +291,18 @@ const runRequestsRoute = createRoute({
   component: RunRequestsPage,
 });
 const runRequestDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests/$id', component: RunRequestDetailPage });
-const workersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/workers', component: WorkersPage });
-const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents', component: AgentsPage });
+const workersRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/workers',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: WorkersPage,
+});
+const agentsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/agents',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: AgentsPage,
+});
 const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
 
 /**
@@ -301,8 +316,18 @@ const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/m
  * bookmarks, in older plan documents, and in anything anyone pasted to a
  * colleague.
  */
-const credentialsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/credentials', component: CredentialsPage });
-const jumpHostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/jump-hosts', component: JumpHostsPage });
+const credentialsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/credentials',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: CredentialsPage,
+});
+const jumpHostsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/jump-hosts',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: JumpHostsPage,
+});
 
 /**
  * checksRoute is the layout route for the monitoring check pipeline

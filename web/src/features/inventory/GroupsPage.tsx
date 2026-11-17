@@ -1,21 +1,21 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
-import { Card, GridHeader } from '../../ui/table.tsx';
-import { ListRow, ListRowName } from '../../ui/list-row.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { useBastions } from '../../api/hooks/useSsh.ts';
+import { useListView } from '../lists/useListView.ts';
 import { CreateGroupDialog } from './CreateGroupDialog.tsx';
+import { groupColumns } from './groupColumns.tsx';
 import { orderTree } from './tree.ts';
 import { useT } from '../../i18n/useT.ts';
 
-const COLUMNS = 'minmax(0, 1fr) 90px 170px 120px 160px';
-
-/** GroupsPage lists the organization's Ansible inventory groups as a tree. */
+/** GroupsPage lists the organization's Ansible inventory groups (list id
+ * `groups`): the whole tree is one request, shown in tree order and sorted
+ * and paged in the browser. A row opens the group; there is no row menu. */
 export function GroupsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
@@ -24,11 +24,17 @@ export function GroupsPage() {
   const bastions = useBastions(org);
   const [createOpen, setCreateOpen] = useState(false);
 
+  const all = groups.data?.groups;
+  const tree = orderTree(all ?? []);
+  const depths = new Map(tree.map(({ group, depth }) => [group.id, depth]));
+  const bastionName = (id?: string | null) => bastions.data?.bastions?.find((b) => b.id === id)?.name ?? '—';
+  const columns = groupColumns({ t, bastionName, depthOf: (id) => depths.get(id) ?? 0 });
+  const view = useListView('groups', columns, { mode: 'client', rowKey: (g) => g.id });
+
   const guard = useQueryGuard(groups);
   if (guard) return guard;
-  if (!groups.data) return <QueryLoading />;
-  const list = groups.data.groups ?? [];
-  const bastionName = (id?: string | null) => bastions.data?.bastions?.find((b) => b.id === id)?.name ?? '—';
+  if (!all) return <QueryLoading />;
+  const { rows, total } = view.view(view.ready ? tree.map((r) => r.group) : undefined);
 
   return (
     <>
@@ -38,35 +44,22 @@ export function GroupsPage() {
           <Layers size={15} /> {t.inventory.groups.addGroup}
         </Button>
       </div>
-      <span className="text-[13px] text-muted-foreground">{t.inventory.groups.summary(list.length)}</span>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.inventory.groups.columns.group}</span>
-          <span>{t.inventory.groups.columns.members}</span>
-          <span>{t.inventory.groups.columns.fields}</span>
-          <span>{t.inventory.groups.columns.values}</span>
-          <span>{t.inventory.groups.columns.jumpHost}</span>
-        </GridHeader>
-        {orderTree(list).map(({ group, depth }) => (
-          <ListRow key={group.id} to="/o/$org/groups/$id" params={{ org, id: group.id }} search={{ tab: undefined }} columns={COLUMNS} label={group.name}>
-            <ListRowName className="truncate font-mono text-[13px] text-foreground" style={{ paddingLeft: depth * 16 }}>
-              {group.name}
-            </ListRowName>
-            <span className="text-[13px]">{group.members}</span>
-            <span className="text-xs text-muted-foreground">
-              {t.inventory.groups.fields(group.group_fields, group.host_fields)}
-            </span>
-            <span>{group.complete ? <Pill tone="ok">{t.inventory.groups.complete}</Pill> : <Pill tone="warn">{t.inventory.groups.incomplete}</Pill>}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{bastionName(group.bastion_id)}</span>
-          </ListRow>
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.groups.empty}</p>}
-      </Card>
+      <span className="text-[13px] text-muted-foreground">{t.inventory.groups.summary(all.length)}</span>
+      <DataList
+        label={t.inventory.groups.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(g) => g.id}
+        rowLink={(g) => ({ to: '/o/$org/groups/$id', params: { org, id: g.id }, search: { tab: undefined }, label: g.name })}
+        loading={!view.ready}
+        empty={t.inventory.groups.empty}
+        {...view.listProps(total, t.inventory.groups.count)}
+      />
       <CreateGroupDialog
         org={org}
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        groups={list}
+        groups={all}
         onCreated={(id) => {
           setCreateOpen(false);
           void navigate({ to: '/o/$org/groups/$id', params: { org, id }, search: { tab: undefined }, hash: 'schema' });

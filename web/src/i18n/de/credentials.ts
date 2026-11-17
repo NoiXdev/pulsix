@@ -33,6 +33,8 @@ export const deCredentials: Messages['credentials'] = {
   list: {
     title: 'Zugangsdaten',
     add: 'Zugangsdaten hinzufügen',
+    label: 'Zugangsdaten',
+    count: (n: number) => `${n} Zugangsdaten`,
     summary: (n: number) =>
       `Zugangsdaten: ${n} · verschlüsselt mit dem Master-Schlüssel der Instanz · Werte werden nie wieder angezeigt`,
     columns: {
@@ -107,9 +109,8 @@ export const deCredentials: Messages['credentials'] = {
     },
     directly: 'direkt',
     via: (name: string) => `über ${name}`,
-    editLabel: (name: string) => `${name} bearbeiten`,
-    edit: 'Bearbeiten',
-    deleteLabel: (name: string) => `${name} löschen`,
+    label: 'Sprunghosts',
+    count: (n: number) => (n === 1 ? '1 Sprunghost' : `${n} Sprunghosts`),
     confirmDelete: (name: string) => `Sprunghost ${name} löschen?`,
     deleted: (name: string) => `Sprunghost ${name} gelöscht`,
     deleteFailed: 'Löschen fehlgeschlagen',
@@ -118,9 +119,8 @@ export const deCredentials: Messages['credentials'] = {
     zoneSaved: (zone: string) => `Standard-Sprunghost von ${zone} gespeichert`,
     saveFailed: 'Speichern fehlgeschlagen',
     zoneNone: '— direkte Verbindung —',
-    pin: 'Anheften',
-    pinLabel: (name: string) => `Host-Schlüssel von ${name} anheften`,
-    unpinLabel: (name: string) => `Anheftung des Host-Schlüssels von ${name} lösen`,
+    pinItem: 'Host-Schlüssel anheften',
+    unpinItem: 'Host-Schlüssel lösen',
     pinned: (name: string) => `Host-Schlüssel des Sprunghosts ${name} angeheftet`,
     pinCleared: 'Anheftung des Sprunghosts gelöst',
     keyChanged: 'Schlüssel geändert – Verbindungen darüber sind blockiert',

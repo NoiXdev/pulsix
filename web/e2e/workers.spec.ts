@@ -50,7 +50,7 @@ test('an admin creates a worker enrollment token and withdraws it again', async 
   await expect(dialog).toHaveCount(0);
 
   // --- It waits, and the token is not in the list -----------------------
-  const rowActions = page.getByRole('button', { name: `Actions for enrollment ${WORKER_NAME}` });
+  const rowActions = page.getByRole('button', { name: `Actions for enrollment ${WORKER_NAME}`, exact: true });
   await expect(rowActions).toBeVisible();
   // Shown once: the pending list names the worker, never its secret.
   await expect(page.getByText(token)).toHaveCount(0);
@@ -58,7 +58,7 @@ test('an admin creates a worker enrollment token and withdraws it again', async 
   // The pending row's menu is labelled as an enrollment, so it never collides
   // with a worker of the same name, and it offers no Revoke.
   await rowActions.click();
-  await expect(page.getByRole('menuitem', { name: 'Withdraw' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Withdraw', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /^Revoke/ })).toHaveCount(0);
   await page.keyboard.press('Escape');
 
@@ -66,6 +66,6 @@ test('an admin creates a worker enrollment token and withdraws it again', async 
   // No confirmation here, unlike Revoke and Delete on a real worker: an
   // unredeemed token has no running jobs and no history to lose.
   await rowActions.click();
-  await page.getByRole('menuitem', { name: 'Withdraw' }).click();
-  await expect(page.getByRole('button', { name: `Actions for enrollment ${WORKER_NAME}` })).toHaveCount(0);
+  await page.getByRole('menuitem', { name: 'Withdraw', exact: true }).click();
+  await expect(page.getByRole('button', { name: `Actions for enrollment ${WORKER_NAME}`, exact: true })).toHaveCount(0);
 });

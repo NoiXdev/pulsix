@@ -16,6 +16,7 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
 import { acceptConfirm } from './confirm.ts';
+import { chooseRowAction } from './rowMenu.ts';
 import { enAgents } from '../src/i18n/en/agents.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
@@ -80,8 +81,7 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
 
     // --- Revoking ends it ----------------------------------------------
     await page.goto(`${base}/agents`);
-    await page.getByRole('button', { name: `Actions for ${AGENT_HOST}` }).click();
-    await page.getByRole('menuitem', { name: 'Revoke…' }).click();
+    await chooseRowAction(page, AGENT_HOST, 'Revoke…');
     await acceptConfirm(page, enAgents.revoke);
     await expect(page.getByText('No agents enrolled yet.')).toBeVisible({ timeout: 30_000 });
   } finally {

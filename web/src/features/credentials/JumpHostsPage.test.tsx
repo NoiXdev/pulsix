@@ -9,6 +9,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { JumpHostsPage } from './JumpHostsPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { chooseRowAction, openRowMenu } from '../../test/wholeList.ts';
 
 const ME = { id: 'u', email: 'a@b', display_name: 'A', instance_admin: false };
 const BASTIONS = {
@@ -118,7 +119,7 @@ describe('JumpHostsPage', () => {
         }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Delete bastion-a' }));
+    await chooseRowAction(user, 'bastion-a', 'Delete');
     await acceptConfirm(user);
     expect(await screen.findByText(/still used by a zone/)).toBeInTheDocument();
   });
@@ -153,7 +154,7 @@ describe('JumpHostsPage', () => {
     renderPage();
     expect(await screen.findByText(FP)).toBeInTheDocument();
     expect(screen.getByText('pin complete')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Unpin bastion-a host key' }));
+    await chooseRowAction(user, 'bastion-a', 'Unpin host key');
     expect(await screen.findByText('Jump host pin cleared')).toBeInTheDocument();
   });
 
@@ -172,7 +173,7 @@ describe('JumpHostsPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Pin bastion-a host key' }));
+    await chooseRowAction(user, 'bastion-a', 'Pin host key');
     await waitFor(() => expect(pinned).toEqual({ fingerprint: FP }));
     expect(await screen.findByText('Jump host key of bastion-a pinned')).toBeInTheDocument();
   });
@@ -188,7 +189,9 @@ describe('JumpHostsPage', () => {
     renderPage();
     expect(await screen.findByText('key changed — connections through it are blocked')).toBeInTheDocument();
     // No unpin here — the operator first pins what the test saw.
-    expect(screen.queryByRole('button', { name: 'Unpin bastion-a host key' })).not.toBeInTheDocument();
+    await openRowMenu(userEvent.setup(), 'bastion-a');
+    expect(screen.getByRole('menuitem', { name: 'Pin host key' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Unpin host key' })).not.toBeInTheDocument();
   });
 
   it('shows nothing interactive for a viewer', async () => {
@@ -201,14 +204,12 @@ describe('JumpHostsPage', () => {
     });
     renderPage();
     expect(await screen.findByText(FP)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Pin bastion-a host key' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
     // Backlog 1.48: the page's own three write controls were rendered
     // unconditionally while the host-key actions beside them were gated,
     // so a viewer was offered buttons that could only answer 403. This
     // test already claimed "nothing interactive" and was not checking
     // them.
     expect(screen.queryByRole('button', { name: 'Add jump host' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit bastion-a' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete bastion-a' })).not.toBeInTheDocument();
   });
 });

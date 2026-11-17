@@ -25,6 +25,15 @@ const LISTS = {
   schedules: ['schedule', 'status', 'template', 'cron', 'next', 'notify', 'last'],
   'run-requests': ['reason', 'status', 'template', 'kind', 'requested'],
   'host-runs': ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
+  groups: ['name', 'members', 'fields', 'values', 'jump_host'],
+  'group-members': ['host', 'values'],
+  'group-children': ['name', 'members'],
+  credentials: ['name', 'kind', 'used_by', 'expiry', 'created'],
+  'jump-hosts': ['name', 'login', 'reached', 'credential', 'host_key'],
+  agents: ['host', 'agent', 'status', 'last_seen', 'version', 'certificate'],
+  'agent-tokens': ['token', 'uses', 'bound', 'expires'],
+  workers: ['worker', 'zone', 'status', 'last_seen', 'version', 'certificate', 'current_job'],
+  'worker-enrollments': ['enrollment', 'expires'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

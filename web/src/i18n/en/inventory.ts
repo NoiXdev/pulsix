@@ -3,6 +3,8 @@ export const enInventory = {
   groups: {
     title: 'Groups',
     addGroup: 'Add group',
+    label: 'Inventory groups',
+    count: (n: number) => (n === 1 ? '1 group' : `${n} groups`),
     summary: (n: number) => `${n} inventory groups · each group owns a variable schema`,
     columns: {
       group: 'Group',
@@ -64,6 +66,9 @@ export const enInventory = {
   children: {
     intro: "Child groups inherit this group's values through Ansible's group inheritance.",
     add: 'Add child group',
+    label: 'Child groups',
+    count: (n: number) => (n === 1 ? '1 group' : `${n} groups`),
+    columns: { group: 'Group', members: 'Members' },
     members: (n: number) => `${n} members`,
     empty: 'No child groups.',
   },
@@ -88,6 +93,8 @@ export const enInventory = {
   },
   members: {
     assign: 'Assign host',
+    label: 'Group members',
+    count: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
     columns: { host: 'Host', values: 'Values' },
     complete: 'complete',
     toFill: (n: number) => `${n} to fill in`,

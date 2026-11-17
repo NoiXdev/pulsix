@@ -5,6 +5,10 @@ export const deAgents: Messages['agents'] = {
   noAccess: 'Kein Zugriff auf die Agents dieser Organisation.',
   summary: (reporting: number, total: number) => `${reporting} von ${total} ${reporting === 1 ? 'meldet' : 'melden'} sich · Agents sammeln die Überwachungsdaten eines Hosts`,
   enrol: 'Agent registrieren',
+  label: 'Agents',
+  count: (n: number) => (n === 1 ? '1 Agent' : `${n} Agents`),
+  tokensLabel: 'Ausstehende Registrierungstoken',
+  tokensCount: (n: number) => `${n} Token`,
   columns: {
     host: 'Host',
     agent: 'Agent',
@@ -40,7 +44,7 @@ export const deAgents: Messages['agents'] = {
   revoked: (host: string) => `Agent auf ${host} widerrufen`,
   revokeFailed: 'Widerrufen fehlgeschlagen',
   withdraw: 'Zurückziehen',
-  tokenActions: (name: string) => `Aktionen für Token ${name}`,
+  tokenName: (name: string) => `Token ${name}`,
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Agent registrieren',

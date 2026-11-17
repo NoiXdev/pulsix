@@ -5,6 +5,10 @@ export const enAgents = {
   noAccess: "You do not have access to this organization's agents.",
   summary: (reporting: number, total: number) => `${reporting} of ${total} reporting · agents collect a host's monitoring data`,
   enrol: 'Enrol agent',
+  label: 'Agents',
+  count: (n: number) => (n === 1 ? '1 agent' : `${n} agents`),
+  tokensLabel: 'Pending enrollment tokens',
+  tokensCount: (n: number) => (n === 1 ? '1 token' : `${n} tokens`),
   columns: {
     host: 'Host',
     agent: 'Agent',
@@ -41,7 +45,8 @@ export const enAgents = {
   revoked: (host: string) => `Agent on ${host} revoked`,
   revokeFailed: 'Revoking failed',
   withdraw: 'Withdraw',
-  tokenActions: (name: string) => `Actions for token ${name}`,
+  /** The token's row name: its menu reads "Actions for token <name>". */
+  tokenName: (name: string) => `token ${name}`,
   withdrawFailed: 'Withdrawing failed',
   dialog: {
     title: 'Enrol an agent',

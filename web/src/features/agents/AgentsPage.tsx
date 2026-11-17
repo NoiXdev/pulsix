@@ -1,44 +1,47 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Radio } from 'lucide-react';
-import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { useAgentTokens, useAgents, useRevokeAgent, useWithdrawAgentToken } from '../../api/hooks/useAgents.ts';
+import { useAgentTokens, useAgents } from '../../api/hooks/useAgents.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
-import type { Agent, AgentToken } from '../../api/types.ts';
-import { AgentRow, AgentTokenRow } from './AgentRow.tsx';
+import { useFormat } from '../../i18n/format.ts';
+import { useListView } from '../lists/useListView.ts';
 import { AddAgentDialog } from './AddAgentDialog.tsx';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-// The trailing 40px track holds a row's ⋯ menu. Every agent row has one (Open
-// host is always there); a token row only has one for a writer.
-const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.8fr) 90px 110px minmax(0, 0.9fr) 110px 40px';
-const TOKEN_COLUMNS = 'minmax(0, 1fr) 120px 110px 160px';
+import { agentColumns } from './agentColumns.tsx';
+import { agentTokenColumns, agentTokenName } from './agentTokenColumns.tsx';
+import { useAgentListActions } from './useAgentListActions.ts';
 
 /** AgentsPage lists the organization's host agents (v0.3a, spec §8):
  * which host each one runs on, whether it is still reporting (online =
  * a heartbeat within three heartbeat intervals), its version and its
  * certificate expiry — plus the enrollment tokens waiting to be redeemed.
- * Viewers read; operators enrol and revoke. */
+ * Viewers read; operators enrol and revoke. Both are lists on the shared list
+ * component, fetched whole and sorted and paged in the browser: the agents
+ * (list id `agents`) keep their sort and page in the URL, the pending tokens
+ * (`agent-tokens`) in component state. */
 export function AgentsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
-  const ask = useConfirm();
+  const fmt = useFormat();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'agents.read');
   const canWrite = may(role, 'agents.write');
   const list = useAgents(org, !!orgInfo.data && canRead);
   const pending = useAgentTokens(org, !!orgInfo.data && canRead);
-  const revoke = useRevokeAgent(org);
-  const withdraw = useWithdrawAgentToken(org);
   const [adding, setAdding] = useState(false);
+  const now = new Date();
+  const actions = useAgentListActions(org, canWrite);
+
+  const columns = agentColumns({ t, now });
+  const view = useListView('agents', columns, { mode: 'client', rowKey: (a) => a.host_id });
+  const tokenColumns = agentTokenColumns(t, fmt);
+  const tokenView = useListView('agent-tokens', tokenColumns, { mode: 'client', urlState: false, rowKey: (tok) => tok.id });
 
   const orgGuard = useQueryGuard(orgInfo);
   if (orgGuard) return orgGuard;
@@ -49,26 +52,8 @@ export function AgentsPage() {
   if (!list.data) return <QueryLoading />;
   const agents = list.data.agents ?? [];
   const tokens = pending.data?.tokens ?? [];
-  const now = new Date();
-  const tokenColumns = canWrite ? `${TOKEN_COLUMNS} 40px` : TOKEN_COLUMNS;
-
-  async function onRevoke(a: Agent) {
-    if (!(await ask({ message: t.agents.revokeConfirm(a.host_name), confirmLabel: t.agents.revoke, destructive: true }))) return;
-    try {
-      await revoke.mutateAsync(a.host_id);
-      toast.show(t.agents.revoked(a.host_name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.agents.revokeFailed, 'destructive');
-    }
-  }
-
-  async function onWithdraw(tok: AgentToken) {
-    try {
-      await withdraw.mutateAsync(tok.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.agents.withdrawFailed, 'destructive');
-    }
-  }
+  const agentRows = view.view(view.ready ? agents : undefined);
+  const tokenRows = tokenView.view(tokenView.ready ? tokens : undefined);
 
   return (
     <>
@@ -85,34 +70,30 @@ export function AgentsPage() {
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.agents.columns.host}</span>
-          <span>{t.agents.columns.agent}</span>
-          <span>{t.agents.columns.status}</span>
-          <span>{t.agents.columns.lastSeen}</span>
-          <span>{t.agents.columns.version}</span>
-          <span>{t.agents.columns.certificate}</span>
-          <span />
-        </GridHeader>
-        {agents.map((a) => (
-          <AgentRow key={a.host_id} org={org} agent={a} columns={COLUMNS} now={now} canWrite={canWrite} onRevoke={(x) => void onRevoke(x)} />
-        ))}
-        {agents.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.agents.empty}</p>}
-      </Card>
+      <DataList
+        label={t.agents.label}
+        columns={columns}
+        rows={agentRows.rows}
+        rowKey={(a) => a.host_id}
+        rowLink={(a) => ({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, hash: 'connection', label: a.host_name })}
+        rowLabel={(a) => a.host_name}
+        rowActions={actions.agentActions}
+        loading={!view.ready}
+        empty={t.agents.empty}
+        {...view.listProps(agentRows.total, t.agents.count)}
+      />
       {tokens.length > 0 && (
-        <Card>
-          <GridHeader columns={tokenColumns}>
-            <span>{t.agents.columns.pendingToken}</span>
-            <span>{t.agents.columns.uses}</span>
-            <span>{t.agents.columns.bound}</span>
-            <span>{t.agents.columns.expires}</span>
-            {canWrite && <span />}
-          </GridHeader>
-          {tokens.map((tok) => (
-            <AgentTokenRow key={tok.id} token={tok} columns={tokenColumns} canWrite={canWrite} onWithdraw={(x) => void onWithdraw(x)} />
-          ))}
-        </Card>
+        <DataList
+          label={t.agents.tokensLabel}
+          columns={tokenColumns}
+          rows={tokenRows.rows}
+          rowKey={(tok) => tok.id}
+          rowLabel={(tok) => t.agents.tokenName(agentTokenName(tok))}
+          rowActions={actions.tokenActions}
+          loading={!tokenView.ready}
+          empty={null}
+          {...tokenView.listProps(tokenRows.total, t.agents.tokensCount)}
+        />
       )}
       {adding && <AddAgentDialog org={org} onClose={() => setAdding(false)} />}
     </>

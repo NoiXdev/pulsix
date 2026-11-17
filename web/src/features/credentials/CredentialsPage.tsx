@@ -1,22 +1,23 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { KeyRound } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
+import { useListView } from '../lists/useListView.ts';
 import { AddCredentialDialog } from './AddCredentialDialog.tsx';
 import { CredentialDialog } from './CredentialDialog.tsx';
-import { expiryState, kindLabel, usageLabel } from './labels.ts';
+import { credentialColumns } from './credentialColumns.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
 
-const COLUMNS = 'minmax(0, 1fr) 190px minmax(0, 1fr) 130px 110px';
-
+/** CredentialsPage lists the organization's credentials (list id
+ * `credentials`): one request, sorted and paged in the browser. A
+ * credential's details open in a dialog, from its name or the row menu. */
 export function CredentialsPage() {
   const t = useT();
   const fmt = useFormat();
@@ -27,10 +28,14 @@ export function CredentialsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const canRotate = may(orgInfo.data?.org.role, 'credentials.write');
 
+  const columns = credentialColumns({ t, fmt, open: (c) => setOpenId(c.id) });
+  const view = useListView('credentials', columns, { mode: 'client', rowKey: (c) => c.id });
+
   const guard = useQueryGuard(credentials);
   if (guard) return guard;
   if (!credentials.data) return <QueryLoading />;
   const list = credentials.data.credentials ?? [];
+  const { rows, total } = view.view(view.ready ? list : undefined);
 
   return (
     <>
@@ -41,33 +46,17 @@ export function CredentialsPage() {
         </Button>
       </div>
       <span className="text-[13px] text-muted-foreground">{t.credentials.list.summary(list.length)}</span>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.credentials.list.columns.name}</span>
-          <span>{t.credentials.list.columns.kind}</span>
-          <span>{t.credentials.list.columns.usedBy}</span>
-          <span>{t.credentials.list.columns.expiry}</span>
-          <span>{t.credentials.list.columns.created}</span>
-        </GridHeader>
-        {list.map((c) => {
-          const expiry = expiryState(c, t);
-          return (
-            <GridRow key={c.id} columns={COLUMNS}>
-              <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setOpenId(c.id)}>
-                {c.name}
-              </button>
-              <span className="text-xs">{kindLabel(c, t)}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                {c.username ? `${c.username}@ · ` : ''}
-                {usageLabel(c, t)}
-              </span>
-              <span>{expiry ? <Pill tone={expiry.tone}>{expiry.text}</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
-              <span className="text-xs text-muted-foreground">{fmt.date(c.created_at)}</span>
-            </GridRow>
-          );
-        })}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.credentials.list.empty}</p>}
-      </Card>
+      <DataList
+        label={t.credentials.list.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(c) => c.id}
+        rowActions={(c) => [{ id: 'open', label: t.common.open, onSelect: () => setOpenId(c.id) }]}
+        rowLabel={(c) => c.name}
+        loading={!view.ready}
+        empty={t.credentials.list.empty}
+        {...view.listProps(total, t.credentials.list.count)}
+      />
       <AddCredentialDialog
         org={org}
         open={addOpen}

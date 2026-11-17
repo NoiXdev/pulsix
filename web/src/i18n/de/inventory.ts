@@ -4,6 +4,8 @@ export const deInventory: Messages['inventory'] = {
   groups: {
     title: 'Gruppen',
     addGroup: 'Gruppe hinzufügen',
+    label: 'Inventargruppen',
+    count: (n: number) => (n === 1 ? '1 Gruppe' : `${n} Gruppen`),
     summary: (n: number) =>
       n === 1
         ? '1 Inventargruppe · jede Gruppe besitzt ein Variablenschema'
@@ -69,6 +71,9 @@ export const deInventory: Messages['inventory'] = {
   children: {
     intro: 'Untergruppen erben die Werte dieser Gruppe über die Gruppenvererbung von Ansible.',
     add: 'Untergruppe hinzufügen',
+    label: 'Untergruppen',
+    count: (n: number) => (n === 1 ? '1 Gruppe' : `${n} Gruppen`),
+    columns: { group: 'Gruppe', members: 'Mitglieder' },
     members: (n: number) => (n === 1 ? '1 Mitglied' : `${n} Mitglieder`),
     empty: 'Keine Untergruppen.',
   },
@@ -98,6 +103,8 @@ export const deInventory: Messages['inventory'] = {
   },
   members: {
     assign: 'Host zuweisen',
+    label: 'Gruppenmitglieder',
+    count: (n: number) => (n === 1 ? '1 Host' : `${n} Hosts`),
     columns: { host: 'Host', values: 'Werte' },
     complete: 'vollständig',
     toFill: (n: number) => `${n} auszufüllen`,

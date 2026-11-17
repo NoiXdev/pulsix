@@ -17,6 +17,10 @@ export const enWorkers = {
   noAccess: "Workers are managed by the organization's owners and admins.",
   summary: (online: number, total: number) => `${online} of ${total} online · workers run the jobs of their zone`,
   add: 'Add worker',
+  label: 'Workers',
+  count: (n: number) => (n === 1 ? '1 worker' : `${n} workers`),
+  enrollmentsLabel: 'Pending enrollments',
+  enrollmentsCount: (n: number) => (n === 1 ? '1 enrollment' : `${n} enrollments`),
   columns: {
     worker: 'Worker',
     zone: 'Zone',
@@ -48,7 +52,8 @@ export const enWorkers = {
   deleteConfirm: (name: string) => `Delete worker ${name}? Its history stays in the activity log.`,
   deleteFailed: 'Deleting failed',
   withdraw: 'Withdraw',
-  enrollmentActions: (name: string) => `Actions for enrollment ${name}`,
+  /** The enrollment's row name: its menu reads "Actions for enrollment <name>". */
+  enrollmentName: (name: string) => `enrollment ${name}`,
   withdrawFailed: 'Withdrawing failed',
   dialog: {
     title: 'Add worker',

@@ -80,9 +80,8 @@ describe('GroupsPage', () => {
     renderPage();
 
     const name = await screen.findByText('web_eu', { ignore: '.sr-only' });
-    expect(name).toHaveAttribute('aria-hidden', 'true');
     expect(name).toHaveStyle({ paddingLeft: '16px' });
-    expect(name.parentElement).toHaveClass('contents');
+    expect(name).toHaveClass('truncate');
   });
 
   it('each group row is a link to its page', async () => {
@@ -93,8 +92,8 @@ describe('GroupsPage', () => {
     renderPage();
     const row = await screen.findByRole('link', { name: 'web' });
     expect(row).toHaveAttribute('href', '/o/acme/groups/g1');
-    // The whole row opens the group, not only its name.
-    expect(within(row).getByText('1 group · 0 host')).toBeInTheDocument();
+    // The row's other cells sit beside the link, which stretches over the row.
+    expect(screen.getByText('1 group · 0 host')).toBeInTheDocument();
     expect(within(row).queryAllByRole('button')).toEqual([]);
     expect(within(row).queryAllByRole('link')).toEqual([]);
   });

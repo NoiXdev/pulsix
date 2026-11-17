@@ -66,20 +66,20 @@ export function useDeleteBastion(org: string) {
 // useSetBastionKey pins a jump host's key: the fingerprint the newest
 // connection test observed at the hop (the pin-what-you-saw rule is the
 // server's check, backlog 2.40).
-export function useSetBastionKey(org: string, id: string) {
+export function useSetBastionKey(org: string) {
   const invalidate = useInvalidateSsh(org);
   return useMutation({
-    mutationFn: (fingerprint: string) =>
+    mutationFn: ({ id, fingerprint }: { id: string; fingerprint: string }) =>
       unwrap(api.PUT('/api/v1/orgs/{org}/bastions/{id}/host-key', { params: { path: { org, id } }, body: { fingerprint } })),
     onSuccess: invalidate,
   });
 }
 
 // useClearBastionKey removes the jump host's pin.
-export function useClearBastionKey(org: string, id: string) {
+export function useClearBastionKey(org: string) {
   const invalidate = useInvalidateSsh(org);
   return useMutation({
-    mutationFn: () => unwrap(api.DELETE('/api/v1/orgs/{org}/bastions/{id}/host-key', { params: { path: { org, id } } })),
+    mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/bastions/{id}/host-key', { params: { path: { org, id } } })),
     onSuccess: invalidate,
   });
 }

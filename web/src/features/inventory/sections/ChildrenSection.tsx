@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Card } from '../../../ui/table.tsx';
 import { Button } from '../../../ui/button.tsx';
 import { Section } from '../../../ui/detail-layout.tsx';
-import { ListRow, ListRowName } from '../../../ui/list-row.tsx';
+import { DataList } from '../../../ui/data-list/index.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
+import { useListView } from '../../lists/useListView.ts';
 import { CreateGroupDialog } from '../CreateGroupDialog.tsx';
+import { childColumns } from './childColumns.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-const COLUMNS = 'minmax(0, 1fr) 120px';
-
-/** ChildrenSection lists the group's child groups, each a row to its page;
+/** ChildrenSection lists the group's child groups (list id `group-children`,
+ * sorted and paged in the browser, never in the URL), each a row to its page;
  * Add child group sits in the section header for a writer. */
 export function ChildrenSection({
   org, group, groups, canWrite,
@@ -24,6 +24,9 @@ export function ChildrenSection({
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const children = groups.filter((g) => g.parent_id === group.id);
+  const columns = childColumns(t);
+  const view = useListView('group-children', columns, { mode: 'client', urlState: false, rowKey: (g) => g.id });
+  const { rows, total } = view.view(view.ready ? children : undefined);
   return (
     <Section
       id="children"
@@ -37,15 +40,16 @@ export function ChildrenSection({
       }
     >
       <span className="text-xs text-muted-foreground">{t.inventory.children.intro}</span>
-      <Card>
-        {children.map((c) => (
-          <ListRow key={c.id} to="/o/$org/groups/$id" params={{ org, id: c.id }} search={{ tab: undefined }} columns={COLUMNS} label={c.name}>
-            <ListRowName className="truncate font-mono text-[13px]">{c.name}</ListRowName>
-            <span className="text-xs text-muted-foreground">{t.inventory.children.members(c.members)}</span>
-          </ListRow>
-        ))}
-        {children.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.children.empty}</p>}
-      </Card>
+      <DataList
+        label={t.inventory.children.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(c) => c.id}
+        rowLink={(c) => ({ to: '/o/$org/groups/$id', params: { org, id: c.id }, search: { tab: undefined }, label: c.name })}
+        loading={!view.ready}
+        empty={t.inventory.children.empty}
+        {...view.listProps(total, t.inventory.children.count)}
+      />
       {canWrite && (
         <CreateGroupDialog
           org={org}

@@ -1,44 +1,46 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Cpu } from 'lucide-react';
-import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { useDeleteWorker, useRevokeWorker, useWithdrawWorkerEnrollment, useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts';
+import { useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
-import type { Worker, WorkerEnrollment } from '../../api/types.ts';
+import { useFormat } from '../../i18n/format.ts';
+import { useListView } from '../lists/useListView.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
-import { EnrollmentRow, WorkerRow } from './WorkerRow.tsx';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-// The trailing 40px track holds a row's ⋯ menu, only reserved for canWrite.
-const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 1fr) 110px minmax(0, 0.7fr)';
-const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
-const ENROLLMENT_COLUMNS = 'minmax(0, 1fr) 160px';
+import { enrollmentColumns } from './enrollmentColumns.tsx';
+import { useWorkerListActions } from './useWorkerListActions.ts';
+import { workerColumns } from './workerColumns.tsx';
 
 /** WorkersPage lists the organization's zone workers (spec 2026-09-18 §4):
  * status (online = seen within 2 minutes), zone, last seen, version,
  * certificate expiry (highlighted under 14 days) and the current job, plus
- * the pending enrollment tokens. Owners and admins add, revoke and delete. */
+ * the pending enrollment tokens. Owners and admins add, revoke and delete.
+ * Both are lists on the shared list component, fetched whole and sorted and
+ * paged in the browser: the workers (list id `workers`) keep their sort and
+ * page in the URL, the enrollments (`worker-enrollments`) in component state. */
 export function WorkersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
-  const ask = useConfirm();
+  const fmt = useFormat();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'workers.read');
   const canWrite = may(role, 'workers.write');
   const list = useWorkers(org, !!orgInfo.data && canRead);
   const pending = useWorkerEnrollments(org, !!orgInfo.data && canRead);
-  const revoke = useRevokeWorker(org);
-  const remove = useDeleteWorker(org);
-  const withdraw = useWithdrawWorkerEnrollment(org);
   const [adding, setAdding] = useState(false);
+  const now = new Date();
+  const actions = useWorkerListActions(org, canWrite);
+
+  const columns = workerColumns({ t, org, now });
+  const view = useListView('workers', columns, { mode: 'client', rowKey: (w) => w.id });
+  const enrollColumns = enrollmentColumns(t, fmt);
+  const enrollView = useListView('worker-enrollments', enrollColumns, { mode: 'client', urlState: false, rowKey: (e) => e.id });
 
   const orgGuard = useQueryGuard(orgInfo);
   if (orgGuard) return orgGuard;
@@ -49,36 +51,8 @@ export function WorkersPage() {
   if (!list.data) return <QueryLoading />;
   const workers = list.data.workers ?? [];
   const enrollments = pending.data?.enrollments ?? [];
-  const now = new Date();
-  const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
-  const enrollmentColumns = canWrite ? `${ENROLLMENT_COLUMNS} 40px` : ENROLLMENT_COLUMNS;
-
-  async function onRevoke(w: Worker) {
-    if (!(await ask({ message: t.workers.revokeConfirm(w.name), destructive: true }))) return;
-    try {
-      await revoke.mutateAsync(w.id);
-      toast.show(t.workers.revoked(w.name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.workers.revokeFailed, 'destructive');
-    }
-  }
-
-  async function onDelete(w: Worker) {
-    if (!(await ask({ message: t.workers.deleteConfirm(w.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(w.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.workers.deleteFailed, 'destructive');
-    }
-  }
-
-  async function onWithdraw(e: WorkerEnrollment) {
-    try {
-      await withdraw.mutateAsync(e.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.workers.withdrawFailed, 'destructive');
-    }
-  }
+  const workerRows = view.view(view.ready ? workers : undefined);
+  const enrollmentRows = enrollView.view(enrollView.ready ? enrollments : undefined);
 
   return (
     <>
@@ -95,33 +69,29 @@ export function WorkersPage() {
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={columns}>
-          <span>{t.workers.columns.worker}</span>
-          <span>{t.workers.columns.zone}</span>
-          <span>{t.workers.columns.status}</span>
-          <span>{t.workers.columns.lastSeen}</span>
-          <span>{t.workers.columns.version}</span>
-          <span>{t.workers.columns.certificate}</span>
-          <span>{t.workers.columns.currentJob}</span>
-          {canWrite && <span />}
-        </GridHeader>
-        {workers.map((w) => (
-          <WorkerRow key={w.id} org={org} worker={w} columns={columns} now={now} canWrite={canWrite} onRevoke={(x) => void onRevoke(x)} onDelete={(x) => void onDelete(x)} />
-        ))}
-        {workers.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.workers.empty}</p>}
-      </Card>
+      <DataList
+        label={t.workers.label}
+        columns={columns}
+        rows={workerRows.rows}
+        rowKey={(w) => w.id}
+        rowLabel={(w) => w.name}
+        rowActions={actions.workerActions}
+        loading={!view.ready}
+        empty={t.workers.empty}
+        {...view.listProps(workerRows.total, t.workers.count)}
+      />
       {enrollments.length > 0 && (
-        <Card>
-          <GridHeader columns={enrollmentColumns}>
-            <span>{t.workers.columns.pendingEnrollment}</span>
-            <span>{t.workers.columns.expires}</span>
-            {canWrite && <span />}
-          </GridHeader>
-          {enrollments.map((e) => (
-            <EnrollmentRow key={e.id} enrollment={e} columns={enrollmentColumns} canWrite={canWrite} onWithdraw={(x) => void onWithdraw(x)} />
-          ))}
-        </Card>
+        <DataList
+          label={t.workers.enrollmentsLabel}
+          columns={enrollColumns}
+          rows={enrollmentRows.rows}
+          rowKey={(e) => e.id}
+          rowLabel={(e) => t.workers.enrollmentName(e.name)}
+          rowActions={actions.enrollmentActions}
+          loading={!enrollView.ready}
+          empty={null}
+          {...enrollView.listProps(enrollmentRows.total, t.workers.enrollmentsCount)}
+        />
       )}
       {adding && <AddWorkerDialog org={org} onClose={() => setAdding(false)} />}
     </>

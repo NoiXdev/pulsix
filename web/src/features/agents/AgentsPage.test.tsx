@@ -45,6 +45,9 @@ function renderPage() {
   };
 }
 
+/** The cells of the list row whose link is named `name`. */
+const rowOf = (name: string) => within(screen.getByRole('link', { name }).closest('[data-list-row]') as HTMLElement);
+
 describe('AgentsPage', () => {
   it('badges an agent that needs an update or runs ahead of the manager, and nothing else', async () => {
     mockApi({
@@ -82,11 +85,11 @@ describe('AgentsPage', () => {
     expect(await screen.findByRole('link', { name: 'web-current' })).toBeInTheDocument();
     expect(screen.getAllByText('Config current')).toHaveLength(1);
     expect(screen.getAllByText('Config outdated')).toHaveLength(1);
-    const outdated = within(screen.getByRole('link', { name: 'web-outdated' }));
+    const outdated = rowOf('web-outdated');
     expect(outdated.getByTitle((title) => title.startsWith('Agent runs aaaaaaaa · manager expects bbbbbbbb · checked '))).toBeInTheDocument();
     // The list keeps the versions in the tooltip; only the host card spells them out.
     expect(outdated.queryByText(/^Agent runs/)).toBeNull();
-    expect(within(screen.getByRole('link', { name: 'web-unknown' })).queryByText(/^Config /)).toBeNull();
+    expect(rowOf('web-unknown').queryByText(/^Config /)).toBeNull();
   });
 
   it('lists agents with their host, status, version and certificate expiry', async () => {
@@ -406,8 +409,9 @@ describe('AgentsPage', () => {
     renderPage();
 
     const name = await screen.findByText('web-1', { ignore: '.sr-only' });
-    expect(name).toHaveAttribute('aria-hidden', 'true');
-    expect(name.parentElement).toHaveClass('contents');
+    // The link's visible label is the name; the row's other cells sit beside it.
+    expect(name).toHaveClass('truncate');
+    expect(screen.getByRole('link', { name: 'web-1' })).toContainElement(name);
   });
 
   it('refuses a host name the server would refuse, before asking it', async () => {

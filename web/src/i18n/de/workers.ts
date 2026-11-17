@@ -15,6 +15,10 @@ export const deWorkers: Messages['workers'] = {
   noAccess: 'Worker werden von Mitgliedern der Organisation mit der Rolle Inhaber oder Admin verwaltet.',
   summary: (online: number, total: number) => `${online} von ${total} online · Worker führen die Jobs ihrer Zone aus`,
   add: 'Worker hinzufügen',
+  label: 'Worker',
+  count: (n: number) => `${n} Worker`,
+  enrollmentsLabel: 'Ausstehende Registrierungen',
+  enrollmentsCount: (n: number) => (n === 1 ? '1 Registrierung' : `${n} Registrierungen`),
   columns: {
     worker: 'Worker',
     zone: 'Zone',
@@ -45,7 +49,7 @@ export const deWorkers: Messages['workers'] = {
   deleteConfirm: (name: string) => `Worker ${name} löschen? Sein Verlauf bleibt im Aktivitätsprotokoll erhalten.`,
   deleteFailed: 'Löschen fehlgeschlagen',
   withdraw: 'Zurückziehen',
-  enrollmentActions: (name: string) => `Aktionen für Registrierung ${name}`,
+  enrollmentName: (name: string) => `Registrierung ${name}`,
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Worker hinzufügen',

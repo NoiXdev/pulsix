@@ -7,9 +7,16 @@ export const enLists = {
   /** One per list id in features/lists/registry.ts. */
   names: {
     activity: 'Activity',
+    'agent-tokens': 'Agent enrollment tokens',
+    agents: 'Agents',
     alerts: 'Alerts',
+    credentials: 'Credentials',
+    'group-children': 'Child groups',
+    'group-members': 'Group members',
+    groups: 'Inventory groups',
     'host-runs': 'Runs of a host',
     hosts: 'Hosts',
+    'jump-hosts': 'Jump hosts',
     'my-activity': 'My activity',
     playbooks: 'Playbooks',
     repos: 'Repositories',
@@ -18,6 +25,8 @@ export const enLists = {
     schedules: 'Schedules',
     templates: 'Job templates',
     users: 'Users',
+    'worker-enrollments': 'Worker enrollments',
+    workers: 'Workers',
   },
   saveFailed: 'Your list settings could not be saved',
 };
