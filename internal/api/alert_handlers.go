@@ -279,8 +279,9 @@ type alertSnoozeInput struct {
 
 // registerAlertRoutes wires the six routes. Every route resolves its scope
 // through requireOrg — reads at checks.read, writes (acknowledge, snooze
-// and their reversals) at alerts.handle — and is mounted on the bearer-enabled *huma.Group in
-// api.go alongside every other org-scoped resource.
+// and their reversals) at alerts.handle — and is mounted on the
+// bearer-enabled *huma.Group in api.go alongside every other org-scoped
+// resource.
 func registerAlertRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/alerts", func(ctx context.Context, in *alertListInput) (*alertListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermChecksRead)

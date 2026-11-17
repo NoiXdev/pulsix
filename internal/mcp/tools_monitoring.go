@@ -39,7 +39,7 @@ type hostMetricsArgs struct {
 	HostID  string `json:"host_id" jsonschema:"the host's id"`
 	Check   string `json:"check,omitempty" jsonschema:"the check key, as list_host_checks reports it"`
 	Item    string `json:"item,omitempty" jsonschema:"the mount or unit; omit for a whole-host metric"`
-	Metric  string `json:"metric,omitempty"`
+	Metric  string `json:"metric,omitempty" jsonschema:"the metric name, as list_host_checks reports it (for example used_percent)"`
 	Range   string `json:"range,omitempty" jsonschema:"one of 1h, 24h, 7d, 30d, 90d"`
 	Vantage string `json:"vantage,omitempty" jsonschema:"one vantage point's own series: manager, or the probing agent's host id"`
 }
@@ -50,8 +50,8 @@ type alertListArgs struct {
 	Severity     string `json:"severity,omitempty" jsonschema:"warn, crit or unknown"`
 	HostID       string `json:"host_id,omitempty" jsonschema:"only this host's alerts"`
 	Scope        string `json:"scope,omitempty" jsonschema:"tuple or host"`
-	Acknowledged *bool  `json:"acknowledged,omitempty"`
-	Muted        *bool  `json:"muted,omitempty"`
+	Acknowledged *bool  `json:"acknowledged,omitempty" jsonschema:"true for only acknowledged alerts, false for only unacknowledged ones"`
+	Muted        *bool  `json:"muted,omitempty" jsonschema:"true for only snoozed alerts, false for only alerts that are not snoozed"`
 }
 
 type alertInput struct {

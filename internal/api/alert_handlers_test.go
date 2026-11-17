@@ -446,11 +446,11 @@ func TestAlertsAreScopedToTheOrganization(t *testing.T) {
 	}
 }
 
-// TestAcknowledgeRequiresTheMonitoringWritePermission is the brief's own
-// test: a read-only member gets 403 acknowledging (alerts.handle, an
-// operator permission since the assistant areas; see
-// TestAlertHandlingNeedsAlertsHandle).
-func TestAcknowledgeRequiresTheMonitoringWritePermission(t *testing.T) {
+// TestAcknowledgeRequiresAlertsHandleForMemberRoles: a read-only member
+// gets 403 acknowledging, an operator succeeds (alerts.handle is an
+// operator permission; see TestAlertHandlingNeedsAlertsHandle for a
+// token holding only that permission).
+func TestAcknowledgeRequiresAlertsHandleForMemberRoles(t *testing.T) {
 	f := newAlertFixture(t, "alert-ack-perm")
 	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateWarn, time.Now().UTC())
 

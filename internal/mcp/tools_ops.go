@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -84,7 +85,7 @@ func opsTools() []toolDef {
 				if tenancy.AreasAllow(c.areas, tenancy.PermMaintenanceRead) {
 					return out, nil
 				}
-				return withoutKey(out.(json.RawMessage), "maintenance"), nil
+				return withoutKey(out.(json.RawMessage), "maintenance")
 			}),
 		define("list_activity", "List activity", "The organization's activity log, newest first, a page at a time. Filter by actor, object type or a start time.",
 			tenancy.AreaActivityRead, readTool, func(ctx context.Context, c *caller, in activityArgs) (any, error) {
@@ -119,20 +120,21 @@ func opsTools() []toolDef {
 	}
 }
 
-// withoutKey drops one top-level key of a JSON object body; a body that is
-// not an object is returned as it is.
-func withoutKey(raw json.RawMessage, key string) json.RawMessage {
+// withoutKey drops one top-level key of a JSON object body. It fails closed:
+// a body it cannot parse or re-encode is an error, never passed through,
+// because the dropped key is data the caller must not see.
+func withoutKey(raw json.RawMessage, key string) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return raw
+		return nil, fmt.Errorf("drop %q from response: %w", key, err)
 	}
 	if _, ok := obj[key]; !ok {
-		return raw
+		return raw, nil
 	}
 	delete(obj, key)
 	b, err := json.Marshal(obj)
 	if err != nil {
-		return raw
+		return nil, fmt.Errorf("drop %q from response: %w", key, err)
 	}
-	return b
+	return b, nil
 }
