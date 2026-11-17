@@ -95,6 +95,8 @@ jobs:
         run: |
           scripts/agent-binaries.sh
           go test -count=1 ./internal/agentdist/...
+          # The release workflow attaches these to the release with this script; it only runs on a tag, so its fake-gh test runs here.
+          scripts/release-agent-assets-test.sh
 
   # The agent on the two systems the go job cannot run it on (spec
   # 2026-11-12 "Build, release and CI"). Each job runs the agent's unit
