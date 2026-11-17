@@ -11,6 +11,8 @@ import { shortId } from '../runs/status.ts';
 /** How many of the host's runs the section shows; the rest are one link away. */
 const RECENT = 5;
 
+const HOST_RUN_DEFAULTS: ReadonlySet<string> = new Set(['run', 'status', 'created']);
+
 /**
  * HostRunsSection is the host page's "Runs" section: a teaser of the latest
  * runs that targeted the host (the jobs list's own `host_id` filter: a run
@@ -25,7 +27,9 @@ export function HostRunsSection({ org, hostId }: { org: string; hostId: string }
   const fmt = useFormat();
   const jobs = useJobs(org, { host: hostId, limit: RECENT });
   const rows = (jobs.data?.pages[0]?.jobs ?? []).slice(0, RECENT);
-  const columns = runColumns(t, fmt);
+  // The section is narrow (a third of the host page): by default only run, status and
+  // created, which is what the old teaser showed; the others can be switched on.
+  const columns = runColumns(t, fmt).map((c) => ({ ...c, defaultVisible: HOST_RUN_DEFAULTS.has(c.id) }));
   const view = useListView('host-runs', columns, { mode: 'client', urlState: false, rowKey: (j) => j.id });
   const { visibleColumns, onVisibleColumnsChange, defaultColumns, density } = view.listProps(undefined, () => '');
 

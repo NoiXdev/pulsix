@@ -1,8 +1,10 @@
-import { useCallback, useId, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useCombobox } from 'downshift';
 import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
 import { useT } from '../i18n/useT.ts';
+import { placePopover } from './popoverPlacement.ts';
 
 export interface SelectOption {
   value: string;
@@ -37,6 +39,11 @@ export interface SelectProps {
    *  placeholder text as a real value) can never fire. */
   required?: boolean;
   create?: { label: string; onSelect: (filterText: string) => void };
+  /** Renders the listbox in a portal on <body>, fixed against the field and
+   *  flipped upward when there is no room below. For a field inside a box that
+   *  clips its overflow (a list's card footer). Not for use inside a modal
+   *  dialog, whose top layer would draw over a portalled listbox. */
+  portal?: boolean;
 }
 
 /**
@@ -76,7 +83,7 @@ const CREATE = ' create';
  * rule on src/ui/**).
  */
 export function Select({
-  options, value, onChange, placeholder, id, disabled, invalid, required, create,
+  options, value, onChange, placeholder, id, disabled, invalid, required, create, portal,
   'aria-label': ariaLabel,
   'aria-describedby': ariaDescribedBy,
 }: SelectProps) {
@@ -191,8 +198,81 @@ export function Select({
 
   const open = cb.isOpen && !disabled;
 
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const [menuEl, setMenuEl] = useState<HTMLUListElement | null>(null);
+  const [floatStyle, setFloatStyle] = useState<CSSProperties>({});
+  const rowCount = rows.length;
+  useLayoutEffect(() => {
+    if (!portal || !open) return;
+    const place = () => {
+      const a = anchorRef.current;
+      const m = menuEl;
+      if (!a || !m) return;
+      const ar = a.getBoundingClientRect();
+      const mr = m.getBoundingClientRect();
+      const p = placePopover(ar, { width: ar.width, height: mr.height }, { width: window.innerWidth, height: window.innerHeight });
+      setFloatStyle({ top: p.top, left: p.left, width: ar.width });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [portal, open, rowCount, menuEl]);
+
+  const menu = (
+    <ul
+      {...cb.getMenuProps({ ref: setMenuEl })}
+      style={portal ? floatStyle : undefined}
+      className={cn(
+        portal ? 'fixed' : 'absolute mt-1 w-full',
+        'z-50 max-h-60 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg',
+        !open && 'hidden',
+      )}
+    >
+      {/* The create row is never filtered away (see the `rows` memo
+          above), so a query that matches nothing still leaves it in
+          `rows` — counting it out here keeps "No match" honest about the
+          real options, not about the row that is always there. */}
+      {open && rows.length === (create ? 1 : 0) && (
+        <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
+          {options.length === 0 ? t.ui.select.noOptions : t.ui.select.noMatch}
+        </li>
+      )}
+      {open &&
+        rows.map((o, i) => (
+          <li
+            key={o.value}
+            data-value={o.value === NONE ? '' : o.value}
+            // The <li>'s own textContent is the label and the hint
+            // concatenated (see the hint <span> below), so a helper that
+            // needs the bare label — pickOption, matching a row whose
+            // label repeats across zones or credential kinds, the exact
+            // case the hint exists for — cannot read it off the node's
+            // text without also matching the hint. This exposes it
+            // directly instead of making every caller strip the hint
+            // back out by hand.
+            data-label={o.label}
+            {...cb.getItemProps({ item: o, index: i, disabled: o.disabled })}
+            className={cn(
+              'flex cursor-pointer items-baseline gap-2 px-2.5 py-1.5 text-xs',
+              cb.highlightedIndex === i && 'bg-background text-foreground',
+              o.disabled && 'cursor-not-allowed opacity-50',
+              o.value === CREATE && 'border-t border-border text-primary',
+            )}
+          >
+            {o.value === CREATE && <Plus size={13} className="shrink-0" />}
+            <span className="flex-1 truncate">{o.label}</span>
+            {o.hint && <span className="shrink-0 text-[11px] text-muted-foreground">{o.hint}</span>}
+          </li>
+        ))}
+    </ul>
+  );
+
   return (
-    <div className="relative">
+    <div className="relative" ref={anchorRef}>
       <input
         {...cb.getInputProps({
           id: inputId,
@@ -273,50 +353,7 @@ export function Select({
       >
         <ChevronDown size={14} />
       </button>
-      <ul
-        {...cb.getMenuProps()}
-        className={cn(
-          'absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg',
-          !open && 'hidden',
-        )}
-      >
-        {/* The create row is never filtered away (see the `rows` memo
-            above), so a query that matches nothing still leaves it in
-            `rows` — counting it out here keeps "No match" honest about the
-            real options, not about the row that is always there. */}
-        {open && rows.length === (create ? 1 : 0) && (
-          <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
-            {options.length === 0 ? t.ui.select.noOptions : t.ui.select.noMatch}
-          </li>
-        )}
-        {open &&
-          rows.map((o, i) => (
-            <li
-              key={o.value}
-              data-value={o.value === NONE ? '' : o.value}
-              // The <li>'s own textContent is the label and the hint
-              // concatenated (see the hint <span> below), so a helper that
-              // needs the bare label — pickOption, matching a row whose
-              // label repeats across zones or credential kinds, the exact
-              // case the hint exists for — cannot read it off the node's
-              // text without also matching the hint. This exposes it
-              // directly instead of making every caller strip the hint
-              // back out by hand.
-              data-label={o.label}
-              {...cb.getItemProps({ item: o, index: i, disabled: o.disabled })}
-              className={cn(
-                'flex cursor-pointer items-baseline gap-2 px-2.5 py-1.5 text-xs',
-                cb.highlightedIndex === i && 'bg-background text-foreground',
-                o.disabled && 'cursor-not-allowed opacity-50',
-                o.value === CREATE && 'border-t border-border text-primary',
-              )}
-            >
-              {o.value === CREATE && <Plus size={13} className="shrink-0" />}
-              <span className="flex-1 truncate">{o.label}</span>
-              {o.hint && <span className="shrink-0 text-[11px] text-muted-foreground">{o.hint}</span>}
-            </li>
-          ))}
-      </ul>
+      {portal ? createPortal(menu, document.body) : menu}
     </div>
   );
 }

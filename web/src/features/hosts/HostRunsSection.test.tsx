@@ -56,8 +56,12 @@ describe('HostRunsSection', () => {
     renderAt(() => <HostRunsSection org="acme" hostId="h1" />);
 
     await screen.findByRole('link', { name: 'aaaaaaaa' });
-    for (const name of ['Run', 'Kind', 'Status', 'Trigger', 'Template', 'Zone', 'Created']) {
+    // The narrow section shows run, status and created by default (the rest fit only on request).
+    for (const name of ['Run', 'Status', 'Created']) {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
+    }
+    for (const name of ['Kind', 'Trigger', 'Template', 'Zone']) {
+      expect(screen.queryByRole('columnheader', { name })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: 'Kind' })).not.toBeInTheDocument();
     expect(document.querySelector('[data-list-row] [title]')?.getAttribute('title')).toMatch(/2026/);
@@ -66,6 +70,6 @@ describe('HostRunsSection', () => {
     expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^Columns/ }));
     await user.click(within(await screen.findByRole('dialog', { name: 'Columns' })).getByRole('checkbox', { name: 'Zone' }));
-    expect(screen.queryByRole('columnheader', { name: 'Zone' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Zone' })).toBeInTheDocument();
   });
 });

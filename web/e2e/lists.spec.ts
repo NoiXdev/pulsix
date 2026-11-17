@@ -84,12 +84,8 @@ test('the page size and the hidden column survive a reload', async ({ page }) =>
   const total = await footerTotal(page);
   expect(total).toBeGreaterThanOrEqual(HOST_COUNT);
 
-  // Chosen with the keyboard: the footer's listbox opens below the list's card, whose
-  // clipping cuts it off, so a mouse click on the option cannot land (reported as a
-  // concern of the task that wrote this spec).
   await page.getByLabel('Rows per page', { exact: true }).click();
-  await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('Enter');
+  await page.getByRole('option', { name: '10', exact: true }).click();
   await expect(page.getByText(`1–10 of ${total} hosts`)).toBeVisible();
   await expect(page.locator('[data-list-row]')).toHaveCount(10);
 

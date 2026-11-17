@@ -1,7 +1,7 @@
 import userEvent from '@testing-library/user-event';
-import type { screen as rtlScreen, within as rtlWithin } from '@testing-library/react';
+import { screen, type within as rtlWithin } from '@testing-library/react';
 
-type Scope = typeof rtlScreen | ReturnType<typeof rtlWithin>;
+type Scope = typeof screen | ReturnType<typeof rtlWithin>;
 
 /**
  * Chooses an option from a ui/Select (v0.4g). It replaced
@@ -29,7 +29,9 @@ type Scope = typeof rtlScreen | ReturnType<typeof rtlWithin>;
 export async function pickOption(scope: Scope, label: string, option: string | { value: string }): Promise<void> {
   const user = userEvent.setup();
   await user.click(scope.getByLabelText(label));
-  const rows: HTMLElement[] = scope.getAllByRole('option');
+  // A portalled listbox (the list footer's page size) lives on <body>, outside the scope.
+  const inScope = scope.queryAllByRole('option');
+  const rows: HTMLElement[] = inScope.length > 0 ? inScope : screen.getAllByRole('option');
   // Matching against the label has to read `data-label`, not the row's own
   // textContent: Select.tsx renders a row's hint as a second <span> inside
   // the same <li>, so textContent is the label and the hint concatenated.

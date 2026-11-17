@@ -30,6 +30,7 @@ export function Pager({ page, perPage, total, countLabel, onPageChange, onPerPag
           <span aria-hidden="true">{t.ui.dataList.perPage}</span>
           <span className="w-[72px]">
             <Select
+              portal
               aria-label={t.ui.dataList.perPage}
               options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
               value={String(perPage)}

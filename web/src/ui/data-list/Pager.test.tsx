@@ -46,6 +46,20 @@ describe('Pager', () => {
     expect(props.onPerPageChange).toHaveBeenCalledWith(50);
   });
 
+  it('renders the page-size listbox in a portal outside the footer, so a clipping card cannot cut it', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <div data-testid="card" style={{ overflow: 'clip' }}>
+        <Pager page={1} perPage={25} total={137} countLabel={(n) => `${n} hosts`} onPageChange={vi.fn()} onPerPageChange={vi.fn()} />
+      </div>,
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Rows per page' }));
+    const listbox = screen.getByRole('listbox');
+    expect(container.contains(listbox)).toBe(false);
+    expect(listbox.parentElement).toBe(document.body);
+    expect(listbox).toHaveClass('fixed');
+  });
+
   it('offers the page sizes 10, 25, 50 and 100', async () => {
     const user = userEvent.setup();
     renderPager();
