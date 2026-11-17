@@ -82,26 +82,7 @@ func TestMustChangePasswordRouteWalk(t *testing.T) {
 	markMustChange(t, s, uid)
 	c := s.LoginAs(uid)
 
-	raw, err := api.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	gen := schemaSampler{t: t, components: componentSchemas(doc)}
-
-	var ops []walkOp
-	for path, item := range doc["paths"].(map[string]any) {
-		for method, op := range item.(map[string]any) {
-			switch method {
-			case "get", "post", "put", "patch", "delete":
-				ops = append(ops, walkOp{strings.ToUpper(method), path, op.(map[string]any)})
-			}
-		}
-	}
-	sort.Slice(ops, func(i, j int) bool { return ops[i].path+ops[i].method < ops[j].path+ops[j].method })
+	ops, gen := walkOperations(t)
 
 	seenAllowed := map[string]bool{}
 	for _, o := range ops {
@@ -147,6 +128,32 @@ func TestMustChangePasswordRouteWalk(t *testing.T) {
 			t.Errorf("GET %s: status %d detail %q, want 403 %q", path, resp.StatusCode, detail, passwordChangeRequired)
 		}
 	}
+}
+
+// walkOperations returns every registered operation of the OpenAPI
+// document, sorted by path and method, and a sampler for their requests.
+// Shared by the route walks (must-change password, locked session).
+func walkOperations(t *testing.T) ([]walkOp, schemaSampler) {
+	t.Helper()
+	raw, err := api.Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var ops []walkOp
+	for path, item := range doc["paths"].(map[string]any) {
+		for method, op := range item.(map[string]any) {
+			switch method {
+			case "get", "post", "put", "patch", "delete":
+				ops = append(ops, walkOp{strings.ToUpper(method), path, op.(map[string]any)})
+			}
+		}
+	}
+	sort.Slice(ops, func(i, j int) bool { return ops[i].path+ops[i].method < ops[j].path+ops[j].method })
+	return ops, schemaSampler{t: t, components: componentSchemas(doc)}
 }
 
 func skippedForMustChange(path string) bool {
