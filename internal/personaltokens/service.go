@@ -27,7 +27,8 @@ var (
 	// ErrNotFound is the store's answer for a row that does not exist.
 	ErrNotFound = errors.New("personal token not found")
 	// ErrNoGrant: the token holds no live grant for the organization —
-	// none at all, or one an organization admin revoked.
+	// none at all, one an organization admin revoked, or one of a user an
+	// admin blocked there through another of their tokens.
 	ErrNoGrant = errors.New("the token holds no grant for this organization")
 	// ErrSwitchedOff: the organization turned personal tokens off.
 	ErrSwitchedOff = errors.New("personal tokens are turned off for this organization")
@@ -60,8 +61,9 @@ const (
 // TokenGrants, the writes and LiveGrants) span every organization a token is
 // granted in, so they run at instance level, with no organization bound.
 type Store interface {
-	// Cap returns the grant of tokenID for orgID and whether an
-	// organization admin blocked it; ErrNotFound when there is none.
+	// Cap returns the grant of tokenID for orgID and whether it is
+	// blocked: an organization admin blocked it, or any other grant of its
+	// user there (the block is per person); ErrNotFound when there is none.
 	Cap(ctx context.Context, tokenID, orgID uuid.UUID) (role tenancy.Role, blocked bool, err error)
 	// Allowed reads the organization's switch; no row means allowed. It
 	// must run bound to orgID or at instance level (see SQLStore.Allowed).

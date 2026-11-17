@@ -417,7 +417,9 @@ a member's grants when the membership ends) and `org_token_settings` (the
 "Allow personal tokens" switch, no row meaning on). Workers and agents are not
 affected, and a backup carries the three tables. Skew: a personal token (`pxp_…`) is
 unknown to an older manager, which answers 401 for it; organization tokens work on
-both.
+both. Migration 00111 adds one partial index, `personal_token_grants_blocked_idx` on
+`(org_id, user_id) WHERE blocked_at IS NOT NULL`, for the per-person block an
+organization admin's revocation sets; nothing else changes.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and

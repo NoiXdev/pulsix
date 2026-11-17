@@ -71,8 +71,10 @@ func (s *SQLStore) InsertGrant(ctx context.Context, tokenID, userID, orgID uuid.
 	return err
 }
 
-// Cap returns the grant's role and whether it is blocked; ErrNotFound when
-// the grant does not exist or row-level security hides it.
+// Cap returns the grant's role and whether it is blocked — its own block,
+// or any block of its user in the organization (the block is per person and
+// organization); ErrNotFound when the grant does not exist or row-level
+// security hides it.
 func (s *SQLStore) Cap(ctx context.Context, tokenID, orgID uuid.UUID) (tenancy.Role, bool, error) {
 	row, err := s.q.GetPersonalTokenGrant(ctx, gen.GetPersonalTokenGrantParams{TokenID: tokenID, OrgID: orgID})
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -39,8 +39,10 @@ personal token never has more rights than its user, and may have fewer.
   organization's token page, which keeps listing a blocked grant even after
   its token was revoked); lifting it lifts every blocked grant of that
   user there, after which the owner may add the organization again.
-  Grants the user's other tokens already held there are not touched by
-  the block; an admin revokes each of them separately. A blocked grant
+  While the block lasts, the user's other tokens' grants there stop
+  working at once as well (and cannot be changed by the owner); after the
+  block is lifted they work again, while the blocked token's own grant is
+  gone and must be added again by the owner. A blocked grant
   counts toward the token's 50 grants. The block ends with the membership
   (rule 11).
 

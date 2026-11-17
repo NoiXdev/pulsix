@@ -141,7 +141,11 @@ func TestSwitchOffThenOn(t *testing.T) {
 	admin := f.s.LoginAs(f.owner)
 	settings := "/api/v1/orgs/pt-switch-a/settings/personal-tokens"
 	plain := f.create(t, map[string]any{"name": "plain", "grants": grantsOf("pt-switch-a", "viewer")})
-	blocked := f.create(t, map[string]any{"name": "blocked", "grants": grantsOf("pt-switch-a", "viewer", "pt-switch-b", "viewer")})
+	// The blocked grant belongs to another member: a block is per person,
+	// so one on the user's own token would stop "plain" as well.
+	other := f.s.SeedUser("pt-switch-other@example.test", "correct horse battery")
+	f.s.AddMember(a, other, tenancy.RoleOperator)
+	blockedID, blockedToken := f.s.PersonalToken(t, other, map[uuid.UUID]tenancy.Role{a: tenancy.RoleViewer})
 	if code, raw := f.call(t, f.c, http.MethodGet, settings, nil); code != http.StatusOK || !strings.Contains(raw, `"allowed":true`) {
 		t.Fatalf("GET settings as an operator: %d (%s)", code, raw)
 	}
@@ -170,7 +174,7 @@ func TestSwitchOffThenOn(t *testing.T) {
 
 	// An admin revokes one grant while the switch is off (the block is per
 	// person, so it comes after the owner's checks above).
-	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-switch-a/personal-tokens/"+blocked.ID, nil); code != http.StatusOK {
+	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-switch-a/personal-tokens/"+blockedID.String(), nil); code != http.StatusOK {
 		t.Fatalf("admin revoke: %d (%s)", code, raw)
 	}
 
@@ -178,7 +182,7 @@ func TestSwitchOffThenOn(t *testing.T) {
 		t.Fatalf("switch on: %d (%s)", code, raw)
 	}
 	wantStatus(t, "existing grant on again", f.s.Get(t, plain.Token, "/api/v1/orgs/pt-switch-a/hosts"), http.StatusOK)
-	wantStatus(t, "blocked grant stays blocked", f.s.Get(t, blocked.Token, "/api/v1/orgs/pt-switch-a/hosts"), http.StatusForbidden)
+	wantStatus(t, "blocked grant stays blocked", f.s.Get(t, blockedToken, "/api/v1/orgs/pt-switch-a/hosts"), http.StatusForbidden)
 
 	feed := auditRows(t, f.s, "org_id = $1 AND action = 'PUT updatePersonalTokenSettings'", a)
 	if len(feed) != 2 || feed[0].Summary != "turned personal tokens off" || feed[1].Summary != "turned personal tokens on" || feed[0].ObjectType != "org_settings" {
@@ -266,4 +270,36 @@ func TestAdminBlockIsPerPerson(t *testing.T) {
 	}
 	fresh := f.create(t, newToken)
 	wantStatus(t, "B with the new token", f.s.Get(t, fresh.Token, "/api/v1/orgs/pt-person-b/hosts"), http.StatusOK)
+}
+
+// TestPersonalBlockStopsOtherTokens (fix round 2): the block is per person
+// and organization, so it also stops the person's other tokens there at
+// use, and nowhere else. Lifting it lets those work again; the blocked
+// token's own grant was deleted with the block, so the owner adds it back.
+func TestPersonalBlockStopsOtherTokens(t *testing.T) {
+	f := newPTFixture(t, "pt-others")
+	f.org(t, "pt-others-a", tenancy.RoleOperator)
+	f.org(t, "pt-others-b", tenancy.RoleOperator)
+	admin := f.s.LoginAs(f.owner)
+	t1 := f.create(t, map[string]any{"name": "one", "grants": grantsOf("pt-others-b", "viewer")})
+	t2 := f.create(t, map[string]any{"name": "two", "grants": grantsOf("pt-others-a", "viewer", "pt-others-b", "viewer")})
+	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-others-b/personal-tokens/"+t1.ID, nil); code != http.StatusOK {
+		t.Fatalf("admin revoke: %d (%s)", code, raw)
+	}
+	r := f.s.Get(t, t2.Token, "/api/v1/orgs/pt-others-b/hosts")
+	wantStatus(t, "T2 in B while T1 is blocked", r, http.StatusForbidden)
+	if d := detailOf(t, r); d != "token is scoped to another organization" {
+		t.Fatalf("detail = %q", d)
+	}
+	wantStatus(t, "T2 in A", f.s.Get(t, t2.Token, "/api/v1/orgs/pt-others-a/hosts"), http.StatusOK)
+
+	if code, raw := f.call(t, admin, http.MethodPost, "/api/v1/orgs/pt-others-b/personal-tokens/"+t1.ID+"/unblock", nil); code != http.StatusOK {
+		t.Fatalf("unblock: %d (%s)", code, raw)
+	}
+	wantStatus(t, "T2 in B after the unblock", f.s.Get(t, t2.Token, "/api/v1/orgs/pt-others-b/hosts"), http.StatusOK)
+	wantStatus(t, "T1 in B after the unblock, before re-adding", f.s.Get(t, t1.Token, "/api/v1/orgs/pt-others-b/hosts"), http.StatusForbidden)
+	if code, raw := f.patch(t, t1.ID, map[string]any{"grants": grantsOf("pt-others-b", "viewer")}); code != http.StatusOK {
+		t.Fatalf("owner re-adding B to T1: %d (%s)", code, raw)
+	}
+	wantStatus(t, "T1 in B after re-adding", f.s.Get(t, t1.Token, "/api/v1/orgs/pt-others-b/hosts"), http.StatusOK)
 }

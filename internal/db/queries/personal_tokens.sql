@@ -36,9 +36,16 @@ WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 mi
 
 -- name: GetPersonalTokenGrant :one
 -- The grant of token_id for org_id, blocked or not. Under an organization's
--- scope row-level security admits only that organization's grants.
-SELECT role, (blocked_at IS NOT NULL)::boolean AS blocked
-FROM personal_token_grants WHERE token_id = $1 AND org_id = $2;
+-- scope row-level security admits only that organization's grants. It
+-- reads as blocked while any grant of its user in the organization is
+-- blocked: an admin's block is per person and organization, so it stops
+-- the person's other tokens there at use too (one indexed EXISTS on
+-- personal_token_grants_blocked_idx).
+SELECT g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+  SELECT 1 FROM personal_token_grants b
+  WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL
+))::boolean AS blocked
+FROM personal_token_grants g WHERE g.token_id = $1 AND g.org_id = $2;
 
 -- name: TouchPersonalTokenGrant :exec
 -- TouchPersonalToken's throttle for one grant.
@@ -84,7 +91,12 @@ FROM personal_tokens WHERE user_id = $1 AND revoked_at IS NULL
 ORDER BY created_at, id;
 
 -- name: ListPersonalTokenGrantsForUser :many
-SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL)::boolean AS blocked,
+-- A grant reads as blocked while any grant of the user in its organization
+-- is blocked (the block is per person and organization): the owner cannot
+-- change it then, and it works again once an admin lifts the block.
+SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+         SELECT 1 FROM personal_token_grants b
+         WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL))::boolean AS blocked,
        COALESCE(s.personal_tokens_allowed, true)::boolean AS allowed, g.last_used_at
 FROM personal_token_grants g
 JOIN organizations o ON o.id = g.org_id
@@ -93,7 +105,9 @@ WHERE g.user_id = $1
 ORDER BY o.slug;
 
 -- name: ListPersonalTokenGrantsForToken :many
-SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL)::boolean AS blocked,
+SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+         SELECT 1 FROM personal_token_grants b
+         WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL))::boolean AS blocked,
        COALESCE(s.personal_tokens_allowed, true)::boolean AS allowed, g.last_used_at
 FROM personal_token_grants g
 JOIN organizations o ON o.id = g.org_id
@@ -118,9 +132,13 @@ DELETE FROM personal_token_grants WHERE token_id = $1 AND org_id = $2 AND blocke
 UPDATE personal_tokens SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
 
 -- name: CountLivePersonalTokenGrants :one
--- A token's unblocked grants, and their organization when there is one.
-SELECT count(*)::int AS n, COALESCE((array_agg(org_id))[1], '00000000-0000-0000-0000-000000000000')::uuid AS org_id
-FROM personal_token_grants WHERE token_id = $1 AND blocked_at IS NULL;
+-- A token's unblocked grants — neither blocked itself nor in an
+-- organization where its user is blocked — and their organization when
+-- there is one.
+SELECT count(*)::int AS n, COALESCE((array_agg(g.org_id))[1], '00000000-0000-0000-0000-000000000000')::uuid AS org_id
+FROM personal_token_grants g WHERE g.token_id = $1 AND g.blocked_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM personal_token_grants b
+                  WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL);
 
 -- An organization's view (spec rule 6). These run bound to the organization;
 -- row-level security admits only its grants, and the statements name the

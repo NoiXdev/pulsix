@@ -425,3 +425,61 @@ func TestSQLBlockIsPerPerson(t *testing.T) {
 		t.Fatalf("revoking a lifted grant of a revoked token: %v", err)
 	}
 }
+
+// TestSQLCapBlockedForThePerson (fix round 2): Cap reads a grant as blocked
+// while any grant of its owner in the organization is blocked.
+func TestSQLCapBlockedForThePerson(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	u := f.user(t, "cap-person@example.test")
+	other := f.user(t, "cap-other@example.test")
+	a := f.org(t, "cap-person-a", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner, other: tenancy.RoleOwner})
+	b := f.org(t, "cap-person-b", map[uuid.UUID]tenancy.Role{u: tenancy.RoleOwner})
+	t1, t2, t3 := f.token(t, u), f.token(t, u), f.token(t, other)
+	f.grant(t, t1, u, a, tenancy.RoleViewer)
+	f.grant(t, t2, u, a, tenancy.RoleOperator)
+	f.grant(t, t2, u, b, tenancy.RoleOperator)
+	f.grant(t, t3, other, a, tenancy.RoleViewer)
+	inA := db.WithOrgScope(ctx, a)
+	if _, err := f.store.BlockGrant(inA, t1, a, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if role, blocked, err := f.store.Cap(inA, t2, a); err != nil || !blocked || role != tenancy.RoleOperator {
+		t.Fatalf("T2 in A = %q %v %v; want blocked", role, blocked, err)
+	}
+	if _, blocked, err := f.store.Cap(db.WithOrgScope(ctx, b), t2, b); err != nil || blocked {
+		t.Fatalf("T2 in B blocked = %v, %v; want not", blocked, err)
+	}
+	if _, blocked, err := f.store.Cap(inA, t3, a); err != nil || blocked {
+		t.Fatalf("another user's token in A blocked = %v, %v; want not", blocked, err)
+	}
+	svc := f.sqlService(nil)
+	if _, err := svc.Cap(inA, t2, a); !errors.Is(err, personaltokens.ErrNoGrant) {
+		t.Fatalf("service Cap of T2 in A = %v, want ErrNoGrant", err)
+	}
+	// The owner sees T2's grant in A as blocked, and the live count leaves it out.
+	list, err := svc.List(ctx, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range list {
+		for _, g := range tok.Grants {
+			if want := map[uuid.UUID]personaltokens.GrantState{a: personaltokens.GrantBlocked, b: personaltokens.GrantActive}[g.OrgID]; g.State != want {
+				t.Fatalf("token %s grant in %s = %s, want %s", tok.ID, g.OrgSlug, g.State, want)
+			}
+		}
+	}
+	if org, n, err := svc.GrantCount(ctx, t2); err != nil || n != 1 || org != b {
+		t.Fatalf("GrantCount(T2) = %v %d %v; want B only", org, n, err)
+	}
+	// Lifting the block deletes T1's blocked grant; T2's grant works again.
+	if _, err := svc.UnblockGrant(inA, a, t1); err != nil {
+		t.Fatal(err)
+	}
+	if _, blocked, err := f.store.Cap(inA, t2, a); err != nil || blocked {
+		t.Fatalf("T2 in A after the unblock blocked = %v, %v", blocked, err)
+	}
+	if _, _, err := f.store.Cap(inA, t1, a); !errors.Is(err, personaltokens.ErrNotFound) {
+		t.Fatalf("T1 in A after the unblock: %v, want ErrNotFound (re-added by the owner)", err)
+	}
+}

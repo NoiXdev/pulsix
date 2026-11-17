@@ -68,8 +68,10 @@ func (q *Queries) BlockPersonalTokenGrantEntry(ctx context.Context, arg BlockPer
 }
 
 const countLivePersonalTokenGrants = `-- name: CountLivePersonalTokenGrants :one
-SELECT count(*)::int AS n, COALESCE((array_agg(org_id))[1], '00000000-0000-0000-0000-000000000000')::uuid AS org_id
-FROM personal_token_grants WHERE token_id = $1 AND blocked_at IS NULL
+SELECT count(*)::int AS n, COALESCE((array_agg(g.org_id))[1], '00000000-0000-0000-0000-000000000000')::uuid AS org_id
+FROM personal_token_grants g WHERE g.token_id = $1 AND g.blocked_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM personal_token_grants b
+                  WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL)
 `
 
 type CountLivePersonalTokenGrantsRow struct {
@@ -77,7 +79,9 @@ type CountLivePersonalTokenGrantsRow struct {
 	OrgID uuid.UUID `json:"org_id"`
 }
 
-// A token's unblocked grants, and their organization when there is one.
+// A token's unblocked grants — neither blocked itself nor in an
+// organization where its user is blocked — and their organization when
+// there is one.
 func (q *Queries) CountLivePersonalTokenGrants(ctx context.Context, tokenID uuid.UUID) (CountLivePersonalTokenGrantsRow, error) {
 	row := q.db.QueryRow(ctx, countLivePersonalTokenGrants, tokenID)
 	var i CountLivePersonalTokenGrantsRow
@@ -200,8 +204,11 @@ func (q *Queries) GetPersonalTokenByHash(ctx context.Context, arg GetPersonalTok
 }
 
 const getPersonalTokenGrant = `-- name: GetPersonalTokenGrant :one
-SELECT role, (blocked_at IS NOT NULL)::boolean AS blocked
-FROM personal_token_grants WHERE token_id = $1 AND org_id = $2
+SELECT g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+  SELECT 1 FROM personal_token_grants b
+  WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL
+))::boolean AS blocked
+FROM personal_token_grants g WHERE g.token_id = $1 AND g.org_id = $2
 `
 
 type GetPersonalTokenGrantParams struct {
@@ -215,7 +222,11 @@ type GetPersonalTokenGrantRow struct {
 }
 
 // The grant of token_id for org_id, blocked or not. Under an organization's
-// scope row-level security admits only that organization's grants.
+// scope row-level security admits only that organization's grants. It
+// reads as blocked while any grant of its user in the organization is
+// blocked: an admin's block is per person and organization, so it stops
+// the person's other tokens there at use too (one indexed EXISTS on
+// personal_token_grants_blocked_idx).
 func (q *Queries) GetPersonalTokenGrant(ctx context.Context, arg GetPersonalTokenGrantParams) (GetPersonalTokenGrantRow, error) {
 	row := q.db.QueryRow(ctx, getPersonalTokenGrant, arg.TokenID, arg.OrgID)
 	var i GetPersonalTokenGrantRow
@@ -395,7 +406,9 @@ func (q *Queries) ListPersonalTokenGrantsForOrg(ctx context.Context, orgID uuid.
 }
 
 const listPersonalTokenGrantsForToken = `-- name: ListPersonalTokenGrantsForToken :many
-SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL)::boolean AS blocked,
+SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+         SELECT 1 FROM personal_token_grants b
+         WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL))::boolean AS blocked,
        COALESCE(s.personal_tokens_allowed, true)::boolean AS allowed, g.last_used_at
 FROM personal_token_grants g
 JOIN organizations o ON o.id = g.org_id
@@ -445,7 +458,9 @@ func (q *Queries) ListPersonalTokenGrantsForToken(ctx context.Context, tokenID u
 }
 
 const listPersonalTokenGrantsForUser = `-- name: ListPersonalTokenGrantsForUser :many
-SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL)::boolean AS blocked,
+SELECT g.token_id, g.org_id, o.slug, o.name, g.role, (g.blocked_at IS NOT NULL OR EXISTS (
+         SELECT 1 FROM personal_token_grants b
+         WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL))::boolean AS blocked,
        COALESCE(s.personal_tokens_allowed, true)::boolean AS allowed, g.last_used_at
 FROM personal_token_grants g
 JOIN organizations o ON o.id = g.org_id
@@ -465,6 +480,9 @@ type ListPersonalTokenGrantsForUserRow struct {
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
 }
 
+// A grant reads as blocked while any grant of the user in its organization
+// is blocked (the block is per person and organization): the owner cannot
+// change it then, and it works again once an admin lifts the block.
 func (q *Queries) ListPersonalTokenGrantsForUser(ctx context.Context, userID uuid.UUID) ([]ListPersonalTokenGrantsForUserRow, error) {
 	rows, err := q.db.Query(ctx, listPersonalTokenGrantsForUser, userID)
 	if err != nil {

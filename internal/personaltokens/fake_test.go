@@ -61,6 +61,12 @@ func (f *fakeStore) Cap(_ context.Context, tokenID, orgID uuid.UUID) (tenancy.Ro
 	if !ok {
 		return "", false, personaltokens.ErrNotFound
 	}
+	// As the SQL store: blocked while any grant of the token's owner in
+	// the organization is blocked.
+	if t, known := f.tokens[tokenID]; known && !g.blocked {
+		personBlocked, _ := f.OrgBlocked(context.Background(), t.tok.UserID, orgID)
+		return g.role, personBlocked, nil
+	}
 	return g.role, g.blocked, nil
 }
 
@@ -145,8 +151,12 @@ func (f *fakeStore) Tokens(_ context.Context, userID uuid.UUID) ([]auth.Personal
 
 func (f *fakeStore) stored(k grantKey, g grantRow) personaltokens.StoredGrant {
 	o := f.orgs[k.org]
+	blocked := g.blocked
+	if t, ok := f.tokens[k.token]; ok && !blocked {
+		blocked, _ = f.OrgBlocked(context.Background(), t.tok.UserID, k.org)
+	}
 	return personaltokens.StoredGrant{TokenID: k.token, OrgID: k.org, OrgSlug: o.slug, OrgName: o.name,
-		Role: g.role, Blocked: g.blocked, Allowed: !f.off[k.org], LastUsedAt: g.lastUsed}
+		Role: g.role, Blocked: blocked, Allowed: !f.off[k.org], LastUsedAt: g.lastUsed}
 }
 
 func (f *fakeStore) sortedGrants(keep func(grantKey) bool) []personaltokens.StoredGrant {
@@ -318,8 +328,8 @@ func (f *fakeStore) LiveGrants(_ context.Context, tokenID uuid.UUID) (uuid.UUID,
 	}
 	var org uuid.UUID
 	n := 0
-	for k, g := range f.grants {
-		if k.token == tokenID && !g.blocked {
+	for k := range f.grants {
+		if _, blocked, _ := f.Cap(context.Background(), k.token, k.org); k.token == tokenID && !blocked {
 			org = k.org
 			n++
 		}

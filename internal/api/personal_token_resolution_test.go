@@ -250,13 +250,21 @@ func TestPersonalTokenNeverInstanceAdmin(t *testing.T) {
 // with a personal token re-checks the grant, so revoking it or turning the
 // organization's switch off ends the stream within one re-check.
 func TestJobStreamEndsWhenGrantRevoked(t *testing.T) {
-	cases := map[string]func(f runFixture, tokenID uuid.UUID){
-		"grant revoked": func(f runFixture, tokenID uuid.UUID) {
+	cases := map[string]func(f runFixture, tokenID, owner uuid.UUID){
+		"grant revoked": func(f runFixture, tokenID, _ uuid.UUID) {
 			if _, err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), f.orgID), tokenID, f.orgID, uuid.Nil); err != nil {
 				t.Fatal(err)
 			}
 		},
-		"switched off": func(f runFixture, _ uuid.UUID) {
+		// Fix round 2: the block is per person and organization, so an
+		// admin's revocation of another token's grant ends this one too.
+		"other token's grant revoked": func(f runFixture, _, owner uuid.UUID) {
+			other, _ := f.s.PersonalToken(t, owner, map[uuid.UUID]tenancy.Role{f.orgID: tenancy.RoleViewer})
+			if _, err := f.s.PersonalTokens.BlockGrant(db.WithOrgScope(context.Background(), f.orgID), other, f.orgID, uuid.Nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"switched off": func(f runFixture, _, _ uuid.UUID) {
 			if err := f.s.PersonalTokens.SetAllowed(db.WithOrgScope(context.Background(), f.orgID), f.orgID, false); err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +272,7 @@ func TestJobStreamEndsWhenGrantRevoked(t *testing.T) {
 	}
 	for name, revoke := range cases {
 		t.Run(name, func(t *testing.T) {
-			slug := "pt-sse-" + map[string]string{"grant revoked": "grant", "switched off": "switch"}[name]
+			slug := "pt-sse-" + map[string]string{"grant revoked": "grant", "other token's grant revoked": "other", "switched off": "switch"}[name]
 			f := newRunFixture(t, slug)
 			jobID := mustUUID(t, runJob(t, f.operatorC, f.runURL())[0].ID)
 			watcher := f.s.SeedUser(slug+"-watcher@example.test", "correct horse battery")
@@ -308,7 +316,7 @@ func TestJobStreamEndsWhenGrantRevoked(t *testing.T) {
 				}
 			}
 
-			revoke(f, tokenID)
+			revoke(f, tokenID, watcher)
 
 			for ev := range events {
 				if ev == "error" {
