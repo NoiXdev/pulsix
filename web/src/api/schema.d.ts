@@ -2951,7 +2951,8 @@ export interface paths {
         delete: operations["revokeToken"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Patch API v1 orgs by org tokens by ID */
+        patch: operations["updateToken"];
         trace?: never;
     };
     "/api/v1/orgs/{org}/triggers": {
@@ -6393,7 +6394,7 @@ export interface components {
              * @example https://example.com/schemas/OrgTokenCreateInputBody.json
              */
             readonly $schema?: string;
-            /** @description Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request) */
+            /** @description Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request, monitoring.read, alerts.handle, activity.read) */
             areas?: string[] | null;
             /** Format: date-time */
             expires_at?: string;
@@ -6432,6 +6433,34 @@ export interface components {
              */
             readonly $schema?: string;
             tokens: components["schemas"]["TokenDTO"][] | null;
+        };
+        OrgTokenUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgTokenUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Assistant tokens only: replaces the areas */
+            areas?: string[];
+            /**
+             * Format: date-time
+             * @description A new expiry; must be in the future
+             */
+            expires_at?: string;
+            /** @description The new name */
+            name?: string;
+            /** @description Remove the expiry */
+            never_expires?: boolean;
+        };
+        OrgTokenUpdateOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgTokenUpdateOutputBody.json
+             */
+            readonly $schema?: string;
+            token: components["schemas"]["TokenDTO"];
         };
         OrgUpdateInputBody: {
             /**
@@ -16432,6 +16461,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgTokenUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgTokenUpdateOutputBody"];
                 };
             };
             /** @description Error */

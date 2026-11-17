@@ -419,6 +419,7 @@ func TestTokensUpdate(t *testing.T) {
 		change   auth.TokenChange
 		wantErr  error
 		wantNoOp bool // the store must not be written
+		wantMsg  string
 		check    func(t *testing.T, before, after auth.Token)
 	}{
 		{name: "rename", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("renamed")},
@@ -458,6 +459,10 @@ func TestTokensUpdate(t *testing.T) {
 			wantErr: auth.ErrExpiryInPast, wantNoOp: true},
 		{name: "expiry exactly now", kind: auth.TokenKindAPI, change: auth.TokenChange{Expiry: auth.ExpirySet, ExpiresAt: &now},
 			wantErr: auth.ErrExpiryInPast, wantNoOp: true},
+		{name: "set expiry without a time", kind: auth.TokenKindAPI, change: auth.TokenChange{Expiry: auth.ExpirySet},
+			wantErr: auth.ErrInvalidInput, wantMsg: "an expiry is required", wantNoOp: true},
+		{name: "unknown expiry change", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("x"), Expiry: auth.ExpiryChange(99)},
+			wantErr: auth.ErrInvalidInput, wantMsg: "unknown expiry change", wantNoOp: true},
 		{name: "areas on an api token", kind: auth.TokenKindAPI, change: auth.TokenChange{Areas: areas("monitoring")},
 			wantErr: auth.ErrAreasOnAPIToken, wantNoOp: true},
 		{name: "empty areas", kind: auth.TokenKindAssistant, change: auth.TokenChange{Areas: areas()},
@@ -503,6 +508,9 @@ func TestTokensUpdate(t *testing.T) {
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+					t.Fatalf("err = %v, want it to contain %q", err, tc.wantMsg)
 				}
 				if tc.wantNoOp && store.updated != 0 {
 					t.Fatalf("store.Update called %d times on a refused change", store.updated)

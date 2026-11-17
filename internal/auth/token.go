@@ -299,8 +299,17 @@ func (t *Tokens) Update(ctx context.Context, orgID, id uuid.UUID, ch TokenChange
 			return Token{}, Token{}, ErrNoAreas
 		}
 	}
-	if ch.Expiry == ExpirySet && (ch.ExpiresAt == nil || !ch.ExpiresAt.After(now)) {
-		return Token{}, Token{}, ErrExpiryInPast
+	switch ch.Expiry {
+	case ExpiryKeep, ExpiryClear:
+	case ExpirySet:
+		if ch.ExpiresAt == nil {
+			return Token{}, Token{}, fmt.Errorf("%w: an expiry is required", ErrInvalidInput)
+		}
+		if !ch.ExpiresAt.After(now) {
+			return Token{}, Token{}, ErrExpiryInPast
+		}
+	default:
+		return Token{}, Token{}, fmt.Errorf("%w: unknown expiry change", ErrInvalidInput)
 	}
 	name, areas, expiresAt := before.Name, before.Areas, before.ExpiresAt
 	if ch.Name != nil {

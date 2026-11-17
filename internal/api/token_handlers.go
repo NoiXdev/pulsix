@@ -84,6 +84,25 @@ type orgTokenIDInput struct {
 	ID string `path:"id"`
 }
 
+type orgTokenUpdateInput struct {
+	Org  string `path:"org"`
+	ID   string `path:"id"`
+	Body struct {
+		Name *string `json:"name,omitempty" minLength:"1" doc:"The new name"`
+		// Areas is a pointer so that a present key, even an empty list, counts
+		// as a change request (an empty list is then refused).
+		Areas        *[]string  `json:"areas,omitempty" doc:"Assistant tokens only: replaces the areas"`
+		ExpiresAt    *time.Time `json:"expires_at,omitempty" doc:"A new expiry; must be in the future"`
+		NeverExpires bool       `json:"never_expires,omitempty" doc:"Remove the expiry"`
+	}
+}
+
+type orgTokenUpdateOutput struct {
+	Body struct {
+		Token tokenDTO `json:"token"`
+	}
+}
+
 // registerTokenRoutes wires org-scoped API token management: create (which
 // returns the plaintext once), list (metadata only) and revoke.
 //
@@ -182,6 +201,84 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "revoked API token")
 		return &okOutput{}, nil
 	}, withAudit("revokeToken", "token"))
+
+	// Editing a token needs an interactive session like creating one: a
+	// bearer token must not be able to widen its own areas or lengthen its
+	// own life.
+	huma.Patch(hapi, "/api/v1/orgs/{org}/tokens/{id}", func(ctx context.Context, in *orgTokenUpdateInput) (*orgTokenUpdateOutput, error) {
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
+		if err != nil {
+			return nil, err
+		}
+		id, err := uuid.Parse(in.ID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid token id")
+		}
+		if in.Body.ExpiresAt != nil && in.Body.NeverExpires {
+			return nil, huma.Error422UnprocessableEntity("expires_at and never_expires exclude each other")
+		}
+		tok, err := deps.Tokens.Get(ctx, scope.OrgID, id)
+		if err != nil {
+			return nil, mapTokenErr(ctx, err)
+		}
+		change := auth.TokenChange{Name: in.Body.Name, Areas: in.Body.Areas}
+		switch {
+		case in.Body.ExpiresAt != nil:
+			change.Expiry, change.ExpiresAt = auth.ExpirySet, in.Body.ExpiresAt
+		case in.Body.NeverExpires:
+			change.Expiry = auth.ExpiryClear
+		}
+		if in.Body.Areas != nil {
+			role := tenancy.Lower(scope.Role, tenancy.Role(tok.Role))
+			if err := validateTokenAreas(tok.Kind, role, *in.Body.Areas); err != nil {
+				return nil, err
+			}
+		}
+		before, after, err := deps.Tokens.Update(ctx, scope.OrgID, id, change)
+		if err != nil {
+			return nil, mapTokenErr(ctx, err)
+		}
+		setAuditObject(ctx, id.String(), tokenChangeSummary(before, after))
+		out := &orgTokenUpdateOutput{}
+		out.Body.Token = tokenDTO{
+			ID: after.ID.String(), Name: after.Name, Role: after.Role, Kind: string(after.Kind), Areas: after.Areas,
+			ExpiresAt: after.ExpiresAt, LastUsedAt: after.LastUsedAt, CreatedAt: after.CreatedAt,
+		}
+		return out, nil
+	}, withAudit("updateToken", "token"))
+}
+
+// tokenChangeSummary words an update for the activity feed: the old and the
+// new value of everything that differs.
+func tokenChangeSummary(before, after auth.Token) string {
+	head := "changed API token "
+	if before.Kind == auth.TokenKindAssistant {
+		head = "changed assistant token "
+	}
+	var parts []string
+	if before.Name != after.Name {
+		parts = append(parts, "name "+before.Name+" → "+after.Name)
+	}
+	if strings.Join(before.Areas, ", ") != strings.Join(after.Areas, ", ") {
+		parts = append(parts, "areas "+strings.Join(before.Areas, ", ")+" → "+strings.Join(after.Areas, ", "))
+	}
+	if expiryText(before.ExpiresAt) != expiryText(after.ExpiresAt) {
+		parts = append(parts, "expiry "+expiryText(before.ExpiresAt)+" → "+expiryText(after.ExpiresAt))
+	}
+	if len(parts) == 0 {
+		parts = []string{"no change"}
+	}
+	return head + before.Name + ": " + strings.Join(parts, "; ")
+}
+
+func expiryText(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // validateTokenAreas enforces the token create body's kind/areas shape: an
@@ -214,13 +311,16 @@ func validateTokenAreas(kind auth.TokenKind, role tenancy.Role, areas []string) 
 	return nil
 }
 
-// mapTokenErr is mapAuthErr plus one override, exactly like mapPasskeyErr:
+// mapTokenErr is mapAuthErr plus two overrides (ErrTokenExpired becomes 409), like mapPasskeyErr:
 // auth.ErrNotFound becomes 404 (an unknown token id, or one belonging to a
 // different org) rather than mapAuthErr's 401 "login required", since here
 // it never means "your own session is invalid".
 func mapTokenErr(ctx context.Context, err error) error {
 	if errors.Is(err, auth.ErrNotFound) {
 		return huma.Error404NotFound("not found")
+	}
+	if errors.Is(err, auth.ErrTokenExpired) {
+		return huma.Error409Conflict(err.Error())
 	}
 	return mapAuthErr(ctx, err)
 }
