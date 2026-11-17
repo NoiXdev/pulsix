@@ -73,6 +73,15 @@ describe('LockScreen', () => {
     other.close();
   });
 
+  it('treats a 409 not-locked answer as unlocked', async () => {
+    renderIt({
+      'POST /api/v1/auth/lock/unlock': () => new Response(JSON.stringify({ detail: 'not locked' }), { status: 409 }),
+    });
+    await userEvent.type(await screen.findByLabelText('PIN'), '1234');
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
+  });
+
   it('goes to /login with the notice when the fifth wrong PIN ends the session', async () => {
     const router = renderIt({
       'POST /api/v1/auth/lock/unlock': () => new Response(JSON.stringify({ detail: 'session ended' }), { status: 401 }),

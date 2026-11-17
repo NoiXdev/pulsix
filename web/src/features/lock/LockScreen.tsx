@@ -49,6 +49,14 @@ export function LockScreen() {
       await unlock.mutateAsync(pin);
     } catch (err) {
       setPin('');
+      if (err instanceof ApiError && err.status === 409) {
+        // Not locked after all (another tab unlocked, or signed in again):
+        // the server is the authority, so follow it.
+        await refetchMe(qc).catch(() => undefined);
+        setLocked(false);
+        void qc.invalidateQueries();
+        return;
+      }
       if (err instanceof ApiError && err.status === 401) {
         await leaveToLogin({ step: undefined, notice: 'lock_ended' });
         return;

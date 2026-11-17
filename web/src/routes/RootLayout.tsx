@@ -3,6 +3,8 @@ import { Outlet, useRouter, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { onPasswordChangeRequired, onSessionLocked } from '../api/client.ts';
 import { refetchMe, useMe } from '../api/hooks/useMe.ts';
+import { ConfirmProvider } from '../ui/confirm.tsx';
+import { QueryLoading } from '../ui/QueryState.tsx';
 import { LockScreen } from '../features/lock/LockScreen.tsx';
 import { onSessionMessage } from '../features/lock/lockChannel.ts';
 import { LockStateContext } from '../features/lock/lockState.ts';
@@ -44,6 +46,10 @@ export function RootLayout() {
   const me = useMe({ enabled: !publicPage });
   const [lockedHere, setLockedHere] = useState(false);
 
+  // Derived during render (React's reset-state-on-change pattern): a public
+  // page starts from an unlocked state.
+  if (publicPage && lockedHere) setLockedHere(false);
+
   const locked = !publicPage && (lockedHere || me.data?.locked === true);
 
   useEffect(
@@ -57,13 +63,21 @@ export function RootLayout() {
 
   const setLocked = useCallback((next: boolean) => setLockedHere(next), []);
 
-  useEffect(() => onSessionLocked(() => setLockedHere(true)), []);
+  // A lock signal means nothing on a page that has no session (a tab left
+  // on /login while another tab locked): signing in there starts a fresh,
+  // unlocked session.
+  const lockHere = useCallback(() => {
+    if (!isPublic(router.state.location.pathname)) setLockedHere(true);
+  }, [router]);
+
+  useEffect(() => onSessionLocked(lockHere), [lockHere]);
+
 
   useEffect(
     () =>
       onSessionMessage((msg) => {
         if (msg.type === 'locked') {
-          setLockedHere(true);
+          lockHere();
         } else if (msg.type === 'unlocked') {
           // Make /auth/me say unlocked before the page comes back.
           void refetchMe(qc)
@@ -74,7 +88,7 @@ export function RootLayout() {
             });
         }
       }),
-    [qc],
+    [qc, lockHere],
   );
 
   // The page is gone from the tree by now (this runs after the commit that
@@ -87,12 +101,26 @@ export function RootLayout() {
   const value = useMemo(() => ({ locked, setLocked }), [locked, setLocked]);
 
   // Until /auth/me has answered, a page that needs a session is not drawn:
-  // it may be one a lock must not show.
-  const waiting = !publicPage && me.isPending && !lockedHere;
+  // it may be one a lock must not show. Only while the fetch is actually
+  // running: offline it pauses and a failed one is over, and then the page
+  // handles it (useSettledMe's recovery, the page's own error state) — if
+  // /auth/me cannot be fetched its data cannot either, and a 403
+  // session_locked still locks.
+  const waiting = !publicPage && me.isPending && me.fetchStatus === 'fetching' && !lockedHere;
 
   return (
     <LockStateContext.Provider value={value}>
-      {locked ? <LockScreen /> : waiting ? null : <Outlet />}
+      {locked ? (
+        <LockScreen />
+      ) : waiting ? (
+        <QueryLoading />
+      ) : (
+        // The confirm dialog lives here, not above the router, so a lock
+        // unmounts it (its question resolves false) with the page it came from.
+        <ConfirmProvider>
+          <Outlet />
+        </ConfirmProvider>
+      )}
     </LockStateContext.Provider>
   );
 }

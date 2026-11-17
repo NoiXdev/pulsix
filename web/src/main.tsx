@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router.tsx';
 import { ToastProvider } from './ui/toast.tsx';
-import { ConfirmProvider } from './ui/confirm.tsx';
 import { I18nProvider } from './i18n/I18nProvider.tsx';
 import './styles/globals.css';
 
@@ -27,9 +26,7 @@ createRoot(rootEl).render(
           follows the language — and switches without a reload. */}
       <I18nProvider>
         <ToastProvider>
-          <ConfirmProvider>
-            <RouterProvider router={router} />
-          </ConfirmProvider>
+          <RouterProvider router={router} />
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>
