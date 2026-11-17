@@ -163,8 +163,18 @@ func TestFifthWrongPINEndsSession(t *testing.T) {
 	if !cleared {
 		t.Fatalf("the session cookie was not cleared: %v", resp.Header["Set-Cookie"])
 	}
+	// The SPA tells this 401 from "login required" by its detail
+	// (web/src/features/lock/LockScreen.tsx), so the string is contract.
+	if d := problemDetail(t, resp); d != "too many wrong pins" {
+		t.Fatalf("fifth attempt detail %q, want %q", d, "too many wrong pins")
+	}
 	if resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("/auth/me after the fifth failure: %d, want 401", resp.StatusCode)
+	}
+	// A session that is simply gone answers the ordinary 401, which the SPA
+	// must not take for the wrong-PIN end.
+	if resp := unlock(t, s, c, "1234"); resp.StatusCode != http.StatusUnauthorized || problemDetail(t, resp) != "login required" {
+		t.Fatalf("unlock of an ended session: %d, want 401 login required", resp.StatusCode)
 	}
 }
 
