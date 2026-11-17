@@ -6,6 +6,18 @@ export const enActivity = {
   anyActor: 'Actor: anyone',
   allTypes: 'all',
   empty: 'No activity recorded yet.',
+  /** Settings > My activity: what the signed-in person did, in every organization. */
+  my: {
+    title: 'My activity',
+    subtitle: 'What you did, in every organization you belong to.',
+    label: 'My activity',
+    at: 'When',
+    organization: 'Organization',
+    action: 'What happened',
+    object: 'Object',
+    count: (n: number) => (n === 1 ? '1 event' : `${n} events`),
+    empty: 'You have not done anything yet.',
+  },
   user: (id: string) => `user · ${id}`,
   /** The API token a change was made with. */
   viaToken: (name: string) => `via token ${name}`,

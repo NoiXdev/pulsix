@@ -1,6 +1,14 @@
 import type { Messages } from '../types.ts';
 
 export const deAccount: Messages['account'] = {
+  nav: {
+    label: 'Einstellungen',
+    back: (org: string) => `Zurück zu ${org}`,
+    security: 'Sicherheit',
+    appearance: 'Darstellung',
+    profile: 'Profil',
+    activity: 'Meine Aktivität',
+  },
   title: 'Sicherheit',
   secondFactorActive: 'zweiter Faktor aktiv',
   secondFactorRequired: 'zweiter Faktor erforderlich',

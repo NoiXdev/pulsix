@@ -2,7 +2,12 @@ import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/
 import { RootLayout } from './routes/RootLayout.tsx';
 import { RootRedirect } from './routes/RootRedirect.tsx';
 import { OrgLayout } from './routes/OrgLayout.tsx';
-import { AccountSecurityLayout } from './routes/AccountSecurityLayout.tsx';
+import { AccountLayout } from './routes/AccountLayout.tsx';
+import { AccountSecurityPage } from './features/account/AccountSecurityPage.tsx';
+import { AppearancePage } from './features/account/AppearancePage.tsx';
+import { ProfilePage } from './features/account/ProfilePage.tsx';
+import { MyActivityPage } from './features/account/MyActivityPage.tsx';
+import { validateListSearch } from './features/lists/listSearch.ts';
 import { EnrolmentLayout } from './routes/EnrolmentLayout.tsx';
 import { LoginPage } from './features/auth/LoginPage.tsx';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage.tsx';
@@ -94,10 +99,34 @@ const legacyInviteRoute = createRoute({
   },
 });
 
+// /account is the personal settings area: one layout (the shell with the
+// settings navigation) around Security, Appearance, Profile and My activity.
+// The forced pages below (/account/enrol, /password, /lock-pin) are not part
+// of it: they render without the shell.
+const accountRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account', component: AccountLayout });
+const accountIndexRoute = createRoute({
+  getParentRoute: () => accountRoute,
+  path: '/',
+  beforeLoad: () => {
+    throw redirect({ to: '/account/security', replace: true });
+  },
+});
 const accountSecurityRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/account/security',
-  component: AccountSecurityLayout,
+  getParentRoute: () => accountRoute,
+  path: '/security',
+  component: AccountSecurityPage,
+});
+const accountAppearanceRoute = createRoute({
+  getParentRoute: () => accountRoute,
+  path: '/appearance',
+  component: AppearancePage,
+});
+const accountProfileRoute = createRoute({ getParentRoute: () => accountRoute, path: '/profile', component: ProfilePage });
+const accountActivityRoute = createRoute({
+  getParentRoute: () => accountRoute,
+  path: '/activity',
+  validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+  component: MyActivityPage,
 });
 
 // /account/enrol is where a session whose account has no second factor yet
@@ -279,7 +308,7 @@ const routeTree = rootRoute.addChildren([
   resetPasswordRoute,
   inviteRoute,
   legacyInviteRoute,
-  accountSecurityRoute,
+  accountRoute.addChildren([accountIndexRoute, accountSecurityRoute, accountAppearanceRoute, accountProfileRoute, accountActivityRoute]),
   enrolRoute,
   lockPinRoute,
   changePasswordRoute,

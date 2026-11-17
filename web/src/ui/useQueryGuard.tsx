@@ -62,7 +62,7 @@ const FINAL_STATUSES = new Set([401, 403, 404]);
  *   if (guard) return guard;
  *   if (!host.data) return <QueryLoading />;
  *
- * A layout with several queries (OrgLayout, AccountSecurityLayout) calls
+ * A layout with several queries (OrgLayout, AccountLayout) calls
  * this once per query and returns the first non-null guard.
  *
  * `options.enabled` (default true) lets a page opt a query out entirely —

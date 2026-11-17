@@ -33,7 +33,7 @@ export const enShell = {
     label: 'Search hosts',
   },
   accountMenu: 'Account menu',
-  accountSecurity: 'Account security',
+  settingsMenu: 'Settings',
   logOut: 'Log out',
   // The explorer the server serves at /api/explorer (backlog 1.8, 3.91).
   apiExplorer: 'API explorer',

@@ -8,7 +8,7 @@ import { loginSearchAfter401 } from '../lib/sessionEnd.ts';
 
 /**
  * QueryError is the one place that decides what a failed query renders —
- * finding "Important 7": OrgLayout, AccountSecurityLayout, HostDetailPage
+ * finding "Important 7": OrgLayout, AccountLayout, HostDetailPage
  * and MembersPage each independently rendered nothing for a query error
  * (staying on "Loading…" forever, 401 included), and HostsListPage showed
  * "No hosts yet" on an error rather than reporting it. A 401 means the

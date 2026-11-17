@@ -1,5 +1,7 @@
 import { enAccount } from './account.ts';
 import { enActivity } from './activity.ts';
+import { enAppearance } from './appearance.ts';
+import { enProfile } from './profile.ts';
 import { enAgents } from './agents.ts';
 import { enAlerts } from './alerts.ts';
 import { enAuth } from './auth.ts';
@@ -52,6 +54,8 @@ import { enWorkers } from './workers.ts';
 export const en = {
   account: enAccount,
   activity: enActivity,
+  appearance: enAppearance,
+  profile: enProfile,
   agents: enAgents,
   alerts: enAlerts,
   auth: enAuth,

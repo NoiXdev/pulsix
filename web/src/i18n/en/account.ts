@@ -6,6 +6,15 @@
  * a new password typed twice are `auth.*`, shared with the reset page.
  */
 export const enAccount = {
+  /** The personal settings area's sidebar (ui/shell-nav.tsx). */
+  nav: {
+    label: 'Settings',
+    back: (org: string) => `Back to ${org}`,
+    security: 'Security',
+    appearance: 'Appearance',
+    profile: 'Profile',
+    activity: 'My activity',
+  },
   title: 'Security',
   secondFactorActive: 'second factor active',
   secondFactorRequired: 'second factor required',

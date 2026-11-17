@@ -136,3 +136,25 @@ describe('the run request pages', () => {
     expect(router.state.matches.some((m) => m.routeId.endsWith('/runs/requests/$id'))).toBe(true);
   });
 });
+
+describe('the personal settings area', () => {
+  it('sends /account to Security', async () => {
+    expect(await settledAt('/account')).toBe('/account/security');
+  });
+
+  it.each(['security', 'appearance', 'profile', 'activity'])('has the %s page inside the account layout', async (page) => {
+    expect(await settledAt(`/account/${page}`)).toBe(`/account/${page}`);
+    expect(router.state.matches.map((m) => m.routeId)).toEqual(['__root__', '/account', `/account/${page}`]);
+  });
+
+  it('keeps the sort, order and page of My activity in the URL', async () => {
+    await router.navigate({ to: '/account/activity', search: { sort: 'at', order: 'asc', page: 2 } });
+    await router.load();
+    expect(router.state.location.search).toEqual({ sort: 'at', order: 'asc', page: 2 });
+  });
+
+  it.each(['/account/enrol', '/account/password', '/account/lock-pin'])('leaves %s outside the layout, without the shell', async (path) => {
+    expect(await settledAt(path)).toBe(path);
+    expect(router.state.matches.map((m) => m.routeId)).toEqual(['__root__', path]);
+  });
+});

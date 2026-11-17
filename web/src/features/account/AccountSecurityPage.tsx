@@ -13,7 +13,6 @@ import { registerPasskey } from '../auth/passkeys.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useStepUp } from './stepUp.tsx';
-import { LanguageCard } from './LanguageCard.tsx';
 import { PasswordCard } from './PasswordCard.tsx';
 import { LockPinCard } from './LockPinCard.tsx';
 
@@ -43,11 +42,11 @@ import { LockPinCard } from './LockPinCard.tsx';
  *    exists.
  *
  * The page serves two layouts: the account security page inside the app
- * shell (AccountSecurityLayout) and second-factor enrolment for an account
+ * shell (AccountLayout) and second-factor enrolment for an account
  * that has none yet (EnrolmentLayout, which passes onEnrolled).
  *
- * The Password and Language cards (backlog 7.74 and 1.41) sit below the
- * factor cards on the account page only.
+ * The Password and lock PIN cards (backlog 7.74) sit below the factor
+ * cards on the account page only. The Language card moved to Appearance.
  *
  * onEnrolled, when given, is called once the
  * account has just gained a second factor and the user is done with this
@@ -290,7 +289,6 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             onEnrolled): that page has one job. */}
         {!onEnrolled && <PasswordCard />}
         {!onEnrolled && <LockPinCard />}
-        {!onEnrolled && <LanguageCard />}
       </div>
       {stepUp.dialog}
     </>

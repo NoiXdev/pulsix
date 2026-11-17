@@ -1,5 +1,6 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import type { ServerPageQuery } from './paging.ts';
 
 export interface ActivityFilter {
   actor?: string;
@@ -41,5 +42,34 @@ export function useOrgActivity(org: string, filter: ActivityFilter = {}) {
       ),
     getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: !!org,
+  });
+}
+
+/**
+ * useMyActivityPage is the signed-in person's own activity across every
+ * organization, one numbered page per request (the API's page mode, which
+ * also answers the total). The previous page stays on screen while the next
+ * one loads. `enabled` waits for the list's preferences (useListView's
+ * `ready`), so the first request already has the person's page size.
+ */
+export function useMyActivityPage(filter: Pick<ActivityFilter, 'objectType'>, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['my-activity', filter, page],
+    queryFn: () =>
+      unwrap(
+        api.GET('/api/v1/me/activity', {
+          params: {
+            query: {
+              object_type: filter.objectType || undefined,
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as 'at' | undefined,
+              order: page.order,
+            },
+          },
+        }),
+      ),
+    placeholderData: keepPreviousData,
+    enabled: opts.enabled ?? true,
   });
 }

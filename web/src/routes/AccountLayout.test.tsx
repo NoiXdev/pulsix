@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
-import { AccountSecurityLayout } from './AccountSecurityLayout.tsx';
+import { AccountLayout } from './AccountLayout.tsx';
+import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
+import { rememberOrg } from '../lib/lastOrg.ts';
 
 function renderAt(initialPath = '/account/security', qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const rootRoute = createRootRoute();
-  const securityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/security', component: AccountSecurityLayout });
+  const accountRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account', component: AccountLayout });
+  const securityRoute = createRoute({ getParentRoute: () => accountRoute, path: '/security', component: AccountSecurityPage });
+  const appearanceRoute = createRoute({ getParentRoute: () => accountRoute, path: '/appearance', component: () => <div>APPEARANCE PAGE</div> });
+  const hostsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/o/$org/hosts',
+    validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
+    component: () => <div>HOSTS PAGE</div>,
+  });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/login',
@@ -22,22 +32,37 @@ function renderAt(initialPath = '/account/security', qc = new QueryClient({ defa
     path: '/account/password',
     component: () => <div>CHANGE PASSWORD</div>,
   });
-  const routeTree = rootRoute.addChildren([securityRoute, loginRoute, enrolRoute, passwordRoute]);
+  const routeTree = rootRoute.addChildren([accountRoute.addChildren([securityRoute, appearanceRoute]), hostsRoute, loginRoute, enrolRoute, passwordRoute]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
 
-  return render(
+  const result = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return { ...result, router };
 }
 
 const ORGS = { orgs: [{ id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' }] };
+const TWO_ORGS = {
+  orgs: [
+    { id: 'o1', slug: 'acme', name: 'Acme', role: 'owner', created_at: '2026-01-01T00:00:00Z' },
+    { id: 'o2', slug: 'beta', name: 'Beta', role: 'viewer', created_at: '2026-01-01T00:00:00Z' },
+  ],
+};
+const ME = {
+  user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+  mfa_complete: true,
+  totp_confirmed: true,
+  instance_admin: true,
+};
 
-describe('AccountSecurityLayout', () => {
-  it('renders inside the shell with Account / Security breadcrumbs and the real security page', async () => {
+afterEach(() => sessionStorage.clear());
+
+describe('AccountLayout', () => {
+  it('renders inside the shell with Settings / Security breadcrumbs and the real security page', async () => {
     mockApi({
       'GET /api/v1/auth/me': {
         user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
@@ -52,8 +77,10 @@ describe('AccountSecurityLayout', () => {
     renderAt();
 
     expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
-    expect(screen.getByText('Account')).toBeInTheDocument();
     expect(screen.getByText('second factor active')).toBeInTheDocument();
+    const crumbs = screen.getByRole('banner');
+    expect(within(crumbs).getByText('Settings')).toBeInTheDocument();
+    expect(within(crumbs).getByText('Security')).toBeInTheDocument();
   });
 
   it('sends a session whose account has no second factor yet to enrolment, without requesting organizations', async () => {
@@ -144,25 +171,45 @@ describe('AccountSecurityLayout', () => {
     await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
   });
 
-  it.each([
-    [true, ['Acme Hosting', 'New organization']],
-    [false, ['Acme Hosting']],
-  ])('offers the org switcher a create entry only to an instance admin (admin: %s)', async (admin, labels) => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/auth/me': {
-        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
-        mfa_complete: true,
-        totp_confirmed: true,
-        instance_admin: admin,
-      },
-      'GET /api/v1/orgs': ORGS,
-      'GET /api/v1/auth/passkeys': { passkeys: [] },
-    });
+  it('shows the settings navigation: back link, name and role, the four pages and no organization switcher', async () => {
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/orgs': TWO_ORGS, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
     renderAt();
 
-    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
-    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual(labels);
+    const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
+    expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
+    expect(within(nav).getByText('Owner')).toBeInTheDocument();
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Back to Acme', 'Security', 'Appearance', 'Profile', 'My activity']);
+    expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Hosts' })).not.toBeInTheDocument();
+  });
+
+  it('goes back to the organization the person came from, with their role there', async () => {
+    rememberOrg('beta');
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/orgs': TWO_ORGS, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    renderAt();
+
+    const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    expect(within(nav).getByRole('link', { name: 'Back to Beta' })).toHaveAttribute('href', '/o/beta/hosts');
+    expect(within(nav).getByText('Viewer')).toBeInTheDocument();
+  });
+
+  it('falls back to the first organization when the remembered one is not one of theirs', async () => {
+    rememberOrg('gone');
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/orgs': TWO_ORGS, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    renderAt();
+
+    expect(await screen.findByRole('link', { name: 'Back to Acme' })).toBeInTheDocument();
+  });
+
+  it('follows the navigation to the other pages and names them in the breadcrumbs', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/orgs': TWO_ORGS, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    renderAt();
+
+    await user.click(await screen.findByRole('link', { name: 'Appearance' }));
+    expect(await screen.findByText('APPEARANCE PAGE')).toBeInTheDocument();
+    expect(within(screen.getByRole('banner')).getByText('Appearance')).toBeInTheDocument();
   });
 });
-

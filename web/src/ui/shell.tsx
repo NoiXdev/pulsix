@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Activity, Bell, CalendarClock, ClipboardList, Cpu, FileCode2, Gauge, GitBranch, KeyRound, Layers, Lock, MoreHorizontal, Play, Radio, Search, Server, Settings as SettingsIcon, Waypoints, Wrench } from 'lucide-react';
+import { Bell, Lock, MoreHorizontal, Search } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
-import { NavGroup } from './NavGroup.tsx';
 import { Select } from './Select.tsx';
-import { may } from '../lib/roles.ts';
+import { OrgNav, SettingsNav } from './shell-nav.tsx';
 import { useT } from '../i18n/useT.ts';
 
 export interface ShellOrg {
@@ -20,6 +19,15 @@ export interface ShellUser {
   /** e.g. "Owner · passkey" — role plus second-factor hint, matching the
    * mockup's sidebar footer. */
   subtitle: string;
+}
+
+/** The personal settings area's sidebar: a way back, who the person is and
+ * the pages of the area (see SettingsNav). */
+export interface ShellSettingsNav {
+  /** The organization "Back to …" returns to. */
+  backOrg: ShellOrg;
+  personName: string;
+  personRole: string;
 }
 
 export interface AppShellProps {
@@ -52,24 +60,11 @@ export interface AppShellProps {
   /** A strip in the normal flow between the header and the page (e.g. the
    * new-version banner); it takes its own space. */
   notice?: ReactNode;
+  /** Present: the sidebar shows the settings navigation instead of the
+   * organization switcher and navigation. */
+  settingsNav?: ShellSettingsNav;
   children: ReactNode;
 }
-
-const ACTIVE_LINK =
-  'flex h-9 items-center gap-2.5 rounded-md bg-background px-3 font-semibold text-foreground shadow-[inset_2px_0_0_var(--px-accent)]';
-const INACTIVE_LINK = 'flex h-9 items-center gap-2.5 rounded-md px-3 font-medium text-muted-foreground hover:text-foreground';
-
-/** The three props every sidebar link repeats. `activeOptions.exact:
- * false` is what lets one entry mark itself on a whole section (Checks
- * on /checks/monitoring-groups, Settings on /settings/members); the
- * router derives the match from the route, never from the pathname
- * (finding "Important 11"). Spread first, so an entry that needs its own
- * activeOptions can override them. */
-const NAV_LINK_PROPS = {
-  activeOptions: { exact: false },
-  activeProps: { className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' },
-  inactiveProps: { className: INACTIVE_LINK },
-} as const;
 
 /** displayVersion prefixes a numeric release version with "v" ("0.1.0"
  * reads "v0.1.0"); one that already has it, or a build name such as
@@ -111,7 +106,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, crumbs, user, onLogout, version, pendingRunRequests, notice, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, crumbs, user, onLogout, version, pendingRunRequests, notice, settingsNav, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -147,171 +142,38 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
           )}
         </div>
 
-        {/* The switcher is handed the organizations the signed-in user
-            belongs to. A create row ends it only when the caller passes
-            onCreateOrg, which is for instance admins alone: an organization
-            is the most deliberate object in the product (v0.4g Move 3). */}
-        {/* The <label> is a sibling of Select, not a wrapper around it, with
-            htmlFor carrying the association instead: an <li role="option">
-            in the dropdown below is not interactive content, so wrapping it
-            inside the label would make clicking a row trigger the label's
-            own activation behaviour — a synthetic click at the input that
-            reopens the list downshift just closed (its InputClick reducer
-            toggles isOpen unconditionally). A native <select> was
-            interactive content, so this never showed up there. Nesting also
-            pollutes the label's own computed text with whatever text content
-            Select renders inside itself (its toggle button's sr-only "Open"
-            label, for one), which a sibling avoids outright. */}
-        <div className="mx-3 mt-3 mb-1 flex flex-col gap-0.5 text-left">
-          <label htmlFor="org-switcher" className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-            {t.shell.organization}
-          </label>
-          <Select
-            id="org-switcher"
-            options={(orgs.length > 0 ? orgs : [org]).map((o) => ({ value: o.slug, label: o.name }))}
-            value={org.slug}
-            onChange={onSelectOrg}
-            create={onCreateOrg ? { label: t.shell.newOrganization, onSelect: onCreateOrg } : undefined}
-          />
-        </div>
-
-        {/* The three headings and their spacing add about 100px to a
-            sidebar that already ran to roughly 700px on fourteen
-            entries, so the nav scrolls on its own rather than pushing
-            the account footer off a short viewport. min-h-0 is what
-            lets a flex child shrink below its content height at all. */}
-        <nav className="flex min-h-0 flex-col overflow-y-auto px-3 py-2">
-          <NavGroup label={t.shell.nav.infrastructure}>
-            <Link to="/o/$org/hosts" params={{ org: org.slug }} search={{ q: undefined }} {...NAV_LINK_PROPS}>
-              <Server size={16} />
-              <span className="flex-1">{t.shell.nav.hosts}</span>
-            </Link>
-            <Link to="/o/$org/groups" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <Layers size={16} />
-              <span className="flex-1">{t.shell.nav.groups}</span>
-            </Link>
-            {/* Jump hosts and Credentials were Settings tabs until v0.4f.
-                They are how a run reaches a host, not a property of the
-                installation, so they belong beside the hosts they serve —
-                and their routes moved out of /settings with them. */}
-            <Link to="/o/$org/jump-hosts" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <Waypoints size={16} />
-              <span className="flex-1">{t.shell.nav.jumpHosts}</span>
-            </Link>
-            <Link to="/o/$org/credentials" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <KeyRound size={16} />
-              <span className="flex-1">{t.shell.nav.credentials}</span>
-            </Link>
-            {may(org.role, 'agents.read') && (
-              <Link to="/o/$org/agents" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-                <Radio size={16} />
-                <span className="flex-1">{t.shell.nav.agents}</span>
-              </Link>
-            )}
-            {may(org.role, 'workers.read') && (
-              <Link to="/o/$org/workers" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-                <Cpu size={16} />
-                <span className="flex-1">{t.shell.nav.workers}</span>
-              </Link>
-            )}
-          </NavGroup>
-
-          <NavGroup label={t.shell.nav.monitoring}>
-            {/* Fleet (v0.3b-2) is a view across every host's own monitoring
-                state, gated on the same checks.read the rest of the rule
-                surface uses — a viewer reads it, same as the Checks entry
-                below. */}
-            {may(org.role, 'checks.read') && (
-              <Link to="/o/$org/fleet" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-                <Gauge size={16} />
-                <span className="flex-1">{t.shell.nav.fleet}</span>
-              </Link>
-            )}
-            {/* Alerts (v0.4a) is the durable-episode view beside Fleet's own
-                live roll-up — same checks.read bar as Fleet and Checks, since
-                it is a read of what the rule engine already concluded.
-
-                Unscoped: the sidebar's own entry point is the full
-                organization-wide list, never a host — host-scoping comes
-                only from HostAlertsCard's own link, which sets this. */}
-            {may(org.role, 'checks.read') && (
-              <Link to="/o/$org/alerts" params={{ org: org.slug }} search={{ host: undefined }} {...NAV_LINK_PROPS}>
-                <Bell size={16} />
-                <span className="flex-1">{t.shell.nav.alerts}</span>
-              </Link>
-            )}
-            {/* Checks (v0.3b-1) covers both the definitions and the
-                monitoring groups they bind to, which live under /checks as
-                a tab strip rather than as a second sidebar entry — see
-                router.tsx's checksRoute. checks.read is a viewer's right,
-                so this is gated only so that a session whose role has not
-                loaded yet is not offered a page it cannot open. */}
-            {may(org.role, 'checks.read') && (
-              <Link to="/o/$org/checks" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-                <Activity size={16} />
-                <span className="flex-1">{t.shell.nav.checks}</span>
-              </Link>
-            )}
-            <Link to="/o/$org/maintenance" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <Wrench size={16} />
-              <span className="flex-1">{t.shell.nav.maintenance}</span>
-            </Link>
-          </NavGroup>
-
-          <NavGroup label={t.shell.nav.automation}>
-            <Link to="/o/$org/repos" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <GitBranch size={16} />
-              <span className="flex-1">{t.shell.nav.repositories}</span>
-            </Link>
-            <Link to="/o/$org/playbooks" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <FileCode2 size={16} />
-              <span className="flex-1">{t.shell.nav.playbooks}</span>
-            </Link>
-            <Link to="/o/$org/templates" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <ClipboardList size={16} />
-              <span className="flex-1">{t.shell.nav.templates}</span>
-            </Link>
-            <Link
-              to="/o/$org/schedules"
-              params={{ org: org.slug }}
-              search={{ id: undefined, template: undefined }}
-              {...NAV_LINK_PROPS}
-              activeOptions={{ exact: false, includeSearch: false }}
-            >
-              <CalendarClock size={16} />
-              <span className="flex-1">{t.shell.nav.schedules}</span>
-            </Link>
-            <Link
-              to="/o/$org/runs"
-              params={{ org: org.slug }}
-              search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined, host: undefined }}
-              {...NAV_LINK_PROPS}
-            >
-              <Play size={16} />
-              <span className="flex-1">{t.shell.nav.runs}</span>
-              {pendingRunRequests !== undefined && pendingRunRequests > 0 && (
-                <>
-                  <span
-                    aria-hidden="true"
-                    className="rounded-full bg-primary px-2 py-px font-mono text-[11px] font-semibold text-primary-foreground"
-                  >
-                    {pendingRunRequests}
-                  </span>
-                  <span className="sr-only">{t.shell.nav.runRequestsBadge(pendingRunRequests)}</span>
-                </>
-              )}
-            </Link>
-          </NavGroup>
-
-          {/* Settings stays one ungrouped entry: a heading over a single
-              link would name a group of one. */}
-          <div className="mt-4 flex flex-col gap-0.5">
-            <Link to="/o/$org/settings" params={{ org: org.slug }} {...NAV_LINK_PROPS}>
-              <SettingsIcon size={16} />
-              <span className="flex-1">{t.shell.nav.settings}</span>
-            </Link>
-          </div>
-        </nav>
+        {!settingsNav && (
+          <>
+            {/* The switcher is handed the organizations the signed-in user
+                belongs to. A create row ends it only when the caller passes
+                onCreateOrg, which is for instance admins alone: an organization
+                is the most deliberate object in the product (v0.4g Move 3). */}
+            {/* The <label> is a sibling of Select, not a wrapper around it, with
+                htmlFor carrying the association instead: an <li role="option">
+                in the dropdown below is not interactive content, so wrapping it
+                inside the label would make clicking a row trigger the label's
+                own activation behaviour — a synthetic click at the input that
+                reopens the list downshift just closed (its InputClick reducer
+                toggles isOpen unconditionally). A native <select> was
+                interactive content, so this never showed up there. Nesting also
+                pollutes the label's own computed text with whatever text content
+                Select renders inside itself (its toggle button's sr-only "Open"
+                label, for one), which a sibling avoids outright. */}
+            <div className="mx-3 mt-3 mb-1 flex flex-col gap-0.5 text-left">
+              <label htmlFor="org-switcher" className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                {t.shell.organization}
+              </label>
+              <Select
+                id="org-switcher"
+                options={(orgs.length > 0 ? orgs : [org]).map((o) => ({ value: o.slug, label: o.name }))}
+                value={org.slug}
+                onChange={onSelectOrg}
+                create={onCreateOrg ? { label: t.shell.newOrganization, onSelect: onCreateOrg } : undefined}
+              />
+            </div>
+          </>
+        )}
+        {settingsNav ? <SettingsNav nav={settingsNav} /> : <OrgNav org={org} pendingRunRequests={pendingRunRequests} />}
 
         <div className="mt-auto flex items-center gap-2.5 border-t border-border px-4 py-3.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
@@ -334,7 +196,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
                 to="/account/security"
                 className="rounded px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-background"
               >
-                {t.shell.accountSecurity}
+                {t.shell.settingsMenu}
               </Link>
               {/* Served by the manager, not an SPA route: a plain link. It
                   answers only an MFA-complete session, like the shell. */}

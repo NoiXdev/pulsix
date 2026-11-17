@@ -1,6 +1,8 @@
 import type { Messages } from '../types.ts';
 import { deAccount } from './account.ts';
 import { deActivity } from './activity.ts';
+import { deAppearance } from './appearance.ts';
+import { deProfile } from './profile.ts';
 import { deAgents } from './agents.ts';
 import { deAlerts } from './alerts.ts';
 import { deAuth } from './auth.ts';
@@ -66,6 +68,8 @@ import { deWorkers } from './workers.ts';
 export const de: Messages = {
   account: deAccount,
   activity: deActivity,
+  appearance: deAppearance,
+  profile: deProfile,
   agents: deAgents,
   alerts: deAlerts,
   auth: deAuth,

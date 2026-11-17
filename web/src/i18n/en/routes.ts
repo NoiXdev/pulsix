@@ -3,8 +3,6 @@ export const enRoutes = {
   noOrganization: 'This account does not belong to any organization yet.',
   noOrganizationInvite: 'This account does not belong to any organization yet. Ask an administrator to invite you.',
   accountSecurity: {
-    crumbAccount: 'Account',
-    crumbSecurity: 'Security',
     secondFactorActive: 'Second factor active',
     secondFactorRequired: 'Second factor required',
   },

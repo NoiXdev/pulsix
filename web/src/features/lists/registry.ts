@@ -15,6 +15,7 @@ import type { Messages } from '../../i18n/types.ts';
 const LISTS = {
   hosts: ['state', 'name', 'zone', 'tags', 'managed', 'monitored', 'last_seen', 'active_runs', 'agent_version', 'os'],
   runs: ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
+  'my-activity': ['at', 'organization', 'action', 'object'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

@@ -8,7 +8,7 @@ import {
   createMemoryHistory,
   RouterProvider,
 } from '@tanstack/react-router';
-import { AppShell, type ShellOrg } from './shell.tsx';
+import { AppShell, type ShellOrg, type ShellSettingsNav } from './shell.tsx';
 
 const ORGS: ShellOrg[] = [
   { slug: 'acme', name: 'Acme Hosting' },
@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; onLockSession?: () => void; version?: string; pendingRunRequests?: number } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; onLockSession?: () => void; version?: string; pendingRunRequests?: number; settingsNav?: ShellSettingsNav } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -40,6 +40,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
           onLockSession={opts.onLockSession}
           version={opts.version}
           pendingRunRequests={opts.pendingRunRequests}
+          settingsNav={opts.settingsNav}
         >
           <div>page content</div>
         </AppShell>
@@ -58,6 +59,10 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
     leaf('/o/$org/settings/members'),
     leaf('/o/$org/settings/activity'),
     leaf('/o/$org/settings/tokens'),
+    leaf('/account/security'),
+    leaf('/account/appearance'),
+    leaf('/account/profile'),
+    leaf('/account/activity'),
   ]);
 
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
@@ -166,7 +171,7 @@ describe('AppShell', () => {
     expect(hostsLink).toHaveAttribute('data-nav-active', 'true');
     expect(hostsLink).toHaveAttribute('aria-current', 'page');
 
-    const settingsLink = screen.getByRole('link', { name: /Settings/ });
+    const settingsLink = within(screen.getByRole('navigation')).getByRole('link', { name: /Settings/ });
     expect(settingsLink).not.toHaveAttribute('data-nav-active');
 
     const groupsLink = screen.getByRole('link', { name: /Groups/ });
@@ -196,7 +201,7 @@ describe('AppShell', () => {
   it('marks Settings active for every route nested under /settings (Members, Activity, Tokens)', async () => {
     for (const path of ['/o/acme/settings/members', '/o/acme/settings/activity', '/o/acme/settings/tokens']) {
       const { unmount } = renderShellAt(path);
-      expect(await screen.findByRole('link', { name: /Settings/ })).toHaveAttribute('data-nav-active', 'true');
+      expect(within(await screen.findByRole('navigation')).getByRole('link', { name: /Settings/ })).toHaveAttribute('data-nav-active', 'true');
       expect(screen.getByRole('link', { name: /Hosts/ })).not.toHaveAttribute('data-nav-active');
       unmount();
     }
@@ -210,17 +215,20 @@ describe('AppShell', () => {
     // router's own route-based matching must not repeat that mistake.
     renderShellAt('/o/hosts-inc/settings/members');
 
-    expect(await screen.findByRole('link', { name: /Settings/ })).toHaveAttribute('data-nav-active', 'true');
+    expect(within(await screen.findByRole('navigation')).getByRole('link', { name: /Settings/ })).toHaveAttribute('data-nav-active', 'true');
     expect(screen.getByRole('link', { name: /Hosts/ })).not.toHaveAttribute('data-nav-active');
   });
 
-  it('the footer menu links to account security and can log out', async () => {
+  it('the footer menu links to the settings and can log out', async () => {
     const user = userEvent.setup();
     const onLogout = vi.fn();
     renderShellAt('/o/acme/hosts', { onLogout });
 
     await user.click(await screen.findByRole('button', { name: 'Account menu' }));
-    expect(screen.getByRole('link', { name: 'Account security' })).toHaveAttribute('href', '/account/security');
+    // The org nav has a "Settings" entry too: scope to the account menu.
+    const menu = screen.getByRole('button', { name: 'Account menu' }).closest('details') as HTMLElement;
+    expect(within(menu).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/account/security');
+    expect(within(menu).queryByRole('link', { name: 'Account security' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Log out' }));
     expect(onLogout).toHaveBeenCalledOnce();
@@ -280,7 +288,7 @@ describe('AppShell nav grouping', () => {
     renderShellAt('/o/acme/hosts');
     await screen.findByText('page content');
     expect(screen.queryByRole('group', { name: 'Settings' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation')).getByRole('link', { name: /Settings/ })).toBeInTheDocument();
   });
 
   it.each([
@@ -314,5 +322,29 @@ describe('AppShell nav grouping', () => {
     await screen.findByText('page content');
     expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument();
     expect(screen.queryByText(/pending run requests/)).not.toBeInTheDocument();
+  });
+
+  describe('with the settings navigation', () => {
+    const settingsNav: ShellSettingsNav = { backOrg: { slug: 'acme', name: 'Acme' }, personName: 'Tim R.', personRole: 'Owner' };
+
+    it('replaces the organization switcher and navigation by the back link, the person and the pages', async () => {
+      renderShellAt('/account/appearance', { settingsNav });
+
+      const nav = await screen.findByRole('navigation', { name: 'Settings' });
+      expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
+      expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
+      expect(within(nav).getByText('Owner')).toBeInTheDocument();
+      expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute('data-nav-active', 'true');
+      expect(within(nav).getByRole('link', { name: 'Security' })).not.toHaveAttribute('data-nav-active');
+      expect(within(nav).getByRole('link', { name: 'Profile' })).toHaveAttribute('href', '/account/profile');
+      expect(within(nav).getByRole('link', { name: 'My activity' })).toHaveAttribute('href', '/account/activity');
+      expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /^Hosts/ })).not.toBeInTheDocument();
+    });
+
+    it('keeps the account footer menu', async () => {
+      renderShellAt('/account/security', { settingsNav });
+      expect(await screen.findByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+    });
   });
 });

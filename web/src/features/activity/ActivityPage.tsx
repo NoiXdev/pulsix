@@ -7,13 +7,8 @@ import { Select } from '../../ui/Select.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useFormat, type Format } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
-
-const OBJECT_TYPES = [
-  'host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite',
-  // Automation (spec 2026-09-18 §8): a scheduled run is recorded against
-  // its job template.
-  'job_template', 'job', 'schedule', 'trigger', 'worker', 'channel', 'maintenance',
-];
+import { ObjectTypeChips } from './ObjectTypeChips.tsx';
+import { known } from './objectTypes.ts';
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's
@@ -76,10 +71,7 @@ export function ActivityPage() {
           onChange={setActorId}
           placeholder={t.activity.anyActor}
         />
-        <Chip label={t.activity.allTypes} on={objectType === ''} onClick={() => setObjectType('')} />
-        {OBJECT_TYPES.map((type) => (
-          <Chip key={type} label={known(t.activity.objectTypes, type)} on={objectType === type} onClick={() => setObjectType(type)} />
-        ))}
+        <ObjectTypeChips value={objectType} onChange={setObjectType} />
       </div>
 
       <div className="flex shrink-0 flex-col overflow-clip rounded-[10px] border border-border bg-card">
@@ -113,28 +105,6 @@ export function ActivityPage() {
       )}
     </>
   );
-}
-
-function Chip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        on
-          ? 'flex h-[30px] items-center rounded-md border border-brand/40 bg-brand/10 px-3 text-xs font-medium text-brand'
-          : 'flex h-[30px] items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-muted-foreground'
-      }
-    >
-      {label}
-    </button>
-  );
-}
-
-/** known is the catalogue's label for a value the API sends, or the value
- * itself when it is one this page has no label for (a newer server). */
-function known(labels: Record<string, string>, value: string): string {
-  return Object.hasOwn(labels, value) ? labels[value] : value;
 }
 
 function groupByDay<T extends { at: string }>(items: T[], fmt: Format): Array<[string, T[]]> {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
@@ -12,6 +12,7 @@ import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
+import { rememberOrg } from '../lib/lastOrg.ts';
 import { useT } from '../i18n/useT.ts';
 import { useLockAction } from '../features/lock/useLockAction.tsx';
 import { roleLabel } from '../i18n/roleLabel.ts';
@@ -57,6 +58,13 @@ export function OrgLayout() {
   // The pending run requests beside Runs, polled; a failed read just shows
   // no badge rather than standing in the way of the page.
   const pendingRunRequests = usePendingRunRequestCount(orgSlug, { enabled: complete });
+
+  // The personal settings area is outside any organization; its "Back"
+  // link returns to the one this person was in.
+  const orgLoaded = !!org.data;
+  useEffect(() => {
+    if (orgLoaded) rememberOrg(orgSlug);
+  }, [orgLoaded, orgSlug]);
 
   const meGuard = useQueryGuard(me);
   const orgGuard = useQueryGuard(org);

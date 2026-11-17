@@ -5,8 +5,6 @@ export const deRoutes: Messages['routes'] = {
   noOrganizationInvite:
     'Dieses Konto gehört noch keiner Organisation an. Ein Admin kann eine Einladung ausstellen.',
   accountSecurity: {
-    crumbAccount: 'Konto',
-    crumbSecurity: 'Sicherheit',
     secondFactorActive: 'Zweiter Faktor aktiv',
     secondFactorRequired: 'Zweiter Faktor erforderlich',
   },

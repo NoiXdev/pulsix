@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,7 +6,10 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { I18nProvider } from '../i18n/I18nProvider.tsx';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
+import { lastOrg } from '../lib/lastOrg.ts';
 import { OrgLayout } from './OrgLayout.tsx';
+
+afterEach(() => sessionStorage.clear());
 
 const ME_OK = {
   user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
@@ -54,6 +57,18 @@ function renderAt(initialPath: string, locale?: 'de') {
 }
 
 describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
+  it('remembers the organization, so the settings area can lead back to it', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(lastOrg()).toBe('acme');
+  });
+
   it('renders the page with breadcrumbs derived from the real route (Settings > Members)', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OK,

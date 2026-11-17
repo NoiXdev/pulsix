@@ -7,6 +7,17 @@ export const deActivity: Messages['activity'] = {
   anyActor: 'Urheber: alle',
   allTypes: 'alle',
   empty: 'Noch keine Aktivität aufgezeichnet.',
+  my: {
+    title: 'Meine Aktivität',
+    subtitle: 'Was du getan hast, in jeder Organisation, der du angehörst.',
+    label: 'Meine Aktivität',
+    at: 'Wann',
+    organization: 'Organisation',
+    action: 'Was passiert ist',
+    object: 'Objekt',
+    count: (n: number) => (n === 1 ? '1 Ereignis' : `${n} Ereignisse`),
+    empty: 'Du hast noch nichts getan.',
+  },
   user: (id: string) => `Benutzer · ${id}`,
   viaToken: (name: string) => `über Token ${name}`,
   actors: {

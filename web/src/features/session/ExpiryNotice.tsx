@@ -16,7 +16,7 @@ export function ExpiryNoticeProvider({ children }: { children: ReactNode }) {
 }
 
 /** ExpiryNotice is the banner's place inside a page shell: OrgLayout and
- * AccountSecurityLayout pass it in AppShell's notice slot. */
+ * AccountLayout pass it in AppShell's notice slot. */
 export function ExpiryNotice() {
   const notice = useExpiryNotice();
   const addSlot = notice?.addSlot;
