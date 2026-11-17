@@ -22,6 +22,11 @@ export type HostInput = components['schemas']['HostInputBody'];
 export type SetupCompleteInput = components['schemas']['SetupCompleteInputBody'];
 /** A GUI language the API accepts (users.locale, the instance default). */
 export type GuiLocale = components['schemas']['LocaleSettingsBody']['default_locale'];
+/** The signed-in user's appearance settings (GET/PUT /auth/me/preferences):
+ * density, rows per page and, per list id, the chosen columns. */
+export type Preferences = Omit<components['schemas']['PreferencesBody'], '$schema'>;
+export type Density = Preferences['density'];
+export type PageSize = Preferences['page_size'];
 
 export type InventoryGroupSummary = components['schemas']['GroupSummaryDTO'];
 export type InventoryGroup = components['schemas']['GroupDTO'];

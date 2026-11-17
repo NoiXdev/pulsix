@@ -11,6 +11,7 @@ import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { ExpiryWatcher } from '../features/session/ExpiryWatcher.tsx';
 import { ExpiryNoticeFallback, ExpiryNoticeProvider } from '../features/session/ExpiryNotice.tsx';
 import { LockStateContext } from '../features/lock/lockState.ts';
+import { DensityEffect } from '../features/lists/DensityEffect.tsx';
 
 /** Where a refusal for a pending password change does not take the person:
  * the change itself, and second-factor enrolment, which completes the
@@ -135,6 +136,9 @@ export function RootLayout() {
             {/* A session that must change its password cannot renew: the renew
                 routes refuse it, so the dialog could only fail. */}
             {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
+            {/* The list density (backlog 3.97) for a session that may read
+                its preferences; locked, the lock screen replaces all this. */}
+            {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <DensityEffect />}
           </ExpiryNoticeProvider>
         </ConfirmProvider>
       )}

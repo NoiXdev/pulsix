@@ -13,6 +13,7 @@ import { enHosts } from './hosts.ts';
 import { enInstance } from './instance.ts';
 import { enInventory } from './inventory.ts';
 import { enLanguage } from './language.ts';
+import { enLists } from './lists.ts';
 import { enLock } from './lock.ts';
 import { enMaintenance } from './maintenance.ts';
 import { enMembers } from './members.ts';
@@ -64,6 +65,7 @@ export const en = {
   instance: enInstance,
   inventory: enInventory,
   language: enLanguage,
+  lists: enLists,
   lock: enLock,
   session: enSession,
   maintenance: enMaintenance,

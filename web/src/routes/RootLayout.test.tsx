@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { render, screen } from '@testing-library/react';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -234,6 +234,39 @@ describe('RootLayout', () => {
       renderAt('/login', { 'GET /api/v1/auth/me': meExpiring({}) });
       expect(await screen.findByText('LOGIN')).toBeInTheDocument();
       expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('density (backlog 3.97)', () => {
+    const me = (extra: Record<string, unknown>) => ({ locked: false, mfa_complete: true, user: { display_name: 'Tim' }, ...extra });
+    const prefs = { density: 'compact', page_size: 25, lists: {} };
+
+    afterEach(() => {
+      delete document.documentElement.dataset.density;
+    });
+
+    it('puts the saved density on the document for an MFA-complete, unlocked session', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': me({}), 'GET /api/v1/orgs': { orgs: [] }, 'GET /api/v1/auth/me/preferences': prefs });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+      await waitFor(() => expect(document.documentElement).toHaveAttribute('data-density', 'compact'));
+    });
+
+    it('takes it off while the session is locked', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': me({}), 'GET /api/v1/orgs': { orgs: [] }, 'GET /api/v1/auth/me/preferences': prefs });
+      await waitFor(() => expect(document.documentElement).toHaveAttribute('data-density', 'compact'));
+
+      postSessionMessage({ type: 'locked' });
+
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(document.documentElement).not.toHaveAttribute('data-density');
+    });
+
+    it('does not ask for the preferences of a session that is not MFA-complete', async () => {
+      const get = vi.fn(() => prefs);
+      renderAt('/orgs', { 'GET /api/v1/auth/me': me({ mfa_complete: false }), 'GET /api/v1/orgs': { orgs: [] }, 'GET /api/v1/auth/me/preferences': get });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+      expect(get).not.toHaveBeenCalled();
+      expect(document.documentElement).not.toHaveAttribute('data-density');
     });
   });
 });
