@@ -52,6 +52,24 @@ func (q *Queries) ClaimFactorAttempt(ctx context.Context, arg ClaimFactorAttempt
 	return result.RowsAffected(), nil
 }
 
+const claimUnlockAttempt = `-- name: ClaimUnlockAttempt :one
+UPDATE sessions SET unlock_failures = unlock_failures + 1
+WHERE id = $1 AND locked_at IS NOT NULL AND unlock_failures < 5
+  AND revoked_at IS NULL AND expires_at > now()
+RETURNING unlock_failures
+`
+
+// Counts one unlock attempt and returns the new count. The check and the
+// increment are one statement, so concurrent wrong PINs can never push the
+// count past 5. No row: the session is not locked or has used all its
+// attempts.
+func (q *Queries) ClaimUnlockAttempt(ctx context.Context, id uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, claimUnlockAttempt, id)
+	var unlock_failures int32
+	err := row.Scan(&unlock_failures)
+	return unlock_failures, err
+}
+
 const clearAbandonedTOTPEnrolments = `-- name: ClearAbandonedTOTPEnrolments :execrows
 UPDATE totp_secrets
 SET pending_secret_sealed = NULL, pending_created_at = NULL
@@ -77,6 +95,16 @@ UPDATE totp_secrets SET failed_factor_attempts = 0, factor_locked_until = NULL W
 
 func (q *Queries) ClearFactorAttempts(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, clearFactorAttempts, userID)
+	return err
+}
+
+const clearLockPIN = `-- name: ClearLockPIN :exec
+UPDATE users SET lock_pin_hash = NULL, lock_pin_prompted_at = NULL WHERE id = $1
+`
+
+// The administrator's reset: the PIN and the "already offered" mark both go.
+func (q *Queries) ClearLockPIN(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearLockPIN, userID)
 	return err
 }
 
@@ -203,8 +231,24 @@ func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 	return err
 }
 
+const getLockPIN = `-- name: GetLockPIN :one
+SELECT lock_pin_hash, lock_pin_prompted_at FROM users WHERE id = $1
+`
+
+type GetLockPINRow struct {
+	LockPinHash       *string            `json:"lock_pin_hash"`
+	LockPinPromptedAt pgtype.Timestamptz `json:"lock_pin_prompted_at"`
+}
+
+func (q *Queries) GetLockPIN(ctx context.Context, userID uuid.UUID) (GetLockPINRow, error) {
+	row := q.db.QueryRow(ctx, getLockPIN, userID)
+	var i GetLockPINRow
+	err := row.Scan(&i.LockPinHash, &i.LockPinPromptedAt)
+	return i, err
+}
+
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, s.mfa_at, u.instance_admin, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id
+SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, s.mfa_at, s.locked_at, s.unlock_failures, u.instance_admin, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL
 `
 
@@ -217,6 +261,8 @@ type GetSessionRow struct {
 	ExpiresAt          time.Time          `json:"expires_at"`
 	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
 	MfaAt              pgtype.Timestamptz `json:"mfa_at"`
+	LockedAt           pgtype.Timestamptz `json:"locked_at"`
+	UnlockFailures     int32              `json:"unlock_failures"`
 	InstanceAdmin      bool               `json:"instance_admin"`
 	MustChangePassword bool               `json:"must_change_password"`
 }
@@ -239,6 +285,8 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, 
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.MfaAt,
+		&i.LockedAt,
+		&i.UnlockFailures,
 		&i.InstanceAdmin,
 		&i.MustChangePassword,
 	)
@@ -278,6 +326,22 @@ type InsertRecoveryCodeParams struct {
 func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error {
 	_, err := q.db.Exec(ctx, insertRecoveryCode, arg.UserID, arg.CodeHash)
 	return err
+}
+
+const lockSession = `-- name: LockSession :execrows
+UPDATE sessions SET locked_at = now(), unlock_failures = 0
+WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND locked_at IS NULL
+`
+
+// Locks one live, unlocked session (backlog 3.92). Revoked, expired and
+// already-locked sessions are untouched, so zero rows means there was nothing
+// to lock. unlock_failures restarts at zero for the new lock.
+func (q *Queries) LockSession(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, lockSession, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const lockUserForEnrolment = `-- name: LockUserForEnrolment :one
@@ -327,6 +391,15 @@ func (q *Queries) LockUserForFactorRemoval(ctx context.Context, id uuid.UUID) (u
 	var id_2 uuid.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const markLockPINPrompted = `-- name: MarkLockPINPrompted :exec
+UPDATE users SET lock_pin_prompted_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkLockPINPrompted(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markLockPINPrompted, userID)
+	return err
 }
 
 const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :execrows
@@ -379,6 +452,16 @@ func (q *Queries) MarkSessionMFAComplete(ctx context.Context, arg MarkSessionMFA
 	return result.RowsAffected(), nil
 }
 
+const removeLockPIN = `-- name: RemoveLockPIN :exec
+UPDATE users SET lock_pin_hash = NULL WHERE id = $1
+`
+
+// The owner removes the PIN; prompted_at stays, so the offer does not return.
+func (q *Queries) RemoveLockPIN(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, removeLockPIN, userID)
+	return err
+}
+
 const replaceRecoveryCodes = `-- name: ReplaceRecoveryCodes :exec
 DELETE FROM recovery_codes WHERE user_id = $1
 `
@@ -397,6 +480,20 @@ func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const setLockPIN = `-- name: SetLockPIN :exec
+UPDATE users SET lock_pin_hash = $1, lock_pin_prompted_at = now() WHERE id = $2
+`
+
+type SetLockPINParams struct {
+	LockPinHash *string   `json:"lock_pin_hash"`
+	UserID      uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) SetLockPIN(ctx context.Context, arg SetLockPINParams) error {
+	_, err := q.db.Exec(ctx, setLockPIN, arg.LockPinHash, arg.UserID)
+	return err
+}
+
 const setTOTPLastStep = `-- name: SetTOTPLastStep :execrows
 UPDATE totp_secrets SET last_used_step = $2 WHERE user_id = $1 AND last_used_step < $2
 `
@@ -408,6 +505,19 @@ type SetTOTPLastStepParams struct {
 
 func (q *Queries) SetTOTPLastStep(ctx context.Context, arg SetTOTPLastStepParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setTOTPLastStep, arg.UserID, arg.LastUsedStep)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unlockSession = `-- name: UnlockSession :execrows
+UPDATE sessions SET locked_at = NULL, unlock_failures = 0
+WHERE id = $1 AND locked_at IS NOT NULL
+`
+
+func (q *Queries) UnlockSession(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, unlockSession, id)
 	if err != nil {
 		return 0, err
 	}

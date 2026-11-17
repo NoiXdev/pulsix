@@ -205,7 +205,7 @@ func streamAccessHeld(ctx context.Context, deps Deps, orgID uuid.UUID) error {
 		}
 	} else {
 		mfaComplete, err := deps.Sessions.StillValid(ctx, p.SessionID)
-		if errors.Is(err, auth.ErrUnauthenticated) || (err == nil && !mfaComplete) {
+		if errors.Is(err, auth.ErrUnauthenticated) || errors.Is(err, auth.ErrSessionLocked) || (err == nil && !mfaComplete) {
 			return fmt.Errorf("%w: session no longer valid", errStreamAccessEnded)
 		}
 		if err != nil {

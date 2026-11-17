@@ -329,6 +329,16 @@ func TestJobStreamEndsWhenAccessEnds(t *testing.T) {
 				t.Fatalf("remove member: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 			}
 		},
+		"session locked": func(f runFixture, userID uuid.UUID, _ *http.Client) {
+			var sid uuid.UUID
+			if err := f.s.DB.Pool().QueryRow(context.Background(),
+				`SELECT id FROM sessions WHERE user_id = $1 AND revoked_at IS NULL`, userID).Scan(&sid); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := f.s.Q.LockSession(context.Background(), sid); err != nil || n != 1 {
+				t.Fatalf("lock session: %d rows, %v", n, err)
+			}
+		},
 		"signed out": func(f runFixture, _ uuid.UUID, c *http.Client) {
 			resp := postJSON(t, c, f.s.HTTP.URL+"/api/v1/auth/logout", nil)
 			if resp.StatusCode/100 != 2 {

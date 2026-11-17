@@ -23,6 +23,11 @@ const SessionTTL = 12 * time.Hour
 // ErrUnauthenticated is returned when no valid credential is present.
 var ErrUnauthenticated = errors.New("unauthenticated")
 
+// ErrSessionLocked is returned by StillValid for a session that is locked
+// behind its owner's PIN (backlog 3.92): still authenticated, but not
+// allowed to act until it is unlocked.
+var ErrSessionLocked = errors.New("session locked")
+
 // Principal identifies the caller of a request.
 type Principal struct {
 	UserID        uuid.UUID
@@ -37,6 +42,11 @@ type Principal struct {
 	// MustChangePassword is the account's forced-change flag, read from the
 	// session lookup. It is carried here and enforced elsewhere.
 	MustChangePassword bool
+	// Locked is true while the session is locked behind the owner's PIN.
+	Locked bool
+	// ExpiresAt is when the session's cookie stops authenticating; zero for
+	// a bearer token principal, which has no session.
+	ExpiresAt time.Time
 }
 
 // StepUpWindow is how long a proven second factor keeps the
@@ -122,7 +132,7 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 	if subtle.ConstantTimeCompare(sum[:], row.SecretHash) != 1 {
 		return Principal{}, ErrUnauthenticated
 	}
-	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete, MustChangePassword: row.MustChangePassword}
+	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete, MustChangePassword: row.MustChangePassword, Locked: row.LockedAt.Valid, ExpiresAt: row.ExpiresAt}
 	if row.MfaAt.Valid {
 		at := row.MfaAt.Time
 		p.MFAAt = &at
@@ -135,7 +145,7 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 // whether it is MFA-complete. A request that runs for a long time (the job
 // log stream) asks it periodically, so a sign-out or a deactivation ends it
 // (backlog 7.22). A session that no longer resolves is ErrUnauthenticated;
-// any other error is the store's.
+// a locked session is ErrSessionLocked; any other error is the store's.
 func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bool, err error) {
 	row, err := s.q.GetSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -143,6 +153,9 @@ func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bo
 	}
 	if err != nil {
 		return false, fmt.Errorf("look up session: %w", err)
+	}
+	if row.LockedAt.Valid {
+		return false, ErrSessionLocked
 	}
 	return row.MfaComplete, nil
 }

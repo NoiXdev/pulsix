@@ -996,14 +996,16 @@ type ScheduleRun struct {
 }
 
 type Session struct {
-	ID          uuid.UUID          `json:"id"`
-	UserID      uuid.UUID          `json:"user_id"`
-	SecretHash  []byte             `json:"secret_hash"`
-	MfaComplete bool               `json:"mfa_complete"`
-	CreatedAt   time.Time          `json:"created_at"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	MfaAt       pgtype.Timestamptz `json:"mfa_at"`
+	ID             uuid.UUID          `json:"id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	SecretHash     []byte             `json:"secret_hash"`
+	MfaComplete    bool               `json:"mfa_complete"`
+	CreatedAt      time.Time          `json:"created_at"`
+	ExpiresAt      time.Time          `json:"expires_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	MfaAt          pgtype.Timestamptz `json:"mfa_at"`
+	LockedAt       pgtype.Timestamptz `json:"locked_at"`
+	UnlockFailures int32              `json:"unlock_failures"`
 }
 
 type SharedCheckDefinition struct {
@@ -1080,6 +1082,8 @@ type User struct {
 	MustChangePassword    bool               `json:"must_change_password"`
 	TempPasswordExpiresAt pgtype.Timestamptz `json:"temp_password_expires_at"`
 	LastSignInAt          pgtype.Timestamptz `json:"last_sign_in_at"`
+	LockPinHash           *string            `json:"lock_pin_hash"`
+	LockPinPromptedAt     pgtype.Timestamptz `json:"lock_pin_prompted_at"`
 }
 
 type WebauthnCeremony struct {

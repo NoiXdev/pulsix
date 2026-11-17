@@ -202,3 +202,41 @@ SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL;
 UPDATE totp_secrets
 SET pending_secret_sealed = NULL, pending_created_at = NULL
 WHERE pending_created_at IS NOT NULL AND pending_created_at < @started_before::timestamptz;
+
+-- name: LockSession :execrows
+-- Locks one live, unlocked session (backlog 3.92). Revoked, expired and
+-- already-locked sessions are untouched, so zero rows means there was nothing
+-- to lock. unlock_failures restarts at zero for the new lock.
+UPDATE sessions SET locked_at = now(), unlock_failures = 0
+WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND locked_at IS NULL;
+
+-- name: ClaimUnlockAttempt :one
+-- Counts one unlock attempt and returns the new count. The check and the
+-- increment are one statement, so concurrent wrong PINs can never push the
+-- count past 5. No row: the session is not locked or has used all its
+-- attempts.
+UPDATE sessions SET unlock_failures = unlock_failures + 1
+WHERE id = $1 AND locked_at IS NOT NULL AND unlock_failures < 5
+  AND revoked_at IS NULL AND expires_at > now()
+RETURNING unlock_failures;
+
+-- name: UnlockSession :execrows
+UPDATE sessions SET locked_at = NULL, unlock_failures = 0
+WHERE id = $1 AND locked_at IS NOT NULL;
+
+-- name: GetLockPIN :one
+SELECT lock_pin_hash, lock_pin_prompted_at FROM users WHERE id = @user_id;
+
+-- name: SetLockPIN :exec
+UPDATE users SET lock_pin_hash = @lock_pin_hash, lock_pin_prompted_at = now() WHERE id = @user_id;
+
+-- name: RemoveLockPIN :exec
+-- The owner removes the PIN; prompted_at stays, so the offer does not return.
+UPDATE users SET lock_pin_hash = NULL WHERE id = @user_id;
+
+-- name: ClearLockPIN :exec
+-- The administrator's reset: the PIN and the "already offered" mark both go.
+UPDATE users SET lock_pin_hash = NULL, lock_pin_prompted_at = NULL WHERE id = @user_id;
+
+-- name: MarkLockPINPrompted :exec
+UPDATE users SET lock_pin_prompted_at = now() WHERE id = @user_id;
