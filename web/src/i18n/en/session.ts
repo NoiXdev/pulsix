@@ -15,5 +15,8 @@ export const enSession = {
   passkeyFailed: 'The passkey could not be verified. Try again.',
   failed: 'The session could not be renewed. Try again.',
   tooManyAttempts: 'Too many attempts. Wait a moment and try again.',
-  expired: 'Your session has ended. Sign in again.',
+  expired: 'Your session has expired. Sign in again.',
+  later: 'Later',
+  bannerText: 'Your session ends in',
+  bannerRenew: 'Renew',
 };

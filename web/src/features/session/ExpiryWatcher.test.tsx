@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi, type MockRoute } from '../../test/mockApi.ts';
 import { fetchMock } from '../../test/fetchMock.ts';
+import { clearRenewed, recentlyRenewed } from '../../lib/sessionEnd.ts';
 import { ExpiryWatcher } from './ExpiryWatcher.tsx';
 
 const T0 = Date.parse('2026-11-17T10:00:00Z');
@@ -180,6 +181,8 @@ describe('ExpiryWatcher', () => {
     await advance(0);
 
     await until(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(recentlyRenewed()).toBe(true);
+    clearRenewed();
     expect(renew).toHaveBeenCalledWith(expect.objectContaining({ body: { password: 'hunter2', code: '123456' } }));
     // Once for the renewal, once more when this tab hears its own message.
     expect(calls('GET', '/api/v1/auth/me')).toBeGreaterThanOrEqual(2);
@@ -295,5 +298,75 @@ describe('ExpiryWatcher', () => {
     });
     await advance(0);
     expect(calls('GET', '/api/v1/auth/me')).toBe(2);
+  });
+  describe('Later and the banner', () => {
+    const closeDialog = () => fireEvent(screen.getByRole('dialog'), new Event('close'));
+
+    it('collapses into a non-modal banner with the countdown on Later', async () => {
+      await renderIt({ 'GET /api/v1/auth/me': me(T0 + 240 * SEC) });
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+      await advance(0);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('Your session ends in 4:00');
+      await advance(5 * SEC);
+      expect(screen.getByRole('status')).toHaveTextContent('3:55');
+    });
+
+    it('collapses into the banner, not into nothing, when the dialog is closed (Escape)', async () => {
+      await renderIt({ 'GET /api/v1/auth/me': me(T0 + 240 * SEC) });
+      act(() => {
+        closeDialog();
+      });
+      await advance(0);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('4:00');
+    });
+
+    it('brings the dialog back from the banner', async () => {
+      await renderIt({ 'GET /api/v1/auth/me': me(T0 + 240 * SEC) });
+      fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+      await advance(0);
+      fireEvent.click(screen.getByRole('button', { name: 'Renew' }));
+      await advance(0);
+
+      expect(screen.getByRole('dialog', { name: 'Your session is about to end' })).toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('keeps the banner until the session ends', async () => {
+      const router = await renderIt({ 'GET /api/v1/auth/me': me(T0 + 20 * SEC) });
+      fireEvent.click(screen.getByRole('button', { name: 'Later' }));
+      await advance(10 * SEC);
+      expect(screen.getByRole('status')).toBeInTheDocument();
+      await advance(10 * SEC);
+      await until(() => expect(router.state.location.pathname).toBe('/login'));
+    });
+  });
+
+  it('goes to /login with the notice when /auth/me answers 401 at zero', async () => {
+    let meCalls = 0;
+    const router = await renderIt({
+      'GET /api/v1/auth/me': () =>
+        meCalls++ === 0
+          ? me(T0 + 20 * SEC)()
+          : new Response(JSON.stringify({ status: 401, detail: 'unauthorized' }), { status: 401 }),
+    });
+    await advance(20 * SEC);
+    await until(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(router.state.location.search).toMatchObject({ notice: 'session_expired' });
+  });
+
+  it('remembers a renewal announced by another tab', async () => {
+    clearRenewed();
+    await renderIt({ 'GET /api/v1/auth/me': me(T0 + 3600 * SEC) });
+    const other = new BroadcastChannel('pulsix-session');
+    other.postMessage({ type: 'renewed', expiresAt: iso(T0 + 3600 * SEC) });
+    other.close();
+    await until(() => expect(recentlyRenewed()).toBe(true));
+    clearRenewed();
   });
 });

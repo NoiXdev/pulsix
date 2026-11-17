@@ -116,7 +116,7 @@ describe('LoginPage notice (backlog 3.92)', () => {
   it('says the session has ended when it ran out (backlog 3.93)', async () => {
     renderLoginAt({ notice: 'session_expired' });
 
-    expect(await screen.findByText('Your session has ended. Sign in again.')).toBeInTheDocument();
+    expect(await screen.findByText('Your session has expired. Sign in again.')).toBeInTheDocument();
   });
 });
 

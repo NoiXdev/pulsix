@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -7,39 +7,38 @@ import { Label } from '../../ui/label.tsx';
 import { ApiError } from '../../api/client.ts';
 import { renewSession } from '../../api/hooks/useAuth.ts';
 import { refetchMe } from '../../api/hooks/useMe.ts';
-import { serverNow } from '../../lib/serverClock.ts';
 import { useT } from '../../i18n/useT.ts';
 import { passkeysSupported, reauthWithPasskey } from '../auth/passkeys.ts';
 import { postSessionMessage } from '../lock/lockChannel.ts';
+import { mmss, useCountdown } from './useCountdown.ts';
+import { markRenewed } from '../../lib/sessionEnd.ts';
 
-function secondsLeft(expiresAtMs: number): number {
-  return Math.max(0, Math.ceil((expiresAtMs - serverNow()) / 1000));
-}
-
-function mmss(total: number): string {
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-}
 
 /**
  * RenewDialog is the warning ExpiryWatcher shows shortly before the session
  * ends (backlog 3.93): a countdown and the way to stay signed in without
  * leaving the page. Renewing needs the account's password and a second
- * factor (a code or a recovery code), or a passkey. It cannot be dismissed:
- * the only ways out are renewing and letting the time run out.
+ * factor (a code or a recovery code), or a passkey. "Later" and Escape hand
+ * over to RenewBanner: a modal that made the page inert would stop the
+ * person from saving what they are working on, which is the point of the
+ * warning.
  */
-export function RenewDialog({ expiresAtMs, onRenewed }: { expiresAtMs: number; onRenewed: () => void }) {
+export function RenewDialog({
+  expiresAtMs,
+  onRenewed,
+  onLater,
+}: {
+  expiresAtMs: number;
+  onRenewed: () => void;
+  onLater: () => void;
+}) {
   const t = useT();
   const qc = useQueryClient();
-  const [left, setLeft] = useState(() => secondsLeft(expiresAtMs));
+  const left = useCountdown(expiresAtMs);
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const id = setInterval(() => setLeft(secondsLeft(expiresAtMs)), 1000);
-    return () => clearInterval(id);
-  }, [expiresAtMs]);
 
   async function renew(run: () => Promise<unknown>, failure: string) {
     setBusy(true);
@@ -53,6 +52,7 @@ export function RenewDialog({ expiresAtMs, onRenewed }: { expiresAtMs: number; o
       else setError(failure);
       return;
     }
+    markRenewed();
     // The server now holds a new session behind a new cookie. Read it back
     // (its expiry, and the server clock with it), tell the other tabs, close.
     const fresh = await refetchMe(qc).catch(() => null);
@@ -76,7 +76,7 @@ export function RenewDialog({ expiresAtMs, onRenewed }: { expiresAtMs: number; o
   }
 
   return (
-    <Dialog open onClose={() => {}} title={t.session.title} dismissible={false}>
+    <Dialog open onClose={onLater} title={t.session.title}>
       <form className="flex flex-col gap-3" onSubmit={submit}>
         <p className="text-xs text-muted-foreground">{t.session.intro}</p>
         <p className="text-xs text-muted-foreground">
@@ -117,9 +117,14 @@ export function RenewDialog({ expiresAtMs, onRenewed }: { expiresAtMs: number; o
           ) : (
             <span />
           )}
-          <Button type="submit" variant="primary" disabled={busy || !password || !code.trim()}>
-            {busy ? t.session.renewing : t.session.renew}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="button" onClick={onLater}>
+              {t.session.later}
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !password || !code.trim()}>
+              {busy ? t.session.renewing : t.session.renew}
+            </Button>
+          </div>
         </div>
       </form>
     </Dialog>

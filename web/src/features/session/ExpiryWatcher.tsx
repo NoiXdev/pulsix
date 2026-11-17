@@ -5,6 +5,8 @@ import { refetchMe, useMe } from '../../api/hooks/useMe.ts';
 import { resetSessionCache } from '../../lib/session.ts';
 import { serverNow } from '../../lib/serverClock.ts';
 import { onSessionMessage } from '../lock/lockChannel.ts';
+import { markRenewed } from '../../lib/sessionEnd.ts';
+import { RenewBanner } from './RenewBanner.tsx';
 import { RenewDialog } from './RenewDialog.tsx';
 
 /** How long before the session ends the warning appears. */
@@ -31,6 +33,9 @@ export function ExpiryWatcher() {
   const me = useMe();
   const expiresAtMs = me.data ? Date.parse(me.data.session_expires_at) : NaN;
   const [warn, setWarn] = useState(false);
+  // The expiry the person chose "Later" for: keyed, so a renewal (a new
+  // expiry) brings the dialog back at the next warning without a reset.
+  const [laterFor, setLaterFor] = useState<number | null>(null);
   const updatedAt = me.dataUpdatedAt;
 
   useEffect(() => {
@@ -78,7 +83,10 @@ export function ExpiryWatcher() {
     // a renewal made here arrives here too; reading /auth/me again is
     // harmless.
     const stop = onSessionMessage((msg) => {
-      if (msg.type === 'renewed') void refetchMe(qc).catch(() => undefined);
+      if (msg.type === 'renewed') {
+        markRenewed();
+        void refetchMe(qc).catch(() => undefined);
+      }
     });
     return () => {
       document.removeEventListener('visibilitychange', reread);
@@ -88,5 +96,10 @@ export function ExpiryWatcher() {
   }, [qc]);
 
   if (!warn || Number.isNaN(expiresAtMs)) return null;
-  return <RenewDialog expiresAtMs={expiresAtMs} onRenewed={() => setWarn(false)} />;
+  if (laterFor === expiresAtMs) {
+    return <RenewBanner expiresAtMs={expiresAtMs} onRenew={() => setLaterFor(null)} />;
+  }
+  return (
+    <RenewDialog expiresAtMs={expiresAtMs} onRenewed={() => setWarn(false)} onLater={() => setLaterFor(expiresAtMs)} />
+  );
 }

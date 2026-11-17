@@ -202,6 +202,15 @@ describe('RootLayout', () => {
       expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
     });
 
+    it('does not warn a session that must change its password, which cannot renew', async () => {
+      renderAt('/orgs', {
+        'GET /api/v1/auth/me': meExpiring({ must_change_password: true }),
+        'GET /api/v1/orgs': { orgs: [] },
+      });
+      await waitFor(() => expect(screen.queryByText('ORGS PAGE') ?? screen.queryByText('CHANGE PASSWORD')).toBeInTheDocument());
+      expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
+    });
+
     it('does not warn a session that is not MFA-complete', async () => {
       renderAt('/orgs', { 'GET /api/v1/auth/me': meExpiring({ mfa_complete: false }), 'GET /api/v1/orgs': { orgs: [] } });
       expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();

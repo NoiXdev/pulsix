@@ -2,7 +2,9 @@ import { useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { errorStatus } from '../lib/apiError.ts';
 import { useT } from '../i18n/useT.ts';
+import { useQueryClient } from '@tanstack/react-query';
 import { useResetSession } from '../lib/session.ts';
+import { loginSearchAfter401 } from '../lib/sessionEnd.ts';
 
 /**
  * QueryError is the one place that decides what a failed query renders —
@@ -22,14 +24,15 @@ import { useResetSession } from '../lib/session.ts';
 export function QueryError({ error }: { error: unknown }) {
   const navigate = useNavigate();
   const resetSession = useResetSession();
+  const qc = useQueryClient();
   const status = errorStatus(error);
   const t = useT();
 
   useEffect(() => {
     if (status === 401) {
-      void navigate({ to: '/login', search: { step: undefined } }).finally(resetSession);
+      void navigate({ to: '/login', search: loginSearchAfter401(qc) }).finally(resetSession);
     }
-  }, [status, navigate, resetSession]);
+  }, [status, navigate, resetSession, qc]);
 
   if (status === 401) {
     return <FullPageMessage title={t.ui.query.signingOutTitle} detail={t.ui.query.signingOutDetail} />;

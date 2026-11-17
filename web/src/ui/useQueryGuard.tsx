@@ -1,9 +1,10 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { UseInfiniteQueryResult, UseQueryResult } from '@tanstack/react-query';
 import { errorStatus } from '../lib/apiError.ts';
 import { useT } from '../i18n/useT.ts';
 import { useToast } from './toastContext.ts';
-import { QueryError } from './QueryState.tsx';
+import { recentlyRenewed } from '../lib/sessionEnd.ts';
+import { QueryError, QueryLoading } from './QueryState.tsx';
 
 /** GuardedQuery is what useQueryGuard accepts: a plain `useQuery` result or
  * a paginated `useInfiniteQuery` one (the hosts list, the activity feed).
@@ -80,7 +81,16 @@ export function useQueryGuard<TData, TError>(
   const t = useT();
   const hasData = query.data !== undefined;
   const status = query.isError ? errorStatus(query.error) : null;
-  const showsError = query.isError && (!hasData || (status !== null && FINAL_STATUSES.has(status)));
+  // A 401 right after a renewal may be a request that left with the old
+  // cookie: fetch once more before treating it as the end (lib/sessionEnd.ts).
+  const [retried, setRetried] = useState(false);
+  const staleCookie401 = enabled && status === 401 && !retried && recentlyRenewed();
+  const showsError = !staleCookie401 && query.isError && (!hasData || (status !== null && FINAL_STATUSES.has(status)));
+  const { refetch } = query;
+  useEffect(() => {
+    if (!staleCookie401) return;
+    void refetch().finally(() => setRetried(true));
+  }, [staleCookie401, refetch]);
   const nextPageFailed = 'isFetchNextPageError' in query && query.isFetchNextPageError;
   // Tracks the errorUpdatedAt of the last background failure this hook
   // has already toasted about, so the toast below fires once per failed
@@ -88,7 +98,7 @@ export function useQueryGuard<TData, TError>(
   const lastHandled = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!enabled || !query.isError || showsError) return;
+    if (!enabled || !query.isError || showsError || staleCookie401) return;
     if (lastHandled.current === query.errorUpdatedAt) return;
     lastHandled.current = query.errorUpdatedAt;
 
@@ -96,10 +106,11 @@ export function useQueryGuard<TData, TError>(
       nextPageFailed ? t.ui.guard.loadMoreFailed : t.ui.guard.refreshFailed,
       'destructive',
     );
-  }, [enabled, query.isError, showsError, nextPageFailed, query.errorUpdatedAt, toast, t]);
+  }, [enabled, query.isError, showsError, staleCookie401, nextPageFailed, query.errorUpdatedAt, toast, t]);
 
   if (enabled && showsError) {
     return <QueryError error={query.error} />;
   }
+  if (staleCookie401 && !hasData) return <QueryLoading />;
   return null;
 }

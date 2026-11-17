@@ -120,7 +120,9 @@ export function RootLayout() {
         // unmounts it (its question resolves false) with the page it came from.
         <ConfirmProvider>
           <Outlet />
-          {!publicPage && me.data?.mfa_complete && <ExpiryWatcher />}
+          {/* A session that must change its password cannot renew: the renew
+              routes refuse it, so the dialog could only fail. */}
+          {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
         </ConfirmProvider>
       )}
     </LockStateContext.Provider>
