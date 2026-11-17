@@ -96,14 +96,13 @@ describe('OrganizationsPage', () => {
     expect(screen.getByText('not a member')).toBeInTheDocument();
   });
 
-  it('keeps the non-member row\'s title and its row layout', async () => {
+  it('keeps the non-member row\'s title and gives it no link', async () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();
 
-    const row = (await screen.findByText('Globex')).closest('[title]') as HTMLElement;
-    expect(row).toHaveAttribute('title', 'You are not a member of this organization, so you cannot open it.');
-    expect(row).toHaveStyle({ gridTemplateColumns: 'minmax(0, 1.6fr) 120px 140px' });
-    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
+    const name = (await screen.findByText('Globex')).closest('[title]') as HTMLElement;
+    expect(name).toHaveAttribute('title', 'You are not a member of this organization, so you cannot open it.');
+    expect(within(name).queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('opens the create dialog from the page', async () => {

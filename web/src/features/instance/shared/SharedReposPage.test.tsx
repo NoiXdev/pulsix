@@ -33,7 +33,7 @@ describe('SharedReposPage', () => {
     renderPage();
     expect(await screen.findByText('https://git.example/provider/ansible-base.git')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Shared repositories', level: 1 })).toBeInTheDocument();
-    expect(screen.getByText(/^1 repository definitions/)).toBeInTheDocument();
+    expect(screen.getByText(/of 1 repository definition$/)).toBeInTheDocument();
   });
 
   it('makes a row a link to its form page', async () => {

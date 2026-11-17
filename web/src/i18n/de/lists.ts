@@ -2,6 +2,11 @@ import type { Messages } from '../types.ts';
 
 export const deLists: Messages['lists'] = {
   names: {
+    organizations: 'Organisationen',
+    backups: 'Backups',
+    'shared-repos': 'Gemeinsame Repository-Definitionen',
+    'shared-templates': 'Gemeinsame Job-Vorlagen-Definitionen',
+    'shared-checks': 'Gemeinsame Check-Definitionen',
     'alert-routes': 'Alarmrouten',
     channels: 'Benachrichtigungskanäle',
     invites: 'Offene Einladungen',

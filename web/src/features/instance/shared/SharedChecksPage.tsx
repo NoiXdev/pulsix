@@ -1,14 +1,14 @@
 import { useParams } from '@tanstack/react-router';
-import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
-import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
+import { SharedListFrame } from './SharedListFrame.tsx';
+import { useSharedRowActions } from './useSharedRowActions.ts';
+import { sharedCheckColumns } from './sharedCheckColumns.tsx';
+import { useListView } from '../../lists/useListView.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
-import { ListRowName } from '../../../ui/list-row.tsx';
+import { DataList } from '../../../ui/data-list/index.ts';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useCheckDefinitions, useDeleteCheckDefinition } from '../../../api/hooks/useSharedCheckDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { CheckDefinitionDef } from '../../../api/types.ts';
-
-const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr)';
 
 /**
  * SharedChecksPage lists the installation's check definitions
@@ -16,6 +16,8 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr)';
  * shared half (spec decision 2) is the key, plugin, params and interval; the
  * binding and the enabled flag belong to the projection, which each
  * organization edits through its own Checks page.
+ *
+ * List id `shared-checks`: one request, sorted and paged in the browser.
  *
  * Unlike the other two kinds, a check definition's delete never refuses with
  * 409: nothing in the schema references check_definitions (internal/shared's
@@ -27,43 +29,40 @@ export function SharedChecksPage() {
   const t = useT();
   const definitions = useCheckDefinitions();
   const remove = useDeleteCheckDefinition();
-  const onDelete = useDeleteWithConfirm<CheckDefinitionDef>({
+  const rowActions = useSharedRowActions<CheckDefinitionDef>({
+    org,
+    to: '/o/$org/settings/shared/checks/$id',
     remove: remove.mutateAsync,
     confirmMessage: (d) => t.instance.shared.checks.confirmDelete(d.key),
     deletedMessage: (d) => t.instance.shared.checks.deleted(d.key),
   });
+  const columns = sharedCheckColumns(t);
+  const view = useListView('shared-checks', columns, { mode: 'client', rowKey: (d) => d.id });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
-  const list = definitions.data.definitions ?? [];
+  const { rows, total } = view.view(view.ready ? (definitions.data.definitions ?? []) : undefined);
 
   return (
     <SharedListFrame
       title={t.settings.tabs.sharedChecks}
-      count={t.instance.shared.checks.count(list.length)}
+      hint={t.instance.shared.checks.listHint}
       addLabel={t.instance.shared.checks.add}
       addTo="/o/$org/settings/shared/checks/new"
       org={org}
-      columns={COLUMNS}
-      headings={[t.instance.shared.checks.key, t.instance.shared.checks.plugin, t.instance.shared.checks.interval]}
-      empty={t.instance.shared.checks.empty}
-      isEmpty={list.length === 0}
     >
-      {list.map((d) => (
-        <SharedRow
-          key={d.id}
-          to="/o/$org/settings/shared/checks/$id"
-          params={{ org, id: d.id }}
-          columns={COLUMNS}
-          name={d.key}
-          onDelete={() => void onDelete(d)}
-        >
-          <ListRowName className="truncate font-mono text-[13px]">{d.key}</ListRowName>
-          <span className="truncate text-xs">{d.plugin}</span>
-          <span className="truncate text-xs text-muted-foreground">{d.interval_seconds}s</span>
-        </SharedRow>
-      ))}
+      <DataList
+        label={t.instance.shared.checks.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(d) => d.id}
+        rowLink={(d) => ({ to: '/o/$org/settings/shared/checks/$id', params: { org, id: d.id }, label: d.key })}
+        rowActions={rowActions}
+        loading={!view.ready}
+        empty={t.instance.shared.checks.empty}
+        {...view.listProps(total, t.instance.shared.checks.count)}
+      />
     </SharedListFrame>
   );
 }

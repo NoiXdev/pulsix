@@ -6,6 +6,11 @@
 export const enLists = {
   /** One per list id in features/lists/registry.ts. */
   names: {
+    organizations: 'Organizations',
+    backups: 'Backups',
+    'shared-repos': 'Shared repository definitions',
+    'shared-templates': 'Shared job template definitions',
+    'shared-checks': 'Shared check definitions',
     'alert-routes': 'Alert routes',
     channels: 'Notification channels',
     invites: 'Open invitations',

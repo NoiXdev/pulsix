@@ -1,14 +1,14 @@
 import { useParams } from '@tanstack/react-router';
-import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
-import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
+import { SharedListFrame } from './SharedListFrame.tsx';
+import { useSharedRowActions } from './useSharedRowActions.ts';
+import { sharedRepoColumns } from './sharedRepoColumns.tsx';
+import { useListView } from '../../lists/useListView.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
-import { ListRowName } from '../../../ui/list-row.tsx';
+import { DataList } from '../../../ui/data-list/index.ts';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useDeleteRepoDefinition, useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { RepoDefinition } from '../../../api/types.ts';
-
-const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1.3fr) 110px minmax(0, 0.9fr)';
 
 /**
  * SharedReposPage lists the installation's repository definitions: the
@@ -26,51 +26,48 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1.3fr) 110px minmax(0, 0.9fr)';
  * the definitions are instance-wide.
  *
  * A row opens SharedRepoFormPage; Delete… confirms and then deletes
- * (useDeleteWithConfirm, which also shows a refused delete's own message).
+ * (useSharedRowActions, which also shows a refused delete's own message).
+List id `shared-repos`: one request, sorted and paged in the browser.
  */
 export function SharedReposPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const definitions = useRepoDefinitions();
   const remove = useDeleteRepoDefinition();
-  const onDelete = useDeleteWithConfirm<RepoDefinition>({
+  const rowActions = useSharedRowActions<RepoDefinition>({
+    org,
+    to: '/o/$org/settings/shared/repos/$id',
     remove: remove.mutateAsync,
     confirmMessage: (d) => t.instance.shared.repos.confirmDelete(d.name),
     deletedMessage: (d) => t.instance.shared.repos.deleted(d.name),
   });
+  const columns = sharedRepoColumns(t);
+  const view = useListView('shared-repos', columns, { mode: 'client', rowKey: (d) => d.id });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
-  const list = definitions.data.definitions ?? [];
+  const { rows, total } = view.view(view.ready ? (definitions.data.definitions ?? []) : undefined);
 
   return (
     <SharedListFrame
       title={t.settings.tabs.sharedRepos}
-      count={t.instance.shared.repos.count(list.length)}
+      hint={t.instance.shared.repos.listHint}
       addLabel={t.instance.shared.repos.add}
       addTo="/o/$org/settings/shared/repos/new"
       org={org}
-      columns={COLUMNS}
-      headings={[t.instance.shared.name, t.instance.shared.repos.url, t.instance.shared.repos.branch, t.instance.shared.repos.subpath]}
-      empty={t.instance.shared.repos.empty}
-      isEmpty={list.length === 0}
     >
-      {list.map((d) => (
-        <SharedRow
-          key={d.id}
-          to="/o/$org/settings/shared/repos/$id"
-          params={{ org, id: d.id }}
-          columns={COLUMNS}
-          name={d.name}
-          onDelete={() => void onDelete(d)}
-        >
-          <ListRowName className="truncate font-mono text-[13px]">{d.name}</ListRowName>
-          <span className="truncate font-mono text-xs text-muted-foreground">{d.url}</span>
-          <span className="truncate font-mono text-xs">{d.branch}</span>
-          <span className="truncate font-mono text-xs text-muted-foreground">{d.subpath || '—'}</span>
-        </SharedRow>
-      ))}
+      <DataList
+        label={t.instance.shared.repos.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(d) => d.id}
+        rowLink={(d) => ({ to: '/o/$org/settings/shared/repos/$id', params: { org, id: d.id }, label: d.name })}
+        rowActions={rowActions}
+        loading={!view.ready}
+        empty={t.instance.shared.repos.empty}
+        {...view.listProps(total, t.instance.shared.repos.count)}
+      />
     </SharedListFrame>
   );
 }

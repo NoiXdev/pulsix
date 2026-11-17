@@ -3,7 +3,9 @@ import type { Messages } from '../types.ts';
 export const deInstance: Messages['instance'] = {
   orgs: {
     hint: 'Alle Organisationen dieser Instanz.',
-    columns: { organization: 'Organisation', members: 'Mitglieder', created: 'Erstellt' },
+    label: 'Organisationen',
+    count: (n: number) => (n === 1 ? '1 Organisation' : `${n} Organisationen`),
+    columns: { organization: 'Organisation', slug: 'Slug', members: 'Mitglieder', created: 'Erstellt' },
     notMember: 'kein Mitglied',
     notMemberTitle: 'Du bist kein Mitglied dieser Organisation und kannst sie deshalb nicht öffnen.',
     empty: 'Es gibt noch keine Organisationen.',
@@ -56,10 +58,9 @@ export const deInstance: Messages['instance'] = {
     saveDefinition: 'Definition speichern',
     createDefinition: 'Definition anlegen',
     repos: {
-      count: (n: number) =>
-        n === 1
-          ? '1 Repository-Definition · in jede Organisation projiziert, dort schreibgeschützt'
-          : `${n} Repository-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
+      label: 'Repository-Definitionen',
+      count: (n: number) => (n === 1 ? '1 Repository-Definition' : `${n} Repository-Definitionen`),
+      listHint: 'In jede Organisation projiziert, dort schreibgeschützt.',
       add: 'Repository-Definition hinzufügen',
       url: 'URL',
       branch: 'Branch',
@@ -76,10 +77,9 @@ export const deInstance: Messages['instance'] = {
       created: (name: string) => `Repository-Definition ${name} angelegt`,
     },
     templates: {
-      count: (n: number) =>
-        n === 1
-          ? '1 Job-Vorlagen-Definition · in jede Organisation projiziert, dort schreibgeschützt'
-          : `${n} Job-Vorlagen-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
+      label: 'Job-Vorlagen-Definitionen',
+      count: (n: number) => (n === 1 ? '1 Job-Vorlagen-Definition' : `${n} Job-Vorlagen-Definitionen`),
+      listHint: 'In jede Organisation projiziert, dort schreibgeschützt.',
       add: 'Job-Vorlagen-Definition hinzufügen',
       repository: 'Repository',
       playbookPath: 'Playbook-Pfad',
@@ -102,10 +102,9 @@ export const deInstance: Messages['instance'] = {
       created: (name: string) => `Job-Vorlagen-Definition ${name} angelegt`,
     },
     checks: {
-      count: (n: number) =>
-        n === 1
-          ? '1 Check-Definition · mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt'
-          : `${n} Check-Definitionen · mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt`,
+      label: 'Check-Definitionen',
+      count: (n: number) => (n === 1 ? '1 Check-Definition' : `${n} Check-Definitionen`),
+      listHint: 'Mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt.',
       add: 'Check-Definition hinzufügen',
       key: 'Schlüssel',
       plugin: 'Plugin',

@@ -56,6 +56,8 @@ export const deBackups: Messages['backups'] = {
   saveFailed: 'Backup-Einstellungen konnten nicht gespeichert werden',
   list: {
     title: 'Backups',
+    label: 'Backups',
+    count: (n: number) => (n === 1 ? '1 Backup' : `${n} Backups`),
     time: 'Zeitpunkt',
     kind: 'Art',
     version: 'Version',

@@ -10,7 +10,9 @@
 export const enInstance = {
   orgs: {
     hint: 'Every organization on this instance.',
-    columns: { organization: 'Organization', members: 'Members', created: 'Created' },
+    label: 'Organizations',
+    count: (n: number) => (n === 1 ? '1 organization' : `${n} organizations`),
+    columns: { organization: 'Organization', slug: 'Slug', members: 'Members', created: 'Created' },
     notMember: 'not a member',
     notMemberTitle: 'You are not a member of this organization, so you cannot open it.',
     empty: 'There are no organizations yet.',
@@ -62,7 +64,9 @@ export const enInstance = {
     saveDefinition: 'Save definition',
     createDefinition: 'Create definition',
     repos: {
-      count: (n: number) => `${n} repository definitions · projected into every organization, read-only there`,
+      label: 'Repository definitions',
+      count: (n: number) => (n === 1 ? '1 repository definition' : `${n} repository definitions`),
+      listHint: 'Projected into every organization, read-only there.',
       add: 'Add repository definition',
       url: 'URL',
       branch: 'Branch',
@@ -79,7 +83,9 @@ export const enInstance = {
       created: (name: string) => `Repository definition ${name} created`,
     },
     templates: {
-      count: (n: number) => `${n} job template definitions · projected into every organization, read-only there`,
+      label: 'Job template definitions',
+      count: (n: number) => (n === 1 ? '1 job template definition' : `${n} job template definitions`),
+      listHint: 'Projected into every organization, read-only there.',
       add: 'Add job template definition',
       repository: 'Repository',
       playbookPath: 'Playbook path',
@@ -102,8 +108,9 @@ export const enInstance = {
       created: (name: string) => `Job template definition ${name} created`,
     },
     checks: {
-      count: (n: number) =>
-        `${n} check definitions · projected into every organization at the default org-wide binding, read-only there`,
+      label: 'Check definitions',
+      count: (n: number) => (n === 1 ? '1 check definition' : `${n} check definitions`),
+      listHint: 'Projected into every organization at the default org-wide binding, read-only there.',
       add: 'Add check definition',
       key: 'Key',
       plugin: 'Plugin',

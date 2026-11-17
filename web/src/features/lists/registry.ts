@@ -47,6 +47,11 @@ const LISTS = {
   channels: ['channel', 'kind', 'sends_to', 'status'],
   'alert-routes': ['route', 'applies_to', 'fires_on', 'delivers_to', 'enabled'],
   rotations: ['rotation', 'period', 'cycle'],
+  organizations: ['name', 'slug', 'members', 'created'],
+  backups: ['time', 'kind', 'version', 'size', 'state'],
+  'shared-repos': ['name', 'url', 'branch', 'subpath'],
+  'shared-templates': ['name', 'repository', 'playbook', 'limit'],
+  'shared-checks': ['key', 'plugin', 'interval'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

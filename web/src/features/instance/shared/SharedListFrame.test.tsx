@@ -8,8 +8,8 @@ describe('the German counts of shared definitions', () => {
     ['checks', 'Check-Definition', 'Check-Definitionen'],
   ] as const)('%s: one is singular, any other number plural', (kind, singular, plural) => {
     const count = de.instance.shared[kind].count;
-    expect(count(1)).toMatch(new RegExp(`^1 ${singular} · `));
-    expect(count(2)).toMatch(new RegExp(`^2 ${plural} · `));
-    expect(count(0)).toMatch(new RegExp(`^0 ${plural} · `));
+    expect(count(1)).toBe(`1 ${singular}`);
+    expect(count(2)).toBe(`2 ${plural}`);
+    expect(count(0)).toBe(`0 ${plural}`);
   });
 });

@@ -59,6 +59,8 @@ export const enBackups = {
   saveFailed: 'failed to save the backup settings',
   list: {
     title: 'Backups',
+    label: 'Backups',
+    count: (n: number) => (n === 1 ? '1 backup' : `${n} backups`),
     time: 'Time',
     kind: 'Kind',
     version: 'Version',
