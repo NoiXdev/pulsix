@@ -29,6 +29,7 @@ type memTokenStore struct {
 	revokeErr error
 	touchErr  error
 	touched   []uuid.UUID
+	updated   int // store.Update calls
 }
 
 func newMemTokenStore() *memTokenStore {
@@ -109,6 +110,33 @@ func (m *memTokenStore) Revoke(_ context.Context, orgID, id uuid.UUID) error {
 		}
 	}
 	return auth.ErrNotFound
+}
+
+// Get mirrors GetAPITokenForOrg: any non-revoked token of the org, expired or not.
+func (m *memTokenStore) Get(_ context.Context, orgID, id uuid.UUID) (auth.Token, error) {
+	for _, tok := range m.byHash {
+		if tok.ID == id && tok.OrgID == orgID && !m.revoke[id] {
+			return tok, nil
+		}
+	}
+	return auth.Token{}, auth.ErrNotFound
+}
+
+// Update mirrors UpdateAPIToken's WHERE clause: not revoked, not expired as of now.
+func (m *memTokenStore) Update(_ context.Context, orgID, id uuid.UUID, name string, areas []string, expiresAt *time.Time, now time.Time) (auth.Token, error) {
+	m.updated++
+	for h, tok := range m.byHash {
+		if tok.ID != id || tok.OrgID != orgID || m.revoke[id] {
+			continue
+		}
+		if tok.ExpiresAt != nil && !tok.ExpiresAt.After(now) {
+			return auth.Token{}, auth.ErrNotFound
+		}
+		tok.Name, tok.Areas, tok.ExpiresAt = name, areas, expiresAt
+		m.byHash[h] = tok
+		return tok, nil
+	}
+	return auth.Token{}, auth.ErrNotFound
 }
 
 func (m *memTokenStore) TouchLastUsed(_ context.Context, id uuid.UUID, _ time.Time) error {
@@ -370,5 +398,152 @@ func TestTokenRevokeUnknownReturnsNotFound(t *testing.T) {
 	tk := auth.NewTokens(store, time.Now)
 	if err := tk.Revoke(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("Revoke(unknown) err = %v, want %v", err, auth.ErrNotFound)
+	}
+}
+
+func TestTokensUpdate(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	future := now.Add(24 * time.Hour)
+	past := now.Add(-time.Hour)
+	str := func(s string) *string { return &s }
+	areas := func(a ...string) *[]string { return &a }
+	org, user := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+
+	// kind: "api" or "assistant"; expiry: nil for none.
+	cases := []struct {
+		name     string
+		kind     auth.TokenKind
+		expires  *time.Time
+		revoked  bool
+		otherOrg bool
+		change   auth.TokenChange
+		wantErr  error
+		wantNoOp bool // the store must not be written
+		check    func(t *testing.T, before, after auth.Token)
+	}{
+		{name: "rename", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("renamed")},
+			check: func(t *testing.T, b, a auth.Token) {
+				if b.Name != "orig" || a.Name != "renamed" {
+					t.Fatalf("names before=%q after=%q", b.Name, a.Name)
+				}
+			}},
+		{name: "replace areas", kind: auth.TokenKindAssistant, change: auth.TokenChange{Areas: areas("monitoring", "activity")},
+			check: func(t *testing.T, b, a auth.Token) {
+				if len(b.Areas) != 1 || b.Areas[0] != "inventory" || len(a.Areas) != 2 || a.Areas[0] != "monitoring" {
+					t.Fatalf("areas before=%v after=%v", b.Areas, a.Areas)
+				}
+				if a.Name != "orig" {
+					t.Fatalf("name changed to %q", a.Name)
+				}
+			}},
+		{name: "set expiry", kind: auth.TokenKindAPI, change: auth.TokenChange{Expiry: auth.ExpirySet, ExpiresAt: &future},
+			check: func(t *testing.T, b, a auth.Token) {
+				if b.ExpiresAt != nil || a.ExpiresAt == nil || !a.ExpiresAt.Equal(future) {
+					t.Fatalf("expiry before=%v after=%v", b.ExpiresAt, a.ExpiresAt)
+				}
+			}},
+		{name: "clear expiry", kind: auth.TokenKindAPI, expires: &future, change: auth.TokenChange{Expiry: auth.ExpiryClear},
+			check: func(t *testing.T, b, a auth.Token) {
+				if b.ExpiresAt == nil || a.ExpiresAt != nil {
+					t.Fatalf("expiry before=%v after=%v", b.ExpiresAt, a.ExpiresAt)
+				}
+			}},
+		{name: "keep expiry when only renaming", kind: auth.TokenKindAPI, expires: &future, change: auth.TokenChange{Name: str("x")},
+			check: func(t *testing.T, b, a auth.Token) {
+				if a.ExpiresAt == nil || !a.ExpiresAt.Equal(future) {
+					t.Fatalf("expiry lost: %v", a.ExpiresAt)
+				}
+			}},
+		{name: "expiry in the past", kind: auth.TokenKindAPI, change: auth.TokenChange{Expiry: auth.ExpirySet, ExpiresAt: &past},
+			wantErr: auth.ErrExpiryInPast, wantNoOp: true},
+		{name: "expiry exactly now", kind: auth.TokenKindAPI, change: auth.TokenChange{Expiry: auth.ExpirySet, ExpiresAt: &now},
+			wantErr: auth.ErrExpiryInPast, wantNoOp: true},
+		{name: "areas on an api token", kind: auth.TokenKindAPI, change: auth.TokenChange{Areas: areas("monitoring")},
+			wantErr: auth.ErrAreasOnAPIToken, wantNoOp: true},
+		{name: "empty areas", kind: auth.TokenKindAssistant, change: auth.TokenChange{Areas: areas()},
+			wantErr: auth.ErrNoAreas, wantNoOp: true},
+		{name: "empty change", kind: auth.TokenKindAPI, change: auth.TokenChange{},
+			wantErr: auth.ErrNoChange, wantNoOp: true},
+		{name: "expired token", kind: auth.TokenKindAPI, expires: &past, change: auth.TokenChange{Name: str("x")},
+			wantErr: auth.ErrTokenExpired, wantNoOp: true},
+		{name: "expired token with empty change reports expired", kind: auth.TokenKindAPI, expires: &past, change: auth.TokenChange{},
+			wantErr: auth.ErrTokenExpired, wantNoOp: true},
+		{name: "revoked token", kind: auth.TokenKindAPI, revoked: true, change: auth.TokenChange{Name: str("x")},
+			wantErr: auth.ErrNotFound, wantNoOp: true},
+		{name: "other org", kind: auth.TokenKindAPI, otherOrg: true, change: auth.TokenChange{Name: str("x")},
+			wantErr: auth.ErrNotFound, wantNoOp: true},
+		{name: "unchanged value still writes", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("orig")},
+			check: func(t *testing.T, b, a auth.Token) {
+				if b.Name != a.Name || b.Name != "orig" {
+					t.Fatalf("before=%+v after=%+v", b, a)
+				}
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemTokenStore()
+			tk := auth.NewTokens(store, func() time.Time { return now })
+			// Seed the token directly so an expired one can exist.
+			seeded := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: user, OrgID: org, Name: "orig", Role: "operator",
+				ExpiresAt: tc.expires, Kind: tc.kind}
+			if tc.kind == auth.TokenKindAssistant {
+				seeded.Areas = []string{"inventory"}
+			}
+			if err := store.Insert(context.Background(), seeded, []byte(tc.name)); err != nil {
+				t.Fatal(err)
+			}
+			if tc.revoked {
+				store.revoke[seeded.ID] = true
+			}
+			orgID := org
+			if tc.otherOrg {
+				orgID = uuid.Must(uuid.NewV7())
+			}
+			before, after, err := tk.Update(context.Background(), orgID, seeded.ID, tc.change)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				if tc.wantNoOp && store.updated != 0 {
+					t.Fatalf("store.Update called %d times on a refused change", store.updated)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if store.updated != 1 {
+				t.Fatalf("store.Update called %d times, want 1", store.updated)
+			}
+			tc.check(t, before, after)
+		})
+	}
+}
+
+func TestTokensUpdateErrorsWrapInvalidInput(t *testing.T) {
+	for _, err := range []error{auth.ErrNoChange, auth.ErrAreasOnAPIToken, auth.ErrNoAreas, auth.ErrExpiryInPast} {
+		if !errors.Is(err, auth.ErrInvalidInput) {
+			t.Fatalf("%v does not wrap ErrInvalidInput", err)
+		}
+	}
+	if errors.Is(auth.ErrTokenExpired, auth.ErrInvalidInput) {
+		t.Fatal("ErrTokenExpired must not be an invalid-input error")
+	}
+}
+
+func TestTokensGet(t *testing.T) {
+	store := newMemTokenStore()
+	tk := auth.NewTokens(store, time.Now)
+	org := uuid.Must(uuid.NewV7())
+	_, tok, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), org, "g", "viewer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := tk.Get(context.Background(), org, tok.ID)
+	if err != nil || got.ID != tok.ID {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if _, err := tk.Get(context.Background(), uuid.Must(uuid.NewV7()), tok.ID); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Get other org err = %v", err)
 	}
 }

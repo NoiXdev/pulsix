@@ -121,7 +121,13 @@ func (f *fakeBearerStore) Usable(context.Context, uuid.UUID, time.Time) (bool, e
 func (f *fakeBearerStore) ListForOrg(context.Context, uuid.UUID) ([]auth.Token, error) {
 	return nil, nil
 }
-func (f *fakeBearerStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error        { return nil }
+func (f *fakeBearerStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeBearerStore) Get(context.Context, uuid.UUID, uuid.UUID) (auth.Token, error) {
+	return auth.Token{}, auth.ErrNotFound
+}
+func (f *fakeBearerStore) Update(context.Context, uuid.UUID, uuid.UUID, string, []string, *time.Time, time.Time) (auth.Token, error) {
+	return auth.Token{}, auth.ErrNotFound
+}
 func (f *fakeBearerStore) TouchLastUsed(context.Context, uuid.UUID, time.Time) error { return nil }
 
 func TestBearerMiddleware(t *testing.T) {

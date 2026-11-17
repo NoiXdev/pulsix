@@ -74,6 +74,12 @@ func (f *fixedRoleTokenStore) ListForOrg(context.Context, uuid.UUID) ([]auth.Tok
 	return nil, nil
 }
 func (f *fixedRoleTokenStore) Revoke(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fixedRoleTokenStore) Get(context.Context, uuid.UUID, uuid.UUID) (auth.Token, error) {
+	return auth.Token{}, auth.ErrNotFound
+}
+func (f *fixedRoleTokenStore) Update(context.Context, uuid.UUID, uuid.UUID, string, []string, *time.Time, time.Time) (auth.Token, error) {
+	return auth.Token{}, auth.ErrNotFound
+}
 func (f *fixedRoleTokenStore) TouchLastUsed(context.Context, uuid.UUID, time.Time) error {
 	return nil
 }

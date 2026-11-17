@@ -49,3 +49,20 @@ SELECT EXISTS (
   WHERE t.id = sqlc.arg(id)::uuid AND t.revoked_at IS NULL
     AND (t.expires_at IS NULL OR t.expires_at > sqlc.arg(now)::timestamptz) AND u.disabled_at IS NULL
 );
+
+-- name: GetAPITokenForOrg :one
+-- A non-revoked token of orgID by id, expired or not: the editing path reads
+-- it first so it can tell "expired" from "gone". Columns are named explicitly
+-- so secret_hash is never scanned into Go, as in ListAPITokensForOrg.
+SELECT id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at, kind, areas
+FROM api_tokens WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL;
+
+-- name: UpdateAPIToken :one
+-- Changes a token's name, areas and expiry. Only a token that is neither
+-- revoked nor expired as of the caller-supplied now matches, so an expired
+-- token cannot be revived by extending it. The kind/areas CHECK still holds:
+-- nil areas on an assistant token is refused by the database.
+UPDATE api_tokens SET name = $3, areas = sqlc.narg(areas)::text[], expires_at = $4
+WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > sqlc.arg(now)::timestamptz)
+RETURNING id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at, kind, areas;

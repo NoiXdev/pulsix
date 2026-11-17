@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -59,6 +60,35 @@ type TokenScope struct {
 	Areas []string
 }
 
+// ExpiryChange says what an update does to a token's expiry; the zero value
+// keeps it.
+type ExpiryChange int
+
+// The expiry changes.
+const (
+	ExpiryKeep ExpiryChange = iota
+	ExpirySet
+	ExpiryClear
+)
+
+// TokenChange is a partial update of a token: a nil Name or Areas and an
+// ExpiryKeep leave that field as it is.
+type TokenChange struct {
+	Name      *string
+	Areas     *[]string
+	Expiry    ExpiryChange
+	ExpiresAt *time.Time // set when Expiry == ExpirySet
+}
+
+// Errors of Tokens.Update. All but ErrTokenExpired wrap ErrInvalidInput.
+var (
+	ErrTokenExpired    = errors.New("an expired token cannot be changed; create a new one")
+	ErrNoChange        = fmt.Errorf("%w: nothing to change", ErrInvalidInput)
+	ErrAreasOnAPIToken = fmt.Errorf("%w: only assistant tokens have areas", ErrInvalidInput)
+	ErrNoAreas         = fmt.Errorf("%w: an assistant token needs at least one area", ErrInvalidInput)
+	ErrExpiryInPast    = fmt.Errorf("%w: the expiry must be in the future", ErrInvalidInput)
+)
+
 // TokenStore persists API tokens. It mirrors Store and TOTPStore's seam:
 // the service never imports gen or pgx directly, so every branch below can
 // be driven from a fake in unit tests (see token_test.go) as well as the
@@ -82,6 +112,14 @@ type TokenStore interface {
 	Usable(ctx context.Context, id uuid.UUID, now time.Time) (bool, error)
 	// ListForOrg returns every non-revoked token belonging to orgID.
 	ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Token, error)
+	// Get returns the non-revoked token id of orgID, expired or not; any
+	// other token is ErrNotFound.
+	Get(ctx context.Context, orgID, id uuid.UUID) (Token, error)
+	// Update sets the name, areas and expiry of the token id of orgID and
+	// returns the stored row. Only a token that is neither revoked nor
+	// expired as of now matches; otherwise it returns ErrNotFound. areas is
+	// nil for an api token.
+	Update(ctx context.Context, orgID, id uuid.UUID, name string, areas []string, expiresAt *time.Time, now time.Time) (Token, error)
 	// Revoke marks id revoked, scoped to orgID so a token can never be
 	// revoked through an org it does not belong to. It returns ErrNotFound
 	// when no matching, not-yet-revoked row exists.
@@ -231,4 +269,55 @@ func (t *Tokens) List(ctx context.Context, orgID uuid.UUID) ([]Token, error) {
 // Revoke revokes id, scoped to orgID.
 func (t *Tokens) Revoke(ctx context.Context, orgID, id uuid.UUID) error {
 	return t.store.Revoke(ctx, orgID, id)
+}
+
+// Get returns the non-revoked token id of orgID, expired or not.
+func (t *Tokens) Get(ctx context.Context, orgID, id uuid.UUID) (Token, error) {
+	return t.store.Get(ctx, orgID, id)
+}
+
+// Update applies ch to the token id of orgID and returns the token before
+// and after. Whether the areas are valid for the token's role is the
+// caller's to check: that needs tenancy, which imports this package.
+func (t *Tokens) Update(ctx context.Context, orgID, id uuid.UUID, ch TokenChange) (before, after Token, err error) {
+	before, err = t.store.Get(ctx, orgID, id)
+	if err != nil {
+		return Token{}, Token{}, err
+	}
+	now := t.now()
+	if before.ExpiresAt != nil && !before.ExpiresAt.After(now) {
+		return Token{}, Token{}, ErrTokenExpired
+	}
+	if ch.Name == nil && ch.Areas == nil && ch.Expiry == ExpiryKeep {
+		return Token{}, Token{}, ErrNoChange
+	}
+	if ch.Areas != nil {
+		if before.Kind != TokenKindAssistant {
+			return Token{}, Token{}, ErrAreasOnAPIToken
+		}
+		if len(*ch.Areas) == 0 {
+			return Token{}, Token{}, ErrNoAreas
+		}
+	}
+	if ch.Expiry == ExpirySet && (ch.ExpiresAt == nil || !ch.ExpiresAt.After(now)) {
+		return Token{}, Token{}, ErrExpiryInPast
+	}
+	name, areas, expiresAt := before.Name, before.Areas, before.ExpiresAt
+	if ch.Name != nil {
+		name = *ch.Name
+	}
+	if ch.Areas != nil {
+		areas = *ch.Areas
+	}
+	switch ch.Expiry {
+	case ExpirySet:
+		expiresAt = ch.ExpiresAt
+	case ExpiryClear:
+		expiresAt = nil
+	}
+	after, err = t.store.Update(ctx, orgID, id, name, areas, expiresAt, now)
+	if err != nil {
+		return Token{}, Token{}, err
+	}
+	return before, after, nil
 }

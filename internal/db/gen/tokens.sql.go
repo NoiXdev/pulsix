@@ -93,6 +93,52 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashPa
 	return i, err
 }
 
+const getAPITokenForOrg = `-- name: GetAPITokenForOrg :one
+SELECT id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at, kind, areas
+FROM api_tokens WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
+`
+
+type GetAPITokenForOrgParams struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+type GetAPITokenForOrgRow struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Name       string             `json:"name"`
+	Role       OrgRole            `json:"role"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
+}
+
+// A non-revoked token of orgID by id, expired or not: the editing path reads
+// it first so it can tell "expired" from "gone". Columns are named explicitly
+// so secret_hash is never scanned into Go, as in ListAPITokensForOrg.
+func (q *Queries) GetAPITokenForOrg(ctx context.Context, arg GetAPITokenForOrgParams) (GetAPITokenForOrgRow, error) {
+	row := q.db.QueryRow(ctx, getAPITokenForOrg, arg.ID, arg.OrgID)
+	var i GetAPITokenForOrgRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.OrgID,
+		&i.Name,
+		&i.Role,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Areas,
+	)
+	return i, err
+}
+
 const insertAPIToken = `-- name: InsertAPIToken :exec
 INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash, expires_at, kind, areas)
 VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8::text, ''), 'api'), $9::text[])
@@ -217,4 +263,64 @@ type TouchAPITokenParams struct {
 func (q *Queries) TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error {
 	_, err := q.db.Exec(ctx, touchAPIToken, arg.ID, arg.LastUsedAt)
 	return err
+}
+
+const updateAPIToken = `-- name: UpdateAPIToken :one
+UPDATE api_tokens SET name = $3, areas = $5::text[], expires_at = $4
+WHERE id = $1 AND org_id = $2 AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > $6::timestamptz)
+RETURNING id, user_id, org_id, name, role, expires_at, last_used_at, revoked_at, created_at, kind, areas
+`
+
+type UpdateAPITokenParams struct {
+	ID        uuid.UUID          `json:"id"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	Name      string             `json:"name"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	Areas     []string           `json:"areas"`
+	Now       time.Time          `json:"now"`
+}
+
+type UpdateAPITokenRow struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Name       string             `json:"name"`
+	Role       OrgRole            `json:"role"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+	Kind       string             `json:"kind"`
+	Areas      []string           `json:"areas"`
+}
+
+// Changes a token's name, areas and expiry. Only a token that is neither
+// revoked nor expired as of the caller-supplied now matches, so an expired
+// token cannot be revived by extending it. The kind/areas CHECK still holds:
+// nil areas on an assistant token is refused by the database.
+func (q *Queries) UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (UpdateAPITokenRow, error) {
+	row := q.db.QueryRow(ctx, updateAPIToken,
+		arg.ID,
+		arg.OrgID,
+		arg.Name,
+		arg.ExpiresAt,
+		arg.Areas,
+		arg.Now,
+	)
+	var i UpdateAPITokenRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.OrgID,
+		&i.Name,
+		&i.Role,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.Kind,
+		&i.Areas,
+	)
+	return i, err
 }

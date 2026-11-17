@@ -470,3 +470,103 @@ func TestSQLTokenStoreUsableAppliesTheResolveFilter(t *testing.T) {
 		t.Fatal("a revoked token is usable")
 	}
 }
+
+// seedUpdatableToken inserts one assistant token with areas and returns the
+// store, the token and the org it lives in.
+func seedUpdatableToken(t *testing.T, slug string, expires *time.Time) (*auth.SQLTokenStore, auth.Token, uuid.UUID) {
+	t.Helper()
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, slug+"@example.test")
+	org := seedOrg(t, q, slug)
+	store := auth.NewSQLTokenStore(d)
+	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "old", Role: "operator",
+		Kind: auth.TokenKindAssistant, Areas: []string{"inventory"}, ExpiresAt: expires}
+	if err := store.Insert(context.Background(), tok, hashOf(slug)); err != nil {
+		t.Fatal(err)
+	}
+	return store, tok, org
+}
+
+func TestSQLTokenStoreUpdateRoundTrip(t *testing.T) {
+	store, tok, org := seedUpdatableToken(t, "upd-roundtrip", nil)
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour).Truncate(time.Microsecond)
+
+	got, err := store.Update(ctx, org, tok.ID, "new", []string{"monitoring", "activity"}, &exp, time.Now())
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.ID != tok.ID || got.Name != "new" || len(got.Areas) != 2 || got.Areas[0] != "monitoring" ||
+		got.ExpiresAt == nil || !got.ExpiresAt.Equal(exp) || got.Role != "operator" || got.Kind != auth.TokenKindAssistant {
+		t.Fatalf("Update returned %+v", got)
+	}
+	list, err := store.ListForOrg(ctx, org)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListForOrg = %+v, %v", list, err)
+	}
+	if list[0].Name != "new" || len(list[0].Areas) != 2 || list[0].ExpiresAt == nil || !list[0].ExpiresAt.Equal(exp) {
+		t.Fatalf("listed token = %+v", list[0])
+	}
+	read, err := store.Get(ctx, org, tok.ID)
+	if err != nil || read.Name != "new" {
+		t.Fatalf("Get = %+v, %v", read, err)
+	}
+
+	// Clearing the expiry persists as NULL.
+	cleared, err := store.Update(ctx, org, tok.ID, "new", []string{"monitoring"}, nil, time.Now())
+	if err != nil || cleared.ExpiresAt != nil {
+		t.Fatalf("clear expiry = %+v, %v", cleared, err)
+	}
+}
+
+func TestSQLTokenStoreUpdateScopedToOrg(t *testing.T) {
+	store, tok, org := seedUpdatableToken(t, "upd-scope", nil)
+	ctx := context.Background()
+	other := uuid.Must(uuid.NewV7())
+	if _, err := store.Update(ctx, other, tok.ID, "x", []string{"inventory"}, nil, time.Now()); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Update through another org err = %v, want ErrNotFound", err)
+	}
+	if _, err := store.Get(ctx, other, tok.ID); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Get through another org err = %v, want ErrNotFound", err)
+	}
+	got, err := store.Get(ctx, org, tok.ID)
+	if err != nil || got.Name != "old" {
+		t.Fatalf("token changed by a foreign update: %+v, %v", got, err)
+	}
+}
+
+func TestSQLTokenStoreUpdateRefusesRevoked(t *testing.T) {
+	store, tok, org := seedUpdatableToken(t, "upd-revoked", nil)
+	ctx := context.Background()
+	if err := store.Revoke(ctx, org, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(ctx, org, tok.ID, "x", []string{"inventory"}, nil, time.Now()); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Update(revoked) err = %v, want ErrNotFound", err)
+	}
+	if _, err := store.Get(ctx, org, tok.ID); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Get(revoked) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSQLTokenStoreUpdateRefusesExpired(t *testing.T) {
+	exp := time.Now().Add(time.Hour).Truncate(time.Microsecond)
+	store, tok, org := seedUpdatableToken(t, "upd-expired", &exp)
+	ctx := context.Background()
+	later := exp.Add(time.Minute)
+	if _, err := store.Update(ctx, org, tok.ID, "x", []string{"inventory"}, nil, later); !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Update(expired) err = %v, want ErrNotFound", err)
+	}
+	// Get still sees it: the service reads it first to say "expired".
+	if got, err := store.Get(ctx, org, tok.ID); err != nil || got.Name != "old" {
+		t.Fatalf("Get(expired) = %+v, %v", got, err)
+	}
+}
+
+func TestSQLTokenStoreUpdateCheckHoldsShape(t *testing.T) {
+	store, tok, org := seedUpdatableToken(t, "upd-check", nil)
+	if _, err := store.Update(context.Background(), org, tok.ID, "x", nil, nil, time.Now()); err == nil || errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("Update(assistant, nil areas) err = %v, want the CHECK violation", err)
+	}
+}

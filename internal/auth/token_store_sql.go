@@ -83,6 +83,43 @@ func (s *SQLTokenStore) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Toke
 	return out, nil
 }
 
+// Get returns the non-revoked token id of orgID, expired or not.
+func (s *SQLTokenStore) Get(ctx context.Context, orgID, id uuid.UUID) (Token, error) {
+	row, err := s.q.GetAPITokenForOrg(ctx, gen.GetAPITokenForOrgParams{ID: id, OrgID: orgID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Token{}, ErrNotFound
+		}
+		return Token{}, err
+	}
+	return Token{
+		ID: row.ID, UserID: row.UserID, OrgID: row.OrgID, Name: row.Name, Role: string(row.Role),
+		ExpiresAt: fromPgTimestamptz(row.ExpiresAt), LastUsedAt: fromPgTimestamptz(row.LastUsedAt), CreatedAt: row.CreatedAt,
+		Kind: TokenKind(row.Kind), Areas: row.Areas,
+	}, nil
+}
+
+// Update changes name, areas and expiry of a token that is neither revoked
+// nor expired as of now. A row the statement does not match (unknown, other
+// org, revoked, expired) is ErrNotFound; the kind/areas CHECK refuses nil
+// areas on an assistant token and areas on an api token.
+func (s *SQLTokenStore) Update(ctx context.Context, orgID, id uuid.UUID, name string, areas []string, expiresAt *time.Time, now time.Time) (Token, error) {
+	row, err := s.q.UpdateAPIToken(ctx, gen.UpdateAPITokenParams{
+		ID: id, OrgID: orgID, Name: name, Areas: areas, ExpiresAt: toPgTimestamptz(expiresAt), Now: now,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Token{}, ErrNotFound
+		}
+		return Token{}, err
+	}
+	return Token{
+		ID: row.ID, UserID: row.UserID, OrgID: row.OrgID, Name: row.Name, Role: string(row.Role),
+		ExpiresAt: fromPgTimestamptz(row.ExpiresAt), LastUsedAt: fromPgTimestamptz(row.LastUsedAt), CreatedAt: row.CreatedAt,
+		Kind: TokenKind(row.Kind), Areas: row.Areas,
+	}, nil
+}
+
 // Revoke returns ErrNotFound when no matching, not-yet-revoked row exists
 // for id within orgID, so a caller can never mistake "nothing happened" for
 // success — the same guarantee SQLPasskeyStore.DeleteCredential gives.
