@@ -125,6 +125,179 @@ WHERE jh.org_id = sqlc.arg(org_id)
 ORDER BY jh.created_at DESC, jh.job_id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListJobsPage :many
+-- Offset paging (backlog 3.97) in the default order, newest first: the one
+-- order the (org_id, created_at, id) index serves, so it stays an index scan.
+-- The filters are ListJobs' own, without the cursor. Live runs only
+-- (status=active) are ListLiveJobs.
+SELECT * FROM jobs
+WHERE org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid)
+ORDER BY created_at DESC, id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListJobsPageSorted :many
+-- Every other key and direction (backlog 3.97). The sort key is whitelisted
+-- by the caller; each CASE is NULL on every row unless its key is chosen, so
+-- the others drop out. status orders by lifecycle rank (queued first), and a
+-- tie falls back to newest first, id last, so pages are disjoint.
+SELECT j.* FROM jobs j
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE j.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND NOT sqlc.arg(sort_desc)::boolean THEN j.created_at END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND sqlc.arg(sort_desc)::boolean THEN j.created_at END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND NOT sqlc.arg(sort_desc)::boolean THEN r.rank END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND sqlc.arg(sort_desc)::boolean THEN r.rank END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND NOT sqlc.arg(sort_desc)::boolean THEN j.kind END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND sqlc.arg(sort_desc)::boolean THEN j.kind END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND NOT sqlc.arg(sort_desc)::boolean THEN j.trigger END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND sqlc.arg(sort_desc)::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountJobs :one
+-- ListJobsPage's filters, counted: the total of a paged answer.
+SELECT count(*) FROM jobs
+WHERE org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid);
+
+-- name: ListJobsForHostPage :many
+-- ListJobsPage for the runs that targeted one host, read through job_hosts
+-- like ListJobsForHost (see there for why it is its own query).
+SELECT sqlc.embed(j)
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = sqlc.arg(org_id)
+  AND jh.host_id = sqlc.arg(host_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
+ORDER BY jh.created_at DESC, jh.job_id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListJobsForHostPageSorted :many
+-- ListJobsPageSorted for the runs of one host.
+SELECT sqlc.embed(j)
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE jh.org_id = sqlc.arg(org_id)
+  AND jh.host_id = sqlc.arg(host_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND NOT sqlc.arg(sort_desc)::boolean THEN j.created_at END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND sqlc.arg(sort_desc)::boolean THEN j.created_at END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND NOT sqlc.arg(sort_desc)::boolean THEN r.rank END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND sqlc.arg(sort_desc)::boolean THEN r.rank END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND NOT sqlc.arg(sort_desc)::boolean THEN j.kind END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND sqlc.arg(sort_desc)::boolean THEN j.kind END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND NOT sqlc.arg(sort_desc)::boolean THEN j.trigger END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND sqlc.arg(sort_desc)::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountJobsForHost :one
+-- CountJobs for the runs of one host.
+SELECT count(*)
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = sqlc.arg(org_id)
+  AND jh.host_id = sqlc.arg(host_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid);
+
+-- name: ListLiveJobs :many
+-- The live runs (queued, claimed, running, cancelling), for status=active in
+-- cursor and page mode, with an optional host. The status condition is a
+-- literal, never behind a parameter, so the planner can prove the partial
+-- index jobs_live_idx (migration 00109) serves it even under a generic plan:
+-- it reads only the few runs in flight, never the history. The host is an
+-- EXISTS over job_hosts for the same reason the other filters are plain
+-- conditions: the live set is small. sort_key/sort_desc and the keyset
+-- cursor work as in ListJobsPageSorted and ListJobs; cursor mode passes
+-- created, descending. row_offset/row_limit page it.
+SELECT j.* FROM jobs j
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE j.org_id = sqlc.arg(org_id)
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  AND (sqlc.narg(host_id)::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM job_hosts jh WHERE jh.org_id = j.org_id AND jh.job_id = j.id AND jh.host_id = sqlc.narg(host_id)::uuid))
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
+  AND (
+    sqlc.narg(cursor_at)::timestamptz IS NULL
+    OR (j.created_at, j.id) < (sqlc.narg(cursor_at)::timestamptz, sqlc.narg(cursor_id)::uuid)
+  )
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND NOT sqlc.arg(sort_desc)::boolean THEN j.created_at END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'created' AND sqlc.arg(sort_desc)::boolean THEN j.created_at END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND NOT sqlc.arg(sort_desc)::boolean THEN r.rank END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'status' AND sqlc.arg(sort_desc)::boolean THEN r.rank END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND NOT sqlc.arg(sort_desc)::boolean THEN j.kind END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'kind' AND sqlc.arg(sort_desc)::boolean THEN j.kind END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND NOT sqlc.arg(sort_desc)::boolean THEN j.trigger END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'trigger' AND sqlc.arg(sort_desc)::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountLiveJobs :one
+-- ListLiveJobs' filters, counted.
+SELECT count(*) FROM jobs j
+WHERE j.org_id = sqlc.arg(org_id)
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  AND (sqlc.narg(host_id)::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM job_hosts jh WHERE jh.org_id = j.org_id AND jh.job_id = j.id AND jh.host_id = sqlc.narg(host_id)::uuid))
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid);
+
 -- name: CancelJob :one
 -- One atomic statement for both cancel shapes: a queued job has never been
 -- shipped to a worker, so it goes straight to 'cancelled' (terminal), while

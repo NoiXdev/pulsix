@@ -5799,7 +5799,13 @@ export interface components {
              */
             readonly $schema?: string;
             jobs: components["schemas"]["JobDTO"][] | null;
+            /** @description Empty in page mode */
             next_cursor: string;
+            /**
+             * Format: int64
+             * @description Runs matching the filters; page mode only
+             */
+            total?: number;
         };
         JobRefDTO: {
             /** Format: date-time */
@@ -13958,6 +13964,7 @@ export interface operations {
     "get-api-v1-orgs-by-org-jobs": {
         parameters: {
             query?: {
+                /** @description A run status, or active for the live runs (queued, claimed, running, cancelling) */
                 status?: string;
                 kind?: string;
                 template_id?: string;
@@ -13970,6 +13977,13 @@ export interface operations {
                 host_id?: string;
                 cursor?: string;
                 limit?: number;
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                sort?: "created" | "status" | "kind" | "trigger";
             };
             header?: never;
             path: {

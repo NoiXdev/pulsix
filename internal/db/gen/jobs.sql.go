@@ -179,6 +179,136 @@ func (q *Queries) CountActiveRotationJobs(ctx context.Context, arg CountActiveRo
 	return count, err
 }
 
+const countJobs = `-- name: CountJobs :one
+SELECT count(*) FROM jobs
+WHERE org_id = $1
+  AND ($2::uuid IS NULL OR zone_id = $2::uuid)
+  AND ($3::text IS NULL OR status = $3::text)
+  AND ($4::text IS NULL OR kind = $4::text)
+  AND ($5::uuid IS NULL OR template_id = $5::uuid)
+  AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
+  AND ($7::text IS NULL OR trigger = $7::text)
+  AND ($8::uuid IS NULL OR trigger_ref = $8::uuid)
+`
+
+type CountJobsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+}
+
+// ListJobsPage's filters, counted: the total of a paged answer.
+func (q *Queries) CountJobs(ctx context.Context, arg CountJobsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countJobs,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countJobsForHost = `-- name: CountJobsForHost :one
+SELECT count(*)
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = $1
+  AND jh.host_id = $2
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+`
+
+type CountJobsForHostParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	HostID     uuid.UUID   `json:"host_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+}
+
+// CountJobs for the runs of one host.
+func (q *Queries) CountJobsForHost(ctx context.Context, arg CountJobsForHostParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countJobsForHost,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveJobs = `-- name: CountLiveJobs :one
+SELECT count(*) FROM jobs j
+WHERE j.org_id = $1
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  AND ($2::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM job_hosts jh WHERE jh.org_id = j.org_id AND jh.job_id = j.id AND jh.host_id = $2::uuid))
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+`
+
+type CountLiveJobsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	HostID     pgtype.UUID `json:"host_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+}
+
+// ListLiveJobs' filters, counted.
+func (q *Queries) CountLiveJobs(ctx context.Context, arg CountLiveJobsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveJobs,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createJob = `-- name: CreateJob :one
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
@@ -857,6 +987,527 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 			&i.Job.ResolvedVaultIdentities,
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsForHostPage = `-- name: ListJobsForHostPage :many
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = $1
+  AND jh.host_id = $2
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+ORDER BY jh.created_at DESC, jh.job_id DESC
+OFFSET $10 LIMIT $11
+`
+
+type ListJobsForHostPageParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	HostID     uuid.UUID   `json:"host_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+type ListJobsForHostPageRow struct {
+	Job Job `json:"job"`
+}
+
+// ListJobsPage for the runs that targeted one host, read through job_hosts
+// like ListJobsForHost (see there for why it is its own query).
+func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPageParams) ([]ListJobsForHostPageRow, error) {
+	rows, err := q.db.Query(ctx, listJobsForHostPage,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobsForHostPageRow
+	for rows.Next() {
+		var i ListJobsForHostPageRow
+		if err := rows.Scan(
+			&i.Job.ID,
+			&i.Job.OrgID,
+			&i.Job.ZoneID,
+			&i.Job.Kind,
+			&i.Job.TemplateID,
+			&i.Job.HostIds,
+			&i.Job.Status,
+			&i.Job.WorkerID,
+			&i.Job.ClaimedAt,
+			&i.Job.StartedAt,
+			&i.Job.FinishedAt,
+			&i.Job.Stats,
+			&i.Job.Error,
+			&i.Job.RunGroupID,
+			&i.Job.Trigger,
+			&i.Job.ActorID,
+			&i.Job.Payload,
+			&i.Job.CreatedAt,
+			&i.Job.Attempts,
+			&i.Job.DependsOn,
+			&i.Job.RotationCredentialID,
+			&i.Job.TriggerRef,
+			&i.Job.RunGroupReported,
+			&i.Job.ResolvedVaultIdentities,
+			&i.Job.HostsExcluded,
+			&i.Job.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsForHostPageSorted = `-- name: ListJobsForHostPageSorted :many
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE jh.org_id = $1
+  AND jh.host_id = $2
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+ORDER BY
+  (CASE WHEN $10::text = 'created' AND NOT $11::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $10::text = 'created' AND $11::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $10::text = 'status' AND NOT $11::boolean THEN r.rank END) ASC,
+  (CASE WHEN $10::text = 'status' AND $11::boolean THEN r.rank END) DESC,
+  (CASE WHEN $10::text = 'kind' AND NOT $11::boolean THEN j.kind END) ASC,
+  (CASE WHEN $10::text = 'kind' AND $11::boolean THEN j.kind END) DESC,
+  (CASE WHEN $10::text = 'trigger' AND NOT $11::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $10::text = 'trigger' AND $11::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET $12 LIMIT $13
+`
+
+type ListJobsForHostPageSortedParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	HostID     uuid.UUID   `json:"host_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+	SortKey    string      `json:"sort_key"`
+	SortDesc   bool        `json:"sort_desc"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+type ListJobsForHostPageSortedRow struct {
+	Job Job `json:"job"`
+}
+
+// ListJobsPageSorted for the runs of one host.
+func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsForHostPageSortedParams) ([]ListJobsForHostPageSortedRow, error) {
+	rows, err := q.db.Query(ctx, listJobsForHostPageSorted,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobsForHostPageSortedRow
+	for rows.Next() {
+		var i ListJobsForHostPageSortedRow
+		if err := rows.Scan(
+			&i.Job.ID,
+			&i.Job.OrgID,
+			&i.Job.ZoneID,
+			&i.Job.Kind,
+			&i.Job.TemplateID,
+			&i.Job.HostIds,
+			&i.Job.Status,
+			&i.Job.WorkerID,
+			&i.Job.ClaimedAt,
+			&i.Job.StartedAt,
+			&i.Job.FinishedAt,
+			&i.Job.Stats,
+			&i.Job.Error,
+			&i.Job.RunGroupID,
+			&i.Job.Trigger,
+			&i.Job.ActorID,
+			&i.Job.Payload,
+			&i.Job.CreatedAt,
+			&i.Job.Attempts,
+			&i.Job.DependsOn,
+			&i.Job.RotationCredentialID,
+			&i.Job.TriggerRef,
+			&i.Job.RunGroupReported,
+			&i.Job.ResolvedVaultIdentities,
+			&i.Job.HostsExcluded,
+			&i.Job.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsPage = `-- name: ListJobsPage :many
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM jobs
+WHERE org_id = $1
+  AND ($2::uuid IS NULL OR zone_id = $2::uuid)
+  AND ($3::text IS NULL OR status = $3::text)
+  AND ($4::text IS NULL OR kind = $4::text)
+  AND ($5::uuid IS NULL OR template_id = $5::uuid)
+  AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
+  AND ($7::text IS NULL OR trigger = $7::text)
+  AND ($8::uuid IS NULL OR trigger_ref = $8::uuid)
+ORDER BY created_at DESC, id DESC
+OFFSET $9 LIMIT $10
+`
+
+type ListJobsPageParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+// Offset paging (backlog 3.97) in the default order, newest first: the one
+// order the (org_id, created_at, id) index serves, so it stays an index scan.
+// The filters are ListJobs' own, without the cursor. Live runs only
+// (status=active) are ListLiveJobs.
+func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]Job, error) {
+	rows, err := q.db.Query(ctx, listJobsPage,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Kind,
+			&i.TemplateID,
+			&i.HostIds,
+			&i.Status,
+			&i.WorkerID,
+			&i.ClaimedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Stats,
+			&i.Error,
+			&i.RunGroupID,
+			&i.Trigger,
+			&i.ActorID,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.Attempts,
+			&i.DependsOn,
+			&i.RotationCredentialID,
+			&i.TriggerRef,
+			&i.RunGroupReported,
+			&i.ResolvedVaultIdentities,
+			&i.HostsExcluded,
+			&i.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsPageSorted = `-- name: ListJobsPageSorted :many
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play FROM jobs j
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE j.org_id = $1
+  AND ($2::uuid IS NULL OR j.zone_id = $2::uuid)
+  AND ($3::text IS NULL OR j.status = $3::text)
+  AND ($4::text IS NULL OR j.kind = $4::text)
+  AND ($5::uuid IS NULL OR j.template_id = $5::uuid)
+  AND ($6::uuid IS NULL OR j.run_group_id = $6::uuid)
+  AND ($7::text IS NULL OR j.trigger = $7::text)
+  AND ($8::uuid IS NULL OR j.trigger_ref = $8::uuid)
+ORDER BY
+  (CASE WHEN $9::text = 'created' AND NOT $10::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $9::text = 'created' AND $10::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $9::text = 'status' AND NOT $10::boolean THEN r.rank END) ASC,
+  (CASE WHEN $9::text = 'status' AND $10::boolean THEN r.rank END) DESC,
+  (CASE WHEN $9::text = 'kind' AND NOT $10::boolean THEN j.kind END) ASC,
+  (CASE WHEN $9::text = 'kind' AND $10::boolean THEN j.kind END) DESC,
+  (CASE WHEN $9::text = 'trigger' AND NOT $10::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $9::text = 'trigger' AND $10::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET $11 LIMIT $12
+`
+
+type ListJobsPageSortedParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Status     *string     `json:"status"`
+	Kind       *string     `json:"kind"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+	Trigger    *string     `json:"trigger"`
+	TriggerRef pgtype.UUID `json:"trigger_ref"`
+	SortKey    string      `json:"sort_key"`
+	SortDesc   bool        `json:"sort_desc"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+// Every other key and direction (backlog 3.97). The sort key is whitelisted
+// by the caller; each CASE is NULL on every row unless its key is chosen, so
+// the others drop out. status orders by lifecycle rank (queued first), and a
+// tie falls back to newest first, id last, so pages are disjoint.
+func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSortedParams) ([]Job, error) {
+	rows, err := q.db.Query(ctx, listJobsPageSorted,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Kind,
+			&i.TemplateID,
+			&i.HostIds,
+			&i.Status,
+			&i.WorkerID,
+			&i.ClaimedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Stats,
+			&i.Error,
+			&i.RunGroupID,
+			&i.Trigger,
+			&i.ActorID,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.Attempts,
+			&i.DependsOn,
+			&i.RotationCredentialID,
+			&i.TriggerRef,
+			&i.RunGroupReported,
+			&i.ResolvedVaultIdentities,
+			&i.HostsExcluded,
+			&i.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLiveJobs = `-- name: ListLiveJobs :many
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play FROM jobs j
+CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
+  WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
+WHERE j.org_id = $1
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  AND ($2::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM job_hosts jh WHERE jh.org_id = j.org_id AND jh.job_id = j.id AND jh.host_id = $2::uuid))
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+  AND (
+    $10::timestamptz IS NULL
+    OR (j.created_at, j.id) < ($10::timestamptz, $11::uuid)
+  )
+ORDER BY
+  (CASE WHEN $12::text = 'created' AND NOT $13::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $12::text = 'created' AND $13::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $12::text = 'status' AND NOT $13::boolean THEN r.rank END) ASC,
+  (CASE WHEN $12::text = 'status' AND $13::boolean THEN r.rank END) DESC,
+  (CASE WHEN $12::text = 'kind' AND NOT $13::boolean THEN j.kind END) ASC,
+  (CASE WHEN $12::text = 'kind' AND $13::boolean THEN j.kind END) DESC,
+  (CASE WHEN $12::text = 'trigger' AND NOT $13::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $12::text = 'trigger' AND $13::boolean THEN j.trigger END) DESC,
+  j.created_at DESC, j.id DESC
+OFFSET $14 LIMIT $15
+`
+
+type ListLiveJobsParams struct {
+	OrgID      uuid.UUID          `json:"org_id"`
+	HostID     pgtype.UUID        `json:"host_id"`
+	ZoneID     pgtype.UUID        `json:"zone_id"`
+	Status     *string            `json:"status"`
+	Kind       *string            `json:"kind"`
+	TemplateID pgtype.UUID        `json:"template_id"`
+	RunGroupID pgtype.UUID        `json:"run_group_id"`
+	Trigger    *string            `json:"trigger"`
+	TriggerRef pgtype.UUID        `json:"trigger_ref"`
+	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
+	CursorID   pgtype.UUID        `json:"cursor_id"`
+	SortKey    string             `json:"sort_key"`
+	SortDesc   bool               `json:"sort_desc"`
+	RowOffset  int32              `json:"row_offset"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// The live runs (queued, claimed, running, cancelling), for status=active in
+// cursor and page mode, with an optional host. The status condition is a
+// literal, never behind a parameter, so the planner can prove the partial
+// index jobs_live_idx (migration 00109) serves it even under a generic plan:
+// it reads only the few runs in flight, never the history. The host is an
+// EXISTS over job_hosts for the same reason the other filters are plain
+// conditions: the live set is small. sort_key/sort_desc and the keyset
+// cursor work as in ListJobsPageSorted and ListJobs; cursor mode passes
+// created, descending. row_offset/row_limit page it.
+func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]Job, error) {
+	rows, err := q.db.Query(ctx, listLiveJobs,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.CursorAt,
+		arg.CursorID,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Kind,
+			&i.TemplateID,
+			&i.HostIds,
+			&i.Status,
+			&i.WorkerID,
+			&i.ClaimedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Stats,
+			&i.Error,
+			&i.RunGroupID,
+			&i.Trigger,
+			&i.ActorID,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.Attempts,
+			&i.DependsOn,
+			&i.RotationCredentialID,
+			&i.TriggerRef,
+			&i.RunGroupReported,
+			&i.ResolvedVaultIdentities,
+			&i.HostsExcluded,
+			&i.CancelStopsPlay,
 		); err != nil {
 			return nil, err
 		}

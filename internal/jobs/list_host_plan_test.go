@@ -275,3 +275,43 @@ func TestExplainGenericFreesItsStatementAfterAFailure(t *testing.T) {
 		t.Fatalf("second call on the same connection: %v", err)
 	}
 }
+
+// TestListLiveJobsUsesTheLiveIndexUnderAGenericPlan pins backlog 3.97: the
+// runs list's status=active reads only the live runs through jobs_live_idx
+// (migration 00109), as pulsix_app under a generic plan, however long the
+// finished history is. The status condition is a literal in the query, so
+// the planner can prove the partial index's predicate without knowing any
+// parameter.
+func TestListLiveJobsUsesTheLiveIndexUnderAGenericPlan(t *testing.T) {
+	if testing.Short() {
+		t.Skip("seeds 50 000 jobs")
+	}
+	org, _, app := seedHostFilterJobs(t)
+	owner, err := db.Open(context.Background(), testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.Close)
+	// 99 % of the history is finished; the rest stays live (queued).
+	if _, err := owner.Pool().Exec(context.Background(), `UPDATE jobs SET status = 'succeeded' WHERE org_id = $1 AND random() < 0.99`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Pool().Exec(context.Background(), `ANALYZE jobs, job_hosts`); err != nil {
+		t.Fatal(err)
+	}
+
+	// gen.ListLiveJobsParams order: org, host, zone, status, kind, template,
+	// run group, trigger, trigger ref, cursor at, cursor id, sort key, sort
+	// desc, offset, limit.
+	for name, args := range map[string]string{
+		"list":  fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'created', true, 0, 25`, org),
+		"count": fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL`, org),
+	} {
+		query := generatedQuery(t, map[string]string{"list": "listLiveJobs", "count": "countLiveJobs"}[name])
+		plan, _ := explainGeneric(t, app, org, query, args, false)
+		pretty, _ := json.MarshalIndent(plan, "", " ")
+		if !planUsesIndex(plan, "jobs_live_idx") {
+			t.Fatalf("%s: generic plan does not use jobs_live_idx:\n%s", name, pretty)
+		}
+	}
+}

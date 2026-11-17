@@ -20,6 +20,7 @@ import (
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/sshconf"
 )
 
@@ -137,6 +138,10 @@ func (s *rotationOnlyStore) GetJob(context.Context, uuid.UUID, uuid.UUID) (Job, 
 
 func (s *rotationOnlyStore) ListJobs(context.Context, uuid.UUID, Filter, string, int) ([]Job, string, error) {
 	return nil, "", nil
+}
+
+func (s *rotationOnlyStore) ListJobsPage(context.Context, uuid.UUID, Filter, paging.Page) ([]Job, int, error) {
+	return nil, 0, nil
 }
 
 func (s *rotationOnlyStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (Status, error) {
@@ -546,6 +551,9 @@ func (plainRotationStore) GetJob(context.Context, uuid.UUID, uuid.UUID) (Job, er
 }
 func (plainRotationStore) ListJobs(context.Context, uuid.UUID, Filter, string, int) ([]Job, string, error) {
 	return nil, "", nil
+}
+func (plainRotationStore) ListJobsPage(context.Context, uuid.UUID, Filter, paging.Page) ([]Job, int, error) {
+	return nil, 0, nil
 }
 func (plainRotationStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (Status, error) {
 	return "", ErrNotRunning

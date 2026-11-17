@@ -268,7 +268,7 @@ func runVaultIdentities(ctx context.Context, deps Deps, orgID uuid.UUID, j jobs.
 
 type jobListInput struct {
 	Org        string `path:"org"`
-	Status     string `query:"status"`
+	Status     string `query:"status" doc:"A run status, or active for the live runs (queued, claimed, running, cancelling)"`
 	Kind       string `query:"kind"`
 	TemplateID string `query:"template_id"`
 	Group      string `query:"group"`
@@ -277,12 +277,17 @@ type jobListInput struct {
 	HostID     string `query:"host_id" doc:"Only the runs that targeted this host (the host was one of the run's target hosts)"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
+	// Page switches the list to offset paging (see PageQuery); Sort is the
+	// whitelist of jobs.Sort* keys, newest first by default.
+	PageQuery
+	Sort string `query:"sort" enum:"created,status,kind,trigger"`
 }
 
 type jobListOutput struct {
 	Body struct {
 		Jobs       []jobDTO `json:"jobs"`
-		NextCursor string   `json:"next_cursor"`
+		NextCursor string   `json:"next_cursor" doc:"Empty in page mode"`
+		Total      *int     `json:"total,omitempty" doc:"Runs matching the filters; page mode only"`
 	}
 }
 
@@ -498,16 +503,25 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 			}
 			filter.HostID = &hostID
 		}
-		list, next, err := deps.Jobs.List(ctx, scope.OrgID, filter, in.Cursor, in.Limit)
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, jobs.SortCreated, true)
 		if err != nil {
+			return nil, err
+		}
+		var list []jobs.Job
+		out := &jobListOutput{}
+		if page != nil {
+			var total int
+			if list, total, err = deps.Jobs.ListPage(ctx, scope.OrgID, filter, *page); err != nil {
+				return nil, mapJobsErr(ctx, err)
+			}
+			out.Body.Total = &total
+		} else if list, out.Body.NextCursor, err = deps.Jobs.List(ctx, scope.OrgID, filter, in.Cursor, in.Limit); err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
-		out := &jobListOutput{}
 		out.Body.Jobs = make([]jobDTO, len(list))
 		for i, j := range list {
 			out.Body.Jobs[i] = toJobDTO(j)
 		}
-		out.Body.NextCursor = next
 		return out, nil
 	})
 
@@ -582,6 +596,10 @@ func jobStart(created []jobs.Job) *jobStartOutput {
 	return out
 }
 
+// statusActive is the status filter's pseudo value for the live runs (queued,
+// claimed, running, cancelling).
+const statusActive = "active"
+
 // parseJobListFilter turns the list route's string-typed query parameters
 // into a jobs.Filter, rejecting an unknown status or kind and a malformed
 // template/group/zone id with 400 rather than letting it silently match
@@ -591,11 +609,13 @@ func jobStart(created []jobs.Job) *jobStartOutput {
 func parseJobListFilter(statusStr, kindStr, templateStr, groupStr string) (jobs.Filter, error) {
 	var f jobs.Filter
 	if statusStr != "" {
-		s := jobs.Status(statusStr)
-		if !s.Valid() {
-			return jobs.Filter{}, huma.Error400BadRequest("invalid status: must be one of queued, claimed, running, cancelling, succeeded, failed, cancelled, error")
+		if statusStr == statusActive {
+			f.Active = true
+		} else if s := jobs.Status(statusStr); s.Valid() {
+			f.Status = &s
+		} else {
+			return jobs.Filter{}, huma.Error400BadRequest("invalid status: must be one of active, queued, claimed, running, cancelling, succeeded, failed, cancelled, error")
 		}
-		f.Status = &s
 	}
 	if kindStr != "" {
 		k := jobs.Kind(kindStr)

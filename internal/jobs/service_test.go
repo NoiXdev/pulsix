@@ -19,6 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 var ctx = context.Background()
@@ -163,6 +164,10 @@ func (f *fakeStore) ListJobs(_ context.Context, orgID uuid.UUID, filter jobs.Fil
 		next = "tail"
 	}
 	return out, next, nil
+}
+
+func (f *fakeStore) ListJobsPage(context.Context, uuid.UUID, jobs.Filter, paging.Page) ([]jobs.Job, int, error) {
+	return nil, 0, nil
 }
 
 func (f *fakeStore) CancelJob(_ context.Context, orgID, id uuid.UUID) (jobs.Status, error) {

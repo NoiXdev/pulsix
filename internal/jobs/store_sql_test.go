@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/sshconf"
 )
 
@@ -293,4 +294,15 @@ func seedHost(t *testing.T, d *db.DB, org, zone uuid.UUID, name string) uuid.UUI
 		t.Fatal(err)
 	}
 	return id
+}
+
+// TestSQLStoreListJobsPageRejectsUnknownSort: the sort key is whitelisted in
+// the store, whatever the transport let through.
+func TestSQLStoreListJobsPageRejectsUnknownSort(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "jobs-page-sort-org")
+	_, _, err := jobs.NewSQLStore(d).ListJobsPage(db.WithOrgScope(ctx, org), org, jobs.Filter{}, paging.Page{Number: 1, Size: 10, Sort: "template"})
+	if !errors.Is(err, jobs.ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	}
 }

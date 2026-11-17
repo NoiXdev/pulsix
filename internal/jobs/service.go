@@ -29,6 +29,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
 
@@ -279,6 +280,9 @@ type Filter struct {
 	// HostID narrows to the runs that targeted one host (the job's
 	// host_ids contain it).
 	HostID *uuid.UUID
+	// Active keeps the live runs only: queued, claimed, running or
+	// cancelling (the API's status=active).
+	Active bool
 }
 
 // DefaultListLimit and MaxListLimit bound List's page size, the same
@@ -344,6 +348,12 @@ type Store interface {
 	// descending, plus the cursor for the next page (empty when there is
 	// none).
 	ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]Job, string, error)
+	// ListJobsPage returns one offset page of the jobs matching f, ordered
+	// by p.Sort (one of the Sort values) with newest first and id as
+	// tie-breakers, plus how many jobs match f in all. A page past the end
+	// is empty with the right total. An unknown sort key is
+	// ErrInvalidInput.
+	ListJobsPage(ctx context.Context, orgID uuid.UUID, f Filter, p paging.Page) ([]Job, int, error)
 	// CancelJob atomically moves the job out of the cancellable set:
 	// queued → cancelled (never shipped, terminal at once), claimed/running
 	// → cancelling. ErrNotRunning when no row matched — after the caller's
@@ -1193,6 +1203,22 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Job, error) {
 // List returns a keyset-paginated page of the org's jobs, newest first.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]Job, string, error) {
 	return s.store.ListJobs(ctx, orgID, f, cursor, clampLimit(limit))
+}
+
+// Sort keys of ListPage; the default is SortCreated, newest first. Status
+// orders by lifecycle rank: queued, claimed, running, cancelling, succeeded,
+// failed, cancelled, error.
+const (
+	SortCreated = "created"
+	SortStatus  = "status"
+	SortKind    = "kind"
+	SortTrigger = "trigger"
+)
+
+// ListPage returns one offset page of the org's jobs matching f and the total
+// number of matches (see Store.ListJobsPage).
+func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p paging.Page) ([]Job, int, error) {
+	return s.store.ListJobsPage(ctx, orgID, f, p)
 }
 
 // Events returns the job's events with seq greater than after, ordered by
