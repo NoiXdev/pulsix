@@ -129,6 +129,8 @@ builder's call: one authorization path is the safer one.
 
 ### Assistant tokens
 
+Later changes to tokens (editing, and the areas added since) are in `2026-11-17-assistant-token-edit-design.md`.
+
 `api_tokens` gains `kind text NOT NULL DEFAULT 'api' CHECK (kind IN ('api',
 'assistant'))` and `areas text[]` (NULL for `api` tokens, non-empty for
 `assistant` tokens, enforced by a CHECK). `auth.Token` and `auth.TokenScope` carry
