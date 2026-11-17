@@ -4,6 +4,7 @@ export const enInventory = {
     title: 'Groups',
     addGroup: 'Add group',
     label: 'Inventory groups',
+    inParent: (parent: string) => `in ${parent}`,
     count: (n: number) => (n === 1 ? '1 group' : `${n} groups`),
     summary: (n: number) => `${n} inventory groups · each group owns a variable schema`,
     columns: {

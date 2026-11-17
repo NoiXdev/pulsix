@@ -9,6 +9,10 @@ export interface GroupColumnsContext {
   bastionName: (id: string | null | undefined) => string;
   /** How deep a group sits in the tree (0 for a top-level group). */
   depthOf: (id: string) => number;
+  /** The name of a group's parent ('' for a top-level group). */
+  parentName: (id: string) => string;
+  /** A sort is chosen: the rows are flat, so the indent would name a false parent. */
+  sorted: boolean;
 }
 
 /**
@@ -18,7 +22,7 @@ export interface GroupColumnsContext {
  * so a group's depth stays visible. Choosing a sort lists the groups flat
  * in that order.
  */
-export function groupColumns({ t, bastionName, depthOf }: GroupColumnsContext): DataListColumn<InventoryGroupSummary>[] {
+export function groupColumns({ t, bastionName, depthOf, parentName, sorted }: GroupColumnsContext): DataListColumn<InventoryGroupSummary>[] {
   const g = t.inventory.groups;
   return [
     {
@@ -29,11 +33,15 @@ export function groupColumns({ t, bastionName, depthOf }: GroupColumnsContext): 
       sortValue: (r) => r.name,
       required: true,
       defaultVisible: true,
-      render: (r) => (
-        <span className="block truncate font-mono" style={{ paddingLeft: depthOf(r.id) * 16 }}>
-          {r.name}
-        </span>
-      ),
+      render: (r) => {
+        const parent = parentName(r.id);
+        return (
+          <span className="block truncate font-mono" style={{ paddingLeft: sorted ? 0 : depthOf(r.id) * 16 }}>
+            {r.name}
+            {sorted && parent && <span className={`font-sans text-muted-foreground ${CELL_MINOR}`}> {g.inParent(parent)}</span>}
+          </span>
+        );
+      },
     },
     {
       id: 'members',

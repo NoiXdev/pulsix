@@ -5,6 +5,7 @@ export const deInventory: Messages['inventory'] = {
     title: 'Gruppen',
     addGroup: 'Gruppe hinzufügen',
     label: 'Inventargruppen',
+    inParent: (parent: string) => `in ${parent}`,
     count: (n: number) => (n === 1 ? '1 Gruppe' : `${n} Gruppen`),
     summary: (n: number) =>
       n === 1

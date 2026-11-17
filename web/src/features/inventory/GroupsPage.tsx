@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
@@ -7,6 +7,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { useBastions } from '../../api/hooks/useSsh.ts';
+import { validateListSearch } from '../lists/listSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { CreateGroupDialog } from './CreateGroupDialog.tsx';
 import { groupColumns } from './groupColumns.tsx';
@@ -28,7 +29,10 @@ export function GroupsPage() {
   const tree = orderTree(all ?? []);
   const depths = new Map(tree.map(({ group, depth }) => [group.id, depth]));
   const bastionName = (id?: string | null) => bastions.data?.bastions?.find((b) => b.id === id)?.name ?? '—';
-  const columns = groupColumns({ t, bastionName, depthOf: (id) => depths.get(id) ?? 0 });
+  const byId = new Map((all ?? []).map((g) => [g.id, g]));
+  const parentName = (id: string) => byId.get(byId.get(id)?.parent_id ?? '')?.name ?? '';
+  const sorted = !!validateListSearch(useSearch({ strict: false }) as Record<string, unknown>).sort;
+  const columns = groupColumns({ t, bastionName, depthOf: (id) => depths.get(id) ?? 0, parentName, sorted });
   const view = useListView('groups', columns, { mode: 'client', rowKey: (g) => g.id });
 
   const guard = useQueryGuard(groups);
@@ -50,7 +54,8 @@ export function GroupsPage() {
         columns={columns}
         rows={rows}
         rowKey={(g) => g.id}
-        rowLink={(g) => ({ to: '/o/$org/groups/$id', params: { org, id: g.id }, search: { tab: undefined }, label: g.name })}
+        rowLink={(g) => ({ to: '/o/$org/groups/$id', params: { org, id: g.id }, search: { tab: undefined }, label: parentName(g.id) && sorted ? `${g.name}, ${t.inventory.groups.inParent(parentName(g.id))}` : g.name })}
+        rowLabel={(g) => g.name}
         loading={!view.ready}
         empty={t.inventory.groups.empty}
         {...view.listProps(total, t.inventory.groups.count)}

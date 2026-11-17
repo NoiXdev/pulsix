@@ -1,8 +1,8 @@
 import { useNavigate } from '@tanstack/react-router';
 import type { RowAction } from '../../ui/data-list/index.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
-import { useRevokeAgent, useWithdrawAgentToken } from '../../api/hooks/useAgents.ts';
+import { useRevokeAgentCommand } from './useRevokeAgentCommand.ts';
+import { useWithdrawAgentToken } from '../../api/hooks/useAgents.ts';
 import type { Agent, AgentToken } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -15,20 +15,9 @@ import { useT } from '../../i18n/useT.ts';
 export function useAgentListActions(org: string, canWrite: boolean): { agentActions: (a: Agent) => RowAction[]; tokenActions: (tok: AgentToken) => RowAction[] } {
   const t = useT();
   const toast = useToast();
-  const ask = useConfirm();
   const navigate = useNavigate();
-  const revoke = useRevokeAgent(org);
+  const revoke = useRevokeAgentCommand(org);
   const withdraw = useWithdrawAgentToken(org);
-
-  async function onRevoke(a: Agent) {
-    if (!(await ask({ message: t.agents.revokeConfirm(a.host_name), confirmLabel: t.agents.revoke, destructive: true }))) return;
-    try {
-      await revoke.mutateAsync(a.host_id);
-      toast.show(t.agents.revoked(a.host_name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.agents.revokeFailed, 'destructive');
-    }
-  }
 
   async function onWithdraw(tok: AgentToken) {
     try {
@@ -43,7 +32,7 @@ export function useAgentListActions(org: string, canWrite: boolean): { agentActi
       const items: RowAction[] = [
         { id: 'open', label: t.agents.openHost, onSelect: () => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, hash: 'connection' }) },
       ];
-      if (canWrite) items.push({ id: 'revoke', label: t.agents.revokeItem, destructive: true, onSelect: () => void onRevoke(a) });
+      if (canWrite) items.push({ id: 'revoke', label: t.agents.revokeItem, destructive: true, onSelect: () => void revoke(a, t.agents.revoked(a.host_name)) });
       return items;
     },
     tokenActions: (tok) => (canWrite ? [{ id: 'withdraw', label: t.agents.withdraw, onSelect: () => void onWithdraw(tok) }] : []),

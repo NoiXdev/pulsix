@@ -2,14 +2,13 @@ import { useId, useState } from 'react';
 import { Card } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
-import { useToast } from '../../ui/toastContext.ts';
-import { useHostAgent, useRevokeAgent } from '../../api/hooks/useAgents.ts';
+import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
 import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
 import { ConfigVersionBadge } from '../agents/ConfigVersionBadge.tsx';
 import { AddAgentDialog } from '../agents/AddAgentDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
+import { useRevokeAgentCommand } from '../agents/useRevokeAgentCommand.ts';
 
 /** HostAgentCard shows the agent running on this host (v0.3a, spec §8):
  * whether it is still reporting, which build it runs, when its
@@ -18,10 +17,8 @@ import { useConfirm } from '../../ui/confirmContext.ts';
  * which is a state to render, not an error. */
 export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org: string; hostId: string; hostName: string; zoneId?: string; canWrite: boolean }) {
   const t = useT();
-  const toast = useToast();
-  const ask = useConfirm();
   const query = useHostAgent(org, hostId);
-  const revoke = useRevokeAgent(org);
+  const revoke = useRevokeAgentCommand(org);
   const agent = query.data?.agent;
   const now = new Date();
   const [enrolling, setEnrolling] = useState(false);
@@ -29,13 +26,7 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
 
   async function onRevoke() {
     if (!agent) return;
-    if (!(await ask({ message: t.agents.revokeConfirm(agent.host_name), confirmLabel: t.agents.revoke, destructive: true }))) return;
-    try {
-      await revoke.mutateAsync(hostId);
-      toast.show(t.hosts.agent.revoked);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.agents.revokeFailed, 'destructive');
-    }
+    await revoke({ host_id: hostId, host_name: agent.host_name }, t.hosts.agent.revoked);
   }
 
   const expiring = !!agent?.cert_expires_at && daysLeft(agent.cert_expires_at, now) < EXPIRY_WARN_DAYS;

@@ -8,15 +8,15 @@ import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.t
 import { GroupsPage } from './GroupsPage.tsx';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
-const group = (name: string) => ({
-  id: `id-${name}`, name, description: '', parent_id: null, members: 3, group_fields: 1, host_fields: 0, complete: true, revision: 1,
+const group = (name: string, extra: Record<string, unknown> = {}) => ({
+  id: `id-${name}`, name, description: '', parent_id: null, members: 3, group_fields: 1, host_fields: 0, complete: true, revision: 1, ...extra,
 });
 
-function setup(locale?: 'de') {
+function setup(locale?: 'de', groups: unknown[] = numbered('grp', 30).map((n) => group(n))) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
-    'GET /api/v1/orgs/acme/inventory/groups': { groups: numbered('grp', 30).map(group) },
+    'GET /api/v1/orgs/acme/inventory/groups': { groups },
     'GET /api/v1/orgs/acme/bastions': { bastions: [] },
   });
   return renderListPage({
@@ -37,10 +37,29 @@ describe('GroupsPage list', () => {
 
   it('sorts by members as a number', async () => {
     const user = userEvent.setup();
-    setup();
-    await screen.findByText('1–25 of 30 groups');
+    setup(undefined, [group('a', { members: 10 }), group('b', { members: 2 }), group('c', { members: 9 })]);
+    await screen.findByText('1–3 of 3 groups');
     await sortBy(user, 'Members');
-    expect(screen.getByRole('columnheader', { name: /Members/ })).toHaveAttribute('aria-sort', 'ascending');
+    await waitFor(() => expect(firstCells()).toEqual(['b', 'c', 'a']));
+  });
+
+  it('lists a parent before its child even when the API returns the child first, indented', async () => {
+    setup(undefined, [group('kid', { parent_id: 'id-top' }), group('top')]);
+    await screen.findByText('1–2 of 2 groups');
+    expect(firstCells()).toEqual(['top', 'kid']);
+    expect(screen.getByText('kid')).toHaveStyle({ paddingLeft: '16px' });
+    expect(screen.queryByText('in top')).not.toBeInTheDocument();
+  });
+
+  it('after a sort the child has no indent and names its parent', async () => {
+    const user = userEvent.setup();
+    setup(undefined, [group('top'), group('zeta'), group('kid', { parent_id: 'id-top' })]);
+    await screen.findByText('1–3 of 3 groups');
+    await sortBy(user, 'Group');
+    await waitFor(() => expect(firstCells()).toEqual(['kid in top', 'top', 'zeta']));
+    expect(screen.getByText('in top')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'kid, in top' })).toBeInTheDocument();
+    expect(screen.getByText(/^kid/, { selector: 'span.truncate' })).toHaveStyle({ paddingLeft: '0px' });
   });
 
   it('has no row menu and no inline buttons; each row is a link', async () => {
