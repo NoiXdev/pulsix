@@ -795,6 +795,8 @@ WHERE a.org_id = $1
                  OR a.snooze_until_change
                  OR a.host_id = ANY($9::uuid[])), false))
 ORDER BY
+  (CASE WHEN $10::text = 'opened' AND NOT $11::boolean THEN a.opened_at END) ASC,
+  (CASE WHEN $10::text = 'opened' AND $11::boolean THEN a.opened_at END) DESC,
   (CASE WHEN $10::text = 'host' AND NOT $11::boolean THEN h.name END) ASC,
   (CASE WHEN $10::text = 'host' AND $11::boolean THEN h.name END) DESC,
   (CASE WHEN $10::text = 'peak' AND NOT $11::boolean THEN r.peak END) ASC,
@@ -851,7 +853,7 @@ type ListAlertsPageSortedRow struct {
 
 // Every other key and direction (backlog 3.97). The sort key is whitelisted
 // by the caller; each CASE is NULL on every row unless its key is chosen, so
-// the others drop out. host orders by host name, peak and tracked by severity
+// the others drop out. opened orders by opened_at, host by host name, peak and tracked by severity
 // rank (crit above warn above unknown, the ranking ListAlerts' acknowledged
 // filter uses), acknowledged by acknowledged_at with unacknowledged alerts
 // last in both directions. A tie falls back to newest opened, id last, so

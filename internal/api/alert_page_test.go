@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,12 +236,38 @@ func TestAlertsSortEveryKeyStable(t *testing.T) {
 	f := newAlertFixture(t, "alertpage-stable")
 	at := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 	sev := []rules.State{rules.StateWarn, rules.StateCrit, rules.StateUnknown}
+	type row struct {
+		id     string
+		opened time.Time
+		host   string
+		sev    rules.State
+	}
+	var rows []row
 	for i := range 23 {
-		h := f.hostA
+		h, name := f.hostA, "web-1"
 		if i%3 == 0 {
-			h = f.hostB
+			h, name = f.hostB, "web-2"
 		}
-		f.seedOpenAlert(t, h, tupleSubject(h, "cpu", "", fmt.Sprintf("m%02d", i)), sev[i%3], at.Add(time.Duration(i/4)*time.Minute)) // ties on opened_at
+		opened := at.Add(time.Duration(i/4) * time.Minute) // ties on opened_at
+		id := f.seedOpenAlert(t, h, tupleSubject(h, "cpu", "", fmt.Sprintf("m%02d", i)), sev[i%3], opened)
+		rows = append(rows, row{id.String(), opened, name, sev[i%3]})
+	}
+	rank := map[rules.State]int{rules.StateUnknown: 1, rules.StateWarn: 2, rules.StateCrit: 3}
+	byID := map[string]row{}
+	for _, r := range rows {
+		byID[r.id] = r
+	}
+	// key value of a row; "" for acknowledged (none are).
+	cmp := func(key string, a, b row) int {
+		switch key {
+		case "opened":
+			return a.opened.Compare(b.opened)
+		case "host":
+			return strings.Compare(a.host, b.host)
+		case "peak", "tracked":
+			return rank[a.sev] - rank[b.sev]
+		}
+		return 0
 	}
 	for _, key := range []string{"opened", "host", "peak", "tracked", "acknowledged"} {
 		for _, order := range []string{"asc", "desc"} {
@@ -253,7 +280,33 @@ func TestAlertsSortEveryKeyStable(t *testing.T) {
 			if !slices.Equal(paged, alertIDs(whole.Alerts)) || len(paged) != 23 {
 				t.Errorf("%s: pages are not the whole list in order (%d rows)", q, len(paged))
 			}
+			// The actual order: key in the asked direction, ties newest opened first, then id descending.
+			want := slices.Clone(rows)
+			slices.SortFunc(want, func(a, b row) int {
+				if c := cmp(key, a, b); c != 0 {
+					if order == "desc" {
+						return -c
+					}
+					return c
+				}
+				if c := b.opened.Compare(a.opened); c != 0 {
+					return c
+				}
+				return strings.Compare(b.id, a.id)
+			})
+			var wantIDs []string
+			for _, r := range want {
+				wantIDs = append(wantIDs, r.id)
+			}
+			if !slices.Equal(alertIDs(whole.Alerts), wantIDs) {
+				t.Errorf("%s: wrong order\n got %v\nwant %v", q, alertIDs(whole.Alerts), wantIDs)
+			}
 		}
+	}
+	// sort=opened alone is ascending, oldest first.
+	asc := f.page(t, "sort=opened&page=1&per_page=100")
+	if first := byID[asc.Alerts[0].ID]; !first.opened.Equal(at) {
+		t.Errorf("sort=opened first row opened %v, want the oldest %v", first.opened, at)
 	}
 }
 

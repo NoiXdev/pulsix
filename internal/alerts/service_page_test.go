@@ -134,3 +134,65 @@ func TestListPageMutedFilterErrorsPropagate(t *testing.T) {
 		t.Fatal("want an error")
 	}
 }
+
+// TestListPageLabelsUseTheFilterSnapshot: the windows the filter used are the
+// ones the labels use, even if the answer changes between reads, and each host
+// is fetched once.
+func TestListPageLabelsUseTheFilterSnapshot(t *testing.T) {
+	st := newPageStore()
+	now := t0.Add(time.Hour)
+	h := uuid.Must(uuid.NewV7())
+	a := openAlert(alerts.Subject{HostID: h, Scope: alerts.ScopeTuple, CheckKey: "cpu", Metric: "u"}, rules.StateWarn, t0)
+	st.alerts[a.ID] = a
+	st.windows[h] = []maintenance.Occurrence{{WindowID: uuid.Must(uuid.NewV7()), Reason: maintenance.ReasonMaintenance, Start: t0, End: now.Add(time.Hour)}}
+	ws := &changingWindows{pageStore: st, h: h}
+	yes := true
+	got, total, err := alerts.NewService(ws, clockAt(now)).ListPage(ctx, orgID, alerts.Filter{Muted: &yes}, paging.Page{Number: 1, Size: 10, Sort: "opened", Desc: true})
+	if err != nil || total != 1 || len(got) != 1 || !got[0].Suppression.Muted {
+		t.Fatalf("got %d rows (total %d, err %v), want one labelled muted", len(got), total, err)
+	}
+	if ws.n != 1 {
+		t.Fatalf("WindowsForHost called %d times, want 1", ws.n)
+	}
+}
+
+// changingWindows answers WindowsForHost with a covering window the first
+// time and none afterwards.
+type changingWindows struct {
+	*pageStore
+	h uuid.UUID
+	n int
+}
+
+func (c *changingWindows) WindowsForHost(ctx context.Context, org, host uuid.UUID, at time.Time) ([]maintenance.Occurrence, error) {
+	c.n++
+	if c.n > 1 {
+		return nil, nil
+	}
+	return c.pageStore.WindowsForHost(ctx, org, host, at)
+}
+
+func TestListPageMutedLookupScope(t *testing.T) {
+	st := newPageStore()
+	h1, h2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, h := range []uuid.UUID{h1, h2} {
+		a := openAlert(alerts.Subject{HostID: h, Scope: alerts.ScopeTuple, CheckKey: "cpu", Metric: "u"}, rules.StateWarn, t0)
+		st.alerts[a.ID] = a
+	}
+	svc := alerts.NewService(st, clockAt(t0.Add(time.Hour)))
+	yes, closed := true, false
+	pg := paging.Page{Number: 1, Size: 10, Sort: "opened", Desc: true}
+	if _, _, err := svc.ListPage(ctx, orgID, alerts.Filter{Muted: &yes, HostID: &h1}, pg); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.windowCalls) != 1 || st.windowCalls[0] != h1 {
+		t.Fatalf("host filter: window lookups %v, want only %s", st.windowCalls, h1)
+	}
+	st.windowCalls = nil
+	if _, _, err := svc.ListPage(ctx, orgID, alerts.Filter{Muted: &yes, Open: &closed}, pg); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.windowCalls) != 0 {
+		t.Fatalf("closed-only: %d window lookups, want 0", len(st.windowCalls))
+	}
+}

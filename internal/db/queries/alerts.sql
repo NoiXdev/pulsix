@@ -413,7 +413,7 @@ OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
 -- name: ListAlertsPageSorted :many
 -- Every other key and direction (backlog 3.97). The sort key is whitelisted
 -- by the caller; each CASE is NULL on every row unless its key is chosen, so
--- the others drop out. host orders by host name, peak and tracked by severity
+-- the others drop out. opened orders by opened_at, host by host name, peak and tracked by severity
 -- rank (crit above warn above unknown, the ranking ListAlerts' acknowledged
 -- filter uses), acknowledged by acknowledged_at with unacknowledged alerts
 -- last in both directions. A tie falls back to newest opened, id last, so
@@ -446,6 +446,8 @@ WHERE a.org_id = sqlc.arg(org_id)
                  OR a.snooze_until_change
                  OR a.host_id = ANY(sqlc.arg(muted_host_ids)::uuid[])), false))
 ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'opened' AND NOT sqlc.arg(sort_desc)::boolean THEN a.opened_at END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'opened' AND sqlc.arg(sort_desc)::boolean THEN a.opened_at END) DESC,
   (CASE WHEN sqlc.arg(sort_key)::text = 'host' AND NOT sqlc.arg(sort_desc)::boolean THEN h.name END) ASC,
   (CASE WHEN sqlc.arg(sort_key)::text = 'host' AND sqlc.arg(sort_desc)::boolean THEN h.name END) DESC,
   (CASE WHEN sqlc.arg(sort_key)::text = 'peak' AND NOT sqlc.arg(sort_desc)::boolean THEN r.peak END) ASC,

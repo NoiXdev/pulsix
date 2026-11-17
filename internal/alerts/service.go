@@ -263,8 +263,9 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter, cursor st
 func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p paging.Page) ([]View, int, error) {
 	now := s.clock()
 	m := MuteQuery{Now: now}
+	cache := map[uuid.UUID][]maintenance.Occurrence{}
 	if f.Muted != nil {
-		ids, err := s.mutedHostIDs(ctx, orgID, now)
+		ids, err := s.mutedHostIDs(ctx, orgID, f, now, cache)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -274,7 +275,6 @@ func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p pag
 	if err != nil {
 		return nil, 0, fmt.Errorf("list alerts page: %w", err)
 	}
-	cache := map[uuid.UUID][]maintenance.Occurrence{}
 	out := make([]View, 0, len(rows))
 	for _, a := range rows {
 		sup, err := s.suppression(ctx, orgID, a.Alert, now, cache)
@@ -287,20 +287,33 @@ func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p pag
 }
 
 // mutedHostIDs returns the hosts with an open alert that a maintenance or
-// silence window covers at now: for each distinct host, the windows covering
+// silence window covers at now: for each candidate host, the windows covering
 // it, then Mute's verdict on an alert with no snooze of its own, so the SQL
-// filter and the row labels cannot disagree about a window.
-func (s *Service) mutedHostIDs(ctx context.Context, orgID uuid.UUID, now time.Time) ([]uuid.UUID, error) {
-	hostIDs, err := s.store.OpenAlertHostIDs(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("open alert hosts: %w", err)
-	}
+// filter and the row labels cannot disagree about a window. The windows it
+// fetched are stored in cache, which ListPage then hands to suppression: the
+// labels use exactly the snapshot the filter used. Candidates are the open
+// alert hosts, or just f.HostID when set; none when only closed alerts are
+// asked for (a closed alert is never muted).
+func (s *Service) mutedHostIDs(ctx context.Context, orgID uuid.UUID, f Filter, now time.Time, cache map[uuid.UUID][]maintenance.Occurrence) ([]uuid.UUID, error) {
 	muted := []uuid.UUID{}
+	if f.Open != nil && !*f.Open {
+		return muted, nil
+	}
+	var hostIDs []uuid.UUID
+	if f.HostID != nil {
+		hostIDs = []uuid.UUID{*f.HostID}
+	} else {
+		var err error
+		if hostIDs, err = s.store.OpenAlertHostIDs(ctx, orgID); err != nil {
+			return nil, fmt.Errorf("open alert hosts: %w", err)
+		}
+	}
 	for _, h := range hostIDs {
 		windows, err := s.store.WindowsForHost(ctx, orgID, h, now)
 		if err != nil {
 			return nil, fmt.Errorf("windows for host %s: %w", h, err)
 		}
+		cache[h] = windows
 		if Mute(Alert{}, windows, now).Muted {
 			muted = append(muted, h)
 		}
