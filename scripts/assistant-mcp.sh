@@ -83,6 +83,9 @@ esac
 store_token() {
   local name="$1" token
   if [ "$store" = keychain ]; then
+    # security reads the hidden prompt from the terminal; without one it
+    # stores an empty token.
+    [ -t 0 ] && [ -t 1 ] || die "run this in a terminal window: the keychain asks for the token at a hidden prompt"
     echo "Paste the assistant token for $name (hidden; the keychain asks twice)."
     # -U updates an existing item; -w as the last option makes security prompt.
     security add-generic-password -U -a "$USER" -s "$(service "$name")" \
@@ -90,11 +93,28 @@ store_token() {
       die "storing the token in the keychain failed"
   else
     printf 'Paste the assistant token for %s (hidden): ' "$name"
-    IFS= read -r -s token
+    IFS= read -r -s token || true
     echo
     [ -n "$token" ] || die "no token given"
     (umask 077 && printf '%s\n' "$token" >"$(tokenfile "$name")")
   fi
+  check_stored "$name"
+}
+
+# Fails unless the stored token looks like a Pulsix token (pxt_...), without
+# printing it.
+check_stored() {
+  local name="$1" token
+  if [ "$store" = keychain ]; then
+    token="$(security find-generic-password -a "$USER" -s "$(service "$name")" -w 2>/dev/null)" || token=
+  else
+    token="$(cat "$(tokenfile "$name")" 2>/dev/null)" || token=
+  fi
+  case "$token" in
+    pxt_?*) ;;
+    "") die "the stored token for $name is empty; run: $me token $name (in a terminal)" ;;
+    *) die "the stored token for $name does not start with pxt_; copy the token itself from Pulsix and run: $me token $name" ;;
+  esac
 }
 
 endpoint_of() {
@@ -176,6 +196,7 @@ cmd_check() {
   need curl
   endpoint="$(endpoint_of "$name")"
   [ -x "$(helper "$name")" ] || die "the helper $(helper "$name") is missing; run: $me remove $name, then add it again"
+  check_stored "$name"
   # The header goes to curl on stdin, never into its arguments.
   code="$("$(helper "$name")" | sed -E 's/^\{"Authorization": "(.*)"\}$/Authorization: \1/' |
     curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$endpoint" \
