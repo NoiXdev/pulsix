@@ -137,12 +137,25 @@ func (s *Service) Lock(ctx context.Context, userID, sessionID uuid.UUID) error {
 // left after a wrong PIN. Every call on a locked session spends an attempt
 // before the PIN is looked at, so a malformed PIN is no free probe.
 func (s *Service) Unlock(ctx context.Context, userID, sessionID uuid.UUID, pin string) (int, error) {
-	count, ok, err := s.store.ClaimAttempt(ctx, sessionID)
-	if err != nil {
-		return 0, fmt.Errorf("claim unlock attempt: %w", err)
-	}
-	if !ok {
-		return 0, s.noClaim(ctx, sessionID)
+	var count int
+	for try := 0; ; try++ {
+		c, ok, err := s.store.ClaimAttempt(ctx, sessionID)
+		if err != nil {
+			return 0, fmt.Errorf("claim unlock attempt: %w", err)
+		}
+		if ok {
+			count = c
+			break
+		}
+		retry, err := s.noClaim(ctx, sessionID)
+		if !retry {
+			return 0, err
+		}
+		if try > 0 {
+			// Locked again and again between our reads: give up without
+			// touching the session.
+			return 0, ErrNotLocked
+		}
 	}
 
 	hash, _, err := s.store.PINState(ctx, userID)
@@ -168,20 +181,25 @@ func (s *Service) Unlock(ctx context.Context, userID, sessionID uuid.UUID, pin s
 	return MaxUnlockFailures - count, ErrWrongPIN
 }
 
-// noClaim explains a ClaimAttempt without a row.
-func (s *Service) noClaim(ctx context.Context, sessionID uuid.UUID) error {
+// noClaim explains a ClaimAttempt without a row. retry is true when the
+// session is locked with attempts left: it was locked again after the claim
+// missed it, so the claim should be repeated. Only a locked session with all
+// attempts used is revoked.
+func (s *Service) noClaim(ctx context.Context, sessionID uuid.UUID) (retry bool, err error) {
 	st, found, err := s.store.SessionState(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("read session: %w", err)
+		return false, fmt.Errorf("read session: %w", err)
 	}
 	switch {
 	case !found:
-		return ErrNotFound
+		return false, ErrNotFound
 	case !st.Locked:
-		return ErrNotLocked
+		return false, ErrNotLocked
+	case st.Failures < MaxUnlockFailures:
+		return true, nil
 	}
 	if err := s.store.RevokeSession(ctx, sessionID); err != nil {
-		return fmt.Errorf("revoke session: %w", err)
+		return false, fmt.Errorf("revoke session: %w", err)
 	}
-	return ErrExhausted
+	return false, ErrExhausted
 }

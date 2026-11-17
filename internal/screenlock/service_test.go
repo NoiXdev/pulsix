@@ -12,14 +12,15 @@ import (
 )
 
 type fakeStore struct {
-	hash     string
-	prompted bool
-	live     bool
-	locked   bool
-	failures int
-	revoked  bool
-	err      error  // returned by every method when set
-	failOn   string // method name that fails alone, when set
+	hash       string
+	prompted   bool
+	live       bool
+	locked     bool
+	failures   int
+	revoked    bool
+	err        error  // returned by every method when set
+	denyClaims int    // next ClaimAttempt calls that miss although a claim would succeed
+	failOn     string // method name that fails alone, when set
 }
 
 func newFake() *fakeStore { return &fakeStore{live: true} }
@@ -54,6 +55,10 @@ func (f *fakeStore) LockSession(context.Context, uuid.UUID) (bool, error) {
 	return true, nil
 }
 func (f *fakeStore) ClaimAttempt(context.Context, uuid.UUID) (int, bool, error) {
+	if f.denyClaims > 0 {
+		f.denyClaims--
+		return 0, false, nil
+	}
 	if e := errors.Join(f.err, f.fail("ClaimAttempt")); e != nil || !f.live || !f.locked || f.failures >= screenlock.MaxUnlockFailures {
 		return 0, false, e
 	}
@@ -313,5 +318,61 @@ func TestSingleStoreFailuresSurface(t *testing.T) {
 		if err := tc.run(s, f); !errors.Is(err, errBoom) {
 			t.Fatalf("%s: err = %v", tc.method, err)
 		}
+	}
+}
+
+func TestSkipPromptClearsPromptWithoutPIN(t *testing.T) {
+	f := newFake()
+	s := screenlock.NewService(f)
+	if err := s.SkipPrompt(ctx, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := s.Status(ctx, uuid.Nil); err != nil || st.Prompt || st.PINSet {
+		t.Fatalf("Status = %+v, %v", st, err)
+	}
+}
+
+func TestRemovePINKeepsPromptedOff(t *testing.T) {
+	f := newFake()
+	s := screenlock.NewService(f)
+	if err := s.SetPIN(ctx, uuid.Nil, "1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemovePIN(ctx, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := s.Status(ctx, uuid.Nil); err != nil || st.Prompt || st.PINSet {
+		t.Fatalf("Status = %+v, %v", st, err)
+	}
+}
+
+func TestUnlockNotLocked(t *testing.T) {
+	f := newFake()
+	if _, err := screenlock.NewService(f).Unlock(ctx, uuid.Nil, uuid.Nil, "1234"); !errors.Is(err, screenlock.ErrNotLocked) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A late request misses its claim while the session is unlocked; the user
+// locks again before it reads the session. The fresh lock must survive and
+// the retried claim counts.
+func TestUnlockNoClaimOnFreshLockRetriesWithoutRevoking(t *testing.T) {
+	s, f := lockedFake(t, "1234")
+	f.denyClaims = 1
+	left, err := s.Unlock(ctx, uuid.Nil, uuid.Nil, "9999")
+	if !errors.Is(err, screenlock.ErrWrongPIN) || left != 4 || f.revoked || f.failures != 1 {
+		t.Fatalf("left %d err %v revoked %v failures %d", left, err, f.revoked, f.failures)
+	}
+	f.denyClaims = 1
+	if _, err := s.Unlock(ctx, uuid.Nil, uuid.Nil, "1234"); err != nil || f.locked {
+		t.Fatalf("retried right PIN: err %v locked %v", err, f.locked)
+	}
+}
+
+func TestUnlockGivesUpAfterOneRetryWithoutRevoking(t *testing.T) {
+	s, f := lockedFake(t, "1234")
+	f.denyClaims = 2
+	if _, err := s.Unlock(ctx, uuid.Nil, uuid.Nil, "9999"); !errors.Is(err, screenlock.ErrNotLocked) || f.revoked || !f.locked {
+		t.Fatalf("err %v revoked %v locked %v", err, f.revoked, f.locked)
 	}
 }
