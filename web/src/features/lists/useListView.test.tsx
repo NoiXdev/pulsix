@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { afterEach, describe, expect, it } from 'vitest';
 import { renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -6,6 +8,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderRoutes } from '../../test/renderRoutes.tsx';
 import { DataList, type DataListColumn } from '../../ui/data-list/index.ts';
 import type { Preferences } from '../../api/types.ts';
+import type { ServerPageQuery } from '../../api/hooks/paging.ts';
 import { useListView } from './useListView.ts';
 
 type Row = { id: string; name: string; zone: string };
@@ -28,6 +31,7 @@ function ServerList({ total, urlState, withFilter }: { total: number | undefined
     <>
       <output data-testid="query">{JSON.stringify(view.serverQuery)}</output>
       <output data-testid="density">{view.density}</output>
+      <output data-testid="ready">{String(view.ready)}</output>
       {withFilter && (
         <button type="button" onClick={() => setFilter('web')}>
           Filter
@@ -36,6 +40,47 @@ function ServerList({ total, urlState, withFilter }: { total: number | undefined
       <DataList label="Hosts" columns={COLUMNS} rows={HOSTS.slice(0, 2)} rowKey={(r) => r.id} empty="No hosts" {...view.listProps(total, count)} />
     </>
   );
+}
+
+type Answer = { hosts: Row[]; total: number };
+let answer: (filter: string, query: ServerPageQuery) => Answer | Promise<Answer>;
+
+/** A server-paged list as Tasks 9 and 10 build it: the filter in the URL
+ * (`?q=`) as resetKey, the page query waiting for the preferences, previous
+ * data kept while the next page loads, and the documented loading and total
+ * recipe. */
+function PagedList() {
+  const search = useSearch({ strict: false }) as { q?: string };
+  const filter = search.q ?? '';
+  const navigate = useNavigate();
+  const view = useListView('hosts', COLUMNS, { mode: 'server', resetKey: filter });
+  const q = useQuery({
+    queryKey: ['test-hosts', filter, view.serverQuery],
+    queryFn: () => Promise.resolve(answer(filter, view.serverQuery)),
+    placeholderData: keepPreviousData,
+    enabled: view.ready,
+  });
+  return (
+    <>
+      <output data-testid="query">{JSON.stringify(view.serverQuery)}</output>
+      <button type="button" onClick={() => void navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, q: 'db' }) } as never)}>
+        Filter db
+      </button>
+      <DataList
+        label="Hosts"
+        columns={COLUMNS}
+        rows={q.data?.hosts ?? []}
+        rowKey={(r) => r.id}
+        empty="No hosts"
+        loading={q.isPending || q.isPlaceholderData}
+        {...view.listProps(q.isPlaceholderData ? undefined : q.data?.total, count)}
+      />
+    </>
+  );
+}
+
+function paged(initial: string) {
+  return renderRoutes([{ path: '/hosts', component: PagedList }], initial);
 }
 
 function ClientList({ rows }: { rows: Row[] | undefined }) {
@@ -152,17 +197,6 @@ describe('useListView in server mode', () => {
     expect(router.history.length).toBe(before);
   });
 
-  it('clamps a page past the end', async () => {
-    api();
-    const router = server('/o/acme/hosts?page=9', { total: 30 });
-
-    await waitFor(() => expect(router.state.location.search).toEqual({ page: 2 }));
-    expect(router.history.length).toBe(1);
-    expect(query()).toEqual({ page: 2, per_page: 25 });
-    expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.queryByText('No hosts')).not.toBeInTheDocument();
-  });
-
   it('clamps to page 1 when nothing matches', async () => {
     api();
     const router = server('/o/acme/hosts?page=4', { total: 0 });
@@ -192,6 +226,16 @@ describe('useListView in server mode', () => {
     expect(router.state.location.search).toEqual({ page: 2, sort: 'name', order: 'asc' });
   });
 
+  it('is ready once the preferences answer, or fail', async () => {
+    let prefs!: (p: unknown) => void;
+    mockApi({ 'GET /api/v1/auth/me/preferences': () => new Promise((r) => (prefs = r)) });
+    server('/o/acme/hosts', { total: 2 });
+    expect(await screen.findByTestId('ready')).toHaveTextContent('false');
+
+    prefs(new Response('{}', { status: 500 }));
+    await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
+  });
+
   it('applies the saved page size and density', async () => {
     api({ page_size: 50, density: 'compact' });
     server('/o/acme/hosts', { total: 60 });
@@ -213,6 +257,89 @@ describe('useListView in server mode', () => {
     expect(puts[0]).toEqual({ density: 'standard', page_size: 50, lists: {} });
     await waitFor(() => expect(router.state.location.search).toEqual({}));
     expect(query()).toEqual({ page: 1, per_page: 50 });
+  });
+});
+
+describe('useListView with a paged query', () => {
+  it('clamps a page past the end and shows loading, never the empty state', async () => {
+    api();
+    let lastPage!: (a: Answer) => void;
+    answer = (_f, query) => (query.page === 9 ? { hosts: [], total: 30 } : new Promise<Answer>((r) => (lastPage = r)));
+    let sawEmpty = false;
+    const watch = new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n.textContent?.includes('No hosts')) sawEmpty = true;
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+    try {
+      const router = paged('/o/acme/hosts?page=9');
+
+      await waitFor(() => expect(router.state.location.search).toEqual({ page: 2 }));
+      expect(router.history.length).toBe(1);
+      expect(query()).toEqual({ page: 2, per_page: 25 });
+      expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+      lastPage({ hosts: HOSTS.slice(25), total: 30 });
+      expect(await screen.findByText('host26')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
+      expect(sawEmpty).toBe(false);
+    } finally {
+      watch.disconnect();
+    }
+  });
+
+  it('keeps the page when Back returns to an earlier filter', async () => {
+    api();
+    answer = (f) => ({ hosts: HOSTS.slice(0, 2), total: f === 'db' ? 10 : 100 });
+    const user = userEvent.setup();
+    const router = paged('/o/acme/hosts?q=web&page=3');
+    await waitFor(() => expect(query().page).toBe(3));
+
+    await user.click(screen.getByRole('button', { name: 'Filter db' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'db' }));
+    expect(query().page).toBe(1);
+
+    router.history.back();
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'web', page: 3 }));
+    await sleep(30);
+    expect(router.state.location.search).toEqual({ q: 'web', page: 3 });
+    expect(query().page).toBe(3);
+  });
+
+  it('keeps the page of a link that changes filter and page together', async () => {
+    api();
+    let web!: (a: Answer) => void;
+    answer = (f) => (f === 'db' ? { hosts: HOSTS.slice(0, 2), total: 10 } : new Promise<Answer>((r) => (web = r)));
+    const router = paged('/o/acme/hosts?q=db');
+    expect(await screen.findByText('host1')).toBeInTheDocument();
+
+    await router.navigate({ to: '.', search: { q: 'web', page: 3 } } as never);
+    // The other filter's total (10) is placeholder data: it must not clamp.
+    await sleep(30);
+    expect(router.state.location.search).toEqual({ q: 'web', page: 3 });
+    expect(query().page).toBe(3);
+
+    web({ hosts: HOSTS.slice(0, 2), total: 100 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Page 3' })).toHaveAttribute('aria-current', 'page'));
+    expect(router.state.location.search).toEqual({ q: 'web', page: 3 });
+  });
+
+  it('waits for the preferences before it asks for a page', async () => {
+    let prefs!: (p: Preferences) => void;
+    mockApi({ 'GET /api/v1/auth/me/preferences': () => new Promise((r) => (prefs = r)) });
+    const asked: ServerPageQuery[] = [];
+    answer = (_f, query) => {
+      asked.push(query);
+      return { hosts: HOSTS.slice(0, 2), total: 2 };
+    };
+    paged('/o/acme/hosts');
+
+    await sleep(30);
+    expect(asked).toEqual([]);
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+
+    prefs({ density: 'standard', page_size: 50, lists: {} });
+    expect(await screen.findByText('host1')).toBeInTheDocument();
+    expect(asked).toEqual([{ page: 1, per_page: 50 }]);
   });
 });
 

@@ -45,14 +45,21 @@ export interface ListView<Row> {
   perPage: PageSize;
   visibleColumns: string[];
   density: Density;
+  /** The preferences have answered (or failed): page size and columns are
+   * the user's. Until then a server-mode page hook waits
+   * (`enabled: view.ready`) and the list shows loading, so it neither
+   * fetches at the default page size first nor jumps its columns. */
+  ready: boolean;
   /** Server mode: the query of the page to fetch. */
   serverQuery: ServerPageQuery;
   /** Client mode: the page's rows, sorted then sliced, and the whole
    * list's length. `undefined` (still loading) gives no rows and no total. */
   view(rows: readonly Row[] | undefined): { rows: Row[]; total: number | undefined };
   /** The DataList props this hook owns. `total` undefined means not known
-   * yet (loading): the page is then not clamped. Call it while rendering the
-   * component that called useListView. */
+   * yet: the page is then not clamped. Pass undefined for placeholder data
+   * too (`q.isPlaceholderData ? undefined : q.data?.total`), whose total
+   * may belong to another filter. Call it while rendering the component
+   * that called useListView. */
   listProps(total: number | undefined, countLabel: (n: number) => string): ListViewProps<Row>;
 }
 
@@ -78,7 +85,7 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
   const t = useT();
   const { locale } = useLocale();
   const toast = useToast();
-  const { prefs } = usePreferences();
+  const { prefs, ready } = usePreferences();
   const save = useSavePreferences();
   const navigate = useNavigate();
   const urlSearch = useSearch({ strict: false }) as Record<string, unknown>;
@@ -91,24 +98,33 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
   const rawPage = search.page ?? 1;
 
   // A changed resetKey shows page 1 at once (no request for the old page),
-  // until the URL has caught up below.
-  const [reset, setReset] = useState<{ key: string | undefined; stalePage?: number }>({ key: opts.resetKey });
+  // until the URL has caught up below — but only when the URL's page stayed
+  // what it was: a navigation that brings its own page with the new filter
+  // (Back, a link) keeps that page.
+  const [reset, setReset] = useState<{ key: string | undefined; rawPage: number; stalePage?: number }>({
+    key: opts.resetKey,
+    rawPage,
+  });
+  // The total last handed to listProps or view, for clamping the page. It
+  // belongs to one filter: a changed resetKey forgets it.
+  const [knownTotal, setKnownTotal] = useState<number | undefined>(undefined);
   let stalePage = reset.stalePage;
+  let total = knownTotal;
   if (reset.key !== opts.resetKey) {
-    stalePage = rawPage > 1 ? rawPage : undefined;
-    setReset({ key: opts.resetKey, stalePage });
-  } else if (stalePage !== undefined && rawPage !== stalePage) {
+    stalePage = rawPage > 1 && rawPage === reset.rawPage ? rawPage : undefined;
+    setReset({ key: opts.resetKey, rawPage, stalePage });
+    total = undefined;
+    setKnownTotal(undefined);
+  } else if (rawPage !== reset.rawPage) {
     stalePage = undefined;
-    setReset({ key: opts.resetKey });
+    setReset({ key: opts.resetKey, rawPage });
   }
   const wanted = stalePage !== undefined ? 1 : rawPage;
 
-  // The total last handed to listProps or view, for clamping the page.
-  const [knownTotal, setKnownTotal] = useState<number | undefined>(undefined);
-  const learnTotal = (total: number | undefined) => {
-    if (total !== undefined && total !== knownTotal) setKnownTotal(total);
+  const learnTotal = (next: number | undefined) => {
+    if (next !== undefined && next !== total) setKnownTotal(next);
   };
-  const page = clampPage(wanted, knownTotal, perPage);
+  const page = clampPage(wanted, total, perPage);
 
   const writeUrl = useCallback(
     (clean: ListSearch, replace: boolean) =>
@@ -182,6 +198,7 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
     perPage,
     visibleColumns,
     density: prefs.density,
+    ready,
     serverQuery: { page, per_page: perPage, ...(sort ? { sort: sort.key, order: sort.order } : {}) },
     view(rows) {
       if (rows === undefined) return { rows: [], total: undefined };
@@ -189,15 +206,16 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
       const sorted = sortRows(rows, columns, sort, opts.rowKey ?? noKey, locale);
       return { rows: pageRows(sorted, clampPage(wanted, rows.length, perPage), perPage), total: rows.length };
     },
-    listProps(total, countLabel) {
-      learnTotal(total);
+    listProps(answered, countLabel) {
+      learnTotal(answered);
+      const known = answered ?? total;
       return {
         sort,
         onSortChange: (next) => write({ sort: next?.key, order: next?.order }),
         paging: {
-          page: clampPage(wanted, total ?? knownTotal, perPage),
+          page: clampPage(wanted, known, perPage),
           perPage,
-          total: total ?? 0,
+          total: known ?? 0,
           countLabel,
           onPageChange: (n) => write({ sort: search.sort, order: search.order, page: n }),
           onPerPageChange,

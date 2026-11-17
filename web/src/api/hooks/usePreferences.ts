@@ -25,11 +25,12 @@ function strip(doc: Preferences & { $schema?: string }): Preferences {
  * The signed-in user's preferences. Read once per session (they change only
  * through useSavePreferences, which keeps the cache current); until the GET
  * has answered — or when it failed — `prefs` holds the defaults and
- * `loaded` is false.
+ * `loaded` is false. `ready` turns true once the GET has answered either
+ * way: from then on `prefs` is all there will be.
  */
-export function usePreferences(): { prefs: Preferences; loaded: boolean } {
+export function usePreferences(): { prefs: Preferences; loaded: boolean; ready: boolean } {
   const q = useQuery({ queryKey: preferencesQueryKey, queryFn: fetchPreferences, staleTime: Infinity });
-  return { prefs: q.data ?? DEFAULT_PREFERENCES, loaded: q.isSuccess };
+  return { prefs: q.data ?? DEFAULT_PREFERENCES, loaded: q.isSuccess, ready: q.status !== 'pending' };
 }
 
 /** One save in flight or queued. `ctx` is set once its change is in the
@@ -71,8 +72,10 @@ export function useSavePreferences(): (update: PreferencesUpdate) => Promise<Pre
     onMutate: async (vars: SaveVars) => {
       await ready(qc);
       // Read and write with no wait between: another save's change, applied
-      // meanwhile, is kept.
-      const previous = qc.getQueryData<Preferences>(preferencesQueryKey) ?? DEFAULT_PREFERENCES;
+      // meanwhile, is kept. Gone meanwhile (a lock or sign-out emptied the
+      // cache): fail rather than save the defaults with this change.
+      const previous = qc.getQueryData<Preferences>(preferencesQueryKey);
+      if (!previous) throw new Error('preferences not loaded');
       qc.setQueryData(preferencesQueryKey, vars.update(previous));
       vars.ctx = { previous };
     },
@@ -95,7 +98,9 @@ export function useSavePreferences(): (update: PreferencesUpdate) => Promise<Pre
 /** Takes a failed save's change out of the cache: its document from before,
  * with the changes of the saves after it applied again, in order. */
 function rollBack(qc: QueryClient, failed: SaveVars) {
-  if (!failed.ctx) return;
+  // Without a query (a lock or sign-out emptied the cache) there is nothing
+  // to take back, and setting it would bring the document back.
+  if (!failed.ctx || !qc.getQueryState(preferencesQueryKey)) return;
   const pending = qc
     .getMutationCache()
     .findAll({ mutationKey: preferencesQueryKey, status: 'pending' })

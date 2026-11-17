@@ -243,6 +243,7 @@ describe('RootLayout', () => {
 
     afterEach(() => {
       delete document.documentElement.dataset.density;
+      window.localStorage.clear();
     });
 
     it('puts the saved density on the document for an MFA-complete, unlocked session', async () => {

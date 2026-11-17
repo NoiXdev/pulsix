@@ -6,6 +6,7 @@ import { router } from './router.tsx';
 import { ToastProvider } from './ui/toast.tsx';
 import { I18nProvider } from './i18n/I18nProvider.tsx';
 import './styles/globals.css';
+import { applyDensityHint } from './features/lists/densityHint.ts';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,6 +16,10 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// The density this browser last saw for its user, on the document before
+// the first paint (the preferences answer later and win).
+applyDensityHint();
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('#root element not found');

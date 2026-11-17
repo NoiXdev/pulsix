@@ -31,12 +31,80 @@ describe('usePreferences', () => {
     mockApi({ 'GET /api/v1/auth/me/preferences': () => get.promise });
     const { result } = setup();
 
-    expect(result.current.read).toEqual({ prefs: DEFAULT_PREFERENCES, loaded: false });
+    expect(result.current.read).toEqual({ prefs: DEFAULT_PREFERENCES, loaded: false, ready: false });
     expect(DEFAULT_PREFERENCES).toEqual({ density: 'standard', page_size: 25, lists: {} });
 
     get.resolve(SAVED);
     await waitFor(() => expect(result.current.read.loaded).toBe(true));
     expect(result.current.read.prefs).toEqual(SAVED);
+    expect(result.current.read.ready).toBe(true);
+  });
+
+  it('is ready with the defaults when the GET fails', async () => {
+    mockApi({ 'GET /api/v1/auth/me/preferences': failure });
+    const { result } = setup();
+
+    await waitFor(() => expect(result.current.read.ready).toBe(true));
+    expect(result.current.read).toEqual({ prefs: DEFAULT_PREFERENCES, loaded: false, ready: true });
+  });
+});
+
+/** Only the save hook, over a cache seeded with SAVED: no query observer
+ * that would bring a removed query back. */
+function setupSaveOnly() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(preferencesQueryKey, SAVED);
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  const { result } = renderHook(() => useSavePreferences(), { wrapper });
+  return { qc, save: result.current };
+}
+
+describe('useSavePreferences after the cache was emptied (a lock, a sign-out)', () => {
+  it('fails instead of saving the defaults with the change', async () => {
+    let puts = 0;
+    mockApi({
+      'PUT /api/v1/auth/me/preferences': (req: MockRequest) => {
+        puts++;
+        return req.body;
+      },
+    });
+    const { qc, save } = setupSaveOnly();
+
+    let outcome: unknown;
+    await act(async () => {
+      const saving = save((p) => ({ ...p, page_size: 10 })).catch((e: unknown) => e);
+      qc.removeQueries({ queryKey: preferencesQueryKey });
+      outcome = await saving;
+    });
+
+    expect(outcome).toBeInstanceOf(Error);
+    expect(puts).toBe(0);
+    expect(qc.getQueryState(preferencesQueryKey)).toBeUndefined();
+  });
+
+  it('does not bring the document back when a PUT fails afterwards', async () => {
+    const put = deferred<Response>();
+    let sent = false;
+    mockApi({
+      'PUT /api/v1/auth/me/preferences': () => {
+        sent = true;
+        return put.promise;
+      },
+    });
+    const { qc, save } = setupSaveOnly();
+
+    let saving!: Promise<unknown>;
+    act(() => {
+      saving = save((p) => ({ ...p, page_size: 10 })).catch((e: unknown) => e);
+    });
+    await waitFor(() => expect(sent).toBe(true));
+    qc.removeQueries({ queryKey: preferencesQueryKey });
+    put.resolve(failure());
+    await act(async () => {
+      await saving;
+    });
+
+    expect(qc.getQueryState(preferencesQueryKey)).toBeUndefined();
   });
 });
 
