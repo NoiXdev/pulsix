@@ -1,0 +1,145 @@
+# Builds the agent binaries from a release tag and attaches them to that
+# tag's GitHub release (backlog 7.5), so a host can run the agent without a
+# manager and a manager built from source can fetch them. The names match the
+# manager's dist: pulsix-agent-<os>-<arch> plus a .sha256 next to each.
+#
+# A separate workflow, not a step of the shared release workflow: owner
+# decision 2026-11-17, because the shared workflow serves every product and
+# knows nothing about Go binaries. The release workflow calls it after the
+# release exists; the design is in docs/superpowers/plans/ (agent binaries on
+# the GitHub release).
+#
+# Backfill: run it from the Actions tab (workflow_dispatch) with the tag of an
+# existing release. The workflow file comes from main while the sources come
+# from the tag, so each release is built with its own agent-binaries.sh and
+# its own target list. A published asset is never replaced: identical bytes
+# are skipped, different bytes fail the run.
+name: release-agents
+run-name: Agent binaries for ${{ inputs.tag }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag the binaries are built from and attached to"
+        type: string
+        required: true
+      dry_run:
+        description: "Build and verify, attach nothing"
+        type: boolean
+        default: false
+      ref:
+        description: "Commit to build on a dry run, when no tag exists yet"
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of an existing release to attach the agent binaries to"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Upload only; no environment and no registry secrets are involved.
+    permissions:
+      contents: write
+    steps:
+      - name: The tag must be a release tag, and on a backfill its release must exist
+        env:
+          TAG: ${{ inputs.tag }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
+            echo "::error::'$TAG' is not a release tag" >&2
+            exit 1
+          fi
+          # From the release workflow the release job has just created it
+          # (or, on a dry run, never will); only a backfill can name a tag
+          # that has no release.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            gh release view "$TAG" >/dev/null
+          fi
+
+      # A live run builds the tag itself; a dry run has no tag, so it builds
+      # the commit the guard job checked.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.dry_run && inputs.ref || inputs.tag }}
+          fetch-depth: 1
+
+      # The toolchain the manager image builds with, so the released binaries
+      # come from the same Go as everything else in the release.
+      - name: Go version of the manager image
+        id: go
+        run: |
+          version=$(sed -n 's/^FROM golang:\([0-9][0-9.]*\)-alpine.*/\1/p' deploy/docker/Dockerfile.manager | head -n 1)
+          if [ -z "$version" ]; then
+            echo "::error::no golang version found in deploy/docker/Dockerfile.manager" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache: false
+
+      - name: Build the agent binaries
+        env:
+          TAG: ${{ inputs.tag }}
+        run: scripts/agent-binaries.sh "$TAG"
+
+      # Proves what is about to be published came from this checkout. With
+      # -trimpath Go leaves -ldflags out of the build info, so the version
+      # stamp cannot be read back as main.version; the VCS stamp proves the
+      # source instead, and a plain search proves the version string landed.
+      # The search is not prefix-exact (Go packs string data), so rc.1 would
+      # also match inside rc.10; the checkout of the tag makes that moot.
+      - name: Verify the binaries
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          dist=internal/agentdist/dist
+          rev=$(git rev-parse HEAD)
+          found=0
+          for f in "$dist"/pulsix-agent-*; do
+            case "$f" in *.sha256) continue ;; esac
+            found=$((found + 1))
+            info=$(go version -m "$f")
+            if ! printf '%s\n' "$info" | grep -Fq "vcs.revision=$rev"; then
+              echo "::error::$f was not built from $rev" >&2
+              exit 1
+            fi
+            if ! printf '%s\n' "$info" | grep -Fq "vcs.modified=false"; then
+              echo "::error::$f was built from a modified tree" >&2
+              exit 1
+            fi
+            if ! grep -a -F -q -- "$TAG" "$f"; then
+              echo "::error::$f does not carry the version $TAG" >&2
+              exit 1
+            fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no agent binaries in $dist" >&2
+            exit 1
+          fi
+          cd "$dist"
+          for s in pulsix-agent-*.sha256; do
+            sha256sum -c "$s"
+          done
+
+      - name: Attach the binaries to the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist

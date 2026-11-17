@@ -4,8 +4,10 @@
 # multi-architecture manager and worker images with that version as their
 # VERSION build argument, pushes both to Docker Hub, commits the version and
 # CHANGELOG.md to main, tags, creates the GitHub release and announces it on
-# Discord. One version for everything (the v0.1 core plan's rule): the
-# compose stack runs both images under one PULSIX_VERSION.
+# Discord. A second job then builds the agent binaries from the new tag and
+# attaches them to that release (release-agents.yml). One version for
+# everything (the v0.1 core plan's rule): the compose stack runs both images
+# under one PULSIX_VERSION.
 #
 # Started by hand from the Actions tab. A pre-release (prerelease_id rc, beta
 # or alpha) publishes its version tag only; `latest` stays on the last final
@@ -103,3 +105,15 @@ jobs:
       version_build_arg: VERSION
       environment: release
     secrets: inherit
+
+  # The agent binaries go on the release the job above just created. A dry
+  # run builds and verifies them from the checked commit, since no tag exists.
+  agents:
+    needs: [guard, release]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-agents.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+      dry_run: ${{ inputs.dry_run }}
+      ref: ${{ needs.guard.outputs.sha }}
