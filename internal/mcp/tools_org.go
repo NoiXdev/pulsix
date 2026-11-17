@@ -11,7 +11,7 @@ type noInput struct{}
 
 func orgTools() []toolDef {
 	return []toolDef{
-		define("get_organization", "Organization", "The organization this token belongs to: its name and slug.",
+		define("get_organization", "Organization", "The organization this connection acts in: its name and slug.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				path, err := c.orgPath("")
 				if err != nil {

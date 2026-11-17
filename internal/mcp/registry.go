@@ -35,6 +35,14 @@ func (t toolDef) allowed(areas []tenancy.Area) bool {
 	return true
 }
 
+// allowedFor reports whether the tool is listed for a token holding areas
+// that acts with role in the organization: its areas unlock it and the role
+// holds every permission of its area, so no listed tool always answers 403
+// there (spec 2026-11-17 personal tokens, rule 4).
+func (t toolDef) allowedFor(areas []tenancy.Area, role tenancy.Role) bool {
+	return t.allowed(areas) && tenancy.RoleAllowsArea(role, t.area)
+}
+
 // kind tells read tools from write tools for the annotations.
 type kind int
 

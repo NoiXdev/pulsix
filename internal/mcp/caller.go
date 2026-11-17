@@ -25,7 +25,6 @@ type caller struct {
 	router        http.Handler
 	authorization string
 	slug          string
-	scope         auth.TokenScope
 	areas         []tenancy.Area
 	publicURL     string
 }

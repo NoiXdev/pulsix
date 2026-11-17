@@ -419,7 +419,12 @@ affected, and a backup carries the three tables. Skew: a personal token (`pxp_â€
 unknown to an older manager, which answers 401 for it; organization tokens work on
 both. Migration 00111 adds one partial index, `personal_token_grants_blocked_idx` on
 `(org_id, user_id) WHERE blocked_at IS NOT NULL`, for the per-person block an
-organization admin's revocation sets; nothing else changes.
+organization admin's revocation sets; nothing else changes. The assistant endpoint
+gains `/api/mcp/o/{org}` for personal assistant tokens (an older manager answers 404
+there; `/api/mcp` takes a personal token only while it holds exactly one live grant).
+Organization assistant tokens keep `/api/mcp`; their tool list now leaves out the tools
+the owner's current role there cannot use, and an owner who is no longer a member is
+refused when connecting (403) rather than on every call.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and

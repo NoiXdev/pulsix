@@ -541,10 +541,15 @@ func New(deps Deps) (http.Handler, error) {
 	// stateless Streamable HTTP. Its tools dispatch back into r itself, so
 	// every call passes the same middleware, authorization and audit as a
 	// REST request.
-	r.Handle("/api/mcp", mcp.New(mcp.Deps{
+	// An organization assistant token uses /api/mcp; a personal one names
+	// its organization as /api/mcp/o/{org}, or uses /api/mcp while it holds
+	// exactly one live grant (spec 2026-11-17 personal tokens, rule 7).
+	assistant := mcp.New(mcp.Deps{
 		Router: r, Tokens: deps.Tokens, Assistant: deps.Assistant, Orgs: orgSlugs{deps.Tenancy},
-		Version: managerVersion(deps), PublicURL: deps.PublicURL,
-	}))
+		Access: mcpAccess{deps}, Version: managerVersion(deps), PublicURL: deps.PublicURL,
+	})
+	r.Handle("/api/mcp", assistant)
+	r.Handle(mcp.OrgPathPattern, assistant)
 
 	// Anything chi did not match above — every SPA route (/, /login,
 	// /o/{org}/hosts, ...) and any /api/... path that is not a real
