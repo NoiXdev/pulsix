@@ -108,11 +108,19 @@ export function initialDraft(rows: readonly GrantRow[]): GrantDraft {
 
 /**
  * grantsBody is what a create or edit sends: every ticked organization the
- * person may still change, in row order. A blocked grant is never sent back
- * (the server answers 409); it stays on the token regardless.
+ * person may still change, in row order. A locked row is never sent: a
+ * blocked grant (the server answers 409; it stays on the token regardless),
+ * nor a new grant in an organization that turned personal tokens off, even
+ * one ticked before the switch was known or a refusal said so.
  */
 export function grantsBody(rows: readonly GrantRow[], draft: GrantDraft): PersonalGrantInput[] {
-  return rows.filter((r) => r.status !== 'blocked' && draft[r.slug]?.on).map((r) => ({ org: r.slug, role: draft[r.slug].role }));
+  return rows.filter((r) => !r.locked && draft[r.slug]?.on).map((r) => ({ org: r.slug, role: draft[r.slug].role }));
+}
+
+/** grantTicked is what a row's checkbox shows: a locked new grant reads as
+ * unticked, since it will not be sent; a held one stays ticked. */
+export function grantTicked(row: GrantRow, draft: GrantDraft): boolean {
+  return !!draft[row.slug]?.on && (!row.locked || !!row.existing);
 }
 
 /** grantsChanged reports whether `body` differs from the token's own grants

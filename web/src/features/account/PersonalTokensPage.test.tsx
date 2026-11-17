@@ -164,6 +164,35 @@ describe('PersonalTokensPage', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('An administrator blocked your personal tokens in Beta.');
   });
 
+  it('drops a new grant refused because the organization turned personal tokens off, so the retry goes through', async () => {
+    const user = userEvent.setup();
+    const posts: Array<{ grants: unknown[] }> = [];
+    setup({
+      onPost: (req) => {
+        posts.push(req.body as { grants: unknown[] });
+        if (posts.length > 1) return undefined;
+        return new Response(
+          JSON.stringify({ title: 'Conflict', status: 409, detail: 'personal_tokens_off', errors: [{ location: 'body.grants', message: 'delta' }] }),
+          { status: 409, headers: { 'Content-Type': 'application/problem+json' } },
+        );
+      },
+    });
+    const dialog = await openCreate(user);
+    await user.type(within(dialog).getByLabelText('Name'), 'laptop');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Use in Acme' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Use in Delta' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Create token' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Personal tokens are turned off in Delta.');
+    const delta = within(dialog).getByRole('checkbox', { name: 'Use in Delta' });
+    expect(delta).toBeDisabled();
+    expect(delta).not.toBeChecked();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create token' }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1].grants).toEqual([{ org: 'acme', role: 'viewer' }]);
+    expect(await within(dialog).findByText('pxp_secret123')).toBeInTheDocument();
+  });
+
   it('edits a token: keeps an unchanged switched-off grant and never sends a blocked one', async () => {
     const user = userEvent.setup();
     const patches: unknown[] = [];

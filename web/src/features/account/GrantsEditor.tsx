@@ -1,7 +1,7 @@
 import { Select } from '../../ui/Select.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { roleLabel } from '../../i18n/roleLabel.ts';
-import type { GrantDraft, GrantRow } from './grants.ts';
+import { grantTicked, type GrantDraft, type GrantRow } from './grants.ts';
 
 /**
  * GrantsEditor is a personal token's organizations: one row per
@@ -48,7 +48,7 @@ export function GrantsEditor({
                   type="checkbox"
                   aria-label={g.use(row.name)}
                   aria-describedby={reason ? reasonId : undefined}
-                  checked={choice.on}
+                  checked={grantTicked(row, value)}
                   disabled={row.locked}
                   onChange={(e) => set(row.slug, { on: e.target.checked })}
                 />

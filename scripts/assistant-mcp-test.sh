@@ -194,6 +194,16 @@ fi
 grep -q "Bearer pxp_personal1" "$FAKE_CURL_STDIN" || bad "curl did not get the header on stdin"
 expect_secret_kept pxp_personal1
 
+setup "check explains a 400 at an organization's endpoint without --org advice"
+run pxp_personal1 add prod https://pulsix.example --org acme || bad "add failed: $(cat "$work/out")"
+export FAKE_CURL_CODE=400 FAKE_CURL_BODY='{"title":"Bad Request","status":400,"detail":"something else"}'
+if "$script" check prod >"$work/out" 2>&1; then
+	bad "check passed on a 400"
+else
+	grep -q "something else" "$work/out" || bad "the detail is missing: $(cat "$work/out")"
+	if grep -q -- "--org" "$work/out"; then bad "suggested --org for an endpoint that names its organization: $(cat "$work/out")"; fi
+fi
+
 setup "check accepts a 200"
 run pxp_personal1 add prod https://pulsix.example --org acme || bad "add failed: $(cat "$work/out")"
 export FAKE_CURL_CODE=200 FAKE_CURL_BODY='{}'

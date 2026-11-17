@@ -45,6 +45,13 @@ personal token never has more rights than its user, and may have fewer.
   gone and must be added again by the owner. A blocked grant
   counts toward the token's 50 grants. The block ends with the membership
   (rule 11).
+  The organization's token page marks every entry of a blocked person
+  ("Blocked (person)"; the API's `owner_blocked`), not only the grant an
+  admin revoked, since all of them are refused there. Lifting the block
+  works through any of the person's entries and lifts it for the person;
+  through an entry of a person who is not blocked it answers 404. An entry
+  blocked only through its owner can also be revoked itself, so it stays
+  out after the person's block is lifted.
 
 ## Rules (designer's calls, check when reading)
 

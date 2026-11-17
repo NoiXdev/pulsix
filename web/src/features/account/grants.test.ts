@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../api/client.ts';
 import type { PersonalGrant, PersonalToken } from '../../api/hooks/usePersonalTokens.ts';
-import { blockedSlugs, grantRows, grantsBody, grantsChanged, highestRole, initialDraft, refusalOf } from './grants.ts';
+import { blockedSlugs, grantRows, grantsBody, grantsChanged, grantTicked, highestRole, initialDraft, refusalOf } from './grants.ts';
 
 const M = [
   { slug: 'acme', name: 'Acme', role: 'operator' },
@@ -49,6 +49,14 @@ describe('grantsBody and grantsChanged', () => {
       { org: 'beta', role: 'viewer' },
     ]);
     expect(grantsChanged(rows, body)).toBe(false);
+  });
+
+  it('never sends a new grant ticked before its organization turned out to be off', () => {
+    const fresh = grantRows(M, { blocked: new Set(), allowed: {}, refused: { gamma: 'off' } });
+    const draft = { acme: { on: true, role: 'viewer' as const }, gamma: { on: true, role: 'viewer' as const } };
+    expect(grantsBody(fresh, draft)).toEqual([{ org: 'acme', role: 'viewer' }]);
+    expect(grantTicked(fresh[2], draft)).toBe(false);
+    expect(grantTicked(rows[1], initialDraft(rows))).toBe(true);
   });
 
   it('notices a removed or changed grant', () => {

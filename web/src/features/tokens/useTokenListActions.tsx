@@ -48,7 +48,8 @@ function useUnblock(org: string) {
  * organization token: Edit (not for an expired token, which cannot be
  * changed) and Revoke…, which asks the same question as before. A member's
  * personal token: "Revoke for this organization…", which blocks its owner
- * here; or, once the owner is blocked here, Unblock…, which lifts it.
+ * here; once the owner is blocked here, Unblock…, which lifts it (beside
+ * Revoke on an entry that is blocked only through its owner).
  * `dialogs` holds the edit dialog.
  */
 export function useTokenListActions(org: string): { rowActions: (row: TokenRow) => RowAction[]; dialogs: ReactNode } {
@@ -80,9 +81,12 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
   function rowActions(row: TokenRow): RowAction[] {
     if (row.type === 'personal') {
       const busy = block.pending.has(row.token_id) || unblock.pending.has(row.token_id);
-      return row.blocked || row.owner_blocked
-        ? [{ id: 'unblock', label: p.unblockItem, onSelect: () => void unblock.run(row), disabled: busy }]
-        : [{ id: 'revoke-grant', label: p.revokeItem, destructive: true, onSelect: () => void block.run(row), disabled: busy }];
+      const unblockItem: RowAction = { id: 'unblock', label: p.unblockItem, onSelect: () => void unblock.run(row), disabled: busy };
+      const revokeItem: RowAction = { id: 'revoke-grant', label: p.revokeItem, destructive: true, onSelect: () => void block.run(row), disabled: busy };
+      // An entry blocked only through its owner can still be revoked itself,
+      // so it stays out once the person's block is lifted.
+      if (row.blocked) return [unblockItem];
+      return row.owner_blocked ? [unblockItem, revokeItem] : [revokeItem];
     }
     return [
       { id: 'edit', label: t.tokens.editItem, onSelect: () => setEditing(row), disabled: isExpired(row.expires_at) },

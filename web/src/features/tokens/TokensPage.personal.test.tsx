@@ -102,6 +102,18 @@ describe('TokensPage personal entries', () => {
     await waitFor(() => expect(unblocked).toBe(1));
   });
 
+  it('also offers to revoke an entry blocked only through its owner, to keep it out after the unblock', async () => {
+    const user = userEvent.setup();
+    let deleted = 0;
+    setup({ entries: [entry('laptop', { owner_blocked: true })], onDelete: () => deleted++ });
+    await screen.findByText('1–2 of 2 tokens');
+    await openRowMenu(user, 'laptop (Bob)');
+    expect((await screen.findAllByRole('menuitem')).map((m) => m.textContent)).toEqual(['Unblock…', 'Revoke for this organization…']);
+    await user.click(screen.getByRole('menuitem', { name: 'Revoke for this organization…' }));
+    await acceptConfirm(user);
+    await waitFor(() => expect(deleted).toBe(1));
+  });
+
   it('hides the Owner column from the Columns menu', async () => {
     const user = userEvent.setup();
     setup();

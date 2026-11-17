@@ -276,7 +276,13 @@ cmd_check() {
   detail="$(detail_of "$body")"
   case "$code" in
     200) echo "$(server "$name"): $endpoint accepts the token" ;;
-    400) die "$endpoint refused the connection (400): ${detail:-bad request}. Run: $me remove $name, then $me add $name <pulsix-url> --org <slug>" ;;
+    400)
+      # Only the plain endpoint can need an organization in the path.
+      case "$endpoint" in
+        */api/mcp/o/*) die "$endpoint refused the connection (400): ${detail:-bad request}" ;;
+        *) die "$endpoint refused the connection (400): ${detail:-bad request}. Run: $me remove $name, then $me add $name <pulsix-url> --org <slug>" ;;
+      esac
+      ;;
     401) die "$endpoint refused the token (401): revoked, expired, or not an assistant token" ;;
     403) die "$endpoint refused the token (403): ${detail:-is assistant access turned on for the organization?}" ;;
     404) die "$endpoint answered 404: ${detail:-not found}; check the organization's slug" ;;

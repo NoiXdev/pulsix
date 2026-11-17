@@ -109,7 +109,13 @@ func registerPersonalTokenOrgRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapPersonalTokenErr(ctx, err, nil)
 		}
-		setAuditObject(ctx, id.String(), "lifted the block on personal tokens of "+e.OwnerName+" (blocked with "+e.Name+")")
+		// The entry the admin went through may be one that was only blocked
+		// through its owner; the audit says which it was.
+		via := " (blocked with " + e.Name + ")"
+		if !e.Blocked {
+			via = " (through " + e.Name + ")"
+		}
+		setAuditObject(ctx, id.String(), "lifted the block on personal tokens of "+e.OwnerName+via)
 		return &okOutput{}, nil
 	}, withAudit("unblockPersonalTokenGrant", "personal_token"))
 

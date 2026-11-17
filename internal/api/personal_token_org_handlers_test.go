@@ -105,6 +105,9 @@ func TestAdminRevocationSticks(t *testing.T) {
 	if feed[1].Summary != "revoked personal token deploy (viewer) of pt-sticky-user@example.test" {
 		t.Fatalf("revoke summary = %q", feed[1].Summary)
 	}
+	if feed[2].Summary != "lifted the block on personal tokens of pt-sticky-user@example.test (blocked with deploy)" {
+		t.Fatalf("unblock summary = %q", feed[2].Summary)
+	}
 }
 
 // TestAdminCannotWidenGrant: no organization route takes a cap; an admin
@@ -311,7 +314,7 @@ func TestPersonalBlockStopsOtherTokens(t *testing.T) {
 func TestOrgViewMarksBlockedOwner(t *testing.T) {
 	f := newPTFixture(t, "pt-ownerblk")
 	f.org(t, "pt-ownerblk-a", tenancy.RoleOperator)
-	f.org(t, "pt-ownerblk-b", tenancy.RoleOperator)
+	b := f.org(t, "pt-ownerblk-b", tenancy.RoleOperator)
 	admin := f.s.LoginAs(f.owner)
 	t1 := f.create(t, map[string]any{"name": "one", "grants": grantsOf("pt-ownerblk-b", "viewer")})
 	t2 := f.create(t, map[string]any{"name": "two", "grants": grantsOf("pt-ownerblk-a", "viewer", "pt-ownerblk-b", "viewer")})
@@ -339,6 +342,11 @@ func TestOrgViewMarksBlockedOwner(t *testing.T) {
 	// The block is lifted through the entry that was never blocked itself.
 	if code, raw := f.call(t, admin, http.MethodPost, "/api/v1/orgs/pt-ownerblk-b/personal-tokens/"+t2.ID+"/unblock", nil); code != http.StatusOK {
 		t.Fatalf("unblock through the other entry: %d (%s)", code, raw)
+	}
+	// The audit names the entry it went through, which was not blocked itself.
+	feed := auditRows(t, f.s, "org_id = $1 AND action = $2", b, "POST unblockPersonalTokenGrant")
+	if len(feed) != 1 || feed[0].Summary != "lifted the block on personal tokens of pt-ownerblk-user@example.test (through two)" {
+		t.Fatalf("unblock feed = %+v", feed)
 	}
 	entries := f.entries(t, admin, "pt-ownerblk-b")
 	if len(entries) != 1 || entries[0].TokenID != t2.ID || entries[0].OwnerBlocked || entries[0].Blocked {
