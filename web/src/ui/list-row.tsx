@@ -1,20 +1,9 @@
-import {
-  createContext,
-  useContext,
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type ReactNode,
-} from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
+import { MenuPopover } from './menu-popover.tsx';
+import { useMenu } from './menuContext.ts';
 
 /** What a list row looks like, linked or not: separated by a hairline, laid
  * out on the list's grid columns. */
@@ -124,144 +113,30 @@ export function StaticListRow({
   );
 }
 
-interface MenuContextValue {
-  /** Closes the menu and puts focus back on its trigger. */
-  select: () => void;
-}
-
-/** Gap between the trigger and the popover, and the minimum distance the
- * popover keeps from the viewport edges. */
-const GAP = 4;
-const EDGE = 8;
-
-interface Position {
-  top: number;
-  left: number;
-}
-
-/** Places a popover of the given size under the trigger, right-aligned to it,
- * flipping above when it would cross the viewport bottom and there is room. */
-function place(trigger: DOMRect, width: number, height: number): Position {
-  const below = trigger.bottom + GAP;
-  const fitsBelow = below + height <= window.innerHeight - EDGE;
-  const above = trigger.top - GAP - height;
-  const top = fitsBelow || above < EDGE ? below : above;
-  const left = Math.max(EDGE, Math.min(trigger.right - width, window.innerWidth - width - EDGE));
-  return { top, left };
-}
-
-const MenuContext = createContext<MenuContextValue | null>(null);
-
 /**
  * RowMenu is a small popover menu for a row's secondary actions. The trigger
  * swallows its click (preventDefault and stopPropagation) so a menu placed
- * over a row never also activates the row. The menu closes on Escape or Tab (focus
- * returns to the trigger), on a click outside it and after an item is
- * selected; the arrow keys, Home and End move between the items.
+ * over a row never also activates the row. The menu itself is MenuPopover:
+ * it closes on Escape or Tab (focus returns to the trigger), on a click
+ * outside it and after an item is selected; the arrow keys, Home and End
+ * move between the items.
  */
 export function RowMenu({ label, children }: { label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const [pos, setPos] = useState<Position | null>(null);
-  // Where the trigger was when the menu was placed, to tell a scroll that
-  // moved it from one that did not.
-  const anchorRef = useRef<{ top: number; left: number } | null>(null);
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
-    setPos(null);
     if (restoreFocus) triggerRef.current?.focus();
   }, []);
 
-  function items(): HTMLElement[] {
-    return Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-  }
-
-  // The popover is portalled to <body> with fixed positioning: a list sits in
-  // a Card whose overflow-clip would cut off a menu opened near its bottom.
-  // Measured before paint so it never shows at the wrong place.
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current || !menuRef.current) return;
-    const menu = menuRef.current.getBoundingClientRect();
-    const trigger = triggerRef.current.getBoundingClientRect();
-    anchorRef.current = { top: trigger.top, left: trigger.left };
-    setPos(place(trigger, menu.width, menu.height));
-  }, [open]);
-
-  // Focus waits for the position: an element hidden by `visibility` cannot
-  // take focus.
-  const positioned = pos !== null;
-  useEffect(() => {
-    if (open && positioned) items()[0]?.focus();
-  }, [open, positioned]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close(false);
-    }
-    // A fixed popover does not follow its row, so a scroll (of the page or of
-    // a scroll container) that moves the trigger, or a resize, closes it.
-    // Scrolling the menu itself is not that, and neither is a scroll that
-    // left the trigger where it was: the browser delivers scroll events on
-    // its next frame, so the scroll that brought the trigger into view can
-    // arrive after the click that opened the menu.
-    function onScroll(e: Event) {
-      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
-      const anchor = anchorRef.current;
-      const now = triggerRef.current?.getBoundingClientRect();
-      if (anchor && now && now.top === anchor.top && now.left === anchor.left) return;
-      close(false);
-    }
-    function onResize() {
-      close(false);
-    }
-    document.addEventListener('mousedown', onPointerDown);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onResize);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onResize);
-    };
-  }, [open, close]);
-
-  function onMenuKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close(true);
-      return;
-    }
-    // The menu is portalled to the end of <body>, so letting Tab move on
-    // from here would send focus past the whole page. It goes back to the
-    // trigger instead, and the next Tab continues from the row.
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      close(true);
-      return;
-    }
-    const list = items();
-    const at = list.indexOf(document.activeElement as HTMLElement);
-    let next: number | undefined;
-    if (e.key === 'ArrowDown') next = (at + 1) % list.length;
-    else if (e.key === 'ArrowUp') next = (at - 1 + list.length) % list.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = list.length - 1;
-    if (next === undefined) return;
-    e.preventDefault();
-    list[next]?.focus();
-  }
-
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
         ref={triggerRef}
         type="button"
+        data-row-menu=""
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -276,23 +151,11 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
       >
         <MoreHorizontal size={16} />
       </button>
-      {open &&
-        createPortal(
-          <MenuContext.Provider value={{ select: () => close(true) }}>
-            <div
-              ref={menuRef}
-              id={menuId}
-              role="menu"
-              aria-label={label}
-              onKeyDown={onMenuKeyDown}
-              style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
-              className="z-50 flex min-w-40 flex-col gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg"
-            >
-              {children}
-            </div>
-          </MenuContext.Provider>,
-          document.body,
-        )}
+      {open && (
+        <MenuPopover id={menuId} label={label} anchor={triggerRef} onClose={close}>
+          {children}
+        </MenuPopover>
+      )}
     </div>
   );
 }
@@ -312,7 +175,7 @@ export function RowMenuItem({
   disabled?: boolean;
   children: ReactNode;
 }) {
-  const menu = useContext(MenuContext);
+  const menu = useMenu();
   return (
     <button
       type="button"
@@ -343,7 +206,7 @@ export function RowMenuItem({
  * browser treats it as one (save-as, open in a new tab). Picking it closes
  * the menu. */
 export function RowMenuLink({ href, download, children }: { href: string; download?: string; children: ReactNode }) {
-  const menu = useContext(MenuContext);
+  const menu = useMenu();
   return (
     <a
       role="menuitem"

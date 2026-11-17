@@ -1,8 +1,8 @@
 /**
  * The shared components in src/ui that say something themselves: the
  * combobox, the full-page error and loading states, the query guard's
- * toasts, the "Load more" button, the slug field, the metric chart and the
- * date and time pickers.
+ * toasts, the "Load more" button, the slug field, the metric chart, the
+ * date and time pickers and the list component (DataList).
  */
 export const enUi = {
   loadMore: 'Load more',
@@ -61,6 +61,25 @@ export const enUi = {
   slug: {
     generateLabel: 'Generate slug from the name',
     generateTitle: 'Generate from the name',
+  },
+  dataList: {
+    columns: 'Columns',
+    columnsHint: 'Saved for you in every browser. Drag a column or use the arrows to change the order.',
+    alwaysShown: 'always',
+    moveUp: (column: string) => `Move ${column} up`,
+    moveDown: (column: string) => `Move ${column} down`,
+    restoreDefaults: 'Restore defaults',
+    actions: 'Actions',
+    actionsFor: (row: string) => `Actions for ${row}`,
+    openInNewTab: 'Open in new tab',
+    copyLink: 'Copy link',
+    linkCopied: 'Link copied',
+    range: (from: number, to: number, count: string) => `${from}–${to} of ${count}`,
+    perPage: 'Rows per page',
+    pages: 'Pages',
+    page: (n: number) => `Page ${n}`,
+    previousPage: 'Previous page',
+    nextPage: 'Next page',
   },
   chart: {
     ranges: {
