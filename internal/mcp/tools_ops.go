@@ -97,9 +97,14 @@ func opsTools() []toolDef {
 
 		define("set_host_tags", "Set host tags", "Replace a host's manual tags with exactly the given set; tags a collector reports stay.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostTagsArgs) (any, error) {
-				tags := in.Tags
-				if tags == nil {
-					tags = []hostTagArg{}
+				// The route requires "value" on every tag, so it is always sent.
+				type wireTag struct {
+					Key   string `json:"key"`
+					Value string `json:"value"`
+				}
+				tags := make([]wireTag, len(in.Tags))
+				for i, tg := range in.Tags {
+					tags[i] = wireTag(tg)
 				}
 				return send(ctx, c, http.MethodPut, tags, "", "/hosts/%s/tags", in.HostID)
 			}),

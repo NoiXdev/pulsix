@@ -11,8 +11,10 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/credentials"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -58,6 +60,21 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		Interval: time.Minute, Enabled: true, BindingKind: checks.BindingHost, HostID: &f.host,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Deps.Hosts.RecordConnectionTest(f.scoped, f.org, f.host, time.Now(), true, "SHA256:sweepfingerprint", "", "unpinned",
+		[]hosts.HostTestCheck{{Name: "login", Detail: "ok", OK: true}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	obsAt := time.Now()
+	v := 12.5
+	if _, err := f.s.Checks.RecordObservations(f.scoped, f.org, []checks.Observation{{HostID: f.host, CheckKey: "cpu", Metric: "usage_percent", At: obsAt.Add(-time.Minute), Value: &v}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Deps.Agents.Register(f.scoped, agents.Registration{
+		OrgID: f.org, HostID: f.host, AgentName: "web-1", Version: "v1", Serial: "serial-sweep",
+		NotBefore: obsAt.Add(-time.Hour), NotAfter: obsAt.Add(time.Hour),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	alert := f.s.SeedOpenAlertWithDeferredNotification(t, f.org)
@@ -140,15 +157,13 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"snooze_alert":        {"alert_id": alert.String(), "until": now.Add(time.Hour).Format(time.RFC3339)},
 		"get_calendar":        {"from": now.Format(time.RFC3339), "to": now.Add(24 * time.Hour).Format(time.RFC3339)},
 		"list_activity":       {"limit": 100},
-		"get_host_metrics":    {"host_id": f.host.String(), "check": "http", "range": "1h"},
+		"get_host_metrics":    {"host_id": f.host.String(), "check": "cpu", "metric": "usage_percent", "range": "1h"},
 	}
-	// The monitoring, schedule and activity tools answer for the seeded data.
-	mustSucceed := map[string]bool{}
-	for _, n := range append(append([]string{}, monitoringReadTools...), "list_schedules", "get_schedule", "list_schedule_runs", "get_calendar", "list_activity", "set_host_tags", "start_connection_test") {
-		mustSucceed[n] = true
-	}
-	for _, n := range []string{"get_host_agent", "get_host_metrics"} {
-		delete(mustSucceed, n) // a host without an agent or samples answers with a refusal
+	// Every swept tool must succeed with the seeded arguments, so an erroring
+	// tool cannot pass for "no secret in the output". Exceptions are named
+	// here with the reason.
+	mayFail := map[string]string{
+		"request_retry": "the seeded job is still running and a retry needs a finished one; the refusal names no secret",
 	}
 	names := toolNames(t, cs)
 	props := toolProperties(t, cs)
@@ -172,7 +187,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 			a = argsFor(props[name], ids)
 		}
 		text, isErr := call(t, cs, name, a)
-		if isErr && mustSucceed[name] {
+		if _, exempt := mayFail[name]; isErr && !exempt {
 			t.Errorf("%s failed with the seeded arguments: %s", name, text)
 		}
 		called++
@@ -183,9 +198,9 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 			}
 		}
 	}
-	for name := range mustSucceed {
+	for name := range mayFail {
 		if !swept[name] {
-			t.Errorf("%s was not swept", name)
+			t.Errorf("exempt tool %s was not swept", name)
 		}
 	}
 	if called < 40 {

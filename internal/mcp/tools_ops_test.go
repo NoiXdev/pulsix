@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -129,6 +130,11 @@ func TestSetHostTags(t *testing.T) {
 	if strings.Contains(text, "role") || !strings.Contains(text, "dev") {
 		t.Fatalf("tags were not replaced:\n%s", text)
 	}
+	// A key-only tag is accepted: the value may be empty.
+	callOK(t, cs, "set_host_tags", map[string]any{"host_id": f.host.String(), "tags": []map[string]any{{"key": "db"}}}, nil)
+	if text = callOK(t, cs, "get_host", h, nil); !strings.Contains(text, `"db"`) {
+		t.Fatalf("key-only tag missing:\n%s", text)
+	}
 	callOK(t, cs, "set_host_tags", map[string]any{"host_id": f.host.String(), "tags": []map[string]any{}}, nil)
 	if text = callOK(t, cs, "get_host", h, nil); strings.Contains(text, `"env"`) {
 		t.Fatalf("empty set did not clear:\n%s", text)
@@ -164,8 +170,20 @@ func TestStartConnectionTest(t *testing.T) {
 	if after := pins(); after != before {
 		t.Errorf("pin state changed from %q to %q", before, after)
 	}
-	// No test has completed yet; the read is a clean answer, not a crash.
-	call(t, cs, "get_connection_test", map[string]any{"host_id": f.host.String()})
+	// No test has completed yet: the read is a refusal, not a crash.
+	if text, isErr := call(t, cs, "get_connection_test", map[string]any{"host_id": f.host.String()}); !isErr {
+		t.Errorf("get_connection_test before any outcome: %s", text)
+	}
+	if err := f.s.Deps.Hosts.RecordConnectionTest(f.scoped, f.org, f.host, time.Now(), true, "SHA256:testfingerprint", "", "unpinned",
+		[]hosts.HostTestCheck{{Name: "login", Detail: "ok", OK: true}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	text := callOK(t, cs, "get_connection_test", map[string]any{"host_id": f.host.String()}, nil)
+	for _, w := range []string{"SHA256:testfingerprint", `"login"`, `"unpinned"`} {
+		if !strings.Contains(text, w) {
+			t.Errorf("get_connection_test lacks %q:\n%s", w, text)
+		}
+	}
 }
 
 func TestListActivity(t *testing.T) {
