@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -104,7 +105,8 @@ type orgTokenUpdateOutput struct {
 }
 
 // registerTokenRoutes wires org-scoped API token management: create (which
-// returns the plaintext once), list (metadata only) and revoke.
+// returns the plaintext once), list (metadata only), update (name, expiry
+// and, for an assistant token, areas) and revoke.
 //
 // Written in Task 9 but left unmounted, because none of the three checked
 // anything beyond requireMFAComplete: there was no check that the caller
@@ -115,10 +117,11 @@ type orgTokenUpdateOutput struct {
 // auth.TokenScopeFromContext by way of requireOrg, which is exactly the
 // subtree that group exists for).
 //
-// Create additionally requires an interactive session
+// Create and update additionally require an interactive session
 // (requireInteractiveSession): a bearer token can list and revoke tokens
-// but never mint one, so a leaked credential cannot outlive its own
-// revocation through a successor it created.
+// but never mint or edit one, so a leaked credential cannot outlive its own
+// revocation through a successor it created, nor widen its own areas or
+// lengthen its own life.
 //
 // Create also caps the minted token's role at the caller's own
 // effective role (tenancy.Lower(scope.Role, requested)): a token can never
@@ -148,6 +151,7 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		if err := validateTokenAreas(kind, role, in.Body.Areas); err != nil {
 			return nil, err
 		}
+		in.Body.Areas = canonicalAreas(in.Body.Areas)
 		plain, tok, err := deps.Tokens.CreateWith(ctx, scope.UserID, scope.OrgID, auth.NewToken{
 			Name: in.Body.Name, Role: string(role), Kind: kind, Areas: in.Body.Areas, ExpiresAt: in.Body.ExpiresAt,
 		})
@@ -178,10 +182,7 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		out := &orgTokenListOutput{}
 		out.Body.Tokens = make([]tokenDTO, len(toks))
 		for i, tok := range toks {
-			out.Body.Tokens[i] = tokenDTO{
-				ID: tok.ID.String(), Name: tok.Name, Role: tok.Role, Kind: string(tok.Kind), Areas: tok.Areas,
-				ExpiresAt: tok.ExpiresAt, LastUsedAt: tok.LastUsedAt, CreatedAt: tok.CreatedAt,
-			}
+			out.Body.Tokens[i] = toTokenDTO(tok)
 		}
 		return out, nil
 	})
@@ -236,6 +237,8 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 			if err := validateTokenAreas(tok.Kind, role, *in.Body.Areas); err != nil {
 				return nil, err
 			}
+			canonical := canonicalAreas(*in.Body.Areas)
+			change.Areas = &canonical
 		}
 		before, after, err := deps.Tokens.Update(ctx, scope.OrgID, id, change)
 		if err != nil {
@@ -243,12 +246,40 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		}
 		setAuditObject(ctx, id.String(), tokenChangeSummary(before, after))
 		out := &orgTokenUpdateOutput{}
-		out.Body.Token = tokenDTO{
-			ID: after.ID.String(), Name: after.Name, Role: after.Role, Kind: string(after.Kind), Areas: after.Areas,
-			ExpiresAt: after.ExpiresAt, LastUsedAt: after.LastUsedAt, CreatedAt: after.CreatedAt,
-		}
+		out.Body.Token = toTokenDTO(after)
 		return out, nil
 	}, withAudit("updateToken", "token"))
+}
+
+func toTokenDTO(tok auth.Token) tokenDTO {
+	return tokenDTO{
+		ID: tok.ID.String(), Name: tok.Name, Role: tok.Role, Kind: string(tok.Kind), Areas: tok.Areas,
+		ExpiresAt: tok.ExpiresAt, LastUsedAt: tok.LastUsedAt, CreatedAt: tok.CreatedAt,
+	}
+}
+
+// canonicalAreas returns areas in tenancy.Areas() order, so the same set is
+// stored, listed and audited the same way whatever order a client sent it
+// in. Callers validate first; an unknown name (not reachable then) sorts last.
+func canonicalAreas(areas []string) []string {
+	order := map[string]int{}
+	for i, a := range tenancy.Areas() {
+		order[string(a)] = i
+	}
+	rank := func(a string) int {
+		if i, ok := order[a]; ok {
+			return i
+		}
+		return len(order)
+	}
+	out := slices.Clone(areas)
+	slices.SortStableFunc(out, func(a, b string) int { return rank(a) - rank(b) })
+	return out
+}
+
+// sameAreaSet reports whether a and b hold the same areas, in any order.
+func sameAreaSet(a, b []string) bool {
+	return slices.Equal(canonicalAreas(a), canonicalAreas(b))
 }
 
 // tokenChangeSummary words an update for the activity feed: the old and the
@@ -262,7 +293,7 @@ func tokenChangeSummary(before, after auth.Token) string {
 	if before.Name != after.Name {
 		parts = append(parts, "name "+before.Name+" → "+after.Name)
 	}
-	if strings.Join(before.Areas, ", ") != strings.Join(after.Areas, ", ") {
+	if !sameAreaSet(before.Areas, after.Areas) {
 		parts = append(parts, "areas "+strings.Join(before.Areas, ", ")+" → "+strings.Join(after.Areas, ", "))
 	}
 	if expiryText(before.ExpiresAt) != expiryText(after.ExpiresAt) {
@@ -311,10 +342,11 @@ func validateTokenAreas(kind auth.TokenKind, role tenancy.Role, areas []string) 
 	return nil
 }
 
-// mapTokenErr is mapAuthErr plus two overrides (ErrTokenExpired becomes 409), like mapPasskeyErr:
+// mapTokenErr is mapAuthErr plus two overrides, like mapPasskeyErr:
 // auth.ErrNotFound becomes 404 (an unknown token id, or one belonging to a
 // different org) rather than mapAuthErr's 401 "login required", since here
-// it never means "your own session is invalid".
+// it never means "your own session is invalid", and auth.ErrTokenExpired
+// becomes 409.
 func mapTokenErr(ctx context.Context, err error) error {
 	if errors.Is(err, auth.ErrNotFound) {
 		return huma.Error404NotFound("not found")
