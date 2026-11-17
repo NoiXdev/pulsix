@@ -35,6 +35,7 @@ function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: f
       return <div>CHANGE PASSWORD</div>;
     },
   });
+  const lockPinRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/lock-pin', component: () => <div>LOCK PIN PROMPT</div> });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const hostsRoute = createRoute({
     getParentRoute: () => orgRoute,
@@ -42,7 +43,7 @@ function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: f
     validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
     component: () => <div>HOSTS PAGE</div>,
   });
-  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute])]);
+  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, passwordRoute, lockPinRoute, orgRoute.addChildren([hostsRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) });
 
   render(
@@ -126,6 +127,27 @@ describe('RootRedirect', () => {
     expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
     const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
     expect(requested).not.toContain('/api/v1/orgs');
+  });
+
+  it.each([
+    [true, 'LOCK PIN PROMPT'],
+    [false, 'HOSTS PAGE'],
+  ])('with lock_pin_prompt %s lands on %s', async (prompt, expected) => {
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        mfa_enrolment_required: false,
+        totp_confirmed: true,
+        instance_admin: false,
+        must_change_password: false,
+        lock_pin_prompt: prompt,
+      },
+      'GET /api/v1/orgs': { orgs: [{ id: 'o1', slug: 'acme', name: 'Acme' }] },
+    });
+    renderRoot();
+    expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 
   // A cached /auth/me from before the password change still says the

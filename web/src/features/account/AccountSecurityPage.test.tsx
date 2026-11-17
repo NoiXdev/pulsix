@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -511,5 +511,88 @@ describe('the Password card', () => {
 
     await screen.findByRole('button', { name: 'Enrol authenticator app' });
     expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument();
+  });
+});
+
+describe('lock PIN card', () => {
+  const ME = {
+    user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+    mfa_complete: true,
+    mfa_enrolment_required: false,
+    totp_confirmed: true,
+    instance_admin: false,
+    must_change_password: false,
+  };
+  const qcNew = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const stale = () =>
+    new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'step_up_required' }), { status: 403 });
+
+  it('offers Set without a PIN and sets it without a step-up', async () => {
+    const user = userEvent.setup();
+    const put = vi.fn(() => ({ ok: true }));
+    mockApi({ 'GET /api/v1/auth/me': { ...ME, lock_pin_set: false }, 'GET /api/v1/auth/passkeys': NO_PASSKEYS, 'PUT /api/v1/auth/lock/pin': put });
+    renderPage(qcNew());
+
+    expect(screen.queryByRole('button', { name: 'Remove PIN' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Set PIN' }));
+    await user.type(screen.getByLabelText('PIN'), '1234');
+    await user.type(screen.getByLabelText('Repeat the PIN'), '1234');
+    await user.click(screen.getByRole('button', { name: 'Save PIN' }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Confirm it is you')).not.toBeInTheDocument();
+  });
+
+  it('offers Change and Remove with a PIN; a step_up_required answer opens the step-up dialog and Change then goes through', async () => {
+    const user = userEvent.setup();
+    let fresh = false;
+    let puts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, lock_pin_set: true },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/totp/verify': () => {
+        fresh = true;
+        return { ok: true };
+      },
+      'PUT /api/v1/auth/lock/pin': () => {
+        puts += 1;
+        return fresh ? { ok: true } : stale();
+      },
+    });
+    renderPage(qcNew());
+
+    expect(await screen.findByRole('button', { name: 'Remove PIN' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Change PIN' }));
+    await user.type(screen.getByLabelText('PIN'), '4321');
+    await user.type(screen.getByLabelText('Repeat the PIN'), '4321');
+    await user.click(screen.getByRole('button', { name: 'Save PIN' }));
+    expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(puts).toBe(2));
+  });
+
+  it('Remove goes through the step-up dialog and then deletes', async () => {
+    const user = userEvent.setup();
+    let fresh = false;
+    let deletes = 0;
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, lock_pin_set: true },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/totp/verify': () => {
+        fresh = true;
+        return { ok: true };
+      },
+      'DELETE /api/v1/auth/lock/pin': () => {
+        deletes += 1;
+        return fresh ? { ok: true } : stale();
+      },
+    });
+    renderPage(qcNew());
+
+    await user.click(await screen.findByRole('button', { name: 'Remove PIN' }));
+    expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(deletes).toBe(2));
   });
 });

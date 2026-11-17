@@ -27,4 +27,12 @@ export const enLock = {
     cancel: 'Cancel',
     failed: 'The PIN could not be set. Try again.',
   },
+  prompt: {
+    title: 'Set a lock PIN',
+    intro:
+      'A PIN lets you lock this session when you step away, for example from the lock icon at the top. You can also set or change it later under Security.',
+    submit: 'Set PIN',
+    skip: 'Skip',
+    skipFailed: 'Could not continue. Try again.',
+  },
 };

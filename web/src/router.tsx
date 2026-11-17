@@ -8,6 +8,7 @@ import { LoginPage } from './features/auth/LoginPage.tsx';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage.tsx';
 import { ResetPasswordPage } from './features/auth/ResetPasswordPage.tsx';
 import { ChangePasswordPage } from './features/account/ChangePasswordPage.tsx';
+import { LockPinPromptPage } from './features/lock/LockPinPromptPage.tsx';
 import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
@@ -115,6 +116,14 @@ const changePasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/password',
   component: ChangePasswordPage,
+});
+
+// /account/lock-pin is the one-time offer to set a lock PIN after signing
+// in; a signed-in page without the app shell, like the two above.
+const lockPinRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account/lock-pin',
+  component: LockPinPromptPage,
 });
 
 const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org', component: OrgLayout });
@@ -272,6 +281,7 @@ const routeTree = rootRoute.addChildren([
   legacyInviteRoute,
   accountSecurityRoute,
   enrolRoute,
+  lockPinRoute,
   changePasswordRoute,
   orgRoute.addChildren([
     orgIndexRoute,

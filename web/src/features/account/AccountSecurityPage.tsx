@@ -15,6 +15,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useStepUp } from './stepUp.tsx';
 import { LanguageCard } from './LanguageCard.tsx';
 import { PasswordCard } from './PasswordCard.tsx';
+import { LockPinCard } from './LockPinCard.tsx';
 
 /**
  * AccountSecurityPage follows design/mockups/build.mjs's ACCOUNT SECURITY
@@ -288,6 +289,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
         {/* Not during second-factor enrolment (EnrolmentLayout passes
             onEnrolled): that page has one job. */}
         {!onEnrolled && <PasswordCard />}
+        {!onEnrolled && <LockPinCard />}
         {!onEnrolled && <LanguageCard />}
       </div>
       {stepUp.dialog}

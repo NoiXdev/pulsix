@@ -24,4 +24,12 @@ export const deLock: Messages['lock'] = {
     cancel: 'Abbrechen',
     failed: 'Die PIN konnte nicht festgelegt werden. Versuche es erneut.',
   },
+  prompt: {
+    title: 'Sperr-PIN festlegen',
+    intro:
+      'Mit einer PIN kannst du diese Sitzung sperren, wenn du dich entfernst, zum Beispiel über das Schloss-Symbol oben. Du kannst sie auch später unter Sicherheit festlegen oder ändern.',
+    submit: 'PIN festlegen',
+    skip: 'Überspringen',
+    skipFailed: 'Es konnte nicht fortgefahren werden. Versuche es erneut.',
+  },
 };

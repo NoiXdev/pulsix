@@ -19,7 +19,9 @@ import { errorStatus } from '../lib/apiError.ts';
  *   5. session, temporary password  -> /account/password (the account must
  *                                      replace a password an administrator
  *                                      set; nothing else is reachable)
- *   6. ready session                -> /o/{first org}/hosts
+ *   6. session, lock PIN not offered yet -> /account/lock-pin (offered once;
+ *                                      setting or skipping it continues)
+ *   7. ready session                -> /o/{first org}/hosts
  *
  * It calls useSetupStatus and useSettledMe directly (not a router loader)
  * so the same TanStack Query cache both hooks share is what every other
@@ -77,6 +79,10 @@ export function RootRedirect() {
     }
     if (me.data.must_change_password) {
       void navigate({ to: '/account/password' });
+      return;
+    }
+    if (me.data.lock_pin_prompt) {
+      void navigate({ to: '/account/lock-pin' });
       return;
     }
     if (!orgs.data) return;
