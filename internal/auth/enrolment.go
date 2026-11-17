@@ -29,7 +29,7 @@ type TxRunner interface {
 // Enrolment composes the writes that finishing a second factor consists
 // of, the owner's removal of one under the account's exclusive lock
 // (backlog 7.116), the completion of a session whose code was verified
-// (backlog 7.118), and the renewal that replaces a session (backlog 3.93).
+// (backlog 7.118), and the renewal that replaces a session (backlog 3.94).
 // It owns no state of its own: the rule it encodes is that
 // these writes commit together, under the account lock.
 type Enrolment struct {
@@ -225,7 +225,7 @@ func (e *Enrolment) CompleteVerifiedSession(ctx context.Context, userID, session
 // RenewSession replaces userID's session oldID with a new MFA-complete one
 // (Sessions.Replace) in one instance transaction, once the caller has
 // verified the password and a second factor, or a passkey, for userID
-// (backlog 3.93). Like CompleteVerifiedSession it runs after the
+// (backlog 3.94). Like CompleteVerifiedSession it runs after the
 // verification, outside of it, so a rollback here never refunds the attempt
 // a wrong code spent. A session that is no longer live, or is locked, is
 // ErrNotFound and nothing changes.

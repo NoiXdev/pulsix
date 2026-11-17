@@ -1,4 +1,4 @@
-// Renewing a session (backlog 3.93) replaces it: a new MFA-complete session
+// Renewing a session (backlog 3.94) replaces it: a new MFA-complete session
 // with a fresh lifetime, and the old one revoked, in one transaction that
 // takes the account row first. These tests drive the real database.
 package auth_test

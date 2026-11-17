@@ -1,5 +1,5 @@
 /**
- * The session lock (backlog 3.92): the screen that replaces the page while
+ * The session lock (backlog 3.93): the screen that replaces the page while
  * the session is locked behind its PIN, and the dialog that sets the PIN
  * before the first lock.
  */

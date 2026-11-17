@@ -333,7 +333,7 @@ UPDATE sessions SET locked_at = now(), unlock_failures = 0
 WHERE id = $1 AND revoked_at IS NULL AND expires_at > now() AND locked_at IS NULL
 `
 
-// Locks one live, unlocked session (backlog 3.92). Revoked, expired and
+// Locks one live, unlocked session (backlog 3.93). Revoked, expired and
 // already-locked sessions are untouched, so zero rows means there was nothing
 // to lock. unlock_failures restarts at zero for the new lock.
 func (q *Queries) LockSession(ctx context.Context, id uuid.UUID) (int64, error) {
@@ -481,7 +481,7 @@ type RevokeReplacedSessionParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
-// Ends the session a renewal replaces (backlog 3.93), and only while it is
+// Ends the session a renewal replaces (backlog 3.94), and only while it is
 // still live, unlocked and the account's own: zero rows means there is
 // nothing to replace. Two renewals of one session race on its row; the
 // second re-checks revoked_at once the first commits and matches nothing,

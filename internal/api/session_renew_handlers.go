@@ -33,7 +33,7 @@ type renewOutput struct {
 }
 
 // registerSessionRenewRoutes wires the in-place session renewal (backlog
-// 3.93) and the user-bound passkey ceremony that the renewal and the
+// 3.94) and the user-bound passkey ceremony that the renewal and the
 // passkey step-up share.
 //
 // Gating: the two renewals use requireInteractiveSession, so a locked
@@ -104,7 +104,7 @@ func registerSessionRenewRoutes(hapi huma.API, deps Deps) {
 		return &sessionUpgradeOutput{SetCookie: &c}, nil
 	}, withAuthRateLimit(deps))
 
-	// A passkey alone renews, as a passkey alone signs in (spec 3.93).
+	// A passkey alone renews, as a passkey alone signs in (spec 3.94).
 	huma.Post(hapi, "/api/v1/auth/session/renew/passkey", func(ctx context.Context, in *passkeyLoginFinishInput) (*renewOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {

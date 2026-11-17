@@ -1,5 +1,5 @@
 /**
- * The end of the session (backlog 3.93): the warning shown shortly before
+ * The end of the session (backlog 3.94): the warning shown shortly before
  * it expires, where it is renewed in place, and the notice on the sign-in
  * page once it has ended.
  */

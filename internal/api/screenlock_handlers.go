@@ -68,7 +68,7 @@ func mapLockErr(ctx context.Context, err error) error {
 	}
 }
 
-// registerScreenLockRoutes wires the session lock (backlog 3.92). Cookie
+// registerScreenLockRoutes wires the session lock (backlog 3.93). Cookie
 // sessions only: a bearer token has no session to lock and no PIN to guard.
 func registerScreenLockRoutes(hapi huma.API, deps Deps) {
 	huma.Put(hapi, "/api/v1/auth/lock/pin", func(ctx context.Context, in *lockPINInput) (*okOutput, error) {

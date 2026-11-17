@@ -1,4 +1,4 @@
-// A signed-in person re-proves a passkey (backlog 3.93): the step-up of the
+// A signed-in person re-proves a passkey (backlog 3.94): the step-up of the
 // current session and the passkey renewal both run a ceremony bound to the
 // session's own account. Unlike the discoverable sign-in ceremony, an
 // assertion of another account's passkey must never pass it. These tests

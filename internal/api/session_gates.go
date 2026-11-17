@@ -37,10 +37,10 @@ import (
 //     activity feed, every org-scoped route.
 //   - requireInteractiveSession: removing a second factor (TOTP disable,
 //     passkey delete), creating API tokens, renewing the session (backlog
-//     3.93) and every instance-admin route — MFA-complete and never a
+//     3.94) and every instance-admin route — MFA-complete and never a
 //     bearer token.
 //
-// A locked session (auth.Principal.Locked, backlog 3.92) is refused by every
+// A locked session (auth.Principal.Locked, backlog 3.93) is refused by every
 // gate below except requireSession with 403 session_locked, before the
 // MFA and password-change checks (refuseWhileLocked): only /auth/me,
 // /auth/logout and the unlock route stay reachable. /auth/totp/verify is
@@ -150,7 +150,7 @@ func refuseUntilPasswordChanged(p auth.Principal) error {
 // password — that route is how the flag is lifted, so it must not be held
 // back by it. A bearer token is refused, as on every route that changes a
 // credential of the account. The passkey step-up (POST
-// /auth/passkeys/reauth/begin and …/finish, backlog 3.93) uses it too: the
+// /auth/passkeys/reauth/begin and …/finish, backlog 3.94) uses it too: the
 // change needs a fresh factor, and a passkey-only account proves it there,
 // as a TOTP account does through /auth/totp/verify.
 func requirePasswordChangeSession(ctx context.Context) (auth.Principal, error) {

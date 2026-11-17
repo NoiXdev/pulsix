@@ -1,5 +1,5 @@
 -- +goose Up
--- Session lock with a PIN (backlog 3.92, spec docs/superpowers/specs/
+-- Session lock with a PIN (backlog 3.93, spec docs/superpowers/specs/
 -- 2026-11-17-session-lock-expiry-version-design.md). The PIN hash lives on the
 -- account; prompted_at records that the one-time "set a PIN?" offer was shown,
 -- so removing a PIN does not bring the offer back. A session is locked while

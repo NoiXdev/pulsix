@@ -23,7 +23,7 @@ function defer(version: string) {
 }
 
 /**
- * VersionWatcher (backlog 3.94) notices that the manager was upgraded while
+ * VersionWatcher (backlog 3.95) notices that the manager was upgraded while
  * this tab stayed open. It compares with the version of the page load's first read; a later
  * successful read of a different one offers a reload. Failed reads change
  * nothing. "Later" turns the dialog into a banner and remembers the version

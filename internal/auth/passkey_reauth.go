@@ -11,7 +11,7 @@ import (
 )
 
 // BeginReauth starts a passkey ceremony for a signed-in person to prove
-// again that they hold one of their own passkeys (backlog 3.93): the
+// again that they hold one of their own passkeys (backlog 3.94): the
 // step-up of the current session and the passkey renewal both finish it.
 //
 // Unlike BeginLogin it is not discoverable. It names the account (the

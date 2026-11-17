@@ -6,7 +6,7 @@ import { recordServerDate } from '../../lib/serverClock.ts';
 export const meQueryKey = ['me'] as const;
 const meQueryFn = async () => {
   const { data, response } = await api.GET('/api/v1/auth/me');
-  // The server's clock, for counting down the session expiry (backlog 3.93).
+  // The server's clock, for counting down the session expiry (backlog 3.94).
   recordServerDate(response.headers.get('Date'));
   return data!;
 };

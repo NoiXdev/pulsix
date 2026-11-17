@@ -20,7 +20,7 @@ export async function logout() {
 }
 
 /** renewSession replaces the session with a fresh one for the same account
- * (backlog 3.93). The server needs the password and a second factor — an
+ * (backlog 3.94). The server needs the password and a second factor — an
  * authenticator code or a recovery code — and answers 401 for a wrong one.
  * The new cookie is the result; the answer carries the new expiry. */
 export async function renewSession(input: { password: string; code: string } | { password: string; recoveryCode: string }) {

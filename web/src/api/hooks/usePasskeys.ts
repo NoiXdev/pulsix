@@ -36,7 +36,7 @@ export async function finishPasskeyLogin(body: { ceremony_id: string; response: 
   return unwrap(api.POST('/api/v1/auth/passkeys/login/finish', { body: body as never }));
 }
 
-/** Passkey re-authentication of the signed-in account (backlog 3.93): the
+/** Passkey re-authentication of the signed-in account (backlog 3.94): the
  * same ceremony as sign-in, but begun against the current session. The
  * finish route says what the proof is for: a step-up of this session, or
  * the renewal of its lifetime. */

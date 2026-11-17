@@ -22,7 +22,7 @@ func (f failingUserStore) GetUserByID(context.Context, uuid.UUID) (auth.User, er
 	return auth.User{}, f.err
 }
 
-// VerifyOwnPassword is the renewal's password check (backlog 3.93): the
+// VerifyOwnPassword is the renewal's password check (backlog 3.94): the
 // session's own account, by id, under exactly Login's rules — a disabled
 // account and an expired temporary password are refused with the same
 // ErrInvalidCredentials a wrong password gets. It never opens a session.

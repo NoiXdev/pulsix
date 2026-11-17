@@ -57,7 +57,7 @@ type Deps struct {
 	Sessions *auth.Sessions
 	Auth     AuthService
 	TOTP     *auth.TOTP
-	// ScreenLock is the session lock and its PIN (backlog 3.92); the gates
+	// ScreenLock is the session lock and its PIN (backlog 3.93); the gates
 	// read a session's lock from the principal, /auth/me reads the PIN state.
 	ScreenLock *screenlock.Service
 	Passkeys   *auth.Passkeys

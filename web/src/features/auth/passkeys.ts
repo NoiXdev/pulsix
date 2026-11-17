@@ -88,7 +88,7 @@ export async function loginWithPasskey(t: Messages = en): Promise<void> {
 
 /**
  * reauthWithPasskey proves a passkey for the account that is already signed
- * in (backlog 3.93). It is NOT loginWithPasskey: that one starts a session
+ * in (backlog 3.94). It is NOT loginWithPasskey: that one starts a session
  * and any account's passkey will do, this one is bound to the current
  * session's account and is what a step-up or a renewal must use. `purpose`
  * only picks the finish route: 'step_up' refreshes this session's second

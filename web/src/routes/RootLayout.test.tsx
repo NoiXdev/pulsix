@@ -194,7 +194,7 @@ describe('RootLayout', () => {
       expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
     });
   });
-  describe('session expiry warning (backlog 3.93)', () => {
+  describe('session expiry warning (backlog 3.94)', () => {
     const soon = () => new Date(Date.now() + 2 * 60 * 1000).toISOString();
     const meExpiring = (extra: Record<string, unknown>) => ({
       locked: false,

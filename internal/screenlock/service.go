@@ -1,4 +1,4 @@
-// Package screenlock implements the session lock with a PIN (backlog 3.92):
+// Package screenlock implements the session lock with a PIN (backlog 3.93):
 // a signed-in user locks their own session, and only the PIN (or a revoked
 // session after five wrong tries) gets them back in.
 package screenlock

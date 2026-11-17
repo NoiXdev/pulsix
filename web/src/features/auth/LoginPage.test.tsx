@@ -106,14 +106,14 @@ function renderLoginAt(
   render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{tree}</I18nProvider> : tree}</QueryClientProvider>);
 }
 
-describe('LoginPage notice (backlog 3.92)', () => {
+describe('LoginPage notice (backlog 3.93)', () => {
   it('says why the session ended after too many wrong lock PINs', async () => {
     renderLoginAt({ notice: 'lock_ended' });
 
     expect(await screen.findByText(/Too many wrong PINs/)).toBeInTheDocument();
   });
 
-  it('says the session has ended when it ran out (backlog 3.93)', async () => {
+  it('says the session has ended when it ran out (backlog 3.94)', async () => {
     renderLoginAt({ notice: 'session_expired' });
 
     expect(await screen.findByText('Your session has expired. Sign in again.')).toBeInTheDocument();

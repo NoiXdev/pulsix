@@ -1,6 +1,6 @@
 /**
  * The BroadcastChannel the tabs of one browser use to tell each other what
- * happened to the shared session (backlog 3.92, 3.93). The cookie is shared
+ * happened to the shared session (backlog 3.93, 3.94). The cookie is shared
  * by every tab, so a lock, an unlock or a renewal in one is true for all;
  * a message only lets the others follow at once instead of on their next
  * request. The server stays the authority: a tab that misses a message

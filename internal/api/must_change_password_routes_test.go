@@ -28,7 +28,7 @@ var mustChangeAllowed = map[string]bool{
 	"POST /api/v1/auth/password":    true,
 	"POST /api/v1/auth/totp/verify": true,
 	// The passkey step-up, the counterpart of totp/verify: the change's
-	// step-up needs it on a passkey-only account (backlog 3.93).
+	// step-up needs it on a passkey-only account (backlog 3.94).
 	"POST /api/v1/auth/passkeys/reauth/begin":  true,
 	"POST /api/v1/auth/passkeys/reauth/finish": true,
 	// Unlock sits on requireSession: a locked session must be able to leave

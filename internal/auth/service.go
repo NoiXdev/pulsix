@@ -188,7 +188,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 // an expired temporary password are all ErrInvalidCredentials, and an
 // account that has vanished or has no password costs the same argon2id time
 // as a wrong password. It opens no session. The session renewal (backlog
-// 3.93) asks it first, before a factor attempt is spent.
+// 3.94) asks it first, before a factor attempt is spent.
 //
 // Unlike Login it takes the account by id, from the caller's own session,
 // so a lookup failure other than ErrNotFound is the store's and is returned

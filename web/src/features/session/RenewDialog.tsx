@@ -16,7 +16,7 @@ import { markRenewed } from '../../lib/sessionEnd.ts';
 
 /**
  * RenewDialog is the warning ExpiryWatcher shows shortly before the session
- * ends (backlog 3.93): a countdown and the way to stay signed in without
+ * ends (backlog 3.94): a countdown and the way to stay signed in without
  * leaving the page. Renewing needs the account's password and a second
  * factor (a code or a recovery code), or a passkey. "Later" and Escape hand
  * over to RenewBanner: a modal that made the page inert would stop the

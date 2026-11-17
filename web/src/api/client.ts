@@ -83,7 +83,7 @@ export function onPasswordChangeRequired(listener: () => void): () => void {
 
 /** SESSION_LOCKED is the detail of the 403 the server answers every route
  * but /auth/me, /auth/logout and /auth/lock/unlock with while the session
- * is locked behind its PIN (backlog 3.92). A contract, like the one above:
+ * is locked behind its PIN (backlog 3.93). A contract, like the one above:
  * internal/api sends exactly this. */
 export const SESSION_LOCKED = 'session_locked';
 

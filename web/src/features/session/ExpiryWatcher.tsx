@@ -17,7 +17,7 @@ const WARN_MS = 5 * 60 * 1000;
 const IDLE_CHECK_MS = 30 * 1000;
 
 /**
- * ExpiryWatcher counts the session down (backlog 3.93). Five minutes before
+ * ExpiryWatcher counts the session down (backlog 3.94). Five minutes before
  * `session_expires_at` it shows RenewDialog, which "Later" collapses into
  * RenewBanner (drawn through ExpiryNoticeContext); at zero it drops the cached
  * data and sends the person to /login with a notice. RootLayout mounts it

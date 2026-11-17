@@ -62,7 +62,7 @@ var auditAllowlist = map[string]string{
 	"POST /api/v1/auth/login":       "routine, high-volume session start; no organization or object, and the session list already covers who is signed in",
 	"POST /api/v1/auth/logout":      "routine, high-volume session end; no organization or object, and the session list already covers who is signed in",
 	"POST /api/v1/auth/totp/verify": "routine, high-volume session step-up (a second-factor check on an already-existing session, not a change to the factor itself); no organization or object, and the session list already covers who is signed in",
-	// Backlog 3.93: the passkey counterpart of POST /auth/totp/verify — it
+	// Backlog 3.94: the passkey counterpart of POST /auth/totp/verify — it
 	// re-proves the factor of the current session and changes nothing else.
 	"POST /api/v1/auth/passkeys/reauth/finish": "routine session step-up with a passkey, the counterpart of POST /auth/totp/verify: re-proves the current session's factor, changes no credential and opens no session",
 

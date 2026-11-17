@@ -24,7 +24,7 @@ const SessionTTL = 12 * time.Hour
 var ErrUnauthenticated = errors.New("unauthenticated")
 
 // ErrSessionLocked is returned by StillValid for a session that is locked
-// behind its owner's PIN (backlog 3.92): still authenticated, but not
+// behind its owner's PIN (backlog 3.93): still authenticated, but not
 // allowed to act until it is unlocked.
 var ErrSessionLocked = errors.New("session locked")
 
@@ -109,7 +109,7 @@ func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 	return RenewedSession{ID: id, Cookie: cookieValue(id, secret), ExpiresAt: expiresAt}, nil
 }
 
-// Replace renews userID's session oldID (backlog 3.93): it ends oldID and
+// Replace renews userID's session oldID (backlog 3.94): it ends oldID and
 // opens a new MFA-complete session with mfa_at now and a fresh SessionTTL.
 // The caller has just proved the password and a second factor (or a
 // passkey) for userID; a renewal never extends a session's lifetime, it

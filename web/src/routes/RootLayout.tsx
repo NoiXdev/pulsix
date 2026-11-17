@@ -33,7 +33,7 @@ function isPublic(pathname: string): boolean {
  * wherever the person is, whatever page or hook sent the request — so no
  * page has to recognize that refusal itself.
  *
- * It also owns the session lock (backlog 3.92). While the session is
+ * It also owns the session lock (backlog 3.93). While the session is
  * locked the lock screen is rendered *instead of* the routed page, so the
  * page unmounts and its data leaves the DOM, and the query cache is
  * emptied of everything but ['me']. Three things lock it: /auth/me saying

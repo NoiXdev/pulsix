@@ -32,7 +32,7 @@ export function useSetupStatus() {
 export const versionWatchQueryKey = ['setup-status', 'version-watch'] as const;
 
 /**
- * The version watcher's own reader of the same endpoint (backlog 3.94), on a
+ * The version watcher's own reader of the same endpoint (backlog 3.95), on a
  * key of its own so the badge's query keeps its cache and timing. It polls
  * every five minutes and when the tab returns to the foreground; a failed
  * read leaves `data` at the last good answer.

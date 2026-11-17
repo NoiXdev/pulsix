@@ -34,7 +34,7 @@ export interface AppShellProps {
    * so a caller passes it for no one else (backlog 7.74). */
   onCreateOrg?: () => void;
   /** Adds the lock button to the top bar and calls this when it is pressed
-   * (backlog 3.92). The shell only draws it: locking needs the API, which
+   * (backlog 3.93). The shell only draws it: locking needs the API, which
    * src/ui may not import, so the route-connected layout passes it in. */
   onLockSession?: () => void;
   crumbs: ReactNode;

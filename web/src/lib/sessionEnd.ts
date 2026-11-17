@@ -4,7 +4,7 @@ import { serverNow } from './serverClock.ts';
 
 /**
  * How a session ends, for the places that send the person to /login
- * (backlog 3.93).
+ * (backlog 3.94).
  *
  * A renewal replaces the session and revokes the old one at once, so a
  * request that left with the old cookie just before (a poll, another tab)

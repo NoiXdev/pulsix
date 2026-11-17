@@ -41,7 +41,7 @@ const unauthorized = () => new ApiError(401, { detail: 'unauthorized' });
 
 afterEach(() => clearRenewed());
 
-describe('a 401 that sends the person to /login (backlog 3.93)', () => {
+describe('a 401 that sends the person to /login (backlog 3.94)', () => {
   it('carries the session_expired notice when the cached session end has passed', async () => {
     const qc = new QueryClient();
     qc.setQueryData(['me'], { session_expires_at: new Date(Date.now() - 5000).toISOString() });

@@ -1,6 +1,6 @@
 /**
  * The offset between the server's clock and this browser's, learned from
- * the `Date` header of /auth/me answers (backlog 3.93). The session expiry
+ * the `Date` header of /auth/me answers (backlog 3.94). The session expiry
  * is a server timestamp; counting it down against a skewed local clock
  * would warn too early, too late, or end a live session on screen.
  *
