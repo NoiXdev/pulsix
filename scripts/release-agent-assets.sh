@@ -13,12 +13,19 @@
 #   pulsix-agent-<os>-<arch>          the binary (Windows without ".exe")
 #   pulsix-agent-<os>-<arch>.sha256   "<hash>  <name>", from the same bytes
 #
+# Any <os>-<arch> is accepted, not a fixed list: agent-binaries.sh's
+# target list is the one place a target is added, and a release built from
+# a tag carries whatever that tag's list held.
+#
 # A published asset is never replaced: someone may already have verified
 # or mirrored it, and replacing bytes under a tag silently breaks every
 # checksum taken before. So this is safe to re-run after a partial failure
 # — identical bytes are skipped — and loud when a rebuild produced
-# different ones (Go builds are reproducible with -trimpath, so a
-# difference means the inputs changed and the tag needs a new release).
+# different ones. Go builds are reproducible with -trimpath, so a
+# difference has one of two causes. Either the published asset is the
+# broken one (a bad build, an upload cut off half-way): remove it with
+# `gh release delete-asset <tag> <name>` and re-run. Or the tag's inputs
+# genuinely changed: that is a new release, not new bytes under this tag.
 #
 # Each binary goes up before its checksum, one file per call: a consumer
 # that finds a checksum then also finds its binary, and a failure leaves
@@ -57,7 +64,9 @@ binaries=0
 for path in "$dist"/*; do
 	[ -e "$path" ] || continue
 	name="${path##*/}"
-	if ! printf '%s\n' "$name" | grep -Eq '^pulsix-agent-(linux|windows|darwin)-(amd64|arm64)(\.sha256)?$'; then
+	# Letters and digits only, so no name can carry a glob character into
+	# `gh release download --pattern` below.
+	if ! printf '%s\n' "$name" | grep -Eq '^pulsix-agent-[a-z0-9]+-[a-z0-9]+(\.sha256)?$'; then
 		die "unexpected file in $dist: $name"
 	fi
 	case "$name" in

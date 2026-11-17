@@ -50,7 +50,8 @@ fi
 # Every target the agent ships for. install.sh maps uname -m (x86_64,
 # aarch64/arm64) and install.ps1 maps the processor architecture onto
 # these; adding one here is all it takes to serve it, since the route
-# builds its lookup from the request.
+# builds its lookup from the request, and to release it, since
+# release-agent-assets.sh accepts any pulsix-agent-<os>-<arch>.
 targets="linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64"
 
 # Clear previous output so a target dropped from the list above cannot

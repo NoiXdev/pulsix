@@ -127,8 +127,30 @@ printf 'other' > "$work/release/$bin"
 run_script "$tag"
 want_fail
 case "$out" in *"$bin"*) ;; *) bad "message does not name $bin: $out" ;; esac
+# The comparison itself must be what failed, not the download before it.
+case "$out" in *"with different bytes"*) ;; *) bad "message does not say the bytes differ: $out" ;; esac
 [ "$(cat "$work/release/$bin")" = other ] || bad "replaced the published binary"
 [ "$(ls "$work/release")" = "$bin" ] || bad "release changed"
+
+# Two targets, one outside today's list (agent-binaries.sh's target list
+# is the only place one is added): everything goes up, and each binary
+# before its own checksum.
+case_name=two_targets
+setup with-release
+other=pulsix-agent-freebsd-riscv64
+dist_pair "$bin" "payload"
+dist_pair "$other" "riscv"
+run_script "$tag"
+want_ok
+for name in "$bin" "$other"; do
+	want_same "$name"
+	want_same "$name.sha256"
+	at_bin="$(grep -Fxn "release upload $tag $work/dist/$name" "$FAKE_LOG" | head -n 1 | cut -d: -f1)"
+	at_sum="$(grep -Fxn "release upload $tag $work/dist/$name.sha256" "$FAKE_LOG" | head -n 1 | cut -d: -f1)"
+	if [ -z "$at_bin" ] || [ -z "$at_sum" ] || [ "$at_bin" -ge "$at_sum" ]; then
+		bad "$name was not uploaded before its .sha256 (lines '$at_bin', '$at_sum')"
+	fi
+done
 
 case_name=empty_dist
 setup with-release
