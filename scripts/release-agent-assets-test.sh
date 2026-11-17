@@ -94,9 +94,14 @@ bin=pulsix-agent-linux-amd64
 
 case_name=no_release
 setup
+dist_pair "$bin" "payload"
 run_script "$tag"
 want_fail
 [ ! -e "$work/release" ] || bad "created a release"
+# A valid dist means the failure must come from the release lookup itself.
+grep -Fxq "release view $tag --json assets --jq .assets[].name" "$FAKE_LOG" || bad "never looked the release up"
+if grep -q '^release upload' "$FAKE_LOG"; then bad "uploaded without a release"; fi
+case "$out" in *"$tag"*) ;; *) bad "message does not name the release $tag: $out" ;; esac
 
 case_name=fresh_upload
 setup with-release
@@ -113,7 +118,7 @@ cp "$work/dist/$bin" "$work/release/$bin"
 run_script "$tag"
 want_ok
 want_same "$bin.sha256"
-if grep -q "^release upload .*$bin\$" "$FAKE_LOG"; then bad "re-uploaded the binary"; fi
+if grep -Fxq "release upload $tag $work/dist/$bin" "$FAKE_LOG"; then bad "re-uploaded the binary"; fi
 
 case_name=differing_asset
 setup with-release
