@@ -175,3 +175,33 @@ func TestMeReportsExpiryAndPINState(t *testing.T) {
 		t.Fatalf("with PIN: set=%v prompt=%v, want true/false", m.PINSet, m.Prompt)
 	}
 }
+
+func TestLockedSessionCannotAcceptInvite(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("lock-invite-owner@example.test", "correct horse battery")
+	s.SeedOrg("lock-invite-org", owner)
+	invitee := s.SeedUser("lock-invitee@example.test", "correct horse battery")
+	s.SeedPasskey(invitee, "key")
+
+	resp := postJSON(t, s.LoginAs(owner), s.HTTP.URL+"/api/v1/orgs/lock-invite-org/invites",
+		map[string]any{"email": "lock-invitee@example.test", "role": "viewer"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("invite: status %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	_ = resp.Body.Close()
+	token := extractInviteToken(t, s)
+
+	c, _ := lockedSession(t, s, invitee)
+	resp = postJSON(t, c, s.HTTP.URL+"/api/v1/invites/accept", map[string]any{"token": token})
+	if resp.StatusCode != http.StatusForbidden || problemDetail(t, resp) != sessionLocked {
+		t.Fatalf("accept with a locked session: status %d, want 403 %s", resp.StatusCode, sessionLocked)
+	}
+	var n int
+	if err := s.DB.Pool().QueryRow(t.Context(),
+		`SELECT count(*) FROM org_memberships WHERE user_id = $1`, invitee).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("the locked account joined %d organizations", n)
+	}
+}

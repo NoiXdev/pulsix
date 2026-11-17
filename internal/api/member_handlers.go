@@ -288,10 +288,11 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 // organization is an account-level act, like the credential routes that
 // requireInteractiveSession guards — and a half-signed-in session (second
 // factor still due) does not either, nor does a session whose account must
-// change its password first (refuseUntilPasswordChanged).
+// change its password first (refuseUntilPasswordChanged), nor does a
+// locked one (refuseWhileLocked).
 func inviteAcceptor(ctx context.Context) uuid.UUID {
 	p, ok := auth.FromContext(ctx)
-	if !ok || !p.MFAComplete || p.TokenID != nil || refuseUntilPasswordChanged(p) != nil {
+	if !ok || !p.MFAComplete || p.TokenID != nil || refuseWhileLocked(p) != nil || refuseUntilPasswordChanged(p) != nil {
 		return uuid.Nil
 	}
 	return p.UserID
@@ -312,6 +313,9 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 func acceptInviteErr(ctx context.Context, err error) error {
 	if errors.Is(err, tenancy.ErrSignInRequired) {
 		if p, ok := auth.FromContext(ctx); ok && p.MFAComplete {
+			if refusal := refuseWhileLocked(p); refusal != nil {
+				return refusal
+			}
 			if refusal := refuseUntilPasswordChanged(p); refusal != nil {
 				return refusal
 			}
