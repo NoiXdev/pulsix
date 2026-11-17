@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -250,6 +251,61 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter, cursor st
 		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup, NotSeenSince: NotSeenSince(a)})
 	}
 	return out, next, nil
+}
+
+// ListPage returns one offset page of the organization's alerts matching f,
+// each with its Suppression, and the number of matches in all (backlog 3.97).
+// Unlike List it filters on Muted in the database, so the total is right: it
+// first works out which hosts a maintenance or silence window covers right
+// now, through the same Mute that labels the rows, and hands the store those
+// ids with the instant they are valid for. now is pinned once for the filter
+// and the labels alike. Without a muted filter no host list is built.
+func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p paging.Page) ([]View, int, error) {
+	now := s.clock()
+	m := MuteQuery{Now: now}
+	if f.Muted != nil {
+		ids, err := s.mutedHostIDs(ctx, orgID, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		m.HostIDs = ids
+	}
+	rows, total, err := s.store.ListAlertsPage(ctx, orgID, f, m, p)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list alerts page: %w", err)
+	}
+	cache := map[uuid.UUID][]maintenance.Occurrence{}
+	out := make([]View, 0, len(rows))
+	for _, a := range rows {
+		sup, err := s.suppression(ctx, orgID, a.Alert, now, cache)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup, NotSeenSince: NotSeenSince(a)})
+	}
+	return out, total, nil
+}
+
+// mutedHostIDs returns the hosts with an open alert that a maintenance or
+// silence window covers at now: for each distinct host, the windows covering
+// it, then Mute's verdict on an alert with no snooze of its own, so the SQL
+// filter and the row labels cannot disagree about a window.
+func (s *Service) mutedHostIDs(ctx context.Context, orgID uuid.UUID, now time.Time) ([]uuid.UUID, error) {
+	hostIDs, err := s.store.OpenAlertHostIDs(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("open alert hosts: %w", err)
+	}
+	muted := []uuid.UUID{}
+	for _, h := range hostIDs {
+		windows, err := s.store.WindowsForHost(ctx, orgID, h, now)
+		if err != nil {
+			return nil, fmt.Errorf("windows for host %s: %w", h, err)
+		}
+		if Mute(Alert{}, windows, now).Muted {
+			muted = append(muted, h)
+		}
+	}
+	return muted, nil
 }
 
 // Get returns one alert with its Suppression and its timeline: the

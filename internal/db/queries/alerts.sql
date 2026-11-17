@@ -374,6 +374,118 @@ WHERE a.org_id = @org_id
 ORDER BY a.opened_at DESC, a.id DESC
 LIMIT sqlc.arg(row_limit);
 
+-- name: ListAlertsPage :many
+-- Offset paging (backlog 3.97) in the default order, newest opened first: the
+-- order alerts_org_opened_idx serves, so it stays an index scan. ListAlerts'
+-- filters without the cursor, plus muted, which the service resolves before
+-- asking: muted_host_ids are the hosts inside a maintenance or silence window
+-- right now (alerts.Mute decides, not SQL), now the instant its verdict is
+-- for. An alert is muted when it is open and snoozed or on one of those
+-- hosts; a closed alert never is, the same rule Service.suppression applies.
+SELECT a.*, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
+WHERE a.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(open)::boolean IS NULL
+       OR (sqlc.narg(open)::boolean AND a.closed_at IS NULL)
+       OR (NOT sqlc.narg(open)::boolean AND a.closed_at IS NOT NULL))
+  AND (sqlc.narg(severity)::text IS NULL OR a.severity = sqlc.narg(severity)::text)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR a.host_id = sqlc.narg(host_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR a.scope = sqlc.narg(scope)::text)
+  AND (sqlc.narg(acknowledged)::boolean IS NULL
+       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT sqlc.narg(acknowledged)::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND (sqlc.narg(muted)::boolean IS NULL
+       OR sqlc.narg(muted)::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > sqlc.arg(now)::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY(sqlc.arg(muted_host_ids)::uuid[])), false))
+ORDER BY a.opened_at DESC, a.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListAlertsPageSorted :many
+-- Every other key and direction (backlog 3.97). The sort key is whitelisted
+-- by the caller; each CASE is NULL on every row unless its key is chosen, so
+-- the others drop out. host orders by host name, peak and tracked by severity
+-- rank (crit above warn above unknown, the ranking ListAlerts' acknowledged
+-- filter uses), acknowledged by acknowledged_at with unacknowledged alerts
+-- last in both directions. A tie falls back to newest opened, id last, so
+-- pages are disjoint.
+SELECT a.*, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
+CROSS JOIN LATERAL (SELECT CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END AS tracked,
+  CASE a.peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END AS peak) r
+WHERE a.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(open)::boolean IS NULL
+       OR (sqlc.narg(open)::boolean AND a.closed_at IS NULL)
+       OR (NOT sqlc.narg(open)::boolean AND a.closed_at IS NOT NULL))
+  AND (sqlc.narg(severity)::text IS NULL OR a.severity = sqlc.narg(severity)::text)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR a.host_id = sqlc.narg(host_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR a.scope = sqlc.narg(scope)::text)
+  AND (sqlc.narg(acknowledged)::boolean IS NULL
+       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT sqlc.narg(acknowledged)::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND (sqlc.narg(muted)::boolean IS NULL
+       OR sqlc.narg(muted)::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > sqlc.arg(now)::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY(sqlc.arg(muted_host_ids)::uuid[])), false))
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'host' AND NOT sqlc.arg(sort_desc)::boolean THEN h.name END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'host' AND sqlc.arg(sort_desc)::boolean THEN h.name END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'peak' AND NOT sqlc.arg(sort_desc)::boolean THEN r.peak END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'peak' AND sqlc.arg(sort_desc)::boolean THEN r.peak END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'tracked' AND NOT sqlc.arg(sort_desc)::boolean THEN r.tracked END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'tracked' AND sqlc.arg(sort_desc)::boolean THEN r.tracked END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'acknowledged' AND NOT sqlc.arg(sort_desc)::boolean THEN a.acknowledged_at END) ASC NULLS LAST,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'acknowledged' AND sqlc.arg(sort_desc)::boolean THEN a.acknowledged_at END) DESC NULLS LAST,
+  a.opened_at DESC, a.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountAlerts :one
+-- ListAlertsPage's filters, counted: the total of a paged answer.
+SELECT count(*) FROM alerts a
+WHERE a.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(open)::boolean IS NULL
+       OR (sqlc.narg(open)::boolean AND a.closed_at IS NULL)
+       OR (NOT sqlc.narg(open)::boolean AND a.closed_at IS NOT NULL))
+  AND (sqlc.narg(severity)::text IS NULL OR a.severity = sqlc.narg(severity)::text)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR a.host_id = sqlc.narg(host_id)::uuid)
+  AND (sqlc.narg(scope)::text IS NULL OR a.scope = sqlc.narg(scope)::text)
+  AND (sqlc.narg(acknowledged)::boolean IS NULL
+       OR (sqlc.narg(acknowledged)::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT sqlc.narg(acknowledged)::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND (sqlc.narg(muted)::boolean IS NULL
+       OR sqlc.narg(muted)::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > sqlc.arg(now)::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY(sqlc.arg(muted_host_ids)::uuid[])), false));
+
+-- name: OpenAlertHostIDs :many
+-- The distinct hosts with an open alert: the hosts whose maintenance windows
+-- Service.ListPage has to look up to answer the muted filter.
+SELECT DISTINCT host_id FROM alerts WHERE org_id = @org_id AND closed_at IS NULL;
+
 -- name: ListAlertEvents :many
 -- Get's own timeline, the event half (timeline.go's mergeTimeline merges
 -- this with ListStateChangesForTuple below). Ordered by (at, id): id only

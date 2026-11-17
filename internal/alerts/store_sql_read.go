@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -85,6 +86,88 @@ func (s *SQLStore) ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter, cu
 		out = out[:limit]
 	}
 	return out, next, nil
+}
+
+// MuteQuery is what the page query needs to evaluate Filter.Muted in SQL:
+// the instant the verdict is for and the hosts a maintenance or silence
+// window covers at that instant, which Service works out through Mute (the
+// window rules, cron included, live in Go, not in SQL). An alert is muted
+// when it is open and snoozed at Now, snoozed until its severity changes, or
+// on one of HostIDs.
+type MuteQuery struct {
+	Now     time.Time
+	HostIDs []uuid.UUID
+}
+
+// Sort keys of ListPage; the default is SortOpened, newest first. Peak and
+// tracked order by severity rank (crit above warn above unknown), host by
+// the host's name, acknowledged by the acknowledgement's time with
+// unacknowledged alerts last in both directions.
+const (
+	SortOpened       = "opened"
+	SortHost         = "host"
+	SortPeak         = "peak"
+	SortTracked      = "tracked"
+	SortAcknowledged = "acknowledged"
+)
+
+// ListAlertsPage implements Store: the default order takes the index-friendly
+// query, every other key the whitelisted CASE ordering; both are counted by
+// the same filters.
+func (s *SQLStore) ListAlertsPage(ctx context.Context, orgID uuid.UUID, f Filter, m MuteQuery, p paging.Page) ([]AlertWithHost, int, error) {
+	switch p.Sort {
+	case SortOpened, SortHost, SortPeak, SortTracked, SortAcknowledged:
+	default:
+		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
+	}
+	q := gen.New(s.d)
+	hostIDs := m.HostIDs
+	if hostIDs == nil {
+		hostIDs = []uuid.UUID{}
+	}
+	open, severity, hostID, scope := f.Open, textOrNil(f.Severity), db.NullUUID(f.HostID), textOrNil(f.Scope)
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is capped by paging.MaxPage
+	out := []AlertWithHost{}
+	if p.Sort == SortOpened && p.Desc {
+		rows, err := q.ListAlertsPage(ctx, gen.ListAlertsPageParams{
+			OrgID: orgID, Open: open, Severity: severity, HostID: hostID, Scope: scope, Acknowledged: f.Acknowledged,
+			Muted: f.Muted, Now: m.Now, MutedHostIds: hostIDs, RowOffset: offset, RowLimit: limit,
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("list alerts page: %w", err)
+		}
+		for _, r := range rows {
+			out = append(out, toAlertFromListRow(gen.ListAlertsRow(r)))
+		}
+	} else {
+		rows, err := q.ListAlertsPageSorted(ctx, gen.ListAlertsPageSortedParams{
+			OrgID: orgID, Open: open, Severity: severity, HostID: hostID, Scope: scope, Acknowledged: f.Acknowledged,
+			Muted: f.Muted, Now: m.Now, MutedHostIds: hostIDs, SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("list alerts page: %w", err)
+		}
+		for _, r := range rows {
+			out = append(out, toAlertFromListRow(gen.ListAlertsRow(r)))
+		}
+	}
+	total, err := q.CountAlerts(ctx, gen.CountAlertsParams{
+		OrgID: orgID, Open: open, Severity: severity, HostID: hostID, Scope: scope, Acknowledged: f.Acknowledged,
+		Muted: f.Muted, Now: m.Now, MutedHostIds: hostIDs,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count alerts: %w", err)
+	}
+	return out, int(total), nil
+}
+
+// OpenAlertHostIDs implements Store.
+func (s *SQLStore) OpenAlertHostIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := gen.New(s.d).OpenAlertHostIDs(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("open alert host ids: %w", err)
+	}
+	return ids, nil
 }
 
 // cursorTimeToPg and cursorIDToPg return an unset pgtype value for the

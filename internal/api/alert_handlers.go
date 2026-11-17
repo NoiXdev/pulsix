@@ -234,6 +234,12 @@ type alertListInput struct {
 	// it — 20 is alerts.DefaultListLimit, so an absent parameter still
 	// resolves to exactly what it always did.
 	Limit int `query:"limit" minimum:"1" maximum:"100" default:"20" doc:"Page size"`
+	// Page switches the list to offset paging (see PageQuery): the muted
+	// filter then runs in the query and total is exact. Sort is the
+	// whitelist of alerts.Sort* keys, newest opened first by default; the
+	// mute column is not sortable.
+	PageQuery
+	Sort string `query:"sort" enum:"opened,host,peak,tracked,acknowledged"`
 }
 
 type alertListOutput struct {
@@ -245,7 +251,8 @@ type alertListOutput struct {
 		// filter after the page is cut (see its own doc comment) — so a
 		// client follows this until it comes back empty rather than until
 		// a page looks short.
-		NextCursor string `json:"next_cursor"`
+		NextCursor string `json:"next_cursor" doc:"Empty in page mode"`
+		Total      *int   `json:"total,omitempty" doc:"Alerts matching the filters; page mode only"`
 	}
 }
 
@@ -292,11 +299,27 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		list, next, err := deps.Alerts.List(ctx, scope.OrgID, f, in.Cursor, in.Limit)
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, alerts.SortOpened, true)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			list  []alerts.View
+			next  string
+			total int
+		)
+		if page != nil {
+			list, total, err = deps.Alerts.ListPage(ctx, scope.OrgID, f, *page)
+		} else {
+			list, next, err = deps.Alerts.List(ctx, scope.OrgID, f, in.Cursor, in.Limit)
+		}
 		if err != nil {
 			return nil, mapAlertsErr(ctx, err)
 		}
 		out := &alertListOutput{}
+		if page != nil {
+			out.Body.Total = &total
+		}
 		out.Body.Alerts = make([]AlertDTO, len(list))
 		for i, v := range list {
 			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression, v.NotSeenSince)

@@ -3745,7 +3745,13 @@ export interface components {
              */
             readonly $schema?: string;
             alerts: components["schemas"]["AlertDTO"][] | null;
+            /** @description Empty in page mode */
             next_cursor: string;
+            /**
+             * Format: int64
+             * @description Alerts matching the filters; page mode only
+             */
+            total?: number;
         };
         AlertRouteBody: {
             /**
@@ -11030,6 +11036,13 @@ export interface operations {
                 cursor?: string;
                 /** @description Page size */
                 limit?: number;
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                sort?: "opened" | "host" | "peak" | "tracked" | "acknowledged";
             };
             header?: never;
             path: {

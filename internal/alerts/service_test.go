@@ -17,6 +17,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -209,6 +210,14 @@ func beforeKeyset(a alerts.Alert, cursorAt time.Time, cursorID uuid.UUID) bool {
 		return a.OpenedAt.Before(cursorAt)
 	}
 	return a.ID.String() < cursorID.String()
+}
+
+func (f *fakeStore) ListAlertsPage(context.Context, uuid.UUID, alerts.Filter, alerts.MuteQuery, paging.Page) ([]alerts.AlertWithHost, int, error) {
+	return nil, 0, errors.New("fakeStore: ListAlertsPage not seeded; use pageStore")
+}
+
+func (f *fakeStore) OpenAlertHostIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, errors.New("fakeStore: OpenAlertHostIDs not seeded; use pageStore")
 }
 
 func (f *fakeStore) Events(_ context.Context, _, alertID uuid.UUID) ([]alerts.Event, error) {

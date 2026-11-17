@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -167,6 +168,13 @@ type Store interface {
 	// Service.List, so an implementation may trust it (SQLStore clamps it
 	// again anyway; see there).
 	ListAlerts(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]AlertWithHost, string, error)
+	// ListAlertsPage returns one offset page of the alerts matching f
+	// ordered by p, and the number of matches in all (backlog 3.97). Unlike
+	// ListAlerts it applies f.Muted itself, from m. ErrInvalidInput for a
+	// sort key outside the Sort* set.
+	ListAlertsPage(ctx context.Context, orgID uuid.UUID, f Filter, m MuteQuery, p paging.Page) ([]AlertWithHost, int, error)
+	// OpenAlertHostIDs returns the distinct hosts with an open alert.
+	OpenAlertHostIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
 	// Events returns alertID's own alert_events, in order — half of
 	// Get's timeline (the other half is StateChanges below).
 	Events(ctx context.Context, orgID, alertID uuid.UUID) ([]Event, error)

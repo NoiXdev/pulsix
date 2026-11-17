@@ -134,6 +134,60 @@ func (q *Queries) CloseForgottenAlerts(ctx context.Context, arg CloseForgottenAl
 	return result.RowsAffected(), nil
 }
 
+const countAlerts = `-- name: CountAlerts :one
+SELECT count(*) FROM alerts a
+WHERE a.org_id = $1
+  AND ($2::boolean IS NULL
+       OR ($2::boolean AND a.closed_at IS NULL)
+       OR (NOT $2::boolean AND a.closed_at IS NOT NULL))
+  AND ($3::text IS NULL OR a.severity = $3::text)
+  AND ($4::uuid IS NULL OR a.host_id = $4::uuid)
+  AND ($5::text IS NULL OR a.scope = $5::text)
+  AND ($6::boolean IS NULL
+       OR ($6::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT $6::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND ($7::boolean IS NULL
+       OR $7::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > $8::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY($9::uuid[])), false))
+`
+
+type CountAlertsParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	Open         *bool       `json:"open"`
+	Severity     *string     `json:"severity"`
+	HostID       pgtype.UUID `json:"host_id"`
+	Scope        *string     `json:"scope"`
+	Acknowledged *bool       `json:"acknowledged"`
+	Muted        *bool       `json:"muted"`
+	Now          time.Time   `json:"now"`
+	MutedHostIds []uuid.UUID `json:"muted_host_ids"`
+}
+
+// ListAlertsPage's filters, counted: the total of a paged answer.
+func (q *Queries) CountAlerts(ctx context.Context, arg CountAlertsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAlerts,
+		arg.OrgID,
+		arg.Open,
+		arg.Severity,
+		arg.HostID,
+		arg.Scope,
+		arg.Acknowledged,
+		arg.Muted,
+		arg.Now,
+		arg.MutedHostIds,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAlert = `-- name: GetAlert :one
 
 SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
@@ -579,6 +633,287 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 	return items, nil
 }
 
+const listAlertsPage = `-- name: ListAlertsPage :many
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
+WHERE a.org_id = $1
+  AND ($2::boolean IS NULL
+       OR ($2::boolean AND a.closed_at IS NULL)
+       OR (NOT $2::boolean AND a.closed_at IS NOT NULL))
+  AND ($3::text IS NULL OR a.severity = $3::text)
+  AND ($4::uuid IS NULL OR a.host_id = $4::uuid)
+  AND ($5::text IS NULL OR a.scope = $5::text)
+  AND ($6::boolean IS NULL
+       OR ($6::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT $6::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND ($7::boolean IS NULL
+       OR $7::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > $8::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY($9::uuid[])), false))
+ORDER BY a.opened_at DESC, a.id DESC
+OFFSET $10 LIMIT $11
+`
+
+type ListAlertsPageParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	Open         *bool       `json:"open"`
+	Severity     *string     `json:"severity"`
+	HostID       pgtype.UUID `json:"host_id"`
+	Scope        *string     `json:"scope"`
+	Acknowledged *bool       `json:"acknowledged"`
+	Muted        *bool       `json:"muted"`
+	Now          time.Time   `json:"now"`
+	MutedHostIds []uuid.UUID `json:"muted_host_ids"`
+	RowOffset    int32       `json:"row_offset"`
+	RowLimit     int32       `json:"row_limit"`
+}
+
+type ListAlertsPageRow struct {
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	PeakSeverity         string             `json:"peak_severity"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason         *string            `json:"closed_reason"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	WasFlapping          bool               `json:"was_flapping"`
+	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
+	Detail               *string            `json:"detail"`
+	HostName             string             `json:"host_name"`
+	AgentLastContact     time.Time          `json:"agent_last_contact"`
+}
+
+// Offset paging (backlog 3.97) in the default order, newest opened first: the
+// order alerts_org_opened_idx serves, so it stays an index scan. ListAlerts'
+// filters without the cursor, plus muted, which the service resolves before
+// asking: muted_host_ids are the hosts inside a maintenance or silence window
+// right now (alerts.Mute decides, not SQL), now the instant its verdict is
+// for. An alert is muted when it is open and snoozed or on one of those
+// hosts; a closed alert never is, the same rule Service.suppression applies.
+func (q *Queries) ListAlertsPage(ctx context.Context, arg ListAlertsPageParams) ([]ListAlertsPageRow, error) {
+	rows, err := q.db.Query(ctx, listAlertsPage,
+		arg.OrgID,
+		arg.Open,
+		arg.Severity,
+		arg.HostID,
+		arg.Scope,
+		arg.Acknowledged,
+		arg.Muted,
+		arg.Now,
+		arg.MutedHostIds,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAlertsPageRow
+	for rows.Next() {
+		var i ListAlertsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.HostID,
+			&i.Scope,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.OpenedAt,
+			&i.Severity,
+			&i.PeakSeverity,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.AcknowledgedSeverity,
+			&i.AckNote,
+			&i.SnoozedUntil,
+			&i.SnoozeUntilChange,
+			&i.WasFlapping,
+			&i.SeverityChangedAt,
+			&i.Detail,
+			&i.HostName,
+			&i.AgentLastContact,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAlertsPageSorted = `-- name: ListAlertsPageSorted :many
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
+FROM alerts a
+LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
+CROSS JOIN LATERAL (SELECT CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END AS tracked,
+  CASE a.peak_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END AS peak) r
+WHERE a.org_id = $1
+  AND ($2::boolean IS NULL
+       OR ($2::boolean AND a.closed_at IS NULL)
+       OR (NOT $2::boolean AND a.closed_at IS NOT NULL))
+  AND ($3::text IS NULL OR a.severity = $3::text)
+  AND ($4::uuid IS NULL OR a.host_id = $4::uuid)
+  AND ($5::text IS NULL OR a.scope = $5::text)
+  AND ($6::boolean IS NULL
+       OR ($6::boolean AND a.acknowledged_at IS NOT NULL
+           AND (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+               <= (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))
+       OR (NOT $6::boolean
+           AND (a.acknowledged_at IS NULL
+                OR (CASE a.severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END)
+                    > (CASE a.acknowledged_severity WHEN 'crit' THEN 3 WHEN 'warn' THEN 2 WHEN 'unknown' THEN 1 ELSE 0 END))))
+  AND ($7::boolean IS NULL
+       OR $7::boolean = COALESCE(a.closed_at IS NULL
+            AND (a.snoozed_until > $8::timestamptz
+                 OR a.snooze_until_change
+                 OR a.host_id = ANY($9::uuid[])), false))
+ORDER BY
+  (CASE WHEN $10::text = 'host' AND NOT $11::boolean THEN h.name END) ASC,
+  (CASE WHEN $10::text = 'host' AND $11::boolean THEN h.name END) DESC,
+  (CASE WHEN $10::text = 'peak' AND NOT $11::boolean THEN r.peak END) ASC,
+  (CASE WHEN $10::text = 'peak' AND $11::boolean THEN r.peak END) DESC,
+  (CASE WHEN $10::text = 'tracked' AND NOT $11::boolean THEN r.tracked END) ASC,
+  (CASE WHEN $10::text = 'tracked' AND $11::boolean THEN r.tracked END) DESC,
+  (CASE WHEN $10::text = 'acknowledged' AND NOT $11::boolean THEN a.acknowledged_at END) ASC NULLS LAST,
+  (CASE WHEN $10::text = 'acknowledged' AND $11::boolean THEN a.acknowledged_at END) DESC NULLS LAST,
+  a.opened_at DESC, a.id DESC
+OFFSET $12 LIMIT $13
+`
+
+type ListAlertsPageSortedParams struct {
+	OrgID        uuid.UUID   `json:"org_id"`
+	Open         *bool       `json:"open"`
+	Severity     *string     `json:"severity"`
+	HostID       pgtype.UUID `json:"host_id"`
+	Scope        *string     `json:"scope"`
+	Acknowledged *bool       `json:"acknowledged"`
+	Muted        *bool       `json:"muted"`
+	Now          time.Time   `json:"now"`
+	MutedHostIds []uuid.UUID `json:"muted_host_ids"`
+	SortKey      string      `json:"sort_key"`
+	SortDesc     bool        `json:"sort_desc"`
+	RowOffset    int32       `json:"row_offset"`
+	RowLimit     int32       `json:"row_limit"`
+}
+
+type ListAlertsPageSortedRow struct {
+	ID                   uuid.UUID          `json:"id"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	PeakSeverity         string             `json:"peak_severity"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason         *string            `json:"closed_reason"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	WasFlapping          bool               `json:"was_flapping"`
+	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
+	Detail               *string            `json:"detail"`
+	HostName             string             `json:"host_name"`
+	AgentLastContact     time.Time          `json:"agent_last_contact"`
+}
+
+// Every other key and direction (backlog 3.97). The sort key is whitelisted
+// by the caller; each CASE is NULL on every row unless its key is chosen, so
+// the others drop out. host orders by host name, peak and tracked by severity
+// rank (crit above warn above unknown, the ranking ListAlerts' acknowledged
+// filter uses), acknowledged by acknowledged_at with unacknowledged alerts
+// last in both directions. A tie falls back to newest opened, id last, so
+// pages are disjoint.
+func (q *Queries) ListAlertsPageSorted(ctx context.Context, arg ListAlertsPageSortedParams) ([]ListAlertsPageSortedRow, error) {
+	rows, err := q.db.Query(ctx, listAlertsPageSorted,
+		arg.OrgID,
+		arg.Open,
+		arg.Severity,
+		arg.HostID,
+		arg.Scope,
+		arg.Acknowledged,
+		arg.Muted,
+		arg.Now,
+		arg.MutedHostIds,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAlertsPageSortedRow
+	for rows.Next() {
+		var i ListAlertsPageSortedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.HostID,
+			&i.Scope,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.OpenedAt,
+			&i.Severity,
+			&i.PeakSeverity,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.AcknowledgedSeverity,
+			&i.AckNote,
+			&i.SnoozedUntil,
+			&i.SnoozeUntilChange,
+			&i.WasFlapping,
+			&i.SeverityChangedAt,
+			&i.Detail,
+			&i.HostName,
+			&i.AgentLastContact,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMaintenanceWindowsForHost = `-- name: ListMaintenanceWindowsForHost :many
 WITH RECURSIVE ancestors AS (
   SELECT g.id, g.parent_id FROM inventory_groups g
@@ -811,6 +1146,32 @@ func (q *Queries) ListStateChangesForTuple(ctx context.Context, arg ListStateCha
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openAlertHostIDs = `-- name: OpenAlertHostIDs :many
+SELECT DISTINCT host_id FROM alerts WHERE org_id = $1 AND closed_at IS NULL
+`
+
+// The distinct hosts with an open alert: the hosts whose maintenance windows
+// Service.ListPage has to look up to answer the muted filter.
+func (q *Queries) OpenAlertHostIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, openAlertHostIDs, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var host_id uuid.UUID
+		if err := rows.Scan(&host_id); err != nil {
+			return nil, err
+		}
+		items = append(items, host_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
