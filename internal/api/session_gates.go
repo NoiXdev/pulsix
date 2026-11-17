@@ -18,6 +18,7 @@ import (
 //	pending, no factor (enrol)     yes             yes                      no                  no
 //	MFA-complete session           yes             yes                      yes                 yes
 //	bearer token (always complete) yes             no                       yes                 no
+//	locked session (complete)      yes             no                       no                  no
 //
 //   - requireSession: /auth/me, /auth/logout, /auth/totp/verify — reachable
 //     in every state, because they are how a pending session learns what it
@@ -34,6 +35,13 @@ import (
 //   - requireInteractiveSession: removing a second factor (TOTP disable,
 //     passkey delete), creating API tokens, and every instance-admin route
 //     — MFA-complete and never a bearer token.
+//
+// A locked session (auth.Principal.Locked, backlog 3.92) is refused by every
+// gate below except requireSession with 403 session_locked, before the
+// MFA and password-change checks (refuseWhileLocked): only /auth/me,
+// /auth/logout and the unlock route stay reachable. /auth/totp/verify is
+// refused explicitly, since it also refreshes a complete session's factor.
+// A bearer token is never locked.
 //
 // An account that must change its password (users.must_change_password,
 // raised by an administrator's temporary password) is held back one step
@@ -82,6 +90,9 @@ func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 	if err != nil {
 		return p, err
 	}
+	if err := refuseWhileLocked(p); err != nil {
+		return p, err
+	}
 	if !p.MFAComplete {
 		return p, huma.Error403Forbidden("second factor required")
 	}
@@ -89,6 +100,25 @@ func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 		return p, err
 	}
 	return p, nil
+}
+
+// sessionLocked is the detail a refusal for a locked session carries. The
+// SPA matches on it to show the lock screen, so it is part of the contract
+// rather than prose.
+const sessionLocked = "session_locked"
+
+// refuseWhileLocked refuses a cookie session that is locked behind its
+// owner's PIN. The flag is read per request through the session lookup
+// (auth.Principal.Locked). An API token has no session to lock and is never
+// refused. It runs before every other refusal of a gate, so the lock screen
+// wins over password_change_required; a locked session is always
+// MFA-complete (locking needs that), so it never hides a pending session's
+// own refusal.
+func refuseWhileLocked(p auth.Principal) error {
+	if p.Locked && p.TokenID == nil {
+		return huma.Error403Forbidden(sessionLocked)
+	}
+	return nil
 }
 
 // passwordChangeRequired is the detail a refusal for an account that must
@@ -117,6 +147,9 @@ func refuseUntilPasswordChanged(p auth.Principal) error {
 func requirePasswordChangeSession(ctx context.Context) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {
+		return p, err
+	}
+	if err := refuseWhileLocked(p); err != nil {
 		return p, err
 	}
 	if p.TokenID != nil {
@@ -217,6 +250,9 @@ func requireFreshFactor(ctx context.Context, deps Deps, p auth.Principal) error 
 func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {
+		return p, err
+	}
+	if err := refuseWhileLocked(p); err != nil {
 		return p, err
 	}
 	if p.TokenID != nil {

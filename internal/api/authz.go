@@ -76,6 +76,9 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	if !ok {
 		return Scope{}, huma.Error401Unauthorized("login required")
 	}
+	if err := refuseWhileLocked(p); err != nil {
+		return Scope{}, err
+	}
 	if !p.MFAComplete {
 		return Scope{}, huma.Error403Forbidden("second factor required")
 	}

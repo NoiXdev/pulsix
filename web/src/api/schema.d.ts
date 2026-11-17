@@ -5763,11 +5763,16 @@ export interface components {
             instance_admin: boolean;
             /** @enum {string|null} */
             locale: "en" | "de" | null;
+            lock_pin_prompt: boolean;
+            lock_pin_set: boolean;
+            locked: boolean;
             mfa_complete: boolean;
             mfa_enrolment_required: boolean;
             must_change_password: boolean;
             /** Format: int64 */
             recovery_codes_remaining: number;
+            /** Format: date-time */
+            session_expires_at: string;
             totp_confirmed: boolean;
             user: components["schemas"]["UserStruct"];
         };

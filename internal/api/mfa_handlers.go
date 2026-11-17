@@ -170,6 +170,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// A locked session must not refresh its factor (it is also the
+		// step-up of a complete session); a pending one is never locked.
+		if err := refuseWhileLocked(p); err != nil {
+			return nil, err
+		}
 		if err := verifyFactorCode(ctx, deps, p.UserID, in); err != nil {
 			return nil, err
 		}

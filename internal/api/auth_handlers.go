@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -97,6 +98,18 @@ type meOutput struct {
 		// password_change_required. The SPA
 		// takes it straight to the change-password screen.
 		MustChangePassword bool `json:"must_change_password"`
+		// Locked is true while this session is locked behind the owner's
+		// PIN: every route but this one, logout and unlock answers 403
+		// session_locked.
+		Locked bool `json:"locked"`
+		// LockPINSet says the account has a lock PIN; LockPINPrompt that
+		// the sign-in flow should offer to set one.
+		LockPINSet    bool `json:"lock_pin_set"`
+		LockPINPrompt bool `json:"lock_pin_prompt"`
+		// SessionExpiresAt is when this session's cookie stops
+		// authenticating (the SPA warns before it); the zero time for a
+		// bearer token, which has no session.
+		SessionExpiresAt time.Time `json:"session_expires_at" format:"date-time"`
 	}
 }
 
@@ -156,6 +169,13 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
 		out.Body.MustChangePassword = p.MustChangePassword && p.TokenID == nil
 		out.Body.TOTPConfirmed = totpConfirmed
+		out.Body.Locked = p.Locked && p.TokenID == nil
+		out.Body.SessionExpiresAt = p.ExpiresAt
+		lock, err := deps.ScreenLock.Status(ctx, p.UserID)
+		if err != nil {
+			return nil, mapAuthErr(ctx, err)
+		}
+		out.Body.LockPINSet, out.Body.LockPINPrompt = lock.PINSet, lock.Prompt
 		def, err := deps.Setup.DefaultLocale(ctx)
 		if err != nil {
 			return nil, mapSetupErr(ctx, err)

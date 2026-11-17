@@ -41,6 +41,7 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
+	"github.com/noixdev/pulsix/internal/screenlock"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -56,8 +57,11 @@ type Deps struct {
 	Sessions *auth.Sessions
 	Auth     AuthService
 	TOTP     *auth.TOTP
-	Passkeys *auth.Passkeys
-	Tokens   *auth.Tokens
+	// ScreenLock is the session lock and its PIN (backlog 3.92); the gates
+	// read a session's lock from the principal, /auth/me reads the PIN state.
+	ScreenLock *screenlock.Service
+	Passkeys   *auth.Passkeys
+	Tokens     *auth.Tokens
 	// Enrolment composes confirming a second factor with completing the
 	// session it was pending for, in one transaction (backlog 1.26).
 	Enrolment *auth.Enrolment

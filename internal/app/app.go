@@ -61,6 +61,7 @@ import (
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/schedules"
+	"github.com/noixdev/pulsix/internal/screenlock"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -691,7 +692,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// worker claims it: the claim recomputes the run picture.
 	jobsQueue.SetClaimGuard(runRequestsSvc)
 	handler, err := api.New(api.Deps{
-		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
+		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment, ScreenLock: screenlock.NewService(screenlock.NewSQLStore(q)),
 		Tenancy: tenancySvc, Accounts: accountsSvc,
 		Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Backups: backupsSvc,
