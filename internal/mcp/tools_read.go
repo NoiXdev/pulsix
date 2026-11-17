@@ -88,7 +88,7 @@ func readTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/hosts")
 			}),
-		define("get_host", "Get host", "One host with its SSH settings (credential by reference) and the inventory groups it belongs to.",
+		define("get_host", "Get host", "One host with its SSH settings (credential by reference), its tags and the inventory groups it belongs to.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
 				host, err := passGet(ctx, c, nil, "/hosts/%s", in.HostID)
 				if err != nil {
@@ -102,7 +102,11 @@ func readTools() []toolDef {
 				if err != nil {
 					return nil, err
 				}
-				return map[string]any{"host": host, "ssh": ssh, "groups": groups}, nil
+				tags, err := passGet(ctx, c, nil, "/hosts/%s/tags", in.HostID)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"host": host, "ssh": ssh, "groups": groups, "tags": tags}, nil
 			}),
 		define("list_groups", "List groups", "The inventory groups, with their parents.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {

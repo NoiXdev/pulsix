@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // caller dispatches a tool's REST call in-process, as the token that called
@@ -25,6 +26,7 @@ type caller struct {
 	authorization string
 	slug          string
 	scope         auth.TokenScope
+	areas         []tenancy.Area
 	publicURL     string
 }
 

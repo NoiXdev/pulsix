@@ -22,6 +22,8 @@ import (
 var allAreas = []tenancy.Area{
 	tenancy.AreaInventoryWrite, tenancy.AreaReposWrite, tenancy.AreaTemplatesWrite,
 	tenancy.AreaCredentialsNames, tenancy.AreaJobsRequest,
+	tenancy.AreaMonitoringRead, tenancy.AreaAlertsHandle, tenancy.AreaActivityRead,
+	tenancy.AreaTemplatesRead,
 }
 
 // orgFixture is one organization with a host, a group, a repository, an

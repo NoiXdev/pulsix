@@ -108,5 +108,6 @@ func registry() []toolDef {
 	out = append(out, writeTools()...)
 	out = append(out, jobTools()...)
 	out = append(out, monitoringTools()...)
+	out = append(out, opsTools()...)
 	return out
 }

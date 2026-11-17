@@ -28,9 +28,11 @@ const MaxBodyBytes = 1 << 20
 
 // instructions is what initialize tells the assistant.
 const instructions = "Pulsix manages servers with Ansible: inventory (hosts, groups and their variables), " +
-	"repositories, playbooks and job templates. Runs need a person's approval in Pulsix: " +
+	"repositories, playbooks and job templates. Playbook runs need a person's approval in Pulsix: " +
 	"request_run and request_retry create a request and return a link; give that link to the person " +
-	"and wait for their approval, then read the run with get_job_log. Secrets (keys, passwords, " +
+	"and wait for their approval, then read the run with get_job_log. A connection test " +
+	"(start_connection_test) runs no playbook: it logs in, probes the host and pins nothing, so it " +
+	"needs no approval. Secrets (keys, passwords, " +
 	"secret variables) are set by a person in Pulsix, never through these tools."
 
 // TokenResolver resolves a bearer token (satisfied by *auth.Tokens).
@@ -117,12 +119,12 @@ func (e *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &caller{router: e.d.Router, authorization: header, slug: slug, scope: scope, publicURL: strings.TrimRight(e.d.PublicURL, "/")}
-	srv := sdk.NewServer(&sdk.Implementation{Name: "pulsix", Title: "Pulsix", Version: e.d.Version}, &sdk.ServerOptions{Instructions: instructions})
 	areas := make([]tenancy.Area, len(scope.Areas))
 	for i, a := range scope.Areas {
 		areas[i] = tenancy.Area(a)
 	}
+	c := &caller{router: e.d.Router, authorization: header, slug: slug, scope: scope, areas: areas, publicURL: strings.TrimRight(e.d.PublicURL, "/")}
+	srv := sdk.NewServer(&sdk.Implementation{Name: "pulsix", Title: "Pulsix", Version: e.d.Version}, &sdk.ServerOptions{Instructions: instructions})
 	for _, t := range registry() {
 		if t.allowed(areas) {
 			t.register(srv, c)
