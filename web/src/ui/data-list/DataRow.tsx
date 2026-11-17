@@ -5,9 +5,8 @@ import type { MenuPoint } from '../menuPlacement.ts';
 import { RowActionsButton } from './RowActionsMenu.tsx';
 import type { DataListColumn, Density, RowAction, RowLink } from './types.ts';
 
-/** A row's grid: the density's vertical padding and, in compact, its type
- * size. `--px-row-font` is unset outside compact, which leaves the font
- * size inherited. */
+/** A row's grid: the density's vertical padding and type size
+ * (`--px-row-py`, `--px-row-font`, styles/globals.css). */
 export const ROW_GRID = 'grid items-center gap-3 px-4 py-[var(--px-row-py)] text-[length:var(--px-row-font)]';
 
 export type MenuSource = 'pointer' | 'keyboard';

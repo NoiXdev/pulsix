@@ -1,5 +1,6 @@
 import { Pill } from '../../ui/badge.tsx';
 import { useT } from '../../i18n/useT.ts';
+import { CELL_MINOR } from '../../ui/data-list/index.ts';
 
 export type CapabilityKind = 'managed' | 'monitored';
 
@@ -14,7 +15,7 @@ export function CapabilityCell({ kind, on }: { kind: CapabilityKind; on: boolean
   const t = useT();
   if (on) return <Pill tone="ok">{t.hosts.capability[kind]}</Pill>;
   return (
-    <span className="truncate text-muted-foreground">
+    <span className={`truncate text-muted-foreground ${CELL_MINOR}`}>
       {kind === 'managed' ? t.hosts.capability.notManaged : t.hosts.capability.notMonitored}
     </span>
   );

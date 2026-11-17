@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DataList, type DataListColumn } from '../../ui/data-list/index.ts';
+import { CELL_MINOR, DataList, type DataListColumn } from '../../ui/data-list/index.ts';
 import { QueryError } from '../../ui/QueryState.tsx';
 import { useMyActivityPage } from '../../api/hooks/useActivity.ts';
 import { useOrgs } from '../../api/hooks/useOrgs.ts';
@@ -31,7 +31,7 @@ export function MyActivityPage() {
       sortKey: 'at',
       required: true,
       defaultVisible: true,
-      render: (e) => <span className="font-mono text-muted-foreground">{fmt.dateTime(e.at, { dateStyle: 'medium', timeStyle: 'short' })}</span>,
+      render: (e) => <span className={`font-mono text-muted-foreground ${CELL_MINOR}`}>{fmt.dateTime(e.at, { dateStyle: 'medium', timeStyle: 'short' })}</span>,
     },
     {
       id: 'organization',
@@ -52,7 +52,7 @@ export function MyActivityPage() {
       label: t.activity.my.object,
       width: '130px',
       defaultVisible: true,
-      render: (e) => <span className="text-muted-foreground">{known(t.activity.objectTypes, e.object_type)}</span>,
+      render: (e) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{known(t.activity.objectTypes, e.object_type)}</span>,
     },
   ];
 

@@ -35,24 +35,30 @@
 /*
  * List density (backlog 3.97). DensityEffect sets `data-density` on <html>
  * from the person's preferences; only DataList rows read these. Standard is
- * the spacing lists had before (py-2.5). `--px-row-font` is set for compact
- * only: elsewhere it stays unset, and a row's font size is inherited.
+ * today's look: the spacing (py-2.5) and the type size (text-xs, 12px) the
+ * lists had before. Comfortable gives more air and a step larger type,
+ * compact less of both. A cell's secondary text (ids, times, muted values)
+ * is sized relative to the row (`CELL_MINOR`, 0.92em), so it stays a step
+ * below the row's text in every density.
  */
 :root {
   --px-row-py: 0.625rem;
+  --px-row-font: 12px;
 }
 
 :root[data-density='comfortable'] {
   --px-row-py: 0.875rem;
+  --px-row-font: 13px;
 }
 
 :root[data-density='standard'] {
   --px-row-py: 0.625rem;
+  --px-row-font: 12px;
 }
 
 :root[data-density='compact'] {
   --px-row-py: 0.375rem;
-  --px-row-font: 12px;
+  --px-row-font: 11px;
 }
 
 @theme inline {

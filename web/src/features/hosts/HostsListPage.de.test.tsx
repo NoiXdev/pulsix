@@ -86,6 +86,7 @@ describe('HostsListPage in German', () => {
     renderPage();
 
     expect(await screen.findByText('Aus')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'laptop-1, Aus' })).toBeInTheDocument();
     expect(screen.getByText('zuletzt gesehen vor 3 Std.')).toBeInTheDocument();
     expect(screen.getByText('Client')).toBeInTheDocument();
   });

@@ -1,3 +1,4 @@
+export { CELL_MINOR } from './cellText.ts';
 export { DataList } from './DataList.tsx';
 export { pageItems } from './pageItems.ts';
 export { nextSort } from './sort.ts';

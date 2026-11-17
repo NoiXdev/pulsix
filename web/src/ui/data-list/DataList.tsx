@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT.ts';
 import type { MenuPoint } from '../menuPlacement.ts';
 import { Card } from '../table.tsx';
+import { CELL_MINOR } from './cellText.ts';
 import { ColumnsMenu } from './ColumnsMenu.tsx';
 import { DataRow, ROW_GRID, type MenuSource, type OpenRowMenu } from './DataRow.tsx';
 import { Pager } from './Pager.tsx';
@@ -112,7 +113,7 @@ export function DataList<Row>({
   } else {
     body = (
       <div role="row" className={ROW_GRID}>
-        <div role="cell" className="text-xs text-muted-foreground">
+        <div role="cell" className={`${CELL_MINOR} text-muted-foreground`}>
           {loading ? t.common.loading : empty}
         </div>
       </div>

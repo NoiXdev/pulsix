@@ -4,7 +4,7 @@ import type { Agent, HostListItem } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { Tag } from '../../ui/badge.tsx';
-import type { Density } from '../../ui/data-list/index.ts';
+import { CELL_MINOR, type Density } from '../../ui/data-list/index.ts';
 import { liveRunsOf } from '../runs/runsSearch.ts';
 import { seenLabel } from '../workers/expiry.ts';
 import { HostPresenceBadge } from './HostPresenceBadge.tsx';
@@ -41,7 +41,7 @@ export function HostName({ host, agent, density }: { host: HostListItem; agent: 
           <span className="max-w-full truncate font-mono font-semibold text-foreground">{host.name}</span>
           <HostPresenceBadge presence={presence} />
         </span>
-        {density === 'comfortable' && host.address && <span className="truncate font-mono text-muted-foreground">{host.address}</span>}
+        {density === 'comfortable' && host.address && <span className={`truncate font-mono text-muted-foreground ${CELL_MINOR}`}>{host.address}</span>}
       </span>
     </span>
   );
@@ -66,7 +66,7 @@ export function HostTags({ org, hostId }: { org: string; hostId: string }) {
  * sits above the row's own link (`relative z-10`). */
 export function ActiveRuns({ org, host }: { org: string; host: HostListItem }) {
   const t = useT();
-  if (host.active_runs <= 0) return <span className="text-muted-foreground">—</span>;
+  if (host.active_runs <= 0) return <span className={`text-muted-foreground ${CELL_MINOR}`}>—</span>;
   return (
     <Link
       to="/o/$org/runs"
@@ -86,9 +86,9 @@ export function LastSeen({ host, agent }: { host: HostListItem; agent: Agent | u
   const t = useT();
   const presence = hostPresence(host.kind, agent);
   if (presence.kind === 'off') {
-    return <span className="text-muted-foreground">{t.hosts.presence.lastSeen(seenLabel(presence.lastSeen, new Date(), t))}</span>;
+    return <span className={`text-muted-foreground ${CELL_MINOR}`}>{t.hosts.presence.lastSeen(seenLabel(presence.lastSeen, new Date(), t))}</span>;
   }
-  return <span className="font-mono text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>;
+  return <span className={`font-mono text-muted-foreground ${CELL_MINOR}`}>{timeAgo(host.last_seen_at, t)}</span>;
 }
 
 function timeAgo(iso: string | null | undefined, t: Messages): string {

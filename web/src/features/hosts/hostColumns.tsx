@@ -1,6 +1,6 @@
 import type { Agent, HostListItem, Zone } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
-import type { DataListColumn } from '../../ui/data-list/index.ts';
+import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import { CapabilityCell } from './capabilities.tsx';
 import { ActiveRuns, HostName, HostTags, LastSeen } from './HostCells.tsx';
 import { systemLabel } from './hostOverview.ts';
@@ -45,7 +45,7 @@ export function hostColumns({ org, t, zones, agents }: HostColumnsContext): Data
       sortKey: 'zone',
       sortValue: (h) => zones.get(h.zone_id)?.name,
       defaultVisible: true,
-      render: (h) => <span className="block truncate font-mono text-muted-foreground">{zones.get(h.zone_id)?.slug ?? h.zone_id.slice(0, 8)}</span>,
+      render: (h) => <span className={`block truncate font-mono text-muted-foreground ${CELL_MINOR}`}>{zones.get(h.zone_id)?.slug ?? h.zone_id.slice(0, 8)}</span>,
     },
     {
       id: 'tags',
@@ -95,14 +95,14 @@ export function hostColumns({ org, t, zones, agents }: HostColumnsContext): Data
       label: c.agentVersion,
       width: '120px',
       defaultVisible: false,
-      render: (h) => <span className="block truncate font-mono text-muted-foreground">{agents.get(h.id)?.version || '—'}</span>,
+      render: (h) => <span className={`block truncate font-mono text-muted-foreground ${CELL_MINOR}`}>{agents.get(h.id)?.version || '—'}</span>,
     },
     {
       id: 'os',
       label: c.os,
       width: '130px',
       defaultVisible: false,
-      render: (h) => <span className="block truncate text-muted-foreground">{systemLabel(h.facts) ?? '—'}</span>,
+      render: (h) => <span className={`block truncate text-muted-foreground ${CELL_MINOR}`}>{systemLabel(h.facts) ?? '—'}</span>,
     },
   ];
 }

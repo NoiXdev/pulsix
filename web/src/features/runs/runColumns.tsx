@@ -1,7 +1,7 @@
 import type { Job } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { Pill } from '../../ui/badge.tsx';
-import type { DataListColumn } from '../../ui/data-list/index.ts';
+import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import { kindLabel, shortId, statusLabel, statusTone } from './status.ts';
 import { triggerLabel } from './trigger.ts';
 
@@ -56,14 +56,14 @@ export function runColumns(t: Messages): DataListColumn<Job>[] {
       label: c.template,
       width: 'minmax(0,0.7fr)',
       defaultVisible: true,
-      render: (j) => <span className="block truncate font-mono text-muted-foreground">{j.template_id ? shortId(j.template_id) : '—'}</span>,
+      render: (j) => <span className={`block truncate font-mono text-muted-foreground ${CELL_MINOR}`}>{j.template_id ? shortId(j.template_id) : '—'}</span>,
     },
     {
       id: 'zone',
       label: c.zone,
       width: '90px',
       defaultVisible: true,
-      render: (j) => <span className="font-mono text-muted-foreground">{shortId(j.zone_id)}</span>,
+      render: (j) => <span className={`font-mono text-muted-foreground ${CELL_MINOR}`}>{shortId(j.zone_id)}</span>,
     },
     {
       id: 'created',
@@ -71,7 +71,7 @@ export function runColumns(t: Messages): DataListColumn<Job>[] {
       width: '130px',
       sortKey: 'created',
       defaultVisible: true,
-      render: (j) => <span className="text-muted-foreground">{j.created_at.slice(0, 16).replace('T', ' ')}</span>,
+      render: (j) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{j.created_at.slice(0, 16).replace('T', ' ')}</span>,
     },
   ];
 }

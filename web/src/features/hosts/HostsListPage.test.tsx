@@ -291,6 +291,20 @@ describe('hosts paging and sorting (server)', () => {
 
     await waitFor(() => expect(requests.at(-1)?.get('managed')).toBe('true'));
     expect(requests.at(-1)?.get('page')).toBe('1');
+    expect(requests.some((r) => r.get('managed') === 'true' && r.get('page') !== '1')).toBe(false);
+  });
+
+  it('starts again at page 1 when a search is typed', async () => {
+    const user = userEvent.setup();
+    const { router, requests } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    await user.type(screen.getByPlaceholderText('Filter hosts…'), 'web');
+
+    await waitFor(() => expect(requests.at(-1)?.get('q')).toBe('web'));
+    expect(requests.at(-1)?.get('page')).toBe('1');
+    expect(requests.some((r) => r.has('q') && r.get('page') !== '1')).toBe(false);
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty('page'));
   });
 });
 
@@ -744,24 +758,35 @@ describe('host rows', () => {
     it('shows an offline client as Off with when it was last seen', async () => {
       mockApi(routes());
       renderPage(newClient());
-      await screen.findByRole('link', { name: 'laptop-1' });
+      await screen.findByRole('link', { name: 'laptop-1, Off' });
 
-      await waitFor(() => expect(within(rowOf('laptop-1')).getByText('Off')).toBeInTheDocument());
-      expect(within(rowOf('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
-      expect(within(rowOf('laptop-1')).queryByText('Client')).not.toBeInTheDocument();
+      expect(within(rowOf('laptop-1, Off')).getByText('Off')).toBeInTheDocument();
+      expect(within(rowOf('laptop-1, Off')).getByText('last seen 3 h ago')).toBeInTheDocument();
+      expect(within(rowOf('laptop-1, Off')).queryByText('Client')).not.toBeInTheDocument();
     });
 
     it('tags an online client and leaves a server with an offline agent alone', async () => {
       mockApi(routes());
       renderPage(newClient());
-      await screen.findByRole('link', { name: 'laptop-1' });
-      await waitFor(() => expect(within(rowOf('laptop-1')).getByText('Off')).toBeInTheDocument());
+      await screen.findByRole('link', { name: 'laptop-1, Off' });
 
-      expect(within(rowOf('laptop-2')).getByText('Client')).toBeInTheDocument();
-      expect(within(rowOf('laptop-2')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(rowOf('laptop-2, Client')).getByText('Client')).toBeInTheDocument();
+      expect(within(rowOf('laptop-2, Client')).queryByText('Off')).not.toBeInTheDocument();
       expect(within(rowOf('web-1')).queryByText('Off')).not.toBeInTheDocument();
       expect(within(rowOf('web-1')).queryByText('Client')).not.toBeInTheDocument();
       expect(within(rowOf('web-1')).queryByText(/last seen/)).not.toBeInTheDocument();
+    });
+
+    // The badge sits inside the row's link, whose label is all a screen
+    // reader announces for it: the presence has to be in the label.
+    it('names a client\'s presence in its row link, and keeps the menu named by the host', async () => {
+      mockApi(routes());
+      renderPage(newClient());
+
+      expect(await screen.findByRole('link', { name: 'laptop-1, Off' })).toHaveAttribute('href', '/o/acme/hosts/h-off');
+      expect(screen.getByRole('link', { name: 'laptop-2, Client' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'web-1' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Actions for laptop-1' })).toBeInTheDocument();
     });
   });
 });

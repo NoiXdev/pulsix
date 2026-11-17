@@ -58,6 +58,7 @@ export const deHosts: Messages['hosts'] = {
     clear: 'zurücksetzen',
     withActiveRuns: 'Mit aktiven Läufen',
     activeRuns: (n: number) => (n === 1 ? '1 läuft' : `${n} laufen`),
+    linkLabel: (name: string, presence: string) => `${name}, ${presence}`,
     columns: {
       host: 'Host',
       zone: 'Zone',

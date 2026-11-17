@@ -132,7 +132,7 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
 
   // Selector query box: only host A carries role=db.
   await page.getByPlaceholder('selector, e.g. role = db').fill('role = db');
-  await page.getByRole('button', { name: 'Run' }).click();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.getByRole('link', { name: 'web-04.fra', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'db-02.fra', exact: true })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'cache-01.fra', exact: true })).toHaveCount(0);

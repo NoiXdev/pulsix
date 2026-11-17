@@ -66,6 +66,8 @@ export const enHosts = {
     withActiveRuns: 'With active runs',
     /** A host's live runs in the Active runs column; it links to them. */
     activeRuns: (n: number) => `${n} running`,
+    /** A row link's label when the host's name carries a presence badge. */
+    linkLabel: (name: string, presence: string) => `${name}, ${presence}`,
     columns: {
       host: 'Host',
       zone: 'Zone',

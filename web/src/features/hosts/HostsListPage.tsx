@@ -10,10 +10,12 @@ import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import type { HostListItem } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { hostColumns } from './hostColumns.tsx';
 import { HostDialog } from './HostDialog.tsx';
+import { hostPresence, type AgentPresence } from './presence.ts';
 import { useHostListActions } from './useHostListActions.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
@@ -73,15 +75,11 @@ export function HostsListPage() {
     }
   }
 
-  const columns = hostColumns({
-    org,
-    t,
-    zones: new Map((zones.data?.zones ?? []).map((z) => [z.id, z])),
-    // One query for the whole page rather than one per row: the list shows
-    // each host's agent as its status dot, and the agents read is org-wide
-    // anyway (v0.3a, spec §8).
-    agents: new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a])),
-  });
+  // One query for the whole page rather than one per row: the list shows
+  // each host's agent as its status dot, and the agents read is org-wide
+  // anyway (v0.3a, spec §8).
+  const agentByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a]));
+  const columns = hostColumns({ org, t, zones: new Map((zones.data?.zones ?? []).map((z) => [z.id, z])), agents: agentByHost });
   const selectorMode = selector !== null;
   const view = useListView('hosts', columns, {
     mode: selectorMode ? 'client' : 'server',
@@ -129,7 +127,8 @@ export function HostsListPage() {
         columns={columns}
         rows={rows}
         rowKey={(h) => h.id}
-        rowLink={(h) => ({ to: '/o/$org/hosts/$id', params: { org, id: h.id }, label: h.name })}
+        rowLink={(h) => ({ to: '/o/$org/hosts/$id', params: { org, id: h.id }, label: hostLinkLabel(h, agentByHost.get(h.id), t) })}
+        rowLabel={(h) => h.name}
         rowActions={actions.rowActions}
         loading={loading}
         empty={filtered ? t.hosts.list.noMatch : t.hosts.list.empty}
@@ -192,6 +191,15 @@ export function HostsListPage() {
       <HostDialog org={org} role={role} open={addOpen} onOpenChange={setAddOpen} />
     </>
   );
+}
+
+/** A row link's label is all a screen reader announces of the name cell,
+ * so it carries the client's presence badge ("Off", "Client") too. */
+function hostLinkLabel(host: HostListItem, agent: AgentPresence | undefined, t: Messages): string {
+  const presence = hostPresence(host.kind, agent);
+  if (presence.kind === 'off') return t.hosts.list.linkLabel(host.name, t.hosts.presence.off);
+  if (presence.kind === 'client') return t.hosts.list.linkLabel(host.name, t.hosts.presence.client);
+  return host.name;
 }
 
 function FilterChip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
