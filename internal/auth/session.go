@@ -80,19 +80,68 @@ func NewSessions(q *gen.Queries, now func() time.Time) *Sessions {
 
 // Create inserts a session and returns the cookie value "<id>.<secret>".
 func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
+	r, err := s.create(ctx, userID, mfaComplete)
+	return r.ID, r.Cookie, err
+}
+
+// RenewedSession is a session Replace opened in place of another: its id,
+// its cookie value and when that cookie stops authenticating.
+type RenewedSession struct {
+	ID        uuid.UUID
+	Cookie    string
+	ExpiresAt time.Time
+}
+
+func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (RenewedSession, error) {
 	id := uuid.Must(uuid.NewV7())
 	secret, sum, err := newSessionSecret()
 	if err != nil {
-		return uuid.Nil, "", err
+		return RenewedSession{}, err
 	}
+	expiresAt := s.now().Add(SessionTTL)
 	err = s.q.CreateSession(ctx, gen.CreateSessionParams{
 		ID: id, UserID: userID, SecretHash: sum, MfaComplete: mfaComplete,
-		ExpiresAt: s.now().Add(SessionTTL),
+		ExpiresAt: expiresAt,
 	})
 	if err != nil {
-		return uuid.Nil, "", err
+		return RenewedSession{}, err
 	}
-	return id, cookieValue(id, secret), nil
+	return RenewedSession{ID: id, Cookie: cookieValue(id, secret), ExpiresAt: expiresAt}, nil
+}
+
+// Replace renews userID's session oldID (backlog 3.93): it ends oldID and
+// opens a new MFA-complete session with mfa_at now and a fresh SessionTTL.
+// The caller has just proved the password and a second factor (or a
+// passkey) for userID; a renewal never extends a session's lifetime, it
+// replaces the session.
+//
+// It runs inside the caller's instance transaction (Enrolment.RenewSession)
+// so the two writes commit together, and it takes the account row first
+// (LockLive), in the order an administrator's second-factor reset takes the
+// account and then the sessions: opening a complete session stamps the
+// account's last_sign_in_at, which in the other order deadlocks with the
+// reset (see CompleteVerifiedSession). A renewal queued behind a reset then
+// finds its session ended.
+//
+// oldID that is not a live session of userID, or is locked, is ErrNotFound
+// and nothing changes; so is one a concurrent renewal already replaced
+// (RevokeReplacedSession matches it once).
+func (s *Sessions) Replace(ctx context.Context, userID, oldID uuid.UUID) (RenewedSession, error) {
+	if err := s.LockLive(ctx, userID, oldID); err != nil {
+		return RenewedSession{}, err
+	}
+	n, err := s.q.RevokeReplacedSession(ctx, gen.RevokeReplacedSessionParams{ID: oldID, UserID: userID})
+	if err != nil {
+		return RenewedSession{}, fmt.Errorf("end the replaced session: %w", err)
+	}
+	if n == 0 {
+		return RenewedSession{}, ErrNotFound
+	}
+	r, err := s.create(ctx, userID, true)
+	if err != nil {
+		return RenewedSession{}, fmt.Errorf("open the renewed session: %w", err)
+	}
+	return r, nil
 }
 
 // newSessionSecret draws a session secret and its stored SHA-256 hash.

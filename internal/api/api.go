@@ -594,6 +594,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerAuthRoutes(hapi, deps)
 	registerMFARoutes(hapi, deps)
 	registerPasskeyRoutes(hapi, deps)
+	registerSessionRenewRoutes(hapi, deps)
 	registerScreenLockRoutes(hapi, deps)  // /auth/lock… — the session lock and its PIN, cookie sessions only
 	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
 	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all

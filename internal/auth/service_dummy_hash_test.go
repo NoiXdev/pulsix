@@ -64,3 +64,25 @@ func TestLoginUnknownUserStillVerifiesDummyHash(t *testing.T) {
 		t.Fatalf("verifyPassword called with hash %q, want the dummy hash", calledWith)
 	}
 }
+
+// VerifyOwnPassword shares Login's password rules, the dummy hash among
+// them: an account that has vanished (or has no password) costs the same
+// argon2id time as a wrong password.
+func TestVerifyOwnPasswordUnknownUserStillVerifiesDummyHash(t *testing.T) {
+	orig := verifyPassword
+	t.Cleanup(func() { verifyPassword = orig })
+
+	var calledWith string
+	verifyPassword = func(hash, pw string) (bool, error) {
+		calledWith = hash
+		return orig(hash, pw)
+	}
+
+	svc := NewService(notFoundStore{}, noopSessions{}, NoMFA{}, time.Now)
+	if err := svc.VerifyOwnPassword(context.Background(), uuid.Must(uuid.NewV7()), "whatever"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
+	}
+	if calledWith != dummyHash {
+		t.Fatalf("verifyPassword called with hash %q, want the dummy hash", calledWith)
+	}
+}

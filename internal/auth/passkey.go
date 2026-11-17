@@ -27,12 +27,14 @@ var ErrCredentialExists = errors.New("credential already registered")
 // registration and login ceremonies.
 const CeremonyTTL = 5 * time.Minute
 
-// ceremonyKindRegister and ceremonyKindLogin tag a stored ceremony so a
-// registration cannot be finished with a ceremony that BeginLogin created,
-// and vice versa.
+// ceremonyKindRegister, ceremonyKindLogin and ceremonyKindReauth tag a
+// stored ceremony so a registration cannot be finished with a ceremony that
+// BeginLogin created, a sign-in not with one BeginReauth created, and so on
+// for every pair.
 const (
 	ceremonyKindRegister = "register"
 	ceremonyKindLogin    = "login"
+	ceremonyKindReauth   = "reauth"
 )
 
 // Credential is a stored passkey, independent of the go-webauthn and sqlc
@@ -339,32 +341,8 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 	if !ok {
 		return "", fmt.Errorf("unexpected user type %T from ValidatePasskeyLogin", user)
 	}
-	if found.u.DisabledAt != nil {
-		// Deactivation must end access at every entry point, not just
-		// password login (Finding 2, Task 10 fix round 1): a disabled
-		// account's passkey must not open a fresh session either, even
-		// though the assertion itself verifies correctly against the
-		// stored credential. Checked before touching the counter at all,
-		// so a disabled account's passkey use leaves no
-		// UpdateCredentialCounter call behind.
-		return "", ErrInvalidCredentials
-	}
-	// go-webauthn does not fail a login when the signature counter regresses
-	// or repeats: Authenticator.UpdateCounter (called inside
-	// ValidatePasskeyLogin, above) only sets CloneWarning and leaves
-	// SignCount unchanged in that case, then validation still reports
-	// success. Left unchecked, an assertion from a cloned or rolled-back
-	// authenticator would produce a normal MFA-complete session with no
-	// trace anywhere. Reject it here with the same generic error a failed
-	// assertion produces, log the event so an operator can find it, and —
-	// deliberately — skip UpdateCredentialCounter below, so the stored
-	// counter still reflects the last legitimate use rather than being
-	// overwritten with the (unchanged) value UpdateCounter left in cred
-	// (Finding 1, fix round 1).
-	if cred.Authenticator.CloneWarning {
-		slog.ErrorContext(ctx, "passkey clone signal: signature counter did not advance",
-			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID))
-		return "", ErrInvalidCredentials
+	if err := refuseVerifiedAssertion(ctx, found.u, cred); err != nil {
+		return "", err
 	}
 	var cookie string
 	err = p.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
@@ -378,9 +356,55 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 	return cookie, nil
 }
 
+// refuseVerifiedAssertion refuses an assertion go-webauthn verified that
+// must still not count, at sign-in and at re-authentication alike, with the
+// same ErrInvalidCredentials a failed assertion gets. Both checks run before
+// the counter is touched, so a refused use leaves no UpdateCredentialCounter
+// call behind.
+//
+//   - A disabled account: deactivation must end access at every entry
+//     point, not just password login (Finding 2, Task 10 fix round 1), even
+//     though the assertion itself verifies against the stored credential.
+//   - A counter that did not advance: go-webauthn does not fail a login when
+//     the signature counter regresses or repeats. Authenticator.UpdateCounter
+//     only sets CloneWarning and leaves SignCount unchanged, and validation
+//     still reports success. Left unchecked, an assertion from a cloned or
+//     rolled-back authenticator would pass with no trace anywhere. It is
+//     logged so an operator can find it, and the stored counter keeps the
+//     last legitimate use rather than being overwritten with the unchanged
+//     value (Finding 1, fix round 1).
+func refuseVerifiedAssertion(ctx context.Context, u User, cred *webauthn.Credential) error {
+	if u.DisabledAt != nil {
+		return ErrInvalidCredentials
+	}
+	if cred.Authenticator.CloneWarning {
+		slog.ErrorContext(ctx, "passkey clone signal: signature counter did not advance",
+			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID))
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
 // openLoginSession advances the credential's counter and opens the login's
 // MFA-complete session, inside the instance transaction FinishLogin runs it
-// in, and only while the credential is still userID's (backlog 7.109).
+// in, and only while the credential is still userID's (claimAssertion,
+// backlog 7.109). A reset that starts after the account lock waits for this
+// transaction and then ends the session it opened.
+func (p *Passkeys) openLoginSession(ctx context.Context, userID uuid.UUID, credentialID []byte, signCount uint32) (string, error) {
+	if err := p.claimAssertion(ctx, userID, credentialID, signCount); err != nil {
+		return "", err
+	}
+	_, cookie, err := p.sessions.Create(ctx, userID, true)
+	if err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+	return cookie, nil
+}
+
+// claimAssertion records a verified use of credentialID as userID's, inside
+// the caller's instance transaction: it advances the credential's counter,
+// and only while the credential is still userID's (backlog 7.109). Sign-in
+// (openLoginSession) and re-authentication (FinishReauth) share it.
 //
 // The assertion was validated against a credential read before this
 // transaction began, and an administrator's second-factor reset may have
@@ -389,32 +413,24 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 // first (Sessions.LockAccount, the key-share lock enrolment takes, in the
 // same order), which waits for a reset in flight, and the credential is
 // re-read afterwards in a statement of its own, which sees what that reset
-// committed. A credential that is gone, or no longer userID's, fails the
-// login with ErrInvalidCredentials — exactly what an unregistered
-// credential gets — and opens nothing. A reset that starts after the lock
-// waits for this transaction and then ends the session it opened.
-func (p *Passkeys) openLoginSession(ctx context.Context, userID uuid.UUID, credentialID []byte, signCount uint32) (string, error) {
+// committed. A credential that is gone, or no longer userID's, is
+// ErrInvalidCredentials — exactly what an unregistered credential gets —
+// and nothing is written.
+func (p *Passkeys) claimAssertion(ctx context.Context, userID uuid.UUID, credentialID []byte, signCount uint32) error {
 	if err := p.sessions.LockAccount(ctx, userID); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return "", ErrInvalidCredentials
+			return ErrInvalidCredentials
 		}
-		return "", err
+		return err
 	}
 	owner, err := p.store.FindUserByCredentialID(ctx, credentialID)
 	if errors.Is(err, ErrNotFound) || (err == nil && owner != userID) {
-		return "", ErrInvalidCredentials
+		return ErrInvalidCredentials
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
-	if err := p.store.UpdateCredentialCounter(ctx, credentialID, signCount); err != nil {
-		return "", err
-	}
-	_, cookie, err := p.sessions.Create(ctx, userID, true)
-	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-	return cookie, nil
+	return p.store.UpdateCredentialCounter(ctx, credentialID, signCount)
 }
 
 // userHandleMismatch is a package-level indirection (mirroring

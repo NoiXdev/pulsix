@@ -166,25 +166,8 @@ type LoginResult struct {
 // call Login or FinishLogin to mint a fresh credential.
 func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	u, err := s.store.GetUserByEmail(ctx, email)
-	if err != nil || u.PasswordHash == nil {
-		// Spend the same argon2id cost a real verification would, so a
-		// missing account (or one without a password) takes the same time
-		// as a wrong-password hit on a real one.
-		_, _ = verifyPassword(dummyHash, password)
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	ok, err := verifyPassword(*u.PasswordHash, password)
-	if err != nil {
-		return LoginResult{}, fmt.Errorf("verify password: %w", err)
-	}
-	if !ok {
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	if u.DisabledAt != nil {
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	if u.TempPasswordExpiresAt != nil && !s.now().Before(*u.TempPasswordExpiresAt) {
-		return LoginResult{}, ErrInvalidCredentials
+	if err := s.checkPassword(u, err != nil, password); err != nil {
+		return LoginResult{}, err
 	}
 	hasFactor, err := s.mfa.Enabled(ctx, u.ID)
 	if err != nil {
@@ -198,6 +181,51 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 		return LoginResult{}, fmt.Errorf("create session: %w", err)
 	}
 	return LoginResult{Cookie: cookie, MFARequired: hasFactor, EnrolmentRequired: !hasFactor}, nil
+}
+
+// VerifyOwnPassword checks password against userID's own account with
+// Login's rules (checkPassword): a wrong password, a disabled account and
+// an expired temporary password are all ErrInvalidCredentials, and an
+// account that has vanished or has no password costs the same argon2id time
+// as a wrong password. It opens no session. The session renewal (backlog
+// 3.93) asks it first, before a factor attempt is spent.
+//
+// Unlike Login it takes the account by id, from the caller's own session,
+// so a lookup failure other than ErrNotFound is the store's and is returned
+// as such rather than folded into a refusal: nobody is probing for accounts
+// here, and an outage must not read as a wrong password.
+func (s *Service) VerifyOwnPassword(ctx context.Context, userID uuid.UUID, password string) error {
+	u, err := s.store.GetUserByID(ctx, userID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("look up the account: %w", err)
+	}
+	return s.checkPassword(u, err != nil, password)
+}
+
+// checkPassword is the password rule Login and VerifyOwnPassword share. u is
+// the account the lookup found; missing reports that it found none.
+//
+// A missing account, or one without a password, still verifies against the
+// dummy hash (timing, see dummyHash). The disabled and expired-temporary
+// checks run only after a successful verification, never instead of it, so
+// every refusal costs the same time and answers the same
+// ErrInvalidCredentials (see Login).
+func (s *Service) checkPassword(u User, missing bool, password string) error {
+	if missing || u.PasswordHash == nil {
+		_, _ = verifyPassword(dummyHash, password)
+		return ErrInvalidCredentials
+	}
+	ok, err := verifyPassword(*u.PasswordHash, password)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	if !ok || u.DisabledAt != nil {
+		return ErrInvalidCredentials
+	}
+	if u.TempPasswordExpiresAt != nil && !s.now().Before(*u.TempPasswordExpiresAt) {
+		return ErrInvalidCredentials
+	}
+	return nil
 }
 
 // Logout revokes the caller's session.

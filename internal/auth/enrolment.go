@@ -28,8 +28,9 @@ type TxRunner interface {
 
 // Enrolment composes the writes that finishing a second factor consists
 // of, the owner's removal of one under the account's exclusive lock
-// (backlog 7.116), and the completion of a session whose code was verified
-// (backlog 7.118). It owns no state of its own: the rule it encodes is that
+// (backlog 7.116), the completion of a session whose code was verified
+// (backlog 7.118), and the renewal that replaces a session (backlog 3.93).
+// It owns no state of its own: the rule it encodes is that
 // these writes commit together, under the account lock.
 type Enrolment struct {
 	totp     *TOTP
@@ -219,4 +220,26 @@ func (e *Enrolment) CompleteVerifiedSession(ctx context.Context, userID, session
 		return "", err
 	}
 	return cookie, nil
+}
+
+// RenewSession replaces userID's session oldID with a new MFA-complete one
+// (Sessions.Replace) in one instance transaction, once the caller has
+// verified the password and a second factor, or a passkey, for userID
+// (backlog 3.93). Like CompleteVerifiedSession it runs after the
+// verification, outside of it, so a rollback here never refunds the attempt
+// a wrong code spent. A session that is no longer live, or is locked, is
+// ErrNotFound and nothing changes.
+func (e *Enrolment) RenewSession(ctx context.Context, userID, oldID uuid.UUID) (RenewedSession, error) {
+	var r RenewedSession
+	err := e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		var err error
+		if r, err = e.sessions.Replace(ctx, userID, oldID); err != nil {
+			return fmt.Errorf("renew the session: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return RenewedSession{}, err
+	}
+	return r, nil
 }

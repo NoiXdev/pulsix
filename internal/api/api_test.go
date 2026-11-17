@@ -164,6 +164,9 @@ func (fakeAuthService) Me(context.Context, auth.Principal) (auth.User, error) {
 	return auth.User{}, nil
 }
 func (fakeAuthService) SetLocale(context.Context, uuid.UUID, *string) error { return nil }
+func (fakeAuthService) VerifyOwnPassword(context.Context, uuid.UUID, string) error {
+	return nil
+}
 
 // testPasskeys builds a *auth.Passkeys with nil store/users/sessions deps,
 // good enough to satisfy api.Deps.validate in tests that never actually

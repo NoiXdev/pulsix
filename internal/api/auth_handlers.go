@@ -21,6 +21,9 @@ import (
 // example Finding 1's forced-revoke-failure test.
 type AuthService interface {
 	Login(ctx context.Context, email, password string) (auth.LoginResult, error)
+	// VerifyOwnPassword checks the signed-in user's own password with
+	// Login's rules, for the session renewal (backlog 3.93).
+	VerifyOwnPassword(ctx context.Context, userID uuid.UUID, password string) error
 	Logout(ctx context.Context, p auth.Principal) error
 	Me(ctx context.Context, p auth.Principal) (auth.User, error)
 	SetLocale(ctx context.Context, userID uuid.UUID, l *string) error

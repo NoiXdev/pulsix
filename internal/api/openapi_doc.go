@@ -77,7 +77,8 @@ type stubAuthService struct{}
 func (stubAuthService) Login(context.Context, string, string) (auth.LoginResult, error) {
 	return auth.LoginResult{}, nil
 }
-func (stubAuthService) Logout(context.Context, auth.Principal) error { return nil }
+func (stubAuthService) VerifyOwnPassword(context.Context, uuid.UUID, string) error { return nil }
+func (stubAuthService) Logout(context.Context, auth.Principal) error               { return nil }
 func (stubAuthService) Me(context.Context, auth.Principal) (auth.User, error) {
 	return auth.User{}, nil
 }

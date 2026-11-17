@@ -471,6 +471,30 @@ func (q *Queries) ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID) er
 	return err
 }
 
+const revokeReplacedSession = `-- name: RevokeReplacedSession :execrows
+UPDATE sessions SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > now() AND locked_at IS NULL
+`
+
+type RevokeReplacedSessionParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// Ends the session a renewal replaces (backlog 3.93), and only while it is
+// still live, unlocked and the account's own: zero rows means there is
+// nothing to replace. Two renewals of one session race on its row; the
+// second re-checks revoked_at once the first commits and matches nothing,
+// so a session is replaced at most once. A locked session is never
+// replaced: a renewal must not keep a locked screen's session alive.
+func (q *Queries) RevokeReplacedSession(ctx context.Context, arg RevokeReplacedSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeReplacedSession, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSession = `-- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1
 `
