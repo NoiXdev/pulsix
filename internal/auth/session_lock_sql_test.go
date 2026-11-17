@@ -63,6 +63,28 @@ func TestLookupCarriesLockAndExpiry(t *testing.T) {
 	}
 }
 
+// TestReplaceReportsTheStoredExpiry pins that a renewal answers the expiry
+// the database keeps: Postgres stores microseconds, so a clock with
+// nanoseconds (Linux) must not leak into the answer, or the renewal and
+// /auth/me disagree about when the same session ends.
+func TestReplaceReportsTheStoredExpiry(t *testing.T) {
+	ctx, q, _, uid, id, _ := newLockFixture(t)
+	nanos := time.Date(2026, 11, 17, 10, 0, 0, 123456789, time.UTC)
+	s := auth.NewSessions(q, func() time.Time { return nanos })
+
+	renewed, err := s.Replace(ctx, uid, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Lookup(ctx, renewed.Cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.ExpiresAt.Equal(p.ExpiresAt) {
+		t.Fatalf("Replace answered %v, the stored expiry is %v", renewed.ExpiresAt, p.ExpiresAt)
+	}
+}
+
 func TestStillValidRefusesLockedSession(t *testing.T) {
 	ctx, q, s, _, id, _ := newLockFixture(t)
 

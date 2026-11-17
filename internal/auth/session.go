@@ -98,7 +98,9 @@ func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 	if err != nil {
 		return RenewedSession{}, err
 	}
-	expiresAt := s.now().Add(SessionTTL)
+	// Postgres keeps microseconds: the expiry is cut to that before it is
+	// stored, so what this returns is what /auth/me later reads back.
+	expiresAt := s.now().Add(SessionTTL).Truncate(time.Microsecond)
 	err = s.q.CreateSession(ctx, gen.CreateSessionParams{
 		ID: id, UserID: userID, SecretHash: sum, MfaComplete: mfaComplete,
 		ExpiresAt: expiresAt,
