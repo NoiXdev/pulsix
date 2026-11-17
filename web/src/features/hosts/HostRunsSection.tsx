@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Section } from '../../ui/detail-layout.tsx';
+import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { runColumns } from '../runs/runColumns.tsx';
@@ -21,9 +22,10 @@ const RECENT = 5;
  */
 export function HostRunsSection({ org, hostId }: { org: string; hostId: string }) {
   const t = useT();
+  const fmt = useFormat();
   const jobs = useJobs(org, { host: hostId, limit: RECENT });
   const rows = (jobs.data?.pages[0]?.jobs ?? []).slice(0, RECENT);
-  const columns = runColumns(t);
+  const columns = runColumns(t, fmt);
   const view = useListView('host-runs', columns, { mode: 'client', urlState: false, rowKey: (j) => j.id });
   const { visibleColumns, onVisibleColumnsChange, defaultColumns, density } = view.listProps(undefined, () => '');
 

@@ -1,9 +1,9 @@
 import type { Schedule } from '../../api/types.ts';
-import { useDeleteSchedule, useScheduleAction } from '../../api/hooks/useSchedules.ts';
+import { useScheduleAction } from '../../api/hooks/useSchedules.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { RowAction } from '../../ui/data-list/index.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
+import { useDeleteScheduleCommand } from './useDeleteScheduleCommand.ts';
 
 export interface ScheduleActionsOptions {
   canWrite: boolean;
@@ -23,8 +23,7 @@ export function useScheduleActions(org: string, opts: ScheduleActionsOptions): (
   const t = useT();
   const m = t.schedules;
   const toast = useToast();
-  const ask = useConfirm();
-  const remove = useDeleteSchedule(org);
+  const remove = useDeleteScheduleCommand(org);
   const pause = useScheduleAction(org, 'pause');
   const resume = useScheduleAction(org, 'resume');
 
@@ -37,13 +36,7 @@ export function useScheduleActions(org: string, opts: ScheduleActionsOptions): (
   }
 
   async function del(s: Schedule) {
-    if (!(await ask({ message: m.editor.deleteConfirm(s.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(s.id);
-      opts.deleted(s.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : m.editor.deleteFailed, 'destructive');
-    }
+    if (await remove.run(s)) opts.deleted(s.id);
   }
 
   return (s) =>

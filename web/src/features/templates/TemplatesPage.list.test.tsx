@@ -15,11 +15,11 @@ const template = (name: string, over: Record<string, unknown> = {}) => ({
   limit: '', extra_vars: {}, revision: 1, vars_mode: 'off', created_at: '', updated_at: '', ...over,
 });
 
-function setup(over: Record<string, unknown> = {}, started: string[] = []) {
+function setup(over: Record<string, unknown> = {}, started: string[] = [], role = 'operator') {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
-    'GET /api/v1/orgs/acme': ORG,
+    'GET /api/v1/orgs/acme': { org: { ...ORG.org, role } },
     'GET /api/v1/orgs/acme/job-templates': { templates: numbered('tpl', 30).map((n) => template(n, over)) },
     'GET /api/v1/orgs/acme/playbooks': { playbooks: [{ id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' }] },
     'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
@@ -94,5 +94,21 @@ describe('TemplatesPage list', () => {
     expect(await screen.findByText('26–30 of 30 templates')).toBeInTheDocument();
     await pickOption(screen, 'Rows per page', '10');
     expect(await screen.findByText('1–10 of 30 templates')).toBeInTheDocument();
+  });
+
+  it('offers a viewer only Variables, Triggers and Schedules', async () => {
+    const user = userEvent.setup();
+    setup({}, [], 'viewer');
+    await screen.findByText('1–25 of 30 templates');
+    await openRowMenu(user, 'tpl30');
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Variables', 'Triggers', 'Schedules']);
+  });
+
+  it('offers no Delete for an installation-managed template', async () => {
+    const user = userEvent.setup();
+    setup({ shared_template_id: 'shared-1' });
+    await screen.findByText('1–25 of 30 templates');
+    await openRowMenu(user, 'tpl30');
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Run', 'Variables', 'Triggers', 'Schedules', 'Edit']);
   });
 });

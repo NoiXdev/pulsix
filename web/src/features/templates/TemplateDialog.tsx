@@ -12,7 +12,8 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { usePickRepoPlaybook } from '../../api/hooks/useRepos.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
-import { useCreateTemplate, useDeleteTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
+import { useDeleteTemplateCommand } from './useDeleteTemplateCommand.ts';
+import { useCreateTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
 import { problemsFromError } from '../variables/paths.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
@@ -27,7 +28,6 @@ import { echoedVars } from './vars.ts';
 import { mergeScope, mergeSetting, mergeVaultRows } from './rebase.ts';
 import { FollowUpsField } from './FollowUpsField.tsx';
 import { existingOf, type Existing } from './existing.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
 
 export interface TemplateDialogProps {
   org: string;
@@ -122,10 +122,9 @@ function TemplateForm({
 }) {
   const t = useT();
   const toast = useToast();
-  const ask = useConfirm();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
-  const remove = useDeleteTemplate(org);
+  const remove = useDeleteTemplateCommand(org);
   // Set means this row is a projection of an installation-owned definition
   // (spec v0.2f decision 1): name, playbook, limit, extra vars and their
   // schema are the definition's own, refused on write by templates.Service.
@@ -334,14 +333,7 @@ function TemplateForm({
               variant="destructive"
               disabled={remove.isPending}
               onClick={async () => {
-                if (!(await ask({ message: t.templates.dialog.confirmDelete(existing.name), confirmLabel: t.common.delete, destructive: true }))) return;
-                try {
-                  await remove.mutateAsync(existing.id);
-                  toast.show(t.templates.dialog.deleted(existing.name));
-                  onClose();
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : t.templates.dialog.deleteFailed, 'destructive');
-                }
+                if (await remove.run(existing)) onClose();
               }}
             >
               {t.common.delete}

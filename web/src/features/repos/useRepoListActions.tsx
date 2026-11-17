@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import type { Credential, Repo } from '../../api/types.ts';
-import { useDeleteRepo, useSyncRepo } from '../../api/hooks/useRepos.ts';
+import { useSyncRepo } from '../../api/hooks/useRepos.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { RowAction } from '../../ui/data-list/index.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
+import { useDeleteRepoCommand } from './useDeleteRepoCommand.ts';
 import { RepoDialog } from './RepoDialog.tsx';
 
 type OpenDialog = { kind: 'edit' | 'triggers'; repo: Repo } | { kind: 'new' };
@@ -27,41 +27,39 @@ export function useRepoListActions(org: string, opts: RepoListActionsOptions): {
   const t = useT();
   const navigate = useNavigate();
   const toast = useToast();
-  const ask = useConfirm();
   const sync = useSyncRepo(org);
-  const remove = useDeleteRepo(org);
+  const remove = useDeleteRepoCommand(org);
+  const [syncing, setSyncing] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const close = () => setDialog(null);
 
   async function startSync(repo: Repo) {
+    if (syncing.has(repo.id)) return;
+    setSyncing((p) => new Set(p).add(repo.id));
     try {
       const { job } = await sync.mutateAsync(repo.id);
       toast.show(t.repos.list.syncStarted(repo.name));
       void navigate({ to: '/o/$org/runs/$id', params: { org, id: job.id } });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.repos.list.syncError, 'destructive');
-    }
-  }
-
-  async function deleteRepo(repo: Repo) {
-    if (!(await ask({ message: t.repos.dialog.confirmDelete(repo.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(repo.id);
-      toast.show(t.repos.dialog.deleted(repo.name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.repos.dialog.deleteFailed, 'destructive');
+    } finally {
+      setSyncing((p) => {
+        const next = new Set(p);
+        next.delete(repo.id);
+        return next;
+      });
     }
   }
 
   function rowActions(repo: Repo): RowAction[] {
     const items: RowAction[] = [];
-    if (opts.canWrite) items.push({ id: 'sync', label: t.repos.list.sync, onSelect: () => void startSync(repo), disabled: sync.isPending });
+    if (opts.canWrite) items.push({ id: 'sync', label: t.repos.list.sync, onSelect: () => void startSync(repo), disabled: syncing.has(repo.id) });
     items.push({ id: 'triggers', label: t.repos.list.triggers, onSelect: () => setDialog({ kind: 'triggers', repo }) });
     if (opts.canWrite) items.push({ id: 'edit', label: t.common.edit, onSelect: () => setDialog({ kind: 'edit', repo }) });
     // A projection of an installation-owned definition cannot be deleted
     // here (decision 6 refuses it server-side regardless).
     if (opts.canWrite && !repo.shared_repo_id) {
-      items.push({ id: 'delete', label: t.common.delete, destructive: true, onSelect: () => void deleteRepo(repo), disabled: remove.isPending });
+      items.push({ id: 'delete', label: t.common.delete, destructive: true, onSelect: () => void remove.run(repo), disabled: remove.isPending });
     }
     return items;
   }

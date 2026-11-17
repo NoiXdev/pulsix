@@ -19,6 +19,7 @@ import { runColumns } from './runColumns.tsx';
 import { isCancellable, kindLabel, shortId, statusLabel } from './status.ts';
 import { TRIGGERS, triggerLabel } from './trigger.ts';
 import { useCancelRuns } from './useCancelRun.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 
 const STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'error'];
@@ -46,6 +47,7 @@ interface RunsSearch {
  */
 export function RunsPage() {
   const t = useT();
+  const fmt = useFormat();
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as RunsSearch;
@@ -57,7 +59,7 @@ export function RunsPage() {
   const pendingRequests = usePendingRunRequestCount(org);
   const cancel = useCancelRuns(org);
 
-  const columns = runColumns(t);
+  const columns = runColumns(t, fmt);
   const view = useListView('runs', columns, { mode: 'server', resetKey: JSON.stringify(filter) });
   const jobs = useJobsPage(org, filter, view.serverQuery, { enabled: view.ready });
 

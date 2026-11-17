@@ -55,7 +55,6 @@ describe('SchedulesPage', () => {
   it('lists schedules with template, cron, human text and last result', async () => {
     mockApi({
       ...base,
-      'GET /api/v1/auth/me/preferences': { density: 'comfortable', page_size: 25, lists: {} },
       'GET /api/v1/orgs/acme/schedules': {
         schedules: [
           schedule({ notify_on: ['failure', 'skipped'] }),
@@ -66,7 +65,7 @@ describe('SchedulesPage', () => {
     renderPage();
     const row = (await screen.findByText('Nightly OS patching')).closest('[role="row"]') as HTMLElement;
     expect(within(row).getByText('0 3 * * 2,4')).toBeInTheDocument();
-    expect(within(row).getByText('Tue, Thu at 03:00')).toBeInTheDocument();
+    expect(within(row).getByText(/Tue, Thu at 03:00/)).toBeInTheDocument();
     expect(within(row).getByText('patch-all')).toBeInTheDocument();
     expect(within(row).getByText('triggered')).toBeInTheDocument();
     // 2.73: the list itself shows each schedule's notify categories,

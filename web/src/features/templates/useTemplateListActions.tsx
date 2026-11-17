@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import type { Template } from '../../api/types.ts';
-import { useDeleteTemplate, useRunTemplateById } from '../../api/hooks/useTemplates.ts';
+import { useRunTemplateById } from '../../api/hooks/useTemplates.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { RowAction } from '../../ui/data-list/index.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import { RunWithFollowUpsDialog } from './RunWithFollowUpsDialog.tsx';
 import { TemplateDialog } from './TemplateDialog.tsx';
+import { useDeleteTemplateCommand } from './useDeleteTemplateCommand.ts';
 
 type OpenDialog = { kind: 'new' } | { kind: 'edit' | 'triggers' | 'followUps'; template: Template };
 
@@ -31,9 +31,8 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
   const t = useT();
   const navigate = useNavigate();
   const toast = useToast();
-  const ask = useConfirm();
   const runTemplate = useRunTemplateById(org);
-  const remove = useDeleteTemplate(org);
+  const remove = useDeleteTemplateCommand(org);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const close = () => setDialog(null);
 
@@ -52,16 +51,6 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
     }
   }
 
-  async function deleteTemplate(tpl: Template) {
-    if (!(await ask({ message: t.templates.dialog.confirmDelete(tpl.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(tpl.id);
-      toast.show(t.templates.dialog.deleted(tpl.name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.templates.dialog.deleteFailed, 'destructive');
-    }
-  }
-
   function rowActions(tpl: Template): RowAction[] {
     const items: RowAction[] = [];
     if (opts.canRun) items.push({ id: 'run', label: t.templates.list.run, onSelect: () => void run(tpl), disabled: runTemplate.isPending });
@@ -76,7 +65,7 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
     );
     if (opts.canWrite) items.push({ id: 'edit', label: t.common.edit, onSelect: () => setDialog({ kind: 'edit', template: tpl }) });
     if (opts.canWrite && !tpl.shared_template_id) {
-      items.push({ id: 'delete', label: t.common.delete, destructive: true, onSelect: () => void deleteTemplate(tpl), disabled: remove.isPending });
+      items.push({ id: 'delete', label: t.common.delete, destructive: true, onSelect: () => void remove.run(tpl), disabled: remove.isPending });
     }
     return items;
   }

@@ -8,14 +8,14 @@ import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
-import { useCreateRepo, useClearRepoKey, useDeleteRepo, useUpdateRepo } from '../../api/hooks/useRepos.ts';
+import { useCreateRepo, useClearRepoKey, useUpdateRepo } from '../../api/hooks/useRepos.ts';
 import type { Credential, VaultIdentity } from '../../api/types.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { kindName } from '../credentials/labels.ts';
 import { useT } from '../../i18n/useT.ts';
 import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
 import { repoErrorsFromServer, validateRepoInput, type RepoFormValues } from './validate.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
+import { useDeleteRepoCommand } from './useDeleteRepoCommand.ts';
 
 export interface RepoDialogProps {
   org: string;
@@ -55,10 +55,9 @@ type FieldErrors = Partial<Record<keyof RepoFormValues, string>>;
 export function RepoDialog({ org, repo, credentials, canCreateCredential, onClose }: RepoDialogProps) {
   const t = useT();
   const toast = useToast();
-  const ask = useConfirm();
   const create = useCreateRepo(org);
   const update = useUpdateRepo(org, repo?.id ?? '');
-  const remove = useDeleteRepo(org);
+  const remove = useDeleteRepoCommand(org);
   const clearKey = useClearRepoKey(org, repo?.id ?? '');
   // Set means this row is a projection of an installation-owned definition
   // (spec v0.2f decision 1): name, url, branch and subpath are the
@@ -233,14 +232,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
               variant="destructive"
               disabled={remove.isPending}
               onClick={async () => {
-                if (!(await ask({ message: t.repos.dialog.confirmDelete(repo.name), confirmLabel: t.common.delete, destructive: true }))) return;
-                try {
-                  await remove.mutateAsync(repo.id);
-                  toast.show(t.repos.dialog.deleted(repo.name));
-                  onClose();
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : t.repos.dialog.deleteFailed, 'destructive');
-                }
+                if (await remove.run(repo)) onClose();
               }}
             >
               {t.common.delete}

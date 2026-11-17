@@ -57,10 +57,10 @@ export function scheduleColumns({ t, templateName, now }: ScheduleColumnsContext
       sortKey: 'cron',
       sortValue: (s) => s.cron,
       defaultVisible: true,
-      render: (s, { density }) => (
-        <span className="flex min-w-0 flex-col">
-          <span className="truncate font-mono">{s.cron}</span>
-          {s.description && density === 'comfortable' && <span className={`truncate text-muted-foreground ${CELL_MINOR}`}>{s.description}</span>}
+      render: (s) => (
+        <span className="block truncate">
+          <span className="font-mono">{s.cron}</span>
+          {s.description && <span className={`text-muted-foreground ${CELL_MINOR}`}> · {s.description}</span>}
         </span>
       ),
     },

@@ -60,6 +60,7 @@ describe('HostRunsSection', () => {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: 'Kind' })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-list-row] [title]')?.getAttribute('title')).toMatch(/2026/);
     expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Rows per page')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();

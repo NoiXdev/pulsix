@@ -163,6 +163,20 @@ describe('RunsPage', () => {
     expect(router.state.location.search).toMatchObject({ sort: 'created', order: 'asc' });
   });
 
+  it('shows Created as a relative time with the full date as its title', async () => {
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job()], next_cursor: '', total: 1 },
+    });
+    renderPage();
+    const link = await screen.findByRole('link', { name: '0197c0a2' });
+    const created = (link.closest('[role="row"]') as HTMLElement).querySelector('[title]') as HTMLElement;
+    expect(created.getAttribute('title')).toMatch(/2026/);
+    expect(created.textContent).toMatch(/ago|year|month/);
+    expect(created.textContent).not.toMatch(/2026-09-15/);
+  });
+
   it.each([
     ['Status', 'status'],
     ['Kind', 'kind'],

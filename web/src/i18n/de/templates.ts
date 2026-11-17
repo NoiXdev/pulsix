@@ -5,8 +5,8 @@ export const deTemplates: Messages['templates'] = {
     title: 'Job-Vorlagen',
     summary: (n: number) =>
       n === 1
-        ? '1 Vorlage · ein Playbook, sein Geltungsbereich, seine Extra-Variablen und eine Schaltfläche zum Ausführen'
-        : `${n} Vorlagen · ein Playbook, sein Geltungsbereich, seine Extra-Variablen und eine Schaltfläche zum Ausführen`,
+        ? '1 Vorlage · ein Playbook, sein Geltungsbereich und seine Extra-Variablen; ausführen im Zeilenmenü'
+        : `${n} Vorlagen · ein Playbook, sein Geltungsbereich und seine Extra-Variablen; ausführen im Zeilenmenü`,
     add: 'Vorlage hinzufügen',
     label: 'Job-Vorlagen',
     count: (n: number) => (n === 1 ? '1 Vorlage' : `${n} Vorlagen`),

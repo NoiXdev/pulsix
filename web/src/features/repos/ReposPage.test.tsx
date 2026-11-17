@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -263,6 +263,23 @@ describe('ReposPage', () => {
     renderPage();
     await chooseRowAction(user, 'infra', 'Sync');
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+  });
+
+  it('keeps Sync usable on other rows while one sync is running', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [repo(), repo({ id: 'r2', name: 'other' })] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+      'POST /api/v1/orgs/acme/repos/r1/sync': () => new Promise(() => {}),
+    });
+    renderPage();
+    await chooseRowAction(user, 'infra', 'Sync');
+    await openRowMenu(user, 'infra');
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Sync' })).toHaveAttribute('aria-disabled', 'true'));
+    await user.keyboard('{Escape}');
+    await openRowMenu(user, 'other');
+    expect(screen.getByRole('menuitem', { name: 'Sync' })).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('edits a repository through the dialog', async () => {

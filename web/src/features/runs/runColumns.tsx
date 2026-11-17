@@ -1,4 +1,5 @@
 import type { Job } from '../../api/types.ts';
+import type { Format } from '../../i18n/format.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
@@ -10,9 +11,9 @@ import { triggerLabel } from './trigger.ts';
  * server sorts by created (the default, newest first), status, kind and
  * trigger; the template is not sortable (the list carries only its id).
  * "Created" is the run's created_at: when it was asked for, not when a
- * worker started it.
+ * worker started it; it reads as a relative time with the full date as title.
  */
-export function runColumns(t: Messages): DataListColumn<Job>[] {
+export function runColumns(t: Messages, fmt: Pick<Format, 'relative' | 'dateTime'>): DataListColumn<Job>[] {
   const c = t.runs.list.columns;
   return [
     {
@@ -71,7 +72,11 @@ export function runColumns(t: Messages): DataListColumn<Job>[] {
       width: '130px',
       sortKey: 'created',
       defaultVisible: true,
-      render: (j) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{j.created_at.slice(0, 16).replace('T', ' ')}</span>,
+      render: (j) => (
+        <span className={`text-muted-foreground ${CELL_MINOR}`} title={fmt.dateTime(j.created_at)}>
+          {fmt.relative(j.created_at)}
+        </span>
+      ),
     },
   ];
 }
