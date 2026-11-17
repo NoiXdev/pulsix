@@ -4,9 +4,11 @@ import { mmss, useCountdown } from './useCountdown.ts';
 
 /**
  * RenewBanner is what RenewDialog collapses into on "Later" or Escape: a
- * non-modal strip at the top with the countdown and a way back to the
- * dialog, so the page stays usable while the end approaches. It stays until
- * the session is renewed or ends.
+ * non-modal strip with the countdown and a way back to the dialog, so the
+ * page stays usable while the end approaches. It sits in the normal flow
+ * (AppShell's notice slot, see ExpiryNotice.tsx), taking its own space
+ * instead of covering the header's controls. It stays until the session is
+ * renewed or ends.
  */
 export function RenewBanner({ expiresAtMs, onRenew }: { expiresAtMs: number; onRenew: () => void }) {
   const t = useT();
@@ -14,7 +16,7 @@ export function RenewBanner({ expiresAtMs, onRenew }: { expiresAtMs: number; onR
   return (
     <div
       role="status"
-      className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-sm text-foreground"
+      className="flex shrink-0 items-center justify-center gap-3 border-b border-border bg-card px-4 py-2 text-sm text-foreground"
     >
       <span>
         {t.session.bannerText} <span className="font-mono">{mmss(left)}</span>

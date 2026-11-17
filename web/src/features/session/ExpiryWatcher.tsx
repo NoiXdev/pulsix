@@ -8,6 +8,7 @@ import { onSessionMessage } from '../lock/lockChannel.ts';
 import { markRenewed } from '../../lib/sessionEnd.ts';
 import { RenewBanner } from './RenewBanner.tsx';
 import { RenewDialog } from './RenewDialog.tsx';
+import { useExpiryNotice } from './expiryNotice.ts';
 
 /** How long before the session ends the warning appears. */
 const WARN_MS = 5 * 60 * 1000;
@@ -17,7 +18,8 @@ const IDLE_CHECK_MS = 30 * 1000;
 
 /**
  * ExpiryWatcher counts the session down (backlog 3.93). Five minutes before
- * `session_expires_at` it shows RenewDialog; at zero it drops the cached
+ * `session_expires_at` it shows RenewDialog, which "Later" collapses into
+ * RenewBanner (drawn through ExpiryNoticeContext); at zero it drops the cached
  * data and sends the person to /login with a notice. RootLayout mounts it
  * only for an unlocked, MFA-complete session on a page that has one.
  *
@@ -37,6 +39,18 @@ export function ExpiryWatcher() {
   // expiry) brings the dialog back at the next warning without a reset.
   const [laterFor, setLaterFor] = useState<number | null>(null);
   const updatedAt = me.dataUpdatedAt;
+  const notice = useExpiryNotice();
+  const setBanner = notice?.setBanner;
+  const collapsed = warn && !Number.isNaN(expiresAtMs) && laterFor === expiresAtMs;
+
+  // The collapsed warning is drawn by the page shell (ExpiryNotice.tsx), in
+  // the flow below its header; hand it over, and take it back when the
+  // warning ends or this watcher goes away (a lock, the session's end).
+  useEffect(() => {
+    if (!setBanner) return;
+    setBanner(collapsed ? { expiresAtMs, onRenew: () => setLaterFor(null) } : null);
+    return () => setBanner(null);
+  }, [setBanner, collapsed, expiresAtMs]);
 
   useEffect(() => {
     if (Number.isNaN(expiresAtMs)) return;
@@ -97,7 +111,7 @@ export function ExpiryWatcher() {
 
   if (!warn || Number.isNaN(expiresAtMs)) return null;
   if (laterFor === expiresAtMs) {
-    return <RenewBanner expiresAtMs={expiresAtMs} onRenew={() => setLaterFor(null)} />;
+    return notice ? null : <RenewBanner expiresAtMs={expiresAtMs} onRenew={() => setLaterFor(null)} />;
   }
   return (
     <RenewDialog expiresAtMs={expiresAtMs} onRenewed={() => setWarn(false)} onLater={() => setLaterFor(expiresAtMs)} />

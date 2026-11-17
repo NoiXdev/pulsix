@@ -9,6 +9,7 @@ import { LockScreen } from '../features/lock/LockScreen.tsx';
 import { onSessionMessage } from '../features/lock/lockChannel.ts';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { ExpiryWatcher } from '../features/session/ExpiryWatcher.tsx';
+import { ExpiryNoticeFallback, ExpiryNoticeProvider } from '../features/session/ExpiryNotice.tsx';
 import { LockStateContext } from '../features/lock/lockState.ts';
 
 /** Where a refusal for a pending password change does not take the person:
@@ -126,10 +127,15 @@ export function RootLayout() {
         // The confirm dialog lives here, not above the router, so a lock
         // unmounts it (its question resolves false) with the page it came from.
         <ConfirmProvider>
-          <Outlet />
-          {/* A session that must change its password cannot renew: the renew
-              routes refuse it, so the dialog could only fail. */}
-          {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
+          {/* The collapsed expiry warning goes into the page shell's notice
+              slot; on a page without one, the fallback draws it on top. */}
+          <ExpiryNoticeProvider>
+            <ExpiryNoticeFallback />
+            <Outlet />
+            {/* A session that must change its password cannot renew: the renew
+                routes refuse it, so the dialog could only fail. */}
+            {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
+          </ExpiryNoticeProvider>
         </ConfirmProvider>
       )}
     </LockStateContext.Provider>

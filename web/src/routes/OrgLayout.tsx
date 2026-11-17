@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
+import { ExpiryNotice } from '../features/session/ExpiryNotice.tsx';
 import { AppShell } from '../ui/shell.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
@@ -70,7 +71,12 @@ export function OrgLayout() {
 
   return (
     <AppShell
-      notice={<VersionWatcher />}
+      notice={
+        <>
+          <ExpiryNotice />
+          <VersionWatcher />
+        </>
+      }
       org={{ slug: orgSlug, name: org.data.org.name, role: org.data.org.role }}
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => {
