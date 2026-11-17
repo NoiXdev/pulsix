@@ -77,6 +77,7 @@ export function tokenColumns(t: Messages, fmt: Format): DataListColumn<Token>[] 
           {isExpired(r.expires_at) && (
             <span title={t.tokens.expiredHint}>
               <Pill tone="unknown">{t.tokens.expired}</Pill>
+              <span className="sr-only">. {t.tokens.expiredHint}</span>
             </span>
           )}
         </span>
