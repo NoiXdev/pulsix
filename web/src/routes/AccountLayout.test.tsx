@@ -178,7 +178,7 @@ describe('AccountLayout', () => {
     const nav = await screen.findByRole('navigation', { name: 'Settings' });
     expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
     expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
-    expect(within(nav).getByText('Owner')).toBeInTheDocument();
+    expect(within(nav).getByText('Owner · Acme')).toBeInTheDocument();
     expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Back to Acme', 'Security', 'Appearance', 'Profile', 'My activity']);
     expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
@@ -192,7 +192,7 @@ describe('AccountLayout', () => {
 
     const nav = await screen.findByRole('navigation', { name: 'Settings' });
     expect(within(nav).getByRole('link', { name: 'Back to Beta' })).toHaveAttribute('href', '/o/beta/hosts');
-    expect(within(nav).getByText('Viewer')).toBeInTheDocument();
+    expect(within(nav).getByText('Viewer · Beta')).toBeInTheDocument();
   });
 
   it('falls back to the first organization when the remembered one is not one of theirs', async () => {

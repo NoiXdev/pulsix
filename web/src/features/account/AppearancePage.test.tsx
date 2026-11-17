@@ -86,26 +86,42 @@ describe('AppearancePage', () => {
     await waitFor(() => expect(puts).toEqual([{ density: 'standard', page_size: 50, lists: {} }]));
   });
 
-  it('lists the saved column choices and resets one list with a single save', async () => {
+  it('lists every list with its state and resets one list with a single save', async () => {
     const user = userEvent.setup();
-    setup({ lists: { hosts: { columns: ['name', 'zone'] }, runs: { columns: ['run'] }, gone: { columns: ['x'] } } });
+    setup({ lists: { hosts: { columns: ['name', 'zone'] }, gone: { columns: ['x'] } } });
 
-    expect(await screen.findByText('Hosts')).toBeInTheDocument();
-    expect(screen.getByText('Runs')).toBeInTheDocument();
+    const hosts = (await screen.findByText('Hosts')).closest('li') as HTMLElement;
+    await waitFor(() => expect(within(hosts).getByText('2 of 10 columns')).toBeInTheDocument());
+    const runs = screen.getByText('Runs').closest('li') as HTMLElement;
+    expect(within(runs).getByText('Standard')).toBeInTheDocument();
+    expect(within(runs).getByRole('button', { name: 'Reset Runs' })).toBeDisabled();
     // A list this build does not know is shown as its id.
-    expect(screen.getByText('gone')).toBeInTheDocument();
+    const gone = (await screen.findByText('gone')).closest('li') as HTMLElement;
+    expect(within(gone).getByText('1 columns')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Reset Hosts' }));
 
-    await waitFor(() =>
-      expect(puts).toEqual([{ density: 'standard', page_size: 25, lists: { runs: { columns: ['run'] }, gone: { columns: ['x'] } } }]),
-    );
-    await waitFor(() => expect(screen.queryByText('Hosts')).not.toBeInTheDocument());
+    await waitFor(() => expect(puts).toEqual([{ density: 'standard', page_size: 25, lists: { gone: { columns: ['x'] } } }]));
+    await waitFor(() => expect(within(hosts).getByText('Standard')).toBeInTheDocument());
   });
 
-  it('says so when no list has its own columns', async () => {
+  it('says why the controls are disabled when the saved settings could not be loaded', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en' },
+      'GET /api/v1/auth/me/preferences': () =>
+        new Response(JSON.stringify({ detail: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    });
+    renderRoutes([{ path: '/appearance', component: AppearancePage }], '/o/acme/appearance');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be loaded');
+    expect(screen.getByRole('radio', { name: /Compact/ })).toBeDisabled();
+  });
+
+  it('shows no such hint while the settings are loading or once they loaded', async () => {
     setup();
-    expect(await screen.findByText('No list has its own columns yet.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Standard/ })).toBeEnabled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('has the language card, moved here from the security page', async () => {

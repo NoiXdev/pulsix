@@ -6,7 +6,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { usePreferences, useSavePreferences, type PreferencesUpdate } from '../../api/hooks/usePreferences.ts';
 import type { Density, PageSize } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
-import { listName } from '../lists/registry.ts';
+import { LIST_COLUMNS, listName } from '../lists/registry.ts';
 import { cn } from '../../lib/utils.ts';
 import { LanguageCard } from './LanguageCard.tsx';
 
@@ -29,14 +29,23 @@ const PREVIEW: Record<Density, { rows: number; height: number }> = {
 export function AppearancePage() {
   const t = useT();
   const toast = useToast();
-  const { prefs, loaded } = usePreferences();
+  const { prefs, loaded, ready } = usePreferences();
   const save = useSavePreferences();
 
   function change(update: PreferencesUpdate) {
     save(update).catch(() => toast.show(t.appearance.saveFailed, 'destructive'));
   }
 
-  const saved = Object.keys(prefs.lists);
+  // Every list the app has, then any saved id this build does not know.
+  const known = Object.keys(LIST_COLUMNS);
+  const lists = [...known, ...Object.keys(prefs.lists).filter((id) => !known.includes(id))];
+
+  function state(id: string): string {
+    const columns = Object.hasOwn(prefs.lists, id) ? prefs.lists[id].columns : null;
+    if (!columns) return t.appearance.columns.standard;
+    const total = Object.hasOwn(LIST_COLUMNS, id) ? LIST_COLUMNS[id as keyof typeof LIST_COLUMNS].length : 0;
+    return total > 0 ? t.appearance.columns.state(columns.length, total) : t.appearance.columns.own(columns.length);
+  }
 
   return (
     <>
@@ -46,6 +55,11 @@ export function AppearancePage() {
       </div>
 
       <div className="flex max-w-[760px] flex-col gap-4">
+        {ready && !loaded && (
+          <p role="alert" className="rounded-md border border-destructive/40 px-3 py-2 text-xs text-destructive">
+            {t.appearance.loadFailed}
+          </p>
+        )}
         <Card>
           <div className="flex flex-col gap-3 p-4">
             <h2 className="text-sm font-semibold">{t.appearance.density.title}</h2>
@@ -75,30 +89,31 @@ export function AppearancePage() {
           <div className="flex flex-col gap-3 p-4">
             <h2 className="text-sm font-semibold">{t.appearance.columns.title}</h2>
             <p className="text-[11px] text-muted-foreground">{t.appearance.columns.hint}</p>
-            {saved.length === 0 ? (
-              <p className="text-xs text-muted-foreground">{t.appearance.columns.none}</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {saved.map((id) => (
-                  <li key={id} className="flex items-center justify-between gap-3 py-2">
-                    <span className="text-[13px]">{listName(id, t)}</span>
+            <ul className="flex flex-col divide-y divide-border">
+              {lists.map((id) => {
+                const own = Object.hasOwn(prefs.lists, id);
+                return (
+                  <li key={id} className="flex items-center gap-3 py-2">
+                    <span className="flex-1 text-[13px]">{listName(id, t)}</span>
+                    <span className="text-xs text-muted-foreground">{state(id)}</span>
                     <Button
                       variant="default"
                       aria-label={t.appearance.columns.resetAria(listName(id, t))}
+                      disabled={!own || !loaded}
                       onClick={() =>
                         change((p) => {
-                          const lists = { ...p.lists };
-                          delete lists[id];
-                          return { ...p, lists };
+                          const next = { ...p.lists };
+                          delete next[id];
+                          return { ...p, lists: next };
                         })
                       }
                     >
                       {t.appearance.columns.reset}
                     </Button>
                   </li>
-                ))}
-              </ul>
-            )}
+                );
+              })}
+            </ul>
           </div>
         </Card>
       </div>

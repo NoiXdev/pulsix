@@ -4,6 +4,7 @@ export const deAccount: Messages['account'] = {
   nav: {
     label: 'Einstellungen',
     back: (org: string) => `Zurück zu ${org}`,
+    roleIn: (role: string, org: string) => `${role} · ${org}`,
     security: 'Sicherheit',
     appearance: 'Darstellung',
     profile: 'Profil',

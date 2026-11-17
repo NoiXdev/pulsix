@@ -11,7 +11,7 @@ import { LOCALES, LOCALE_NAMES, isLocale } from '../../i18n/types.ts';
 const INSTANCE_DEFAULT = 'default';
 
 /**
- * LanguageCard is the account page's language choice: the instance
+ * LanguageCard is the language choice on the Appearance page: the instance
  * default, or one of the languages for this user on every device (PUT
  * /auth/me/locale through useLocale().setLocale, which switches the whole
  * shell as soon as the server has it). The instance default's name comes

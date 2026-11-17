@@ -340,7 +340,7 @@ describe('recovery codes', () => {
 });
 
 describe('the Language card', () => {
-  it('moved to Appearance: neither the account page nor enrolment offers it', async () => {
+  it('moved to Appearance: the security page no longer offers it', async () => {
     const ME = {
       user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
       mfa_complete: true,

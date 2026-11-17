@@ -81,7 +81,7 @@ export function AccountLayout() {
       settingsNav={{
         backOrg: { slug: backOrg.slug, name: backOrg.name, role: backOrg.role },
         personName: me.data.user.display_name,
-        personRole: roleLabel(t, backOrg.role),
+        personRole: t.account.nav.roleIn(roleLabel(t, backOrg.role), backOrg.name),
       }}
       onLockSession={lockAction.lock}
       crumbs={

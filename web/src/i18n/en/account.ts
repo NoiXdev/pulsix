@@ -10,6 +10,7 @@ export const enAccount = {
   nav: {
     label: 'Settings',
     back: (org: string) => `Back to ${org}`,
+    roleIn: (role: string, org: string) => `${role} · ${org}`,
     security: 'Security',
     appearance: 'Appearance',
     profile: 'Profile',

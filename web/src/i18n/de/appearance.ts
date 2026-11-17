@@ -20,9 +20,12 @@ export const deAppearance: Messages['appearance'] = {
   columns: {
     title: 'Gespeicherte Spaltenauswahl',
     hint: 'Listen merken sich die Spalten, die du anzeigst. Setze eine Liste zurück, um ihre Standardspalten wiederzuholen.',
-    none: 'Noch keine Liste hat eigene Spalten.',
+    state: (n: number, total: number) => `${n} von ${total} Spalten`,
+    own: (n: number) => `${n} Spalten`,
+    standard: 'Standard',
     reset: 'Zurücksetzen',
     resetAria: (list: string) => `${list} zurücksetzen`,
   },
+  loadFailed: 'Deine gespeicherten Einstellungen konnten nicht geladen werden und lassen sich gerade nicht ändern. Lade die Seite neu, um es erneut zu versuchen.',
   saveFailed: 'Deine Einstellungen konnten nicht gespeichert werden',
 };

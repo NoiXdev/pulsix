@@ -19,9 +19,12 @@ export const enAppearance = {
   columns: {
     title: 'Saved column choices',
     hint: 'Lists remember the columns you show. Reset a list to bring back its default columns.',
-    none: 'No list has its own columns yet.',
+    state: (n: number, total: number) => `${n} of ${total} columns`,
+    own: (n: number) => `${n} columns`,
+    standard: 'Standard',
     reset: 'Reset',
     resetAria: (list: string) => `Reset ${list}`,
   },
+  loadFailed: 'Your saved settings could not be loaded, so they cannot be changed right now. Reload the page to try again.',
   saveFailed: 'Your settings could not be saved',
 };
