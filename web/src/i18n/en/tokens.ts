@@ -35,6 +35,18 @@ export const enTokens = {
       'For an AI assistant: works only through the assistant access of this organization, and only in the areas ticked below. Runs it requests need a person to approve them.',
     badge: 'Assistant',
   },
+  edit: {
+    action: 'edit',
+    title: (name: string) => `Edit token ${name}`,
+    neverExpires: 'Never expires',
+    expiresLabel: 'Expires',
+    kindRoleFixed: 'Kind and role cannot be changed; create a new token for that.',
+    save: 'Save',
+    saved: (name: string) => `Token ${name} saved`,
+    savedReconnect: (name: string) => `Token ${name} saved. Reconnect the assistant to see new tools.`,
+    expiredHint: 'Expired tokens cannot be changed.',
+    failed: 'failed to save token',
+  },
   areas: {
     legend: 'Areas',
     area: 'Area',

@@ -14,6 +14,7 @@ import { Select } from '../../ui/Select.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import type { components } from '../../api/schema.d.ts';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -22,6 +23,7 @@ import type { Messages } from '../../i18n/types.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
 import { Tag } from '../../ui/badge.tsx';
 import { AreaGrid } from './AreaGrid.tsx';
+import { EditTokenDialog } from './EditTokenDialog.tsx';
 import { allowedAreas, displayedAreas, type Area } from './areas.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
@@ -45,7 +47,11 @@ type TokenFormValues = z.infer<ReturnType<typeof tokenFormSchema>>;
 
 const DEFAULTS: TokenFormValues = { name: '', role: 'viewer', kind: 'api', areas: [] };
 
-const COLUMNS = 'minmax(0, 1fr) 100px 140px 140px 70px';
+function isExpired(expiresAt?: string): boolean {
+  return !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
+}
+
+const COLUMNS = 'minmax(0, 1fr) 100px 140px 140px 120px';
 
 export function TokensPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -62,6 +68,7 @@ export function TokensPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [justCreated, setJustCreated] = useState<string | null>(null);
+  const [editing, setEditing] = useState<components['schemas']['TokenDTO'] | null>(null);
 
   const form = useForm<TokenFormValues>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
   const kind = useWatch({ control: form.control, name: 'kind' });
@@ -119,6 +126,17 @@ export function TokensPage() {
             <span className="text-[11px] text-muted-foreground">
               {token.expires_at ? fmt.date(token.expires_at) : t.common.never}
             </span>
+            <span className="flex items-center gap-3">
+            <button
+              type="button"
+              className="text-[11px] disabled:opacity-50"
+              disabled={isExpired(token.expires_at)}
+              title={isExpired(token.expires_at) ? t.tokens.edit.expiredHint : undefined}
+              aria-label={`${t.tokens.edit.action} ${token.name}`}
+              onClick={() => setEditing(token)}
+            >
+              {t.tokens.edit.action}
+            </button>
             <button
               type="button"
               className="text-[11px] text-destructive"
@@ -134,12 +152,15 @@ export function TokensPage() {
             >
               {t.tokens.revoke}
             </button>
+            </span>
           </GridRow>
         ))}
         {(tokens.data?.tokens ?? []).length === 0 && (
           <div className="p-4 text-xs text-muted-foreground">{t.tokens.empty}</div>
         )}
       </Card>
+
+      {editing && <EditTokenDialog key={editing.id} org={org} token={editing} open onClose={() => setEditing(null)} />}
 
       <Dialog
         open={createOpen}

@@ -33,6 +33,18 @@ export const deTokens: Messages['tokens'] = {
       'Für einen KI-Assistenten: funktioniert nur über den Assistenten-Zugang dieser Organisation und nur in den Bereichen, die du unten ankreuzt. Läufe, die er anfragt, muss eine Person freigeben.',
     badge: 'Assistent',
   },
+  edit: {
+    action: 'bearbeiten',
+    title: (name: string) => `Token ${name} bearbeiten`,
+    neverExpires: 'Läuft nie ab',
+    expiresLabel: 'Läuft ab',
+    kindRoleFixed: 'Art und Rolle lassen sich nicht ändern; lege dafür einen neuen Token an.',
+    save: 'Speichern',
+    saved: (name: string) => `Token ${name} gespeichert`,
+    savedReconnect: (name: string) => `Token ${name} gespeichert. Verbinde den Assistenten neu, um neue Tools zu sehen.`,
+    expiredHint: 'Abgelaufene Tokens lassen sich nicht ändern.',
+    failed: 'Token konnte nicht gespeichert werden',
+  },
   areas: {
     legend: 'Bereiche',
     area: 'Bereich',

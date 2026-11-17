@@ -6,6 +6,11 @@ import type { components } from '../schema.d.ts';
  * required (non-empty) for an assistant token and refused for an API token. */
 export type CreateTokenInput = Omit<components['schemas']['OrgTokenCreateInputBody'], '$schema'>;
 
+/** What PATCH /orgs/{org}/tokens/{id} takes: every field is optional and only
+ * the ones present change. `areas` is the full new list (assistant tokens
+ * only); `never_expires` removes the expiry. */
+export type UpdateTokenInput = Omit<components['schemas']['OrgTokenUpdateInputBody'], '$schema'>;
+
 export function useTokens(org: string) {
   return useQuery({
     queryKey: ['tokens', org],
@@ -36,6 +41,15 @@ export function useRevokeToken(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/tokens/{id}', { params: { path: { org, id } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens', org] }),
+  });
+}
+
+export function useUpdateToken(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateTokenInput }) =>
+      unwrap(api.PATCH('/api/v1/orgs/{org}/tokens/{id}', { params: { path: { org, id } }, body })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens', org] }),
   });
 }

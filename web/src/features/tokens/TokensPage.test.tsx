@@ -335,3 +335,22 @@ describe('TokensPage API explorer hint', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });
+
+describe('TokensPage edit action', () => {
+  it('disables edit for an expired token, with a hint', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': {
+        tokens: [
+          { id: 'tok1', name: 'old', role: 'viewer', kind: 'api', created_at: '2020-01-01T00:00:00Z', expires_at: '2020-02-01T00:00:00Z' },
+          { id: 'tok2', name: 'fresh', role: 'viewer', kind: 'api', created_at: '2020-01-01T00:00:00Z' },
+        ],
+      },
+    });
+    renderPage(qc);
+    const old = await screen.findByRole('button', { name: 'edit old' });
+    expect(old).toBeDisabled();
+    expect(old).toHaveAttribute('title', 'Expired tokens cannot be changed.');
+    expect(screen.getByRole('button', { name: 'edit fresh' })).toBeEnabled();
+  });
+});

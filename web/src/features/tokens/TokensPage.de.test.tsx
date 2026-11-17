@@ -123,3 +123,44 @@ describe('TokensPage assistant tokens in German', () => {
     expect(screen.getByText('Ausgegraute Bereiche brauchen eine höhere Rolle als Betrachter.')).toBeInTheDocument();
   });
 });
+
+describe('TokensPage editing in German', () => {
+  it('titles the dialog and confirms an area change in German', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': {
+        tokens: [
+          { id: 'tok2', name: 'helper', role: 'operator', kind: 'assistant', areas: ['inventory.read'], created_at: '2026-01-01T00:00:00Z' },
+        ],
+      },
+      'PATCH /api/v1/orgs/acme/tokens/tok2': { token: {} },
+    });
+    const rootRoute = createRootRoute();
+    const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+    const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([orgRoute.addChildren([tokensRoute])]),
+      history: createMemoryHistory({ initialEntries: ['/o/acme/settings/tokens'] }),
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nProvider locale="de">
+          <ConfirmProvider>
+            <ToastProvider>
+              <RouterProvider router={router} />
+            </ToastProvider>
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'bearbeiten helper' }));
+    expect(screen.getByRole('dialog', { name: 'Token helper bearbeiten' })).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: 'Vorlagen: lesen' }));
+    await user.click(screen.getByRole('button', { name: 'Speichern' }));
+    expect(
+      await screen.findByText('Token helper gespeichert. Verbinde den Assistenten neu, um neue Tools zu sehen.'),
+    ).toBeInTheDocument();
+  });
+});
