@@ -73,6 +73,11 @@ func TestRoleMatrix(t *testing.T) {
 		{tenancy.RoleOperator, tenancy.PermChecksWrite, true},
 		{tenancy.RoleAdmin, tenancy.PermChecksWrite, true},
 		{tenancy.RoleOwner, tenancy.PermChecksWrite, true},
+		// Handling an alert (acknowledge, snooze) is narrower than
+		// checks.write: an assistant may do it without editing checks.
+		{tenancy.RoleViewer, tenancy.PermAlertsHandle, false},
+		{tenancy.RoleOperator, tenancy.PermAlertsHandle, true},
+		{tenancy.RoleAdmin, tenancy.PermAlertsHandle, true},
 	}
 	for _, c := range cases {
 		if got := tenancy.Allows(c.role, c.perm); got != c.want {

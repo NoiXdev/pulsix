@@ -21,6 +21,9 @@ const (
 	AreaCredentialsNames Area = "credentials.names"
 	AreaJobsRead         Area = "jobs.read"
 	AreaJobsRequest      Area = "jobs.request"
+	AreaMonitoringRead   Area = "monitoring.read"
+	AreaAlertsHandle     Area = "alerts.handle"
+	AreaActivityRead     Area = "activity.read"
 )
 
 // areaOrder is the canonical order Areas returns.
@@ -30,6 +33,7 @@ var areaOrder = []Area{
 	AreaTemplatesRead, AreaTemplatesWrite,
 	AreaCredentialsNames,
 	AreaJobsRead, AreaJobsRequest,
+	AreaMonitoringRead, AreaAlertsHandle, AreaActivityRead,
 }
 
 // areaPerms maps each area to its permissions. jobs.run is deliberately in
@@ -44,6 +48,9 @@ var areaPerms = map[Area][]Permission{
 	AreaCredentialsNames: {PermCredentialsRead},
 	AreaJobsRead:         {PermJobsRead},
 	AreaJobsRequest:      {PermJobsRead, PermJobsRequest},
+	AreaMonitoringRead:   {PermAgentsRead, PermChecksRead, PermMaintenanceRead},
+	AreaAlertsHandle:     {PermAgentsRead, PermChecksRead, PermMaintenanceRead, PermAlertsHandle},
+	AreaActivityRead:     {PermAuditRead},
 }
 
 // Areas returns every known area in canonical order.

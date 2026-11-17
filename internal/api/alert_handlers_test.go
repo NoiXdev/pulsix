@@ -447,9 +447,9 @@ func TestAlertsAreScopedToTheOrganization(t *testing.T) {
 }
 
 // TestAcknowledgeRequiresTheMonitoringWritePermission is the brief's own
-// test: a read-only member gets 403 acknowledging, the same
-// checks.write bar every other monitoring write in this package uses
-// (design doc: "v0.4a introduces no new [permission]").
+// test: a read-only member gets 403 acknowledging (alerts.handle, an
+// operator permission since the assistant areas; see
+// TestAlertHandlingNeedsAlertsHandle).
 func TestAcknowledgeRequiresTheMonitoringWritePermission(t *testing.T) {
 	f := newAlertFixture(t, "alert-ack-perm")
 	id := f.seedOpenAlert(t, f.hostA, tupleSubject(f.hostA, "cpu", "", "used_percent"), rules.StateWarn, time.Now().UTC())
@@ -870,5 +870,36 @@ func TestAlertDTOReportsWasFlapping(t *testing.T) {
 	}
 	if seen[steadyID.String()] {
 		t.Errorf("the list reports was_flapping=true for the steady alert")
+	}
+}
+
+// TestAlertHandlingNeedsAlertsHandle: acknowledge and snooze (and their
+// reversals) sit behind alerts.handle, not checks.write.
+func TestAlertHandlingNeedsAlertsHandle(t *testing.T) {
+	s := apitest.New(t)
+	org, op := s.OrgWithTokenPerms(t, tenancy.PermAlertsHandle)
+	alert := s.SeedOpenAlertWithDeferredNotification(t, org)
+	base := "/api/v1/orgs/" + org.String() + "/alerts/" + alert.String()
+
+	vid := s.SeedUser("alert-viewer-"+alert.String()+"@example.test", "correct horse battery")
+	s.AddMember(org, vid, tenancy.RoleViewer)
+	viewer, _, err := s.Deps.Tokens.Create(context.Background(), vid, org, "viewer", string(tenancy.RoleViewer), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := s.Post(t, viewer, base+"/acknowledge", map[string]any{"note": "x"}); resp.Code != http.StatusForbidden {
+		t.Fatalf("viewer acknowledge = %d, want 403: %s", resp.Code, resp.Body)
+	}
+	if resp := s.Post(t, op, base+"/acknowledge", map[string]any{"note": "x"}); resp.Code != http.StatusOK {
+		t.Fatalf("operator acknowledge = %d: %s", resp.Code, resp.Body)
+	}
+	if resp := s.Delete(t, op, base+"/acknowledge", ""); resp.Code != http.StatusOK {
+		t.Fatalf("operator unacknowledge = %d: %s", resp.Code, resp.Body)
+	}
+	if resp := s.Post(t, op, base+"/snooze", map[string]any{"until_change": true}); resp.Code != http.StatusOK {
+		t.Fatalf("operator snooze = %d: %s", resp.Code, resp.Body)
+	}
+	if resp := s.Delete(t, op, base+"/snooze", ""); resp.Code != http.StatusOK {
+		t.Fatalf("operator unsnooze = %d: %s", resp.Code, resp.Body)
 	}
 }

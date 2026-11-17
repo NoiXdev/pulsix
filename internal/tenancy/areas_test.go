@@ -18,6 +18,9 @@ func TestAreaPermissions(t *testing.T) {
 		tenancy.AreaCredentialsNames: {tenancy.PermCredentialsRead},
 		tenancy.AreaJobsRead:         {tenancy.PermJobsRead},
 		tenancy.AreaJobsRequest:      {tenancy.PermJobsRead, tenancy.PermJobsRequest},
+		tenancy.AreaMonitoringRead:   {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead},
+		tenancy.AreaAlertsHandle:     {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead, tenancy.PermAlertsHandle},
+		tenancy.AreaActivityRead:     {tenancy.PermAuditRead},
 	}
 	for area, want := range cases {
 		got, ok := tenancy.AreaPermissions(area)
@@ -86,5 +89,37 @@ func TestRoleAllowsArea(t *testing.T) {
 	}
 	if tenancy.RoleAllowsArea(tenancy.RoleViewer, tenancy.AreaCredentialsNames) {
 		t.Error("a viewer role covers credentials.names (credentials.read is operator)")
+	}
+}
+
+func TestNewAreas(t *testing.T) {
+	if !tenancy.RoleAllowsArea(tenancy.RoleViewer, tenancy.AreaMonitoringRead) {
+		t.Error("a viewer role does not cover monitoring.read")
+	}
+	if tenancy.RoleAllowsArea(tenancy.RoleViewer, tenancy.AreaAlertsHandle) {
+		t.Error("a viewer role covers alerts.handle")
+	}
+	if !tenancy.RoleAllowsArea(tenancy.RoleOperator, tenancy.AreaAlertsHandle) {
+		t.Error("an operator role does not cover alerts.handle")
+	}
+	if tenancy.RoleAllowsArea(tenancy.RoleViewer, tenancy.AreaActivityRead) {
+		t.Error("a viewer role covers activity.read")
+	}
+	if !tenancy.RoleAllowsArea(tenancy.RoleOperator, tenancy.AreaActivityRead) {
+		t.Error("an operator role does not cover activity.read")
+	}
+	if !tenancy.AreasAllow([]tenancy.Area{tenancy.AreaAlertsHandle}, tenancy.PermChecksRead) {
+		t.Error("alerts.handle does not include checks.read")
+	}
+	if tenancy.AreasAllow([]tenancy.Area{tenancy.AreaAlertsHandle}, tenancy.PermChecksWrite) {
+		t.Error("alerts.handle grants checks.write")
+	}
+	all := tenancy.Areas()
+	want := []tenancy.Area{tenancy.AreaMonitoringRead, tenancy.AreaAlertsHandle, tenancy.AreaActivityRead}
+	if len(all) < len(want) {
+		t.Fatalf("Areas() = %v", all)
+	}
+	if got := all[len(all)-3:]; !slices.Equal(got, want) {
+		t.Errorf("Areas() ends with %v, want %v", got, want)
 	}
 }

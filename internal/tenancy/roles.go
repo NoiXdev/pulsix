@@ -65,6 +65,11 @@ const (
 	PermChecksRead  Permission = "checks.read"
 	PermChecksWrite Permission = "checks.write"
 
+	// PermAlertsHandle covers acknowledging and snoozing an alert (and
+	// undoing either) without editing the checks behind it, so an
+	// assistant token can triage alerts without checks.write.
+	PermAlertsHandle Permission = "alerts.handle"
+
 	PermChannelsRead  Permission = "channels.read"
 	PermChannelsWrite Permission = "channels.write"
 
@@ -136,6 +141,8 @@ var matrix = map[Permission]Role{
 	// organization, so no higher bar than hosts.write applies.
 	PermChecksRead:  RoleViewer,
 	PermChecksWrite: RoleOperator,
+	// Acknowledging or snoozing an alert is operating work, as checks.write.
+	PermAlertsHandle: RoleOperator,
 	// Notification channels (spec 2026-09-18 §5): operators see them —
 	// they pick channels for a schedule's rules and read the delivery log —
 	// and admins manage them, because a channel decides where the
