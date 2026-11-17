@@ -20,6 +20,11 @@ describe('may', () => {
     expect(may('admin', 'checks.write')).toBe(true);
   });
 
+  it('lets operators handle alerts but not viewers', () => {
+    expect(may('operator', 'alerts.handle')).toBe(true);
+    expect(may('viewer', 'alerts.handle')).toBe(false);
+  });
+
   it('lets admins and owners manage the organization', () => {
     expect(may('operator', 'org.manage')).toBe(false);
     expect(may('admin', 'org.manage')).toBe(true);

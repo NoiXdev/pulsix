@@ -56,7 +56,7 @@ export interface HostAlertsCardProps {
  * now) or its tense-aware flapping marker by inventing a second, slightly
  * different presentation of the same row. The row's actions are the
  * Alerts page's own as well (spec 1.2, "open alerts with snooze"):
- * `canWrite` is `checks.write`, the same gate AlertsPage uses, and this
+ * `canWrite` is `alerts.handle`, the same gate AlertsPage uses, and this
  * card owns the same AcknowledgeDialog and SnoozeDialog and the same
  * unacknowledge/unsnooze mutations, so an operator triaging one machine
  * never has to leave its page to silence what they are looking at.

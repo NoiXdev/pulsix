@@ -141,7 +141,7 @@ describe('AlertsPage', () => {
     expect(asked).toBe(false);
   });
 
-  it('offers no row actions for a viewer (no checks.write)', async () => {
+  it('offers no row actions for a viewer (no alerts.handle)', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },

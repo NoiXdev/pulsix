@@ -65,7 +65,7 @@ export function AlertsPage() {
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
-  const canWrite = may(role, 'checks.write');
+  const canHandle = may(role, 'alerts.handle');
   const [filter, setFilter] = useState<AlertFilter>({ host: routeSearch.host });
   const [syncedHost, setSyncedHost] = useState(routeSearch.host);
   if (routeSearch.host !== syncedHost) {
@@ -179,7 +179,7 @@ export function AlertsPage() {
             <div key={a.id}>
               <AlertRow
                 alert={a}
-                canWrite={canWrite}
+                canWrite={canHandle}
                 onAcknowledge={(alert) => setAcking(alert.id)}
                 onUnacknowledge={(alert) => void onUnacknowledge(alert)}
                 onSnooze={(alert) => setSnoozing(alert.id)}

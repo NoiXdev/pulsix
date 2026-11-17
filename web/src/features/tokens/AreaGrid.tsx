@@ -1,12 +1,12 @@
 import { useT } from '../../i18n/useT.ts';
 import { roleLabel } from '../../i18n/roleLabel.ts';
-import { AREA_ROWS, CREDENTIALS_AREA, areaAllowed, toggleArea, type Area } from './areas.ts';
+import { ACTIVITY_AREA, AREA_ROWS, CREDENTIALS_AREA, areaAllowed, toggleArea, type Area } from './areas.ts';
 
 const CELL = 'px-3 py-1.5';
 
 /**
  * AreaGrid is the assistant token's area choice: one row per subject with a
- * read and a write checkbox (for Jobs the second one requests runs), and the
+ * read and a write checkbox (for Jobs the second one requests runs, for Monitoring it handles alerts), and the
  * credential names on their own. Ticking write ticks read, unticking read
  * unticks write; an area the chosen role cannot cover is disabled, and a
  * line under the grid says why.
@@ -25,7 +25,7 @@ export function AreaGrid({
   const t = useT();
   const a = t.tokens.areas;
   const held = new Set(value);
-  const anyDisabled = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA].some((area) => !areaAllowed(role, area));
+  const anyDisabled = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA].some((area) => !areaAllowed(role, area));
 
   function box(area: Area, label: string) {
     const allowed = areaAllowed(role, area);
@@ -55,7 +55,7 @@ export function AreaGrid({
         <tbody>
           {AREA_ROWS.map((row) => {
             const name = a.rows[row.key];
-            const second = row.key === 'jobs' ? a.request : a.write;
+            const second = row.key === 'jobs' ? a.request : row.key === 'monitoring' ? a.handle : a.write;
             return (
               <tr key={row.key} className="border-b border-border last:border-b-0">
                 <td className={CELL}>{name}</td>
@@ -80,6 +80,10 @@ export function AreaGrid({
       <label className="flex items-center gap-2 text-xs">
         {box(CREDENTIALS_AREA, a.credentials)}
         <span aria-hidden="true">{a.credentials}</span>
+      </label>
+      <label className="flex items-center gap-2 text-xs">
+        {box(ACTIVITY_AREA, a.activity)}
+        <span aria-hidden="true">{a.activity}</span>
       </label>
       <span id="token_areas_hint" className="text-[11px] text-muted-foreground">
         {a.writeHint}

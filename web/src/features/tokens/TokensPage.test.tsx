@@ -268,6 +268,10 @@ describe('TokensPage assistant tokens', () => {
     expect(screen.getByRole('checkbox', { name: 'Inventory: write' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Jobs: request runs' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Credentials: names only' })).toBeDisabled();
+    expect(screen.getByText('Monitoring & alerts')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Monitoring & alerts: read' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Monitoring & alerts: handle alerts' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Activity log: read' })).toBeDisabled();
     expect(screen.getByText('Greyed-out areas need a higher role than Viewer.')).toBeInTheDocument();
 
     await pickOption(screen, 'Role', 'Operator');

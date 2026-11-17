@@ -14,11 +14,14 @@ export type Area =
   | 'templates.write'
   | 'credentials.names'
   | 'jobs.read'
-  | 'jobs.request';
+  | 'jobs.request'
+  | 'monitoring.read'
+  | 'alerts.handle'
+  | 'activity.read';
 
 /** One row of the area grid: a read area and the area that writes it. */
 export interface AreaRow {
-  key: 'inventory' | 'repos' | 'templates' | 'jobs';
+  key: 'inventory' | 'repos' | 'templates' | 'jobs' | 'monitoring';
   read: Area;
   write: Area;
 }
@@ -28,12 +31,14 @@ export const AREA_ROWS: readonly AreaRow[] = [
   { key: 'repos', read: 'repos.read', write: 'repos.write' },
   { key: 'templates', read: 'templates.read', write: 'templates.write' },
   { key: 'jobs', read: 'jobs.read', write: 'jobs.request' },
+  { key: 'monitoring', read: 'monitoring.read', write: 'alerts.handle' },
 ];
 
 export const CREDENTIALS_AREA: Area = 'credentials.names';
+export const ACTIVITY_AREA: Area = 'activity.read';
 
 /** Every area in the order the grid shows them. */
-const ORDER: readonly Area[] = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA];
+const ORDER: readonly Area[] = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA];
 
 /** The lowest role whose permissions cover the area: the server refuses
  * (422) an area the token's role cannot cover. */
@@ -42,6 +47,9 @@ const MINIMUM_ROLE: Record<Area, Role> = {
   'repos.read': 'viewer',
   'templates.read': 'viewer',
   'jobs.read': 'viewer',
+  'monitoring.read': 'viewer',
+  'alerts.handle': 'operator',
+  'activity.read': 'operator',
   'inventory.write': 'operator',
   'repos.write': 'operator',
   'templates.write': 'operator',

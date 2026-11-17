@@ -11,6 +11,11 @@ describe('assistant token areas', () => {
     ['operator', 'inventory.write', true],
     ['operator', 'credentials.names', true],
     ['operator', 'jobs.request', true],
+    ['viewer', 'monitoring.read', true],
+    ['viewer', 'alerts.handle', false],
+    ['viewer', 'activity.read', false],
+    ['operator', 'alerts.handle', true],
+    ['operator', 'activity.read', true],
     ['owner', 'templates.write', true],
     ['nobody', 'inventory.read', false],
   ] as const)('%s may hold %s: %s', (role, area, want) => {
@@ -19,6 +24,15 @@ describe('assistant token areas', () => {
 
   it('ticks the read area with its write area', () => {
     expect(toggleArea([], 'repos.write', true)).toEqual(['repos.read', 'repos.write']);
+  });
+
+  it('ticks monitoring with handling alerts and unticks handling with monitoring', () => {
+    expect(toggleArea([], 'alerts.handle', true)).toEqual(['monitoring.read', 'alerts.handle']);
+    expect(toggleArea(['monitoring.read', 'alerts.handle'], 'monitoring.read', false)).toEqual([]);
+  });
+
+  it('keeps the activity area in grid order after credentials', () => {
+    expect(toggleArea(['activity.read'], 'credentials.names', true)).toEqual(['credentials.names', 'activity.read']);
   });
 
   it('unticks the write area with its read area', () => {

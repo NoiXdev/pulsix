@@ -41,16 +41,19 @@ export const enTokens = {
     read: 'read',
     write: 'write',
     request: 'request runs',
+    handle: 'handle alerts',
     rows: {
       inventory: 'Inventory',
       repos: 'Repositories & playbooks',
       templates: 'Job templates',
       jobs: 'Jobs',
+      monitoring: 'Monitoring & alerts',
     },
     credentials: 'Credentials: names only',
+    activity: 'Activity log: read',
     /** The accessible name of one checkbox in the grid. */
     cell: (row: string, column: string) => `${row}: ${column}`,
-    writeHint: 'Write includes read. Credential names show which credentials exist, never their contents.',
+    writeHint: 'Write includes read. Handling alerts means acknowledging and snoozing them. Credential names show which credentials exist, never their contents.',
     roleHint: (role: string) => `Greyed-out areas need a higher role than ${role}.`,
     required: 'Tick at least one area.',
     /** How the token list names each area a token holds. */
@@ -64,6 +67,9 @@ export const enTokens = {
       'credentials.names': 'Credentials: names only',
       'jobs.read': 'Jobs: read',
       'jobs.request': 'Jobs: request runs',
+      'monitoring.read': 'Monitoring & alerts: read',
+      'alerts.handle': 'Monitoring & alerts: handle alerts',
+      'activity.read': 'Activity log: read',
     },
   },
 };

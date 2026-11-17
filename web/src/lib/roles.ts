@@ -28,6 +28,7 @@ export type UiPermission =
   | 'channels.read'
   | 'channels.write'
   | 'maintenance.write'
+  | 'alerts.handle'
   | 'org.manage'
   | 'org.settings.read'
   | 'org.settings.write'
@@ -62,6 +63,9 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   'channels.read': 'operator',
   'channels.write': 'admin',
   'maintenance.write': 'operator',
+  // Acknowledging and snoozing alerts (PermAlertsHandle): an operator
+  // handles what monitoring raises without editing the checks.
+  'alerts.handle': 'operator',
   // Renaming the organization (internal/tenancy/roles.go PermOrgManage).
   'org.manage': 'admin',
   // The organization's settings (PermOrgSettingsRead/Write): every member

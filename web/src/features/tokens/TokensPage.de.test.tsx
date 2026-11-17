@@ -117,6 +117,9 @@ describe('TokensPage assistant tokens in German', () => {
     expect(screen.getByRole('checkbox', { name: 'Vorlagen: schreiben' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Läufe: anfragen' })).toBeDisabled();
     expect(screen.getByRole('checkbox', { name: 'Zugangsdaten: nur Namen' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Monitoring & Alarme: lesen' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Monitoring & Alarme: Alarme bearbeiten' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Aktivitätsprotokoll: lesen' })).toBeDisabled();
     expect(screen.getByText('Ausgegraute Bereiche brauchen eine höhere Rolle als Betrachter.')).toBeInTheDocument();
   });
 });

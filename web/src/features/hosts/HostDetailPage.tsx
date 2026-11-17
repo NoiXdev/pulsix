@@ -98,7 +98,7 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
           <>
             <HostStateSection org={org} hostId={host.id} canRead={canReadChecks} frozen={frozen} />
             <Section id="alerts" title={s.alerts} actions={<HostAlertsHistoryLink org={org} hostId={host.id} canRead={canReadChecks} />}>
-              <HostAlertsCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'checks.write')} />
+              <HostAlertsCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'alerts.handle')} />
               <HostAlertRoutesCard org={org} hostId={host.id} canRead={may(role, 'channels.read')} />
             </Section>
             <Section id="checks" title={s.checks} actions={<ManageChecksLink org={org} canWrite={may(role, 'checks.write')} />}>
