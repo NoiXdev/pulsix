@@ -51,6 +51,21 @@ service() { printf 'pulsix-assistant-%s' "$1"; }
 helper() { printf '%s/%s-headers.sh' "$dir" "$1"; }
 tokenfile() { printf '%s/%s.token' "$dir" "$1"; }
 
+# The Claude Code CLI: $CLAUDE_BIN, else claude on PATH, else its default
+# install locations (the native installer puts it in ~/.local/bin, which a
+# login shell does not always have on PATH).
+find_claude() {
+  local c
+  for c in "${CLAUDE_BIN:-}" "$(command -v claude 2>/dev/null || true)" \
+    "$HOME/.local/bin/claude" "$HOME/.claude/local/claude"; do
+    if [ -n "$c" ] && [ -x "$c" ]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required"
 }
@@ -112,7 +127,7 @@ EOF
 
 cmd_add() {
   [ "$#" -eq 2 ] || usage
-  local name="$1" url="$2" endpoint json
+  local name="$1" url="$2" endpoint json claude
   check_name "$name"
   case "$url" in
     https://*) ;;
@@ -124,10 +139,10 @@ cmd_add() {
     https://*/*) die "give the address you open Pulsix at, without a path (got $url)" ;;
   esac
   endpoint="$url/api/mcp"
-  need claude
+  claude="$(find_claude)" || die "the Claude Code CLI (claude) was not found; set CLAUDE_BIN to its path"
   [ "$store" = file ] || need security
 
-  if claude mcp get "$(server "$name")" >/dev/null 2>&1; then
+  if "$claude" mcp get "$(server "$name")" >/dev/null 2>&1; then
     die "Claude Code already has a server $(server "$name"); run: $me remove $name"
   fi
 
@@ -138,7 +153,7 @@ cmd_add() {
   printf '%s\n' "$endpoint" >"$dir/$name.url"
 
   json="$(printf '{"type": "http", "url": "%s", "headersHelper": "%s"}' "$endpoint" "$(helper "$name")")"
-  claude mcp add-json --scope user "$(server "$name")" "$json" >/dev/null ||
+  "$claude" mcp add-json --scope user "$(server "$name")" "$json" >/dev/null ||
     die "claude mcp add-json failed; the token and helper are in place, run: $me remove $name and try again"
 
   echo "Added $(server "$name") -> $endpoint"
@@ -189,10 +204,10 @@ cmd_list() {
 
 cmd_remove() {
   [ "$#" -eq 1 ] || usage
-  local name="$1"
+  local name="$1" claude
   check_name "$name"
-  if command -v claude >/dev/null 2>&1; then
-    claude mcp remove --scope user "$(server "$name")" >/dev/null 2>&1 || true
+  if claude="$(find_claude)"; then
+    "$claude" mcp remove --scope user "$(server "$name")" >/dev/null 2>&1 || true
   fi
   if command -v security >/dev/null 2>&1; then
     security delete-generic-password -a "$USER" -s "$(service "$name")" >/dev/null 2>&1 || true
