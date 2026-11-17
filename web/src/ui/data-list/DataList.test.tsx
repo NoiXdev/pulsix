@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderRoutes } from '../../test/renderRoutes.tsx';
+import { DataList as DataListComponent } from './DataList.tsx';
 import { DataList, type DataListColumn, type DataListProps, type RowAction, type SortState } from './index.ts';
 
 interface Host {
@@ -311,5 +313,112 @@ describe('DataList row menus', () => {
     await user.keyboard('{Shift>}{F10}{/Shift}');
     expect(screen.getAllByRole('menu')).toHaveLength(1);
     expect(menuLabels()).toEqual(['Restart', 'Download log', 'Delete']);
+  });
+});
+
+describe('DataList row menus and the browser menu', () => {
+  const RUNS: DataListColumn<Host> = {
+    id: 'runs',
+    label: 'Active runs',
+    width: '100px',
+    defaultVisible: true,
+    render: (h) => (
+      <a href={`/o/acme/runs?host=${h.id}`} className="relative z-10">
+        2 running
+      </a>
+    ),
+  };
+
+  it('leaves a right-click on a link inside a cell to the browser', async () => {
+    renderList({ columns: [...COLUMNS, RUNS], visibleColumns: ['name', 'zone', 'runs'], rowLink: link, rowActions: actions() });
+    await table();
+    expect(fireEvent.contextMenu(within(rowOf('web-01')).getByRole('link', { name: '2 running' }), { button: 2 })).toBe(true);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('still opens the row menu on a right-click on the row\'s own link', async () => {
+    renderList({ rowLink: link, rowActions: actions() });
+    await table();
+    expect(fireEvent.contextMenu(screen.getByRole('link', { name: 'Open web-01' }), { button: 2 })).toBe(false);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
+  it('gives Shift+right-click to the browser', async () => {
+    renderList({ rowLink: link, rowActions: actions() });
+    await table();
+    expect(fireEvent.contextMenu(within(rowOf('web-01')).getByText('fra-1'), { button: 2, shiftKey: true })).toBe(true);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('keeps the contextmenu event that follows Shift+F10 on its own menu', async () => {
+    renderList({ rowLink: link, rowActions: actions() });
+    await table();
+    screen.getByRole('link', { name: 'Open web-01' }).focus();
+    await userEvent.setup().keyboard('{Shift>}{F10}{/Shift}');
+    const item = screen.getByRole('menuitem', { name: 'Open in new tab' });
+    // The key's echo: no right button, Shift still held, aimed at the focus.
+    expect(fireEvent.contextMenu(item, { button: 0, shiftKey: true })).toBe(false);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
+  it('leaves a right-click on a link item of the context menu to the browser', async () => {
+    renderList({ rowActions: actions() });
+    await table();
+    fireEvent.contextMenu(within(rowOf('web-01')).getByText('fra-1'), { button: 2 });
+    expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Download log' }), { button: 2 })).toBe(true);
+    expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Restart' }), { button: 2 })).toBe(false);
+  });
+
+  it('opens a keyboard menu that must flip upwards above its row, not over it', async () => {
+    renderList({ rowLink: link, rowActions: actions() });
+    await table();
+    const row = rowOf('web-01');
+    const bottom = window.innerHeight + 20;
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({ top: bottom - 40, bottom, left: 0, right: 800, width: 800, height: 40, x: 0, y: bottom - 40, toJSON: () => ({}) });
+    screen.getByRole('link', { name: 'Open web-01' }).focus();
+    await userEvent.setup().keyboard('{ContextMenu}');
+    expect(screen.getByRole('menu')).toHaveStyle({ top: `${bottom - 40}px` });
+  });
+});
+
+describe('DataList when the menu\'s row goes away', () => {
+  function Shifting() {
+    const [rows, setRows] = useState<Host[]>(HOSTS);
+    return (
+      <>
+        <button type="button" onClick={() => setRows([HOSTS[1]])}>
+          drop web-01
+        </button>
+        <button type="button" onClick={() => setRows(HOSTS)}>
+          bring back web-01
+        </button>
+        <DataListComponent<Host>
+          label="Hosts"
+          columns={COLUMNS}
+          rows={rows}
+          rowKey={(h) => h.id}
+          rowActions={actions()}
+          visibleColumns={['name', 'zone']}
+          onVisibleColumnsChange={vi.fn()}
+          defaultColumns={['name', 'zone']}
+          density="standard"
+          empty="none"
+        />
+      </>
+    );
+  }
+
+  it('closes the menu for good, so it does not reopen when the row comes back', async () => {
+    renderRoutes([{ path: '/hosts', component: Shifting }], '/o/acme/hosts');
+    await table();
+    fireEvent.contextMenu(within(rowOf('web-01')).getByText('fra-1'), { button: 2 });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    // fireEvent.click sends no mousedown, so the menu is not closed as by
+    // a press outside it: only the row going away closes it.
+    fireEvent.click(screen.getByRole('button', { name: 'drop web-01' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'bring back web-01' }));
+    expect(await screen.findByText('web-01')).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });

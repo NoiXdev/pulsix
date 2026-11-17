@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT.ts';
+import type { MenuPoint } from '../menuPlacement.ts';
 import { Card } from '../table.tsx';
 import { ColumnsMenu } from './ColumnsMenu.tsx';
 import { DataRow, ROW_GRID, type MenuSource, type OpenRowMenu } from './DataRow.tsx';
@@ -13,7 +14,7 @@ const MENU_TRACK = '40px';
 
 interface ContextMenuState {
   key: string;
-  point: { x: number; y: number };
+  point: MenuPoint;
   source: MenuSource;
   /** Tells a reopened menu from the one before, so it is placed afresh. */
   seq: number;
@@ -78,6 +79,9 @@ export function DataList<Row>({
   };
 
   const menuRow = menu ? rows.find((r) => rowKey(r) === menu.key) : undefined;
+  // The menu's row went away (a refetch while it was open): the menu is
+  // gone with it, and must not come back if the row does.
+  if (menu && menuRow === undefined) setMenu(null);
   const nameOf = (row: Row) => rowLabel?.(row) ?? rowLink?.(row)?.label;
   const menuLabel = (row: Row) => {
     const name = nameOf(row);

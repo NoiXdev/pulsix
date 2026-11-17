@@ -3,6 +3,7 @@ import { useRouter } from '@tanstack/react-router';
 import { useT } from '../../i18n/useT.ts';
 import { RowMenu, RowMenuItem, RowMenuLink } from '../list-row.tsx';
 import { MenuPopover, MenuSeparator } from '../menu-popover.tsx';
+import type { MenuPoint } from '../menuPlacement.ts';
 import { useCopy } from '../useCopy.ts';
 import type { RowAction, RowLink } from './types.ts';
 
@@ -49,7 +50,7 @@ export function RowContextMenu({
 }: {
   label: string;
   anchor: RefObject<HTMLElement | null>;
-  point: { x: number; y: number };
+  point: MenuPoint;
   link?: RowLink;
   actions: RowAction[];
   onClose: (restoreFocus: boolean) => void;

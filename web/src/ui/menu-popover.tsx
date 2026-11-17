@@ -1,37 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { MenuContext } from './menuContext.ts';
-
-/** Gap between the trigger and the popover, and the minimum distance the
- * popover keeps from the viewport edges. */
-const GAP = 4;
-const EDGE = 8;
-
-interface Position {
-  top: number;
-  left: number;
-}
-
-/** Places a popover of the given size under the trigger, right-aligned to it,
- * flipping above when it would cross the viewport bottom and there is room. */
-function placeUnder(trigger: DOMRect, width: number, height: number): Position {
-  const below = trigger.bottom + GAP;
-  const fitsBelow = below + height <= window.innerHeight - EDGE;
-  const above = trigger.top - GAP - height;
-  const top = fitsBelow || above < EDGE ? below : above;
-  const left = Math.max(EDGE, Math.min(trigger.right - width, window.innerWidth - width - EDGE));
-  return { top, left };
-}
-
-/** Places a popover with its top-left corner at a point (where a right-click
- * happened), opening upwards when it would cross the viewport bottom, and
- * kept inside the viewport. */
-function placeAt(point: { x: number; y: number }, width: number, height: number): Position {
-  const fitsBelow = point.y + height <= window.innerHeight - EDGE;
-  const top = fitsBelow ? point.y : Math.max(EDGE, point.y - height);
-  const left = Math.max(EDGE, Math.min(point.x, window.innerWidth - width - EDGE));
-  return { top, left };
-}
+import { placeAt, placeUnder, type MenuPoint, type Position } from './menuPlacement.ts';
 
 export interface MenuPopoverProps {
   id?: string;
@@ -44,11 +14,15 @@ export interface MenuPopoverProps {
    * the anchor, right-aligned to it. With a point, a press on the anchor
    * counts as outside (it is a whole row); without, it does not (the
    * trigger toggles the menu itself). */
-  point?: { x: number; y: number };
+  point?: MenuPoint;
   /** `restoreFocus` is true for Escape, Tab and a picked item, false for a
    * click outside, a scroll or a resize. The owner moves focus back. */
   onClose: (restoreFocus: boolean) => void;
   children: ReactNode;
+}
+
+function viewport() {
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 /**
@@ -74,6 +48,7 @@ export function MenuPopover({ id, label, anchor, point, onClose, children }: Men
   const close = useCallback((restoreFocus: boolean) => onCloseRef.current(restoreFocus), []);
   const pointX = point?.x;
   const pointY = point?.y;
+  const pointAbove = point?.above;
   const atPoint = point !== undefined;
 
   function items(): HTMLElement[] {
@@ -89,10 +64,10 @@ export function MenuPopover({ id, label, anchor, point, onClose, children }: Men
     anchorAt.current = { top: at.top, left: at.left };
     setPos(
       pointX !== undefined && pointY !== undefined
-        ? placeAt({ x: pointX, y: pointY }, menu.width, menu.height)
-        : placeUnder(at, menu.width, menu.height),
+        ? placeAt({ x: pointX, y: pointY, above: pointAbove }, menu.width, menu.height, viewport())
+        : placeUnder(at, menu.width, menu.height, viewport()),
     );
-  }, [anchor, pointX, pointY]);
+  }, [anchor, pointX, pointY, pointAbove]);
 
   // Focus waits for the position: an element hidden by `visibility` cannot
   // take focus.
@@ -169,10 +144,19 @@ export function MenuPopover({ id, label, anchor, point, onClose, children }: Men
         role="menu"
         aria-label={label}
         onKeyDown={onKeyDown}
-        // A keyboard-opened menu has focus by the time the browser sends
-        // the key's own contextmenu event: its native menu must not open
-        // over this one.
-        onContextMenu={(e) => e.preventDefault()}
+        // A context menu opened from the keyboard has focus by the time the
+        // browser sends the key's own contextmenu event: its native menu
+        // must not open over this one. A real right-click on a link item
+        // still gets the browser's menu (save a download, open in a tab),
+        // and a "…" menu is left alone entirely.
+        onContextMenu={
+          atPoint
+            ? (e) => {
+                const onLink = e.button === 2 && e.target instanceof Element && e.target.closest('a[href]') !== null;
+                if (!onLink) e.preventDefault();
+              }
+            : undefined
+        }
         style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
         className="z-50 flex min-w-40 flex-col gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg"
       >

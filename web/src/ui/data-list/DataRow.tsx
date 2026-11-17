@@ -1,6 +1,7 @@
 import type { KeyboardEvent, MouseEvent } from 'react';
 import { Link } from '@tanstack/react-router';
 import { cn } from '../../lib/utils.ts';
+import type { MenuPoint } from '../menuPlacement.ts';
 import { RowActionsButton } from './RowActionsMenu.tsx';
 import type { DataListColumn, Density, RowAction, RowLink } from './types.ts';
 
@@ -12,7 +13,7 @@ export const ROW_GRID = 'grid items-center gap-3 px-4 py-[var(--px-row-py)] text
 export type MenuSource = 'pointer' | 'keyboard';
 
 /** What a row asks of its list to open its context menu. */
-export type OpenRowMenu = (row: HTMLElement, point: { x: number; y: number }, source: MenuSource, returnTo: HTMLElement | null) => void;
+export type OpenRowMenu = (row: HTMLElement, point: MenuPoint, source: MenuSource, returnTo: HTMLElement | null) => void;
 
 /**
  * DataRow is one body row of a DataList: `role="row"` of `role="cell"`s on
@@ -59,16 +60,27 @@ export function DataRow<Row>({
     return e.target instanceof Node && e.currentTarget.contains(e.target);
   }
 
+  // A link a cell renders (Active runs) is its own link: its context menu
+  // is the browser's, as "Open in new tab" in ours would open the row's page.
+  function inCellLink(target: EventTarget): boolean {
+    const a = target instanceof Element ? target.closest('a[href]') : null;
+    return a !== null && !a.hasAttribute('data-row-link');
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (!hasActions || !own(e)) return;
+    if (!hasActions || !own(e) || inCellLink(e.target)) return;
     if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
     e.preventDefault();
     const r = e.currentTarget.getBoundingClientRect();
-    onOpenMenu(e.currentTarget, { x: r.left + 16, y: r.bottom }, 'keyboard', e.target as HTMLElement);
+    // Below the row; opening upwards it ends above the row, not over it.
+    onOpenMenu(e.currentTarget, { x: r.left + 16, y: r.bottom, above: r.top }, 'keyboard', e.target as HTMLElement);
   }
 
   function onContextMenu(e: MouseEvent<HTMLDivElement>) {
-    if (!hasActions || !own(e)) return;
+    if (!hasActions || !own(e) || inCellLink(e.target)) return;
+    // Shift+right-click is the way to the browser's own menu. (Shift+F10's
+    // own contextmenu event is no right-click: it stays with ours.)
+    if (e.shiftKey && e.button === 2) return;
     e.preventDefault();
     const returnTo = e.currentTarget.querySelector<HTMLElement>('[data-row-link], [data-row-menu]');
     onOpenMenu(e.currentTarget, { x: e.clientX, y: e.clientY }, 'pointer', returnTo);

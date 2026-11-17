@@ -403,6 +403,32 @@ describe('RowMenuLink', () => {
   });
 });
 
+describe('RowMenu and the browser menu', () => {
+  // RowMenuLink exists so the browser treats a download as a link: its
+  // own right-click menu ("Save link as…") must stay reachable.
+  it('leaves a right-click on a RowMenuLink to the browser', async () => {
+    render(
+      <RowMenu label="Actions">
+        <RowMenuLink href="/api/v1/backups/b1.tar/download" download="b1.tar">
+          Download
+        </RowMenuLink>
+      </RowMenu>,
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Actions' }));
+    expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Download' }), { button: 2 })).toBe(true);
+  });
+
+  it('leaves a right-click on an item of a "…" menu to the browser', async () => {
+    render(
+      <RowMenu label="Actions">
+        <RowMenuItem onSelect={vi.fn()}>Restart</RowMenuItem>
+      </RowMenu>,
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Actions' }));
+    expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Restart' }), { button: 2 })).toBe(true);
+  });
+});
+
 describe('StaticListRow', () => {
   function renderStatic() {
     const rootRoute = createRootRoute();
