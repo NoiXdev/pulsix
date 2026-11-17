@@ -75,6 +75,14 @@ import (
 // matters and how it is verified, not merely assumed.
 const appRole = "pulsix_app"
 
+// lockSessions caps the pool the advisory lockers hold their sessions on
+// (backlog 3.92): one per locker — six today (re-test, item expiry,
+// retention purge, auth reaper, probe runner, backup) — plus headroom for
+// the next one. A locker that finds it full waits for a lock session, never for one
+// the work it locks needs, so the cap bounds the connections the lockers
+// use and cannot deadlock them.
+const lockSessions = 8
+
 // App is a fully wired manager: an http.Handler, the optional worker gRPC
 // server (nil unless cfg.GRPCListen was set), plus what main.go needs to
 // shut both down cleanly.
@@ -83,6 +91,10 @@ type App struct {
 	GRPC       *grpc.Server
 	GRPCListen string
 	db         *db.DB
+	// locks is the pool the advisory lockers hold their sessions on, apart
+	// from db so a held lock never takes a connection its own work needs
+	// (backlog 3.92). Close closes it after every loop has stopped.
+	locks *db.DB
 	// stopReaper, stopRetest and stopTicker stop the job queue's reaper,
 	// the connection re-test scheduler and the schedule ticker, each
 	// waiting until its goroutine has returned (startLoop); Close calls
@@ -221,6 +233,9 @@ func (a *App) Close() {
 	}
 	if a.backups != nil {
 		a.backups.Stop()
+	}
+	if a.locks != nil {
+		a.locks.Close()
 	}
 	a.db.Close()
 }
@@ -646,7 +661,20 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	// Backups (backlog 7.2): the service dumps through appDB itself; its
 	// schedule starts below, once nothing can fail any more.
-	backupsSvc := newBackupService(appDB, box, cfg.MasterKey, mailer, cfg.Version)
+	// The advisory lockers (the background loops below and the backup lock)
+	// hold their sessions on a pool of their own (backlog 3.92). Taken from
+	// appDB, a held lock occupied one of the connections the locked work
+	// then needed: once as many loops held a lock as appDB had connections
+	// (the default is the CPU count, at least four), each waited for a
+	// connection none would give back, and every request with them. Same role as appDB: an advisory lock needs no
+	// privilege at all.
+	lockDB, err := db.OpenAsRoleWithMaxConns(ctx, dbURL, appRole, lockSessions)
+	if err != nil {
+		appDB.Close()
+		return nil, fmt.Errorf("open advisory lock connection: %w", err)
+	}
+
+	backupsSvc := newBackupService(appDB, lockDB, box, cfg.MasterKey, mailer, cfg.Version)
 
 	accountsSvc := accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader)
 	// The run request resolver (spec 2026-11-16 assistant access) reads the
@@ -724,6 +752,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Oncall:      oncallSvc,
 	})
 	if err != nil {
+		lockDB.Close()
 		appDB.Close()
 		return nil, fmt.Errorf("build api handler: %w", err)
 	}
@@ -744,13 +773,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	// The daily connection re-test: one pass per interval (default 1h),
 	// staggered per host, under its own advisory lock. Stopped in Close.
-	retestStop := startLoop(schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run)
+	retestStop := startLoop(schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(lockDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run)
 
 	// The item expiry (backlog 3.12b): once per hour, one manager forgets the
 	// items that have been silent for PULSIX_ITEM_EXPIRY while their host
 	// kept reporting, under its own advisory key. A period of 0 disables it.
 	// Stopped in Close.
-	itemExpiryStop := startLoop(checks.NewExpiryLoop(checksSvc, schedule.NewAdvisoryLocker(appDB.Pool(), checks.ExpiryAdvisoryKey), cfg.ItemExpiry, checks.DefaultExpiryInterval, slog.Default()).Run)
+	itemExpiryStop := startLoop(checks.NewExpiryLoop(checksSvc, schedule.NewAdvisoryLocker(lockDB.Pool(), checks.ExpiryAdvisoryKey), cfg.ItemExpiry, checks.DefaultExpiryInterval, slog.Default()).Run)
 
 	// The retention purge (backlog 3.15): once per hour, one manager
 	// deletes the measurements and state history of every organization
@@ -758,13 +787,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// older than the choice, in batches within a per-round budget, under
 	// its own advisory key (interval 0 keeps the hourly default). Stopped
 	// in Close.
-	retentionPurgeStop := startLoop(monitorsettings.NewPurger(monitorsettings.NewPurgeSQLStore(appDB), schedule.NewAdvisoryLocker(appDB.Pool(), monitorsettings.RetentionPurgeLockKey), cfg.RetentionMaxDays(), o.retentionPurgeInterval, time.Now, slog.Default()).Run)
+	retentionPurgeStop := startLoop(monitorsettings.NewPurger(monitorsettings.NewPurgeSQLStore(appDB), schedule.NewAdvisoryLocker(lockDB.Pool(), monitorsettings.RetentionPurgeLockKey), cfg.RetentionMaxDays(), o.retentionPurgeInterval, time.Now, slog.Default()).Run)
 
 	// The expired-ceremony and expired-session reaper (backlog 1.21): one
 	// DELETE pass per interval (default 1h) under its own advisory key,
 	// bounding the two unauthenticated/expired write paths' growth.
 	// Stopped in Close.
-	authReaperStop := startLoop(auth.NewReaper(q, schedule.NewAdvisoryLocker(appDB.Pool(), auth.AdvisoryKeyAuthReaper), o.authReaperInterval, time.Now, slog.Default()).Run)
+	authReaperStop := startLoop(auth.NewReaper(q, schedule.NewAdvisoryLocker(lockDB.Pool(), auth.AdvisoryKeyAuthReaper), o.authReaperInterval, time.Now, slog.Default()).Run)
 
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
 	// several safe. Stopped in Close and on every early return below;
@@ -842,7 +871,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Stopped in Close and on every early return below.
 	probesStop := startLoop(probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
-		Locker:  schedule.NewAdvisoryLocker(appDB.Pool(), probes.AdvisoryKeyProbes),
+		Locker:  schedule.NewAdvisoryLocker(lockDB.Pool(), probes.AdvisoryKeyProbes),
 		Guard:   probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
 		Secrets: orgSecretsSvc,
 		Clock:   time.Now, Log: slog.Default(),
@@ -872,6 +901,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			evalStop()
 			alertNotifyStop()
 			probesStop()
+			lockDB.Close()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -899,6 +929,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				evalStop()
 				alertNotifyStop()
 				probesStop()
+				lockDB.Close()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -916,7 +947,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	backupTickerStop := startLoop(backup.NewTicker(backupsSvc, backup.DefaultTick).Run)
 
 	return &App{
-		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
+		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, locks: lockDB,
 		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil

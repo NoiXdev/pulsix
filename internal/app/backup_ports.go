@@ -51,9 +51,11 @@ func (m backupAdminMailer) SendToInstanceAdmins(ctx context.Context, subject, bo
 
 // newBackupService builds the backup service on the app pool: scheduled and
 // manual backups dump through pulsix_app without an organization scope,
-// which the org_isolation_bypass policies let read every organization.
-func newBackupService(appDB *db.DB, box *crypto.Box, masterKey [32]byte, smtp backupSMTP, version string) *backup.Service {
-	store := backup.NewSQLStore(appDB)
+// which the org_isolation_bypass policies let read every organization. The
+// backup lock's session comes from locks, apart from the pool the dump
+// runs on (backlog 3.92).
+func newBackupService(appDB, locks *db.DB, box *crypto.Box, masterKey [32]byte, smtp backupSMTP, version string) *backup.Service {
+	store := backup.NewSQLStoreWithLocks(appDB, locks)
 	return backup.NewService(store, box, backup.HeaderKey(masterKey), backupDump(appDB, masterKey), backup.StorageFor(backup.DefaultDir),
 		backupAdminMailer{admins: store, smtp: smtp}, version, time.Now, slog.Default())
 }

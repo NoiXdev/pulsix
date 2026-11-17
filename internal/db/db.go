@@ -54,9 +54,28 @@ func Open(ctx context.Context, url string) (*DB, error) {
 // so policies apply to it as designed. Migrations, which need DDL privileges
 // pulsix_app does not have, must run through Open instead.
 func OpenAsRole(ctx context.Context, url, postgresRole string) (*DB, error) {
+	return openAsRole(ctx, url, postgresRole, 0)
+}
+
+// OpenAsRoleWithMaxConns is OpenAsRole with the pool capped at maxConns
+// connections, whatever url's pool_max_conns says. The manager uses it for
+// the pool its advisory lockers hold their sessions on (backlog 3.92),
+// which must never compete with the shared pool the locked work runs on.
+func OpenAsRoleWithMaxConns(ctx context.Context, url, postgresRole string, maxConns int32) (*DB, error) {
+	if maxConns <= 0 {
+		return nil, fmt.Errorf("open pool: max connections %d, want at least 1", maxConns)
+	}
+	return openAsRole(ctx, url, postgresRole, maxConns)
+}
+
+// openAsRole is OpenAsRole's body; maxConns 0 keeps the configured size.
+func openAsRole(ctx context.Context, url, postgresRole string, maxConns int32) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
 	}
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET ROLE "+(pgx.Identifier{postgresRole}).Sanitize())

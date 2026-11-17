@@ -221,6 +221,12 @@ func (r *Retest) logger() *slog.Logger {
 // pg_try_advisory_lock, acquired and released on one dedicated pooled
 // connection, because advisory locks live on the session, not the
 // statement.
+//
+// The pool must not be the one the locked work runs on (backlog 3.92): the
+// session is held for the whole pass while the work takes connections of
+// its own, so lockers sharing that pool can hold every connection between
+// them and wait on each other for good. The manager gives its lockers a
+// pool of their own (app.lockSessions).
 type AdvisoryLocker struct {
 	pool *pgxpool.Pool
 	key  int64

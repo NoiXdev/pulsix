@@ -31,10 +31,21 @@ const unlockTimeout = 10 * time.Second
 type SQLStore struct {
 	d *db.DB
 	q *gen.Queries
+	// locks is the pool TryLock takes the lock's session from.
+	locks *db.DB
 }
 
-// NewSQLStore wraps d.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
+// NewSQLStore wraps d; the backup lock's session comes from d as well.
+func NewSQLStore(d *db.DB) *SQLStore { return NewSQLStoreWithLocks(d, d) }
+
+// NewSQLStoreWithLocks wraps d and takes the backup lock's session from
+// locks. The manager passes a pool of its own there (backlog 3.92): the
+// session is held for the whole backup while the dump and the run's rows
+// take connections from d, so a lock taken from d occupies a connection
+// the backup itself may need.
+func NewSQLStoreWithLocks(d, locks *db.DB) *SQLStore {
+	return &SQLStore{d: d, q: gen.New(d), locks: locks}
+}
 
 // LoadSetting implements Store.
 func (s *SQLStore) LoadSetting(ctx context.Context, key string) ([]byte, bool, error) {
@@ -56,7 +67,7 @@ func (s *SQLStore) SaveSetting(ctx context.Context, key string, value []byte) er
 // TryLock implements Store with pg_try_advisory_lock on a session pinned
 // for as long as the lock is held: advisory locks belong to the session.
 func (s *SQLStore) TryLock(ctx context.Context) (func(), bool, error) {
-	conn, err := s.d.Pool().Acquire(ctx)
+	conn, err := s.locks.Pool().Acquire(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("acquire session for the backup lock: %w", err)
 	}
