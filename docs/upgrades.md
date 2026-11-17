@@ -438,6 +438,16 @@ Organization assistant tokens keep `/api/mcp`; their tool list now leaves out th
 the owner's current role there cannot use, and an owner who is no longer a member is
 refused when connecting (403) rather than on every call.
 
+Skew for this release (3.97 to 3.100), during a rolling upgrade. A new SPA reaching an
+older manager: page-mode lists get cursor answers without `total`, so the pager hides
+and only the first page is reachable; the preferences and personal token routes answer
+404. API-visible changes of the new manager: a cursor-mode request with an invalid
+`sort`, `order` or `per_page` now answers 422 instead of the value being ignored; the
+bare `/api/mcp` counts grants in organizations whose personal token switch is off, so a
+token with one live and one switched-off grant gets 400 "several organizations"; and a
+user deactivated through an older manager keeps unrevoked personal tokens, which the
+disabled check holds off and which work again if the user is re-enabled.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
