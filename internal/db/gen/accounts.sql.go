@@ -32,6 +32,21 @@ func (q *Queries) AccountHasSecondFactor(ctx context.Context, userID uuid.UUID) 
 	return has_second_factor, err
 }
 
+const countAccounts = `-- name: CountAccounts :one
+SELECT count(*) FROM users u
+WHERE ($1::text = ''
+       OR strpos(lower(u.email::text), lower($1::text)) > 0
+       OR strpos(lower(u.display_name), lower($1::text)) > 0)
+`
+
+// ListAccountsPage's search, counted: the total of a paged answer.
+func (q *Queries) CountAccounts(ctx context.Context, query string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAccounts, query)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countResetTokensSince = `-- name: CountResetTokensSince :one
 SELECT count(*) FROM password_reset_tokens
 WHERE user_id = $1 AND created_at >= $2::timestamptz
@@ -312,6 +327,160 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 	var items []ListAccountsRow
 	for rows.Next() {
 		var i ListAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.InstanceAdmin,
+			&i.DisabledAt,
+			&i.HasPassword,
+			&i.MustChangePassword,
+			&i.LastSignInAt,
+			&i.HasSecondFactor,
+			&i.OrgCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountsPage = `-- name: ListAccountsPage :many
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.last_sign_in_at,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE ($1::text = ''
+       OR strpos(lower(u.email::text), lower($1::text)) > 0
+       OR strpos(lower(u.display_name), lower($1::text)) > 0)
+ORDER BY u.email ASC
+OFFSET $2 LIMIT $3
+`
+
+type ListAccountsPageParams struct {
+	Query     string `json:"query"`
+	RowOffset int32  `json:"row_offset"`
+	RowLimit  int32  `json:"row_limit"`
+}
+
+type ListAccountsPageRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Email              string             `json:"email"`
+	DisplayName        string             `json:"display_name"`
+	InstanceAdmin      bool               `json:"instance_admin"`
+	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
+	HasPassword        bool               `json:"has_password"`
+	MustChangePassword bool               `json:"must_change_password"`
+	LastSignInAt       pgtype.Timestamptz `json:"last_sign_in_at"`
+	HasSecondFactor    bool               `json:"has_second_factor"`
+	OrgCount           int64              `json:"org_count"`
+}
+
+// Offset paging (backlog 3.97) in the default order, e-mail ascending: the
+// order the unique e-mail index serves. ListAccounts' search without the
+// keyset bound.
+func (q *Queries) ListAccountsPage(ctx context.Context, arg ListAccountsPageParams) ([]ListAccountsPageRow, error) {
+	rows, err := q.db.Query(ctx, listAccountsPage, arg.Query, arg.RowOffset, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountsPageRow
+	for rows.Next() {
+		var i ListAccountsPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.InstanceAdmin,
+			&i.DisabledAt,
+			&i.HasPassword,
+			&i.MustChangePassword,
+			&i.LastSignInAt,
+			&i.HasSecondFactor,
+			&i.OrgCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccountsPageSorted = `-- name: ListAccountsPageSorted :many
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.last_sign_in_at,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE ($1::text = ''
+       OR strpos(lower(u.email::text), lower($1::text)) > 0
+       OR strpos(lower(u.display_name), lower($1::text)) > 0)
+ORDER BY
+  (CASE WHEN $2::text = 'email' AND NOT $3::boolean THEN u.email END) ASC,
+  (CASE WHEN $2::text = 'email' AND $3::boolean THEN u.email END) DESC,
+  (CASE WHEN $2::text = 'name' AND NOT $3::boolean THEN lower(u.display_name) END) ASC,
+  (CASE WHEN $2::text = 'name' AND $3::boolean THEN lower(u.display_name) END) DESC,
+  (CASE WHEN $2::text = 'last_sign_in' AND NOT $3::boolean THEN u.last_sign_in_at END) ASC NULLS LAST,
+  (CASE WHEN $2::text = 'last_sign_in' AND $3::boolean THEN u.last_sign_in_at END) DESC NULLS LAST,
+  u.email ASC
+OFFSET $4 LIMIT $5
+`
+
+type ListAccountsPageSortedParams struct {
+	Query     string `json:"query"`
+	SortKey   string `json:"sort_key"`
+	SortDesc  bool   `json:"sort_desc"`
+	RowOffset int32  `json:"row_offset"`
+	RowLimit  int32  `json:"row_limit"`
+}
+
+type ListAccountsPageSortedRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Email              string             `json:"email"`
+	DisplayName        string             `json:"display_name"`
+	InstanceAdmin      bool               `json:"instance_admin"`
+	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
+	HasPassword        bool               `json:"has_password"`
+	MustChangePassword bool               `json:"must_change_password"`
+	LastSignInAt       pgtype.Timestamptz `json:"last_sign_in_at"`
+	HasSecondFactor    bool               `json:"has_second_factor"`
+	OrgCount           int64              `json:"org_count"`
+}
+
+// Every other key and direction (backlog 3.97). The sort key is whitelisted
+// by the caller; each CASE is NULL on every row unless its key is chosen, so
+// the others drop out. name orders by the display name case-insensitively,
+// last_sign_in by the last sign-in with the accounts that never signed in
+// last in both directions. A tie falls back to the e-mail, which is unique,
+// so pages are disjoint.
+func (q *Queries) ListAccountsPageSorted(ctx context.Context, arg ListAccountsPageSortedParams) ([]ListAccountsPageSortedRow, error) {
+	rows, err := q.db.Query(ctx, listAccountsPageSorted,
+		arg.Query,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountsPageSortedRow
+	for rows.Next() {
+		var i ListAccountsPageSortedRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Email,

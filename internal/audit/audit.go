@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // ActorKind says how the request that produced an Event was authenticated:
@@ -82,7 +84,20 @@ type Store interface {
 	Insert(ctx context.Context, e Event) error
 	List(ctx context.Context, orgID uuid.UUID, filter Filter, cursor string, limit int) ([]Event, string, error)
 	ListForActor(ctx context.Context, actorID uuid.UUID, filter Filter, cursor string, limit int) ([]Event, string, error)
+	// ListPage and ListForActorPage are the offset-paged counterparts
+	// (backlog 3.97): one page ordered by p, and how many events match
+	// the filter in all. The only sort key is SortAt; anything else is
+	// ErrInvalidInput.
+	ListPage(ctx context.Context, orgID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error)
+	ListForActorPage(ctx context.Context, actorID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error)
 }
+
+// SortAt is the one sort key of the paged feeds: the time of the event,
+// newest first unless the page asks for ascending.
+const SortAt = "at"
+
+// ErrInvalidInput is a sort key the paged feeds do not know.
+var ErrInvalidInput = errors.New("audit: invalid input")
 
 // ErrInvalidCursor is returned by DecodeCursor (and so, by extension, by any
 // Store.List/ListForActor implementation that decodes its cursor argument
@@ -199,6 +214,18 @@ func (r *Recorder) List(ctx context.Context, orgID uuid.UUID, filter Filter, cur
 // clamped by clampLimit.
 func (r *Recorder) ListForActor(ctx context.Context, actorID uuid.UUID, filter Filter, cursor string, limit int) ([]Event, string, error) {
 	return r.store.ListForActor(ctx, actorID, filter, cursor, clampLimit(limit))
+}
+
+// ListPage returns one offset page of orgID's activity feed ordered by p,
+// narrowed by filter, and the number of events matching in all.
+func (r *Recorder) ListPage(ctx context.Context, orgID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error) {
+	return r.store.ListPage(ctx, orgID, filter, p)
+}
+
+// ListForActorPage is ListPage for actorID's own events across every
+// organization.
+func (r *Recorder) ListForActorPage(ctx context.Context, actorID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error) {
+	return r.store.ListForActorPage(ctx, actorID, filter, p)
 }
 
 // SystemEvent is the reduced shape a system-generated event arrives in:

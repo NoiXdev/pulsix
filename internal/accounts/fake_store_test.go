@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // fakeStore is an in-memory accounts.Store. It records the writes the
@@ -23,6 +24,9 @@ type fakeStore struct {
 	// The admin views (admin_test.go).
 	records     []accounts.AccountRecord
 	listCalls   []listCall
+	pageCalls   []pageCall
+	pageTotal   int
+	pageErr     error
 	detail      *accounts.AccountDetailRecord
 	memberships []accounts.Membership
 	memberCalls []memberCall
@@ -149,6 +153,19 @@ func (f *fakeStore) ListAccounts(_ context.Context, query, after string, limit i
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) ListAccountsPage(_ context.Context, query string, p paging.Page) ([]accounts.AccountRecord, int, error) {
+	f.pageCalls = append(f.pageCalls, pageCall{query, p})
+	if f.pageErr != nil {
+		return nil, 0, f.pageErr
+	}
+	return f.records, f.pageTotal, nil
+}
+
+type pageCall struct {
+	query string
+	page  paging.Page
 }
 
 func (f *fakeStore) GetAccount(_ context.Context, _ uuid.UUID) (accounts.AccountDetailRecord, error) {

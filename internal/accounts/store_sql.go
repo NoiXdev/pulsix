@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // SQLStore implements Store with sqlc queries.
@@ -82,13 +83,56 @@ func (s *SQLStore) ListAccounts(ctx context.Context, query, after string, limit 
 	}
 	out := make([]AccountRecord, len(rows))
 	for i, r := range rows {
-		out[i] = AccountRecord{
-			ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, InstanceAdmin: r.InstanceAdmin,
-			HasPassword: r.HasPassword, MustChangePassword: r.MustChangePassword, HasSecondFactor: r.HasSecondFactor,
-			DisabledAt: db.TimePtr(r.DisabledAt), LastSignInAt: db.TimePtr(r.LastSignInAt), OrgCount: int(r.OrgCount),
-		}
+		out[i] = accountOf(r)
 	}
 	return out, nil
+}
+
+// ListAccountsPage implements Store: the default order takes the
+// index-friendly query, every other key the whitelisted CASE ordering; both
+// are counted by the same search.
+func (s *SQLStore) ListAccountsPage(ctx context.Context, query string, p paging.Page) ([]AccountRecord, int, error) {
+	switch p.Sort {
+	case SortEmail, SortName, SortLastSignIn:
+	default:
+		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
+	}
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is capped by paging.MaxPage
+	var out []AccountRecord
+	if p.Sort == SortEmail && !p.Desc {
+		rows, err := s.q.ListAccountsPage(ctx, gen.ListAccountsPageParams{Query: query, RowOffset: offset, RowLimit: limit})
+		if err != nil {
+			return nil, 0, fmt.Errorf("list accounts page: %w", err)
+		}
+		out = make([]AccountRecord, len(rows))
+		for i, r := range rows {
+			out[i] = accountOf(gen.ListAccountsRow(r))
+		}
+	} else {
+		rows, err := s.q.ListAccountsPageSorted(ctx, gen.ListAccountsPageSortedParams{
+			Query: query, SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("list accounts page: %w", err)
+		}
+		out = make([]AccountRecord, len(rows))
+		for i, r := range rows {
+			out[i] = accountOf(gen.ListAccountsRow(r))
+		}
+	}
+	total, err := s.q.CountAccounts(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("count accounts: %w", err)
+	}
+	return out, int(total), nil
+}
+
+func accountOf(r gen.ListAccountsRow) AccountRecord {
+	return AccountRecord{
+		ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, InstanceAdmin: r.InstanceAdmin,
+		HasPassword: r.HasPassword, MustChangePassword: r.MustChangePassword, HasSecondFactor: r.HasSecondFactor,
+		DisabledAt: db.TimePtr(r.DisabledAt), LastSignInAt: db.TimePtr(r.LastSignInAt), OrgCount: int(r.OrgCount),
+	}
 }
 
 // GetAccount implements Store.

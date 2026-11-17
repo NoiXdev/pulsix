@@ -2,6 +2,7 @@ package audit_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 func seedUser(t *testing.T, q *gen.Queries, email string) uuid.UUID {
@@ -358,5 +360,134 @@ func TestAuditEventsAreIsolatedPerOrgByRLS(t *testing.T) {
 	}
 	if len(seen) != 1 || seen[0] != orgA {
 		t.Fatalf("RLS leak: saw %v, want only [%s]", seen, orgA)
+	}
+}
+
+// TestSQLStorePages: both page reads in both directions, with events tied on
+// at so the id tie-break is exercised, the filters applied to rows and total,
+// a page past the end, and the token name resolved.
+func TestSQLStorePages(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := audit.NewSQLStore(d)
+	org, other := seedOrg(t, q, "audit-page-org"), seedOrg(t, q, "audit-page-other")
+	alice, bob := seedUser(t, q, "alice-page@example.test"), seedUser(t, q, "bob-page@example.test")
+	tokenID := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash) VALUES ($1, $2, $3, 'ci', 'viewer', $4)`,
+		tokenID, alice, org, []byte("hash-"+tokenID.String())); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	var ids []uuid.UUID // oldest first: ascending at, and ascending id within a tie
+	for i := range 7 {
+		actor, ot := &alice, "host"
+		if i%2 == 1 {
+			actor, ot = &bob, "user"
+		}
+		e := audit.Event{
+			ID: uuid.MustParse("01900000-0000-7000-8000-00000000000" + string(rune('0'+i))), OrgID: &org, ActorID: actor,
+			ActorKind: audit.ActorKindUser, Action: "a", ObjectType: ot, ObjectID: "o", At: base.Add(time.Duration(i/2) * time.Second),
+		}
+		if i == 6 {
+			e.TokenID = &tokenID
+		}
+		if err := store.Insert(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, e.ID)
+	}
+	// An event of alice's in another organization and one of nobody's.
+	elsewhere := audit.Event{ID: uuid.MustParse("01900000-0000-7000-8000-000000000099"), OrgID: &other, ActorID: &alice, ActorKind: audit.ActorKindUser, Action: "a", ObjectType: "host", ObjectID: "o", At: base.Add(time.Hour)}
+	if err := store.Insert(ctx, elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	idsOf := func(es []audit.Event) []uuid.UUID {
+		var out []uuid.UUID
+		for _, e := range es {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	rev := func(in []uuid.UUID) []uuid.UUID {
+		out := append([]uuid.UUID(nil), in...)
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+		return out
+	}
+	eq := func(a, b []uuid.UUID) bool {
+		return len(a) == len(b) && (len(a) == 0 || func() bool {
+			for i := range a {
+				if a[i] != b[i] {
+					return false
+				}
+			}
+			return true
+		}())
+	}
+
+	for _, desc := range []bool{true, false} {
+		want := ids
+		if desc {
+			want = rev(ids)
+		}
+		var got []audit.Event
+		for n := 1; n <= 3; n++ {
+			rows, total, err := store.ListPage(ctx, org, audit.Filter{}, paging.Page{Number: n, Size: 3, Sort: audit.SortAt, Desc: desc})
+			if err != nil || total != 7 {
+				t.Fatalf("ListPage desc=%v page %d: total %d err %v", desc, n, total, err)
+			}
+			got = append(got, rows...)
+		}
+		if !eq(idsOf(got), want) {
+			t.Fatalf("ListPage desc=%v = %v, want %v", desc, idsOf(got), want)
+		}
+	}
+
+	rows, total, err := store.ListPage(ctx, org, audit.Filter{ObjectType: "user"}, paging.Page{Number: 1, Size: 10, Sort: audit.SortAt})
+	if err != nil || total != 3 || !eq(idsOf(rows), []uuid.UUID{ids[1], ids[3], ids[5]}) {
+		t.Fatalf("object_type filter: %v total %d err %v", idsOf(rows), total, err)
+	}
+	rows, total, err = store.ListPage(ctx, org, audit.Filter{ActorID: &alice}, paging.Page{Number: 2, Size: 3, Sort: audit.SortAt, Desc: true})
+	if err != nil || total != 4 || !eq(idsOf(rows), []uuid.UUID{ids[0]}) {
+		t.Fatalf("actor filter page 2: %v total %d err %v", idsOf(rows), total, err)
+	}
+	since := base.Add(time.Second)
+	rows, total, err = store.ListPage(ctx, org, audit.Filter{Since: &since}, paging.Page{Number: 1, Size: 10, Sort: audit.SortAt})
+	if err != nil || total != 5 || len(rows) != 5 {
+		t.Fatalf("since filter: %d rows total %d err %v", len(rows), total, err)
+	}
+	rows, total, err = store.ListPage(ctx, org, audit.Filter{}, paging.Page{Number: 99, Size: 10, Sort: audit.SortAt})
+	if err != nil || total != 7 || len(rows) != 0 {
+		t.Fatalf("past the end: %d rows total %d err %v", len(rows), total, err)
+	}
+	rows, _, err = store.ListPage(ctx, org, audit.Filter{}, paging.Page{Number: 1, Size: 1, Sort: audit.SortAt, Desc: true})
+	if err != nil || len(rows) != 1 || rows[0].TokenID == nil || rows[0].TokenName != "ci" {
+		t.Fatalf("token name: %+v err %v", rows, err)
+	}
+
+	// The actor's page spans organizations.
+	for _, desc := range []bool{true, false} {
+		want := []uuid.UUID{ids[0], ids[2], ids[4], ids[6], elsewhere.ID}
+		if desc {
+			want = rev(want)
+		}
+		rows, total, err := store.ListForActorPage(ctx, alice, audit.Filter{}, paging.Page{Number: 1, Size: 10, Sort: audit.SortAt, Desc: desc})
+		if err != nil || total != 5 || !eq(idsOf(rows), want) {
+			t.Fatalf("ListForActorPage desc=%v = %v total %d err %v, want %v", desc, idsOf(rows), total, err, want)
+		}
+	}
+	rows, total, err = store.ListForActorPage(ctx, alice, audit.Filter{ObjectType: "host"}, paging.Page{Number: 2, Size: 2, Sort: audit.SortAt, Desc: true})
+	if err != nil || total != 5 || len(rows) != 2 {
+		t.Fatalf("actor page 2: %d rows total %d err %v", len(rows), total, err)
+	}
+
+	if _, _, err := store.ListPage(ctx, org, audit.Filter{}, paging.Page{Number: 1, Size: 10, Sort: "actor"}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Fatalf("unknown sort: %v, want ErrInvalidInput", err)
+	}
+	if _, _, err := store.ListForActorPage(ctx, alice, audit.Filter{}, paging.Page{Number: 1, Size: 10, Sort: ""}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Fatalf("empty sort: %v, want ErrInvalidInput", err)
 	}
 }

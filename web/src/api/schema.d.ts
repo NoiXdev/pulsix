@@ -3365,7 +3365,13 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["EventDTO"][] | null;
+            /** @description Empty in page mode */
             next_cursor: string;
+            /**
+             * Format: int64
+             * @description Events matching the filters; page mode only
+             */
+            total?: number;
         };
         Added: {
             field: components["schemas"]["Field"];
@@ -3469,7 +3475,13 @@ export interface components {
              * @example https://example.com/schemas/AdminUserListOutputBody.json
              */
             readonly $schema?: string;
+            /** @description Empty in page mode */
             next_cursor: string;
+            /**
+             * Format: int64
+             * @description Accounts matching q; page mode only
+             */
+            total?: number;
             users: components["schemas"]["AdminUserDTO"][] | null;
         };
         AdminUserOutputBody: {
@@ -9137,6 +9149,14 @@ export interface operations {
                 q?: string;
                 cursor?: string;
                 limit?: number;
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                /** @description Page mode only; accounts that never signed in come last under last_sign_in */
+                sort?: "email" | "name" | "last_sign_in";
             };
             header?: never;
             path?: never;
@@ -10492,6 +10512,13 @@ export interface operations {
                 since?: string;
                 cursor?: string;
                 limit?: number;
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                sort?: "at";
             };
             header?: never;
             path?: never;
@@ -10655,6 +10682,13 @@ export interface operations {
                 since?: string;
                 cursor?: string;
                 limit?: number;
+                /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                sort?: "at";
             };
             header?: never;
             path: {

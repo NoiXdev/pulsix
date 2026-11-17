@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 var testNow = time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
@@ -170,5 +171,38 @@ func TestGetUser(t *testing.T) {
 	}
 	if _, err := newAdminService(&fakeStore{}, &fakeMailer{}).GetUser(ctx, true, actor, id); !errors.Is(err, accounts.ErrNotFound) {
 		t.Fatalf("unknown account: err %v, want ErrNotFound", err)
+	}
+}
+
+func TestListUsersPage(t *testing.T) {
+	ctx := context.Background()
+	recs := []accounts.AccountRecord{
+		{ID: uuid.Must(uuid.NewV7()), Email: "a@example.test", HasPassword: true, HasSecondFactor: true},
+		{ID: uuid.Must(uuid.NewV7()), Email: "b@example.test"},
+	}
+	store := &fakeStore{records: recs, pageTotal: 42}
+	svc := newAdminService(store, &fakeMailer{})
+	p := paging.Page{Number: 3, Size: 10, Sort: accounts.SortLastSignIn, Desc: true}
+
+	users, total, err := svc.ListUsersPage(ctx, true, "  needle  ", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 42 || len(users) != 2 || users[0].State != accounts.StateActive || users[1].State != accounts.StateInvitePending {
+		t.Fatalf("ListUsersPage = %+v, total %d", users, total)
+	}
+	if got := store.pageCalls[0]; got.query != "needle" || got.page != p {
+		t.Fatalf("store asked with %+v, want the trimmed query and the page as given", got)
+	}
+
+	if _, _, err := svc.ListUsersPage(ctx, false, "", p); !errors.Is(err, accounts.ErrForbidden) {
+		t.Fatalf("non-admin: %v, want ErrForbidden", err)
+	}
+	if len(store.pageCalls) != 1 {
+		t.Fatal("a non-admin reached the store")
+	}
+	store.pageErr = accounts.ErrInvalidInput
+	if _, _, err := svc.ListUsersPage(ctx, true, "", p); !errors.Is(err, accounts.ErrInvalidInput) {
+		t.Fatalf("store error lost: %v", err)
 	}
 }

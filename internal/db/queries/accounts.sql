@@ -55,6 +55,57 @@ WHERE (sqlc.arg(query)::text = ''
 ORDER BY u.email
 LIMIT sqlc.arg(lim);
 
+-- name: ListAccountsPage :many
+-- Offset paging (backlog 3.97) in the default order, e-mail ascending: the
+-- order the unique e-mail index serves. ListAccounts' search without the
+-- keyset bound.
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.last_sign_in_at,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE (sqlc.arg(query)::text = ''
+       OR strpos(lower(u.email::text), lower(sqlc.arg(query)::text)) > 0
+       OR strpos(lower(u.display_name), lower(sqlc.arg(query)::text)) > 0)
+ORDER BY u.email ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListAccountsPageSorted :many
+-- Every other key and direction (backlog 3.97). The sort key is whitelisted
+-- by the caller; each CASE is NULL on every row unless its key is chosen, so
+-- the others drop out. name orders by the display name case-insensitively,
+-- last_sign_in by the last sign-in with the accounts that never signed in
+-- last in both directions. A tie falls back to the e-mail, which is unique,
+-- so pages are disjoint.
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.last_sign_in_at,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE (sqlc.arg(query)::text = ''
+       OR strpos(lower(u.email::text), lower(sqlc.arg(query)::text)) > 0
+       OR strpos(lower(u.display_name), lower(sqlc.arg(query)::text)) > 0)
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'email' AND NOT sqlc.arg(sort_desc)::boolean THEN u.email END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'email' AND sqlc.arg(sort_desc)::boolean THEN u.email END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND NOT sqlc.arg(sort_desc)::boolean THEN lower(u.display_name) END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND sqlc.arg(sort_desc)::boolean THEN lower(u.display_name) END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'last_sign_in' AND NOT sqlc.arg(sort_desc)::boolean THEN u.last_sign_in_at END) ASC NULLS LAST,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'last_sign_in' AND sqlc.arg(sort_desc)::boolean THEN u.last_sign_in_at END) DESC NULLS LAST,
+  u.email ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountAccounts :one
+-- ListAccountsPage's search, counted: the total of a paged answer.
+SELECT count(*) FROM users u
+WHERE (sqlc.arg(query)::text = ''
+       OR strpos(lower(u.email::text), lower(sqlc.arg(query)::text)) > 0
+       OR strpos(lower(u.display_name), lower(sqlc.arg(query)::text)) > 0);
+
 -- name: GetAccount :one
 -- One account for the instance admin's account page: what ListAccounts
 -- shows, plus the second factors and the sessions. A confirmed TOTP secret

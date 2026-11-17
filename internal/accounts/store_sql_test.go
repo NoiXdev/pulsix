@@ -14,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 func seedUser(t *testing.T, d *db.DB, email string, hash *string) uuid.UUID {
@@ -290,6 +291,45 @@ func TestSQLStoreAccountReads(t *testing.T) {
 			if len(found) != 1 || found[0].ID != want {
 				t.Errorf("query %q matched %+v, want only %s", query, found, want)
 			}
+		}
+	})
+
+	t.Run("ListAccountsPage", func(t *testing.T) {
+		emails := func(rs []accounts.AccountRecord) string {
+			var out []string
+			for _, r := range rs {
+				out = append(out, r.Email)
+			}
+			return strings.Join(out, ",")
+		}
+		for _, tc := range []struct {
+			name  string
+			page  paging.Page
+			query string
+			want  string
+			total int
+		}{
+			{"default", paging.Page{Number: 1, Size: 10, Sort: accounts.SortEmail}, "", "admin@example.test,Alice@example.test,bob@example.test,carol@example.test", 4},
+			{"second page", paging.Page{Number: 2, Size: 2, Sort: accounts.SortEmail}, "", "bob@example.test,carol@example.test", 4},
+			{"email desc", paging.Page{Number: 1, Size: 10, Sort: accounts.SortEmail, Desc: true}, "", "carol@example.test,bob@example.test,Alice@example.test,admin@example.test", 4},
+			{"name asc", paging.Page{Number: 1, Size: 10, Sort: accounts.SortName}, "", "bob@example.test,admin@example.test,Alice@example.test,carol@example.test", 4},
+			{"name desc", paging.Page{Number: 1, Size: 10, Sort: accounts.SortName, Desc: true}, "", "admin@example.test,Alice@example.test,carol@example.test,bob@example.test", 4},
+			{"last sign-in asc, never last", paging.Page{Number: 1, Size: 10, Sort: accounts.SortLastSignIn}, "", "bob@example.test,admin@example.test,Alice@example.test,carol@example.test", 4},
+			{"last sign-in desc, never last", paging.Page{Number: 1, Size: 10, Sort: accounts.SortLastSignIn, Desc: true}, "", "bob@example.test,admin@example.test,Alice@example.test,carol@example.test", 4},
+			{"search", paging.Page{Number: 1, Size: 10, Sort: accounts.SortEmail}, "ROBERT", "bob@example.test", 1},
+			{"no wildcards", paging.Page{Number: 1, Size: 10, Sort: accounts.SortName}, "%", "", 0},
+			{"past the end", paging.Page{Number: 9, Size: 10, Sort: accounts.SortEmail}, "", "", 4},
+		} {
+			rows, total, err := store.ListAccountsPage(ctx, tc.query, tc.page)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if got := emails(rows); got != tc.want || total != tc.total {
+				t.Errorf("%s: got %s (total %d), want %s (total %d)", tc.name, got, total, tc.want, tc.total)
+			}
+		}
+		if _, _, err := store.ListAccountsPage(ctx, "", paging.Page{Number: 1, Size: 10, Sort: "state"}); !errors.Is(err, accounts.ErrInvalidInput) {
+			t.Fatalf("unknown sort: %v, want ErrInvalidInput", err)
 		}
 	})
 

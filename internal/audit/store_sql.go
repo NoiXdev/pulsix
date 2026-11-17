@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // SQLStore implements Store with sqlc queries, the same shape SQLTokenStore
@@ -180,4 +182,104 @@ func cursorIDToPg(cursor string, id uuid.UUID) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+// ListPage returns one offset page of orgID's activity feed. The default
+// order (newest first) is the index-friendly query; ascending is its mirror.
+func (s *SQLStore) ListPage(ctx context.Context, orgID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error) {
+	if p.Sort != SortAt {
+		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
+	}
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is capped by paging.MaxPage
+	actor, objectType, since := uuidToPg(filter.ActorID), nilIfEmpty(filter.ObjectType), timeToPg(filter.Since)
+	var rows []gen.AuditEvent
+	var err error
+	if p.Desc {
+		rows, err = s.q.ListAuditEventsForOrgPage(ctx, gen.ListAuditEventsForOrgPageParams{
+			OrgID: pgtype.UUID{Bytes: orgID, Valid: true}, ActorID: actor, ObjectType: objectType, Since: since, RowOffset: offset, RowLimit: limit,
+		})
+	} else {
+		rows, err = s.q.ListAuditEventsForOrgPageAsc(ctx, gen.ListAuditEventsForOrgPageAscParams{
+			OrgID: pgtype.UUID{Bytes: orgID, Valid: true}, ActorID: actor, ObjectType: objectType, Since: since, RowOffset: offset, RowLimit: limit,
+		})
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("list audit events page: %w", err)
+	}
+	total, err := s.q.CountAuditEventsForOrg(ctx, gen.CountAuditEventsForOrgParams{
+		OrgID: pgtype.UUID{Bytes: orgID, Valid: true}, ActorID: actor, ObjectType: objectType, Since: since,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count audit events: %w", err)
+	}
+	events, err := s.pageEvents(ctx, rows)
+	return events, int(total), err
+}
+
+// ListForActorPage is ListPage for actorID's own events across every
+// organization.
+func (s *SQLStore) ListForActorPage(ctx context.Context, actorID uuid.UUID, filter Filter, p paging.Page) ([]Event, int, error) {
+	if p.Sort != SortAt {
+		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
+	}
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is capped by paging.MaxPage
+	actor, objectType, since := pgtype.UUID{Bytes: actorID, Valid: true}, nilIfEmpty(filter.ObjectType), timeToPg(filter.Since)
+	var rows []gen.AuditEvent
+	var err error
+	if p.Desc {
+		rows, err = s.q.ListAuditEventsForActorPage(ctx, gen.ListAuditEventsForActorPageParams{
+			ActorID: actor, ObjectType: objectType, Since: since, RowOffset: offset, RowLimit: limit,
+		})
+	} else {
+		rows, err = s.q.ListAuditEventsForActorPageAsc(ctx, gen.ListAuditEventsForActorPageAscParams{
+			ActorID: actor, ObjectType: objectType, Since: since, RowOffset: offset, RowLimit: limit,
+		})
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("list audit events page: %w", err)
+	}
+	total, err := s.q.CountAuditEventsForActor(ctx, gen.CountAuditEventsForActorParams{ActorID: actor, ObjectType: objectType, Since: since})
+	if err != nil {
+		return nil, 0, fmt.Errorf("count audit events: %w", err)
+	}
+	events, err := s.pageEvents(ctx, rows)
+	return events, int(total), err
+}
+
+// pageEvents turns a page's rows into events and names the API tokens they
+// were made with. This is the one place the paged feeds resolve a token's
+// name: one query for the whole page, not a join per page query.
+func (s *SQLStore) pageEvents(ctx context.Context, rows []gen.AuditEvent) ([]Event, error) {
+	events := make([]Event, len(rows))
+	var tokenIDs []uuid.UUID
+	for i, r := range rows {
+		e, err := fromRow(eventRow{
+			ID: r.ID, OrgID: r.OrgID, ActorID: r.ActorID, ActorKind: r.ActorKind, Action: r.Action, ObjectType: r.ObjectType,
+			ObjectID: r.ObjectID, Summary: r.Summary, Meta: r.Meta, At: r.At, ActorTokenID: r.ActorTokenID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		events[i] = e
+		if e.TokenID != nil {
+			tokenIDs = append(tokenIDs, *e.TokenID)
+		}
+	}
+	if len(tokenIDs) == 0 {
+		return events, nil
+	}
+	named, err := s.q.ListAuditTokenNames(ctx, tokenIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list audit token names: %w", err)
+	}
+	names := make(map[uuid.UUID]string, len(named))
+	for _, n := range named {
+		names[n.ID] = n.Name
+	}
+	for i := range events {
+		if events[i].TokenID != nil {
+			events[i].TokenName = names[*events[i].TokenID]
+		}
+	}
+	return events, nil
 }

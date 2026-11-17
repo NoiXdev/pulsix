@@ -33,7 +33,8 @@ type eventDTO struct {
 type activityListOutput struct {
 	Body struct {
 		Items      []eventDTO `json:"items"`
-		NextCursor string     `json:"next_cursor"`
+		NextCursor string     `json:"next_cursor" doc:"Empty in page mode"`
+		Total      *int       `json:"total,omitempty" doc:"Events matching the filters; page mode only"`
 	}
 }
 
@@ -51,6 +52,10 @@ type orgActivityListInput struct {
 	Since      string `query:"since"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
+	// Page switches the feed to offset paging (see PageQuery); the one sort
+	// key is at, newest first by default.
+	PageQuery
+	Sort string `query:"sort" enum:"at"`
 }
 
 type myActivityListInput struct {
@@ -58,6 +63,8 @@ type myActivityListInput struct {
 	Since      string `query:"since"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
+	PageQuery
+	Sort string `query:"sort" enum:"at"`
 }
 
 // registerAuditRoutes wires GET /orgs/{org}/activity: the org's own
@@ -76,6 +83,14 @@ func registerAuditRoutes(hapi huma.API, deps Deps) {
 		filter, err := parseActivityFilter(in.Actor, in.ObjectType, in.Since)
 		if err != nil {
 			return nil, err
+		}
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, audit.SortAt, true)
+		if err != nil {
+			return nil, err
+		}
+		if page != nil {
+			items, total, err := deps.Audit.ListPage(ctx, scope.OrgID, filter, *page)
+			return activityPageOutput(ctx, items, total, err)
 		}
 		items, next, err := deps.Audit.List(ctx, scope.OrgID, filter, in.Cursor, in.Limit)
 		if err != nil {
@@ -107,6 +122,14 @@ func registerMyActivityRoute(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, audit.SortAt, true)
+		if err != nil {
+			return nil, err
+		}
+		if page != nil {
+			items, total, err := deps.Audit.ListForActorPage(ctx, p.UserID, filter, *page)
+			return activityPageOutput(ctx, items, total, err)
+		}
 		items, next, err := deps.Audit.ListForActor(ctx, p.UserID, filter, in.Cursor, in.Limit)
 		if err != nil {
 			return nil, mapAuditErr(ctx, err)
@@ -115,6 +138,16 @@ func registerMyActivityRoute(hapi huma.API, deps Deps) {
 		out.Body.Items, out.Body.NextCursor = toEventDTOs(items), next
 		return out, nil
 	})
+}
+
+// activityPageOutput is the answer of a paged activity feed.
+func activityPageOutput(ctx context.Context, items []audit.Event, total int, err error) (*activityListOutput, error) {
+	if err != nil {
+		return nil, mapAuditErr(ctx, err)
+	}
+	out := &activityListOutput{}
+	out.Body.Items, out.Body.Total = toEventDTOs(items), &total
+	return out, nil
 }
 
 // parseActivityFilter turns the three optional, string-typed query
@@ -169,6 +202,9 @@ func uuidPtrToStringPtr(id *uuid.UUID) *string {
 func mapAuditErr(ctx context.Context, err error) error {
 	if errors.Is(err, audit.ErrInvalidCursor) {
 		return huma.Error400BadRequest("invalid cursor")
+	}
+	if errors.Is(err, audit.ErrInvalidInput) {
+		return huma.Error422UnprocessableEntity("invalid sort")
 	}
 	slog.ErrorContext(ctx, "unmapped audit error", "err", err)
 	return huma.Error500InternalServerError("internal error")

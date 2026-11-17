@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // spyAuditStore records every Insert call it receives. It never needs a
@@ -34,6 +35,14 @@ func (s *spyAuditStore) List(context.Context, uuid.UUID, audit.Filter, string, i
 
 func (s *spyAuditStore) ListForActor(context.Context, uuid.UUID, audit.Filter, string, int) ([]audit.Event, string, error) {
 	return nil, "", nil
+}
+
+func (s *spyAuditStore) ListPage(context.Context, uuid.UUID, audit.Filter, paging.Page) ([]audit.Event, int, error) {
+	return nil, 0, nil
+}
+
+func (s *spyAuditStore) ListForActorPage(context.Context, uuid.UUID, audit.Filter, paging.Page) ([]audit.Event, int, error) {
+	return nil, 0, nil
 }
 
 // TestPanicInHandlerRecordsNoAuditEvent drives a real panic through

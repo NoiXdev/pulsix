@@ -73,12 +73,18 @@ type adminUserListInput struct {
 	Q      string `query:"q"`
 	Cursor string `query:"cursor"`
 	Limit  int    `query:"limit" minimum:"1" maximum:"200" default:"50"`
+	// Page switches the list to offset paging (see PageQuery). Sort is the
+	// whitelist of accounts.Sort* keys, e-mail ascending by default; the
+	// derived state is not sortable.
+	PageQuery
+	Sort string `query:"sort" enum:"email,name,last_sign_in" doc:"Page mode only; accounts that never signed in come last under last_sign_in"`
 }
 
 type adminUserListOutput struct {
 	Body struct {
 		Users      []AdminUserDTO `json:"users"`
-		NextCursor string         `json:"next_cursor"`
+		NextCursor string         `json:"next_cursor" doc:"Empty in page mode"`
+		Total      *int           `json:"total,omitempty" doc:"Accounts matching q; page mode only"`
 	}
 }
 
@@ -131,11 +137,27 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		users, next, err := deps.Accounts.ListUsers(ctx, p.InstanceAdmin, in.Q, in.Cursor, in.Limit)
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, accounts.SortEmail, false)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			users []accounts.UserSummary
+			next  string
+			total int
+		)
+		if page != nil {
+			users, total, err = deps.Accounts.ListUsersPage(ctx, p.InstanceAdmin, in.Q, *page)
+		} else {
+			users, next, err = deps.Accounts.ListUsers(ctx, p.InstanceAdmin, in.Q, in.Cursor, in.Limit)
+		}
 		if err != nil {
 			return nil, mapAdminAccountsErr(ctx, err)
 		}
 		out := &adminUserListOutput{}
+		if page != nil {
+			out.Body.Total = &total
+		}
 		out.Body.Users = make([]AdminUserDTO, len(users))
 		for i, u := range users {
 			out.Body.Users[i] = adminUserDTOOf(u)
@@ -326,6 +348,8 @@ func mapAdminAccountsErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, accounts.ErrInvalidCursor):
 		return huma.Error400BadRequest("invalid cursor")
+	case errors.Is(err, accounts.ErrInvalidInput):
+		return huma.Error422UnprocessableEntity("invalid sort")
 	default:
 		slog.ErrorContext(ctx, "unmapped accounts error", "err", err)
 		return huma.Error500InternalServerError("internal error")

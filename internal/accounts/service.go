@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // Sentinel errors, mapped to HTTP status by the transport layer.
@@ -53,6 +55,8 @@ var (
 	ErrInvalidResetToken = errors.New("invalid or expired reset token")
 	// ErrInvalidCursor is a page cursor the account list did not issue.
 	ErrInvalidCursor = errors.New("invalid cursor")
+	// ErrInvalidInput is a sort key the account list does not know.
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // PasswordState is what a password change reads about the account.
@@ -90,6 +94,11 @@ type Store interface {
 	// first page). A non-empty query keeps the accounts whose e-mail or
 	// display name contains it, case-insensitively.
 	ListAccounts(ctx context.Context, query, after string, limit int) ([]AccountRecord, error)
+	// ListAccountsPage returns one offset page of the accounts matching
+	// query (as for ListAccounts) ordered by p, and the number of matches
+	// in all (backlog 3.97). ErrInvalidInput for a sort key outside the
+	// Sort* set.
+	ListAccountsPage(ctx context.Context, query string, p paging.Page) ([]AccountRecord, int, error)
 	// GetAccount reads one account; ErrNotFound for an unknown id.
 	GetAccount(ctx context.Context, id uuid.UUID) (AccountDetailRecord, error)
 	// ListMemberships returns the organizations userID belongs to, each

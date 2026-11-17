@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // The page size of ListUsers: DefaultUserListLimit when the caller names
@@ -15,6 +17,15 @@ import (
 const (
 	DefaultUserListLimit = 50
 	MaxUserListLimit     = 200
+)
+
+// Sort keys of ListUsersPage; the default is SortEmail, ascending. The
+// derived account state is not sortable. Accounts that never signed in come
+// last under SortLastSignIn in both directions.
+const (
+	SortEmail      = "email"
+	SortName       = "name"
+	SortLastSignIn = "last_sign_in"
 )
 
 // AccountState is the one state the Users page shows for an account.
@@ -140,6 +151,24 @@ func (s *Service) ListUsers(ctx context.Context, actorIsAdmin bool, q, cursor st
 		out[i] = summaryOf(r)
 	}
 	return out, next, nil
+}
+
+// ListUsersPage returns one offset page of the accounts, ordered by p, and
+// how many accounts match q in all (backlog 3.97). q is as for ListUsers.
+// Instance admins only.
+func (s *Service) ListUsersPage(ctx context.Context, actorIsAdmin bool, q string, p paging.Page) ([]UserSummary, int, error) {
+	if !actorIsAdmin {
+		return nil, 0, ErrForbidden
+	}
+	recs, total, err := s.store.ListAccountsPage(ctx, strings.TrimSpace(q), p)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list accounts page: %w", err)
+	}
+	out := make([]UserSummary, len(recs))
+	for i, r := range recs {
+		out[i] = summaryOf(r)
+	}
+	return out, total, nil
 }
 
 // GetUser returns the account page of id, with the memberships marked

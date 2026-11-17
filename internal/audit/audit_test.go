@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // memStore is a hand-rolled audit.Store, the same fake-store seam
@@ -21,6 +22,7 @@ import (
 // pagination contract asserted without a database.
 type memStore struct {
 	events    []audit.Event
+	pageCalls []paging.Page
 	insertErr error
 }
 
@@ -407,5 +409,64 @@ func TestRecordSystemInstanceLevel(t *testing.T) {
 	}
 	if got := store.events[0].OrgID; got != nil {
 		t.Fatalf("OrgID = %v, want nil for an instance-level event", got)
+	}
+}
+
+func (s *memStore) ListPage(_ context.Context, orgID uuid.UUID, f audit.Filter, p paging.Page) ([]audit.Event, int, error) {
+	s.pageCalls = append(s.pageCalls, p)
+	return s.pageOf(p, func(e audit.Event) bool {
+		return e.OrgID != nil && *e.OrgID == orgID && matchesFilter(e, f, true)
+	})
+}
+
+func (s *memStore) ListForActorPage(_ context.Context, actorID uuid.UUID, f audit.Filter, p paging.Page) ([]audit.Event, int, error) {
+	s.pageCalls = append(s.pageCalls, p)
+	return s.pageOf(p, func(e audit.Event) bool {
+		return e.ActorID != nil && *e.ActorID == actorID && matchesFilter(e, f, false)
+	})
+}
+
+func (s *memStore) pageOf(p paging.Page, keep func(audit.Event) bool) ([]audit.Event, int, error) {
+	var all []audit.Event
+	for _, e := range s.events {
+		if keep(e) {
+			all = append(all, e)
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if p.Desc {
+			return all[i].At.After(all[j].At)
+		}
+		return all[i].At.Before(all[j].At)
+	})
+	total := len(all)
+	from := min(p.Offset(), total)
+	to := min(from+p.Size, total)
+	return all[from:to], total, nil
+}
+
+// TestRecorderListPage: the recorder hands the page and the filter to the
+// store untouched (no cursor clamping applies to a page) and returns the total.
+func TestRecorderListPage(t *testing.T) {
+	ctx := context.Background()
+	org, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	now := time.Now().UTC()
+	st := &memStore{}
+	for i := range 5 {
+		st.events = append(st.events, audit.Event{ID: uuid.Must(uuid.NewV7()), OrgID: &org, ActorID: &actor, Action: "a", ObjectType: "host", At: now.Add(time.Duration(i) * time.Second)})
+	}
+	r := audit.NewRecorder(st, func() time.Time { return now })
+
+	p := paging.Page{Number: 2, Size: 2, Sort: audit.SortAt, Desc: true}
+	got, total, err := r.ListPage(ctx, org, audit.Filter{ObjectType: "host"}, p)
+	if err != nil || total != 5 || len(got) != 2 || !got[0].At.Equal(now.Add(2*time.Second)) {
+		t.Fatalf("ListPage = %+v total %d err %v", got, total, err)
+	}
+	got, total, err = r.ListForActorPage(ctx, actor, audit.Filter{}, paging.Page{Number: 3, Size: 2, Sort: audit.SortAt})
+	if err != nil || total != 5 || len(got) != 1 || !got[0].At.Equal(now.Add(4*time.Second)) {
+		t.Fatalf("ListForActorPage = %+v total %d err %v", got, total, err)
+	}
+	if st.pageCalls[0] != p {
+		t.Fatalf("store got %+v, want %+v", st.pageCalls[0], p)
 	}
 }

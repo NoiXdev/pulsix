@@ -20,6 +20,7 @@ import (
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/paging"
 	"github.com/noixdev/pulsix/internal/sshconf"
 )
 
@@ -36,6 +37,14 @@ func (s *stubAuditStore) List(context.Context, uuid.UUID, audit.Filter, string, 
 
 func (s *stubAuditStore) ListForActor(context.Context, uuid.UUID, audit.Filter, string, int) ([]audit.Event, string, error) {
 	return nil, "", nil
+}
+
+func (s *stubAuditStore) ListPage(context.Context, uuid.UUID, audit.Filter, paging.Page) ([]audit.Event, int, error) {
+	return nil, 0, nil
+}
+
+func (s *stubAuditStore) ListForActorPage(context.Context, uuid.UUID, audit.Filter, paging.Page) ([]audit.Event, int, error) {
+	return nil, 0, nil
 }
 
 type stubSnapshot struct{}

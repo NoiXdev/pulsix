@@ -13,6 +13,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAuditEventsForActor = `-- name: CountAuditEventsForActor :one
+SELECT count(*) FROM audit_events e
+WHERE e.actor_id = $1
+  AND ($2::text IS NULL OR e.object_type = $2::text)
+  AND ($3::timestamptz IS NULL OR e.at >= $3::timestamptz)
+`
+
+type CountAuditEventsForActorParams struct {
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+}
+
+// ListAuditEventsForActorPage's filters, counted: the total of a paged answer.
+func (q *Queries) CountAuditEventsForActor(ctx context.Context, arg CountAuditEventsForActorParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuditEventsForActor, arg.ActorID, arg.ObjectType, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countAuditEventsForOrg = `-- name: CountAuditEventsForOrg :one
+SELECT count(*) FROM audit_events e
+WHERE e.org_id = $1
+  AND ($2::uuid IS NULL OR e.actor_id = $2::uuid)
+  AND ($3::text IS NULL OR e.object_type = $3::text)
+  AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
+`
+
+type CountAuditEventsForOrgParams struct {
+	OrgID      pgtype.UUID        `json:"org_id"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+}
+
+// ListAuditEventsForOrgPage's filters, counted: the total of a paged answer.
+func (q *Queries) CountAuditEventsForOrg(ctx context.Context, arg CountAuditEventsForOrgParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuditEventsForOrg,
+		arg.OrgID,
+		arg.ActorID,
+		arg.ObjectType,
+		arg.Since,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
 INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -133,6 +182,119 @@ func (q *Queries) ListAuditEventsForActor(ctx context.Context, arg ListAuditEven
 	return items, nil
 }
 
+const listAuditEventsForActorPage = `-- name: ListAuditEventsForActorPage :many
+SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id FROM audit_events e
+WHERE e.actor_id = $1
+  AND ($2::text IS NULL OR e.object_type = $2::text)
+  AND ($3::timestamptz IS NULL OR e.at >= $3::timestamptz)
+ORDER BY e.at DESC, e.id DESC
+OFFSET $4 LIMIT $5
+`
+
+type ListAuditEventsForActorPageParams struct {
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+	RowOffset  int32              `json:"row_offset"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// The cross-org counterpart of ListAuditEventsForOrgPage, for GET
+// /me/activity: the same default order and filters, by actor instead of org.
+func (q *Queries) ListAuditEventsForActorPage(ctx context.Context, arg ListAuditEventsForActorPageParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsForActorPage,
+		arg.ActorID,
+		arg.ObjectType,
+		arg.Since,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.Action,
+			&i.ObjectType,
+			&i.ObjectID,
+			&i.Summary,
+			&i.Meta,
+			&i.At,
+			&i.ActorTokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditEventsForActorPageAsc = `-- name: ListAuditEventsForActorPageAsc :many
+SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id FROM audit_events e
+WHERE e.actor_id = $1
+  AND ($2::text IS NULL OR e.object_type = $2::text)
+  AND ($3::timestamptz IS NULL OR e.at >= $3::timestamptz)
+ORDER BY e.at ASC, e.id ASC
+OFFSET $4 LIMIT $5
+`
+
+type ListAuditEventsForActorPageAscParams struct {
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+	RowOffset  int32              `json:"row_offset"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// ListAuditEventsForActorPage, oldest first; the id runs the same way.
+func (q *Queries) ListAuditEventsForActorPageAsc(ctx context.Context, arg ListAuditEventsForActorPageAscParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsForActorPageAsc,
+		arg.ActorID,
+		arg.ObjectType,
+		arg.Since,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.Action,
+			&i.ObjectType,
+			&i.ObjectID,
+			&i.Summary,
+			&i.Meta,
+			&i.At,
+			&i.ActorTokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAuditEventsForOrg = `-- name: ListAuditEventsForOrg :many
 SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
        e.actor_token_id, COALESCE(t.name, '')::text AS token_name
@@ -216,6 +378,159 @@ func (q *Queries) ListAuditEventsForOrg(ctx context.Context, arg ListAuditEvents
 			&i.ActorTokenID,
 			&i.TokenName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditEventsForOrgPage = `-- name: ListAuditEventsForOrgPage :many
+SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id FROM audit_events e
+WHERE e.org_id = $1
+  AND ($2::uuid IS NULL OR e.actor_id = $2::uuid)
+  AND ($3::text IS NULL OR e.object_type = $3::text)
+  AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
+ORDER BY e.at DESC, e.id DESC
+OFFSET $5 LIMIT $6
+`
+
+type ListAuditEventsForOrgPageParams struct {
+	OrgID      pgtype.UUID        `json:"org_id"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+	RowOffset  int32              `json:"row_offset"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// Offset paging (backlog 3.97) in the default order, newest first: the order
+// audit_events_org_at serves. ListAuditEventsForOrg's filters without the
+// cursor. The token's name is not joined here: the store resolves it for the
+// page's rows with ListAuditTokenNames, once for every page query.
+func (q *Queries) ListAuditEventsForOrgPage(ctx context.Context, arg ListAuditEventsForOrgPageParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsForOrgPage,
+		arg.OrgID,
+		arg.ActorID,
+		arg.ObjectType,
+		arg.Since,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.Action,
+			&i.ObjectType,
+			&i.ObjectID,
+			&i.Summary,
+			&i.Meta,
+			&i.At,
+			&i.ActorTokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditEventsForOrgPageAsc = `-- name: ListAuditEventsForOrgPageAsc :many
+SELECT id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, meta, at, actor_token_id FROM audit_events e
+WHERE e.org_id = $1
+  AND ($2::uuid IS NULL OR e.actor_id = $2::uuid)
+  AND ($3::text IS NULL OR e.object_type = $3::text)
+  AND ($4::timestamptz IS NULL OR e.at >= $4::timestamptz)
+ORDER BY e.at ASC, e.id ASC
+OFFSET $5 LIMIT $6
+`
+
+type ListAuditEventsForOrgPageAscParams struct {
+	OrgID      pgtype.UUID        `json:"org_id"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ObjectType *string            `json:"object_type"`
+	Since      pgtype.Timestamptz `json:"since"`
+	RowOffset  int32              `json:"row_offset"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+// ListAuditEventsForOrgPage, oldest first; the id runs the same way.
+func (q *Queries) ListAuditEventsForOrgPageAsc(ctx context.Context, arg ListAuditEventsForOrgPageAscParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEventsForOrgPageAsc,
+		arg.OrgID,
+		arg.ActorID,
+		arg.ObjectType,
+		arg.Since,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ActorID,
+			&i.ActorKind,
+			&i.Action,
+			&i.ObjectType,
+			&i.ObjectID,
+			&i.Summary,
+			&i.Meta,
+			&i.At,
+			&i.ActorTokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditTokenNames = `-- name: ListAuditTokenNames :many
+SELECT id, name FROM api_tokens WHERE id = ANY($1::uuid[])
+`
+
+type ListAuditTokenNamesRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// The names of the API tokens a page of events was made with: the one place
+// the activity pages resolve a token's name (the cursor feeds keep their own
+// left join), so a change of where tokens live touches this query only.
+func (q *Queries) ListAuditTokenNames(ctx context.Context, ids []uuid.UUID) ([]ListAuditTokenNamesRow, error) {
+	rows, err := q.db.Query(ctx, listAuditTokenNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuditTokenNamesRow
+	for rows.Next() {
+		var i ListAuditTokenNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

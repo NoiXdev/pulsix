@@ -46,3 +46,66 @@ WHERE e.actor_id = sqlc.arg(actor_id)
   )
 ORDER BY e.at DESC, e.id DESC
 LIMIT sqlc.arg(row_limit);
+
+-- name: ListAuditEventsForOrgPage :many
+-- Offset paging (backlog 3.97) in the default order, newest first: the order
+-- audit_events_org_at serves. ListAuditEventsForOrg's filters without the
+-- cursor. The token's name is not joined here: the store resolves it for the
+-- page's rows with ListAuditTokenNames, once for every page query.
+SELECT * FROM audit_events e
+WHERE e.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(actor_id)::uuid IS NULL OR e.actor_id = sqlc.narg(actor_id)::uuid)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz)
+ORDER BY e.at DESC, e.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListAuditEventsForOrgPageAsc :many
+-- ListAuditEventsForOrgPage, oldest first; the id runs the same way.
+SELECT * FROM audit_events e
+WHERE e.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(actor_id)::uuid IS NULL OR e.actor_id = sqlc.narg(actor_id)::uuid)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz)
+ORDER BY e.at ASC, e.id ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountAuditEventsForOrg :one
+-- ListAuditEventsForOrgPage's filters, counted: the total of a paged answer.
+SELECT count(*) FROM audit_events e
+WHERE e.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(actor_id)::uuid IS NULL OR e.actor_id = sqlc.narg(actor_id)::uuid)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz);
+
+-- name: ListAuditEventsForActorPage :many
+-- The cross-org counterpart of ListAuditEventsForOrgPage, for GET
+-- /me/activity: the same default order and filters, by actor instead of org.
+SELECT * FROM audit_events e
+WHERE e.actor_id = sqlc.arg(actor_id)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz)
+ORDER BY e.at DESC, e.id DESC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListAuditEventsForActorPageAsc :many
+-- ListAuditEventsForActorPage, oldest first; the id runs the same way.
+SELECT * FROM audit_events e
+WHERE e.actor_id = sqlc.arg(actor_id)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz)
+ORDER BY e.at ASC, e.id ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountAuditEventsForActor :one
+-- ListAuditEventsForActorPage's filters, counted: the total of a paged answer.
+SELECT count(*) FROM audit_events e
+WHERE e.actor_id = sqlc.arg(actor_id)
+  AND (sqlc.narg(object_type)::text IS NULL OR e.object_type = sqlc.narg(object_type)::text)
+  AND (sqlc.narg(since)::timestamptz IS NULL OR e.at >= sqlc.narg(since)::timestamptz);
+
+-- name: ListAuditTokenNames :many
+-- The names of the API tokens a page of events was made with: the one place
+-- the activity pages resolve a token's name (the cursor feeds keep their own
+-- left join), so a change of where tokens live touches this query only.
+SELECT id, name FROM api_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);
