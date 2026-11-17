@@ -104,13 +104,13 @@ func TestPatchTokenAPITokenNameAndExpiry(t *testing.T) {
 	}
 	listed := listTokens(t, s, c, "patch-api-org")
 	if len(listed) != 1 || listed[0].Name != "ci-2" || listed[0].ExpiresAt == nil || !sameInstant(t, *listed[0].ExpiresAt, "2030-01-01T00:00:00Z") {
-		t.Fatalf("list = %+v (expiry %v)", listed, listed[0].ExpiresAt)
+		t.Fatalf("list = %+v", listed)
 	}
 	resp = patchToken(t, s, c, "patch-api-org", id, map[string]any{"never_expires": true})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("clear expiry: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
-	if listed = listTokens(t, s, c, "patch-api-org"); listed[0].ExpiresAt != nil {
+	if listed = listTokens(t, s, c, "patch-api-org"); len(listed) != 1 || listed[0].ExpiresAt != nil {
 		t.Fatalf("expiry not cleared: %+v", listed)
 	}
 }
@@ -133,6 +133,18 @@ func TestPatchTokenAdminEditsOwnersToken(t *testing.T) {
 	if len(listed) != 1 || listed[0].Name != "renamed" || strings.Join(listed[0].Areas, ",") != "inventory.write" {
 		t.Fatalf("list = %+v", listed)
 	}
+	var found bool
+	for _, e := range decodeActivity(t, requestJSON(t, s.LoginAs(owner), http.MethodGet, s.HTTP.URL+"/api/v1/orgs/patch-adm-org/activity?limit=50", nil)).Items {
+		if e.Action == "PATCH updateToken" {
+			found = true
+			if e.ActorID == nil || *e.ActorID != admin.String() {
+				t.Errorf("audit actor = %v, want the admin %s", e.ActorID, admin)
+			}
+		}
+	}
+	if !found {
+		t.Error("no PATCH updateToken audit entry")
+	}
 }
 
 func TestPatchTokenOperatorForbidden(t *testing.T) {
@@ -151,8 +163,9 @@ func TestPatchTokenBearerForbidden(t *testing.T) {
 	s := apitest.New(t)
 	org, tok := s.OrgWithTokenPerms(t, tenancy.PermTokensManage)
 	path := "/api/v1/orgs/" + org.String() + "/tokens/" + uuid.NewString()
-	if resp := bearerRequestJSON(t, s, http.MethodPatch, path, tok, map[string]any{"name": "x"}); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("api token patch: %d, want 403", resp.StatusCode)
+	resp := bearerRequestJSON(t, s, http.MethodPatch, path, tok, map[string]any{"name": "x"})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "interactive session required") {
+		t.Fatalf("api token patch: %d %s, want 403 interactive session required", resp.StatusCode, body)
 	}
 	aorg, atok := s.OrgWithAssistantToken(t, tenancy.RoleOwner, tenancy.AreaInventoryRead)
 	apath := "/api/v1/orgs/" + aorg.String() + "/tokens/" + uuid.NewString()
@@ -224,7 +237,8 @@ func TestPatchTokenValidation(t *testing.T) {
 		{"empty areas", asstID, map[string]any{"areas": []string{}}, "at least one area"},
 		{"unknown area", asstID, map[string]any{"areas": []string{"everything"}}, "unknown area"},
 		{"duplicate area", asstID, map[string]any{"areas": []string{"inventory.read", "inventory.read"}}, "listed twice"},
-		{"area above the role", viewerID, map[string]any{"areas": []string{"inventory.write"}}, "inventory.write"},
+		{"area above the role", viewerID, map[string]any{"areas": []string{"inventory.write"}}, "needs more than"},
+		{"empty name", apiID, map[string]any{"name": ""}, "name"},
 	}
 	for _, tc := range cases {
 		resp := patchToken(t, s, c, "patch-val-org", tc.id, tc.body)
@@ -305,5 +319,34 @@ func TestPatchTokenTakesEffectImmediately(t *testing.T) {
 	}
 	if resp := s.AssistantDo(t, http.MethodGet, tok, repos, "", nil); resp.Code != http.StatusForbidden {
 		t.Fatalf("after removing: %d, want 403", resp.Code)
+	}
+}
+
+// The same set of areas in another order is no change, is stored and listed
+// in canonical order, and reads "no change" for areas in the audit entry.
+func TestPatchTokenAreasOrderDoesNotMatter(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("patch-ord@example.test", "correct horse battery")
+	s.SeedOrg("patch-ord-org", owner)
+	c := s.LoginAs(owner)
+	id := mkToken(t, s, c, "patch-ord-org", map[string]any{"name": "asst", "role": "operator", "kind": "assistant", "areas": []string{"repos.read", "inventory.read"}})
+	if got := listTokens(t, s, c, "patch-ord-org"); len(got) != 1 || strings.Join(got[0].Areas, ",") != "inventory.read,repos.read" {
+		t.Fatalf("created areas not canonical: %+v", got)
+	}
+	resp := patchToken(t, s, c, "patch-ord-org", id, map[string]any{"name": "asst2", "areas": []string{"repos.read", "inventory.read"}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if got := listTokens(t, s, c, "patch-ord-org"); len(got) != 1 || strings.Join(got[0].Areas, ",") != "inventory.read,repos.read" {
+		t.Fatalf("list areas = %+v, want canonical order", got)
+	}
+	var summary string
+	for _, e := range decodeActivity(t, requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/patch-ord-org/activity?limit=50", nil)).Items {
+		if e.Action == "PATCH updateToken" {
+			summary = e.Summary
+		}
+	}
+	if want := "changed assistant token asst: name asst → asst2"; summary != want {
+		t.Fatalf("summary = %q, want %q (no areas part)", summary, want)
 	}
 }
