@@ -1,7 +1,7 @@
 # Session lock, expiry warning and new-version notice — design
 
-Backlog 3.92 (session lock with a PIN), 3.93 (session expiry warning with
-in-place renewal), 3.94 (new-version notice). Owner's request, 2026-11-17.
+Backlog 3.93 (session lock with a PIN), 3.94 (session expiry warning with
+in-place renewal), 3.95 (new-version notice). Owner's request, 2026-11-17.
 
 ## Intent
 
@@ -36,7 +36,7 @@ Three things a person at the GUI should not be surprised by:
 - **No automatic lock** after inactivity — only by click (owner's
   confirmation of the playback).
 - **No idle timeout.** The 12-hour absolute lifetime stays as it is.
-- **No "newer release on GitHub" notice.** 3.94 is only about a version
+- **No "newer release on GitHub" notice.** 3.95 is only about a version
   already running on the instance's own server.
 - No lock for API tokens: the lock is a cookie-session state.
 - No organization- or instance-wide PIN policy (length rules, mandatory
@@ -51,7 +51,7 @@ Three things a person at the GUI should not be surprised by:
 - A PIN that becomes a second password: it unlocks a session that already
   proved password and second factor; it never signs anyone in.
 
-## 3.92 Session lock
+## 3.93 Session lock
 
 ### Behaviour the owner decided
 
@@ -184,7 +184,7 @@ counter is the real bound.
   `lock_pin_prompt` is true, a "Set a lock PIN" step with "Skip".
 - Everything in en and de.
 
-## 3.93 Expiry warning and renewal
+## 3.94 Expiry warning and renewal
 
 ### Behaviour
 
@@ -241,7 +241,7 @@ counter is the real bound.
   id (and, until the fix above, the expiry) can change there.
 - On expiry: clear client state, go to sign-in with the notice.
 
-## 3.94 New-version notice
+## 3.95 New-version notice
 
 ### Behaviour
 
@@ -290,5 +290,5 @@ No change.
   safe floor, or a Playwright test that intercepts `/auth/me` to show the
   dialog and drives the renewal for real. The Go API tests can use the
   injected clock. No test-only switch in a production build.
-- Polling details of 3.94 (jitter, back-off when the server is unreachable).
+- Polling details of 3.95 (jitter, back-off when the server is unreachable).
 - Visual design within the existing shell and dialog components.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Lock a session with a PIN (enforced by the server), warn before a session expires and renew it in place, and tell an open tab when the manager was upgraded (backlog 3.92, 3.93, 3.94).
+**Goal:** Lock a session with a PIN (enforced by the server), warn before a session expires and renew it in place, and tell an open tab when the manager was upgraded (backlog 3.93, 3.94, 3.95).
 
 **Architecture:** The lock is a session state (`sessions.locked_at`) read with every session lookup and refused by the shared session gates in `internal/api/session_gates.go`, the way `must_change_password` already is; its rules live in a new `internal/screenlock` service. Renewal re-proves password plus second factor (or a passkey) for the session's own user and replaces the session. The SPA reacts to a `session_locked` refusal like it already reacts to `password_change_required`, keeps an expiry timer from `/auth/me`, and polls `/setup/status` for the version.
 
@@ -258,7 +258,7 @@
 
 **Files:**
 - Create: `web/e2e/session-lock.spec.ts`, `web/e2e/session-expiry.spec.ts`, `web/e2e/version-notice.spec.ts`
-- Modify: `docs/BACKLOG.md` (rows 3.92, 3.93, 3.94 → done, with what was built), `docs/upgrades.md` only if the migration needs a note
+- Modify: `docs/BACKLOG.md` (rows 3.93, 3.94, 3.95 → done, with what was built), `docs/upgrades.md` only if the migration needs a note
 - Docs repo: scratch clone `/private/tmp/claude-501/-Users-noidee--dev-pulsix/76b69f36-5040-49f9-a80e-08a1ef63bcdb/scratchpad/noix-docs-merge`, new branch `docs/pulsix-session-lock` from its `main`: account-security page (lock PIN), a "Locking your session" section, the expiry dialog, the update notice, changelog "Unreleased" line. Never `~/_dev/noix-docs`. No tech-stack names.
 
 **E2E:**
@@ -268,4 +268,4 @@
 
 - [ ] **Step 1: Write the specs.** **Step 2: Run** `cd web && npm run e2e -- session-lock session-expiry version-notice` → PASS (ports 55432, 45025, 48025, 48444, 48090 belong to the e2e compose project; nothing else is touched).
 - [ ] **Step 3: Full verification:** `make test` (read the log: exit line, FAIL lines, ok count), `golangci-lint run`, `cd web && npm test && npm run lint && npx tsc -b && npm run e2e`.
-- [ ] **Step 4: Commit** `test(e2e): lock, expiry and version notice` and `docs: backlog 3.92–3.94`; docs repo commit `docs(pulsix): session lock, expiry warning, update notice` on its branch (not pushed).
+- [ ] **Step 4: Commit** `test(e2e): lock, expiry and version notice` and `docs: backlog 3.93–3.95`; docs repo commit `docs(pulsix): session lock, expiry warning, update notice` on its branch (not pushed).
