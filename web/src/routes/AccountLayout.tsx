@@ -19,7 +19,7 @@ import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
  * AccountLayout is the personal settings area (/account/*): the app shell
  * with the settings navigation instead of the organization's — a "Back to
  * <organization>" link, the person's name and role, and the area's pages
- * (Security, Appearance, Profile, My activity), which render in the
+ * (Security, Appearance, Profile, API tokens, My activity), which render in the
  * <Outlet/>. No route param names an organization here: Back goes to the
  * one the person came from (lib/lastOrg) while they are still a member,
  * else to their first. The pages that must come first for a session that
@@ -62,6 +62,7 @@ export function AccountLayout() {
     security: t.account.nav.security,
     appearance: t.account.nav.appearance,
     profile: t.account.nav.profile,
+    tokens: t.account.nav.tokens,
     activity: t.account.nav.activity,
   };
   const segment = pathname.split('/').filter(Boolean)[1] ?? '';

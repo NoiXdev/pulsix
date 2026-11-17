@@ -12,6 +12,7 @@ export const deLists: Messages['lists'] = {
     invites: 'Offene Einladungen',
     members: 'Mitglieder',
     'org-tokens': 'API-Tokens',
+    'personal-tokens': 'Persönliche API-Tokens',
     rotations: 'Bereitschaftsrotationen',
     secrets: 'Secrets',
     activity: 'Aktivität',

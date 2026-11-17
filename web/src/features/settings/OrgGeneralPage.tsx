@@ -12,13 +12,15 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { OrgMonitoringCard } from './OrgMonitoringCard.tsx';
 import { AssistantCard } from './AssistantCard.tsx';
+import { PersonalTokensCard } from './PersonalTokensCard.tsx';
 
 /**
  * OrgGeneralPage is Settings → General: the organization's name, which an
  * owner or admin (org.manage) may change, and its slug, which is fixed
  * because every URL of the organization carries it. Beside them, the
- * organization's monitoring settings (OrgMonitoringCard, backlog 3.57) and
- * its assistant access switch (AssistantCard).
+ * organization's monitoring settings (OrgMonitoringCard, backlog 3.57), its
+ * assistant access switch (AssistantCard) and its switch "Allow personal
+ * tokens" (PersonalTokensCard, backlog 3.100).
  */
 export function OrgGeneralPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -84,6 +86,7 @@ export function OrgGeneralPage() {
         </Card>
         <OrgMonitoringCard org={org} canWrite={may(current.role, 'org.settings.write')} />
         <AssistantCard org={org} canWrite={may(current.role, 'org.settings.write')} />
+        <PersonalTokensCard org={org} canWrite={may(current.role, 'org.settings.write')} />
       </div>
     </>
   );

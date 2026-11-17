@@ -8,6 +8,7 @@ export const deAccount: Messages['account'] = {
     security: 'Sicherheit',
     appearance: 'Darstellung',
     profile: 'Profil',
+    tokens: 'API-Tokens',
     activity: 'Meine Aktivität',
   },
   title: 'Sicherheit',

@@ -170,8 +170,8 @@ export function OrgNav({ org, pendingRunRequests }: { org: ShellOrg; pendingRunR
 /**
  * SettingsNav replaces the organization sidebar inside the personal
  * settings area (/account/*): a way back to the organization the person
- * came from, who they are, and the pages of the area. API tokens will sit
- * between Profile and My activity.
+ * came from, who they are, and the pages of the area: Security, Appearance,
+ * Profile, API tokens and My activity.
  */
 export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
   const t = useT();
@@ -203,7 +203,10 @@ export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
           <UserRound size={16} />
           <span className="flex-1">{t.account.nav.profile}</span>
         </Link>
-        {/* API tokens (/account/tokens, Task 19) go here, before My activity. */}
+        <Link to="/account/tokens" {...NAV_LINK_PROPS}>
+          <KeyRound size={16} />
+          <span className="flex-1">{t.account.nav.tokens}</span>
+        </Link>
         <Link to="/account/activity" search={{}} {...NAV_LINK_PROPS}>
           <History size={16} />
           <span className="flex-1">{t.account.nav.activity}</span>

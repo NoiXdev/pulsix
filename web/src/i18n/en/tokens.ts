@@ -9,6 +9,7 @@ export const enTokens = {
     role: 'Role',
     lastUsed: 'Last used',
     expires: 'Expires',
+    owner: 'Owner',
   },
   label: 'API tokens',
   editItem: 'Edit',
@@ -85,6 +86,41 @@ export const enTokens = {
       'monitoring.read': 'Monitoring & alerts: read',
       'alerts.handle': 'Monitoring & alerts: handle alerts',
       'activity.read': 'Activity log: read',
+    },
+  },
+  /** Members' personal tokens on the organization's token page, and the
+   * organization's switch "Allow personal tokens" (Settings → General). */
+  personal: {
+    tag: 'Personal',
+    revokeItem: 'Revoke for this organization…',
+    revokeConfirm: (name: string, owner: string) =>
+      `Revoke ${owner}’s personal token ${name} for this organization? Until an administrator lifts the block, no personal token of ${owner} works here.`,
+    revoked: (name: string) => `Personal token ${name} revoked for this organization`,
+    revokeFailed: 'failed to revoke the personal token',
+    unblockItem: 'Unblock…',
+    unblockConfirm: (owner: string) =>
+      `Lift the block on ${owner}’s personal tokens in this organization? Their other tokens work here again at once, and they can add this organization to a token again.`,
+    unblocked: (owner: string) => `Block on ${owner}’s personal tokens lifted`,
+    unblockFailed: 'failed to lift the block',
+    blocked: 'Blocked',
+    blockedHint: 'An administrator revoked this token for this organization.',
+    ownerBlocked: 'Blocked (person)',
+    ownerBlockedHint: 'Another personal token of this person is blocked here, so this one is refused too.',
+    tokenRevoked: 'Token revoked',
+    tokenRevokedHint: 'The owner revoked the token; the block on the person stays until an administrator lifts it.',
+    loadFailed: 'Personal tokens could not be loaded.',
+    /** "Actions for laptop (Bob)". */
+    rowLabel: (name: string, owner: string) => `${name} (${owner})`,
+    setting: {
+      title: 'Allow personal tokens',
+      hint: 'Members can give their own personal tokens access to this organization, up to their own role. Turning this off stops every personal token here at once and refuses new ones; they work again when you turn it back on, except those an administrator revoked.',
+      on: 'On',
+      off: 'Off',
+      readOnlyHint: 'Only owners and admins can change this.',
+      turnedOn: 'Personal tokens turned on',
+      turnedOff: 'Personal tokens turned off',
+      saveFailed: 'Failed to change personal tokens',
+      loadFailed: 'Failed to load the personal token setting',
     },
   },
 };

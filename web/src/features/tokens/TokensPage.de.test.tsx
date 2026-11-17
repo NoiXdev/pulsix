@@ -20,7 +20,7 @@ describe('TokensPage in German', () => {
         instance_admin: false,
       },
       'GET /api/v1/orgs/acme': { org: { id: 'o1', slug: 'acme', name: 'Acme', role: 'owner' } },
-      'GET /api/v1/orgs/acme/tokens': {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': {
         tokens: [
           { id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: '2026-03-04T10:00:00Z', expires_at: null },
         ],
@@ -54,7 +54,7 @@ describe('TokensPage in German', () => {
 
   it('offers the roles of the token form in German', async () => {
     const user = userEvent.setup();
-    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    mockApi({ 'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
     const rootRoute = createRootRoute();
     const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
     const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
@@ -89,7 +89,7 @@ describe('TokensPage in German', () => {
 describe('TokensPage assistant tokens in German', () => {
   it('offers the kind choice and the area grid in German', async () => {
     const user = userEvent.setup();
-    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    mockApi({ 'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
     const rootRoute = createRootRoute();
     const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
     const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
@@ -128,7 +128,7 @@ describe('TokensPage editing in German', () => {
   it('titles the dialog and confirms an area change in German', async () => {
     const user = userEvent.setup();
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': {
         tokens: [
           { id: 'tok2', name: 'helper', role: 'operator', kind: 'assistant', areas: ['inventory.read'], created_at: '2026-01-01T00:00:00Z' },
         ],

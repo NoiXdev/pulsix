@@ -46,7 +46,7 @@ describe('TokensPage token plaintext handling (Critical fix)', () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] },
       'POST /api/v1/orgs/acme/tokens': {
         id: 'tok1',
         name: 'ci-deploy',
@@ -93,7 +93,7 @@ describe('TokensPage role picker', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let posted: Record<string, unknown> | undefined;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] },
       'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
         posted = req.body as Record<string, unknown>;
         return { id: 'tok1', name: 'ci-deploy', role: 'admin', token: 'pxe_x', created_at: '2026-01-01T00:00:00Z' };
@@ -119,7 +119,7 @@ describe('TokensPage error handling (cheap fix)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': {
         tokens: [{ id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: null, expires_at: null }],
       },
       'DELETE /api/v1/orgs/acme/tokens/tok1': () =>
@@ -151,7 +151,7 @@ describe('TokensPage background refetch error handling (fix round 2)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let call = 0;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': () => {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': () => {
         call += 1;
         if (call === 1) return { tokens: [{ id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: null, expires_at: null }] };
         return new Response(JSON.stringify({ detail: 'internal error' }), { status: 500 });
@@ -177,7 +177,7 @@ describe('TokensPage background refetch error handling (fix round 2)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let call = 0;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': () => {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': () => {
         call += 1;
         if (call === 1) return { tokens: [{ id: 'tok1', name: 'ci-deploy', role: 'viewer', last_used_at: null, expires_at: null }] };
         return new Response(JSON.stringify({ detail: 'session expired' }), { status: 401 });
@@ -209,7 +209,7 @@ describe('TokensPage assistant tokens', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let posted: Record<string, unknown> | undefined;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] },
       'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
         posted = req.body as Record<string, unknown>;
         return { id: 'tok1', name: 'helper', role: 'viewer', token: 'pxt_a', created_at: '2026-01-01T00:00:00Z' };
@@ -228,7 +228,7 @@ describe('TokensPage assistant tokens', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let posted: Record<string, unknown> | undefined;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] },
       'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
         posted = req.body as Record<string, unknown>;
         return { id: 'tok1', name: 'helper', role: 'operator', token: 'pxt_b', created_at: '2026-01-01T00:00:00Z' };
@@ -260,7 +260,7 @@ describe('TokensPage assistant tokens', () => {
   it('disables the areas the role cannot cover, with a hint', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    mockApi({ 'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
     renderPage(qc);
     await openDialog(user);
     await user.click(screen.getByRole('radio', { name: 'Assistant token' }));
@@ -285,7 +285,7 @@ describe('TokensPage assistant tokens', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let posts = 0;
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] },
       'POST /api/v1/orgs/acme/tokens': () => {
         posts += 1;
         return {};
@@ -302,7 +302,7 @@ describe('TokensPage assistant tokens', () => {
   it('shows the kind and the areas of each token in the list', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': {
         tokens: [
           { id: 'tok1', name: 'ci-deploy', role: 'viewer', kind: 'api', created_at: '2026-01-01T00:00:00Z' },
           {
@@ -326,7 +326,7 @@ describe('TokensPage assistant tokens', () => {
 describe('TokensPage API explorer hint', () => {
   it('points to the API explorer, opened in a new tab', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    mockApi({ 'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
 
     renderPage(qc);
 
@@ -341,7 +341,7 @@ describe('TokensPage edit action', () => {
   it('disables edit for an expired token and keeps it for a live one', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
-      'GET /api/v1/orgs/acme/tokens': {
+      'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': {
         tokens: [
           { id: 'tok1', name: 'old', role: 'viewer', kind: 'api', created_at: '2020-01-01T00:00:00Z', expires_at: '2020-02-01T00:00:00Z' },
           { id: 'tok2', name: 'fresh', role: 'viewer', kind: 'api', created_at: '2020-01-01T00:00:00Z' },

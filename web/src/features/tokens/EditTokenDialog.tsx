@@ -13,7 +13,8 @@ import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { roleLabel } from '../../i18n/roleLabel.ts';
 import { AreaGrid } from './AreaGrid.tsx';
-import { allowedAreas, type Area } from './areas.ts';
+import { allowedAreas, sameAreas, type Area } from './areas.ts';
+import { endOfLocalDay, localDay } from './expiry.ts';
 
 type TokenRow = components['schemas']['TokenDTO'];
 
@@ -25,23 +26,6 @@ const editSchema = (t: Messages) =>
     areas: z.array(z.custom<Area>()),
   });
 type EditValues = z.infer<ReturnType<typeof editSchema>>;
-
-/** The local calendar day of an instant as YYYY-MM-DD, for a date input. */
-function localDay(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/** The last millisecond of a YYYY-MM-DD day in local time, as an ISO instant. */
-function endOfLocalDay(day: string): string {
-  const [y, m, d] = day.split('-').map(Number);
-  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
-}
-
-function sameAreas(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && new Set(a).size === new Set([...a, ...b]).size;
-}
 
 /**
  * EditTokenDialog changes a token's name, expiry and (assistant tokens) areas.

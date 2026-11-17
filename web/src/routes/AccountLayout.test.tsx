@@ -171,7 +171,7 @@ describe('AccountLayout', () => {
     await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
   });
 
-  it('shows the settings navigation: back link, name and role, the four pages and no organization switcher', async () => {
+  it('shows the settings navigation: back link, name and role, the five pages and no organization switcher', async () => {
     mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/orgs': TWO_ORGS, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
     renderAt();
 
@@ -179,8 +179,9 @@ describe('AccountLayout', () => {
     expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
     expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
     expect(within(nav).getByText('Owner · Acme')).toBeInTheDocument();
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Back to Acme', 'Security', 'Appearance', 'Profile', 'My activity']);
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Back to Acme', 'Security', 'Appearance', 'Profile', 'API tokens', 'My activity']);
     expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('link', { name: 'API tokens' })).toHaveAttribute('href', '/account/tokens');
     expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Hosts' })).not.toBeInTheDocument();
   });

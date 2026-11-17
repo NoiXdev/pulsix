@@ -93,3 +93,8 @@ export function displayedAreas(areas: readonly string[]): string[] {
   const held = new Set(areas);
   return areas.filter((a) => !AREA_ROWS.some((r) => r.read === a && held.has(r.write)));
 }
+
+/** sameAreas reports whether two area lists hold the same areas, in any order. */
+export function sameAreas(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && new Set(a).size === new Set([...a, ...b]).size;
+}

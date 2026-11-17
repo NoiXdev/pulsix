@@ -14,6 +14,7 @@ export const enAccount = {
     security: 'Security',
     appearance: 'Appearance',
     profile: 'Profile',
+    tokens: 'API tokens',
     activity: 'My activity',
   },
   title: 'Security',

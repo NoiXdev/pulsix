@@ -1,0 +1,70 @@
+/** Personal API and assistant tokens in the personal settings
+ * (/account/tokens): the list, the create and edit dialog and its grants
+ * editor. Role names come from members.roles. */
+export const enPersonalTokens = {
+  title: 'API tokens',
+  subtitle:
+    'Your own tokens. Each one works only in the organizations you choose, with at most the role you pick there, and never with more than your own role.',
+  create: 'Create token',
+  label: 'Your API tokens',
+  count: (n: number) => (n === 1 ? '1 token' : `${n} tokens`),
+  empty: 'No personal tokens yet.',
+  columns: {
+    name: 'Name',
+    kind: 'Kind',
+    orgs: 'Organizations',
+    lastUsed: 'Last used',
+    expires: 'Expires',
+    created: 'Created',
+  },
+  /** One organization in the Organizations column: "acme: Operator". */
+  grant: (slug: string, role: string) => `${slug}: ${role}`,
+  grantBlocked: 'Blocked by an administrator',
+  grantOff: 'Turned off',
+  grantOffHint: 'Personal tokens are turned off in this organization; the grant works again when they are turned back on.',
+  editItem: 'Edit',
+  revokeItem: 'Revoke…',
+  revokeConfirm: (name: string) => `Revoke token ${name}? It stops working in every organization.`,
+  revoked: (name: string) => `Token ${name} revoked`,
+  revokeFailed: 'failed to revoke token',
+  dialog: {
+    createTitle: 'Create token',
+    editTitle: (name: string) => `Edit token ${name}`,
+    nameLabel: 'Name',
+    expiresLabel: 'Expires',
+    expiresHint: 'Leave empty for a token that never expires.',
+    neverExpires: 'Never expires',
+    expiryRequired: 'Pick a date or tick Never expires.',
+    kindFixed: 'The kind cannot be changed; create a new token for that.',
+    save: 'Save',
+    saved: (name: string) => `Token ${name} saved`,
+    savedReconnect: (name: string) => `Token ${name} saved. Reconnect the assistant to see new tools.`,
+    failed: 'failed to save token',
+    createFailed: 'failed to create token',
+    shownOnce: 'This is the only time the token is shown: copy it now, you will not see it again.',
+    copy: 'Copy',
+    done: 'Done',
+    assistantHint:
+      'For an AI assistant: works only through the assistant access of the organizations you choose, and only in the areas ticked below. Connect one assistant server per organization.',
+    apiHint: 'For scripts and integrations: works with everything the role you choose allows in each organization.',
+  },
+  grants: {
+    legend: 'Organizations',
+    hint: 'The token works only in the organizations you tick, with at most the role you choose there.',
+    use: (org: string) => `Use in ${org}`,
+    role: (org: string) => `Role in ${org}`,
+    yourRole: (role: string) => `Your role: ${role}`,
+    blocked: 'Blocked by an administrator',
+    blockedHint: 'An administrator of this organization revoked one of your personal tokens; ask them to lift the block.',
+    off: 'Personal tokens are turned off in this organization',
+    offKept: 'Personal tokens are turned off here: you can lower or remove this grant, not raise it.',
+    required: 'Choose at least one organization.',
+    none: 'You belong to no organization yet.',
+  },
+  /** The server's refusals, by their contract detail. */
+  errors: {
+    limit: 'You already have 50 personal tokens. Revoke one first.',
+    off: (org: string) => `Personal tokens are turned off in ${org}.`,
+    blocked: (org: string) => `An administrator blocked your personal tokens in ${org}.`,
+  },
+};

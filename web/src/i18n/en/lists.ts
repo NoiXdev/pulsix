@@ -16,6 +16,7 @@ export const enLists = {
     invites: 'Open invitations',
     members: 'Members',
     'org-tokens': 'API tokens',
+    'personal-tokens': 'Personal API tokens',
     rotations: 'On-call rotations',
     secrets: 'Secrets',
     activity: 'Activity',

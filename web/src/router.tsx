@@ -7,6 +7,7 @@ import { AccountSecurityPage } from './features/account/AccountSecurityPage.tsx'
 import { AppearancePage } from './features/account/AppearancePage.tsx';
 import { ProfilePage } from './features/account/ProfilePage.tsx';
 import { MyActivityPage } from './features/account/MyActivityPage.tsx';
+import { PersonalTokensPage } from './features/account/PersonalTokensPage.tsx';
 import { validateListSearch } from './features/lists/listSearch.ts';
 import { EnrolmentLayout } from './routes/EnrolmentLayout.tsx';
 import { LoginPage } from './features/auth/LoginPage.tsx';
@@ -100,7 +101,8 @@ const legacyInviteRoute = createRoute({
 });
 
 // /account is the personal settings area: one layout (the shell with the
-// settings navigation) around Security, Appearance, Profile and My activity.
+// settings navigation) around Security, Appearance, Profile, API tokens and
+// My activity.
 // The forced pages below (/account/enrol, /password, /lock-pin) are not part
 // of it: they render without the shell.
 const accountRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account', component: AccountLayout });
@@ -122,6 +124,12 @@ const accountAppearanceRoute = createRoute({
   component: AppearancePage,
 });
 const accountProfileRoute = createRoute({ getParentRoute: () => accountRoute, path: '/profile', component: ProfilePage });
+const accountTokensRoute = createRoute({
+  getParentRoute: () => accountRoute,
+  path: '/tokens',
+  validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+  component: PersonalTokensPage,
+});
 const accountActivityRoute = createRoute({
   getParentRoute: () => accountRoute,
   path: '/activity',
@@ -385,7 +393,7 @@ const routeTree = rootRoute.addChildren([
   resetPasswordRoute,
   inviteRoute,
   legacyInviteRoute,
-  accountRoute.addChildren([accountIndexRoute, accountSecurityRoute, accountAppearanceRoute, accountProfileRoute, accountActivityRoute]),
+  accountRoute.addChildren([accountIndexRoute, accountSecurityRoute, accountAppearanceRoute, accountProfileRoute, accountTokensRoute, accountActivityRoute]),
   enrolRoute,
   lockPinRoute,
   changePasswordRoute,

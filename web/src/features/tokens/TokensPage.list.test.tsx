@@ -17,7 +17,7 @@ function setup(opts: { locale?: 'de'; tokens?: unknown[]; onRevoke?: () => void 
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
-    'GET /api/v1/orgs/acme/tokens': { tokens: opts.tokens ?? numbered('tok', 30).map((n) => token(n)) },
+    'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: opts.tokens ?? numbered('tok', 30).map((n) => token(n)) },
     'DELETE /api/v1/orgs/acme/tokens/id-tok30-viewer': () => {
       opts.onRevoke?.();
       return {};

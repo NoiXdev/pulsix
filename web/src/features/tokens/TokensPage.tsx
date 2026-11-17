@@ -14,13 +14,14 @@ import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreateToken, useTokens } from '../../api/hooks/useTokens.ts';
+import { useOrgPersonalTokens } from '../../api/hooks/usePersonalTokens.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AreaGrid } from './AreaGrid.tsx';
-import { tokenColumns } from './tokenColumns.tsx';
+import { tokenColumns, tokenRowKey, type TokenRow } from './tokenColumns.tsx';
 import { useTokenListActions } from './useTokenListActions.tsx';
 import { allowedAreas, type Area } from './areas.ts';
 
@@ -54,6 +55,7 @@ export function TokensPage() {
   const schema = useMemo(() => tokenFormSchema(t), [t]);
 
   const tokens = useTokens(org);
+  const personal = useOrgPersonalTokens(org);
   const createToken = useCreateToken(org);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -64,12 +66,20 @@ export function TokensPage() {
   const role = useWatch({ control: form.control, name: 'role' });
 
   const columns = tokenColumns(t, fmt);
-  const view = useListView('org-tokens', columns, { mode: 'client', rowKey: (tok) => tok.id });
+  const view = useListView('org-tokens', columns, { mode: 'client', rowKey: tokenRowKey });
   const actions = useTokenListActions(org);
 
   const tokensGuard = useQueryGuard(tokens);
   if (tokensGuard) return tokensGuard;
-  const { rows, total } = view.view(view.ready ? (tokens.data?.tokens ?? []) : undefined);
+  // The organization's tokens and the members' personal tokens granted
+  // here, in one list; the personal ones wait for their own answer, and a
+  // failure there leaves the organization's tokens on the page.
+  const all: TokenRow[] = [
+    ...(tokens.data?.tokens ?? []).map((tok) => ({ type: 'org' as const, ...tok })),
+    ...(personal.data?.entries ?? []).map((e) => ({ type: 'personal' as const, ...e })),
+  ];
+  const settled = view.ready && !personal.isPending;
+  const { rows, total } = view.view(settled ? all : undefined);
 
   return (
     <>
@@ -87,14 +97,19 @@ export function TokensPage() {
         </a>
       </p>
 
+      {personal.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {t.tokens.personal.loadFailed}
+        </p>
+      )}
       <DataList
         label={t.tokens.label}
         columns={columns}
         rows={rows}
-        rowKey={(tok) => tok.id}
+        rowKey={tokenRowKey}
         rowActions={actions.rowActions}
-        rowLabel={(tok) => `${tok.name} (${tok.role})`}
-        loading={!view.ready}
+        rowLabel={(r) => (r.type === 'personal' ? t.tokens.personal.rowLabel(r.name, r.owner_name) : `${r.name} (${r.role})`)}
+        loading={!settled}
         empty={t.tokens.empty}
         {...view.listProps(total, t.tokens.count)}
       />

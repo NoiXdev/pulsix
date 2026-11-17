@@ -33,6 +33,7 @@ import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
 import { deTemplates } from './templates.ts';
 import { deTokens } from './tokens.ts';
+import { dePersonalTokens } from './personalTokens.ts';
 import { deTriggers } from './triggers.ts';
 import { deUsers } from './users.ts';
 import { deUi } from './ui.ts';
@@ -99,6 +100,7 @@ export const de: Messages = {
   setup: deSetup,
   shell: deShell,
   templates: deTemplates,
+  personalTokens: dePersonalTokens,
   tokens: deTokens,
   triggers: deTriggers,
   users: deUsers,

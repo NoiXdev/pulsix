@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # assistant-mcp.sh — connect Claude Code to one or more Pulsix instances
-# through their assistant endpoint (/api/mcp), one MCP server per instance.
+# through their assistant endpoint, one MCP server per instance and
+# organization.
 #
-#   assistant-mcp.sh add <name> <pulsix-url>   store a token, write the helper, register the server
+#   assistant-mcp.sh add <name> <pulsix-url> [--org <slug>]   store a token, write the helper, register the server
 #   assistant-mcp.sh token <name>              replace the stored token (after a rotation)
 #   assistant-mcp.sh check <name>              ask the endpoint whether it accepts the token
 #   assistant-mcp.sh list                      the instances set up here
@@ -14,14 +15,25 @@
 #                          $USER; elsewhere: ~/.config/pulsix/<name>.token (mode 600)
 #   - headers helper       ~/.config/pulsix/<name>-headers.sh (mode 700), which
 #                          Claude Code runs as headersHelper on each connection
-#   - endpoint             <pulsix-url>/api/mcp, kept in ~/.config/pulsix/<name>.url
+#   - endpoint             kept in ~/.config/pulsix/<name>.url:
+#                          <pulsix-url>/api/mcp for an organization's assistant
+#                          token (pxt_...), <pulsix-url>/api/mcp/o/<slug> with
+#                          --org <slug> for a personal assistant token (pxp_...)
+#                          in the organization <slug>
+#
+# A personal assistant token can work in several organizations; register one
+# server per organization, each under its own name with --org (for example
+# "add prod-acme <url> --org acme" and "add prod-beta <url> --org beta"); each
+# stores the token. The URL may also be given as the endpoint itself
+# (<url>/api/mcp or <url>/api/mcp/o/<slug>).
 #
 # The token never goes into an argument, the Claude Code configuration or the
 # shell history: "add" and "token" prompt for it, and the helper reads it each
-# time Claude Code connects. Create the token in Pulsix first (Settings ->
-# Organization -> API tokens, kind "Assistant token") and turn on Settings ->
-# Organization -> General -> Assistant access. See the user guide "Assistant
-# access" in the Pulsix docs.
+# time Claude Code connects. Create the token in Pulsix first (an
+# organization's token: Settings -> Organization -> API tokens; a personal
+# token: your Settings -> API tokens; kind "Assistant token") and turn on
+# Settings -> Organization -> General -> Assistant access. See the user guide
+# "Assistant access" in the Pulsix docs.
 #
 # PULSIX_MCP_DIR overrides ~/.config/pulsix. PULSIX_MCP_STORE=file uses the
 # token file on macOS too.
@@ -36,13 +48,20 @@ die() {
 }
 
 usage() {
-  sed -n '5,9s/^#   assistant-mcp\.sh /  '"$me"' /p' "$0" >&2
+  sed -n '6,10s/^#   assistant-mcp\.sh /  '"$me"' /p' "$0" >&2
   exit 2
 }
 
 check_name() {
   case "$1" in
     "" | -* | *[!a-z0-9-]*) die "instance name \"$1\" must be lowercase letters, digits and \"-\"" ;;
+  esac
+}
+
+# An organization's slug as the manager takes it: ^[a-z0-9-]+$.
+check_slug() {
+  case "$1" in
+    "" | *[!a-z0-9-]*) die "organization \"$1\" must be the organization's slug: lowercase letters, digits and \"-\"" ;;
   esac
 }
 
@@ -101,8 +120,8 @@ store_token() {
   check_stored "$name"
 }
 
-# Fails unless the stored token looks like a Pulsix token (pxt_...), without
-# printing it.
+# Fails unless the stored token looks like a Pulsix assistant token, an
+# organization's (pxt_...) or a personal one (pxp_...), without printing it.
 check_stored() {
   local name="$1" token
   if [ "$store" = keychain ]; then
@@ -111,9 +130,9 @@ check_stored() {
     token="$(cat "$(tokenfile "$name")" 2>/dev/null)" || token=
   fi
   case "$token" in
-    pxt_?*) ;;
+    pxt_?* | pxp_?*) ;;
     "") die "the stored token for $name is empty; run: $me token $name (in a terminal)" ;;
-    *) die "the stored token for $name does not start with pxt_; copy the token itself from Pulsix and run: $me token $name" ;;
+    *) die "the stored token for $name does not start with pxt_ or pxp_; copy the token itself from Pulsix and run: $me token $name" ;;
   esac
 }
 
@@ -146,24 +165,63 @@ EOF
 }
 
 cmd_add() {
-  [ "$#" -eq 2 ] || usage
-  local name="$1" url="$2" endpoint json claude
+  local name="" url="" org="" url_org="" endpoint json claude
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --org)
+        [ "$#" -ge 2 ] || die "--org needs the organization's slug"
+        org="$2"
+        shift 2
+        ;;
+      --org=*)
+        org="${1#--org=}"
+        shift
+        ;;
+      -*) usage ;;
+      *)
+        if [ -z "$name" ]; then
+          name="$1"
+        elif [ -z "$url" ]; then
+          url="$1"
+        else
+          usage
+        fi
+        shift
+        ;;
+    esac
+  done
+  [ -n "$name" ] && [ -n "$url" ] || usage
   check_name "$name"
   case "$url" in
     https://*) ;;
     *) die "the Pulsix URL must start with https://" ;;
   esac
+  # The address Pulsix opens at, or the endpoint itself: <url>/api/mcp or
+  # <url>/api/mcp/o/<slug>.
   url="${url%/}"
+  case "$url" in
+    https://*/api/mcp/o/*)
+      url_org="${url##*/api/mcp/o/}"
+      url="${url%/api/mcp/o/*}"
+      check_slug "$url_org"
+      ;;
+  esac
   url="${url%/api/mcp}"
   case "$url" in
     https://*/*) die "give the address you open Pulsix at, without a path (got $url)" ;;
   esac
-  endpoint="$url/api/mcp"
+  if [ -n "$org" ]; then
+    check_slug "$org"
+    [ -z "$url_org" ] || [ "$url_org" = "$org" ] || die "the URL names organization $url_org, --org names $org"
+  else
+    org="$url_org"
+  fi
+  if [ -n "$org" ]; then endpoint="$url/api/mcp/o/$org"; else endpoint="$url/api/mcp"; fi
   claude="$(find_claude)" || die "the Claude Code CLI (claude) was not found; set CLAUDE_BIN to its path"
   [ "$store" = file ] || need security
 
   if "$claude" mcp get "$(server "$name")" >/dev/null 2>&1; then
-    die "Claude Code already has a server $(server "$name"); run: $me remove $name"
+    die "Claude Code already has a server $(server "$name"); run: $me remove $name, or pick another name"
   fi
 
   mkdir -p "$dir"
@@ -177,6 +235,9 @@ cmd_add() {
     die "claude mcp add-json failed; the token and helper are in place, run: $me remove $name and try again"
 
   echo "Added $(server "$name") -> $endpoint"
+  if [ -z "$org" ]; then
+    echo "A personal token (pxp_) that works in several organizations needs one server per organization: add it again under another name with --org <slug>."
+  fi
   echo "Next: $me check $name, then start a new Claude Code session and run /mcp."
 }
 
@@ -189,24 +250,36 @@ cmd_token() {
   echo "Token for $1 replaced. Claude Code picks it up on its next connection."
 }
 
+# The detail of a problem answer ({"detail": "..."}), or nothing.
+detail_of() {
+  sed -n -E 's/.*"detail" *: *"(([^"\\]|\\.)*)".*/\1/p' "$1" | head -n 1
+}
+
 cmd_check() {
   [ "$#" -eq 1 ] || usage
-  local name="$1" endpoint code
+  local name="$1" endpoint code body detail
   check_name "$name"
   need curl
   endpoint="$(endpoint_of "$name")"
   [ -x "$(helper "$name")" ] || die "the helper $(helper "$name") is missing; run: $me remove $name, then add it again"
   check_stored "$name"
-  # The header goes to curl on stdin, never into its arguments.
+  body="$(mktemp)"
+  # shellcheck disable=SC2064 # expand now: the file is this run's
+  trap "rm -f '$body'" EXIT
+  # The header goes to curl on stdin, never into its arguments. The answer
+  # is a refusal's problem document at most; it never holds the token.
   code="$("$(helper "$name")" | sed -E 's/^\{"Authorization": "(.*)"\}$/Authorization: \1/' |
-    curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$endpoint" \
+    curl -sS -o "$body" -w '%{http_code}' --max-time 15 -X POST "$endpoint" \
       -H @- -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
       -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"pulsix-assistant-mcp","version":"1"}}}')" ||
     die "cannot reach $endpoint"
+  detail="$(detail_of "$body")"
   case "$code" in
     200) echo "$(server "$name"): $endpoint accepts the token" ;;
+    400) die "$endpoint refused the connection (400): ${detail:-bad request}. Run: $me remove $name, then $me add $name <pulsix-url> --org <slug>" ;;
     401) die "$endpoint refused the token (401): revoked, expired, or not an assistant token" ;;
-    403) die "$endpoint refused the token (403): is assistant access turned on for the organization?" ;;
+    403) die "$endpoint refused the token (403): ${detail:-is assistant access turned on for the organization?}" ;;
+    404) die "$endpoint answered 404: ${detail:-not found}; check the organization's slug" ;;
     *) die "$endpoint answered HTTP $code" ;;
   esac
 }

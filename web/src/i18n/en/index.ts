@@ -32,6 +32,7 @@ import { enSetup } from './setup.ts';
 import { enShell } from './shell.ts';
 import { enTemplates } from './templates.ts';
 import { enTokens } from './tokens.ts';
+import { enPersonalTokens } from './personalTokens.ts';
 import { enTriggers } from './triggers.ts';
 import { enUsers } from './users.ts';
 import { enUi } from './ui.ts';
@@ -85,6 +86,7 @@ export const en = {
   setup: enSetup,
   shell: enShell,
   templates: enTemplates,
+  personalTokens: enPersonalTokens,
   tokens: enTokens,
   triggers: enTriggers,
   users: enUsers,
