@@ -20,7 +20,7 @@ WHERE g.org_id = $2::uuid AND g.token_id = $3::uuid AND g.blocked_at IS NULL
   AND t.id = g.token_id AND t.revoked_at IS NULL AND u.id = g.user_id
 RETURNING g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
-       g.last_used_at, t.created_at, t.expires_at
+       true::boolean AS owner_blocked, g.last_used_at, t.created_at, t.expires_at
 `
 
 type BlockPersonalTokenGrantEntryParams struct {
@@ -39,6 +39,7 @@ type BlockPersonalTokenGrantEntryRow struct {
 	Role         OrgRole            `json:"role"`
 	Blocked      bool               `json:"blocked"`
 	TokenRevoked bool               `json:"token_revoked"`
+	OwnerBlocked bool               `json:"owner_blocked"`
 	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
 	CreatedAt    time.Time          `json:"created_at"`
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
@@ -60,6 +61,7 @@ func (q *Queries) BlockPersonalTokenGrantEntry(ctx context.Context, arg BlockPer
 		&i.Role,
 		&i.Blocked,
 		&i.TokenRevoked,
+		&i.OwnerBlocked,
 		&i.LastUsedAt,
 		&i.CreatedAt,
 		&i.ExpiresAt,
@@ -237,6 +239,8 @@ func (q *Queries) GetPersonalTokenGrant(ctx context.Context, arg GetPersonalToke
 const getPersonalTokenGrantForOrg = `-- name: GetPersonalTokenGrantForOrg :one
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       EXISTS (SELECT 1 FROM personal_token_grants b
+               WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL)::boolean AS owner_blocked,
        g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
@@ -259,6 +263,7 @@ type GetPersonalTokenGrantForOrgRow struct {
 	Role         OrgRole            `json:"role"`
 	Blocked      bool               `json:"blocked"`
 	TokenRevoked bool               `json:"token_revoked"`
+	OwnerBlocked bool               `json:"owner_blocked"`
 	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
 	CreatedAt    time.Time          `json:"created_at"`
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
@@ -277,6 +282,7 @@ func (q *Queries) GetPersonalTokenGrantForOrg(ctx context.Context, arg GetPerson
 		&i.Role,
 		&i.Blocked,
 		&i.TokenRevoked,
+		&i.OwnerBlocked,
 		&i.LastUsedAt,
 		&i.CreatedAt,
 		&i.ExpiresAt,
@@ -342,6 +348,8 @@ const listPersonalTokenGrantsForOrg = `-- name: ListPersonalTokenGrantsForOrg :m
 
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       EXISTS (SELECT 1 FROM personal_token_grants b
+               WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL)::boolean AS owner_blocked,
        g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
@@ -360,6 +368,7 @@ type ListPersonalTokenGrantsForOrgRow struct {
 	Role         OrgRole            `json:"role"`
 	Blocked      bool               `json:"blocked"`
 	TokenRevoked bool               `json:"token_revoked"`
+	OwnerBlocked bool               `json:"owner_blocked"`
 	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
 	CreatedAt    time.Time          `json:"created_at"`
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
@@ -371,7 +380,9 @@ type ListPersonalTokenGrantsForOrgRow struct {
 // Grants of tokens that are not revoked, and every blocked grant: a block
 // keeps its owner out of the organization even after they revoked the
 // token (the block is per person and organization), so the admins must
-// still see it to lift it.
+// still see it to lift it. owner_blocked marks every entry of a person
+// blocked here (the EXISTS GetPersonalTokenGrant uses, on
+// personal_token_grants_blocked_idx): their other tokens are refused too.
 func (q *Queries) ListPersonalTokenGrantsForOrg(ctx context.Context, orgID uuid.UUID) ([]ListPersonalTokenGrantsForOrgRow, error) {
 	rows, err := q.db.Query(ctx, listPersonalTokenGrantsForOrg, orgID)
 	if err != nil {
@@ -391,6 +402,7 @@ func (q *Queries) ListPersonalTokenGrantsForOrg(ctx context.Context, orgID uuid.
 			&i.Role,
 			&i.Blocked,
 			&i.TokenRevoked,
+			&i.OwnerBlocked,
 			&i.LastUsedAt,
 			&i.CreatedAt,
 			&i.ExpiresAt,

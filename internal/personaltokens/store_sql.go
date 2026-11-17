@@ -128,7 +128,7 @@ func (s *SQLStore) BlockGrant(ctx context.Context, tokenID, orgID, by uuid.UUID)
 	if err != nil {
 		return OrgEntry{}, err
 	}
-	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked,
+	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.OwnerBlocked,
 		r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
 }
 

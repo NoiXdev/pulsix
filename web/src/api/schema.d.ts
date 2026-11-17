@@ -7000,6 +7000,8 @@ export interface components {
              */
             last_used_at?: string;
             name: string;
+            /** @description An admin blocked a grant of this token's owner here, so every token of theirs is refused here; lifting the block through this entry lifts it for the owner */
+            owner_blocked: boolean;
             owner_email: string;
             owner_id: string;
             owner_name: string;

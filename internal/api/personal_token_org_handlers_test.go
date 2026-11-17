@@ -24,6 +24,7 @@ type ptEntry struct {
 	Role         string  `json:"role"`
 	Blocked      bool    `json:"blocked"`
 	TokenRevoked bool    `json:"token_revoked"`
+	OwnerBlocked bool    `json:"owner_blocked"`
 	LastUsedAt   *string `json:"last_used_at"`
 	CreatedAt    string  `json:"created_at"`
 }
@@ -302,4 +303,49 @@ func TestPersonalBlockStopsOtherTokens(t *testing.T) {
 		t.Fatalf("owner re-adding B to T1: %d (%s)", code, raw)
 	}
 	wantStatus(t, "T1 in B after re-adding", f.s.Get(t, t1.Token, "/api/v1/orgs/pt-others-b/hosts"), http.StatusOK)
+}
+
+// TestOrgViewMarksBlockedOwner (Task 19): every entry of a person blocked in
+// the organization carries owner_blocked, since the block stops all their
+// tokens there, and the block can be lifted through any of those entries.
+func TestOrgViewMarksBlockedOwner(t *testing.T) {
+	f := newPTFixture(t, "pt-ownerblk")
+	f.org(t, "pt-ownerblk-a", tenancy.RoleOperator)
+	f.org(t, "pt-ownerblk-b", tenancy.RoleOperator)
+	admin := f.s.LoginAs(f.owner)
+	t1 := f.create(t, map[string]any{"name": "one", "grants": grantsOf("pt-ownerblk-b", "viewer")})
+	t2 := f.create(t, map[string]any{"name": "two", "grants": grantsOf("pt-ownerblk-a", "viewer", "pt-ownerblk-b", "viewer")})
+	for _, e := range f.entries(t, admin, "pt-ownerblk-b") {
+		if e.Blocked || e.OwnerBlocked {
+			t.Fatalf("entry before any block = %+v", e)
+		}
+	}
+	if code, raw := f.call(t, admin, http.MethodDelete, "/api/v1/orgs/pt-ownerblk-b/personal-tokens/"+t1.ID, nil); code != http.StatusOK {
+		t.Fatalf("admin revoke: %d (%s)", code, raw)
+	}
+	byID := map[string]ptEntry{}
+	for _, e := range f.entries(t, admin, "pt-ownerblk-b") {
+		byID[e.TokenID] = e
+	}
+	if e := byID[t1.ID]; !e.Blocked || !e.OwnerBlocked {
+		t.Fatalf("blocked entry = %+v; want blocked and owner_blocked", e)
+	}
+	if e := byID[t2.ID]; e.Blocked || !e.OwnerBlocked {
+		t.Fatalf("other token's entry = %+v; want owner_blocked only", e)
+	}
+	if e := f.entries(t, admin, "pt-ownerblk-a"); len(e) != 1 || e[0].OwnerBlocked {
+		t.Fatalf("A entries = %+v; want not owner_blocked", e)
+	}
+	// The block is lifted through the entry that was never blocked itself.
+	if code, raw := f.call(t, admin, http.MethodPost, "/api/v1/orgs/pt-ownerblk-b/personal-tokens/"+t2.ID+"/unblock", nil); code != http.StatusOK {
+		t.Fatalf("unblock through the other entry: %d (%s)", code, raw)
+	}
+	entries := f.entries(t, admin, "pt-ownerblk-b")
+	if len(entries) != 1 || entries[0].TokenID != t2.ID || entries[0].OwnerBlocked || entries[0].Blocked {
+		t.Fatalf("B entries after the unblock = %+v", entries)
+	}
+	wantStatus(t, "T2 in B after the unblock", f.s.Get(t, t2.Token, "/api/v1/orgs/pt-ownerblk-b/hosts"), http.StatusOK)
+	if code, _ := f.call(t, admin, http.MethodPost, "/api/v1/orgs/pt-ownerblk-b/personal-tokens/"+t2.ID+"/unblock", nil); code != http.StatusNotFound {
+		t.Fatalf("unblock without a block: %d, want 404", code)
+	}
 }

@@ -453,6 +453,23 @@ func TestSQLCapBlockedForThePerson(t *testing.T) {
 	if _, blocked, err := f.store.Cap(inA, t3, a); err != nil || blocked {
 		t.Fatalf("another user's token in A blocked = %v, %v; want not", blocked, err)
 	}
+	// The organization's view marks every entry of the blocked person.
+	entries, err := f.store.OrgEntries(inA, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		want := map[uuid.UUID]bool{t1: true, t2: true, t3: false}[e.TokenID]
+		if e.OwnerBlocked != want {
+			t.Fatalf("entry %s owner blocked = %v, want %v", e.TokenID, e.OwnerBlocked, want)
+		}
+	}
+	if e, err := f.store.OrgEntry(inA, a, t2); err != nil || !e.OwnerBlocked || e.Blocked {
+		t.Fatalf("OrgEntry(T2) = %+v, %v; want owner blocked only", e, err)
+	}
+	if e, err := f.store.OrgEntry(db.WithOrgScope(ctx, b), b, t2); err != nil || e.OwnerBlocked {
+		t.Fatalf("OrgEntry(T2) in B = %+v, %v; want not owner blocked", e, err)
+	}
 	svc := f.sqlService(nil)
 	if _, err := svc.Cap(inA, t2, a); !errors.Is(err, personaltokens.ErrNoGrant) {
 		t.Fatalf("service Cap of T2 in A = %v, want ErrNoGrant", err)

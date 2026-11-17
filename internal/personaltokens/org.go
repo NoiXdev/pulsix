@@ -25,9 +25,12 @@ type OrgEntry struct {
 	Role                  tenancy.Role
 	Blocked               bool
 	TokenRevoked          bool // listed only while its grant here is blocked
-	LastUsedAt            *time.Time
-	CreatedAt             time.Time
-	ExpiresAt             *time.Time
+	// OwnerBlocked: an admin blocked a grant of the owner here, this one or
+	// another token's, so every token of theirs is refused here.
+	OwnerBlocked bool
+	LastUsedAt   *time.Time
+	CreatedAt    time.Time
+	ExpiresAt    *time.Time
 }
 
 // The organization methods run with the request's database scope bound to
@@ -68,15 +71,15 @@ func (s *Service) RevokeGrant(ctx context.Context, orgID, tokenID, adminID uuid.
 
 // UnblockGrant lifts the block of tokenID's owner in orgID: every blocked
 // grant of theirs there is deleted, so no token of theirs holds a grant for
-// orgID until they add one again. tokenID names any of their blocked
-// grants; one that is not blocked is ErrNotFound. It returns the entry as
-// it was.
+// orgID until they add one again. tokenID names any entry of the blocked
+// person (blocked itself or only through the person); an entry of a person
+// who is not blocked is ErrNotFound. It returns the entry as it was.
 func (s *Service) UnblockGrant(ctx context.Context, orgID, tokenID uuid.UUID) (OrgEntry, error) {
 	e, err := s.store.OrgEntry(ctx, orgID, tokenID)
 	if err != nil {
 		return OrgEntry{}, err
 	}
-	if !e.Blocked {
+	if !e.Blocked && !e.OwnerBlocked {
 		return OrgEntry{}, ErrNotFound
 	}
 	if err := s.store.UnblockOwner(ctx, orgID, e.OwnerID); err != nil {

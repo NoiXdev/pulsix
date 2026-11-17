@@ -251,7 +251,7 @@ func (f *fakeStore) entry(orgID, tokenID uuid.UUID) (personaltokens.OrgEntry, bo
 		return personaltokens.OrgEntry{}, false
 	}
 	return personaltokens.OrgEntry{TokenID: tokenID, Name: t.tok.Name, Kind: t.tok.Kind, OwnerID: t.tok.UserID,
-		Role: g.role, Blocked: g.blocked, TokenRevoked: t.revoked, LastUsedAt: g.lastUsed, CreatedAt: t.tok.CreatedAt,
+		Role: g.role, Blocked: g.blocked, TokenRevoked: t.revoked, OwnerBlocked: f.ownerBlocked(t.tok.UserID, orgID), LastUsedAt: g.lastUsed, CreatedAt: t.tok.CreatedAt,
 		ExpiresAt: t.tok.ExpiresAt}, true
 }
 
@@ -289,12 +289,16 @@ func (f *fakeStore) BlockGrant(_ context.Context, tokenID, orgID, _ uuid.UUID) (
 }
 
 func (f *fakeStore) OrgBlocked(_ context.Context, userID, orgID uuid.UUID) (bool, error) {
+	return f.ownerBlocked(userID, orgID), nil
+}
+
+func (f *fakeStore) ownerBlocked(userID, orgID uuid.UUID) bool {
 	for k, g := range f.grants {
 		if t, ok := f.tokens[k.token]; ok && k.org == orgID && g.blocked && t.tok.UserID == userID {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func (f *fakeStore) UnblockOwner(_ context.Context, orgID, userID uuid.UUID) error {

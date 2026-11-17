@@ -28,7 +28,10 @@ type personalTokenEntryDTO struct {
 	Blocked    bool   `json:"blocked" doc:"An admin revoked the grant; no token of its owner gets a grant here until an admin lifts the block"`
 	// TokenRevoked: the owner revoked the token. Such a grant is listed
 	// only while blocked, since the block outlives the token.
-	TokenRevoked bool       `json:"token_revoked" doc:"The owner revoked the token; listed only while its grant here is blocked"`
+	TokenRevoked bool `json:"token_revoked" doc:"The owner revoked the token; listed only while its grant here is blocked"`
+	// OwnerBlocked: an admin blocked a grant of the owner here (this one or
+	// another token's); every token of theirs is refused here until lifted.
+	OwnerBlocked bool       `json:"owner_blocked" doc:"An admin blocked a grant of this token's owner here, so every token of theirs is refused here; lifting the block through this entry lifts it for the owner"`
 	LastUsedAt   *time.Time `json:"last_used_at,omitempty" doc:"The token's last use in this organization"`
 	CreatedAt    time.Time  `json:"created_at"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
@@ -48,8 +51,9 @@ type personalTokenSettingsOutput struct{ Body personalTokenSettingsBody }
 
 // registerPersonalTokenOrgRoutes wires the organization's side. A revoked
 // grant blocks its owner in the organization (per person, for every token
-// of theirs, until lifted); lifting it through any of their blocked
-// entries lifts all of them. Seeing and revoking grants needs tokens.manage, as for organization tokens (and,
+// of theirs, until lifted); lifting it through any of their entries lifts
+// all of them. Seeing and revoking grants needs tokens.manage, as for
+// organization tokens (and,
 // like revoking an organization token, a token with that right may do
 // it); lifting a block and the switch need an interactive session, so no
 // token can reopen access. No route here takes a cap: an admin can revoke a
@@ -153,7 +157,7 @@ func readPersonalTokenSettings(ctx context.Context, deps Deps, orgID uuid.UUID) 
 func toPersonalTokenEntryDTO(e personaltokens.OrgEntry) personalTokenEntryDTO {
 	return personalTokenEntryDTO{
 		TokenID: e.TokenID.String(), Name: e.Name, Kind: string(e.Kind), OwnerID: e.OwnerID.String(),
-		OwnerName: e.OwnerName, OwnerEmail: e.OwnerEmail, Role: string(e.Role), Blocked: e.Blocked, TokenRevoked: e.TokenRevoked,
+		OwnerName: e.OwnerName, OwnerEmail: e.OwnerEmail, Role: string(e.Role), Blocked: e.Blocked, TokenRevoked: e.TokenRevoked, OwnerBlocked: e.OwnerBlocked,
 		LastUsedAt: e.LastUsedAt, CreatedAt: e.CreatedAt, ExpiresAt: e.ExpiresAt,
 	}
 }

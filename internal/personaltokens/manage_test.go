@@ -636,3 +636,38 @@ func TestUpdateCountsBlockedGrantsTowardLimit(t *testing.T) {
 		t.Fatalf("49 listed + 1 blocked: %v", err)
 	}
 }
+
+// TestUnblockThroughOwnerBlockedEntry (Task 19): an entry of a blocked person
+// that was never blocked itself reads as owner blocked, and lifting the
+// block through it lifts the person's block.
+func TestUnblockThroughOwnerBlockedEntry(t *testing.T) {
+	w := newWorld()
+	t1 := w.create(t, api(g(w.a, tenancy.RoleViewer)))
+	t2 := w.create(t, api(g(w.a, tenancy.RoleViewer), g(w.b, tenancy.RoleViewer)))
+	ctx := context.Background()
+	if _, err := w.svc.RevokeGrant(ctx, w.a, t1.ID, uuid.Must(uuid.NewV7())); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := w.svc.ListForOrg(ctx, w.a)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries = %+v, %v", entries, err)
+	}
+	for _, e := range entries {
+		if !e.OwnerBlocked || e.Blocked != (e.TokenID == t1.ID) {
+			t.Fatalf("entry = %+v", e)
+		}
+	}
+	if b, _ := w.svc.ListForOrg(ctx, w.b); len(b) != 1 || b[0].OwnerBlocked {
+		t.Fatalf("B entries = %+v", b)
+	}
+	e, err := w.svc.UnblockGrant(ctx, w.a, t2.ID)
+	if err != nil || e.TokenID != t2.ID {
+		t.Fatalf("UnblockGrant through T2 = %+v, %v", e, err)
+	}
+	if _, err := w.svc.Cap(ctx, t2.ID, w.a); err != nil {
+		t.Fatalf("T2 in A after the unblock: %v", err)
+	}
+	if _, err := w.svc.UnblockGrant(ctx, w.a, t2.ID); !errors.Is(err, personaltokens.ErrNotFound) {
+		t.Fatalf("second unblock: %v, want ErrNotFound", err)
+	}
+}

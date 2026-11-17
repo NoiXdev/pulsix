@@ -148,9 +148,13 @@ FROM personal_token_grants g WHERE g.token_id = $1 AND g.blocked_at IS NULL
 -- Grants of tokens that are not revoked, and every blocked grant: a block
 -- keeps its owner out of the organization even after they revoked the
 -- token (the block is per person and organization), so the admins must
--- still see it to lift it.
+-- still see it to lift it. owner_blocked marks every entry of a person
+-- blocked here (the EXISTS GetPersonalTokenGrant uses, on
+-- personal_token_grants_blocked_idx): their other tokens are refused too.
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       EXISTS (SELECT 1 FROM personal_token_grants b
+               WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL)::boolean AS owner_blocked,
        g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
@@ -161,6 +165,8 @@ ORDER BY t.created_at, t.id;
 -- name: GetPersonalTokenGrantForOrg :one
 SELECT g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
+       EXISTS (SELECT 1 FROM personal_token_grants b
+               WHERE b.org_id = g.org_id AND b.user_id = g.user_id AND b.blocked_at IS NOT NULL)::boolean AS owner_blocked,
        g.last_used_at, t.created_at, t.expires_at
 FROM personal_token_grants g
 JOIN personal_tokens t ON t.id = g.token_id
@@ -177,7 +183,7 @@ WHERE g.org_id = sqlc.arg(org_id)::uuid AND g.token_id = sqlc.arg(token_id)::uui
   AND t.id = g.token_id AND t.revoked_at IS NULL AND u.id = g.user_id
 RETURNING g.token_id, t.name, t.kind, g.user_id, u.display_name, u.email, g.role,
        (g.blocked_at IS NOT NULL)::boolean AS blocked, (t.revoked_at IS NOT NULL)::boolean AS token_revoked,
-       g.last_used_at, t.created_at, t.expires_at;
+       true::boolean AS owner_blocked, g.last_used_at, t.created_at, t.expires_at;
 
 -- name: PersonalTokenOrgBlocked :one
 -- Whether an admin blocked any grant of the user in the organization, of

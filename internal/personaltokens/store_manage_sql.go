@@ -162,9 +162,9 @@ func (s *SQLStore) LiveGrants(ctx context.Context, tokenID uuid.UUID) (uuid.UUID
 }
 
 func orgEntry(tokenID uuid.UUID, name, kind string, owner uuid.UUID, ownerName, ownerEmail string, role gen.OrgRole,
-	blocked, revoked bool, last pgtype.Timestamptz, created time.Time, exp pgtype.Timestamptz) OrgEntry {
+	blocked, revoked, ownerBlocked bool, last pgtype.Timestamptz, created time.Time, exp pgtype.Timestamptz) OrgEntry {
 	return OrgEntry{TokenID: tokenID, Name: name, Kind: auth.TokenKind(kind), OwnerID: owner, OwnerName: ownerName,
-		OwnerEmail: ownerEmail, Role: tenancy.Role(role), Blocked: blocked, TokenRevoked: revoked, LastUsedAt: db.TimePtr(last),
+		OwnerEmail: ownerEmail, Role: tenancy.Role(role), Blocked: blocked, TokenRevoked: revoked, OwnerBlocked: ownerBlocked, LastUsedAt: db.TimePtr(last),
 		CreatedAt: created, ExpiresAt: db.TimePtr(exp)}
 }
 
@@ -177,7 +177,7 @@ func (s *SQLStore) OrgEntries(ctx context.Context, orgID uuid.UUID) ([]OrgEntry,
 	}
 	out := make([]OrgEntry, len(rows))
 	for i, r := range rows {
-		out[i] = orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt)
+		out[i] = orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.OwnerBlocked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt)
 	}
 	return out, nil
 }
@@ -191,7 +191,7 @@ func (s *SQLStore) OrgEntry(ctx context.Context, orgID, tokenID uuid.UUID) (OrgE
 	if err != nil {
 		return OrgEntry{}, err
 	}
-	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
+	return orgEntry(r.TokenID, r.Name, r.Kind, r.UserID, r.DisplayName, r.Email, r.Role, r.Blocked, r.TokenRevoked, r.OwnerBlocked, r.LastUsedAt, r.CreatedAt, r.ExpiresAt), nil
 }
 
 // OrgBlocked reports whether an admin blocked any grant of userID in orgID,
