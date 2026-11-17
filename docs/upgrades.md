@@ -409,6 +409,18 @@ backup carries the columns with `users` and `sessions`. The skew between manager
 the behaviour changes are under "Behaviour changes to check after an upgrade" (3.93 to
 3.95).
 
+List settings and appearance (backlog 3.97 and 3.98) add migrations 00108 and 00109,
+both additive. 00108 creates `user_preferences` (one row per user: density, page size
+and the per-list column document; no row means the defaults) and nothing else changes.
+00109 adds the partial index `jobs_live_idx` on `jobs (org_id)` for the statuses
+queued, claimed, running and cancelling, built with a plain `CREATE INDEX` like 00079:
+it **blocks writes to `jobs` (new runs, status updates) while it builds**, and the
+live rows are few, but the build still reads the whole table, so on a large run history
+upgrade outside busy automation windows. An older manager ignores the table and the
+index. The list endpoints gain `page`, `per_page`, `sort`, `order` and an answer
+`total`; an older SPA keeps working against the new manager. Workers and agents are
+not affected, and a backup carries `user_preferences`.
+
 Personal tokens (backlog 3.100) add migration 00110, three new tables and nothing
 changed in existing ones: `personal_tokens` (a user's own tokens, no row-level
 security, like `sessions`), `personal_token_grants` (organization and role cap per
