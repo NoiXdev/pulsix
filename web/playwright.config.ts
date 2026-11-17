@@ -117,5 +117,11 @@ export default defineConfig({
     { name: 'session-lock', testMatch: /session-lock\.spec\.ts/, dependencies: ['chain'] },
     { name: 'session-expiry', testMatch: /session-expiry\.spec\.ts/, dependencies: ['session-lock'] },
     { name: 'version-notice', testMatch: /version-notice\.spec\.ts/, dependencies: ['session-expiry'] },
+    // The shared list component, the personal settings area and personal
+    // tokens (backlog 3.97 to 3.100). They sign in with the administrator's
+    // shared state and put every personal setting back, so they run last.
+    { name: 'lists', testMatch: /lists\.spec\.ts/, dependencies: ['version-notice'] },
+    { name: 'settings-area', testMatch: /settings-area\.spec\.ts/, dependencies: ['lists'] },
+    { name: 'personal-tokens', testMatch: /personal-tokens\.spec\.ts/, dependencies: ['settings-area'] },
   ],
 });

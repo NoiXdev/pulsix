@@ -51,7 +51,7 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
   await page.getByRole('button', { name: /Enrol agent/ }).click();
   await page.getByLabel('Host name (optional)').fill(hostName);
   await page.getByRole('button', { name: 'Create token' }).click();
-  const token = (await page.getByLabel('Enrollment token').textContent())?.trim() ?? '';
+  const token = (await page.getByLabel('Enrollment token', { exact: true }).textContent())?.trim() ?? '';
   expect(token).toMatch(/^pxa1\./);
   await page.getByRole('button', { name: 'Done' }).click();
   return startAgent(token, hostName);

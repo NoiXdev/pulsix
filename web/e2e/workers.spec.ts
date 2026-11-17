@@ -36,7 +36,7 @@ test('an admin creates a worker enrollment token and withdraws it again', async 
   // would pin setup.spec's fixture rather than this page's behaviour.
   await dialog.getByRole('button', { name: 'Create token' }).click();
 
-  const token = (await dialog.getByLabel('Enrollment token').textContent())?.trim() ?? '';
+  const token = (await dialog.getByLabel('Enrollment token', { exact: true }).textContent())?.trim() ?? '';
   expect(token).toMatch(/^pxw1\./);
   // The snippet is the point of the dialog: an operator copies one line
   // rather than assembling the manager address and the token by hand.

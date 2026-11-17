@@ -45,7 +45,7 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     // of the host, so the installer asks for the token on the terminal
     // instead (backlog 7.30; internal/api/agent_handlers_test.go asserts
     // the same on the API).
-    const token = (await page.getByLabel('Enrollment token').textContent())?.trim() ?? '';
+    const token = (await page.getByLabel('Enrollment token', { exact: true }).textContent())?.trim() ?? '';
     expect(token).toMatch(/^pxa1\./);
     const command = page.getByLabel('Linux and macOS', { exact: true });
     await expect(command).toContainText('/install.sh');
