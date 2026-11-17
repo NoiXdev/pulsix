@@ -367,6 +367,12 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 			}
 		}
 	}
+	// The filtered list_activity above proves the content; this unfiltered
+	// call puts every audit entry, including those about secret-holding
+	// objects, into the recorded outputs the secret sweep reads.
+	if text, isErr := a.record(cs, "list_activity", map[string]any{"limit": 100}); isErr {
+		s.t.Errorf("unfiltered list_activity failed: %s", text)
+	}
 }
 
 func keys(m map[string]bool) []string {
