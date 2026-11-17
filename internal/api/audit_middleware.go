@@ -179,6 +179,21 @@ func recordAuditFailure(ctx context.Context, deps Deps, orgID, userID uuid.UUID,
 	}
 }
 
+// recordInstanceAuditFailure is recordAuditFailure for an event with no
+// organization, recorded the way auditMiddleware records a route that has
+// none (setAuditScope with a nil org, no organization scope on the database
+// context). It exists for the session lock: a wrong PIN (422) and the fifth
+// one (401) end in statuses withAudit does not record, yet an account owner
+// needs them on their activity feed. Callers never put a PIN into summary.
+func recordInstanceAuditFailure(ctx context.Context, deps Deps, userID uuid.UUID, action, objectType, objectID, summary string) {
+	if err := deps.Audit.Record(ctx, audit.Event{
+		ActorID: &userID, ActorKind: actorKind(ctx), TokenID: actorTokenID(ctx),
+		Action: action, ObjectType: objectType, ObjectID: objectID, Summary: summary,
+	}); err != nil {
+		slog.ErrorContext(ctx, "audit: failed to record event", "err", err, "action", action)
+	}
+}
+
 // actorKind reports how the current request was authenticated, for an
 // event's ActorKind: "token" for a bearer API token (auth.Principal.TokenID
 // is set exactly when auth.Tokens.Resolve produced the principal — see its

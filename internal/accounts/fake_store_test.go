@@ -196,6 +196,12 @@ func (f *fakeStore) DeleteSecondFactors(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeStore) ClearLockPIN(_ context.Context, _ uuid.UUID) error {
+	f.write()
+	f.actions = append(f.actions, "clear lock PIN")
+	return nil
+}
+
 func (f *fakeStore) Reactivate(_ context.Context, _ uuid.UUID) error {
 	f.write()
 	f.actions = append(f.actions, "reactivate")

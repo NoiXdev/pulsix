@@ -115,6 +115,10 @@ type Store interface {
 	// DeleteSecondFactors removes the account's TOTP secret, recovery
 	// codes and passkeys.
 	DeleteSecondFactors(ctx context.Context, id uuid.UUID) error
+	// ClearLockPIN drops the account's session-lock PIN and its "already
+	// offered" mark (the second-factor reset starts the account's security
+	// over).
+	ClearLockPIN(ctx context.Context, id uuid.UUID) error
 	// Reactivate clears the account's deactivation. ErrNotFound for an
 	// unknown id.
 	Reactivate(ctx context.Context, id uuid.UUID) error

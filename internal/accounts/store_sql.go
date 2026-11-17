@@ -178,6 +178,14 @@ func (s *SQLStore) DeleteSecondFactors(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// ClearLockPIN implements Store.
+func (s *SQLStore) ClearLockPIN(ctx context.Context, id uuid.UUID) error {
+	if err := s.q.ClearLockPIN(ctx, id); err != nil {
+		return fmt.Errorf("clear lock PIN: %w", err)
+	}
+	return nil
+}
+
 // Reactivate implements Store.
 func (s *SQLStore) Reactivate(ctx context.Context, id uuid.UUID) error {
 	n, err := s.q.ReactivateUser(ctx, id)

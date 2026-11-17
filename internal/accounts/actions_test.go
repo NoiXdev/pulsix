@@ -128,7 +128,7 @@ func TestResetSecondFactor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(store.actions, ", ") != "delete second factors, revoke sessions, void reset tokens" || store.writesOutside != 0 {
+	if strings.Join(store.actions, ", ") != "delete second factors, clear lock PIN, revoke sessions, void reset tokens" || store.writesOutside != 0 {
 		t.Fatalf("writes %v (%d outside the transaction)", store.actions, store.writesOutside)
 	}
 	if notice != accounts.NoticeSent || len(mailer.sent) != 1 {

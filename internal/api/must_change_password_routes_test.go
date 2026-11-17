@@ -18,8 +18,8 @@ import (
 
 // mustChangeAllowed is every operation a complete session whose account
 // must change its password may still reach: who am I, sign out, the
-// password change itself, and verifying a factor, which the change's
-// step-up needs. Enrolling a factor is not on it: only a pending session
+// password change itself, verifying a factor, which the change's
+// step-up needs, and unlocking a locked session. Enrolling a factor is not on it: only a pending session
 // of an account without one may enrol, before the change
 // (TestMustChangePasswordPendingSessionCanEnrol).
 var mustChangeAllowed = map[string]bool{
@@ -27,6 +27,10 @@ var mustChangeAllowed = map[string]bool{
 	"POST /api/v1/auth/logout":      true,
 	"POST /api/v1/auth/password":    true,
 	"POST /api/v1/auth/totp/verify": true,
+	// Unlock sits on requireSession: a locked session must be able to leave
+	// the lock whatever else its account owes. On a session that is not
+	// locked it only answers 409.
+	"POST /api/v1/auth/lock/unlock": true,
 }
 
 // mustChangeSkippedExact and mustChangeSkippedPrefixes are the routes that

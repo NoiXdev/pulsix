@@ -76,7 +76,7 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, a
 }
 
 // ResetSecondFactor removes target's TOTP secret, recovery codes and every
-// passkey, ends every session of target and voids every unused reset link
+// passkey, clears target's lock PIN, ends every session of target and voids every unused reset link
 // of target, in one transaction: until a new factor is enrolled, whoever
 // sets the password can enrol one, so a link issued before the reset must
 // not be the way in. At the next sign-in the person enrols a new factor.
@@ -92,6 +92,9 @@ func (s *Service) ResetSecondFactor(ctx context.Context, actorIsAdmin bool, acto
 		active = acct.active()
 		if err := s.store.DeleteSecondFactors(ctx, target); err != nil {
 			return fmt.Errorf("delete second factors: %w", err)
+		}
+		if err := s.store.ClearLockPIN(ctx, target); err != nil {
+			return fmt.Errorf("clear lock PIN: %w", err)
 		}
 		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
