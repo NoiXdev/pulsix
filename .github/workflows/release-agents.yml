@@ -6,14 +6,15 @@
 # A separate workflow, not a step of the shared release workflow: owner
 # decision 2026-11-17, because the shared workflow serves every product and
 # knows nothing about Go binaries. The release workflow calls it after the
-# release exists; the design is in docs/superpowers/plans/ (agent binaries on
-# the GitHub release).
+# release exists; the design is in
+# docs/superpowers/specs/2026-11-17-release-agent-assets-design.md.
 #
 # Backfill: run it from the Actions tab (workflow_dispatch) with the tag of an
-# existing release. The workflow file comes from main while the sources come
-# from the tag, so each release is built with its own agent-binaries.sh and
-# its own target list. A published asset is never replaced: identical bytes
-# are skipped, different bytes fail the run.
+# existing release. The build sources and scripts/agent-binaries.sh come from
+# the tag, so each release is built with its own target list; the uploader
+# (scripts/release-agent-assets.sh) comes from the workflow's own commit
+# (main), so tags cut before it existed can be backfilled. A published asset
+# is never replaced: identical bytes are skipped, different bytes fail the run.
 name: release-agents
 run-name: Agent binaries for ${{ inputs.tag }}${{ inputs.dry_run && ' (dry run)' || '' }}
 
@@ -53,18 +54,21 @@ jobs:
       - name: The tag must be a release tag, and on a backfill its release must exist
         env:
           TAG: ${{ inputs.tag }}
-          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$'; then
-            echo "::error::'$TAG' is not a release tag" >&2
+          # Whole-value match: grep would accept a multi-line input when one
+          # line is valid. The value stays out of the annotation command.
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::the tag is not a release tag" >&2
             exit 1
           fi
-          # From the release workflow the release job has just created it
-          # (or, on a dry run, never will); only a backfill can name a tag
-          # that has no release.
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          # Only a dry run has no release (the release job creates none).
+          # A live call finds the one it just made and a backfill the one
+          # it targets; `github.event_name` cannot tell them apart, since a
+          # called workflow sees its caller's event.
+          if [ "$DRY_RUN" != "true" ]; then
             gh release view "$TAG" >/dev/null
           fi
 
@@ -113,6 +117,10 @@ jobs:
           for f in "$dist"/pulsix-agent-*; do
             case "$f" in *.sha256) continue ;; esac
             found=$((found + 1))
+            if [ ! -f "$f.sha256" ]; then
+              echo "::error::$f has no .sha256" >&2
+              exit 1
+            fi
             info=$(go version -m "$f")
             if ! printf '%s\n' "$info" | grep -Fq "vcs.revision=$rev"; then
               echo "::error::$f was not built from $rev" >&2
@@ -136,10 +144,21 @@ jobs:
             sha256sum -c "$s"
           done
 
+      # The uploader comes from this workflow's own commit, not the tag:
+      # tags cut before it existed do not contain it. Checked out after the
+      # verify step so it cannot dirty the tree the binaries were built from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.dry_run }}
+        with:
+          ref: ${{ github.sha }}
+          path: release-tools
+          sparse-checkout: scripts/release-agent-assets.sh
+          sparse-checkout-cone-mode: false
+
       - name: Attach the binaries to the release
         if: ${{ !inputs.dry_run }}
         env:
           TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist
+        run: release-tools/scripts/release-agent-assets.sh "$TAG" internal/agentdist/dist
