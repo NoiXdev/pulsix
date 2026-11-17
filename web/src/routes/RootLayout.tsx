@@ -98,10 +98,12 @@ export function RootLayout() {
   );
 
   // The page is gone from the tree by now (this runs after the commit that
-  // swapped it for the lock screen); drop what it had fetched.
+  // swapped it for the lock screen); drop what it had fetched, and every
+  // mutation it sent (a PIN set just before locking rides in `variables`).
   useEffect(() => {
     if (!locked) return;
     qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
+    qc.getMutationCache().clear();
   }, [locked, qc]);
 
   const value = useMemo(() => ({ locked, setLocked }), [locked, setLocked]);

@@ -7,6 +7,7 @@ import { Outlet, createRootRoute, createRoute, createRouter, createMemoryHistory
 import { mockApi, type MockRoute } from '../../test/mockApi.ts';
 import { LockScreen } from './LockScreen.tsx';
 import { LockStateContext } from './lockState.ts';
+import { meQueryKey } from '../../api/hooks/useMe.ts';
 
 const me = { locked: false, lock_pin_set: true, user: { display_name: 'Tim' } };
 
@@ -19,16 +20,21 @@ function Harness() {
   );
 }
 
-function renderIt(routes: Record<string, MockRoute>) {
+let qcRef: QueryClient;
+
+function renderIt(routes: Record<string, MockRoute>, cachedMe?: Record<string, unknown>) {
   mockApi({ 'GET /api/v1/auth/me': me, ...routes });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (cachedMe) qc.setQueryData(meQueryKey, cachedMe);
   const rootRoute = createRootRoute({ component: Harness });
   const login = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: () => <div>LOGIN</div> });
   const router = createRouter({ routeTree: rootRoute.addChildren([login]), history: createMemoryHistory({ initialEntries: ['/'] }) });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  qcRef = qc;
   return router;
 }
 
@@ -51,6 +57,16 @@ describe('LockScreen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
     expect(screen.queryByText('UNLOCKED PAGE')).not.toBeInTheDocument();
+  });
+
+  it('keeps no wrong PIN in the mutation cache', async () => {
+    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) });
+    await userEvent.type(await screen.findByLabelText('PIN'), '0815');
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(JSON.stringify(qcRef.getMutationCache().getAll().map((m) => m.state.variables))).not.toContain('0815'),
+    );
   });
 
   it('goes away when the PIN is right', async () => {
@@ -84,13 +100,40 @@ describe('LockScreen', () => {
 
   it('goes to /login with the notice when the fifth wrong PIN ends the session', async () => {
     const router = renderIt({
-      'POST /api/v1/auth/lock/unlock': () => new Response(JSON.stringify({ detail: 'session ended' }), { status: 401 }),
+      'POST /api/v1/auth/lock/unlock': () =>
+        new Response(JSON.stringify({ title: 'Unauthorized', status: 401, detail: 'too many wrong pins' }), { status: 401 }),
     });
     await userEvent.type(await screen.findByLabelText('PIN'), '0000');
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');
     expect(router.state.location.search).toMatchObject({ notice: 'lock_ended' });
+  });
+
+  const gone = () =>
+    new Response(JSON.stringify({ title: 'Unauthorized', status: 401, detail: 'login required' }), { status: 401 });
+
+  it('goes to /login without the wrong-PIN notice when the session was gone for another reason', async () => {
+    const router = renderIt(
+      { 'POST /api/v1/auth/lock/unlock': gone },
+      { ...me, session_expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+    );
+    await userEvent.type(await screen.findByLabelText('PIN'), '1234');
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/login');
+    expect(router.state.location.search).not.toHaveProperty('notice');
+  });
+
+  it('goes to /login with the expiry notice when the session reached its end while locked', async () => {
+    const router = renderIt(
+      { 'POST /api/v1/auth/lock/unlock': gone },
+      { ...me, session_expires_at: new Date(Date.now() - 60_000).toISOString() },
+    );
+    await userEvent.type(await screen.findByLabelText('PIN'), '1234');
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+    expect(router.state.location.search).toMatchObject({ notice: 'session_expired' });
   });
 
   it('signs out to /login', async () => {

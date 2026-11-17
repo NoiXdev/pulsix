@@ -11,16 +11,23 @@ import { attemptsLeft, useUnlockSession } from '../../api/hooks/useScreenLock.ts
 import { logout } from '../../api/hooks/useAuth.ts';
 import { refetchMe } from '../../api/hooks/useMe.ts';
 import { resetSessionCache } from '../../lib/session.ts';
+import { loginSearchAfter401 } from '../../lib/sessionEnd.ts';
 import { useT } from '../../i18n/useT.ts';
 import { postSessionMessage } from './lockChannel.ts';
 import { useLockState } from './lockState.ts';
+
+/** EXHAUSTED_DETAIL is the problem detail the unlock route answers with
+ * when the fifth wrong PIN ended the session
+ * (internal/api/screenlock_handlers.go). */
+const EXHAUSTED_DETAIL = 'too many wrong pins';
 
 /**
  * LockScreen is rendered by routes/RootLayout.tsx instead of the routed
  * page while the session is locked, so the page's components, and the data
  * they showed, are not in the DOM. Unlocking needs the PIN; the fifth
- * wrong one ends the session on the server (401), which sends the person
- * to the sign-in page with a notice.
+ * wrong one ends the session on the server (401 "too many wrong pins"),
+ * which sends the person to the sign-in page with a notice. Any other 401
+ * (the session ended meanwhile) goes there with the ordinary notice.
  */
 export function LockScreen() {
   const t = useT();
@@ -49,6 +56,9 @@ export function LockScreen() {
       await unlock.mutateAsync(pin);
     } catch (err) {
       setPin('');
+      // Drop the attempt, PIN included, from the mutation cache (gcTime 0
+      // removes it once nothing observes it; reset stops observing it).
+      unlock.reset();
       if (err instanceof ApiError && err.status === 409) {
         // Not locked after all (another tab unlocked, or signed in again):
         // the server is the authority, so follow it.
@@ -58,7 +68,12 @@ export function LockScreen() {
         return;
       }
       if (err instanceof ApiError && err.status === 401) {
-        await leaveToLogin({ step: undefined, notice: 'lock_ended' });
+        // Only the fifth wrong PIN is "too many wrong PINs"; any other 401
+        // means the session was already gone (its 12-hour end, a sign-out
+        // in another tab, an administrator ending it).
+        await leaveToLogin(
+          err.message === EXHAUSTED_DETAIL ? { step: undefined, notice: 'lock_ended' } : loginSearchAfter401(qc),
+        );
         return;
       }
       const left = attemptsLeft(err);

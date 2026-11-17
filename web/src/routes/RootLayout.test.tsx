@@ -111,6 +111,19 @@ describe('RootLayout', () => {
       expect(qcRef.getQueryData(['me'])).toBeDefined();
     });
 
+    it('drops every mutation, and the PIN it carried, from the cache when the session locks', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+      // A PIN set just before locking (default gcTime, as any mutation).
+      await qcRef.getMutationCache().build(qcRef, { mutationFn: async (_pin: string) => ({ ok: true }) }).execute('4711');
+      expect(qcRef.getMutationCache().getAll().some((m) => m.state.variables === '4711')).toBe(true);
+
+      postSessionMessage({ type: 'locked' });
+
+      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      await waitFor(() => expect(JSON.stringify(qcRef.getMutationCache().getAll().map((m) => m.state.variables))).not.toContain('4711'));
+    });
+
     it('shows the lock screen without rendering the page when /auth/me says locked', async () => {
       const orgs = vi.fn(() => ({ orgs: [] }));
       renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(true), 'GET /api/v1/orgs': orgs });
