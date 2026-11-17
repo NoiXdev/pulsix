@@ -1,32 +1,23 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
-import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Tag } from '../../ui/badge.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import {
-  useCreateMonitoringGroup,
-  useDeleteMonitoringGroup,
-  useMonitoringGroupPreview,
-  useMonitoringGroups,
-  useUpdateMonitoringGroup,
-} from '../../api/hooks/useChecks.ts';
+import { useCreateMonitoringGroup, useMonitoringGroupPreview, useMonitoringGroups, useUpdateMonitoringGroup } from '../../api/hooks/useChecks.ts';
 import { may } from '../../lib/roles.ts';
 import type { MonitoringGroup } from '../../api/types.ts';
+import { useListView } from '../lists/useListView.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
-import { MonitoringGroupRow } from './MonitoringGroupRow.tsx';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 1.4fr) 90px';
-const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
+import { monitoringGroupColumns } from './monitoringGroupColumns.tsx';
+import { useMonitoringGroupListActions } from './useMonitoringGroupListActions.tsx';
 
 /** How long the selector field stays quiet before the preview asks. The
  * route expands the expression across the organization's whole host
@@ -39,20 +30,20 @@ const PREVIEW_DEBOUNCE_MS = 300;
  * can bind to (v0.3b-1 spec, GUI): name, selector and priority, with a
  * live match count while typing — "a selector with no visible matches is
  * guesswork". Same permissions as the definitions: a viewer reads, an
- * operator writes.
+ * operator writes. List id `monitoring-groups`: one request, sorted and
+ * paged in the browser.
  */
 export function MonitoringGroupsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
-  const toast = useToast();
-  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
   const canWrite = may(role, 'checks.write');
   const groups = useMonitoringGroups(org, !!orgInfo.data && canRead);
-  const remove = useDeleteMonitoringGroup(org);
-  const [editing, setEditing] = useState<MonitoringGroup | 'new' | null>(null);
+  const actions = useMonitoringGroupListActions(org, canWrite, (group, onClose) => <GroupDialog org={org} group={group} onClose={onClose} />);
+  const columns = monitoringGroupColumns(t);
+  const view = useListView('monitoring-groups', columns, { mode: 'client', rowKey: (g) => g.id });
 
   // Built before any early return, and carried by every one of them: a
   // failed list used to replace the whole page, taking ChecksTabs with it
@@ -100,16 +91,7 @@ export function MonitoringGroupsPage() {
     );
   }
   const list = groups.data.groups ?? [];
-  const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
-
-  async function onDelete(g: MonitoringGroup) {
-    if (!(await ask({ message: t.checks.groups.deleteConfirm(g.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(g.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.checks.deleteFailed, 'destructive');
-    }
-  }
+  const { rows, total } = view.view(view.ready ? list : undefined);
 
   return (
     <>
@@ -119,24 +101,23 @@ export function MonitoringGroupsPage() {
           {t.checks.groups.summary(list.length)}
         </span>
         {canWrite && (
-          <Button variant="primary" onClick={() => setEditing('new')}>
+          <Button variant="primary" onClick={actions.openNew}>
             <Layers size={15} /> {t.checks.groups.newGroup}
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={columns}>
-          <span>{t.checks.groups.columns.group}</span>
-          <span>{t.checks.groups.columns.selector}</span>
-          <span>{t.checks.groups.columns.priority}</span>
-          {canWrite && <span />}
-        </GridHeader>
-        {list.map((g) => (
-          <MonitoringGroupRow key={g.id} group={g} columns={columns} canWrite={canWrite} onEdit={setEditing} onDelete={(x) => void onDelete(x)} />
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.checks.groups.empty}</p>}
-      </Card>
-      {editing && <GroupDialog org={org} group={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      <DataList
+        label={t.checks.groups.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(g) => g.id}
+        rowActions={actions.rowActions}
+        rowLabel={(g) => g.name}
+        loading={!view.ready}
+        empty={t.checks.groups.empty}
+        {...view.listProps(total, t.checks.groups.count)}
+      />
+      {actions.dialogs}
     </>
   );
 }

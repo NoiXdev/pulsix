@@ -51,7 +51,7 @@ describe('MaintenancePage in German', () => {
     expect(screen.getByText(/^Jetzt aktiv: 1 · Wartung lässt Zeitpläne Hosts überspringen/)).toBeInTheDocument();
 
     // A recurring window names its own zone, which no locale may drop.
-    const row = screen.getByText('nightly').closest('[data-row]')!.parentElement as HTMLElement;
+    const row = screen.getByText('nightly').closest('[data-list-row]') as HTMLElement;
     expect(within(row).getByText('Sa um 02:00 · für 2h · Europe/Berlin')).toBeInTheDocument();
     expect(within(row).getByText('Gesamte Organisation')).toBeInTheDocument();
 

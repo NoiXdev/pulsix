@@ -82,16 +82,12 @@ describe('ItemsPage', () => {
     });
     renderPage();
 
-    // The check-key heading is a <div>; the per-row check Tag repeating the
-    // same text is a <span> — selecting by tag tells the section heading
-    // apart from a row's own badge.
-    const diskHeading = await screen.findByText('disk', { selector: 'div' });
-    const serviceHeading = screen.getByText('service', { selector: 'div' });
-    expect(diskHeading).toBeInTheDocument();
-    expect(serviceHeading).toBeInTheDocument();
-    expect(screen.getByText('/mnt/backup*')).toBeInTheDocument();
+    // Decisions on one check stay together; the check is a column now.
+    expect(await screen.findByText('/mnt/backup*')).toBeInTheDocument();
     expect(screen.getByText('/mnt/backup')).toBeInTheDocument();
     expect(screen.getByText('sshd')).toBeInTheDocument();
+    expect(screen.getAllByText('disk')).toHaveLength(2);
+    expect(screen.getAllByText('service')).toHaveLength(1);
 
     // The organization-wide decision (d-org) reads as the broad stroke:
     // it sits before the host-scoped override on the same check.
@@ -223,13 +219,13 @@ describe('ItemsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for decision /mnt/backup*' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for /mnt/backup*' }));
     expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Edit', 'Delete…']);
     await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
     expect(await screen.findByRole('dialog', { name: 'Edit decision for /mnt/backup*' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await user.click(screen.getByRole('button', { name: 'Actions for decision /mnt/backup*' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for /mnt/backup*' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     await acceptConfirm(user);
     await waitFor(() => expect(deleted).toBe(1));

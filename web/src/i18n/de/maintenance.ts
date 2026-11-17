@@ -5,6 +5,8 @@ export const deMaintenance: Messages['maintenance'] = {
   active: (n: number) =>
     `Jetzt aktiv: ${n} · Wartung lässt Zeitpläne Hosts überspringen oder auslassen; Stummschaltung schaltet nur Alarme stumm`,
   newWindow: 'Neues Fenster',
+  label: 'Wartungsfenster',
+  count: (n: number) => (n === 1 ? '1 Fenster' : `${n} Fenster`),
   columns: {
     window: 'Fenster',
     why: 'Grund',
@@ -18,8 +20,6 @@ export const deMaintenance: Messages['maintenance'] = {
   },
   activeNow: 'jetzt aktiv',
   edit: 'Bearbeiten',
-  editAria: (name: string) => `${name} bearbeiten`,
-  deleteAria: (name: string) => `${name} löschen`,
   deleteConfirm: {
     maintenance: (name: string) => `Wartungsfenster ${name} löschen?`,
     silence: (name: string) => `Stummschaltungsfenster ${name} löschen?`,

@@ -23,17 +23,17 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickDateTime } from './pickDateTime.ts';
 import { pickOption } from './pickOption.ts';
 import { acceptConfirm } from './confirm.ts';
+import { chooseRowAction } from './rowMenu.ts';
 import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
 const WINDOW_NAME = 'e2e-maintenance-window';
 
-/** row is the window's own line, found through the Edit button that
- * names it — the list has no per-row test id and the name alone also
- * appears inside the dialog's title while it is open. */
+/** row is the window's own list row, found by its name (a window has no
+ * row link: its Edit and Delete live in the row menu). */
 function row(page: import('@playwright/test').Page) {
-  return page.getByRole('button', { name: `Edit ${WINDOW_NAME}` }).locator('xpath=../..');
+  return page.locator('[data-list-row]', { hasText: WINDOW_NAME });
 }
 
 test('an admin creates a maintenance window, turns it into a silence, and deletes it', async ({ page }) => {
@@ -63,7 +63,7 @@ test('an admin creates a maintenance window, turns it into a silence, and delete
   await expect(row(page).getByText('active now')).toHaveCount(0);
 
   // --- Turn it into a silence ------------------------------------------
-  await page.getByRole('button', { name: `Edit ${WINDOW_NAME}` }).click();
+  await chooseRowAction(page, WINDOW_NAME, 'Edit');
   const editDialog = page.getByRole('dialog');
   await expect(editDialog.getByLabel('Name')).toHaveValue(WINDOW_NAME);
   await pickOption(editDialog, 'Why', 'Silence — do not raise alerts; scheduled runs are unaffected');
@@ -82,7 +82,7 @@ test('an admin creates a maintenance window, turns it into a silence, and delete
   await expect(row(page).getByText('silence', { exact: true })).toBeVisible();
 
   // --- Delete ----------------------------------------------------------
-  await page.getByRole('button', { name: `Delete ${WINDOW_NAME}` }).click();
+  await chooseRowAction(page, WINDOW_NAME, 'Delete');
   await acceptConfirm(page, enCommon.delete);
-  await expect(page.getByRole('button', { name: `Edit ${WINDOW_NAME}` })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `Actions for ${WINDOW_NAME}`, exact: true })).toHaveCount(0);
 });

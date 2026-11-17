@@ -34,6 +34,12 @@ const LISTS = {
   'agent-tokens': ['token', 'uses', 'bound', 'expires'],
   workers: ['worker', 'zone', 'status', 'last_seen', 'version', 'certificate', 'current_job'],
   'worker-enrollments': ['enrollment', 'expires'],
+  fleet: ['host', 'state', 'zone', 'crit', 'warn', 'unknown', 'since'],
+  checks: ['check', 'plugin', 'binds_to', 'interval', 'state'],
+  'monitoring-groups': ['group', 'selector', 'priority'],
+  rules: ['rule', 'metric', 'severity', 'applies_to', 'for', 'state'],
+  'item-decisions': ['pattern', 'target', 'check', 'verdict', 'note', 'created'],
+  maintenance: ['window', 'why', 'applies_to', 'when', 'status'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

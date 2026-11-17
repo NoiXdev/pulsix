@@ -66,7 +66,6 @@ export const deChecks: Messages['checks'] = {
   monitoringGroup: 'Überwachungsgruppe',
   chooseGroup: 'Überwachungsgruppe auswählen…',
   groupFallback: (id: string) => `Gruppe ${id}`,
-  rowActions: (key: string, binding: string) => `Aktionen für ${key} (${binding})`,
   groupCurrent: (id: string) => `Gruppe ${id} (aktuelle Bindung)`,
   currentBinding: (name: string) => `${name} (aktuelle Bindung)`,
   hostPicker: {
@@ -81,6 +80,8 @@ export const deChecks: Messages['checks'] = {
     summary: (n: number) =>
       `${n === 1 ? '1 Definition' : `${n} Definitionen`} · ein engerer Geltungsbereich überschreibt einen weiteren unter demselben Schlüssel`,
     newCheck: 'Neuer Check',
+    label: 'Check-Definitionen',
+    count: (n: number) => (n === 1 ? '1 Check' : `${n} Checks`),
     columns: {
       check: 'Check',
       plugin: 'Plugin',
@@ -446,6 +447,8 @@ export const deChecks: Messages['checks'] = {
     summary: (n: number) =>
       `${n === 1 ? '1 Gruppe' : `${n} Gruppen`} · die höhere Priorität gewinnt, wenn zwei Gruppen denselben Check-Schlüssel an einen Host binden`,
     newGroup: 'Neue Gruppe',
+    label: 'Überwachungsgruppen',
+    count: (n: number) => (n === 1 ? '1 Überwachungsgruppe' : `${n} Überwachungsgruppen`),
     columns: {
       group: 'Gruppe',
       selector: 'Selektor',
@@ -471,8 +474,11 @@ export const deChecks: Messages['checks'] = {
     newRule: 'Neue Regel',
     noMetricsTitle: 'Noch keine Metriken für eine Regel',
     noMetricsBody: 'Eine Regel bewertet einen gemessenen Wert, daher bleibt „Neue Regel“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
+    label: 'Regeln',
+    count: (n: number) => (n === 1 ? '1 Regel' : `${n} Regeln`),
     columns: {
       rule: 'Regel',
+      metric: 'Metrik',
       severity: 'Schweregrad',
       appliesTo: 'Gilt für',
       for: 'Dauer',
@@ -527,6 +533,8 @@ export const deChecks: Messages['checks'] = {
     newDecision: 'Neue Entscheidung',
     noMetricsTitle: 'Noch keine Checks für eine Entscheidung',
     noMetricsBody: 'Eine Entscheidung nennt ein Element eines Checks, daher bleibt „Neue Entscheidung“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
+    label: 'Item-Entscheidungen',
+    count: (n: number) => (n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`),
     columns: {
       target: 'Ziel',
       check: 'Check',
@@ -544,7 +552,6 @@ export const deChecks: Messages['checks'] = {
       glob: 'Glob',
     },
     editDecision: (pattern: string) => `Entscheidung für ${pattern} bearbeiten`,
-    decisionActions: (pattern: string) => `Aktionen für Entscheidung ${pattern}`,
     empty: 'Noch keine Element-Entscheidungen.',
   },
   itemDialog: {

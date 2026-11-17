@@ -8,6 +8,8 @@ export const enMaintenance = {
   active: (n: number) =>
     `${n} active now · maintenance lets schedules skip or leave out hosts; silence only mutes alerts`,
   newWindow: 'New window',
+  label: 'Maintenance windows',
+  count: (n: number) => (n === 1 ? '1 window' : `${n} windows`),
   columns: {
     window: 'Window',
     why: 'Why',
@@ -21,8 +23,6 @@ export const enMaintenance = {
   },
   activeNow: 'active now',
   edit: 'Edit',
-  editAria: (name: string) => `Edit ${name}`,
-  deleteAria: (name: string) => `Delete ${name}`,
   deleteConfirm: {
     maintenance: (name: string) => `Delete maintenance window ${name}?`,
     silence: (name: string) => `Delete silence window ${name}?`,

@@ -224,13 +224,13 @@ test('an operator ignores a mount from the host page, and separately creates, pr
     await expect(dialog).toHaveCount(0);
 
     // --- See it listed ---------------------------------------------------
-    // "Actions for decision …" names the decision's own pattern, so — the same
+    // "Actions for …" names the decision's own pattern, so — the same
     // shape rules.spec.ts's own listing check uses — it doubles as proof
     // the row exists without a brittle row-by-CSS-class lookup. Unique on
     // the page: ITEMS_TAB_MOUNT names only the decision this act just
     // created, never the host page's own "/" one from above or anything
     // another spec's own host-scoped decision could name.
-    await expect(page.getByRole('button', { name: `Actions for decision ${ITEMS_TAB_MOUNT}` })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Actions for ${ITEMS_TAB_MOUNT}` })).toBeVisible();
   } finally {
     await agent?.stop();
   }

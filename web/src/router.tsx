@@ -189,7 +189,12 @@ const hostDetailRoute = createRoute({
 // top-level entry beside Hosts rather than nested under /checks, since it
 // is a view across every host's own state, not one more page about the
 // check/rule pipeline's configuration.
-const fleetRoute = createRoute({ getParentRoute: () => orgRoute, path: '/fleet', component: FleetPage });
+const fleetRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/fleet',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: FleetPage,
+});
 
 // alertsRoute is the Alerts list (v0.4a design doc, "GUI"): alongside Fleet
 // rather than nested under /checks — it reads what the rule engine
@@ -303,7 +308,12 @@ const agentsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
   component: AgentsPage,
 });
-const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
+const maintenanceRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/maintenance',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: MaintenancePage,
+});
 
 /**
  * Credentials and Jump hosts are top-level pages (v0.4f), in the
@@ -342,14 +352,30 @@ const jumpHostsRoute = createRoute({
  * one of them through the router's own activeProps.
  */
 const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks' });
-const checksIndexRoute = createRoute({ getParentRoute: () => checksRoute, path: '/', component: ChecksPage });
+const checksIndexRoute = createRoute({
+  getParentRoute: () => checksRoute,
+  path: '/',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: ChecksPage,
+});
 const monitoringGroupsRoute = createRoute({
   getParentRoute: () => checksRoute,
   path: '/monitoring-groups',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
   component: MonitoringGroupsPage,
 });
-const rulesRoute = createRoute({ getParentRoute: () => checksRoute, path: '/rules', component: RulesPage });
-const itemsRoute = createRoute({ getParentRoute: () => checksRoute, path: '/items', component: ItemsPage });
+const rulesRoute = createRoute({
+  getParentRoute: () => checksRoute,
+  path: '/rules',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: RulesPage,
+});
+const itemsRoute = createRoute({
+  getParentRoute: () => checksRoute,
+  path: '/items',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: ItemsPage,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,

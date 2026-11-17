@@ -81,9 +81,9 @@ describe('FleetPage', () => {
     // discovered is ignored reads as its own word, not "no data".
     expect(screen.getByText('all ignored')).toBeInTheDocument();
 
-    // The row is the link: its cells are inside it, so the link scopes the
-    // assertion to the one host's row.
-    const critRow = within(screen.getByRole('link', { name: 'db-1' }));
+    // The cells sit beside the row's link: its row scopes the assertion to
+    // the one host.
+    const critRow = within(screen.getByRole('link', { name: 'db-1' }).closest('[data-list-row]') as HTMLElement);
     expect(critRow.getByText('2')).toBeInTheDocument();
   });
 
@@ -250,12 +250,12 @@ describe('FleetPage', () => {
         },
       };
     }
-    const row = (name: string) => screen.getByRole('link', { name });
+    const row = (name: string) => screen.getByRole('link', { name: new RegExp(`^${name}`) }).closest('[data-list-row]') as HTMLElement;
 
     it('shows an offline client as Off, its last state muted, and when it was last seen', async () => {
       mockApi(routes());
       renderPage();
-      await screen.findByRole('link', { name: 'laptop-1' });
+      await screen.findByRole('link', { name: /^laptop-1/ });
 
       await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
       expect(within(row('laptop-1')).queryByText('crit')).not.toBeInTheDocument();
@@ -267,7 +267,7 @@ describe('FleetPage', () => {
     it('leaves a server with an offline agent alone and tags an online client', async () => {
       mockApi(routes());
       renderPage();
-      await screen.findByRole('link', { name: 'laptop-1' });
+      await screen.findByRole('link', { name: /^laptop-1/ });
       await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
 
       expect(within(row('web-1')).getByText('warn')).toBeInTheDocument();

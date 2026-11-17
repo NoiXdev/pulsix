@@ -1,6 +1,7 @@
 import type { Tone } from '../../ui/badge.tsx';
 import type { FleetHost } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
+import type { HostPresence } from '../hosts/presence.ts';
 
 /**
  * The pure reading rules behind FleetPage, kept beside it rather than
@@ -48,4 +49,15 @@ export function fleetStateLabel(state: FleetHost['state'], allIgnored: boolean, 
     default:
       return { label: s.unknown, tone: 'unknown' };
   }
+}
+
+/**
+ * fleetLinkLabel is a row link's accessible name: all a screen reader
+ * announces of the host cell, so a client's presence badge ("Off",
+ * "Client") is part of it.
+ */
+export function fleetLinkLabel(host: FleetHost, presence: HostPresence, t: Messages): string {
+  if (presence.kind === 'off') return t.hosts.list.linkLabel(host.name, t.hosts.presence.off);
+  if (presence.kind === 'client') return t.hosts.list.linkLabel(host.name, t.hosts.presence.client);
+  return host.name;
 }

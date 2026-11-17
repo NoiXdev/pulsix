@@ -9,6 +9,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickDateTime } from '../../test/pickDateTime.ts';
 import { pickOption } from '../../test/pickOption.ts';
+import { chooseRowAction } from '../../test/wholeList.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
 import { fromLocalInput, targetLabel, toLocalInput, whenLabel } from './time.ts';
 import type { MaintenanceWindow } from '../../api/types.ts';
@@ -49,7 +50,7 @@ describe('MaintenancePage', () => {
   it('lists windows with target, timing and active state', async () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('viewer'), 'GET /api/v1/orgs/acme/maintenance-windows': { windows: [nightly, dbUpgrade] } });
     renderPage();
-    const row = (await screen.findByText('nightly')).closest('[data-row]')!.parentElement as HTMLElement;
+    const row = (await screen.findByText('nightly')).closest('[data-list-row]') as HTMLElement;
     expect(within(row).getByText('Whole organization')).toBeInTheDocument();
     expect(within(row).getByText('Sat at 02:00 · for 2h · Europe/Berlin')).toBeInTheDocument();
     expect(within(row).getByText('active now').style.color).toBe('var(--px-maintenance)');
@@ -101,7 +102,7 @@ describe('MaintenancePage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Edit db upgrade' }));
+    await chooseRowAction(user, 'db upgrade', 'Edit');
     const dialog = screen.getByRole('dialog', { name: 'Edit db upgrade' });
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put?.ifMatch).toBe('"3"'));
@@ -132,7 +133,7 @@ describe('MaintenancePage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Edit mute disk' }));
+    await chooseRowAction(user, 'mute disk', 'Edit');
     const dialog = screen.getByRole('dialog', { name: 'Edit mute disk' });
     expect(within(dialog).getByLabelText('Why')).toHaveValue('Silence — do not raise alerts; scheduled runs are unaffected');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -159,7 +160,7 @@ describe('MaintenancePage', () => {
     });
     renderPage();
 
-    const row = (await screen.findByText('mute disk')).closest('[data-row]')!.parentElement as HTMLElement;
+    const row = (await screen.findByText('mute disk')).closest('[data-list-row]') as HTMLElement;
     expect(within(row).getByText('silence')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'New window' }));

@@ -82,7 +82,6 @@ export const enChecks = {
   monitoringGroup: 'Monitoring group',
   chooseGroup: 'Choose a monitoring group…',
   groupFallback: (id: string) => `group ${id}`,
-  rowActions: (key: string, binding: string) => `Actions for ${key} (${binding})`,
   groupCurrent: (id: string) => `group ${id} (current binding)`,
   currentBinding: (name: string) => `${name} (current binding)`,
   hostPicker: {
@@ -96,6 +95,8 @@ export const enChecks = {
     noAccess: 'Checks are visible to members of this organization.',
     summary: (n: number) => `${n} definitions · a narrower scope overrides a wider one under the same key`,
     newCheck: 'New check',
+    label: 'Check definitions',
+    count: (n: number) => (n === 1 ? '1 check' : `${n} checks`),
     columns: {
       check: 'Check',
       plugin: 'Plugin',
@@ -470,6 +471,8 @@ export const enChecks = {
     deleteConfirm: (name: string) => `Delete monitoring group ${name}? The check definitions bound to it are deleted with it.`,
     summary: (n: number) => `${n} groups · a higher priority wins when two groups bind the same check key to one host`,
     newGroup: 'New group',
+    label: 'Monitoring groups',
+    count: (n: number) => (n === 1 ? '1 monitoring group' : `${n} monitoring groups`),
     columns: {
       group: 'Group',
       selector: 'Selector',
@@ -494,8 +497,11 @@ export const enChecks = {
     newRule: 'New rule',
     noMetricsTitle: 'No metrics to write a rule on yet',
     noMetricsBody: 'A rule judges a measured value, so New rule stays unavailable until an agent reports its first metric.',
+    label: 'Rules',
+    count: (n: number) => (n === 1 ? '1 rule' : `${n} rules`),
     columns: {
       rule: 'Rule',
+      metric: 'Metric',
       severity: 'Severity',
       appliesTo: 'Applies to',
       for: 'For',
@@ -549,6 +555,8 @@ export const enChecks = {
     newDecision: 'New decision',
     noMetricsTitle: 'No checks to decide on yet',
     noMetricsBody: 'A decision names an item of a check, so New decision stays unavailable until an agent reports its first metric.',
+    label: 'Item decisions',
+    count: (n: number) => (n === 1 ? '1 decision' : `${n} decisions`),
     columns: {
       target: 'Target',
       check: 'Check',
@@ -566,7 +574,6 @@ export const enChecks = {
       glob: 'glob',
     },
     editDecision: (pattern: string) => `Edit decision for ${pattern}`,
-    decisionActions: (pattern: string) => `Actions for decision ${pattern}`,
     empty: 'No item decisions yet.',
   },
   itemDialog: {

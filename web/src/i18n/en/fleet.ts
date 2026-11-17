@@ -13,6 +13,8 @@ export const enFleet = {
   noAccess: 'The fleet overview is visible to members of this organization.',
   totals: (crit: number, warn: number, unknown: number, ok: number, noData: number, allIgnored: number) =>
     `Totals for this filtered view, not the whole organization: ${crit} crit · ${warn} warn · ${unknown} unknown · ${ok} ok · ${noData} no data · ${allIgnored} all ignored`,
+  label: 'Fleet hosts',
+  count: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
   columns: {
     state: 'State',
     host: 'Host',

@@ -97,11 +97,10 @@ describe('RulesPage', () => {
     });
     renderPage();
 
-    // Both cpu.used_pct rules sit under the same group heading.
-    const cpuHeading = await screen.findByText('cpu.used_pct');
-    const memHeading = screen.getByText('mem.used_pct');
-    expect(cpuHeading).toBeInTheDocument();
-    expect(memHeading).toBeInTheDocument();
+    // Both cpu.used_pct rules sit together, the metric a column of their own.
+    await screen.findByText('Web tier memory');
+    expect(screen.getAllByText('cpu.used_pct')).toHaveLength(2);
+    expect(screen.getByText('mem.used_pct')).toBeInTheDocument();
     expect(screen.getByText('CPU usage warning')).toBeInTheDocument();
     expect(screen.getByText('CPU usage critical')).toBeInTheDocument();
     expect(screen.getByText('Web tier memory')).toBeInTheDocument();
