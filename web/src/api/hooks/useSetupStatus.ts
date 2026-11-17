@@ -1,9 +1,14 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { versionBaseline } from '../../lib/versionBaseline.ts';
 import type { SetupCompleteInput } from '../types.ts';
 
 export const setupStatusQueryKey = ['setup-status'] as const;
-const setupStatusQueryFn = () => unwrap(api.GET('/api/v1/setup/status'));
+const setupStatusQueryFn = async () => {
+  const status = await unwrap(api.GET('/api/v1/setup/status'));
+  if (versionBaseline.value === null && status.version) versionBaseline.value = status.version;
+  return status;
+};
 
 /**
  * The one set of options every reader of the setup status shares. The

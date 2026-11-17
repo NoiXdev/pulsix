@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
 import { AppShell } from '../ui/shell.tsx';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
@@ -56,6 +57,7 @@ export function AccountSecurityLayout() {
 
   return (
     <AppShell
+      notice={<VersionWatcher />}
       org={{ slug: firstOrg.slug, name: firstOrg.name, role: firstOrg.role }}
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}

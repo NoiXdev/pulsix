@@ -7,7 +7,7 @@ import { ConfirmProvider } from '../ui/confirm.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { LockScreen } from '../features/lock/LockScreen.tsx';
 import { onSessionMessage } from '../features/lock/lockChannel.ts';
-import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
+import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { ExpiryWatcher } from '../features/session/ExpiryWatcher.tsx';
 import { LockStateContext } from '../features/lock/lockState.ts';
 
@@ -46,6 +46,10 @@ export function RootLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const publicPage = isPublic(pathname);
   const me = useMe({ enabled: !publicPage });
+  // Every page load reads the setup status once, public pages included: the
+  // first successful read is the version this page load was served with
+  // (lib/versionBaseline.ts), which the version watcher compares against.
+  useSetupStatus();
   const [lockedHere, setLockedHere] = useState(false);
 
   // Derived during render (React's reset-state-on-change pattern): a public
@@ -124,7 +128,6 @@ export function RootLayout() {
           {/* A session that must change its password cannot renew: the renew
               routes refuse it, so the dialog could only fail. */}
           {!publicPage && me.data?.mfa_complete && !me.data.must_change_password && <ExpiryWatcher />}
-          {!publicPage && me.data?.mfa_complete && <VersionWatcher />}
         </ConfirmProvider>
       )}
     </LockStateContext.Provider>

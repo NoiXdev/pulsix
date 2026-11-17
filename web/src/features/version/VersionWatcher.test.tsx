@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi } from '../../test/mockApi.ts';
 import { versionWatchQueryKey } from '../../api/hooks/useSetupStatus.ts';
 import { VersionWatcher } from './VersionWatcher.tsx';
-import { resetVersionBaseline } from './baseline.ts';
+import { resetVersionBaseline, versionBaseline } from '../../lib/versionBaseline.ts';
 
 let current: string | Response;
 let qc: QueryClient;
@@ -47,6 +47,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('VersionWatcher', () => {
@@ -141,6 +142,33 @@ describe('VersionWatcher', () => {
     await poll();
     await userEvent.click(await screen.findByRole('button', { name: 'Later' }));
     expect(screen.getByRole('status')).toBeInTheDocument();
-    vi.restoreAllMocks();
+  });
+
+  it('compares with the version the page load started with, not the watcher\'s first read', async () => {
+    // The page loaded (e.g. on /login) with 0.1.0-rc.3; the server was
+    // upgraded before the watcher mounted after sign-in.
+    versionBaseline.value = '0.1.0-rc.3';
+    setVersion('0.1.0-rc.4');
+    renderIt();
+    await screen.findByRole('dialog', { name: /updated to v0\.1\.0-rc\.4/i });
+  });
+
+  it('keeps the baseline across a remount (lock, unlock)', async () => {
+    setVersion('0.1.0-rc.3');
+    const first = renderIt();
+    await firstRead();
+    first.unmount();
+    setVersion('0.1.0-rc.4');
+    renderIt();
+    await screen.findByRole('dialog');
+  });
+
+  it('renders the banner in the normal flow, not fixed', async () => {
+    versionBaseline.value = '0.1.0-rc.3';
+    sessionStorage.setItem('pulsix.version.later', '0.1.0-rc.4');
+    setVersion('0.1.0-rc.4');
+    renderIt();
+    const banner = await screen.findByRole('status');
+    expect(banner.className).not.toMatch(/\b(fixed|absolute|sticky)\b/);
   });
 });

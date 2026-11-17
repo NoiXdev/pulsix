@@ -49,6 +49,9 @@ export interface AppShellProps {
   /** How many run requests wait for a person's decision, shown beside the
    * Runs entry; nothing is shown while it is unknown or zero. */
   pendingRunRequests?: number;
+  /** A strip in the normal flow between the header and the page (e.g. the
+   * new-version banner); it takes its own space. */
+  notice?: ReactNode;
   children: ReactNode;
 }
 
@@ -108,7 +111,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, crumbs, user, onLogout, version, pendingRunRequests, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, crumbs, user, onLogout, version, pendingRunRequests, notice, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -401,6 +404,8 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
             <Bell size={16} />
           </button>
         </header>
+
+        {notice}
 
         <main className="flex flex-1 flex-col gap-5 overflow-auto p-6">{children}</main>
       </div>
