@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // SQLStore implements Store with sqlc queries, mirroring tenancy.SQLStore
@@ -153,7 +155,7 @@ func (s *SQLStore) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter,
 	}
 	rows, err := s.q.ListHosts(ctx, gen.ListHostsParams{
 		OrgID: orgID, ZoneID: uuidPtrToPg(f.ZoneID), Managed: f.Managed, Monitored: f.Monitored,
-		Query:      nilIfEmpty(f.Query),
+		Query: nilIfEmpty(f.Query), ActiveRuns: f.ActiveRuns,
 		CursorName: cursorNameToPg(cursor, cursorName), CursorID: cursorIDToPg(cursor, cursorID),
 		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.ListHosts before it ever reaches here
 	})
@@ -175,6 +177,60 @@ func (s *SQLStore) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter,
 		hosts = hosts[:limit]
 	}
 	return hosts, next, nil
+}
+
+// ListHostsPage implements Store: the default order (name ascending) takes
+// the index-friendly query, every other key the whitelisted CASE ordering.
+func (s *SQLStore) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFilter, p paging.Page) ([]Host, int, error) {
+	switch p.Sort {
+	case SortName, SortZone, SortManaged, SortMonitored, SortLastSeen, SortActiveRuns:
+	default:
+		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
+	}
+	zone, query := uuidPtrToPg(f.ZoneID), nilIfEmpty(f.Query)
+	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // the page size is one of paging.Sizes, the offset is bounded by the table
+	var rows []gen.Host
+	var err error
+	if p.Sort == SortName && !p.Desc {
+		rows, err = s.q.ListHostsPage(ctx, gen.ListHostsPageParams{
+			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+			RowOffset: offset, RowLimit: limit,
+		})
+	} else {
+		rows, err = s.q.ListHostsPageSorted(ctx, gen.ListHostsPageSortedParams{
+			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+			SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
+		})
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.q.CountHosts(ctx, gen.CountHostsParams{
+		OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]Host, len(rows))
+	for i, r := range rows {
+		if out[i], err = fromHostRow(r); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, int(total), nil
+}
+
+// ActiveRuns implements Store.
+func (s *SQLStore) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]int, error) {
+	rows, err := s.q.ActiveRunsForHosts(ctx, gen.ActiveRunsForHostsParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[uuid.UUID]int, len(rows))
+	for _, r := range rows {
+		out[r.HostID] = int(r.Runs)
+	}
+	return out, nil
 }
 
 // ListAllHosts returns every host of orgID ordered by name, unpaginated, for

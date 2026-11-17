@@ -115,7 +115,7 @@ type hostQueryInput struct {
 
 type hostQueryOutput struct {
 	Body struct {
-		Hosts []hostDTO `json:"hosts"`
+		Hosts []hostListItemDTO `json:"hosts"`
 	}
 }
 
@@ -217,9 +217,8 @@ func registerTagRoutes(hapi huma.API, deps Deps) {
 			return nil, mapHostsErr(ctx, err)
 		}
 		out := &hostQueryOutput{}
-		out.Body.Hosts = make([]hostDTO, len(list))
-		for i, h := range list {
-			out.Body.Hosts[i] = toHostDTO(h)
+		if out.Body.Hosts, err = hostListItems(ctx, deps, scope.OrgID, list); err != nil {
+			return nil, err
 		}
 		return out, nil
 	}) // no withAudit: this is a read (a POST only because the filter is a

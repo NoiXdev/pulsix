@@ -5281,6 +5281,36 @@ export interface components {
             readonly $schema?: string;
             fingerprint: string;
         };
+        HostListItemDTO: {
+            /**
+             * Format: int64
+             * @description Runs of this host that are queued, claimed, running or cancelling
+             */
+            active_runs: number;
+            address: string;
+            /** Format: date-time */
+            created_at: string;
+            facts: {
+                [key: string]: unknown;
+            };
+            id: string;
+            /**
+             * @description server: expected to be on; client: may be off (a notebook, a desktop) and is not judged while its agent is offline
+             * @enum {string}
+             */
+            kind: "server" | "client";
+            /** Format: date-time */
+            last_seen_at?: string;
+            managed: boolean;
+            monitored: boolean;
+            name: string;
+            /**
+             * Format: int64
+             * @description The host's revision; send it back as If-Match (quoted, like the ETag) on PATCH
+             */
+            revision: number;
+            zone_id: string;
+        };
         HostListOutputBody: {
             /**
              * Format: uri
@@ -5288,8 +5318,14 @@ export interface components {
              * @example https://example.com/schemas/HostListOutputBody.json
              */
             readonly $schema?: string;
-            hosts: components["schemas"]["HostDTO"][] | null;
+            hosts: components["schemas"]["HostListItemDTO"][] | null;
+            /** @description Empty in page mode */
             next_cursor: string;
+            /**
+             * Format: int64
+             * @description Hosts matching the filters; page mode only
+             */
+            total?: number;
         };
         HostMetricsOutputBody: {
             /**
@@ -5337,7 +5373,7 @@ export interface components {
              * @example https://example.com/schemas/HostQueryOutputBody.json
              */
             readonly $schema?: string;
-            hosts: components["schemas"]["HostDTO"][] | null;
+            hosts: components["schemas"]["HostListItemDTO"][] | null;
         };
         HostSSHDTO: {
             bastion_id?: string;
@@ -11864,7 +11900,15 @@ export interface operations {
                 managed?: string;
                 monitored?: string;
                 q?: string;
+                active_runs?: "true" | "false";
                 cursor?: string;
+                /** @description Page number; when set the list is offset-paged and answers total */
+                page?: number;
+                /** @description Rows per page (default 25); page mode only */
+                per_page?: 10 | 25 | 50 | 100;
+                /** @description Sort direction; page mode only */
+                order?: "asc" | "desc";
+                sort?: "name" | "zone" | "managed" | "monitored" | "last_seen" | "active_runs";
                 limit?: number;
             };
             header?: never;

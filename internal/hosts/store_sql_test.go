@@ -8,10 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 func seedOrg(t *testing.T, q *gen.Queries, slug string) uuid.UUID {
@@ -593,5 +595,93 @@ func TestZonesAreIsolatedPerOrgByRLS(t *testing.T) {
 	}
 	if len(seen) != 1 || seen[0] != orgA {
 		t.Fatalf("RLS leak: saw %v, want only [%s]", seen, orgA)
+	}
+}
+
+// seedLiveRun inserts one run of the given status linked to host, the way
+// CreateJob does, without importing the jobs package.
+func seedLiveRun(t *testing.T, d interface {
+	Pool() *pgxpool.Pool
+}, org, zone, host uuid.UUID, status string) {
+	t.Helper()
+	job := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO jobs (id, org_id, zone_id, kind, status, run_group_id, host_ids)
+		VALUES ($1, $2, $3, 'adhoc', $4, $5, ARRAY[$6]::uuid[])`, job, org, zone, status, uuid.Must(uuid.NewV7()), host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO job_hosts (org_id, job_id, host_id, created_at) VALUES ($1, $2, $3, now())`, org, job, host); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSQLStoreListHostsPageAndActiveRuns(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hosts-page-org")
+	zone := seedZone(t, store, org, "fra")
+
+	names := []string{"d", "b", "a", "c", "e"}
+	ids := map[string]uuid.UUID{}
+	for _, n := range names {
+		id := uuid.Must(uuid.NewV7())
+		if err := store.CreateHost(ctx, hosts.Host{ID: id, OrgID: org, ZoneID: zone.ID, Name: n}); err != nil {
+			t.Fatal(err)
+		}
+		ids[n] = id
+	}
+	// b was seen; the others never.
+	if _, err := d.Pool().Exec(ctx, "UPDATE hosts SET last_seen_at = now() WHERE id = $1", ids["b"]); err != nil {
+		t.Fatal(err)
+	}
+
+	names2 := func(hs []hosts.Host) string {
+		s := ""
+		for _, h := range hs {
+			s += h.Name
+		}
+		return s
+	}
+	got, total, err := store.ListHostsPage(ctx, org, hosts.ListFilter{}, paging.Page{Number: 2, Size: 2, Sort: "name"})
+	if err != nil || total != 5 || names2(got) != "cd" {
+		t.Fatalf("default order page 2 = %q total %d err %v, want cd / 5", names2(got), total, err)
+	}
+	got, total, err = store.ListHostsPage(ctx, org, hosts.ListFilter{}, paging.Page{Number: 1, Size: 10, Sort: "name", Desc: true})
+	if err != nil || total != 5 || names2(got) != "edcba" {
+		t.Fatalf("name desc = %q (%v)", names2(got), err)
+	}
+	for _, desc := range []bool{false, true} {
+		got, _, err = store.ListHostsPage(ctx, org, hosts.ListFilter{}, paging.Page{Number: 1, Size: 10, Sort: "last_seen", Desc: desc})
+		if err != nil || got[0].Name != "b" {
+			t.Fatalf("last_seen desc=%v: %q (%v), want the seen host b first", desc, names2(got), err)
+		}
+	}
+	got, total, err = store.ListHostsPage(ctx, org, hosts.ListFilter{}, paging.Page{Number: 9, Size: 10, Sort: "name"})
+	if err != nil || total != 5 || len(got) != 0 {
+		t.Fatalf("beyond the end = %d rows total %d err %v", len(got), total, err)
+	}
+	if _, _, err = store.ListHostsPage(ctx, org, hosts.ListFilter{}, paging.Page{Number: 1, Size: 10, Sort: "bogus"}); err == nil {
+		t.Fatal("an unknown sort key was accepted")
+	}
+
+	seedLiveRun(t, d, org, zone.ID, ids["a"], "queued")
+	seedLiveRun(t, d, org, zone.ID, ids["a"], "cancelling")
+	seedLiveRun(t, d, org, zone.ID, ids["a"], "succeeded")
+	seedLiveRun(t, d, org, zone.ID, ids["c"], "claimed")
+	counts, err := store.ActiveRuns(ctx, org, []uuid.UUID{ids["a"], ids["b"], ids["c"]})
+	if err != nil || len(counts) != 2 || counts[ids["a"]] != 2 || counts[ids["c"]] != 1 {
+		t.Fatalf("ActiveRuns = %v (%v), want a 2, c 1, b absent", counts, err)
+	}
+	yes := true
+	got, total, err = store.ListHostsPage(ctx, org, hosts.ListFilter{ActiveRuns: &yes}, paging.Page{Number: 1, Size: 10, Sort: "active_runs", Desc: true})
+	if err != nil || total != 2 || names2(got) != "ac" {
+		t.Fatalf("active_runs=true desc = %q total %d (%v), want ac / 2", names2(got), total, err)
+	}
+	no := false
+	if got, total, err = store.ListHostsPage(ctx, org, hosts.ListFilter{ActiveRuns: &no}, paging.Page{Number: 1, Size: 10, Sort: "name"}); err != nil || total != 3 || names2(got) != "bde" {
+		t.Fatalf("active_runs=false = %q total %d (%v)", names2(got), total, err)
+	}
+	if none, err := store.ActiveRuns(ctx, org, nil); err != nil || len(none) != 0 {
+		t.Fatalf("ActiveRuns(nil) = %v, %v", none, err)
 	}
 }

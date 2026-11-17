@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/hosts/selector"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer, the same
@@ -145,6 +146,10 @@ type ListFilter struct {
 	// Query, if non-empty, matches hosts whose name or address contains it
 	// (case-insensitive).
 	Query string
+	// ActiveRuns narrows by live runs: true keeps hosts with at least one
+	// run queued, claimed, running or cancelling, false those with none,
+	// nil both.
+	ActiveRuns *bool
 }
 
 // Store is the persistence contract for zones and hosts. Every method that
@@ -173,6 +178,15 @@ type Store interface {
 	// page (empty when there is none). cursor is opaque to the caller —
 	// see EncodeCursor/DecodeCursor.
 	ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, cursor string, limit int) ([]Host, string, error)
+	// ListHostsPage returns one offset page of orgID's hosts matching f,
+	// ordered by p.Sort (one of the SortKey values) with name then id as
+	// tie-breakers, plus how many hosts match f in all. A page past the
+	// end is empty with the right total. An unknown sort key is
+	// ErrInvalidInput.
+	ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFilter, p paging.Page) ([]Host, int, error)
+	// ActiveRuns counts each of ids' live runs (job_hosts joined to jobs
+	// queued, claimed, running or cancelling); a host with none is absent.
+	ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]int, error)
 	// UpdateHostWith persists every mutable field of h (ZoneID, Name,
 	// Address, Managed, Monitored, and Kind unless it is empty) while
 	// h.Revision is still current, and writes x in the same transaction,
@@ -562,6 +576,31 @@ func (s *Service) SetCapabilities(ctx context.Context, orgID, id uuid.UUID, mana
 // its own limit.
 func (s *Service) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, cursor string, limit int) ([]Host, string, error) {
 	return s.store.ListHosts(ctx, orgID, f, cursor, clampLimit(limit))
+}
+
+// Sort keys of ListHostsPage; the default is SortName ascending.
+const (
+	SortName       = "name"
+	SortZone       = "zone"
+	SortManaged    = "managed"
+	SortMonitored  = "monitored"
+	SortLastSeen   = "last_seen"
+	SortActiveRuns = "active_runs"
+)
+
+// ListHostsPage returns one offset page of orgID's hosts matching f and the
+// total number of matches (see Store.ListHostsPage).
+func (s *Service) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFilter, p paging.Page) ([]Host, int, error) {
+	return s.store.ListHostsPage(ctx, orgID, f, p)
+}
+
+// ActiveRuns counts each host's live runs; hosts without one are absent. An
+// empty ids list is answered without touching the store.
+func (s *Service) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]int, error) {
+	if len(ids) == 0 {
+		return map[uuid.UUID]int{}, nil
+	}
+	return s.store.ActiveRuns(ctx, orgID, ids)
 }
 
 // DeleteHost removes the host identified by (orgID, id), scoped to the

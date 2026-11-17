@@ -77,6 +77,36 @@ func toHostDTO(h hosts.Host) hostDTO {
 	}
 }
 
+// HostDTO is hostDTO under an exported name, for embedding only: huma skips an
+// embedded field of an unexported type, so embedding hostDTO would drop every
+// host field from the OpenAPI schema (encoding/json would still promote them).
+type HostDTO = hostDTO
+
+// hostListItemDTO is one host of a list answer: the host plus how many runs
+// target it right now. GET /hosts/{id} answers the plain hostDTO.
+type hostListItemDTO struct {
+	HostDTO
+	ActiveRuns int `json:"active_runs" doc:"Runs of this host that are queued, claimed, running or cancelling"`
+}
+
+// hostListItems maps hosts to list items and counts every host's live runs in
+// one query for the whole page.
+func hostListItems(ctx context.Context, deps Deps, orgID uuid.UUID, list []hosts.Host) ([]hostListItemDTO, error) {
+	ids := make([]uuid.UUID, len(list))
+	for i, h := range list {
+		ids[i] = h.ID
+	}
+	counts, err := deps.Hosts.ActiveRuns(ctx, orgID, ids)
+	if err != nil {
+		return nil, mapHostsErr(ctx, err)
+	}
+	items := make([]hostListItemDTO, len(list))
+	for i, h := range list {
+		items[i] = hostListItemDTO{HostDTO: toHostDTO(h), ActiveRuns: counts[h.ID]}
+	}
+	return items, nil
+}
+
 // hostInputBody is the request body shared by host creation and full
 // replacement (PATCH /hosts/{id}): every mutable field is required, not
 // optional — a partial update that must not disturb fields it does not
@@ -211,7 +241,13 @@ type hostListInput struct {
 	Managed   string `query:"managed"`
 	Monitored string `query:"monitored"`
 	Q         string `query:"q"`
-	Cursor    string `query:"cursor"`
+	// ActiveRuns keeps hosts with (true) or without (false) a live run.
+	ActiveRuns string `query:"active_runs" enum:"true,false"`
+	Cursor     string `query:"cursor"`
+	// Page switches the list to offset paging (see PageQuery); Sort is the
+	// whitelist of hosts.Sort* keys, name ascending by default.
+	PageQuery
+	Sort string `query:"sort" enum:"name,zone,managed,monitored,last_seen,active_runs"`
 	// Same bounds, same reasoning as alertListInput's own Limit
 	// (backlog 4.40): hosts.clampLimit enforces exactly these, and 20
 	// is hosts.DefaultListLimit, so an absent parameter is unchanged.
@@ -220,8 +256,9 @@ type hostListInput struct {
 
 type hostListOutput struct {
 	Body struct {
-		Hosts      []hostDTO `json:"hosts"`
-		NextCursor string    `json:"next_cursor"`
+		Hosts      []hostListItemDTO `json:"hosts"`
+		NextCursor string            `json:"next_cursor" doc:"Empty in page mode"`
+		Total      *int              `json:"total,omitempty" doc:"Hosts matching the filters; page mode only"`
 	}
 }
 
@@ -303,20 +340,28 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		filter, err := parseHostListFilter(in.Zone, in.Managed, in.Monitored, in.Q)
+		filter, err := parseHostListFilter(in.Zone, in.Managed, in.Monitored, in.Q, in.ActiveRuns)
 		if err != nil {
 			return nil, err
 		}
-		list, next, err := deps.Hosts.ListHosts(ctx, scope.OrgID, filter, in.Cursor, in.Limit)
+		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, hosts.SortName, false)
 		if err != nil {
+			return nil, err
+		}
+		var list []hosts.Host
+		out := &hostListOutput{}
+		if page != nil {
+			var total int
+			if list, total, err = deps.Hosts.ListHostsPage(ctx, scope.OrgID, filter, *page); err != nil {
+				return nil, mapHostsErr(ctx, err)
+			}
+			out.Body.Total = &total
+		} else if list, out.Body.NextCursor, err = deps.Hosts.ListHosts(ctx, scope.OrgID, filter, in.Cursor, in.Limit); err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
-		out := &hostListOutput{}
-		out.Body.Hosts = make([]hostDTO, len(list))
-		for i, h := range list {
-			out.Body.Hosts[i] = toHostDTO(h)
+		if out.Body.Hosts, err = hostListItems(ctx, deps, scope.OrgID, list); err != nil {
+			return nil, err
 		}
-		out.Body.NextCursor = next
 		return out, nil
 	})
 
@@ -406,7 +451,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 // monitored value with 400 rather than letting it silently match nothing —
 // the same contract parseActivityFilter gives its own optional filters
 // (audit_handlers.go).
-func parseHostListFilter(zoneStr, managedStr, monitoredStr, query string) (hosts.ListFilter, error) {
+func parseHostListFilter(zoneStr, managedStr, monitoredStr, query, activeRunsStr string) (hosts.ListFilter, error) {
 	f := hosts.ListFilter{Query: query}
 	if zoneStr != "" {
 		id, err := uuid.Parse(zoneStr)
@@ -428,6 +473,13 @@ func parseHostListFilter(zoneStr, managedStr, monitoredStr, query string) (hosts
 			return hosts.ListFilter{}, huma.Error400BadRequest("invalid monitored: must be true or false")
 		}
 		f.Monitored = &b
+	}
+	if activeRunsStr != "" {
+		b, err := strconv.ParseBool(activeRunsStr)
+		if err != nil {
+			return hosts.ListFilter{}, huma.Error400BadRequest("invalid active_runs: must be true or false")
+		}
+		f.ActiveRuns = &b
 	}
 	return f, nil
 }

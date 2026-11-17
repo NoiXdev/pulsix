@@ -101,21 +101,26 @@ DELETE FROM hosts WHERE id = $1 AND org_id = $2;
 -- "(name, id) > (cursor_name, cursor_id)" is the ascending-order mirror of
 -- ListAuditEventsForOrg's "(at, id) < (cursor_at, cursor_id)": it resumes
 -- strictly after the last row of the previous page.
-SELECT * FROM hosts
-WHERE org_id = sqlc.arg(org_id)
-  AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
-  AND (sqlc.narg(managed)::boolean IS NULL OR managed = sqlc.narg(managed)::boolean)
-  AND (sqlc.narg(monitored)::boolean IS NULL OR monitored = sqlc.narg(monitored)::boolean)
+SELECT h.* FROM hosts h
+WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
+  AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
   AND (
     sqlc.narg(query)::text IS NULL
-    OR name ILIKE '%' || sqlc.narg(query)::text || '%'
-    OR address ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
   )
   AND (
     sqlc.narg(cursor_name)::text IS NULL
-    OR (name, id) > (sqlc.narg(cursor_name)::text, sqlc.narg(cursor_id)::uuid)
+    OR (h.name, h.id) > (sqlc.narg(cursor_name)::text, sqlc.narg(cursor_id)::uuid)
   )
-ORDER BY name ASC, id ASC
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ))
+ORDER BY h.name ASC, h.id ASC
 LIMIT sqlc.arg(row_limit);
 
 -- name: ListAllHosts :many
@@ -159,3 +164,92 @@ FROM zones z
 JOIN organizations o ON o.id = z.org_id
 WHERE z.slug = $1
 ORDER BY o.slug;
+
+-- name: ListHostsPage :many
+-- Offset paging (backlog 3.97) in the default order, name then id: the one
+-- order the (org_id, name) unique index serves, so it stays an index scan.
+-- The filters are ListHosts' own, plus active_runs: true keeps hosts with a
+-- live run, false those without, NULL both.
+SELECT h.* FROM hosts h
+WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
+  AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
+  AND (
+    sqlc.narg(query)::text IS NULL
+    OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
+  )
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ))
+ORDER BY h.name ASC, h.id ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: ListHostsPageSorted :many
+-- Every other key and direction (backlog 3.97). The sort key is whitelisted
+-- by the caller; each CASE is NULL on every row unless its key is chosen, so
+-- the others drop out. last_seen puts never-seen hosts last in both
+-- directions (NULLS LAST), active_runs counts live runs through a lateral
+-- subquery, and a tie falls back to name then id so pages are disjoint.
+SELECT h.* FROM hosts h
+JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
+LEFT JOIN LATERAL (
+  SELECT count(*) AS n FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+  WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+) ar ON true
+WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
+  AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
+  AND (
+    sqlc.narg(query)::text IS NULL
+    OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
+  )
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = (ar.n > 0))
+ORDER BY
+  (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND NOT sqlc.arg(sort_desc)::boolean THEN h.name END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'name' AND sqlc.arg(sort_desc)::boolean THEN h.name END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'zone' AND NOT sqlc.arg(sort_desc)::boolean THEN z.name END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'zone' AND sqlc.arg(sort_desc)::boolean THEN z.name END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'managed' AND NOT sqlc.arg(sort_desc)::boolean THEN h.managed::int END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'managed' AND sqlc.arg(sort_desc)::boolean THEN h.managed::int END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'monitored' AND NOT sqlc.arg(sort_desc)::boolean THEN h.monitored::int END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'monitored' AND sqlc.arg(sort_desc)::boolean THEN h.monitored::int END) DESC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'last_seen' AND NOT sqlc.arg(sort_desc)::boolean THEN h.last_seen_at END) ASC NULLS LAST,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'last_seen' AND sqlc.arg(sort_desc)::boolean THEN h.last_seen_at END) DESC NULLS LAST,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND NOT sqlc.arg(sort_desc)::boolean THEN ar.n END) ASC,
+  (CASE WHEN sqlc.arg(sort_key)::text = 'active_runs' AND sqlc.arg(sort_desc)::boolean THEN ar.n END) DESC,
+  h.name ASC, h.id ASC
+OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
+
+-- name: CountHosts :one
+-- ListHostsPage's filters, counted: the total of a paged answer.
+SELECT count(*) FROM hosts h
+WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
+  AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
+  AND (
+    sqlc.narg(query)::text IS NULL
+    OR h.name ILIKE '%' || sqlc.narg(query)::text || '%'
+    OR h.address ILIKE '%' || sqlc.narg(query)::text || '%'
+  )
+  AND (sqlc.narg(active_runs)::boolean IS NULL OR sqlc.narg(active_runs)::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ));
+
+-- name: ActiveRunsForHosts :many
+-- Live runs (queued, claimed, running, cancelling) per named host; a host
+-- with none is absent. Served by job_hosts_host_idx and jobs_live_idx.
+SELECT jh.host_id, count(*)::int AS runs
+FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = sqlc.arg(org_id) AND jh.host_id = ANY(sqlc.arg(ids)::uuid[])
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+GROUP BY jh.host_id;

@@ -12,6 +12,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activeRunsForHosts = `-- name: ActiveRunsForHosts :many
+SELECT jh.host_id, count(*)::int AS runs
+FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = $1 AND jh.host_id = ANY($2::uuid[])
+  AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+GROUP BY jh.host_id
+`
+
+type ActiveRunsForHostsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+type ActiveRunsForHostsRow struct {
+	HostID uuid.UUID `json:"host_id"`
+	Runs   int32     `json:"runs"`
+}
+
+// Live runs (queued, claimed, running, cancelling) per named host; a host
+// with none is absent. Served by job_hosts_host_idx and jobs_live_idx.
+func (q *Queries) ActiveRunsForHosts(ctx context.Context, arg ActiveRunsForHostsParams) ([]ActiveRunsForHostsRow, error) {
+	rows, err := q.db.Query(ctx, activeRunsForHosts, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActiveRunsForHostsRow
+	for rows.Next() {
+		var i ActiveRunsForHostsRow
+		if err := rows.Scan(&i.HostID, &i.Runs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const bumpHostRevision = `-- name: BumpHostRevision :one
 UPDATE hosts
 SET revision = revision + 1, updated_at = now()
@@ -37,6 +77,48 @@ func (q *Queries) BumpHostRevision(ctx context.Context, arg BumpHostRevisionPara
 	var revision int64
 	err := row.Scan(&revision)
 	return revision, err
+}
+
+const countHosts = `-- name: CountHosts :one
+SELECT count(*) FROM hosts h
+WHERE h.org_id = $1
+  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
+  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
+  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND (
+    $5::text IS NULL
+    OR h.name ILIKE '%' || $5::text || '%'
+    OR h.address ILIKE '%' || $5::text || '%'
+  )
+  AND ($6::boolean IS NULL OR $6::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ))
+`
+
+type CountHostsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Managed    *bool       `json:"managed"`
+	Monitored  *bool       `json:"monitored"`
+	Query      *string     `json:"query"`
+	ActiveRuns *bool       `json:"active_runs"`
+}
+
+// ListHostsPage's filters, counted: the total of a paged answer.
+func (q *Queries) CountHosts(ctx context.Context, arg CountHostsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countHosts,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Managed,
+		arg.Monitored,
+		arg.Query,
+		arg.ActiveRuns,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createHost = `-- name: CreateHost :one
@@ -318,22 +400,27 @@ func (q *Queries) ListHostZones(ctx context.Context, arg ListHostZonesParams) ([
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts
-WHERE org_id = $1
-  AND ($2::uuid IS NULL OR zone_id = $2::uuid)
-  AND ($3::boolean IS NULL OR managed = $3::boolean)
-  AND ($4::boolean IS NULL OR monitored = $4::boolean)
+SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
+WHERE h.org_id = $1
+  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
+  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
+  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
   AND (
     $5::text IS NULL
-    OR name ILIKE '%' || $5::text || '%'
-    OR address ILIKE '%' || $5::text || '%'
+    OR h.name ILIKE '%' || $5::text || '%'
+    OR h.address ILIKE '%' || $5::text || '%'
   )
   AND (
     $6::text IS NULL
-    OR (name, id) > ($6::text, $7::uuid)
+    OR (h.name, h.id) > ($6::text, $7::uuid)
   )
-ORDER BY name ASC, id ASC
-LIMIT $8
+  AND ($8::boolean IS NULL OR $8::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ))
+ORDER BY h.name ASC, h.id ASC
+LIMIT $9
 `
 
 type ListHostsParams struct {
@@ -344,6 +431,7 @@ type ListHostsParams struct {
 	Query      *string     `json:"query"`
 	CursorName *string     `json:"cursor_name"`
 	CursorID   pgtype.UUID `json:"cursor_id"`
+	ActiveRuns *bool       `json:"active_runs"`
 	RowLimit   int32       `json:"row_limit"`
 }
 
@@ -367,6 +455,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 		arg.Query,
 		arg.CursorName,
 		arg.CursorID,
+		arg.ActiveRuns,
 		arg.RowLimit,
 	)
 	if err != nil {
@@ -418,6 +507,182 @@ type ListHostsByIDsParams struct {
 // host-bound check would be worse than the per-id round trips it replaced.
 func (q *Queries) ListHostsByIDs(ctx context.Context, arg ListHostsByIDsParams) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHostsByIDs, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Host
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Name,
+			&i.Address,
+			&i.Managed,
+			&i.Monitored,
+			&i.Facts,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostsPage = `-- name: ListHostsPage :many
+SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
+WHERE h.org_id = $1
+  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
+  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
+  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND (
+    $5::text IS NULL
+    OR h.name ILIKE '%' || $5::text || '%'
+    OR h.address ILIKE '%' || $5::text || '%'
+  )
+  AND ($6::boolean IS NULL OR $6::boolean = EXISTS (
+    SELECT 1 FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+    WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+      AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+  ))
+ORDER BY h.name ASC, h.id ASC
+OFFSET $7 LIMIT $8
+`
+
+type ListHostsPageParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Managed    *bool       `json:"managed"`
+	Monitored  *bool       `json:"monitored"`
+	Query      *string     `json:"query"`
+	ActiveRuns *bool       `json:"active_runs"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+// Offset paging (backlog 3.97) in the default order, name then id: the one
+// order the (org_id, name) unique index serves, so it stays an index scan.
+// The filters are ListHosts' own, plus active_runs: true keeps hosts with a
+// live run, false those without, NULL both.
+func (q *Queries) ListHostsPage(ctx context.Context, arg ListHostsPageParams) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listHostsPage,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Managed,
+		arg.Monitored,
+		arg.Query,
+		arg.ActiveRuns,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Host
+	for rows.Next() {
+		var i Host
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ZoneID,
+			&i.Name,
+			&i.Address,
+			&i.Managed,
+			&i.Monitored,
+			&i.Facts,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostsPageSorted = `-- name: ListHostsPageSorted :many
+SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
+JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
+LEFT JOIN LATERAL (
+  SELECT count(*) AS n FROM job_hosts jh JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+  WHERE jh.org_id = h.org_id AND jh.host_id = h.id
+    AND j.status IN ('queued', 'claimed', 'running', 'cancelling')
+) ar ON true
+WHERE h.org_id = $1
+  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
+  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
+  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND (
+    $5::text IS NULL
+    OR h.name ILIKE '%' || $5::text || '%'
+    OR h.address ILIKE '%' || $5::text || '%'
+  )
+  AND ($6::boolean IS NULL OR $6::boolean = (ar.n > 0))
+ORDER BY
+  (CASE WHEN $7::text = 'name' AND NOT $8::boolean THEN h.name END) ASC,
+  (CASE WHEN $7::text = 'name' AND $8::boolean THEN h.name END) DESC,
+  (CASE WHEN $7::text = 'zone' AND NOT $8::boolean THEN z.name END) ASC,
+  (CASE WHEN $7::text = 'zone' AND $8::boolean THEN z.name END) DESC,
+  (CASE WHEN $7::text = 'managed' AND NOT $8::boolean THEN h.managed::int END) ASC,
+  (CASE WHEN $7::text = 'managed' AND $8::boolean THEN h.managed::int END) DESC,
+  (CASE WHEN $7::text = 'monitored' AND NOT $8::boolean THEN h.monitored::int END) ASC,
+  (CASE WHEN $7::text = 'monitored' AND $8::boolean THEN h.monitored::int END) DESC,
+  (CASE WHEN $7::text = 'last_seen' AND NOT $8::boolean THEN h.last_seen_at END) ASC NULLS LAST,
+  (CASE WHEN $7::text = 'last_seen' AND $8::boolean THEN h.last_seen_at END) DESC NULLS LAST,
+  (CASE WHEN $7::text = 'active_runs' AND NOT $8::boolean THEN ar.n END) ASC,
+  (CASE WHEN $7::text = 'active_runs' AND $8::boolean THEN ar.n END) DESC,
+  h.name ASC, h.id ASC
+OFFSET $9 LIMIT $10
+`
+
+type ListHostsPageSortedParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	ZoneID     pgtype.UUID `json:"zone_id"`
+	Managed    *bool       `json:"managed"`
+	Monitored  *bool       `json:"monitored"`
+	Query      *string     `json:"query"`
+	ActiveRuns *bool       `json:"active_runs"`
+	SortKey    string      `json:"sort_key"`
+	SortDesc   bool        `json:"sort_desc"`
+	RowOffset  int32       `json:"row_offset"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+// Every other key and direction (backlog 3.97). The sort key is whitelisted
+// by the caller; each CASE is NULL on every row unless its key is chosen, so
+// the others drop out. last_seen puts never-seen hosts last in both
+// directions (NULLS LAST), active_runs counts live runs through a lateral
+// subquery, and a tie falls back to name then id so pages are disjoint.
+func (q *Queries) ListHostsPageSorted(ctx context.Context, arg ListHostsPageSortedParams) ([]Host, error) {
+	rows, err := q.db.Query(ctx, listHostsPageSorted,
+		arg.OrgID,
+		arg.ZoneID,
+		arg.Managed,
+		arg.Monitored,
+		arg.Query,
+		arg.ActiveRuns,
+		arg.SortKey,
+		arg.SortDesc,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

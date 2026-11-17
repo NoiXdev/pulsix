@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/paging"
 )
 
 var ctx = context.Background()
@@ -299,6 +300,16 @@ func (f *fakeHostStore) ListHosts(_ context.Context, orgID uuid.UUID, filt hosts
 // ListAllHosts returns every host of orgID sorted by name, unpaginated —
 // the fake's counterpart to the real store's ORDER BY name query, used by
 // TestListAllHostsSortedAndScoped and by the renderer's own tests.
+// ListHostsPage and ActiveRuns are never reached through the fake: the page
+// query and the live-run count are SQL, exercised by store_sql_test.go.
+func (f *fakeHostStore) ListHostsPage(context.Context, uuid.UUID, hosts.ListFilter, paging.Page) ([]hosts.Host, int, error) {
+	return nil, 0, errors.New("fakeHostStore: ListHostsPage is covered by the SQL store tests")
+}
+
+func (f *fakeHostStore) ActiveRuns(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]int, error) {
+	return map[uuid.UUID]int{}, nil
+}
+
 func (f *fakeHostStore) ListHostsByIDs(_ context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error) {
 	if err := f.take("ListHostsByIDs"); err != nil {
 		return nil, err
