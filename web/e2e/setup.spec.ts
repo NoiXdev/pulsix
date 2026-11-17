@@ -90,7 +90,14 @@ test('a fresh instance redirects to /setup, the wizard creates the instance, and
   // the backend never actually validates), the "Confirm" step would never
   // get past its own error toast. enrolTotp also checks for the eight
   // recovery codes' heading and dismisses them.
-  await enrolTotp(page, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH);
+  await enrolTotp(page, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH, { skipLockPinOffer: false });
+
+  // A completed session is offered a lock PIN once (backlog 3.93); the
+  // administrator skips it here. session-lock.spec sets one later from the
+  // lock icon.
+  await expect(page).toHaveURL(/\/account\/lock-pin$/);
+  await expect(page.getByRole('heading', { name: 'Set a lock PIN' })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip' }).click();
 
   // Enrolling completed the session without a fresh login, and the page
   // continued into the app: the (empty) host list — the brief's own

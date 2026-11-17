@@ -109,5 +109,13 @@ export default defineConfig({
     // Job chaining (backlog 2.121): runs a template with a follow-up on the
     // managed fixture host ansible.spec registers, so it follows it.
     { name: 'chain', testMatch: /chain\.spec\.ts/, dependencies: ['ansible'] },
+    // The session lock, the expiry warning and the new-version notice
+    // (backlog 3.93 to 3.95). Each signs in on a context of its own, so the
+    // administrator's shared storage state stays alive; they run last
+    // because signing in again once offers (and the lock spec sets) the
+    // lock PIN, which is a one-time step the earlier specs do not expect.
+    { name: 'session-lock', testMatch: /session-lock\.spec\.ts/, dependencies: ['chain'] },
+    { name: 'session-expiry', testMatch: /session-expiry\.spec\.ts/, dependencies: ['session-lock'] },
+    { name: 'version-notice', testMatch: /version-notice\.spec\.ts/, dependencies: ['session-expiry'] },
   ],
 });

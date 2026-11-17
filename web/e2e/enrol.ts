@@ -5,14 +5,21 @@
  * invitee — lands there first and can do nothing else until this is done.
  * It confirms the secret the page shows with a real code, dismisses the
  * recovery codes, and returns the secret so a later sign-in can compute
- * codes for it. The page then continues into the app on its own.
+ * codes for it. The page then continues into the app (after the one-time lock PIN offer).
  */
 import { expect, type Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { nextTotpCode } from './otp.ts';
 
-export async function enrolTotp(page: Page, secretPath: string, stepStatePath: string): Promise<string> {
+export async function enrolTotp(
+  page: Page,
+  secretPath: string,
+  stepStatePath: string,
+  // After enrolling, the app offers the lock PIN once (backlog 3.93). Every
+  // account but the administrator's just skips it; setup.spec drives it.
+  { skipLockPinOffer = true }: { skipLockPinOffer?: boolean } = {},
+): Promise<string> {
   await expect(page).toHaveURL(/\/account\/enrol$/);
   await expect(page.getByRole('heading', { name: 'Set up a second factor' })).toBeVisible();
   await page.getByRole('button', { name: 'Enrol authenticator app' }).click();
@@ -25,5 +32,9 @@ export async function enrolTotp(page: Page, secretPath: string, stepStatePath: s
   await page.getByRole('button', { name: 'Confirm' }).click();
   await expect(page.getByText('Recovery codes — shown once.')).toBeVisible();
   await page.getByRole('button', { name: 'I have saved these' }).click();
+  if (skipLockPinOffer) {
+    await expect(page).toHaveURL(/\/account\/lock-pin$/);
+    await page.getByRole('button', { name: 'Skip' }).click();
+  }
   return secret;
 }

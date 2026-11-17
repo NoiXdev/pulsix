@@ -251,7 +251,9 @@ test('a person whose second factor was reset enrols a new one, then replaces the
     await personPage.getByRole('button', { name: 'Sign in' }).click();
 
     // No factor is left to ask for: the person is held on the enrolment page.
-    await enrolTotp(personPage, FACTOR_PERSON_TOTP_STATE_PATH, FACTOR_PERSON_TOTP_STEP_STATE_PATH);
+    // A second-factor reset also starts the lock PIN offer over, but the
+    // temporary password comes first; the offer follows it below.
+    await enrolTotp(personPage, FACTOR_PERSON_TOTP_STATE_PATH, FACTOR_PERSON_TOTP_STEP_STATE_PATH, { skipLockPinOffer: false });
     await expect(personPage).toHaveURL(/\/account\/password$/);
     await expect(personPage.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
 
@@ -260,6 +262,8 @@ test('a person whose second factor was reset enrols a new one, then replaces the
     await personPage.getByLabel('Repeat the new password').fill(FACTOR_PERSON.changedPassword);
     await personPage.getByRole('button', { name: 'Change password' }).click();
 
+    await expect(personPage).toHaveURL(/\/account\/lock-pin$/);
+    await personPage.getByRole('button', { name: 'Skip' }).click();
     await expect(personPage).toHaveURL(/\/o\/[^/]+\/hosts$/);
     await expect(personPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
   } finally {
