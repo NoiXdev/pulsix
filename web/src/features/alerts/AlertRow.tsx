@@ -13,7 +13,7 @@ const SEVERITY_TONE: Record<string, Tone> = { warn: 'warn', crit: 'crit', unknow
 
 export interface AlertRowProps {
   alert: AlertRowAlert;
-  /** `checks.write` — without it this row offers no action, only the read. */
+  /** `alerts.handle` — without it this row offers no action, only the read. */
   canWrite?: boolean;
   onAcknowledge?: (alert: AlertRowAlert) => void;
   onUnacknowledge?: (alert: AlertRowAlert) => void;

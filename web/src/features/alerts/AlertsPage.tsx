@@ -23,7 +23,7 @@ import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
  * first — exactly the server's own order, the same discipline FleetPage
  * already holds for its own worst-first contract. Same permission bar as
  * the rest of the monitoring surface (alert_handlers.go's own doc
- * comment): checks.read to see it, checks.write to acknowledge or snooze.
+ * comment): checks.read to see it, alerts.handle to acknowledge or snooze.
  *
  * Bulk acknowledge is deliberately not offered (design doc, "Deliberately
  * not built"): decision 4 already took the peak off an alert storm by

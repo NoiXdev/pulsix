@@ -17,7 +17,7 @@ export interface HostAlertsCardProps {
   /** `checks.read` — the same bar HostChecksCard and the org-wide Alerts
    * page both hold for monitoring data; without it nothing is requested. */
   canRead: boolean;
-  /** `checks.write` — the same bar the org-wide Alerts page holds for
+  /** `alerts.handle` — the same bar the org-wide Alerts page holds for
    * acknowledging and snoozing; without it each row is read-only. */
   canWrite?: boolean;
 }
