@@ -110,8 +110,9 @@ type meOutput struct {
 		LockPINSet    bool `json:"lock_pin_set"`
 		LockPINPrompt bool `json:"lock_pin_prompt"`
 		// SessionExpiresAt is when this session's cookie stops
-		// authenticating (the SPA warns before it); the zero time for a
-		// bearer token, which has no session.
+		// authenticating (the SPA warns before it). Only a cookie session
+		// reaches this route: bearer tokens are accepted on the
+		// org-scoped routes alone and get 401 here.
 		SessionExpiresAt time.Time `json:"session_expires_at" format:"date-time"`
 	}
 }

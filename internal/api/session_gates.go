@@ -13,16 +13,19 @@ import (
 // one of three states, and every route names the gate that admits exactly
 // the states it may serve:
 //
-//	state \ gate                  requireSession  requireEnrolmentSession  requireMFAComplete  requireInteractiveSession
-//	pending, factor to verify      yes             no                       no                  no
-//	pending, no factor (enrol)     yes             yes                      no                  no
-//	MFA-complete session           yes             yes                      yes                 yes
-//	bearer token (always complete) yes             no                       yes                 no
-//	locked session (complete)      yes             no                       no                  no
+//	state \ gate                  requireSession     requireEnrolmentSession  requireMFAComplete  requireInteractiveSession
+//	pending, factor to verify      yes                no                       no                  no
+//	pending, no factor (enrol)     yes                yes                      no                  no
+//	MFA-complete session           yes                yes                      yes                 yes
+//	bearer token (always complete) yes                no                       yes                 no
+//	locked session (complete)      me, logout, unlock no                       no                  no
 //
-//   - requireSession: /auth/me, /auth/logout, /auth/totp/verify — reachable
-//     in every state, because they are how a pending session learns what it
-//     still owes and supplies it (or gives up).
+//   - requireSession: /auth/me, /auth/logout, /auth/totp/verify and the
+//     unlock route. /auth/me, /auth/logout and /auth/totp/verify are
+//     reachable in every state but the locked one, because they are how a
+//     pending session learns what it still owes and supplies it (or gives
+//     up); a locked session reaches /auth/me, /auth/logout and unlock only
+//     (see below).
 //   - requireEnrolmentSession: TOTP enrol and confirm, passkey register
 //     begin and finish, and the passkey list — the only routes an account
 //     without a second factor can use, and the ones that give it one.
@@ -62,7 +65,9 @@ import (
 // /auth/logout, /auth/me and /auth/totp/verify: routes that a
 // half-authenticated (MFA-pending) session must still be able to reach,
 // since the SPA needs /me to discover that a second factor is pending, and
-// needs logout/verify to still work before that factor is supplied.
+// needs logout/verify to still work before that factor is supplied. The
+// unlock route uses it too, as the one way out of a locked session;
+// /auth/totp/verify refuses a locked session itself (refuseWhileLocked).
 //
 // The passkey login endpoints (registerPasskeyRoutes in
 // passkey_handlers.go) use no gate at all, not this one: they are how an
