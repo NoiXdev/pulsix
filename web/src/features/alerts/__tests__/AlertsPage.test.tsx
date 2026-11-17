@@ -1,12 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ToastProvider } from '../../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { pickDateTime } from '../../../test/pickDateTime.ts';
 import { pickOption } from '../../../test/pickOption.ts';
+import { renderListPage } from '../../../test/renderListPage.tsx';
+import type { Locale } from '../../../i18n/types.ts';
 import { AlertsPage } from '../AlertsPage.tsx';
 
 // Only Date is faked: the calendar opens on the current month.
@@ -35,44 +34,51 @@ const alert = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function renderPage(initialPath = '/o/acme/alerts') {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rootRoute = createRootRoute();
-  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  // Mirrors router.tsx's own alertsRoute exactly (fix round 2):
-  // HostAlertsCard's link depends on this page actually reading `?host=`
-  // back out, not just on the link carrying it.
-  const alertsRoute = createRoute({
-    getParentRoute: () => orgRoute,
+const PREFS = { density: 'standard', page_size: 25, lists: {} };
+
+/** The alerts list's own routes plus the preferences every list reads. */
+const base = (role = 'operator') => ({
+  'GET /api/v1/auth/me/preferences': PREFS,
+  'GET /api/v1/orgs/acme': org(role),
+});
+
+/** The list as the page mounts it in router.tsx's alertsRoute (fix round 2:
+ * HostAlertsCard's link depends on this page reading `?host=` back out). */
+function renderPage(initialPath = '/o/acme/alerts', locale?: Locale) {
+  // renderListPage mounts the page itself; the unmount of the previous
+  // test's tree is RTL's own cleanup.
+  const router = renderListPage({
     path: '/alerts',
-    validateSearch: (search: Record<string, unknown>) => ({
-      host: typeof search.host === 'string' ? search.host : undefined,
-    }),
     component: AlertsPage,
+    initial: initialPath,
+    extraSearch: (search) => ({ host: typeof search.host === 'string' ? search.host : undefined }),
+    locale,
   });
-  const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([alertsRoute])]),
-    history: createMemoryHistory({ initialEntries: [initialPath] }),
-  });
-  const view = render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
-  );
-  // Returned alongside the render result (every existing call site ignores
-  // this and keeps using the global `screen`, same as before) so a test
-  // can read the actual browser-visible location back
-  // (`router.state.location.search`) or unmount this instance to simulate
-  // a reload at wherever navigation actually left the URL (fix round 3).
-  return { ...view, router };
+  // Returned so a test can read the actual browser-visible location back
+  // (`router.state.location.search`) or remount at wherever navigation
+  // actually left the URL (fix round 3).
+  return { router };
+}
+
+/** Opens a row's "…" menu: the row is named by its host and what it is about. */
+async function openMenu(user: ReturnType<typeof userEvent.setup>, name = 'Actions for web-1, disk · /var · use_pct') {
+  await user.click(await screen.findByRole('button', { name }));
+}
+
+const menuItem = (name: string) => screen.findByRole('menuitem', { name });
+
+/** n open alerts on distinct hosts, and the answer for one page of them. */
+const manyAlerts = (n: number) => Array.from({ length: n }, (_, i) => alert({ id: `a${i + 1}`, host_id: `h${i + 1}`, host_name: `host-${String(i + 1).padStart(2, '0')}` }));
+function pageOf(all: ReturnType<typeof manyAlerts>, req: MockRequest) {
+  const page = Number(req.search.get('page') ?? '1');
+  const perPage = Number(req.search.get('per_page') ?? '25');
+  return { alerts: all.slice((page - 1) * perPage, page * perPage), next_cursor: '', total: all.length };
 }
 
 describe('AlertsPage', () => {
   it('lists alerts in the order the API returns them', async () => {
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': {
         alerts: [
           alert({ id: 'a-crit', host_id: 'h-crit', host_name: 'db-1', check_key: 'cpu', item: '', metric: 'load', severity: 'crit', peak_severity: 'crit' }),
@@ -101,7 +107,7 @@ describe('AlertsPage', () => {
 
   it('renders an explicit empty state rather than a blank page', async () => {
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [] },
     });
     renderPage();
@@ -109,27 +115,10 @@ describe('AlertsPage', () => {
     expect(await screen.findByText(/No alerts match this view/)).toBeInTheDocument();
   });
 
-  // Backlog 4.37. The `muted` filter is applied server-side AFTER the
-  // page is cut (alerts.Service.List), so a page can legitimately come
-  // back empty with next_cursor still set — following the cursor yields
-  // the full set. Correct, but the two pieces of copy contradicted each
-  // other on screen: "nothing matched" above a "Load more" button that
-  // would go on to produce matches.
-  it('does not claim nothing matched while a cursor is still unfollowed', async () => {
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/alerts': { alerts: [], next_cursor: 'cur-2' },
-    });
-    renderPage();
-
-    expect(await screen.findByRole('button', { name: /Load more/i })).toBeInTheDocument();
-    expect(screen.queryByText(/No alerts match this view/)).not.toBeInTheDocument();
-  });
-
   it('asks for nothing without checks.read', async () => {
     let asked = false;
     mockApi({
-      'GET /api/v1/orgs/acme': org('none'),
+      ...base('none'),
       'GET /api/v1/orgs/acme/alerts': () => {
         asked = true;
         return { alerts: [] };
@@ -141,26 +130,80 @@ describe('AlertsPage', () => {
     expect(asked).toBe(false);
   });
 
-  it('offers no row actions for a viewer (no alerts.handle)', async () => {
+  it('offers a viewer (no alerts.handle) the timeline only', async () => {
+    const user = userEvent.setup();
     mockApi({
-      'GET /api/v1/orgs/acme': org('viewer'),
+      ...base('viewer'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
     });
     renderPage();
 
     await screen.findByText('disk · /var · use_pct');
-    // Anchored, not a bare /acknowledge/i: AlertFilters' own "Acknowledged"
-    // picker now renders a toggle button labelled "Open Acknowledged"
-    // (ui/Select.tsx, v0.4g) on every render regardless of role, and an
-    // unanchored match against "Acknowledged" finds it too.
+    // No inline buttons any more, and nothing to acknowledge or snooze in
+    // the menu either.
+    expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
+    await openMenu(user);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Show timeline']);
+  });
+
+  it('offers an operator Acknowledge, Snooze and the timeline, in that order, on an open alert', async () => {
+    const user = userEvent.setup();
+    mockApi({ ...base('operator'), 'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] } });
+    renderPage();
+
+    await screen.findByText('disk · /var · use_pct');
+    // The actions are not visible buttons on the row any more.
     expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^snooze$/i })).not.toBeInTheDocument();
+    await openMenu(user);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Acknowledge', 'Snooze', 'Show timeline']);
+  });
+
+  it('offers Unsnooze instead of Snooze while a snooze mutes the alert', async () => {
+    const user = userEvent.setup();
+    let called = false;
+    mockApi({
+      ...base('operator'),
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert({ muted: true, mute_reason: 'snooze', muted_until: '2026-10-08T12:00:00Z' })] },
+      'DELETE /api/v1/orgs/acme/alerts/a1/snooze': () => {
+        called = true;
+        return {};
+      },
+    });
+    renderPage();
+
+    await openMenu(user);
+    expect(screen.queryByRole('menuitem', { name: 'Snooze' })).not.toBeInTheDocument();
+    await user.click(await menuItem('Unsnooze'));
+    await waitFor(() => expect(called).toBe(true));
+  });
+
+  it('offers a closed alert no acknowledge or snooze, only the timeline', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base('operator'),
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert({ closed_at: '2026-10-02T00:00:00Z', closed_reason: 'resolved' })] },
+    });
+    renderPage();
+
+    await openMenu(user);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Show timeline']);
+  });
+
+  it('opens the same entries on a right-click', async () => {
+    mockApi({ ...base('operator'), 'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] } });
+    renderPage();
+
+    await screen.findByText('disk · /var · use_pct');
+    fireEvent.contextMenu(screen.getByTestId('alert-ack'), { clientX: 200, clientY: 300 });
+    const items = within(await screen.findByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual(['Acknowledge', 'Snooze', 'Show timeline']);
   });
 
   it('applies the state filter to the alerts request', async () => {
     const asked: Array<Record<string, string>> = [];
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
         return { alerts: [] };
@@ -177,7 +220,7 @@ describe('AlertsPage', () => {
   it('applies the severity, scope, acknowledged and muted filters to the alerts request', async () => {
     const asked: Array<Record<string, string>> = [];
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
         return { alerts: [] };
@@ -200,7 +243,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let sentBody: unknown;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
       'POST /api/v1/orgs/acme/alerts/a1/acknowledge': (req: MockRequest) => {
         sentBody = req.body;
@@ -209,13 +252,12 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^acknowledge$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Acknowledge'));
     const noteField = await screen.findByLabelText('Note');
     await user.type(noteField, 'Known issue, ticket OPS-42');
 
-    // Two "Acknowledge" buttons exist at this point (the row's own trigger,
-    // still in the DOM behind the native <dialog>, and the dialog's own
-    // submit) — the dialog's is the one with type="submit"; clicking it is
+    // The dialog's own submit is the one with type="submit"; clicking it is
     // what actually submits, and this assertion is the one that would fail
     // if the note were dropped (e.g. trimmed to empty, or never wired into
     // the mutation body at all) rather than merely checking that *a* POST
@@ -230,7 +272,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let snoozeCalled = false;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
       'POST /api/v1/orgs/acme/alerts/a1/snooze': () => {
         snoozeCalled = true;
@@ -239,7 +281,8 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Snooze'));
     await screen.findByRole('switch', { name: /severity next changes/i });
     // The dialog's own Save button is the one with type="submit" — the
     // row's own trigger (type="button") is still in the DOM behind the
@@ -262,7 +305,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let sentBody: unknown;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
       'POST /api/v1/orgs/acme/alerts/a1/snooze': (req: MockRequest) => {
         sentBody = req.body;
@@ -271,7 +314,8 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Snooze'));
     await screen.findByRole('switch', { name: /severity next changes/i });
     await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
@@ -287,7 +331,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let sentBody: unknown;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
       'POST /api/v1/orgs/acme/alerts/a1/snooze': (req: MockRequest) => {
         sentBody = req.body;
@@ -296,7 +340,8 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Snooze'));
     await user.type(await screen.findByRole('textbox', { name: 'Until Time' }), '10:00');
     await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
@@ -311,7 +356,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let sentBody: unknown;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
       'POST /api/v1/orgs/acme/alerts/a1/snooze': (req: MockRequest) => {
         sentBody = req.body;
@@ -320,7 +365,8 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Snooze'));
     await screen.findByLabelText('Until');
     await pickDateTime(user, screen, 'Until', '10:00');
 
@@ -335,12 +381,13 @@ describe('AlertsPage', () => {
     pinClock();
     const user = userEvent.setup();
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Snooze'));
     const untilField = await screen.findByLabelText('Until');
     await pickDateTime(user, screen, 'Until', '10:00');
     expect(untilField).toHaveTextContent('10/15/2026');
@@ -360,7 +407,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let called = false;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': {
         alerts: [alert({ ack_at: '2026-10-01T01:00:00Z', ack_severity: 'warn', ack_by: 'u1' })],
       },
@@ -371,7 +418,8 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /unacknowledge/i }));
+    await openMenu(user);
+    await user.click(await menuItem('Unacknowledge'));
     await waitFor(() => expect(called).toBe(true));
   });
 
@@ -383,7 +431,7 @@ describe('AlertsPage', () => {
     // and still pass every other test in this file.
     let askedSearch: Record<string, string> | undefined;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
         askedSearch = Object.fromEntries(req.search.entries());
         return { alerts: [] };
@@ -404,7 +452,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
         return { alerts: [] };
@@ -417,7 +465,7 @@ describe('AlertsPage', () => {
 
     await user.click(screen.getByRole('button', { name: /show every alert/i }));
 
-    await waitFor(() => expect(asked.at(-1)?.host).toBe(''));
+    await waitFor(() => expect(asked.at(-1)?.host).toBeUndefined());
     expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
     // Fix round 3: clearing the in-memory filter is not enough on its own
     // — a version that called only setFilter, never navigate, would still
@@ -440,25 +488,25 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
         asked.push(Object.fromEntries(req.search.entries()));
         return { alerts: [] };
       },
     });
-    const { router, unmount } = renderPage('/o/acme/alerts?host=h1');
+    const { router } = renderPage('/o/acme/alerts?host=h1');
 
     await screen.findByText(/one host's alerts only/i);
     await user.click(screen.getByRole('button', { name: /show every alert/i }));
-    await waitFor(() => expect(asked.at(-1)?.host).toBe(''));
+    await waitFor(() => expect(asked.at(-1)?.host).toBeUndefined());
 
     const hrefAfterClear = router.history.location.href;
-    unmount();
+    cleanup();
     renderPage(hrefAfterClear);
 
     await screen.findByText(/No alerts match this view/);
     expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
-    expect(asked.at(-1)?.host).toBe('');
+    expect(asked.at(-1)?.host).toBeUndefined();
   });
   it('discloses a closed alert\u2019s timeline, which is otherwise unreachable in the GUI', async () => {
     // The design doc opens with "nobody can yet say host X was critical
@@ -470,7 +518,7 @@ describe('AlertsPage', () => {
     const user = userEvent.setup();
     let detailCalls = 0;
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': {
         alerts: [alert({ id: 'a-closed', closed_at: '2026-10-01T14:51:00Z', closed_reason: 'resolved' })],
       },
@@ -490,52 +538,142 @@ describe('AlertsPage', () => {
     });
     renderPage();
 
-    const toggle = await screen.findByRole('button', { name: /timeline for web-1/i });
-    // Nothing is fetched until the row is actually expanded — the same
-    // "pay for it when it is asked for" rule HostAlertsCard holds.
+    await screen.findByText('disk · /var · use_pct');
+    // Nothing is fetched until the timeline is actually asked for — the
+    // same "pay for it when it is asked for" rule HostAlertsCard holds.
     expect(detailCalls).toBe(0);
 
-    await user.click(toggle);
+    await openMenu(user);
+    await user.click(await menuItem('Show timeline'));
     await waitFor(() => expect(detailCalls).toBe(1));
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const dialog = await screen.findByRole('dialog', { name: 'Timeline for web-1' });
     // "Alert opened" and "Closed — resolved …" exist only on the
     // timeline; the row itself renders neither, so these prove the panel
     // and not the row.
-    await screen.findByText('Alert opened');
-    expect(screen.getByText(/Closed — resolved/)).toBeInTheDocument();
-
-    await user.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await within(dialog).findByText('Alert opened');
+    expect(within(dialog).getByText(/Closed — resolved/)).toBeInTheDocument();
   });
 
-  it('follows next_cursor rather than stopping at the first page', async () => {
-    // The list is unbounded over a table the design gives no retention, so
-    // it is paginated (review finding, Important). "Load more" must follow
-    // the server's own cursor, and must disappear once the server stops
-    // handing one back.
-    const user = userEvent.setup();
-    const cursors: Array<string | null> = [];
+});
+
+describe('AlertsPage paging and sorting', () => {
+  let requests: URLSearchParams[] = [];
+  const setup = (all: ReturnType<typeof manyAlerts>, initial = '/o/acme/alerts', locale?: Locale) => {
+    requests = [];
     mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
+      ...base('operator'),
       'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
-        const cursor = req.search.get('cursor');
-        cursors.push(cursor);
-        if (!cursor) {
-          return { alerts: [alert({ id: 'a-page1', host_name: 'web-1' })], next_cursor: 'cur-2' };
-        }
-        return { alerts: [alert({ id: 'a-page2', host_name: 'web-9' })], next_cursor: '' };
+        requests.push(req.search);
+        return pageOf(all, req);
       },
     });
+    return renderPage(initial, locale);
+  };
+
+  it('asks for page 1 at the saved size, with no sort and no cursor, and shows the footer instead of "Load more"', async () => {
+    setup(manyAlerts(30));
+
+    expect(await screen.findByText('1–25 of 30 alerts')).toBeInTheDocument();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].get('page')).toBe('1');
+    expect(requests[0].get('per_page')).toBe('25');
+    expect(requests[0].get('sort')).toBeNull();
+    expect(requests[0].get('order')).toBeNull();
+    expect(requests[0].get('cursor')).toBeNull();
+    expect(requests[0].get('limit')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  });
+
+  it('sorts by Open, Alert (host), Peak, Tracked and Acknowledged through the URL; Mute does not sort', async () => {
+    const user = userEvent.setup();
+    const { router } = setup(manyAlerts(30));
+    await screen.findByText('1–25 of 30 alerts');
+    expect(within(screen.getByRole('columnheader', { name: /^Mute/ })).queryByRole('button')).not.toBeInTheDocument();
+
+    for (const [header, key] of [
+      ['Open', 'opened'],
+      ['Alert', 'host'],
+      ['Peak', 'peak'],
+      ['Tracked', 'tracked'],
+      ['Acknowledged', 'acknowledged'],
+    ]) {
+      await user.click(within(screen.getByRole('columnheader', { name: new RegExp(`^${header}`) })).getByRole('button'));
+      await waitFor(() => expect(requests.at(-1)?.get('sort')).toBe(key));
+      expect(requests.at(-1)?.get('order')).toBe('asc');
+      expect(router.state.location.search).toMatchObject({ sort: key, order: 'asc' });
+    }
+  });
+
+  it('reads the sort and page from the URL, with the host scope next to them', async () => {
+    setup(manyAlerts(30), '/o/acme/alerts?sort=peak&order=desc&page=2&host=h1');
+    expect(await screen.findByText('26–30 of 30 alerts')).toBeInTheDocument();
+    expect(requests[0].get('sort')).toBe('peak');
+    expect(requests[0].get('order')).toBe('desc');
+    expect(requests[0].get('page')).toBe('2');
+    expect(requests[0].get('host')).toBe('h1');
+  });
+
+  it('shows the last page for a page past the end, not the empty state', async () => {
+    setup(manyAlerts(30), '/o/acme/alerts?page=9');
+    expect(await screen.findByText('26–30 of 30 alerts')).toBeInTheDocument();
+    expect(screen.queryByText(/No alerts match this view/)).not.toBeInTheDocument();
+  });
+
+  it('starts again at page 1 when a filter changes, and keeps the sort', async () => {
+    const { router } = setup(manyAlerts(30), '/o/acme/alerts?sort=host&order=desc&page=2');
+    await screen.findByText('26–30 of 30 alerts');
+
+    const filters: Array<[string, string, string]> = [
+      ['State', 'open', 'state'],
+      ['Severity', 'crit', 'severity'],
+      ['Scope', 'host', 'scope'],
+      ['Acknowledged', 'true', 'acknowledged'],
+      ['Muted', 'false', 'muted'],
+    ];
+    for (const [label, value, param] of filters) {
+      await pickOption(screen, label, { value });
+      await waitFor(() => expect(requests.at(-1)?.get(param)).toBe(value));
+      // No request carried the new filter on the old page, and the sort stayed.
+      expect(requests.filter((r) => r.get(param) === value).every((r) => r.get('page') === '1')).toBe(true);
+      expect(requests.at(-1)?.get('sort')).toBe('host');
+    }
+    expect(router.state.location.search).not.toHaveProperty('page');
+  });
+
+  it('starts again at page 1 when the host scope is cleared, keeping the sort', async () => {
+    const user = userEvent.setup();
+    const { router } = setup(manyAlerts(30), '/o/acme/alerts?host=h1&sort=host&order=asc&page=2');
+    await screen.findByText(/one host's alerts only/i);
+    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+    await waitFor(() => expect(requests.at(-1)?.get('host')).toBeNull());
+    expect(requests.at(-1)?.get('page')).toBe('1');
+    expect(requests.at(-1)?.get('sort')).toBe('host');
+    expect(router.state.location.search).toEqual({ sort: 'host', order: 'asc', host: undefined });
+  });
+
+  it('keeps the muted filter in the request', async () => {
+    setup(manyAlerts(3), '/o/acme/alerts');
+    await screen.findByText('host-01');
+    await pickOption(screen, 'Muted', { value: 'true' });
+    await waitFor(() => expect(requests.at(-1)?.get('muted')).toBe('true'));
+  });
+
+  it('shows the columns the list offers and hides one the person turned off', async () => {
+    requests = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': { ...PREFS, lists: { alerts: { columns: ['alert', 'open'] } } },
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => pageOf(manyAlerts(2), req),
+    });
     renderPage();
+    await screen.findByText('host-01');
+    expect(screen.getByRole('columnheader', { name: /^Open/ })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /^Peak/ })).not.toBeInTheDocument();
+  });
 
-    await screen.findByText('web-1');
-    expect(screen.queryByText('web-9')).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /load more/i }));
-
-    await screen.findByText('web-9');
-    expect(screen.getByText('web-1')).toBeInTheDocument();
-    expect(cursors).toEqual([null, 'cur-2']);
-    await waitFor(() => expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument());
+  it('says so in German', async () => {
+    setup(manyAlerts(30), '/o/acme/alerts', 'de');
+    expect(await screen.findByText('1–25 von 30 Alarme')).toBeInTheDocument();
+    await screen.findByRole('button', { name: /^Quittierung/ });
   });
 });

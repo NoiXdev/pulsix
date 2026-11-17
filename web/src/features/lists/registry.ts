@@ -15,6 +15,9 @@ import type { Messages } from '../../i18n/types.ts';
 const LISTS = {
   hosts: ['name', 'zone', 'tags', 'managed', 'monitored', 'last_seen', 'active_runs', 'agent_version', 'os'],
   runs: ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
+  alerts: ['alert', 'open', 'peak', 'tracked', 'acknowledged', 'mute'],
+  users: ['email', 'name', 'state', 'orgs', 'last_sign_in'],
+  activity: ['at', 'actor', 'action', 'object'],
   'my-activity': ['at', 'organization', 'action', 'object'],
 } as const satisfies Record<string, readonly string[]>;
 

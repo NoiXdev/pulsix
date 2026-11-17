@@ -4,6 +4,7 @@ import { MemberPage } from '../features/members/MemberPage.tsx';
 import { UsersPage } from '../features/users/UsersPage.tsx';
 import { AccountPage } from '../features/users/AccountPage.tsx';
 import { OrganizationsPage } from '../features/instance/OrganizationsPage.tsx';
+import { validateListSearch } from '../features/lists/listSearch.ts';
 import { ActivityPage } from '../features/activity/ActivityPage.tsx';
 import { TokensPage } from '../features/tokens/TokensPage.tsx';
 import { SecretsPage } from '../features/secrets/SecretsPage.tsx';
@@ -62,6 +63,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const activityRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/activity',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
     component: ActivityPage,
   });
   const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
@@ -87,7 +89,12 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
   // Every account on the instance and one account's page, for instance
   // administrators; filed under Settings for navigation only, same as mail.
-  const usersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users', component: UsersPage });
+  const usersRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/users',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: UsersPage,
+  });
   const accountRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users/$userId', component: AccountPage });
   // Every organization on the instance, for instance administrators; filed
   // under Settings for navigation only, same as users.

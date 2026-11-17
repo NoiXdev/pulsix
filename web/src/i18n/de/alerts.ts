@@ -12,12 +12,17 @@ export const deAlerts: Messages['alerts'] = {
   timelineReadFailed: 'Der Verlauf dieses Alarms konnte nicht gelesen werden.',
   unacknowledgeFailed: 'Die Quittierung dieses Alarms konnte nicht aufgehoben werden',
   unsnoozeFailed: 'Die Zurückstellung dieses Alarms konnte nicht aufgehoben werden',
+  list: {
+    label: 'Alarme',
+    count: (n: number) => (n === 1 ? '1 Alarm' : `${n} Alarme`),
+    rowLabel: (host: string, subject: string) => (subject === '' ? host : `${host}, ${subject}`),
+  },
   columns: {
+    alert: 'Alarm',
     open: 'Offen',
-    host: 'Host',
     peak: 'Spitze',
     tracked: 'Erfasst',
-    ack: 'Quittierung',
+    acknowledged: 'Quittierung',
     mute: 'Stumm',
   },
   severity: {

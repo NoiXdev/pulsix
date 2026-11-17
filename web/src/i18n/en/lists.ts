@@ -6,9 +6,12 @@
 export const enLists = {
   /** One per list id in features/lists/registry.ts. */
   names: {
+    activity: 'Activity',
+    alerts: 'Alerts',
     hosts: 'Hosts',
     'my-activity': 'My activity',
     runs: 'Runs',
+    users: 'Users',
   },
   saveFailed: 'Your list settings could not be saved',
 };

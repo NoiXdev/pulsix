@@ -1,29 +1,34 @@
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { AccountNotice } from '../types.ts';
-
-/** Accounts fetched per page of the Users list; the API defaults to 50 and
- * clamps at 200. */
-export const ADMIN_USERS_PAGE_SIZE = 50;
+import type { ServerPageQuery } from './paging.ts';
 
 /**
- * useAdminUsers is the instance admin's paged list of every account,
- * filtered by `q` (name or e-mail). The term is in the query key, so a new
- * one starts over from the first page; the previous result stays on screen
- * while it loads.
+ * useAdminUsersPage is the instance admin's list of every account, one
+ * numbered page per request (the API's page mode, which also answers the
+ * total), filtered by `q` (name or e-mail). The previous page stays on
+ * screen while the next one loads. `enabled` waits for the list's
+ * preferences (useListView's `ready`).
  */
-export function useAdminUsers(q: string) {
-  return useInfiniteQuery({
-    queryKey: ['admin-users', q],
-    initialPageParam: '',
-    queryFn: ({ pageParam }) =>
+export function useAdminUsersPage(q: string, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['admin-users', 'page', q, page],
+    queryFn: () =>
       unwrap(
         api.GET('/api/v1/admin/users', {
-          params: { query: { q: q || undefined, cursor: pageParam || undefined, limit: ADMIN_USERS_PAGE_SIZE } },
+          params: {
+            query: {
+              q: q || undefined,
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as 'email' | 'name' | 'last_sign_in' | undefined,
+              order: page.order,
+            },
+          },
         }),
       ),
-    getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     placeholderData: keepPreviousData,
+    enabled: opts.enabled ?? true,
   });
 }
 

@@ -205,6 +205,7 @@ const alertsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/alerts',
   validateSearch: (search: Record<string, unknown>) => ({
+    ...validateListSearch(search),
     host: typeof search.host === 'string' ? search.host : undefined,
   }),
   component: AlertsPage,

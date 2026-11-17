@@ -58,7 +58,7 @@ test('an instance admin sets a temporary password and the person must change it 
   await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: 'Users', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/users$`));
   await page.getByLabel('Search users').fill(OPERATOR.email);
-  await page.getByRole('link', { name: OPERATOR.name }).click();
+  await page.getByRole('link', { name: OPERATOR.email, exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/users/[^/]+$`));
   await expect(page.getByText(OPERATOR.email).first()).toBeVisible();
 
@@ -210,7 +210,7 @@ test('a person whose second factor was reset enrols a new one, then replaces the
     // --- The administrator resets the second factor ------------------------
     await page.goto(`/o/${ORG.slug}/settings/users`);
     await page.getByLabel('Search users').fill(FACTOR_PERSON.email);
-    await page.getByRole('link', { name: FACTOR_PERSON.name }).click();
+    await page.getByRole('link', { name: FACTOR_PERSON.email, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/users/[^/]+$`));
     await expect(page.getByText(FACTOR_PERSON.email).first()).toBeVisible();
 

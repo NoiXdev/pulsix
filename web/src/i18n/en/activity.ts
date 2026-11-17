@@ -6,6 +6,12 @@ export const enActivity = {
   anyActor: 'Actor: anyone',
   allTypes: 'all',
   empty: 'No activity recorded yet.',
+  /** The organization's feed as a list. */
+  list: {
+    label: 'Activity',
+    count: (n: number) => (n === 1 ? '1 event' : `${n} events`),
+    columns: { at: 'When', actor: 'Who', action: 'What happened', object: 'Object' },
+  },
   /** Settings > My activity: what the signed-in person did, in every organization. */
   my: {
     title: 'My activity',

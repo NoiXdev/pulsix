@@ -1,6 +1,7 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { AlertAcknowledgeInput, AlertSnoozeInput } from '../types.ts';
+import type { ServerPageQuery } from './paging.ts';
 
 /**
  * AlertFilter mirrors GET /orgs/{org}/alerts' own query parameters
@@ -84,6 +85,44 @@ export function useAlerts(org: string, filter: AlertFilter = {}, enabled = true)
       ),
     getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: !!org && enabled,
+  });
+}
+
+type AlertSort = 'opened' | 'host' | 'peak' | 'tracked' | 'acknowledged';
+
+/**
+ * useAlertsPage is the alerts list one numbered page at a time (the API's
+ * page mode, which also answers the total — with the `muted` filter
+ * already applied to it, so the total is right). The previous page stays on
+ * screen while the next one loads. The key keeps the ['alerts', org] prefix
+ * every alert mutation invalidates. `enabled` waits for the list's
+ * preferences (useListView's `ready`) and for the caller's permission.
+ */
+export function useAlertsPage(org: string, filter: AlertFilter, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['alerts', org, 'page', filter, page],
+    queryFn: () =>
+      unwrap(
+        api.GET('/api/v1/orgs/{org}/alerts', {
+          params: {
+            path: { org },
+            query: {
+              state: filter.state,
+              severity: filter.severity,
+              host: filter.host || undefined,
+              scope: filter.scope,
+              acknowledged: filter.acknowledged === undefined ? undefined : String(filter.acknowledged),
+              muted: filter.muted === undefined ? undefined : String(filter.muted),
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as AlertSort | undefined,
+              order: page.order,
+            },
+          },
+        }),
+      ),
+    placeholderData: keepPreviousData,
+    enabled: !!org && (opts.enabled ?? true),
   });
 }
 

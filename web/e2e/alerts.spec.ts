@@ -10,9 +10,9 @@
  * `(host, check_key, item)` story and the row actions it asserts have no
  * per-row name), this is a single episode told in three sequential acts on
  * one alert, so there is only ever one alert row to find. What still needs
- * isolation is AlertRow's own un-scoped "Acknowledge"/"Snooze" buttons
- * (AlertRow.tsx: `aria-label="Acknowledge"`, not `aria-label="Acknowledge
- * <host>"`) — ambiguous the moment two rows are visible on the SAME page at
+ * isolation is the rows' own un-scoped "Acknowledge"/"Snooze" menu
+ * entries (alertActions.ts: a row's "…" button is named "Actions for
+ * <host>, <check>", but its entries are not) — ambiguous the moment two rows are visible on the SAME page at
  * once. fleet.spec.ts's own WARN_HOST/CRIT_HOST (and items.spec.ts's own
  * host) can easily still have an open or recently-stale alert by the time
  * this spec runs in the same shared manager. The fix is not a second host
@@ -175,7 +175,7 @@ async function waitForCpuState(page: Page, hostName: string, want: string, timeo
  * (AlertRow.tsx's own `data-testid="alert-open"`) — robust even though
  * AlertRow's own root `<div>` carries no testid or role of its own. */
 function alertRow(page: Page): Locator {
-  return page.getByTestId('alert-open').locator('xpath=..');
+  return page.locator('[data-list-row]', { has: page.getByTestId('alert-open') });
 }
 
 /** waitForHostAlert polls the host-scoped Alerts page (a fresh navigation
@@ -235,19 +235,23 @@ test('one alert episode: a host goes crit, the alert is acknowledged, and it clo
     await expect(row.getByTestId('alert-ack').getByText('Unacknowledged', { exact: true })).toBeVisible();
 
     // --- Act 2: acknowledge it with a note --------------------------------
-    await row.getByRole('button', { name: 'Acknowledge' }).click();
+    await row.getByRole('button', { name: /^Actions for / }).click();
+    await page.getByRole('menuitem', { name: 'Acknowledge', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Acknowledge alert' })).toBeVisible();
     const NOTE = 'e2e: investigating the crit spike';
     await dialog.getByLabel('Note').fill(NOTE);
-    await dialog.getByRole('button', { name: 'Acknowledge' }).click();
+    await dialog.getByRole('button', { name: 'Acknowledge', exact: true }).click();
     await expect(dialog).toHaveCount(0);
 
     await expect(row.getByTestId('alert-ack').getByText('Acknowledged', { exact: true })).toBeVisible();
     await expect(row.getByTestId('alert-ack').getByText(NOTE)).toBeVisible();
     // Acknowledging never mutes (design doc, "Acknowledging is not muting")
     // — the row still offers Snooze, not Unsnooze.
-    await expect(row.getByRole('button', { name: 'Snooze' })).toBeVisible();
+    await row.getByRole('button', { name: /^Actions for / }).click();
+    await expect(page.getByRole('menuitem', { name: 'Snooze', exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Unsnooze', exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     // --- Act 3: resolve the host, see the alert close and leave the open
     //     list ----------------------------------------------------------

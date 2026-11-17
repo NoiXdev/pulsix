@@ -16,12 +16,19 @@ export const enAlerts = {
   timelineReadFailed: 'Could not read this alert’s timeline.',
   unacknowledgeFailed: 'Unacknowledging this alert failed',
   unsnoozeFailed: 'Unsnoozing this alert failed',
+  /** The table's accessible name, and the total in its footer. */
+  list: {
+    label: 'Alerts',
+    count: (n: number) => (n === 1 ? '1 alert' : `${n} alerts`),
+    /** A row's name for its "…" button: the host, then what it is about. */
+    rowLabel: (host: string, subject: string) => (subject === '' ? host : `${host}, ${subject}`),
+  },
   columns: {
+    alert: 'Alert',
     open: 'Open',
-    host: 'Host',
     peak: 'Peak',
     tracked: 'Tracked',
-    ack: 'Ack',
+    acknowledged: 'Acknowledged',
     mute: 'Mute',
   },
   severity: {

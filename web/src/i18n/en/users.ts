@@ -7,11 +7,15 @@ export const enUsers = {
   searchLabel: 'Search users',
   searchPlaceholder: 'Search by name or e-mail',
   columns: {
-    account: 'Account',
+    email: 'E-mail',
+    name: 'Name',
     state: 'State',
     orgs: 'Organizations',
     lastSignIn: 'Last sign-in',
   },
+  /** The table's accessible name. */
+  label: 'Users',
+  count: (n: number) => (n === 1 ? '1 account' : `${n} accounts`),
   empty: 'No account matches.',
   instanceAdmin: 'instance admin',
   never: 'never',

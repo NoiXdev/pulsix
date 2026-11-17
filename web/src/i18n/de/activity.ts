@@ -7,6 +7,11 @@ export const deActivity: Messages['activity'] = {
   anyActor: 'Urheber: alle',
   allTypes: 'alle',
   empty: 'Noch keine Aktivität aufgezeichnet.',
+  list: {
+    label: 'Aktivität',
+    count: (n: number) => (n === 1 ? '1 Ereignis' : `${n} Ereignisse`),
+    columns: { at: 'Wann', actor: 'Wer', action: 'Was passiert ist', object: 'Objekt' },
+  },
   my: {
     title: 'Meine Aktivität',
     subtitle: 'Was du getan hast, in jeder Organisation, der du angehörst.',

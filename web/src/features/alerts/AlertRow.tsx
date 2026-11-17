@@ -1,15 +1,10 @@
 import { useT } from '../../i18n/useT.ts';
-import { useFormat } from '../../i18n/format.ts';
 import { Button } from '../../ui/button.tsx';
-import { Pill, type Tone } from '../../ui/badge.tsx';
-import { closeReasonLabel, detailText, isAckCovering, muteLabel, subjectLabel, type AlertRowAlert } from './alertRow.ts';
+import { AlertAckCell, AlertHostCell, AlertMuteCell, AlertOpenCell, AlertPeakCell, AlertTrackedCell } from './AlertCells.tsx';
+import { isAckCovering, type AlertRowAlert } from './alertRow.ts';
 
-/** The grid this row renders into — exported so AlertsPage's own
- * GridHeader lines up with it exactly, the same pairing FleetPage's own
- * COLUMNS constant gives FleetRow. */
+/** The grid this row renders into. */
 export const ALERTS_COLUMNS = '70px minmax(0, 1.2fr) 70px 90px minmax(0, 1.3fr) minmax(0, 1.1fr) 160px';
-
-const SEVERITY_TONE: Record<string, Tone> = { warn: 'warn', crit: 'crit', unknown: 'unknown' };
 
 export interface AlertRowProps {
   alert: AlertRowAlert;
@@ -63,6 +58,10 @@ export interface AlertRowProps {
  * unacknowledged with a note that it was overtaken rather than silently
  * dropping back to "no one has looked at this".
  *
+ * The cells are AlertCells.tsx's, shared with the Alerts page's list
+ * columns (alertColumns.tsx), so the host card and the list read an alert
+ * the same way.
+ *
  * Presentational only — no data fetching of its own (CLAUDE.md's own
  * layering), which is also why every action is a callback rather than a
  * mutation hook: the caller (AlertsPage) owns the dialogs and the API
@@ -71,57 +70,17 @@ export interface AlertRowProps {
  */
 export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowledge, onSnooze, onUnsnooze }: AlertRowProps) {
   const t = useT();
-  const fmt = useFormat();
   const open = alert.closedAt === null;
   const covering = isAckCovering(alert);
-  const overtaken = alert.ackAt !== null && !covering;
-  const mute = muteLabel(alert, t, fmt);
-  const detail = detailText(alert.detail, t);
 
   return (
-    <div className="grid items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0" style={{ gridTemplateColumns: ALERTS_COLUMNS }}>
-      <span data-testid="alert-open">
-        <Pill tone={open ? 'accent' : 'unknown'}>{open ? t.alerts.row.open : t.alerts.row.closed(closeReasonLabel(alert.closedReason, t))}</Pill>
-      </span>
-      <span className="flex min-w-0 flex-col" title={alert.hostId} data-testid="alert-host">
-        <span className="truncate text-[13px] font-medium">{alert.hostName}</span>
-        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert, t, fmt)}</span>
-        {/* Backlog 3.13b: why it fired, under what it is about. */}
-        {detail && (
-          <span data-testid="alert-detail" className="truncate text-[11px] text-foreground" title={detail}>
-            {detail}
-          </span>
-        )}
-      </span>
-      <span data-testid="alert-peak">
-        <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{t.alerts.severity[alert.peakSeverity]}</Pill>
-      </span>
-      <span data-testid="alert-current" className="flex items-center gap-1.5">
-        <Pill tone={SEVERITY_TONE[alert.severity] ?? 'unknown'}>{t.alerts.severity[alert.severity]}</Pill>
-        {alert.wasFlapping && (
-          <span
-            data-testid="alert-flapping"
-            title={open ? t.alerts.row.flappingTitle : t.alerts.row.flappedTitle}
-            className="text-[10px] font-semibold text-[var(--px-warn)]"
-          >
-            {open ? t.alerts.row.flapping : t.alerts.row.flapped}
-          </span>
-        )}
-      </span>
-      <span data-testid="alert-ack" className="flex min-w-0 flex-col">
-        <span className="truncate text-[13px]">{covering ? t.alerts.row.acknowledged : t.alerts.row.unacknowledged}</span>
-        {overtaken && (
-          <span className="truncate text-[11px] text-muted-foreground">{t.alerts.row.overtaken}</span>
-        )}
-        {covering && alert.ackNote && <span className="truncate text-[11px] text-muted-foreground">{alert.ackNote}</span>}
-      </span>
-      {mute ? (
-        <span data-testid="alert-mute" className="truncate text-[13px] text-muted-foreground">
-          {mute}
-        </span>
-      ) : (
-        <span />
-      )}
+    <div className="grid items-center gap-3 border-b border-border px-4 py-2.5 text-[13px] last:border-b-0" style={{ gridTemplateColumns: ALERTS_COLUMNS }}>
+      <AlertOpenCell alert={alert} />
+      <AlertHostCell alert={alert} />
+      <AlertPeakCell alert={alert} />
+      <AlertTrackedCell alert={alert} />
+      <AlertAckCell alert={alert} />
+      <AlertMuteCell alert={alert} />
       <span className="flex justify-end gap-1">
         {canWrite && open && (
           <>

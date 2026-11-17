@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { ServerPageQuery } from './paging.ts';
 
@@ -8,40 +8,35 @@ export interface ActivityFilter {
   since?: string;
 }
 
-/** Events fetched per page; the API defaults to 20 and clamps at 100
- * (internal/audit MaxListLimit). */
-export const ACTIVITY_PAGE_SIZE = 50;
-
 /**
- * useOrgActivity is the paginated activity feed, following the API's
- * `next_cursor` (an empty string on the last page) through
- * `fetchNextPage` — the same shape as useHosts.ts's useHosts, for the
- * same reason: a single cursor-less request silently ended the feed at
- * the server's default page size. The cursor is managed by the infinite
- * query itself (it is no longer part of the filter), and the filter is in
- * the query key, so changing it starts over from the first page.
+ * useOrgActivityPage is the organization's activity feed, one numbered page
+ * per request (the API's page mode, which also answers the total). The
+ * previous page stays on screen while the next one loads. `enabled` waits
+ * for the list's preferences (useListView's `ready`), so the first request
+ * already has the person's page size.
  */
-export function useOrgActivity(org: string, filter: ActivityFilter = {}) {
-  return useInfiniteQuery({
-    queryKey: ['activity', org, filter],
-    initialPageParam: '',
-    queryFn: ({ pageParam }) =>
+export function useOrgActivityPage(org: string, filter: ActivityFilter, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['activity', org, 'page', filter, page],
+    queryFn: () =>
       unwrap(
         api.GET('/api/v1/orgs/{org}/activity', {
           params: {
             path: { org },
             query: {
-              actor: filter.actor ?? '',
-              object_type: filter.objectType ?? '',
-              since: filter.since ?? '',
-              cursor: pageParam || undefined,
-              limit: ACTIVITY_PAGE_SIZE,
+              actor: filter.actor || undefined,
+              object_type: filter.objectType || undefined,
+              since: filter.since || undefined,
+              page: page.page,
+              per_page: page.per_page,
+              sort: page.sort as 'at' | undefined,
+              order: page.order,
             },
           },
         }),
       ),
-    getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
-    enabled: !!org,
+    placeholderData: keepPreviousData,
+    enabled: !!org && (opts.enabled ?? true),
   });
 }
 
