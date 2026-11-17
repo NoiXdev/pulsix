@@ -30,15 +30,11 @@ describe('RunRequestsPage', () => {
     });
     renderList();
 
-    expect((await screen.findAllByText('Roll out nginx')).length).toBeGreaterThan(0);
-    const rows = screen.getAllByRole('link');
-    expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining('Roll out nginx'),
-      expect.stringContaining('Retry the failed hosts'),
-      expect.stringContaining('Nobody looked'),
-      expect.stringContaining('Old one'),
-    ]);
+    await screen.findByRole('link', { name: 'Roll out nginx' });
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-list-row]'));
+    expect(rows.map((r) => r.querySelector('a')?.textContent)).toEqual(['Roll out nginx', 'Retry the failed hosts', 'Nobody looked', 'Old one']);
     expect(within(rows[0]).getByText('deploy-nginx')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('pending')).toBeInTheDocument();
     expect(within(rows[0]).getByText('expires in 30 minutes')).toBeInTheDocument();
     // A template the list does not know is named by a piece of its id.
     expect(within(rows[1]).getByText('tpl9')).toBeInTheDocument();

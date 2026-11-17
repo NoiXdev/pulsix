@@ -13,6 +13,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { workerServiceAvailable } from './worker.ts';
 import { pickOption } from './pickOption.ts';
+import { chooseRowAction } from './rowMenu.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -73,7 +74,7 @@ test('a run starts its follow-up and the two runs link to each other', async ({ 
   await createTemplate(page, 'chain-a', 'chain-b');
 
   // A template with follow-ups asks first; they come preselected.
-  await page.getByRole('button', { name: 'Run chain-a' }).click();
+  await chooseRowAction(page, 'chain-a', 'Run');
   const run = page.getByRole('dialog', { name: 'Run chain-a' });
   await expect(run.getByRole('list', { name: 'Chosen follow-ups' }).getByText('chain-b')).toBeVisible();
   await run.getByRole('button', { name: 'Run', exact: true }).click();

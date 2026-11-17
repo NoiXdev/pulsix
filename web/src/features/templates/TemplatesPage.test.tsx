@@ -8,6 +8,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { chooseRowAction } from '../../test/wholeList.ts';
 import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { settled } from '../../test/settled.ts';
 
@@ -184,7 +185,7 @@ describe('TemplatesPage', () => {
       'POST /api/v1/orgs/acme/job-templates/t1/run': { jobs: [{ id: 'job-9', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg1', trigger: 'manual', created_at: '' }] },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Run deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Run');
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
@@ -205,7 +206,7 @@ describe('TemplatesPage', () => {
       'POST /api/v1/orgs/acme/job-templates/t2/run': { jobs: [{ id: 'job-8', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg2', trigger: 'manual', created_at: '' }] },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Run deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Run');
     const dialog = await screen.findByRole('dialog', { name: 'Run deploy-site' });
     expect(posted).toBe('none');
     await within(dialog).findByText('patch-all');
@@ -234,7 +235,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await acceptConfirm(user);
@@ -256,7 +257,7 @@ describe('TemplatesPage', () => {
         new Response(JSON.stringify({ detail: 'template still referenced' }), { status: 409 }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await acceptConfirm(user);
@@ -282,7 +283,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await declineConfirm(user);
@@ -326,7 +327,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     expect(within(dialog).queryByRole('table', { name: 'Fields' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -364,7 +365,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.type(within(dialog).getByLabelText('Limit pattern'), 'web*');
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -404,7 +405,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.type(within(dialog).getByLabelText('Name'), '-2');
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -444,7 +445,7 @@ describe('TemplatesPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.type(within(dialog).getByLabelText('Limit pattern'), 'web');
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -472,7 +473,7 @@ describe('TemplatesPage', () => {
     expect(await screen.findByText('2 not sent to runs')).toBeInTheDocument();
   });
 
-  it("links a template's variables page from its row and its dialog, with the review badges", async () => {
+  it("opens a template's variables page from its row menu and links it from its dialog, with the review badges", async () => {
     const user = userEvent.setup();
     const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0, not_sent: [] } });
     mockApi({
@@ -488,10 +489,12 @@ describe('TemplatesPage', () => {
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
     expect(screen.queryByText(/required/)).not.toBeInTheDocument();
     expect(screen.queryByText(/not sent to runs/)).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Variables of deploy-site' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
-    await user.click(screen.getByRole('button', { name: 'deploy-site' }));
+    await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     expect(within(dialog).getByRole('link', { name: 'Variables' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await chooseRowAction(user, 'deploy-site', 'Variables');
+    expect(await screen.findByText('VARIABLES')).toBeInTheDocument();
   });
 
   // v0.2e Task 5: a template's own labelled vault password set, added on
@@ -600,7 +603,7 @@ describe('TemplatesPage', () => {
         },
       });
       renderPage();
-      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      await chooseRowAction(user, 'deploy-site', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
       await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
       expect(put).toMatchObject({ vault_identities: [{ label: 'production', credential_id: 'c3' }] });
@@ -636,7 +639,7 @@ describe('TemplatesPage', () => {
       // matching playbook yet) renders as its own label, not an empty cell.
       expect(screen.getByText('not synced yet')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: 'deploy-site' }));
+      await chooseRowAction(user, 'deploy-site', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
 
       // The marker repeats inside the dialog — its own element, not only
@@ -694,7 +697,7 @@ describe('TemplatesPage', () => {
       });
       renderPage();
 
-      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      await chooseRowAction(user, 'deploy-site', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
 
       const saveButton = within(dialog).getByRole('button', { name: 'Save template' });
@@ -723,7 +726,7 @@ describe('TemplatesPage', () => {
 
       expect(screen.queryByText('Installation-managed')).not.toBeInTheDocument();
 
-      await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+      await chooseRowAction(user, 'deploy-site', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
       expect(within(dialog).getByLabelText('Name')).not.toBeDisabled();
       expect(within(dialog).getByLabelText('Playbook')).not.toBeDisabled();

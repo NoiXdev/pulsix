@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ToastProvider } from '../../ui/toast.tsx';
-import { I18nProvider } from '../../i18n/I18nProvider.tsx';
+import userEvent from '@testing-library/user-event';
+import { screen } from '@testing-library/react';
+import { renderListPage } from '../../test/renderListPage.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
 
@@ -13,23 +11,7 @@ const template = (id: string, name: string, hostIds: string[]) => ({
 });
 
 function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rootRoute = createRootRoute();
-  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
-  const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute])]),
-    history: createMemoryHistory({ initialEntries: ['/o/acme/templates'] }),
-  });
-  return render(
-    <QueryClientProvider client={qc}>
-      <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
-      </I18nProvider>
-    </QueryClientProvider>,
-  );
+  return renderListPage({ path: '/templates', component: TemplatesPage, initial: '/o/acme/templates', locale: 'de' });
 }
 
 describe('TemplatesPage in German', () => {
@@ -44,9 +26,9 @@ describe('TemplatesPage in German', () => {
     renderPage();
 
     expect(await screen.findByText('deploy-site')).toBeInTheDocument();
-    const run = screen.getByRole('button', { name: 'deploy-site ausführen' });
-    expect(run).toHaveTextContent(/^Ausführen$/);
-    expect(screen.getAllByText('Ausführen')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Ausführen' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Aktionen für deploy-site' }));
+    expect(await screen.findByRole('menuitem', { name: 'Ausführen' })).toBeInTheDocument();
   });
 
   it('writes the page and its counts in German, with the singular for one', async () => {

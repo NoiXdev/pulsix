@@ -19,6 +19,12 @@ const LISTS = {
   users: ['email', 'name', 'state', 'orgs', 'last_sign_in'],
   activity: ['at', 'actor', 'action', 'object'],
   'my-activity': ['at', 'organization', 'action', 'object'],
+  repos: ['name', 'url', 'branch', 'subpath', 'credential', 'last_sync'],
+  playbooks: ['name', 'source', 'repository', 'updated'],
+  templates: ['name', 'playbook', 'scope', 'credential'],
+  schedules: ['schedule', 'status', 'template', 'cron', 'next', 'notify', 'last'],
+  'run-requests': ['reason', 'status', 'template', 'kind', 'requested'],
+  'host-runs': ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

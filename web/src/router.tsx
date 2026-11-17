@@ -233,14 +233,30 @@ const groupDetailRoute = createRoute({
   component: GroupDetailPage,
 });
 
-const reposRoute = createRoute({ getParentRoute: () => orgRoute, path: '/repos', component: ReposPage });
-const playbooksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks', component: PlaybooksPage });
-const templatesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
+const reposRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/repos',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: ReposPage,
+});
+const playbooksRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/playbooks',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: PlaybooksPage,
+});
+const templatesRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/templates',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: TemplatesPage,
+});
 const templateVariablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: TemplateVariablesPage });
 const schedulesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/schedules',
   validateSearch: (search: Record<string, unknown>) => ({
+    ...validateListSearch(search),
     id: typeof search.id === 'string' ? search.id : undefined,
     template: typeof search.template === 'string' ? search.template : undefined,
   }),
@@ -263,7 +279,12 @@ const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/run
 // Run requests (spec 2026-11-16): the runs an assistant asked for, and the
 // page where a person approves or rejects one. The static segment wins over
 // /runs/$id, so no run id is ever read as "requests".
-const runRequestsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests', component: RunRequestsPage });
+const runRequestsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/runs/requests',
+  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  component: RunRequestsPage,
+});
 const runRequestDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests/$id', component: RunRequestDetailPage });
 const workersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/workers', component: WorkersPage });
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents', component: AgentsPage });

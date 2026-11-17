@@ -1,8 +1,7 @@
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Clock, Pause } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -12,18 +11,18 @@ import { usePauseAllSchedules, useSchedules } from '../../api/hooks/useSchedules
 import { may } from '../../lib/roles.ts';
 import { ScheduleCalendar } from '../calendar/ScheduleCalendar.tsx';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
-import { OUTCOME_TONE, outcomeLabel } from './outcome.ts';
-import { CATEGORY_TONE, type Category } from './notifyCategory.ts';
+import { scheduleColumns } from './scheduleColumns.tsx';
+import { useScheduleActions } from './useScheduleActions.ts';
+import { useListView } from '../lists/useListView.ts';
 import { useT } from '../../i18n/useT.ts';
-import { relative } from './simple.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS = '90px minmax(0, 1.2fr) minmax(0, 1fr) 90px 150px 90px';
 
 /** SchedulesPage is the Scheduler artboard (spec 2026-09-18 §2): every
  * schedule of the organization with status, template, timetable, next run
  * and last result; "Pause all"; "New schedule"; the detail panel for the
- * selected one (?id=), optionally filtered to one template (?template=). */
+ * selected one (?id=), optionally filtered to one template (?template=).
+ * The list (id `schedules`) is one request, sorted and paged in the browser;
+ * Pause or Resume, Edit and Delete are the row menu's. */
 export function SchedulesPage() {
   const t = useT();
   const m = t.schedules;
@@ -39,15 +38,25 @@ export function SchedulesPage() {
   const templates = useTemplates(org);
   const pauseAll = usePauseAllSchedules(org);
 
+  const select = (id?: string) => void navigate({ to: '/o/$org/schedules', params: { org }, search: (prev) => ({ ...prev, id }) });
+  const rowActions = useScheduleActions(org, {
+    canWrite,
+    edit: (id) => select(id),
+    deleted: (id) => {
+      if (search.id === id) select(undefined);
+    },
+  });
+  const templateList = templates.data?.templates ?? [];
+  const templateName = (id: string) => templateList.find((tpl) => tpl.id === id)?.name ?? id.slice(0, 8);
+  const now = new Date();
+  const columns = scheduleColumns({ t, templateName, now });
+  const view = useListView('schedules', columns, { mode: 'client', resetKey: search.template ?? '', rowKey: (s) => s.id });
+
   const guard = useQueryGuard(schedules);
   if (guard) return guard;
   if (!schedules.data) return <QueryLoading />;
   const list = schedules.data.schedules ?? [];
-  const templateList = templates.data?.templates ?? [];
-  const templateName = (id: string) => templateList.find((t) => t.id === id)?.name ?? id.slice(0, 8);
-  const now = new Date();
-
-  const select = (id?: string) => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id, template: search.template } });
+  const { rows, total } = view.view(view.ready ? list : undefined);
 
   async function onPauseAll() {
     if (!(await ask({ message: m.pauseAllConfirm, confirmLabel: m.pauseAll }))) return;
@@ -82,53 +91,23 @@ export function SchedulesPage() {
       {search.template && (
         <div className="flex items-center gap-2 text-xs">
           <span>{m.template(templateName(search.template))}</span>
-          <button type="button" className="text-primary" onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: undefined, template: undefined } })}>
+          <button type="button" className="text-primary" onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: (prev) => ({ ...prev, id: undefined, template: undefined, page: undefined }) })}>
             {m.showAll}
           </button>
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <Card>
-          <GridHeader columns={COLUMNS}>
-            <span>{m.columns.status}</span>
-            <span>{m.columns.schedule}</span>
-            <span>{m.columns.cron}</span>
-            <span>{m.columns.next}</span>
-            <span>{m.columns.notify}</span>
-            <span>{m.columns.last}</span>
-          </GridHeader>
-          {list.map((s) => (
-            <div key={s.id} data-row className={s.paused ? 'opacity-55' : undefined}>
-              <GridRow columns={COLUMNS}>
-                <span>{s.paused ? <Pill tone="unknown">{m.paused}</Pill> : <Pill tone="ok">{m.active}</Pill>}</span>
-                <span className="flex min-w-0 flex-col">
-                  <button type="button" className="truncate text-left text-[13px] font-medium hover:text-primary" onClick={() => select(s.id)}>
-                    {s.name}
-                  </button>
-                  <span className="truncate font-mono text-[11px] text-muted-foreground">{templateName(s.template_id)}</span>
-                </span>
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate font-mono text-xs">{s.cron}</span>
-                  {s.description && <span className="truncate text-[11px] text-muted-foreground">{s.description}</span>}
-                </span>
-                <span className="text-xs text-muted-foreground">{s.paused ? '—' : relative(s.next_run_at, now, t)}</span>
-                <span className="flex flex-wrap gap-1">
-                  {(s.notify_on ?? []).length === 0 ? (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  ) : (
-                    (s.notify_on as Category[]).map((c) => (
-                      <span key={c} title={m.categoryLabel[c]}>
-                        <Pill tone={CATEGORY_TONE[c]}>{m.category[c]}</Pill>
-                      </span>
-                    ))
-                  )}
-                </span>
-                <span>{s.last_run ? <Pill tone={OUTCOME_TONE[s.last_run.outcome] ?? 'unknown'}>{outcomeLabel(s.last_run.outcome, t)}</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
-              </GridRow>
-            </div>
-          ))}
-          {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{m.empty}</p>}
-        </Card>
+        <DataList
+          label={m.label}
+          columns={columns}
+          rows={rows}
+          rowKey={(sc) => sc.id}
+          rowLink={(sc) => ({ to: '/o/$org/schedules', params: { org }, search: { sort: view.sort?.key, order: view.sort?.order, page: view.page > 1 ? view.page : undefined, template: search.template, id: sc.id }, label: sc.name })}
+          rowActions={rowActions}
+          loading={!view.ready}
+          empty={m.empty}
+          {...view.listProps(total, m.count)}
+        />
         <div className="lg:col-start-1">
           <ScheduleCalendar org={org} />
         </div>

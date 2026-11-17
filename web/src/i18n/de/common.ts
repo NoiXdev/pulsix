@@ -13,6 +13,7 @@ export const deCommon: Messages['common'] = {
   continue: 'Weiter',
   remove: 'Entfernen',
   delete: 'Löschen',
+  edit: 'Bearbeiten',
   loading: 'Wird geladen…',
   never: 'nie',
 };

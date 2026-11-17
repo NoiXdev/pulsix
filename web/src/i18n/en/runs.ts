@@ -174,6 +174,8 @@ export const enRuns = {
     title: 'Run requests',
     summary: 'Runs an assistant asked for. Nothing runs until someone with the right to run jobs approves it.',
     pendingCount: (n: number) => `${n} pending`,
+    label: 'Run requests',
+    count: (n: number) => (n === 1 ? '1 request' : `${n} requests`),
     open: 'Run requests',
     openCount: (n: number) => `Run requests (${n} pending)`,
     columns: {

@@ -8,6 +8,8 @@ export const dePlaybooks: Messages['playbooks'] = {
         ? '1 Playbook · eine Job-Vorlage führt eines davon gegen ihren Geltungsbereich aus'
         : `${n} Playbooks · eine Job-Vorlage führt eines davon gegen ihren Geltungsbereich aus`,
     add: 'Neues Editor-Playbook',
+    label: 'Playbooks',
+    count: (n: number) => (n === 1 ? '1 Playbook' : `${n} Playbooks`),
     columns: {
       source: 'Quelle',
       summaryPath: 'Zusammenfassung / Pfad',

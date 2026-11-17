@@ -25,6 +25,7 @@ import { SSH_FIXTURE_HOST, BASTION_FIXTURE_HOST, GIT_FIXTURE_URL, FIXTURE_REPO_B
 import { workerServiceAvailable } from './worker.ts';
 import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
+import { chooseRowAction } from './rowMenu.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -159,7 +160,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await dialog.getByRole('button', { name: 'Create repository' }).click();
   await toast(page, 'Repository ansible-e2e-repo created');
 
-  await page.getByRole('button', { name: 'Sync ansible-e2e-repo' }).click();
+  await chooseRowAction(page, 'ansible-e2e-repo', 'Sync');
   await toast(page, 'Sync of ansible-e2e-repo started');
   // The sync button lands on the sync's own run page; the repository list
   // shows the outcome. "never synced" contains "synced", so the dated pill
@@ -190,7 +191,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await setVariable(page, 'ansible-e2e-hello', 'greeting', GREETING);
 
   // --- The run: live log, per-host ok, stats ---------------------------
-  await page.getByRole('button', { name: 'Run ansible-e2e-hello' }).click();
+  await chooseRowAction(page, 'ansible-e2e-hello', 'Run');
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
   await expect(page.getByRole('table', { name: 'Per-host results' })).toBeVisible({ timeout: 60_000 });
   // The fixture's final task lands ok with the greeting the extra var
@@ -220,7 +221,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await toast(page, 'Template ansible-e2e-fail created');
   await setVariable(page, 'ansible-e2e-fail', 'should_fail', 'true');
 
-  await page.getByRole('button', { name: 'Run ansible-e2e-fail' }).click();
+  await chooseRowAction(page, 'ansible-e2e-fail', 'Run');
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
   await expectRunStatus(page, 'failed', 60_000);
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('failed', { exact: true })).toBeVisible();
@@ -233,7 +234,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   // operator would use, then the run view's retry action re-runs only
   // what failed.
   await page.goto(`${base}/templates`);
-  await page.getByRole('link', { name: 'Variables of ansible-e2e-fail' }).click();
+  await chooseRowAction(page, 'ansible-e2e-fail', 'Variables');
   await page.getByRole('region', { name: 'Values' }).getByLabel('should_fail').fill('false');
   await page.getByRole('button', { name: 'Save variables' }).click();
   await toast(page, 'Variables saved');
@@ -250,7 +251,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
  * adds a string field `name`, fills its value and saves, then returns to
  * the list. */
 async function setVariable(page: Page, template: string, name: string, value: string) {
-  await page.getByRole('link', { name: `Variables of ${template}` }).click();
+  await chooseRowAction(page, template, 'Variables');
   await page.getByRole('button', { name: 'Add field' }).click();
   // The dialog is titled after the field's name as it is typed ("Field
   // field_1" until the rename), so it is matched by its prefix.

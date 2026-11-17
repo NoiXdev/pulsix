@@ -16,6 +16,7 @@ export const enCommon = {
   continue: 'Continue',
   remove: 'Remove',
   delete: 'Delete',
+  edit: 'Edit',
   loading: 'Loading…',
   never: 'never',
 };

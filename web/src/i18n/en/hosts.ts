@@ -189,6 +189,7 @@ export const enHosts = {
     },
     runs: {
       all: 'All runs for this host',
+      label: 'Runs of this host',
       none: 'No runs have targeted this host yet.',
       readFailed: 'Could not read this host’s runs.',
     },

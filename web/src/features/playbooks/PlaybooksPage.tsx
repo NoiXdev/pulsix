@@ -1,21 +1,19 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { FilePlus2 } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { DataList, type RowAction } from '../../ui/data-list/index.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useRepos } from '../../api/hooks/useRepos.ts';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { may } from '../../lib/roles.ts';
-import { PlaybookEditor } from './PlaybookEditor.tsx';
-import type { Playbook } from '../../api/types.ts';
-import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
-
-const COLUMNS = 'minmax(0, 0.6fr) minmax(0, 1fr) 130px 90px 90px 130px';
+import { useListView } from '../lists/useListView.ts';
+import { PlaybookEditor } from './PlaybookEditor.tsx';
+import { playbookColumns, playbookLabel } from './playbookColumns.tsx';
+import type { Playbook } from '../../api/types.ts';
 
 /** PlaybooksPage lists the playbooks jobs run against (spec §7, backlog
  * 2.9): repo-sourced ones (a path inside a registered repository, arriving
@@ -31,11 +29,18 @@ export function PlaybooksPage() {
 
   const [dialog, setDialog] = useState<'new' | Playbook | null>(null);
 
+  const columns = playbookColumns({ t, repoName: (id) => (repos.data?.repos ?? []).find((r) => r.id === id)?.name });
+  const view = useListView('playbooks', columns, { mode: 'client', rowKey: (p) => p.id });
+
   const guard = useQueryGuard(playbooks);
   if (guard) return guard;
   if (!playbooks.data) return <QueryLoading />;
   const list = playbooks.data.playbooks ?? [];
-  const repoName = (id?: string) => (repos.data?.repos ?? []).find((r) => r.id === id)?.name;
+  const { rows, total } = view.view(view.ready ? list : undefined);
+
+  // Repo playbooks have no editor: they are edited in their repository.
+  const rowActions = (p: Playbook): RowAction[] =>
+    canWrite && p.source === 'editor' ? [{ id: 'edit', label: t.common.edit, onSelect: () => setDialog(p) }] : [];
 
   return (
     <>
@@ -52,33 +57,17 @@ export function PlaybooksPage() {
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.playbooks.list.columns.source}</span>
-          <span>{t.playbooks.list.columns.summaryPath}</span>
-          <span>{t.playbooks.list.columns.repository}</span>
-          <span>{t.playbooks.list.columns.updated}</span>
-        </GridHeader>
-        {list.map((p) => (
-          <GridRow key={p.id} columns={COLUMNS}>
-            <span>
-              {p.source === 'repo' ? <Pill tone="accent">{t.playbooks.list.sourceRepo}</Pill> : <Pill tone="unknown">{t.playbooks.list.sourceEditor}</Pill>}
-            </span>
-            <span className="truncate font-mono text-[13px]">
-              {canWrite && p.source === 'editor' ? (
-                <button type="button" className="truncate text-left hover:text-primary" onClick={() => setDialog(p)}>
-                  {label(p, t)}
-                </button>
-              ) : (
-                label(p, t)
-              )}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">{p.repo_id ? (repoName(p.repo_id) ?? p.repo_id.slice(0, 8)) : '—'}</span>
-            <span className="text-xs text-muted-foreground">{p.updated_at.slice(0, 10)}</span>
-          </GridRow>
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.playbooks.list.empty}</p>}
-      </Card>
+      <DataList
+        label={t.playbooks.list.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(p) => p.id}
+        rowLabel={(p) => playbookLabel(p, t)}
+        rowActions={rowActions}
+        loading={!view.ready}
+        empty={t.playbooks.list.empty}
+        {...view.listProps(total, t.playbooks.list.count)}
+      />
       {dialog === 'new' ? (
         <PlaybookEditor org={org} onClose={() => setDialog(null)} />
       ) : dialog && dialog.source === 'editor' ? (
@@ -90,8 +79,4 @@ export function PlaybooksPage() {
       ) : null}
     </>
   );
-}
-
-function label(p: Playbook, t: Messages): string {
-  return p.source === 'repo' ? (p.path ?? '') : p.summary || t.playbooks.list.unnamed;
 }

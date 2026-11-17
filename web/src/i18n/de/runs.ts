@@ -169,6 +169,8 @@ export const deRuns: Messages['runs'] = {
     title: 'Laufanfragen',
     summary: 'Läufe, die ein Assistent angefragt hat. Nichts läuft, bevor jemand mit dem Recht, Jobs auszuführen, es freigibt.',
     pendingCount: (n: number) => `${n} offen`,
+    label: 'Laufanfragen',
+    count: (n: number) => (n === 1 ? '1 Anfrage' : `${n} Anfragen`),
     open: 'Laufanfragen',
     openCount: (n: number) => `Laufanfragen (${n} offen)`,
     columns: {

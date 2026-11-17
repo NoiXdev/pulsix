@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { PlaybooksPage } from './PlaybooksPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { chooseRowAction } from '../../test/wholeList.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
@@ -131,7 +132,7 @@ describe('PlaybooksPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Install nginx' }));
+    await chooseRowAction(user, 'Install nginx', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'Install nginx' });
     const yaml = within(dialog).getByLabelText('Playbook YAML') as HTMLTextAreaElement;
     expect(yaml.value).toContain('hosts: all');
@@ -165,7 +166,7 @@ describe('PlaybooksPage', () => {
         new Response(JSON.stringify({ status: 409, detail: 'the playbook is still referenced by a job template' }), { status: 409, headers: { 'Content-Type': 'application/json' } }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Install nginx' }));
+    await chooseRowAction(user, 'Install nginx', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'Install nginx' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await acceptConfirm(user);

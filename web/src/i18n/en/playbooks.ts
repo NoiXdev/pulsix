@@ -4,6 +4,8 @@ export const enPlaybooks = {
     title: 'Playbooks',
     summary: (n: number) => `${n} playbooks · a job template runs one of these against its scope`,
     add: 'New editor playbook',
+    label: 'Playbooks',
+    count: (n: number) => (n === 1 ? '1 playbook' : `${n} playbooks`),
     columns: {
       source: 'Source',
       summaryPath: 'Summary / path',

@@ -16,6 +16,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 import { expectNoClippedCards } from './layout.ts';
+import { chooseRowAction } from './rowMenu.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -65,7 +66,7 @@ test('a template takes its variables from the playbook, and a group keeps manual
   await toast(page, `Template ${TEMPLATE} created`);
 
   // --- Link: Manual opens the preview with both fields added ------------
-  await page.getByRole('link', { name: `Variables of ${TEMPLATE}` }).click();
+  await chooseRowAction(page, TEMPLATE, 'Variables');
   await expect(page.getByRole('heading', { name: `Variables of ${TEMPLATE}` })).toBeVisible();
   // Linking goes through the preview: the radio stays on Off until the
   // apply links the variables.

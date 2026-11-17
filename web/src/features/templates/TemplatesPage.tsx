@@ -1,37 +1,28 @@
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { Braces, CalendarClock, ListPlus, Play, Webhook } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { useParams } from '@tanstack/react-router';
+import { ListPlus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
-import { buttonClass } from '../../ui/buttonStyles.ts';
-import { Pill } from '../../ui/badge.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
-import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
+import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import { may } from '../../lib/roles.ts';
-import { RunWithFollowUpsDialog } from './RunWithFollowUpsDialog.tsx';
-import { TemplateDialog } from './TemplateDialog.tsx';
-import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
-import { ReviewBadges } from './variables/ReviewBadges.tsx';
-import type { Template } from '../../api/types.ts';
-import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
-
-const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 150px';
+import { useListView } from '../lists/useListView.ts';
+import { templateColumns } from './templateColumns.tsx';
+import { useTemplateListActions } from './useTemplateListActions.tsx';
 
 /** TemplatesPage lists the job templates (spec §7, backlog 2.10): a
  * playbook plus scope, limit, extra vars and the default SSH credential —
- * the thing an operator runs, and the run view's own entry point. */
+ * the thing an operator runs, and the run view's own entry point. The list (id
+ * `templates`) is one request, sorted and paged in the browser; Run, Variables,
+ * Triggers, Schedules, Edit and Delete are the row menu's. */
 export function TemplatesPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
-  const navigate = useNavigate();
-  const toast = useToast();
   const orgInfo = useOrg(org);
   const templates = useTemplates(org);
   const playbooks = usePlaybooks(org);
@@ -44,19 +35,10 @@ export function TemplatesPage() {
   // Task 7 fix round).
   const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
   const credentials = useCredentials(org, { enabled: canReadCredentials });
-  const runTemplate = useRunTemplateById(org);
+  const actions = useTemplateListActions(org, { canWrite, canRun, canReadCredentials, canCreateCredential });
 
-  const [dialog, setDialog] = useState<'new' | Template | null>(null);
-  const [triggers, setTriggers] = useState<Template | null>(null);
-  const [runWithFollowUps, setRunWithFollowUps] = useState<Template | null>(null);
-
-  const guard = useQueryGuard(templates);
-  if (guard) return guard;
-  if (!templates.data) return <QueryLoading />;
-  const list = templates.data.templates ?? [];
-  const credentialName = (id?: string) => (credentials.data?.credentials ?? []).find((c) => c.id === id)?.name;
+  const credentialName = (id: string) => (credentials.data?.credentials ?? []).find((c) => c.id === id)?.name;
   const groupName = (id: string) => (groups.data?.groups ?? []).find((g) => g.id === id)?.name ?? id.slice(0, 8);
-
   const playbookLabel = (id: string) => {
     // "" is the unresolved-projection case (toTemplateDTO's own comment,
     // internal/api/template_handlers.go): this organization has not synced
@@ -70,21 +52,14 @@ export function TemplatesPage() {
     return p.source === 'repo' ? t.templates.playbook.repo(p.path ?? '') : p.summary || t.templates.playbook.editor;
   };
 
-  async function opened(tpl: Template, jobs: { id: string }[]) {
-    toast.show(t.templates.list.started(tpl.name));
-    if (jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
-  }
+  const columns = templateColumns({ t, playbookLabel, groupName, credentialName });
+  const view = useListView('templates', columns, { mode: 'client', rowKey: (tpl) => tpl.id });
 
-  async function run(tpl: Template) {
-    // A template with follow-ups asks first, so they can be changed for this run.
-    if ((tpl.follow_ups ?? []).length > 0) return setRunWithFollowUps(tpl);
-    try {
-      const { jobs } = await runTemplate.mutateAsync({ id: tpl.id });
-      await opened(tpl, jobs ?? []);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.templates.list.startFailed, 'destructive');
-    }
-  }
+  const guard = useQueryGuard(templates);
+  if (guard) return guard;
+  if (!templates.data) return <QueryLoading />;
+  const list = templates.data.templates ?? [];
+  const { rows, total } = view.view(view.ready ? list : undefined);
 
   return (
     <>
@@ -96,116 +71,23 @@ export function TemplatesPage() {
           </span>
         </div>
         {canWrite && (
-          <Button variant="primary" onClick={() => setDialog('new')}>
+          <Button variant="primary" onClick={actions.openNew}>
             <ListPlus size={15} /> {t.templates.list.add}
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.templates.list.columns.name}</span>
-          <span>{t.templates.list.columns.playbook}</span>
-          <span>{t.templates.list.columns.scope}</span>
-          <span>{t.templates.list.columns.credential}</span>
-          <span>{t.templates.list.columns.actions}</span>
-        </GridHeader>
-        {list.map((tpl) => (
-          <GridRow key={tpl.id} columns={COLUMNS}>
-            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {canWrite ? (
-                <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(tpl)}>
-                  {tpl.name}
-                </button>
-              ) : (
-                <span className="truncate font-mono text-[13px]">{tpl.name}</span>
-              )}
-              {/* tpl.shared_template_id marks a projection of an installation-
-                  owned definition (spec v0.2f decision 1) — TemplateDialog
-                  disables its name/playbook/limit/extra-vars fields, so the
-                  row needs to say why before the dialog ever opens. */}
-              {tpl.shared_template_id && <Pill tone="accent">{t.templates.list.managed}</Pill>}
-              {/* What a linked template's variables leave for a person
-                  (backlog 7.75); the variables page resolves it. */}
-              <ReviewBadges review={tpl.variables_review} />
-            </span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(tpl.playbook_id)}</span>
-            <span>{scopeChip(tpl, groupName, t)}</span>
-            <span className="truncate text-xs text-muted-foreground">{tpl.credential_id ? (credentialName(tpl.credential_id) ?? tpl.credential_id.slice(0, 8)) : '—'}</span>
-            <span className="flex gap-1">
-              <Link
-                to="/o/$org/templates/$id/variables"
-                params={{ org, id: tpl.id }}
-                aria-label={t.templates.list.variablesLabel(tpl.name)}
-                title={t.templates.list.variables}
-                className={buttonClass('ghost', 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary')}
-              >
-                <Braces size={13} />
-              </Link>
-              <Button type="button" variant="ghost" aria-label={t.templates.list.triggersLabel(tpl.name)} onClick={() => setTriggers(tpl)}>
-                <Webhook size={13} />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                aria-label={t.templates.list.schedulesLabel(tpl.name)}
-                onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: undefined, template: tpl.id } })}
-              >
-                <CalendarClock size={13} />
-              </Button>
-              {canRun && (
-                <Button type="button" aria-label={t.templates.list.runLabel(tpl.name)} disabled={runTemplate.isPending} onClick={() => void run(tpl)}>
-                  <Play size={13} /> {t.templates.list.run}
-                </Button>
-              )}
-            </span>
-          </GridRow>
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.templates.list.empty}</p>}
-      </Card>
-      {runWithFollowUps && (
-        <RunWithFollowUpsDialog
-          org={org}
-          template={runWithFollowUps}
-          onStarted={(jobs) => opened(runWithFollowUps, jobs)}
-          onClose={() => setRunWithFollowUps(null)}
-        />
-      )}
-      {triggers && (
-        <TriggersDialog
-          org={org}
-          target={{ kind: 'template_run', id: triggers.id, name: triggers.name }}
-          canWrite={canWrite}
-          canRun={canRun}
-          onClose={() => setTriggers(null)}
-        />
-      )}
-      {dialog === 'new' ? (
-        <TemplateDialog
-          org={org}
-          canReadCredentials={canReadCredentials}
-          canCreateCredential={canCreateCredential}
-          onClose={() => setDialog(null)}
-        />
-      ) : dialog ? (
-        <TemplateDialog
-          org={org}
-          template={{ id: dialog.id, name: dialog.name }}
-          canReadCredentials={canReadCredentials}
-          canCreateCredential={canCreateCredential}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
+      <DataList
+        label={t.templates.list.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(tpl) => tpl.id}
+        rowLabel={(tpl) => tpl.name}
+        rowActions={actions.rowActions}
+        loading={!view.ready}
+        empty={t.templates.list.empty}
+        {...view.listProps(total, t.templates.list.count)}
+      />
+      {actions.dialogs}
     </>
   );
-}
-
-/** scopeChip names the template's targets: the whole organization, a
- * group, an explicit host selection, or both halves at once. */
-function scopeChip(tpl: Template, groupName: (id: string) => string, t: Messages) {
-  const count = (tpl.scope.host_ids ?? []).length;
-  if (!tpl.scope.group_id && count === 0) return <Pill tone="unknown">{t.templates.scope.whole}</Pill>;
-  const group = tpl.scope.group_id ? groupName(tpl.scope.group_id) : null;
-  if (!group) return <Pill tone="accent">{t.templates.scope.hosts(count)}</Pill>;
-  if (count === 0) return <Pill tone="accent">{group}</Pill>;
-  return <Pill tone="accent">{t.templates.scope.groupAndHosts(group, count)}</Pill>;
 }

@@ -63,7 +63,7 @@ describe('SchedulesPage in German', () => {
 
     expect(await screen.findByRole('heading', { name: 'Zeitpläne' })).toBeInTheDocument();
     expect(screen.getByText('2 Zeitpläne · aktiv: 1')).toBeInTheDocument();
-    const paused = screen.getByText('DB monitor user').closest('[data-row]') as HTMLElement;
+    const paused = screen.getByText('DB monitor user').closest('[role="row"]') as HTMLElement;
     expect(within(paused).getByText('pausiert')).toBeInTheDocument();
 
     const panel = await screen.findByRole('region', { name: 'Zeitplan-Editor' });

@@ -47,19 +47,24 @@ describe('HostRunsSection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('jobs store down');
   });
 
-  it('each recent run is a link row', async () => {
-    mockApi({ 'GET /api/v1/orgs/acme/jobs': { jobs: [job('aaaaaaaa-1111', 'succeeded')], next_cursor: '' } });
+  it('is a teaser on the runs list columns: no pager, no sort buttons, a column can be hidden', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me/preferences': { density: 'standard', page_size: 25, lists: {} },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job('aaaaaaaa-1111', 'succeeded'), job('bbbbbbbb-2222', 'failed', 'adhoc')], next_cursor: '' },
+    });
     renderAt(() => <HostRunsSection org="acme" hostId="h1" />);
 
-    const row = await screen.findByRole('link', { name: 'aaaaaaaa' });
-    expect(row).toHaveAttribute('href', '/o/acme/runs/aaaaaaaa-1111');
-    expect(row).toHaveTextContent('succeeded');
-    expect(row).toHaveTextContent('run · Manual');
-    expect(within(row).queryAllByRole('link')).toEqual([]);
-    expect(within(row).queryAllByRole('button')).toEqual([]);
-    // The status track is as wide as the runs list's and the run group's, so
-    // the longest pill ("cancelling") is not clipped.
-    expect(row.style.gridTemplateColumns.split(' ')[0]).toBe('110px');
+    await screen.findByRole('link', { name: 'aaaaaaaa' });
+    for (const name of ['Run', 'Kind', 'Status', 'Trigger', 'Template', 'Zone', 'Created']) {
+      expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: 'Kind' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Rows per page')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Columns/ }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Columns' })).getByRole('checkbox', { name: 'Zone' }));
+    expect(screen.queryByRole('columnheader', { name: 'Zone' })).not.toBeInTheDocument();
   });
 });

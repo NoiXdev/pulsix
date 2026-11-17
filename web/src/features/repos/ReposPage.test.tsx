@@ -8,6 +8,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ReposPage } from './ReposPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { chooseRowAction, openRowMenu } from '../../test/wholeList.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ORG = { org: { id: 'org-1', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
@@ -260,7 +261,7 @@ describe('ReposPage', () => {
       'POST /api/v1/orgs/acme/repos/r1/sync': { job: { id: 'job-1', zone_id: 'z1', kind: 'sync_repo', status: 'queued', run_group_id: 'g1', trigger: 'manual', created_at: '' } },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Sync infra' }));
+    await chooseRowAction(user, 'infra', 'Sync');
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
@@ -277,7 +278,7 @@ describe('ReposPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    await chooseRowAction(user, 'infra', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     const branch = within(dialog).getByLabelText('Branch');
     await user.clear(branch);
@@ -299,7 +300,7 @@ describe('ReposPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    await chooseRowAction(user, 'infra', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await acceptConfirm(user);
@@ -321,7 +322,7 @@ describe('ReposPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    await chooseRowAction(user, 'infra', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     expect(within(dialog).getByText('SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Unpin key' }));
@@ -338,7 +339,7 @@ describe('ReposPage', () => {
       'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'infra' }));
+    await chooseRowAction(user, 'infra', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     expect(within(dialog).getByText(/not pinned yet/)).toBeInTheDocument();
     expect(within(dialog).queryByRole('button', { name: 'Unpin key' })).not.toBeInTheDocument();
@@ -365,7 +366,7 @@ describe('ReposPage', () => {
 
       expect(await screen.findByText('Installation-managed')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: 'infra' }));
+      await chooseRowAction(user, 'infra', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'infra' });
 
       // The marker repeats inside the dialog — it is its own element, not
@@ -385,6 +386,11 @@ describe('ReposPage', () => {
       expect(within(dialog).getByLabelText('Credential')).not.toBeDisabled();
 
       expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+
+      // The row menu offers no Delete for it either.
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await openRowMenu(user, 'infra');
+      expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Sync', 'Triggers', 'Edit']);
     });
 
     it('keeps every field editable and offers delete for an ordinary, non-projected repository', async () => {
@@ -398,7 +404,7 @@ describe('ReposPage', () => {
 
       expect(screen.queryByText('Installation-managed')).not.toBeInTheDocument();
 
-      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      await chooseRowAction(user, 'infra', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'infra' });
       expect(within(dialog).getByLabelText('Name')).not.toBeDisabled();
       expect(within(dialog).getByLabelText('URL')).not.toBeDisabled();
@@ -517,7 +523,7 @@ describe('ReposPage', () => {
         },
       });
       renderPage();
-      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      await chooseRowAction(user, 'infra', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'infra' });
       const branch = within(dialog).getByLabelText('Branch');
       await user.clear(branch);
@@ -549,7 +555,7 @@ describe('ReposPage', () => {
         },
       });
       renderPage();
-      await user.click(await screen.findByRole('button', { name: 'infra' }));
+      await chooseRowAction(user, 'infra', 'Edit');
       const dialog = await screen.findByRole('dialog', { name: 'infra' });
       expect(within(dialog).queryByLabelText('Vault password')).not.toBeInTheDocument();
 

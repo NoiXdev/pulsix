@@ -180,6 +180,7 @@ export const deHosts: Messages['hosts'] = {
     },
     runs: {
       all: 'Alle Runs für diesen Host',
+      label: 'Runs dieses Hosts',
       none: 'Noch kein Run hat diesen Host als Ziel gehabt.',
       readFailed: 'Die Runs dieses Hosts konnten nicht gelesen werden.',
     },

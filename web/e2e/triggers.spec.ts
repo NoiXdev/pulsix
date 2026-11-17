@@ -22,6 +22,7 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 import { acceptConfirm } from './confirm.ts';
 import { enCommon } from '../src/i18n/en/common.ts';
+import { chooseRowAction } from './rowMenu.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -39,7 +40,7 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   await expect(repoDialog).toHaveCount(0);
 
   // --- Create the trigger ------------------------------------------------
-  await page.getByRole('button', { name: `Triggers of ${REPO}` }).click();
+  await chooseRowAction(page, REPO, 'Triggers');
   const dialog = page.getByRole('dialog', { name: `Triggers · ${REPO}` });
   await expect(dialog.getByText('No incoming webhooks yet.')).toBeVisible();
   await dialog.getByRole('button', { name: 'New trigger' }).click();
@@ -62,7 +63,7 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
 
-  await page.getByRole('button', { name: `Triggers of ${REPO}` }).click();
+  await chooseRowAction(page, REPO, 'Triggers');
   const reopened = page.getByRole('dialog', { name: `Triggers · ${REPO}` });
   await expect(reopened.getByText(TRIGGER)).toBeVisible();
   await expect(reopened.getByText(secret)).toHaveCount(0);
@@ -74,10 +75,8 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   await page.keyboard.press('Escape');
 
   // Leave the organization as it was found: the repository exists only to
-  // carry the trigger, and later specs share this manager. Deleting one
-  // lives inside its own dialog, which the row's name opens.
-  await page.getByRole('button', { name: REPO, exact: true }).click();
-  await page.getByRole('dialog', { name: REPO }).getByRole('button', { name: 'Delete' }).click();
+  // carry the trigger, and later specs share this manager.
+  await chooseRowAction(page, REPO, 'Delete');
   await acceptConfirm(page, enCommon.delete);
-  await expect(page.getByRole('button', { name: `Triggers of ${REPO}` })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `Actions for ${REPO}`, exact: true })).toHaveCount(0);
 });
