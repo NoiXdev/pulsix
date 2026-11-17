@@ -340,6 +340,14 @@ func WithRunRequestClock(now func() time.Time) Option {
 	}
 }
 
+// WithPersonalTokenClock rebuilds the personal token service on the
+// test's clock, so a test can mint a token at a time with nanoseconds.
+func WithPersonalTokenClock(now func() time.Time) Option {
+	return func(s *Server) {
+		s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, s.Deps.Tenancy, now)
+	}
+}
+
 // newRunRequests wires the run request service exactly as app.Build does.
 func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.Service {
 	res := runrequests.NewResolver(runrequests.Sources{
@@ -784,7 +792,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	}
 	s.Deps.RunRequests = newRunRequests(d, s.Deps, time.Now)
 	// Personal tokens (backlog 3.100), wired as app.Build wires them.
-	s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, tenancySvc)
+	s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, tenancySvc, time.Now)
 	s.Queue.SetClaimGuard(s.Deps.RunRequests)
 	for _, opt := range opts {
 		opt(s)

@@ -190,7 +190,7 @@ awk -v module="$module" -v generated="$generated_list" '
 		    pkg == module "/internal/enrolltoken" || pkg == module "/internal/outbound" ||
 		    pkg == module "/internal/maintenance" || pkg == module "/internal/calendar" ||
 		    pkg == module "/internal/checks" || pkg == module "/internal/rules" ||
-		    pkg == module "/internal/items") {
+		    pkg == module "/internal/items" || pkg == module "/internal/personaltokens") {
 			floor = 90
 		}
 

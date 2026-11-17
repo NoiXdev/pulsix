@@ -108,3 +108,30 @@ func TestValid(t *testing.T) {
 		t.Error("Valid(bogus) = true, want false")
 	}
 }
+
+// TestHighest: the most privileged of several roles, for validating a
+// personal token's areas against its highest grant cap (backlog 3.100).
+// An unknown role ranks lowest, as in Lower, so it never wins over a
+// known one; no roles at all is the empty role.
+func TestHighest(t *testing.T) {
+	cases := []struct {
+		name  string
+		roles []tenancy.Role
+		want  tenancy.Role
+	}{
+		{"none", nil, ""},
+		{"one", []tenancy.Role{tenancy.RoleViewer}, tenancy.RoleViewer},
+		{"owner wins", []tenancy.Role{tenancy.RoleViewer, tenancy.RoleOwner, tenancy.RoleAdmin}, tenancy.RoleOwner},
+		{"operator over viewer", []tenancy.Role{tenancy.RoleOperator, tenancy.RoleViewer}, tenancy.RoleOperator},
+		{"unknown loses", []tenancy.Role{tenancy.Role("root"), tenancy.RoleViewer}, tenancy.RoleViewer},
+		{"unknown loses in any order", []tenancy.Role{tenancy.RoleViewer, tenancy.Role("root")}, tenancy.RoleViewer},
+		{"only unknown", []tenancy.Role{tenancy.Role("root")}, tenancy.Role("root")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tenancy.Highest(tc.roles...); got != tc.want {
+				t.Fatalf("Highest(%v) = %q, want %q", tc.roles, got, tc.want)
+			}
+		})
+	}
+}

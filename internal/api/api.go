@@ -65,9 +65,10 @@ type Deps struct {
 	Preferences *preferences.Service
 	Passkeys    *auth.Passkeys
 	Tokens      *auth.Tokens
-	// PersonalTokens answers what a personal token may do in one
-	// organization (backlog 3.100): its grant's cap and the grant's use.
-	PersonalTokens PersonalTokenAccess
+	// PersonalTokens is personal tokens (backlog 3.100): what one may do in
+	// one organization (its grant's cap and the grant's use), the owner's
+	// management of them and an organization's view of their grants.
+	PersonalTokens PersonalTokenService
 	// Enrolment composes confirming a second factor with completing the
 	// session it was pending for, in one transaction (backlog 1.26).
 	Enrolment *auth.Enrolment
@@ -623,6 +624,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
 	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
 	registerPreferencesRoutes(hapi, deps)    // /auth/me/preferences — the user's own appearance settings, session only
+	registerPersonalTokenRoutes(hapi, deps)  // /auth/me/tokens — the user's own personal tokens, session only
 	registerPasswordRoutes(hapi, deps)       // POST /auth/password — the user's own password
 	registerPasswordResetRoutes(hapi, deps)  // /auth/password/{reset-available,forgot,reset} — public
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
@@ -666,6 +668,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMemberRoutes(orgScoped, deps)             // members + invites, all /orgs/{org}/...
 	registerInviteRoutes(orgScoped, deps)             // open invitations: list, revoke
 	registerTokenRoutes(orgScoped, deps)              // /orgs/{org}/tokens...
+	registerPersonalTokenOrgRoutes(orgScoped, deps)   // /orgs/{org}/personal-tokens..., /orgs/{org}/settings/personal-tokens
 	registerAuditRoutes(orgScoped, deps)              // GET /orgs/{org}/activity
 	registerHostRoutes(orgScoped, deps)               // zones + hosts, all /orgs/{org}/...
 	registerTagRoutes(orgScoped, deps)                // host tags + the tag selector, all /orgs/{org}/...

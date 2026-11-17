@@ -25,6 +25,26 @@ type PersonalTokenAccess interface {
 	TouchGrant(ctx context.Context, tokenID, orgID uuid.UUID)
 }
 
+// PersonalTokenService is Deps.PersonalTokens: the read side requireOrg
+// uses, plus the owner's management of their tokens and an organization's
+// view of the grants it holds (Task 17). *personaltokens.Service
+// satisfies it.
+type PersonalTokenService interface {
+	PersonalTokenAccess
+	Create(ctx context.Context, userID uuid.UUID, in personaltokens.NewToken) (plain string, tok personaltokens.Token, err error)
+	List(ctx context.Context, userID uuid.UUID) ([]personaltokens.Token, error)
+	Update(ctx context.Context, userID, id uuid.UUID, ch personaltokens.Change) (before, after personaltokens.Token, changes []personaltokens.GrantChange, err error)
+	Revoke(ctx context.Context, userID, id uuid.UUID) (personaltokens.Token, error)
+	ListForOrg(ctx context.Context, orgID uuid.UUID) ([]personaltokens.OrgEntry, error)
+	RevokeGrant(ctx context.Context, orgID, tokenID, adminID uuid.UUID) (personaltokens.OrgEntry, error)
+	UnblockGrant(ctx context.Context, orgID, tokenID uuid.UUID) (personaltokens.OrgEntry, error)
+	Allowed(ctx context.Context, orgID uuid.UUID) (bool, error)
+	SetAllowed(ctx context.Context, orgID uuid.UUID, on bool) error
+	GrantCount(ctx context.Context, tokenID uuid.UUID) (orgID uuid.UUID, n int, err error)
+}
+
+var _ PersonalTokenService = (*personaltokens.Service)(nil)
+
 // The refusals of a token for an organization.
 const (
 	tokenOtherOrg       = "token is scoped to another organization"

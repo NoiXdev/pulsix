@@ -171,6 +171,20 @@ func setAuditObject(ctx context.Context, objectID, summary string) {
 // own fields are about to be read by a middleware pass that will throw this
 // event's summary away regardless (same gate, same reason).
 func recordAuditFailure(ctx context.Context, deps Deps, orgID, userID uuid.UUID, action, objectType, objectID, summary string) {
+	recordOrgEvent(ctx, deps, orgID, userID, action, objectType, objectID, summary)
+}
+
+// recordOrgEvent records one event in orgID's feed directly through
+// deps.Audit, inside that organization's database scope, attributed to
+// userID and to the request's credential. It exists for the events a
+// request causes in an organization other than its own route's — a
+// personal token's owner adding, changing or removing a grant from their
+// account page (backlog 3.100, spec rule 12) has no organization in its
+// path, yet each organization's admins must see the change in their feed —
+// and for recordAuditFailure. A recording failure is logged, never
+// returned: the change it describes already happened. Callers never put a
+// secret into summary.
+func recordOrgEvent(ctx context.Context, deps Deps, orgID, userID uuid.UUID, action, objectType, objectID, summary string) {
 	if err := deps.Audit.Record(db.WithOrgScope(ctx, orgID), audit.Event{
 		OrgID: &orgID, ActorID: &userID, ActorKind: actorKind(ctx), TokenID: actorTokenID(ctx),
 		Action: action, ObjectType: objectType, ObjectID: objectID, Summary: summary,

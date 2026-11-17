@@ -183,3 +183,17 @@ func Lower(a, b Role) Role {
 
 // Valid reports whether r is a known role.
 func Valid(r Role) bool { _, ok := rank[r]; return ok }
+
+// Highest returns the most privileged of roles: what a personal token's
+// assistant areas are validated against, its highest grant cap (backlog
+// 3.100). An unknown role ranks lowest, as in Lower, so it only wins when
+// nothing known is given; no roles at all is the empty role.
+func Highest(roles ...Role) Role {
+	var best Role
+	for i, r := range roles {
+		if i == 0 || rank[r] > rank[best] {
+			best = r
+		}
+	}
+	return best
+}

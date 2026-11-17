@@ -124,6 +124,32 @@ func TestPersonalTokenCapVersusMembership(t *testing.T) {
 	wantStatus(t, "POST hosts of B", f.s.Post(t, tok, "/api/v1/orgs/pt-cap-b/hosts",
 		map[string]any{"name": "web-1", "zone_id": f.zone(t, b)}), http.StatusForbidden)
 	wantStatus(t, "GET hosts of B", f.s.Get(t, tok, "/api/v1/orgs/pt-cap-b/hosts"), http.StatusOK)
+
+	// Cap owner, member operator (a cap no create would accept, held since
+	// before a demotion): the membership decides, never the cap.
+	c := f.org(t, "pt-cap-c", tenancy.RoleOperator)
+	_, ownerCap := f.s.PersonalToken(t, f.user, map[uuid.UUID]tenancy.Role{c: tenancy.RoleOwner})
+	wantStatus(t, "POST hosts of C, owner cap", f.s.Post(t, ownerCap, "/api/v1/orgs/pt-cap-c/hosts",
+		map[string]any{"name": "web-1", "zone_id": f.zone(t, c)}), http.StatusCreated)
+	wantStatus(t, "PUT settings/jobs of C, owner cap", f.s.Put(t, ownerCap, "/api/v1/orgs/pt-cap-c/settings/jobs", "",
+		map[string]any{"jobs_require_pinned_hosts": true}), http.StatusForbidden)
+
+	// Cap admin, member admin, then demoted to viewer after the grant was
+	// created: the demotion takes effect at the next request.
+	d := f.org(t, "pt-cap-d", tenancy.RoleAdmin)
+	_, demoted := f.s.PersonalToken(t, f.user, map[uuid.UUID]tenancy.Role{d: tenancy.RoleAdmin})
+	wantStatus(t, "PUT settings/jobs of D before the demotion", f.s.Put(t, demoted, "/api/v1/orgs/pt-cap-d/settings/jobs", "",
+		map[string]any{"jobs_require_pinned_hosts": true}), http.StatusOK)
+	resp := requestJSON(t, f.s.LoginAs(f.owner), http.MethodPatch, f.s.HTTP.URL+"/api/v1/orgs/pt-cap-d/members/"+f.user.String(),
+		map[string]any{"role": "viewer"})
+	if resp.StatusCode/100 != 2 {
+		t.Fatalf("demote: status %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	wantStatus(t, "PUT settings/jobs of D after the demotion", f.s.Put(t, demoted, "/api/v1/orgs/pt-cap-d/settings/jobs", "",
+		map[string]any{"jobs_require_pinned_hosts": false}), http.StatusForbidden)
+	wantStatus(t, "POST hosts of D after the demotion", f.s.Post(t, demoted, "/api/v1/orgs/pt-cap-d/hosts",
+		map[string]any{"name": "web-1", "zone_id": f.zone(t, d)}), http.StatusForbidden)
+	wantStatus(t, "GET hosts of D after the demotion", f.s.Get(t, demoted, "/api/v1/orgs/pt-cap-d/hosts"), http.StatusOK)
 }
 
 func TestPersonalTokenMembershipLost(t *testing.T) {

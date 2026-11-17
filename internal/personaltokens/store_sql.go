@@ -3,6 +3,7 @@ package personaltokens
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +21,15 @@ import (
 // confines every grant and switch statement to that organization. Reads
 // across one user's grants (the owner's own view) run in an instance-level
 // context, where the bypass policy applies, like the token lookup by hash.
-type SQLStore struct{ q *gen.Queries }
+type SQLStore struct {
+	d *db.DB
+	q *gen.Queries
+}
+
+var _ Store = (*SQLStore)(nil)
 
 // NewSQLStore builds the store on d.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
 
 // InsertToken stores t with the hash of its secret and returns it as
 // stored: CreatedAt and ExpiresAt truncated to the database's microsecond
@@ -48,12 +54,21 @@ func (s *SQLStore) InsertToken(ctx context.Context, t auth.PersonalToken, secret
 	return t, nil
 }
 
+// grantMembershipFK is the foreign key from a grant to its user's
+// membership in the organization (migration 00110).
+const grantMembershipFK = "personal_token_grants_org_id_user_id_fkey"
+
 // InsertGrant grants tokenID orgID at role. The foreign keys refuse a grant
-// whose user is not the token's owner or not a member of orgID.
+// whose user is not the token's owner or not a member of orgID; the latter
+// is ErrNotMember (a membership that ended after it was checked).
 func (s *SQLStore) InsertGrant(ctx context.Context, tokenID, userID, orgID uuid.UUID, role tenancy.Role) error {
-	return s.q.InsertPersonalTokenGrant(ctx, gen.InsertPersonalTokenGrantParams{
+	err := s.q.InsertPersonalTokenGrant(ctx, gen.InsertPersonalTokenGrantParams{
 		TokenID: tokenID, UserID: userID, OrgID: orgID, Role: gen.OrgRole(role),
 	})
+	if db.IsForeignKeyViolation(err) && db.ConstraintName(err) == grantMembershipFK {
+		return ErrNotMember
+	}
+	return err
 }
 
 // Cap returns the grant's role and whether it is blocked; ErrNotFound when
@@ -70,9 +85,21 @@ func (s *SQLStore) Cap(ctx context.Context, tokenID, orgID uuid.UUID) (tenancy.R
 }
 
 // Allowed reads the organization's switch; no row means allowed.
+//
+// Precondition: ctx is bound to orgID (db.WithOrgScope) or to no
+// organization at all. Under another organization's scope row-level
+// security hides orgID's row, and "no row" would read as allowed; Allowed
+// therefore fails closed with an error instead of answering.
 func (s *SQLStore) Allowed(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	if bound, ok := db.OrgScope(ctx); ok && bound != orgID {
+		return false, fmt.Errorf("read personal token switch of %s bound to %s: %w", orgID, bound, errForeignScope)
+	}
 	return s.q.PersonalTokensAllowed(ctx, orgID)
 }
+
+// errForeignScope is Allowed's refusal to read under another
+// organization's scope.
+var errForeignScope = errors.New("organization scope mismatch")
 
 // SetAllowed turns the organization's switch on or off.
 func (s *SQLStore) SetAllowed(ctx context.Context, orgID uuid.UUID, on bool) error {

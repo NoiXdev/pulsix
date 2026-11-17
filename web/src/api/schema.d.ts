@@ -546,6 +546,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/me/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 auth me tokens */
+        get: operations["get-api-v1-auth-me-tokens"];
+        put?: never;
+        /** Post API v1 auth me tokens */
+        post: operations["createPersonalToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/me/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 auth me tokens by ID */
+        delete: operations["revokePersonalToken"];
+        options?: never;
+        head?: never;
+        /** Patch API v1 auth me tokens by ID */
+        patch: operations["updatePersonalToken"];
+        trace?: never;
+    };
     "/api/v1/auth/passkeys": {
         parameters: {
             query?: never;
@@ -2546,6 +2582,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/personal-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org personal tokens */
+        get: operations["get-api-v1-orgs-by-org-personal-tokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/personal-tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org personal tokens by ID */
+        delete: operations["revokePersonalTokenGrant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/personal-tokens/{id}/unblock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org personal tokens by ID unblock */
+        post: operations["unblockPersonalTokenGrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks": {
         parameters: {
             query?: never;
@@ -3050,6 +3137,24 @@ export interface paths {
         get: operations["get-api-v1-orgs-by-org-settings-monitoring"];
         /** Put API v1 orgs by org settings monitoring */
         put: operations["updateOrgMonitoringSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/settings/personal-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org settings personal tokens */
+        get: operations["get-api-v1-orgs-by-org-settings-personal-tokens"];
+        /** Put API v1 orgs by org settings personal tokens */
+        put: operations["updatePersonalTokenSettings"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6793,6 +6898,166 @@ export interface components {
             invited_by_name: string;
             role: string;
         };
+        PersonalGrantDTO: {
+            /** Format: date-time */
+            last_used_at?: string;
+            org_id: string;
+            org_name: string;
+            org_slug: string;
+            /** @enum {string} */
+            role: "owner" | "admin" | "operator" | "viewer";
+            /**
+             * @description active; blocked by an organization admin; off while the organization does not allow personal tokens
+             * @enum {string}
+             */
+            state: "active" | "blocked" | "off";
+        };
+        PersonalGrantInput: {
+            /** @description The organization's slug */
+            org: string;
+            /**
+             * @description The highest role the token acts with there; at most your own role
+             * @enum {string}
+             */
+            role: "owner" | "admin" | "operator" | "viewer";
+        };
+        PersonalTokenCreateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenCreateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Assistant tokens only: the areas the token may use, within its highest role */
+            areas?: string[] | null;
+            /** Format: date-time */
+            expires_at?: string;
+            /** @description The organizations the token acts in, each with its role cap */
+            grants: components["schemas"]["PersonalGrantInput"][] | null;
+            /**
+             * @description api (the default) or assistant
+             * @enum {string}
+             */
+            kind?: "api" | "assistant";
+            name: string;
+        };
+        PersonalTokenCreatedDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenCreatedDTO.json
+             */
+            readonly $schema?: string;
+            areas?: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at?: string;
+            grants: components["schemas"]["PersonalGrantDTO"][] | null;
+            id: string;
+            /** @enum {string} */
+            kind: "api" | "assistant";
+            /** Format: date-time */
+            last_used_at?: string;
+            name: string;
+            token: string;
+        };
+        PersonalTokenDTO: {
+            areas?: string[] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at?: string;
+            grants: components["schemas"]["PersonalGrantDTO"][] | null;
+            id: string;
+            /** @enum {string} */
+            kind: "api" | "assistant";
+            /** Format: date-time */
+            last_used_at?: string;
+            name: string;
+        };
+        PersonalTokenEntriesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenEntriesOutputBody.json
+             */
+            readonly $schema?: string;
+            entries: components["schemas"]["PersonalTokenEntryDTO"][] | null;
+        };
+        PersonalTokenEntryDTO: {
+            /** @description An admin revoked the grant; it stays blocked until an admin lifts the block */
+            blocked: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** @enum {string} */
+            kind: "api" | "assistant";
+            /**
+             * Format: date-time
+             * @description The token's last use in this organization
+             */
+            last_used_at?: string;
+            name: string;
+            owner_email: string;
+            owner_id: string;
+            owner_name: string;
+            /**
+             * @description The grant's cap here; the owner's membership role may lower it further
+             * @enum {string}
+             */
+            role: "owner" | "admin" | "operator" | "viewer";
+            token_id: string;
+        };
+        PersonalTokenListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenListOutputBody.json
+             */
+            readonly $schema?: string;
+            tokens: components["schemas"]["PersonalTokenDTO"][] | null;
+        };
+        PersonalTokenSettingsBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenSettingsBody.json
+             */
+            readonly $schema?: string;
+            /** @description Whether members may grant their personal tokens access to this organization */
+            allowed: boolean;
+        };
+        PersonalTokenUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Assistant tokens only: replaces the areas */
+            areas?: string[];
+            /**
+             * Format: date-time
+             * @description A new expiry; must be in the future
+             */
+            expires_at?: string;
+            /** @description Replaces the grants; organizations an admin blocked stay blocked and cannot be listed */
+            grants?: components["schemas"]["PersonalGrantInput"][];
+            name?: string;
+            /** @description Remove the expiry */
+            never_expires?: boolean;
+        };
+        PersonalTokenUpdateOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PersonalTokenUpdateOutputBody.json
+             */
+            readonly $schema?: string;
+            token: components["schemas"]["PersonalTokenDTO"];
+        };
         Picture: {
             extra_vars: {
                 [key: string]: unknown;
@@ -9725,6 +9990,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PreferencesBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-auth-me-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createPersonalToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalTokenCreateInputBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenCreatedDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    revokePersonalToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updatePersonalToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalTokenUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenUpdateOutputBody"];
                 };
             };
             /** @description Error */
@@ -15444,6 +15837,101 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-personal-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenEntriesOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    revokePersonalTokenGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    unblockPersonalTokenGrant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-playbooks": {
         parameters: {
             query?: never;
@@ -17008,6 +17496,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgMonitoringSettingsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-settings-personal-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenSettingsBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updatePersonalTokenSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonalTokenSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalTokenSettingsBody"];
                 };
             };
             /** @description Error */
