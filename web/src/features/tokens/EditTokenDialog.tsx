@@ -78,11 +78,15 @@ export function EditTokenDialog({
 
   const submit = form.handleSubmit(async (values) => {
     setError(null);
+    if (!values.never && values.expiry === '') {
+      form.setError('expiry', { message: t.tokens.edit.expiryRequired });
+      return;
+    }
     const body: UpdateTokenInput = {};
     if (values.name !== token.name) body.name = values.name;
     const day = values.never ? '' : values.expiry;
     if (day !== initialDay) {
-      if (day === '') body.never_expires = true;
+      if (values.never) body.never_expires = true;
       else body.expires_at = endOfLocalDay(day);
     }
     const areas = allowedAreas(values.areas, token.role);
@@ -126,6 +130,9 @@ export function EditTokenDialog({
               },
             })}
           />
+          {form.formState.errors.expiry && (
+            <span className="text-[11px] text-destructive">{form.formState.errors.expiry.message}</span>
+          )}
           <label className="flex items-center gap-2 text-xs">
             <input
               type="checkbox"

@@ -82,6 +82,32 @@ describe('EditTokenDialog', () => {
     expect(body).toEqual({ never_expires: true });
   });
 
+  it('refuses a cleared date instead of silently removing the expiry', async () => {
+    let called = false;
+    const user = setup(apiToken, () => {
+      called = true;
+      return { token: apiToken };
+    });
+    await user.clear(screen.getByLabelText('Expires'));
+    await save(user);
+    expect(await screen.findByText('Pick a date or tick Never expires.')).toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
+  it('refuses ticking then unticking Never expires with no date', async () => {
+    let called = false;
+    const user = setup(apiToken, () => {
+      called = true;
+      return { token: apiToken };
+    });
+    const never = screen.getByRole('checkbox', { name: 'Never expires' });
+    await user.click(never);
+    await user.click(never);
+    await save(user);
+    expect(await screen.findByText('Pick a date or tick Never expires.')).toBeInTheDocument();
+    expect(called).toBe(false);
+  });
+
   it('sets a new expiry at the end of that local day', async () => {
     let body: { expires_at?: string } | undefined;
     const user = setup(apiToken, (req) => {

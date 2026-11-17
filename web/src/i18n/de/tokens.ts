@@ -37,6 +37,7 @@ export const deTokens: Messages['tokens'] = {
     action: 'bearbeiten',
     title: (name: string) => `Token ${name} bearbeiten`,
     neverExpires: 'Läuft nie ab',
+    expiryRequired: 'Wähle ein Datum oder setze „Läuft nie ab“.',
     expiresLabel: 'Läuft ab',
     kindRoleFixed: 'Art und Rolle lassen sich nicht ändern; lege dafür einen neuen Token an.',
     save: 'Speichern',

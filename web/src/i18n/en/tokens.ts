@@ -39,6 +39,7 @@ export const enTokens = {
     action: 'edit',
     title: (name: string) => `Edit token ${name}`,
     neverExpires: 'Never expires',
+    expiryRequired: 'Pick a date or tick Never expires.',
     expiresLabel: 'Expires',
     kindRoleFixed: 'Kind and role cannot be changed; create a new token for that.',
     save: 'Save',
