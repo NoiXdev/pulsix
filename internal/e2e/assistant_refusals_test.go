@@ -239,7 +239,7 @@ func (a *assistantSuite) edit() {
 	s.get(prefix+"/activity?object_type=token", &act)
 	for _, want := range []string{
 		"changed assistant token asst-edit: areas monitoring.read, alerts.handle → monitoring.read",
-		"changed assistant token asst-edit: areas monitoring.read → monitoring.read, templates.read",
+		"changed assistant token asst-edit: areas monitoring.read → templates.read, monitoring.read",
 	} {
 		found := false
 		for _, it := range act.Items {
