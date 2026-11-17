@@ -155,7 +155,8 @@ describe('TokensPage editing in German', () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: 'bearbeiten helper' }));
+    await user.click(await screen.findByRole('button', { name: 'Aktionen für helper (operator)' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Bearbeiten' }));
     expect(screen.getByRole('dialog', { name: 'Token helper bearbeiten' })).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: 'Vorlagen: lesen' }));
     await user.click(screen.getByRole('button', { name: 'Speichern' }));

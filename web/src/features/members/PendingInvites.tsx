@@ -1,67 +1,61 @@
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
-import { RoleBadge } from '../../ui/badge.tsx';
+import { DataList, type RowAction } from '../../ui/data-list/index.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { usePendingInvites, useRevokeInvite } from '../../api/hooks/useMembers.ts';
+import type { PendingInvite } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS = 'minmax(0, 1fr) 110px minmax(0, 160px) 110px 70px';
+import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
+import { useListView } from '../lists/useListView.ts';
+import { inviteColumns } from './inviteColumns.tsx';
 
 /**
  * PendingInvites lists the organization's open invitations under the
- * member table, so an invitation sent to a wrong address can be withdrawn
- * instead of waited out (backlog 7.29). It renders nothing while there are
- * none — or when the list cannot be loaded, which must not take the member
- * table down with it.
+ * member table (list id `invites`), so an invitation sent to a wrong address
+ * can be withdrawn instead of waited out (backlog 7.29). It is the page's
+ * second list: its sort and page live in the component, not in the URL. It
+ * renders nothing while there are none — or when the list cannot be loaded,
+ * which must not take the member table down with it.
  */
 export function PendingInvites({ org }: { org: string }) {
   const toast = useToast();
-  const ask = useConfirm();
   const t = useT();
   const fmt = useFormat();
   const invites = usePendingInvites(org);
   const revoke = useRevokeInvite(org);
+  const columns = inviteColumns(t, fmt);
+  const view = useListView('invites', columns, { mode: 'client', urlState: false, rowKey: (i) => i.id });
+  const del = useConfirmedDelete<PendingInvite>({
+    message: (i) => t.members.pending.confirmRevoke(i.email),
+    failed: t.members.pending.revokeFailed,
+    confirmLabel: t.ui.confirm.confirm,
+    remove: async (id) => {
+      await revoke.mutateAsync(id);
+    },
+    onDone: (i) => toast.show(t.members.pending.revoked(i.email)),
+  });
 
-  const rows = invites.data?.invites ?? [];
-  if (rows.length === 0) return null;
+  const all = invites.data?.invites ?? [];
+  const { rows, total } = view.view(view.ready ? all : undefined);
+  if (all.length === 0) return null;
+
+  const rowActions = (i: PendingInvite): RowAction[] => [
+    { id: 'revoke', label: t.members.pending.revokeItem, destructive: true, onSelect: () => void del.run(i), disabled: del.pending.has(i.id) },
+  ];
 
   return (
     <section aria-label={t.members.pending.title} className="flex flex-col gap-2">
       <h2 className="text-sm font-semibold">{t.members.pending.title}</h2>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.members.inviteDialog.emailLabel}</span>
-          <span>{t.members.columns.role}</span>
-          <span>{t.members.pending.invitedBy}</span>
-          <span>{t.members.pending.expires}</span>
-          <span />
-        </GridHeader>
-        {rows.map((inv) => (
-          <GridRow key={inv.id} columns={COLUMNS}>
-            <span className="truncate text-xs">{inv.email}</span>
-            <RoleBadge role={inv.role} />
-            <span className="truncate text-[11px] text-muted-foreground">{inv.invited_by_name}</span>
-            <span className="text-[11px] text-muted-foreground">{fmt.date(inv.expires_at)}</span>
-            <button
-              type="button"
-              className="text-[11px] text-destructive"
-              aria-label={t.members.pending.revokeAria(inv.email)}
-              onClick={async () => {
-                if (!(await ask({ message: t.members.pending.confirmRevoke(inv.email), destructive: true }))) return;
-                try {
-                  await revoke.mutateAsync(inv.id);
-                  toast.show(t.members.pending.revoked(inv.email));
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : t.members.pending.revokeFailed, 'destructive');
-                }
-              }}
-            >
-              {t.members.pending.revoke}
-            </button>
-          </GridRow>
-        ))}
-      </Card>
+      <DataList
+        label={t.members.pending.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(i) => i.id}
+        rowActions={rowActions}
+        rowLabel={(i) => `${i.email} (${i.role})`}
+        loading={!view.ready}
+        empty={null}
+        {...view.listProps(total, t.members.pending.count)}
+      />
     </section>
   );
 }

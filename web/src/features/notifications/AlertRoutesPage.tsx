@@ -1,28 +1,22 @@
-import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { CalendarClock, Route as RouteIcon } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Route as RouteIcon } from 'lucide-react';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
-import { Switch } from '../../ui/switch.tsx';
-import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useChannels } from '../../api/hooks/useNotifications.ts';
 import { useOncallRotations } from '../../api/hooks/useOncall.ts';
-import { useAlertRoutes, useCreateAlertRoute, useDeleteAlertRoute, useUpdateAlertRoute } from '../../api/hooks/useAlertRoutes.ts';
+import { useAlertRoutes, useCreateAlertRoute, useUpdateAlertRoute } from '../../api/hooks/useAlertRoutes.ts';
 import { may } from '../../lib/roles.ts';
 import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 import { RouteDialog } from './RouteDialog.tsx';
-import { ReachesNobody, RouteFiresOn } from './AlertRouteCells.tsx';
-import { routeReachesNobody, routeToInput } from './alertRoute.ts';
+import { alertRouteColumns } from './alertRouteColumns.tsx';
+import { useAlertRouteListActions } from './useAlertRouteListActions.tsx';
+import { useListView } from '../lists/useListView.ts';
 import { useT } from '../../i18n/useT.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) 90px 220px';
 
 /** AlertRoutesPage is Settings → Alert routes (v0.4b design, "GUI"): which
  * of the organization's notification channels hear about which alerts —
@@ -37,8 +31,6 @@ export function AlertRoutesPage() {
   const t = useT();
   const m = t.notifications;
   const a = m.alertRoutes;
-  const toast = useToast();
-  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'channels.read');
@@ -54,27 +46,6 @@ export function AlertRoutesPage() {
   const rotations = useOncallRotations(org, !!orgInfo.data && canRead);
   const create = useCreateAlertRoute(org);
   const update = useUpdateAlertRoute(org);
-  const remove = useDeleteAlertRoute(org);
-  const [editing, setEditing] = useState<AlertRoute | 'new' | null>(null);
-
-  const guard = useQueryGuard(orgInfo);
-  const routesGuard = useQueryGuard(routes);
-  if (guard) return guard;
-  if (routesGuard) return routesGuard;
-  if (!orgInfo.data) return <QueryLoading />;
-  const header = (
-    <h1 className="text-xl font-semibold">{m.title}</h1>
-  );
-  if (!canRead) {
-    return (
-      <>
-        {header}
-        <p className="text-sm text-muted-foreground">{a.noAccess}</p>
-      </>
-    );
-  }
-  if (!routes.data) return <QueryLoading />;
-  const list = routes.data.routes ?? [];
   const channelList = channels.data?.channels ?? [];
   const hostList = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
   const groupList = groups.data?.groups ?? [];
@@ -116,37 +87,49 @@ export function AlertRoutesPage() {
     return rotationOf(r)?.name ?? a.rotationUnknown((r.rotation_id ?? '').slice(0, 8));
   }
 
-  async function onSave(body: AlertRouteInput) {
-    if (editing && editing !== 'new') {
-      await update.mutateAsync({ ...body, id: editing.id, revision: editing.revision });
+  async function onSave(route: AlertRoute | undefined, body: AlertRouteInput) {
+    if (route) {
+      await update.mutateAsync({ ...body, id: route.id, revision: route.revision });
     } else {
       await create.mutateAsync(body);
     }
   }
 
-  // PATCH is a full replace, so the toggle has to send the whole route
-  // back, not the handful of fields it happens to remember: rebuilt by
-  // hand here, it silently deleted the delivery window, the breakthrough
-  // severities and the rotation, and 400'd outright on a rotation route
-  // (whole-branch review, Important #3). routeToInput is the one place
-  // that knows what a stored route is on the wire, so a field added to
-  // the route in future cannot be forgotten at this call site.
-  async function onToggle(r: AlertRoute) {
-    try {
-      await update.mutateAsync({ ...routeToInput(r), id: r.id, revision: r.revision, enabled: !r.enabled });
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : a.updateFailed, 'destructive');
-    }
-  }
+  const actions = useAlertRouteListActions(org, canWrite, (route, onClose) => (
+    <RouteDialog
+      open
+      route={route}
+      channels={channelOptions}
+      hosts={hostOptions}
+      groups={groupOptions}
+      rotations={rotationOptions}
+      onClose={onClose}
+      onSave={(body) => onSave(route, body)}
+    />
+  ));
 
-  async function onDelete(r: AlertRoute) {
-    if (!(await ask({ message: a.deleteConfirm(r.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(r.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
-    }
+  const columns = alertRouteColumns({ t, scopeLabel, channelNames, rotationName, rotationOf });
+  const view = useListView('alert-routes', columns, { mode: 'client', rowKey: (r) => r.id });
+
+  const guard = useQueryGuard(orgInfo);
+  const routesGuard = useQueryGuard(routes);
+  if (guard) return guard;
+  if (routesGuard) return routesGuard;
+  if (!orgInfo.data) return <QueryLoading />;
+  const header = (
+    <h1 className="text-xl font-semibold">{m.title}</h1>
+  );
+  if (!canRead) {
+    return (
+      <>
+        {header}
+        <p className="text-sm text-muted-foreground">{a.noAccess}</p>
+      </>
+    );
   }
+  if (!routes.data) return <QueryLoading />;
+  const list = routes.data.routes ?? [];
+  const { rows, total } = view.view(view.ready ? list : undefined);
 
   return (
     <>
@@ -154,79 +137,23 @@ export function AlertRoutesPage() {
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">{a.subtitle}</span>
         {canWrite && (
-          <Button variant="primary" onClick={() => setEditing('new')}>
+          <Button variant="primary" onClick={actions.openNew}>
             <RouteIcon size={15} /> {a.newRoute}
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{a.columns.route}</span>
-          <span>{a.columns.appliesTo}</span>
-          <span>{a.columns.firesOn}</span>
-          {/* Not "Channels": a rotation-sourced route has none of its own, and this cell names the rotation instead. */}
-          <span>{a.columns.deliversTo}</span>
-          <span>{a.columns.status}</span>
-          <span />
-        </GridHeader>
-        {list.map((r) => (
-          <GridRow key={r.id} columns={COLUMNS}>
-            <span className="truncate text-[13px] font-medium" data-row>
-              {r.name}
-            </span>
-            <span className="truncate text-[13px] text-muted-foreground">{scopeLabel(r)}</span>
-            <RouteFiresOn route={r} />
-            {routeReachesNobody(r, rotationOf(r)) ? (
-              <ReachesNobody />
-            ) : r.rotation_id ? (
-              <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
-                <CalendarClock size={12} aria-hidden="true" />
-                <span className="truncate">{a.onCall(rotationName(r))}</span>
-              </span>
-            ) : (
-              <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
-            )}
-            <span>
-              {canWrite ? (
-                <Switch
-                  checked={r.enabled}
-                  aria-label={r.enabled ? a.disableAria(r.name) : a.enableAria(r.name)}
-                  onCheckedChange={() => void onToggle(r)}
-                />
-              ) : r.enabled ? (
-                <Pill tone="ok">{m.enabled}</Pill>
-              ) : (
-                <Pill tone="unknown">{m.disabled}</Pill>
-              )}
-            </span>
-            <span className="flex justify-end gap-1">
-              {canWrite && (
-                <>
-                  <Button type="button" variant="ghost" aria-label={m.editAria(r.name)} onClick={() => setEditing(r)}>
-                    {m.edit}
-                  </Button>
-                  <Button type="button" variant="destructive" aria-label={m.deleteAria(r.name)} onClick={() => void onDelete(r)}>
-                    {t.common.delete}
-                  </Button>
-                </>
-              )}
-            </span>
-          </GridRow>
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{a.empty}</p>}
-      </Card>
-      {editing && (
-        <RouteDialog
-          open
-          route={editing === 'new' ? undefined : editing}
-          channels={channelOptions}
-          hosts={hostOptions}
-          groups={groupOptions}
-          rotations={rotationOptions}
-          onClose={() => setEditing(null)}
-          onSave={onSave}
-        />
-      )}
+      <DataList
+        label={a.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowLabel={(r) => r.name}
+        rowActions={actions.rowActions}
+        loading={!view.ready}
+        empty={a.empty}
+        {...view.listProps(total, a.count)}
+      />
+      {actions.dialogs}
     </>
   );
 }

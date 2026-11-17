@@ -15,7 +15,7 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
   await page.goto(`/o/${ORG.slug}/settings/members`);
   await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Invite member' }).click();
+  await page.getByRole('button', { name: 'Invite member', exact: true }).click();
   const dialog = page.getByRole('dialog');
 
   // The dialog sits in the middle of the viewport. A native <dialog>

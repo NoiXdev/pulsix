@@ -51,7 +51,7 @@ describe('ChannelsPage', () => {
       'GET /api/v1/orgs/acme/notification-channels': { channels: [hook, mailCh], mail_available: true },
     });
     renderPage();
-    const row = (await screen.findByText('ops hook')).closest('[data-row]')!.parentElement as HTMLElement;
+    const row = (await screen.findByText('ops hook')).closest<HTMLElement>('[data-list-row]')!;
     expect(within(row).getByText('POST https://hooks.example.test/…')).toBeInTheDocument();
     expect(within(row).getByText('enabled')).toBeInTheDocument();
     expect(screen.getByText('ops@example.test')).toBeInTheDocument();

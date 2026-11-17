@@ -6,14 +6,15 @@
  * speaks.
  */
 export const enMembers = {
-  count: (n: number) => `${n} members`,
+  count: (n: number) => (n === 1 ? '1 member' : `${n} members`),
   invite: 'Invite member',
+  label: 'Members',
   columns: {
     member: 'Member',
+    email: 'E-mail',
     role: 'Role',
     joined: 'Joined',
     status: 'Status',
-    actions: 'Actions',
   },
   roles: {
     viewer: 'Viewer',
@@ -47,7 +48,6 @@ export const enMembers = {
     copyFailed: 'Could not copy — select the link and copy it by hand',
     done: 'Done',
   },
-  rowActions: (name: string) => `Actions for ${name}`,
   open: 'Open',
   removeItem: 'Remove…',
   page: {
@@ -67,8 +67,9 @@ export const enMembers = {
     title: 'Open invitations',
     invitedBy: 'Invited by',
     expires: 'Expires',
-    revoke: 'revoke',
-    revokeAria: (email: string) => `Revoke invitation to ${email}`,
+    label: 'Open invitations',
+    count: (n: number) => (n === 1 ? '1 invitation' : `${n} invitations`),
+    revokeItem: 'Revoke…',
     confirmRevoke: (email: string) => `Revoke the invitation to ${email}? Its link stops working.`,
     revoked: (email: string) => `Invitation to ${email} revoked`,
     revokeFailed: 'failed to revoke invitation',

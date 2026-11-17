@@ -8,6 +8,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { AlertRoutesPage } from './AlertRoutesPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { chooseRowAction } from '../../test/wholeList.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const me = { user: { id: 'u1', email: 'a@acme.io', display_name: 'A' }, mfa_complete: true, mfa_enrolment_required: false, totp_confirmed: true, instance_admin: false };
@@ -59,13 +60,14 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    const row = (await screen.findByText('Critical to ops')).closest('[data-row]')!.parentElement as HTMLElement;
+    const row = (await screen.findByText('Critical to ops')).closest<HTMLElement>('[data-list-row]')!;
     expect(within(row).getByText('Organization')).toBeInTheDocument();
     expect(within(row).getByText('Critical')).toBeInTheDocument();
     expect(within(row).getByText('opened, worsened')).toBeInTheDocument();
     expect(within(row).getByText('Ops mail')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New route' })).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Disable Critical to ops' })).toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(within(row).getByText('enabled')).toBeInTheDocument();
   });
 
   it('viewers are told alert routes are for operators', async () => {
@@ -91,11 +93,7 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    const toggle = await screen.findByRole('switch', { name: 'Disable Critical to ops' });
-    expect(toggle).toHaveAttribute('aria-checked', 'true');
-    // The shared ui/switch size, not a hand-built toggle.
-    expect(toggle.className).toContain('h-[19px]');
-    await user.click(toggle);
+    await chooseRowAction(user, 'Critical to ops', 'Disable');
     await waitFor(() => expect(patched?.ifMatch).toBe('"1"'));
     expect(patched?.body).toEqual({
       name: 'Critical to ops', enabled: false, scope: 'org', severities: ['crit'], events: ['opened', 'severity_raised'], channels: ['c1'],
@@ -149,7 +147,7 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit Critical to ops' }));
+    await chooseRowAction(user, 'Critical to ops', 'Edit');
     const dialog = screen.getByRole('dialog', { name: 'Edit Critical to ops' });
     await user.click(within(dialog).getByRole('button', { name: /save/i }));
 
@@ -209,7 +207,7 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete Critical to ops' }));
+    await chooseRowAction(user, 'Critical to ops', 'Delete');
     expect(await acceptConfirm(user)).toContain('Critical to ops');
     await waitFor(() => expect(deleted).toBe(1));
   });
@@ -232,7 +230,7 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    const row = (await screen.findByText('Critical to ops')).closest('[data-row]')!.parentElement as HTMLElement;
+    const row = (await screen.findByText('Critical to ops')).closest<HTMLElement>('[data-list-row]')!;
     expect(within(row).getByText(/weekly/i)).toBeInTheDocument();
     expect(screen.queryByText(/reaches nobody/i)).not.toBeInTheDocument();
   });
@@ -263,7 +261,7 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('switch', { name: 'Disable Critical to ops' }));
+    await chooseRowAction(user, 'Critical to ops', 'Disable');
     await waitFor(() =>
       expect(patched).toEqual({
         name: 'Critical to ops', enabled: false, scope: 'org',

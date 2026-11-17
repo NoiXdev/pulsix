@@ -6,6 +6,13 @@
 export const enLists = {
   /** One per list id in features/lists/registry.ts. */
   names: {
+    'alert-routes': 'Alert routes',
+    channels: 'Notification channels',
+    invites: 'Open invitations',
+    members: 'Members',
+    'org-tokens': 'API tokens',
+    rotations: 'On-call rotations',
+    secrets: 'Secrets',
     activity: 'Activity',
     'agent-tokens': 'Agent enrollment tokens',
     agents: 'Agents',

@@ -4,6 +4,7 @@ export const deSecrets: Messages['secrets'] = {
   title: 'Secrets',
   subtitle:
     'Zugangsdaten für die Checks, die der Pulsix-Server ausführt, etwa eine SNMP-Community oder ein SNMP-Login. Ein Check nennt ein Secret in seinem Feld „Secret“.',
+  label: 'Secrets',
   count: (n: number) => (n === 1 ? '1 Secret' : `${n} Secrets`),
   add: 'Neues Secret',
   readOnly: 'Nur Inhaber und Admins können Secrets anlegen, ersetzen oder löschen.',

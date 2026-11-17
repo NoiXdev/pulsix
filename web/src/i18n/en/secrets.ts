@@ -6,6 +6,7 @@ export const enSecrets = {
   title: 'Secrets',
   subtitle:
     'Credentials for the checks the Pulsix server runs, such as an SNMP community or login. A check names a secret in its Secret field.',
+  label: 'Secrets',
   count: (n: number) => (n === 1 ? '1 secret' : `${n} secrets`),
   add: 'New secret',
   readOnly: 'Only owners and admins can create, replace or delete secrets.',

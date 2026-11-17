@@ -4,27 +4,25 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { KeyRound } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
 import { useCopy } from '../../ui/useCopy.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
-import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import type { components } from '../../api/schema.d.ts';
-import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
+import { useCreateToken, useTokens } from '../../api/hooks/useTokens.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
-import { Tag } from '../../ui/badge.tsx';
+import { useListView } from '../lists/useListView.ts';
 import { AreaGrid } from './AreaGrid.tsx';
-import { EditTokenDialog } from './EditTokenDialog.tsx';
-import { allowedAreas, displayedAreas, type Area } from './areas.ts';
+import { tokenColumns } from './tokenColumns.tsx';
+import { useTokenListActions } from './useTokenListActions.tsx';
+import { allowedAreas, type Area } from './areas.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 const KINDS = ['api', 'assistant'] as const;
@@ -47,16 +45,9 @@ type TokenFormValues = z.infer<ReturnType<typeof tokenFormSchema>>;
 
 const DEFAULTS: TokenFormValues = { name: '', role: 'viewer', kind: 'api', areas: [] };
 
-function isExpired(expiresAt?: string): boolean {
-  return !!expiresAt && new Date(expiresAt).getTime() <= Date.now();
-}
-
-const COLUMNS = 'minmax(0, 1fr) 100px 140px 140px 120px';
-
 export function TokensPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
-  const ask = useConfirm();
   const t = useT();
   const copy = useCopy();
   const fmt = useFormat();
@@ -64,18 +55,21 @@ export function TokensPage() {
 
   const tokens = useTokens(org);
   const createToken = useCreateToken(org);
-  const revokeToken = useRevokeToken(org);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [justCreated, setJustCreated] = useState<string | null>(null);
-  const [editing, setEditing] = useState<components['schemas']['TokenDTO'] | null>(null);
 
   const form = useForm<TokenFormValues>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
   const kind = useWatch({ control: form.control, name: 'kind' });
   const role = useWatch({ control: form.control, name: 'role' });
 
+  const columns = tokenColumns(t, fmt);
+  const view = useListView('org-tokens', columns, { mode: 'client', rowKey: (tok) => tok.id });
+  const actions = useTokenListActions(org);
+
   const tokensGuard = useQueryGuard(tokens);
   if (tokensGuard) return tokensGuard;
+  const { rows, total } = view.view(view.ready ? (tokens.data?.tokens ?? []) : undefined);
 
   return (
     <>
@@ -85,9 +79,6 @@ export function TokensPage() {
           <KeyRound size={15} /> {t.tokens.create}
         </Button>
       </div>
-      <span className="text-[13px] text-muted-foreground">
-        {tokens.data ? t.tokens.count((tokens.data.tokens ?? []).length) : t.common.loading}
-      </span>
       <p className="text-[13px] text-muted-foreground">
         {t.tokens.explorerHint}{' '}
         <a href="/api/explorer" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2">
@@ -96,71 +87,19 @@ export function TokensPage() {
         </a>
       </p>
 
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.tokens.columns.name}</span>
-          <span>{t.tokens.columns.role}</span>
-          <span>{t.tokens.columns.lastUsed}</span>
-          <span>{t.tokens.columns.expires}</span>
-          <span />
-        </GridHeader>
-        {(tokens.data?.tokens ?? []).map((token) => (
-          <GridRow key={token.id} columns={COLUMNS}>
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-xs font-semibold">{token.name}</span>
-                {token.kind === 'assistant' && <Tag>{t.tokens.kind.badge}</Tag>}
-              </span>
-              {token.kind === 'assistant' && (token.areas ?? []).length > 0 && (
-                <span className="truncate text-[11px] text-muted-foreground">
-                  {displayedAreas(token.areas ?? [])
-                    .map((area) => (Object.hasOwn(t.tokens.areas.labels, area) ? t.tokens.areas.labels[area as Area] : area))
-                    .join(' · ')}
-                </span>
-              )}
-            </span>
-            <RoleBadge role={token.role} />
-            <span className="text-[11px] text-muted-foreground">
-              {token.last_used_at ? fmt.date(token.last_used_at) : t.common.never}
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {token.expires_at ? fmt.date(token.expires_at) : t.common.never}
-            </span>
-            <span className="flex items-center gap-3">
-            <button
-              type="button"
-              className="text-[11px] disabled:opacity-50"
-              disabled={isExpired(token.expires_at)}
-              title={isExpired(token.expires_at) ? t.tokens.edit.expiredHint : undefined}
-              aria-label={`${t.tokens.edit.action} ${token.name}`}
-              onClick={() => setEditing(token)}
-            >
-              {t.tokens.edit.action}
-            </button>
-            <button
-              type="button"
-              className="text-[11px] text-destructive"
-              onClick={async () => {
-                if (!(await ask({ message: t.tokens.revokeConfirm(token.name), destructive: true }))) return;
-                try {
-                  await revokeToken.mutateAsync(token.id);
-                  toast.show(t.tokens.revoked(token.name));
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : t.tokens.revokeFailed, 'destructive');
-                }
-              }}
-            >
-              {t.tokens.revoke}
-            </button>
-            </span>
-          </GridRow>
-        ))}
-        {(tokens.data?.tokens ?? []).length === 0 && (
-          <div className="p-4 text-xs text-muted-foreground">{t.tokens.empty}</div>
-        )}
-      </Card>
+      <DataList
+        label={t.tokens.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(tok) => tok.id}
+        rowActions={actions.rowActions}
+        rowLabel={(tok) => `${tok.name} (${tok.role})`}
+        loading={!view.ready}
+        empty={t.tokens.empty}
+        {...view.listProps(total, t.tokens.count)}
+      />
 
-      {editing && <EditTokenDialog key={editing.id} org={org} token={editing} open onClose={() => setEditing(null)} />}
+      {actions.dialogs}
 
       <Dialog
         open={createOpen}

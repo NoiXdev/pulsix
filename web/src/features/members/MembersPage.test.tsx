@@ -18,6 +18,9 @@ const MEMBERS = {
   ],
 };
 
+/** The list row a name link sits in. */
+const rowOf = (link: HTMLElement) => link.closest<HTMLElement>('[data-list-row]')!;
+
 const ORG = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
 
 function renderPage(qc: QueryClient, locale?: 'de') {
@@ -78,7 +81,8 @@ describe('MembersPage', () => {
     expect(within(section).getByText('wrong@acme.io')).toBeInTheDocument();
     expect(within(section).getByText('Admin')).toBeInTheDocument();
     expect(within(section).getByText(/Tim R\./)).toBeInTheDocument();
-    await user.click(within(section).getByRole('button', { name: 'Revoke invitation to wrong@acme.io' }));
+    await user.click(within(section).getByRole('button', { name: 'Actions for wrong@acme.io (admin)' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
     await acceptConfirm(user);
 
     expect(await screen.findByText('Invitation to wrong@acme.io revoked')).toBeInTheDocument();
@@ -102,7 +106,7 @@ describe('MembersPage', () => {
 
     expect(await screen.findByRole('link', { name: 'Tim R.' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Sara K.' })).toBeInTheDocument();
-    expect(screen.getByText('2 members')).toBeInTheDocument();
+    expect(screen.getByText('1–2 of 2 members')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Invite member' }));
     await user.type(screen.getByLabelText('E-mail address'), 'ops@acme.io');
@@ -257,8 +261,8 @@ describe('MembersPage', () => {
     });
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }), 'de');
 
-    expect(within(await screen.findByRole('link', { name: 'Sara K.' })).getByText('Betrachter')).toBeInTheDocument();
-    expect(within(screen.getByRole('link', { name: 'Tim R.' })).getByText('Inhaber')).toBeInTheDocument();
+    expect(within(rowOf(await screen.findByRole('link', { name: 'Sara K.' }))).getByText('Betrachter')).toBeInTheDocument();
+    expect(within(rowOf(screen.getByRole('link', { name: 'Tim R.' }))).getByText('Inhaber')).toBeInTheDocument();
     const invites = await screen.findByRole('region', { name: 'Offene Einladungen' });
     expect(within(invites).getByText('Admin')).toBeInTheDocument();
     expect(screen.queryByText('viewer')).not.toBeInTheDocument();
@@ -275,9 +279,8 @@ describe('MembersPage', () => {
 
     const row = await screen.findByRole('link', { name: 'Sara K.' });
     expect(row).toHaveAttribute('href', '/o/acme/settings/members/u2');
-    expect(within(row).getByText('Viewer')).toBeInTheDocument();
-    expect(within(row).queryByText('viewer')).not.toBeInTheDocument();
-    expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(rowOf(row)).getByText('Viewer')).toBeInTheDocument();
+    expect(within(rowOf(row)).queryByText('viewer')).not.toBeInTheDocument();
     expect(screen.queryByText(/Change role/)).not.toBeInTheDocument();
 
     await user.click(row);
@@ -291,7 +294,7 @@ describe('MembersPage', () => {
 
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K. (sara@acme.io)' }));
     expect(screen.getByRole('menuitem', { name: 'Open' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Remove…' })).not.toBeInTheDocument();
   });
@@ -307,7 +310,7 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K. (sara@acme.io)' }));
     await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
     await acceptConfirm(user);
 
@@ -325,7 +328,7 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K. (sara@acme.io)' }));
     await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
     await acceptConfirm(user);
 

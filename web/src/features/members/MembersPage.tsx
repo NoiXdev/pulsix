@@ -1,20 +1,18 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { Copy, UserPlus } from 'lucide-react';
-import { Card, GridHeader } from '../../ui/table.tsx';
-import { ListRow, ListRowName, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
-import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { copyText } from '../../lib/clipboard.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
+import { useInviteMember, useMembers } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -22,9 +20,9 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 import { roleOptions } from './roles.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
+import { useListView } from '../lists/useListView.ts';
+import { memberColumns } from './memberColumns.tsx';
+import { useMemberListActions } from './useMemberListActions.ts';
 
 /** An invitation cannot grant ownership. */
 const INVITE_ROLES = ['viewer', 'operator', 'admin'] as const;
@@ -43,13 +41,10 @@ const INVITE_ROLES = ['viewer', 'operator', 'admin'] as const;
 export function MembersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
-  const ask = useConfirm();
-  const navigate = useNavigate();
 
   const members = useMembers(org);
   const canManage = may(useOrg(org).data?.org.role, 'members.manage');
   const invite = useInviteMember(org);
-  const removeMember = useRemoveMember(org);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   // Set when an invitation was created but not e-mailed because the
@@ -65,18 +60,13 @@ export function MembersPage() {
     defaultValues: { email: '', role: 'operator' },
   });
 
-  async function remove(userId: string, name: string) {
-    if (!(await ask({ message: t.members.confirmRemove(name), confirmLabel: t.common.remove, destructive: true }))) return;
-    try {
-      await removeMember.mutateAsync(userId);
-      toast.show(t.members.removed(name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.members.removeFailed, 'destructive');
-    }
-  }
+  const columns = memberColumns(t, fmt);
+  const view = useListView('members', columns, { mode: 'client', rowKey: (m) => m.user_id });
+  const rowActions = useMemberListActions(org, canManage);
 
   const membersGuard = useQueryGuard(members);
   if (membersGuard) return membersGuard;
+  const { rows, total } = view.view(view.ready ? (members.data?.members ?? []) : undefined);
 
   return (
     <>
@@ -86,65 +76,18 @@ export function MembersPage() {
           <UserPlus size={15} /> {t.members.invite}
         </Button>
       </div>
-      <span className="text-[13px] text-muted-foreground">
-        {members.data ? t.members.count((members.data.members ?? []).length) : t.common.loading}
-      </span>
-
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span />
-          <span>{t.members.columns.member}</span>
-          <span>{t.members.columns.role}</span>
-          <span>{t.members.columns.joined}</span>
-          <span>{t.members.columns.status}</span>
-          <span className="sr-only">{t.members.columns.actions}</span>
-        </GridHeader>
-        {(members.data?.members ?? []).map((m) => (
-          <ListRow
-            key={m.user_id}
-            to="/o/$org/settings/members/$userId"
-            params={{ org, userId: m.user_id }}
-            columns={COLUMNS}
-            label={m.display_name}
-            menu={
-              <RowMenu label={t.members.rowActions(m.display_name)}>
-                <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/settings/members/$userId', params: { org, userId: m.user_id } })}>
-                  {t.members.open}
-                </RowMenuItem>
-                {canManage && (
-                  <RowMenuItem destructive onSelect={() => void remove(m.user_id, m.display_name)}>
-                    {t.members.removeItem}
-                  </RowMenuItem>
-                )}
-              </RowMenu>
-            }
-          >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
-              {m.display_name
-                .split(' ')
-                .slice(0, 2)
-                .map((p) => p[0]?.toUpperCase())
-                .join('')}
-            </span>
-            <div className="flex min-w-0 flex-col">
-              <ListRowName className="truncate text-xs font-semibold">{m.display_name}</ListRowName>
-              <span className="truncate text-[11px] text-muted-foreground">{m.email}</span>
-            </div>
-            <span>
-              <RoleBadge role={m.role} />
-            </span>
-            <span className="text-[11px] text-muted-foreground">{fmt.date(m.created_at)}</span>
-            <span>
-              {m.disabled_at ? (
-                <Pill tone="unknown">{t.members.disabled}</Pill>
-              ) : (
-                <Pill tone="ok">{t.members.active}</Pill>
-              )}
-            </span>
-            <span />
-          </ListRow>
-        ))}
-      </Card>
+      <DataList
+        label={t.members.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(m) => m.user_id}
+        rowLink={(m) => ({ to: '/o/$org/settings/members/$userId', params: { org, userId: m.user_id }, label: m.display_name })}
+        rowLabel={(m) => `${m.display_name} (${m.email})`}
+        rowActions={rowActions}
+        loading={!view.ready}
+        empty={null}
+        {...view.listProps(total, t.members.count)}
+      />
 
       <PendingInvites org={org} />
 

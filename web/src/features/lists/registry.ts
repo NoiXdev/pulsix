@@ -40,6 +40,13 @@ const LISTS = {
   rules: ['rule', 'metric', 'severity', 'applies_to', 'for', 'state'],
   'item-decisions': ['pattern', 'target', 'check', 'verdict', 'note', 'created'],
   maintenance: ['window', 'why', 'applies_to', 'when', 'status'],
+  'org-tokens': ['token', 'role', 'last_used', 'expires'],
+  members: ['member', 'email', 'role', 'joined', 'status'],
+  invites: ['email', 'role', 'invited_by', 'expires'],
+  secrets: ['name', 'fields', 'updated', 'used_by'],
+  channels: ['channel', 'kind', 'sends_to', 'status'],
+  'alert-routes': ['route', 'applies_to', 'fires_on', 'delivers_to', 'enabled'],
+  rotations: ['rotation', 'period', 'cycle'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ListId = keyof typeof LISTS;

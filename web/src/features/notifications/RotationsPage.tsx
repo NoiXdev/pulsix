@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { BellOff, CalendarClock, Plus, Trash2 } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { DateTimePicker } from '../../ui/DateTimePicker.tsx';
@@ -16,7 +16,6 @@ import {
   useCreateOncallException,
   useCreateOncallRotation,
   useDeleteOncallException,
-  useDeleteOncallRotation,
   useOncallExceptions,
   useOncallRotations,
   useOncallShifts,
@@ -26,13 +25,13 @@ import { may } from '../../lib/roles.ts';
 import { fromLocalInput, toLocalInput } from '../maintenance/time.ts';
 import type { OncallRotation, OncallRotationInput } from '../../api/types.ts';
 import { RotationDialog } from './RotationDialog.tsx';
+import { rotationColumns } from './rotationColumns.tsx';
+import { useRotationListActions } from './useRotationListActions.tsx';
+import { useListView } from '../lists/useListView.ts';
 import { RosterStrip } from './RosterStrip.tsx';
 import { ChannelDialog } from './ChannelDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
-import { useConfirm } from '../../ui/confirmContext.ts';
-
-const COLUMNS = 'minmax(0, 0.9fr) 90px minmax(0, 1.4fr) 160px';
 
 // The roster strip only needs a near-term window to answer "who is on
 // call now, and next" — two weeks is comfortably past any period this
@@ -63,8 +62,6 @@ export function RotationsPage() {
   const t = useT();
   const m = t.notifications;
   const r8 = m.rotations;
-  const toast = useToast();
-  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'channels.read');
@@ -73,8 +70,27 @@ export function RotationsPage() {
   const channels = useChannels(org, !!orgInfo.data && canRead);
   const create = useCreateOncallRotation(org);
   const update = useUpdateOncallRotation(org);
-  const remove = useDeleteOncallRotation(org);
-  const [editing, setEditing] = useState<OncallRotation | 'new' | null>(null);
+
+  const channelList = channels.data?.channels ?? [];
+  const channelOptions = channelList.map((c) => ({ id: c.id, name: c.name }));
+
+  function channelNames(r: OncallRotation): string {
+    return (r.channels ?? []).map((id) => channelList.find((c) => c.id === id)?.name ?? id.slice(0, 8)).join(' → ');
+  }
+
+  async function onSave(rotation: OncallRotation | undefined, body: OncallRotationInput) {
+    if (rotation) {
+      await update.mutateAsync({ ...body, id: rotation.id, revision: rotation.revision });
+    } else {
+      await create.mutateAsync(body);
+    }
+  }
+
+  const actions = useRotationListActions(org, canWrite, (rotation, onClose) => (
+    <RotationDialog open rotation={rotation} channels={channelOptions} onClose={onClose} onSave={(body) => onSave(rotation, body)} />
+  ));
+  const columns = rotationColumns(t, channelNames);
+  const view = useListView('rotations', columns, { mode: 'client', rowKey: (r) => r.id });
 
   const guard = useQueryGuard(orgInfo);
   const rotationsGuard = useQueryGuard(rotations);
@@ -94,83 +110,33 @@ export function RotationsPage() {
   }
   if (!rotations.data) return <QueryLoading />;
   const list = rotations.data.rotations ?? [];
-  const channelList = channels.data?.channels ?? [];
-  const channelOptions = channelList.map((c) => ({ id: c.id, name: c.name }));
-
-  function channelNames(r: OncallRotation): string {
-    return (r.channels ?? []).map((id) => channelList.find((c) => c.id === id)?.name ?? id.slice(0, 8)).join(' → ');
-  }
-
-  async function onSave(body: OncallRotationInput) {
-    if (editing && editing !== 'new') {
-      await update.mutateAsync({ ...body, id: editing.id, revision: editing.revision });
-    } else {
-      await create.mutateAsync(body);
-    }
-  }
-
-  async function onDelete(r: OncallRotation) {
-    if (!(await ask({ message: r8.deleteConfirm(r.name), confirmLabel: t.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(r.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
-    }
-  }
-
+  const { rows, total } = view.view(view.ready ? list : undefined);
   return (
     <>
       {header}
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">{r8.subtitle}</span>
         {canWrite && (
-          <Button variant="primary" onClick={() => setEditing('new')}>
+          <Button variant="primary" onClick={actions.openNew}>
             <CalendarClock size={15} /> {r8.newRotation}
           </Button>
         )}
       </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{r8.columns.rotation}</span>
-          <span>{r8.columns.period}</span>
-          <span>{r8.columns.cycle}</span>
-          <span />
-        </GridHeader>
-        {list.map((r) => (
-          <GridRow key={r.id} columns={COLUMNS}>
-            <span className="truncate text-[13px] font-medium" data-row>
-              {r.name}
-            </span>
-            <span className="text-xs text-muted-foreground">{r8.periodDays(r.period_days)}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
-            <span className="flex justify-end gap-1">
-              {canWrite && (
-                <>
-                  <Button type="button" variant="ghost" aria-label={m.editAria(r.name)} onClick={() => setEditing(r)}>
-                    {m.edit}
-                  </Button>
-                  <Button type="button" variant="destructive" aria-label={m.deleteAria(r.name)} onClick={() => void onDelete(r)}>
-                    {t.common.delete}
-                  </Button>
-                </>
-              )}
-            </span>
-          </GridRow>
-        ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{r8.empty}</p>}
-      </Card>
+      <DataList
+        label={r8.label}
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        rowLabel={(r) => r.name}
+        rowActions={actions.rowActions}
+        loading={!view.ready}
+        empty={r8.empty}
+        {...view.listProps(total, r8.count)}
+      />
       {list.map((r) => (
         <StandIns key={r.id} org={org} rotation={r} channels={channelOptions} mailAvailable={!!channels.data?.mail_available} canWrite={canWrite} />
       ))}
-      {editing && (
-        <RotationDialog
-          open
-          rotation={editing === 'new' ? undefined : editing}
-          channels={channelOptions}
-          onClose={() => setEditing(null)}
-          onSave={onSave}
-        />
-      )}
+      {actions.dialogs}
     </>
   );
 }

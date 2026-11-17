@@ -2,6 +2,13 @@ import type { Messages } from '../types.ts';
 
 export const deLists: Messages['lists'] = {
   names: {
+    'alert-routes': 'Alarmrouten',
+    channels: 'Benachrichtigungskanäle',
+    invites: 'Offene Einladungen',
+    members: 'Mitglieder',
+    'org-tokens': 'API-Tokens',
+    rotations: 'Bereitschaftsrotationen',
+    secrets: 'Secrets',
     activity: 'Aktivität',
     'agent-tokens': 'Agent-Registrierungstoken',
     agents: 'Agents',

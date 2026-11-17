@@ -1,0 +1,76 @@
+import { RoleBadge, Tag } from '../../ui/badge.tsx';
+import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
+import type { components } from '../../api/schema.d.ts';
+import type { Format } from '../../i18n/format.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { roleRank } from '../members/roles.ts';
+import { displayedAreas, type Area } from './areas.ts';
+
+type Token = components['schemas']['TokenDTO'];
+
+/**
+ * tokenColumns is every column the organization's API token list offers
+ * (list id `org-tokens`), sorted in the browser. A token opens nothing, so
+ * the name is plain text: an assistant token's badge and its areas stay
+ * under the name at every density.
+ */
+export function tokenColumns(t: Messages, fmt: Format): DataListColumn<Token>[] {
+  const c = t.tokens.columns;
+  return [
+    {
+      id: 'token',
+      label: c.name,
+      width: 'minmax(0, 1.6fr)',
+      sortKey: 'name',
+      sortValue: (r) => r.name,
+      required: true,
+      defaultVisible: true,
+      render: (r) => (
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-semibold">{r.name}</span>
+            {r.kind === 'assistant' && <Tag>{t.tokens.kind.badge}</Tag>}
+          </span>
+          {r.kind === 'assistant' && (r.areas ?? []).length > 0 && (
+            <span className={`truncate text-muted-foreground ${CELL_MINOR}`}>
+              {displayedAreas(r.areas ?? [])
+                .map((area) => (Object.hasOwn(t.tokens.areas.labels, area) ? t.tokens.areas.labels[area as Area] : area))
+                .join(' · ')}
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      id: 'role',
+      label: c.role,
+      width: '110px',
+      sortKey: 'role',
+      sortValue: (r) => roleRank(r.role),
+      defaultVisible: true,
+      render: (r) => (
+        <span>
+          <RoleBadge role={r.role} />
+        </span>
+      ),
+    },
+    {
+      id: 'last_used',
+      label: c.lastUsed,
+      width: '140px',
+      sortKey: 'last_used',
+      sortValue: (r) => r.last_used_at,
+      defaultVisible: true,
+      render: (r) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.last_used_at ? fmt.date(r.last_used_at) : t.common.never}</span>,
+    },
+    {
+      id: 'expires',
+      label: c.expires,
+      width: '140px',
+      sortKey: 'expires',
+      sortValue: (r) => r.expires_at,
+      defaultVisible: true,
+      render: (r) => <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.expires_at ? fmt.date(r.expires_at) : t.common.never}</span>,
+    },
+  ];
+}

@@ -3,12 +3,13 @@ import type { Messages } from '../types.ts';
 export const deMembers: Messages['members'] = {
   count: (n: number) => (n === 1 ? '1 Mitglied' : `${n} Mitglieder`),
   invite: 'Mitglied einladen',
+  label: 'Mitglieder',
   columns: {
     member: 'Mitglied',
+    email: 'E-Mail',
     role: 'Rolle',
     joined: 'Beigetreten',
     status: 'Status',
-    actions: 'Aktionen',
   },
   roles: {
     viewer: 'Betrachter',
@@ -43,7 +44,6 @@ export const deMembers: Messages['members'] = {
     copyFailed: 'Kopieren nicht möglich — den Link markieren und von Hand kopieren',
     done: 'Fertig',
   },
-  rowActions: (name: string) => `Aktionen für ${name}`,
   open: 'Öffnen',
   removeItem: 'Entfernen…',
   page: {
@@ -63,8 +63,9 @@ export const deMembers: Messages['members'] = {
     title: 'Offene Einladungen',
     invitedBy: 'Eingeladen von',
     expires: 'Läuft ab',
-    revoke: 'widerrufen',
-    revokeAria: (email: string) => `Einladung an ${email} widerrufen`,
+    label: 'Offene Einladungen',
+    count: (n: number) => (n === 1 ? '1 Einladung' : `${n} Einladungen`),
+    revokeItem: 'Widerrufen…',
     confirmRevoke: (email: string) => `Einladung an ${email} widerrufen? Der Link funktioniert dann nicht mehr.`,
     revoked: (email: string) => `Einladung an ${email} widerrufen`,
     revokeFailed: 'Einladung konnte nicht widerrufen werden',

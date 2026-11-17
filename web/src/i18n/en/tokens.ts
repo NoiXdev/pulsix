@@ -3,14 +3,16 @@
 export const enTokens = {
   title: 'API tokens',
   create: 'Create token',
-  count: (n: number) => `${n} tokens`,
+  count: (n: number) => (n === 1 ? '1 token' : `${n} tokens`),
   columns: {
     name: 'Name',
     role: 'Role',
     lastUsed: 'Last used',
     expires: 'Expires',
   },
-  revoke: 'revoke',
+  label: 'API tokens',
+  editItem: 'Edit',
+  revokeItem: 'Revoke…',
   revokeConfirm: (name: string) => `Revoke token ${name}?`,
   revoked: (name: string) => `Token ${name} revoked`,
   revokeFailed: 'failed to revoke token',
@@ -36,7 +38,6 @@ export const enTokens = {
     badge: 'Assistant',
   },
   edit: {
-    action: 'edit',
     title: (name: string) => `Edit token ${name}`,
     neverExpires: 'Never expires',
     expiryRequired: 'Pick a date or tick Never expires.',
@@ -45,7 +46,6 @@ export const enTokens = {
     save: 'Save',
     saved: (name: string) => `Token ${name} saved`,
     savedReconnect: (name: string) => `Token ${name} saved. Reconnect the assistant to see new tools.`,
-    expiredHint: 'Expired tokens cannot be changed.',
     failed: 'failed to save token',
   },
   areas: {

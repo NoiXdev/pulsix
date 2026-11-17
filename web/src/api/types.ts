@@ -15,6 +15,7 @@ export type HostListItem = components['schemas']['HostListItemDTO'];
 export type Zone = components['schemas']['ZoneDTO'];
 export type Tag = components['schemas']['TagDTO'];
 export type Member = components['schemas']['MemberDTO'];
+export type PendingInvite = components['schemas']['PendingInviteDTO'];
 export type Event = components['schemas']['EventDTO'];
 export type Token = components['schemas']['TokenDTO'];
 export type Passkey = components['schemas']['PasskeyDTO'];

@@ -35,7 +35,7 @@ test('an admin adds an e-mail channel, sends a test through it, and points the d
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
 
   // --- Add the channel -------------------------------------------------
-  await page.getByRole('button', { name: 'Add channel' }).click();
+  await page.getByRole('button', { name: 'Add channel', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await pickOption(dialog, 'Kind', { value: 'email' });
   await dialog.getByLabel('Name').fill(CHANNEL);
@@ -49,15 +49,15 @@ test('an admin adds an e-mail channel, sends a test through it, and points the d
   await expect(channelRow.getByText('enabled', { exact: true })).toBeVisible();
 
   // --- Send a test, and find the mail -----------------------------------
-  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}` }).click();
-  await page.getByRole('menuitem', { name: 'Send test' }).click();
+  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Send test', exact: true }).click();
   await expect(page.getByText(`Test message sent through ${CHANNEL}`)).toBeVisible();
   const body = await waitForMessageTo(RECIPIENT);
   expect(body.length).toBeGreaterThan(0);
 
   // --- The delivery log records that attempt ----------------------------
-  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}` }).click();
-  await page.getByRole('menuitem', { name: 'Deliveries' }).click();
+  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Deliveries', exact: true }).click();
   const log = page.getByRole('dialog');
   await expect(log).toContainText(`Deliveries · ${CHANNEL}`);
   const delivery = log.locator('[data-delivery]').first();
@@ -96,8 +96,8 @@ test('an admin adds an e-mail channel, sends a test through it, and points the d
   // --- Remove the channel ------------------------------------------------
   // Leaves the digest pointing at nothing, which is the state this
   // organization started in — the other specs share this manager.
-  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}` }).click();
-  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Delete…', exact: true }).click();
   await acceptConfirm(page, enCommon.delete);
-  await expect(page.getByRole('button', { name: `Actions for ${CHANNEL}` })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `Actions for ${CHANNEL}`, exact: true })).toHaveCount(0);
 });

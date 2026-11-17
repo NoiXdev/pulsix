@@ -56,7 +56,12 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
     },
   });
   const generalRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/general', component: OrgGeneralPage });
-  const membersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members', component: MembersPage });
+  const membersRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/members',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: MembersPage,
+  });
   // A member's page in this organization: the role, and for an instance
   // administrator the account's sign-in and actions too (backlog 7.74).
   const memberRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members/$userId', component: MemberPage });
@@ -66,10 +71,20 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
     validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
     component: ActivityPage,
   });
-  const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
+  const tokensRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/tokens',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: TokensPage,
+  });
   // The organization's secret store (backlog 3.13d): the credentials of the
   // checks the Pulsix server runs.
-  const secretsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/secrets', component: SecretsPage });
+  const secretsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/secrets',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: SecretsPage,
+  });
   const legacyCredentialsRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/credentials',
@@ -141,9 +156,24 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const sharedChecksRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks', component: SharedChecksPage });
   const sharedCheckNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/new', component: SharedCheckFormPage });
   const sharedCheckEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/$id', component: SharedCheckFormPage });
-  const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
-  const alertRoutesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/alert-routes', component: AlertRoutesPage });
-  const rotationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/rotations', component: RotationsPage });
+  const notificationsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/notifications',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: ChannelsPage,
+  });
+  const alertRoutesRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/alert-routes',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: AlertRoutesPage,
+  });
+  const rotationsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: '/rotations',
+    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    component: RotationsPage,
+  });
 
   return settingsRoute.addChildren([
         settingsIndexRoute,

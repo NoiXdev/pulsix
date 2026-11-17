@@ -10,7 +10,9 @@ export const deTokens: Messages['tokens'] = {
     lastUsed: 'Zuletzt verwendet',
     expires: 'Läuft ab',
   },
-  revoke: 'widerrufen',
+  label: 'API-Tokens',
+  editItem: 'Bearbeiten',
+  revokeItem: 'Widerrufen…',
   revokeConfirm: (name: string) => `Token ${name} widerrufen?`,
   revoked: (name: string) => `Token ${name} widerrufen`,
   revokeFailed: 'Token konnte nicht widerrufen werden',
@@ -34,7 +36,6 @@ export const deTokens: Messages['tokens'] = {
     badge: 'Assistent',
   },
   edit: {
-    action: 'bearbeiten',
     title: (name: string) => `Token ${name} bearbeiten`,
     neverExpires: 'Läuft nie ab',
     expiryRequired: 'Wähle ein Datum oder setze „Läuft nie ab“.',
@@ -43,7 +44,6 @@ export const deTokens: Messages['tokens'] = {
     save: 'Speichern',
     saved: (name: string) => `Token ${name} gespeichert`,
     savedReconnect: (name: string) => `Token ${name} gespeichert. Verbinde den Assistenten neu, um neue Tools zu sehen.`,
-    expiredHint: 'Abgelaufene Tokens lassen sich nicht ändern.',
     failed: 'Token konnte nicht gespeichert werden',
   },
   areas: {

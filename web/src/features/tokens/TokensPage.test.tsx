@@ -9,6 +9,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { TokensPage } from './TokensPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { chooseRowAction, openRowMenu } from '../../test/wholeList.ts';
 
 function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
@@ -127,7 +128,7 @@ describe('TokensPage error handling (cheap fix)', () => {
 
     renderPage(qc);
 
-    await user.click(await screen.findByRole('button', { name: 'revoke' }));
+    await chooseRowAction(user, 'ci-deploy (viewer)', 'Revoke…');
     await acceptConfirm(user);
 
     const toast = await screen.findByRole('status');
@@ -337,7 +338,7 @@ describe('TokensPage API explorer hint', () => {
 });
 
 describe('TokensPage edit action', () => {
-  it('disables edit for an expired token, with a hint', async () => {
+  it('disables edit for an expired token and keeps it for a live one', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockApi({
       'GET /api/v1/orgs/acme/tokens': {
@@ -348,9 +349,11 @@ describe('TokensPage edit action', () => {
       },
     });
     renderPage(qc);
-    const old = await screen.findByRole('button', { name: 'edit old' });
-    expect(old).toBeDisabled();
-    expect(old).toHaveAttribute('title', 'Expired tokens cannot be changed.');
-    expect(screen.getByRole('button', { name: 'edit fresh' })).toBeEnabled();
+    const user = userEvent.setup();
+    await openRowMenu(user, 'old (viewer)');
+    expect(await screen.findByRole('menuitem', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
+    await user.keyboard('{Escape}');
+    await openRowMenu(user, 'fresh (viewer)');
+    expect(await screen.findByRole('menuitem', { name: 'Edit' })).not.toHaveAttribute('aria-disabled');
   });
 });
