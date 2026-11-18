@@ -41,3 +41,22 @@ test('the account menu opens the settings area, whose sidebar leads back to the 
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}(/|$)`));
   await expect(page.getByRole('link', { name: 'Hosts', exact: true })).toBeVisible();
 });
+
+test('one sidebar carries account, organization and instance settings', async ({ page }) => {
+  await page.goto(`/o/${ORG.slug}/settings/general`);
+  const nav = page.getByRole('navigation', { name: 'Settings' });
+  await expect(nav.getByRole('link', { name: `Back to ${ORG.name}` })).toBeVisible();
+  for (const group of ['My account', `Organization · ${ORG.name}`, 'Alerting', 'Instance']) {
+    await expect(nav.getByRole('group', { name: group })).toBeVisible();
+  }
+  // No organization switcher.
+  await expect(page.getByRole('combobox', { name: 'Organization' })).toHaveCount(0);
+
+  await nav.getByRole('link', { name: 'Members', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/members$`));
+  await expect(nav.getByRole('link', { name: 'Members', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await nav.getByRole('link', { name: 'Security', exact: true }).click();
+  await expect(page).toHaveURL(/\/account\/security$/);
+  await expect(nav.getByRole('link', { name: 'Members', exact: true })).toHaveAttribute('href', `/o/${ORG.slug}/settings/members`);
+});

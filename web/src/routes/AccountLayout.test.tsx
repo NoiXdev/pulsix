@@ -83,6 +83,43 @@ describe('AccountLayout', () => {
     expect(within(crumbs).getByText('Security')).toBeInTheDocument();
   });
 
+  it('lists the organization links against the back-org, Alerting and Instance by role', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        instance_admin: true,
+      },
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+    renderAt();
+    const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    const org = within(nav).getByRole('group', { name: 'Organization · Acme Hosting' });
+    expect(within(org).getByRole('link', { name: 'Members' })).toHaveAttribute('href', '/o/acme/settings/members');
+    expect(within(nav).getByRole('group', { name: 'Alerting' })).toBeInTheDocument();
+    expect(within(nav).getByRole('group', { name: 'Instance' })).toBeInTheDocument();
+  });
+
+  it('hides Alerting for a viewer in the back-org and Instance for a non-admin', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        instance_admin: false,
+      },
+      'GET /api/v1/orgs': { orgs: [{ ...ORGS.orgs[0], role: 'viewer' }] },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+    renderAt();
+    const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    expect(within(nav).getByRole('group', { name: 'Organization · Acme Hosting' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('group', { name: 'Alerting' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('group', { name: 'Instance' })).not.toBeInTheDocument();
+  });
+
   it('sends a session whose account has no second factor yet to enrolment, without requesting organizations', async () => {
     let orgsRequested = false;
     mockApi({
@@ -179,9 +216,10 @@ describe('AccountLayout', () => {
     expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
     expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
     expect(within(nav).getByText('Owner · Acme')).toBeInTheDocument();
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Back to Acme', 'Security', 'Appearance', 'Profile', 'API tokens', 'My activity']);
-    expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav).getByRole('link', { name: 'API tokens' })).toHaveAttribute('href', '/account/tokens');
+    const mine = within(nav).getByRole('group', { name: 'My account' });
+    expect(within(mine).getAllByRole('link').map((l) => l.textContent)).toEqual(['Security', 'Appearance', 'Profile', 'API tokens', 'My activity']);
+    expect(within(mine).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page');
+    expect(within(mine).getByRole('link', { name: 'API tokens' })).toHaveAttribute('href', '/account/tokens');
     expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Hosts' })).not.toBeInTheDocument();
   });

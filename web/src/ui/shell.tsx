@@ -21,13 +21,18 @@ export interface ShellUser {
   subtitle: string;
 }
 
-/** The personal settings area's sidebar: a way back, who the person is and
- * the pages of the area (see SettingsNav). */
+/** The settings sidebar (personal, organization and instance settings in
+ * one): a way back, who the person is and the grouped pages (see
+ * SettingsNav). The route layouts decide which groups the person may see. */
 export interface ShellSettingsNav {
   /** The organization "Back to …" returns to. */
-  backOrg: ShellOrg;
+  backOrg: Pick<ShellOrg, 'slug' | 'name'>;
   personName: string;
   personRole: string;
+  /** Show the Alerting group (the role may read channels). */
+  showAlerting: boolean;
+  /** Show the Instance group (instance administrators). */
+  showInstance: boolean;
 }
 
 export interface AppShellProps {

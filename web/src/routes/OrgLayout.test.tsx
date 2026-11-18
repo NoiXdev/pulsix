@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -40,8 +40,13 @@ function renderAt(initialPath: string, locale?: 'de') {
     path: '/settings/members',
     component: () => <div>MEMBERS PAGE</div>,
   });
+  const generalRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/settings/general',
+    component: () => <div>GENERAL PAGE</div>,
+  });
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
-  const routeTree = rootRoute.addChildren([loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute, membersRoute])]);
+  const routeTree = rootRoute.addChildren([loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute, membersRoute, generalRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -80,6 +85,48 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(await screen.findByText('MEMBERS PAGE')).toBeInTheDocument();
     const header = document.querySelector('header');
     expect(header).toHaveTextContent('SettingsMembers');
+  });
+
+  it('swaps the organization navigation for the settings navigation under /settings', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': { ...ME_OK, instance_admin: true },
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/settings/general');
+
+    expect(await screen.findByText('GENERAL PAGE')).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Settings' });
+    expect(within(nav).getByRole('link', { name: 'Back to Acme Hosting' })).toBeInTheDocument();
+    expect(within(nav).getByRole('group', { name: 'My account' })).toBeInTheDocument();
+    expect(within(nav).getByRole('group', { name: 'Organization · Acme Hosting' })).toBeInTheDocument();
+    expect(within(nav).getByRole('group', { name: 'Alerting' })).toBeInTheDocument();
+    expect(within(nav).getByRole('group', { name: 'Instance' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /^Hosts/ })).not.toBeInTheDocument();
+    expect(document.querySelector('header')).toHaveTextContent('SettingsGeneral');
+  });
+
+  it('shows a viewer only My account and Organization, and keeps the organization navigation elsewhere', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': { org: { ...ORG_OK.org, role: 'viewer' } },
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/settings/general');
+
+    const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    expect(within(nav).getByRole('group', { name: 'Organization · Acme Hosting' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('group', { name: 'Alerting' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('group', { name: 'Instance' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the organization navigation on an ordinary page', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme': ORG_OK, 'GET /api/v1/auth/me': ME_OK, 'GET /api/v1/orgs': ORGS_OK });
+    renderAt('/o/acme/hosts');
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Organization' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'My account' })).not.toBeInTheDocument();
   });
 
   it('shows the number of pending run requests beside Runs', async () => {

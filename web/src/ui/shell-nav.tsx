@@ -167,14 +167,38 @@ export function OrgNav({ org, pendingRunRequests }: { org: ShellOrg; pendingRunR
   );
 }
 
+type SettingsOrgPath =
+  | '/o/$org/settings/general'
+  | '/o/$org/settings/members'
+  | '/o/$org/settings/activity'
+  | '/o/$org/settings/tokens'
+  | '/o/$org/settings/secrets'
+  | '/o/$org/settings/notifications'
+  | '/o/$org/settings/alert-routes'
+  | '/o/$org/settings/rotations'
+  | '/o/$org/settings/users'
+  | '/o/$org/settings/organizations'
+  | '/o/$org/settings/mail'
+  | '/o/$org/settings/language'
+  | '/o/$org/settings/backups'
+  | '/o/$org/settings/shared/repos'
+  | '/o/$org/settings/shared/templates'
+  | '/o/$org/settings/shared/checks';
+
 /**
- * SettingsNav replaces the organization sidebar inside the personal
- * settings area (/account/*): a way back to the organization the person
- * came from, who they are, and the pages of the area: Security, Appearance,
- * Profile, API tokens and My activity.
+ * SettingsNav replaces the organization sidebar in every settings page
+ * (/account/* and /o/$org/settings/*): a way back to the organization, who
+ * the person is, then My account, the organization's settings, Alerting
+ * (role-gated) and Instance (instance administrators). The organization
+ * groups always point at the back-org, so one nav serves both areas.
  */
 export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
   const t = useT();
+  const orgLink = (to: SettingsOrgPath, label: string) => (
+    <Link key={to} to={to} params={{ org: nav.backOrg.slug }} {...NAV_LINK_PROPS}>
+      <span className="flex-1 truncate">{label}</span>
+    </Link>
+  );
   return (
     <nav aria-label={t.account.nav.label} className="flex min-h-0 flex-col overflow-y-auto px-3 py-3">
       <Link
@@ -190,7 +214,7 @@ export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
         <span className="truncate font-semibold">{nav.personName}</span>
         <span className="truncate text-[11px] text-muted-foreground">{nav.personRole}</span>
       </div>
-      <div className="flex flex-col gap-0.5">
+      <NavGroup label={t.account.nav.myAccount}>
         <Link to="/account/security" {...NAV_LINK_PROPS}>
           <ShieldCheck size={16} />
           <span className="flex-1">{t.account.nav.security}</span>
@@ -211,7 +235,33 @@ export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
           <History size={16} />
           <span className="flex-1">{t.account.nav.activity}</span>
         </Link>
-      </div>
+      </NavGroup>
+      <NavGroup label={t.settings.nav.organizationIn(nav.backOrg.name)}>
+        {orgLink('/o/$org/settings/general', t.settings.tabs.general)}
+        {orgLink('/o/$org/settings/members', t.settings.tabs.members)}
+        {orgLink('/o/$org/settings/activity', t.settings.tabs.activity)}
+        {orgLink('/o/$org/settings/tokens', t.settings.tabs.tokens)}
+        {orgLink('/o/$org/settings/secrets', t.settings.tabs.secrets)}
+      </NavGroup>
+      {nav.showAlerting && (
+        <NavGroup label={t.settings.nav.alerting}>
+          {orgLink('/o/$org/settings/notifications', t.settings.tabs.notifications)}
+          {orgLink('/o/$org/settings/alert-routes', t.settings.tabs.alertRoutes)}
+          {orgLink('/o/$org/settings/rotations', t.settings.tabs.rotations)}
+        </NavGroup>
+      )}
+      {nav.showInstance && (
+        <NavGroup label={t.settings.nav.instance}>
+          {orgLink('/o/$org/settings/users', t.settings.tabs.users)}
+          {orgLink('/o/$org/settings/organizations', t.settings.tabs.organizations)}
+          {orgLink('/o/$org/settings/mail', t.settings.tabs.mail)}
+          {orgLink('/o/$org/settings/language', t.language.instance.tab)}
+          {orgLink('/o/$org/settings/backups', t.backups.tab)}
+          {orgLink('/o/$org/settings/shared/repos', t.settings.tabs.sharedRepos)}
+          {orgLink('/o/$org/settings/shared/templates', t.settings.tabs.sharedTemplates)}
+          {orgLink('/o/$org/settings/shared/checks', t.settings.tabs.sharedChecks)}
+        </NavGroup>
+      )}
     </nav>
   );
 }

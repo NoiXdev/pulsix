@@ -13,6 +13,7 @@ import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { rememberOrg } from '../lib/lastOrg.ts';
+import { may } from '../lib/roles.ts';
 import { useT } from '../i18n/useT.ts';
 import { useLockAction } from '../features/lock/useLockAction.tsx';
 import { roleLabel } from '../i18n/roleLabel.ts';
@@ -76,6 +77,16 @@ export function OrgLayout() {
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
   const crumbs = crumbLabels(pathname, orgSlug, t);
+  const inSettings = pathname === `/o/${orgSlug}/settings` || pathname.startsWith(`/o/${orgSlug}/settings/`);
+  const settingsNav = inSettings
+    ? {
+        backOrg: { slug: orgSlug, name: org.data.org.name },
+        personName: me.data.user.display_name,
+        personRole: t.account.nav.roleIn(roleLabel(t, org.data.org.role), org.data.org.name),
+        showAlerting: may(org.data.org.role, 'channels.read'),
+        showInstance: me.data.instance_admin === true,
+      }
+    : undefined;
 
   return (
     <AppShell
@@ -91,6 +102,7 @@ export function OrgLayout() {
         if (slug === orgSlug) return;
         void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } });
       }}
+      settingsNav={settingsNav}
       onCreateOrg={me.data.instance_admin ? () => setCreatingOrg(true) : undefined}
       onLockSession={lockAction.lock}
       crumbs={

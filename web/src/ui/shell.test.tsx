@@ -57,6 +57,8 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
     leaf('/o/$org/credentials'),
     leaf('/o/$org/jump-hosts'),
     leaf('/o/$org/settings/members'),
+    leaf('/o/$org/settings/members/$userId'),
+    leaf('/o/$org/settings/general'),
     leaf('/o/$org/settings/activity'),
     leaf('/o/$org/settings/tokens'),
     leaf('/account/security'),
@@ -325,7 +327,7 @@ describe('AppShell nav grouping', () => {
   });
 
   describe('with the settings navigation', () => {
-    const settingsNav: ShellSettingsNav = { backOrg: { slug: 'acme', name: 'Acme' }, personName: 'Tim R.', personRole: 'Owner' };
+    const settingsNav: ShellSettingsNav = { backOrg: { slug: 'acme', name: 'Acme' }, personName: 'Tim R.', personRole: 'Owner', showAlerting: true, showInstance: true };
 
     it('replaces the organization switcher and navigation by the back link, the person and the pages', async () => {
       renderShellAt('/account/appearance', { settingsNav });
@@ -340,6 +342,29 @@ describe('AppShell nav grouping', () => {
       expect(within(nav).getByRole('link', { name: 'My activity' })).toHaveAttribute('href', '/account/activity');
       expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /^Hosts/ })).not.toBeInTheDocument();
+    });
+
+    it('groups My account, Organization, Alerting and Instance, the organization links pointing at the back-org', async () => {
+      renderShellAt('/o/acme/settings/members/u2', { settingsNav });
+      const nav = await screen.findByRole('navigation', { name: 'Settings' });
+      for (const name of ['My account', 'Organization · Acme', 'Alerting', 'Instance']) {
+        expect(within(nav).getByRole('group', { name })).toBeInTheDocument();
+      }
+      const org = within(nav).getByRole('group', { name: 'Organization · Acme' });
+      expect(within(org).getByRole('link', { name: 'General' })).toHaveAttribute('href', '/o/acme/settings/general');
+      expect(within(org).getByRole('link', { name: 'Secrets' })).toHaveAttribute('href', '/o/acme/settings/secrets');
+      expect(within(org).getByRole('link', { name: 'Members' })).toHaveAttribute('data-nav-active', 'true');
+      const instance = within(nav).getByRole('group', { name: 'Instance' });
+      expect(within(instance).getByRole('link', { name: 'Shared check definitions' })).toHaveAttribute('href', '/o/acme/settings/shared/checks');
+      expect(within(nav).getByRole('group', { name: 'Alerting' })).toBeInTheDocument();
+    });
+
+    it('hides Alerting and Instance when the booleans are false', async () => {
+      renderShellAt('/o/acme/settings/general', { settingsNav: { ...settingsNav, showAlerting: false, showInstance: false } });
+      const nav = await screen.findByRole('navigation', { name: 'Settings' });
+      expect(within(nav).getByRole('group', { name: 'Organization · Acme' })).toBeInTheDocument();
+      expect(within(nav).queryByRole('group', { name: 'Alerting' })).not.toBeInTheDocument();
+      expect(within(nav).queryByRole('group', { name: 'Instance' })).not.toBeInTheDocument();
     });
 
     it('keeps the account footer menu', async () => {
