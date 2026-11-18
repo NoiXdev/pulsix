@@ -4,8 +4,8 @@ import {
   type ClipboardEvent,
   type Ref,
   type SyntheticEvent,
-} from "react";
-import { cn } from "../lib/utils.ts";
+} from 'react';
+import { cn } from '../lib/utils.ts';
 
 export interface PinInputProps {
   id: string;
@@ -20,7 +20,7 @@ export interface PinInputProps {
   /** Plays a short horizontal shake (motion-safe only). */
   shake?: boolean;
   autoComplete?: string;
-  "aria-describedby"?: string;
+  'aria-describedby'?: string;
   inputRef?: Ref<HTMLInputElement>;
 }
 
@@ -37,16 +37,17 @@ export function PinInput({
   disabled,
   invalid,
   shake,
-  autoComplete = "off",
-  "aria-describedby": describedBy,
+  autoComplete = 'off',
+  'aria-describedby': describedBy,
   inputRef,
 }: PinInputProps) {
   const [focused, setFocused] = useState(false);
-  const active =
-    focused && !disabled && value.length < length ? value.length : -1;
+  // The box the next digit goes into; a full PIN keeps the last one marked,
+  // so a focused field always shows where the focus is.
+  const active = focused && !disabled ? Math.min(value.length, length - 1) : -1;
 
   function commit(raw: string) {
-    const digits = raw.replace(/\D/g, "").slice(0, length);
+    const digits = raw.replace(/\D/g, '').slice(0, length);
     onChange(digits);
     if (digits.length === length && value.length !== length)
       onComplete?.(digits);
@@ -57,10 +58,10 @@ export function PinInput({
   }
 
   // maxLength would cut a paste before the non-digits are dropped
-  // ("12a45" -> "12a4" -> "124"), so filter the clipboard text ourselves.
+  // ('12a45' -> '12a4' -> '124'), so filter the clipboard text ourselves.
   function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
     e.preventDefault();
-    commit(value + e.clipboardData.getData("text"));
+    commit(value + e.clipboardData.getData('text'));
   }
 
   // Keep the caret at the end: no insertion in the middle of the PIN.
@@ -74,8 +75,8 @@ export function PinInput({
   return (
     <div
       className={cn(
-        "relative inline-flex gap-3",
-        shake && "motion-safe:animate-pin-shake",
+        'relative inline-flex gap-3',
+        shake && 'motion-safe:animate-pin-shake',
       )}
     >
       {Array.from({ length }, (_, i) => {
@@ -88,17 +89,17 @@ export function PinInput({
             data-filled={isFilled}
             data-active={i === active}
             className={cn(
-              "relative flex h-16 w-14 items-center justify-center rounded-xl border bg-background",
-              invalid ? "border-destructive" : "border-border",
-              i === active && "border-primary ring-2 ring-primary",
-              disabled && "opacity-50",
+              'relative flex h-16 w-14 items-center justify-center rounded-xl border bg-background',
+              invalid ? 'border-destructive' : 'border-border',
+              i === active && 'border-primary ring-2 ring-primary',
+              disabled && 'opacity-50',
             )}
           >
             {isFilled && (
               <span className="h-3.5 w-3.5 rounded-full bg-foreground" />
             )}
-            {i === active && (
-              <span className="absolute h-6 w-0.5 animate-pin-caret bg-primary" />
+            {i === active && !isFilled && (
+              <span className="absolute h-6 w-0.5 bg-primary motion-safe:animate-pin-caret" />
             )}
           </div>
         );
