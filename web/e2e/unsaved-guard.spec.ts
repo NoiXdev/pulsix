@@ -180,7 +180,7 @@ test('a save that finishes during a Back keeps the next form guarded', async ({ 
 // not ask at all.
 test('a dirty card on Organization › General asks before Members, and not after Discard', async ({ page }) => {
   await page.goto(`/o/${ORG.slug}/settings/general`);
-  const name = page.locator('#org_name');
+  const name = page.locator('#org-general-name');
   await expect(name).toHaveValue(ORG.name);
   await name.fill(`${ORG.name} e2e-unsaved`);
 
