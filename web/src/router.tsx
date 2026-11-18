@@ -8,7 +8,6 @@ import { AppearancePage } from './features/account/AppearancePage.tsx';
 import { ProfilePage } from './features/account/ProfilePage.tsx';
 import { MyActivityPage } from './features/account/MyActivityPage.tsx';
 import { PersonalTokensPage } from './features/account/PersonalTokensPage.tsx';
-import { validateListSearch } from './features/lists/listSearch.ts';
 import { EnrolmentLayout } from './routes/EnrolmentLayout.tsx';
 import { LoginPage } from './features/auth/LoginPage.tsx';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage.tsx';
