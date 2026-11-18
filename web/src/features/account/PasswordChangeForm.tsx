@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Field } from '../../ui/field.tsx';
@@ -30,13 +30,17 @@ type FieldProblem = 'tooShort' | 'mismatch' | 'same';
  * proof is stale, the form asks for it (useStepUp) and then carries on.
  * Every other session of the account ends; this one stays. onChanged runs
  * once the server has the new password, after the fields are emptied.
+ * `extra` (a dialog's Cancel) sits beside the submit button, which then
+ * moves to the right like every dialog's actions.
  */
 export function PasswordChangeForm({
   variant,
   onChanged,
+  extra,
 }: {
   variant: 'own' | 'temporary';
   onChanged: () => void | Promise<void>;
+  extra?: ReactNode;
 }) {
   const t = useT();
   const change = useChangePassword();
@@ -140,9 +144,18 @@ export function PasswordChangeForm({
             {error}
           </p>
         )}
-        <Button type="submit" variant="primary" className="self-start" disabled={change.isPending}>
-          {p.submit}
-        </Button>
+        {extra ? (
+          <div className="flex justify-end gap-2">
+            {extra}
+            <Button type="submit" variant="primary" disabled={change.isPending}>
+              {p.submit}
+            </Button>
+          </div>
+        ) : (
+          <Button type="submit" variant="primary" className="self-start" disabled={change.isPending}>
+            {p.submit}
+          </Button>
+        )}
       </form>
       {/* Outside the form: the dialog holds a form of its own. */}
       {stepUp.dialog}

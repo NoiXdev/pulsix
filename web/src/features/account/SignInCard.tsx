@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { Dialog } from '../../ui/dialog.tsx';
 import { useMe } from '../../api/hooks/useMe.ts';
 import { useDeletePasskey, usePasskeys } from '../../api/hooks/usePasskeys.ts';
 import { useConfirmTotp, useEnrolTotp, useRegenerateRecoveryCodes } from '../../api/hooks/useTotp.ts';
@@ -57,6 +58,7 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
   const [enrolling, setEnrolling] = useState<TotpEnrolment | null>(null);
   const [code, setCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [askRegenerate, setAskRegenerate] = useState(false);
 
   const list = passkeys.data?.passkeys ?? [];
   const totpConfirmed = me.data?.totp_confirmed === true;
@@ -93,6 +95,18 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
       enrolTotp.reset();
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.auth.errors.invalidCode, 'destructive');
+    }
+  }
+
+  // The codes in use stop working the moment new ones exist, so this asks
+  // first (R7).
+  async function regenerateCodes() {
+    setAskRegenerate(false);
+    try {
+      const res = await regenerate.mutateAsync();
+      setRecoveryCodes(res.recovery_codes);
+    } catch {
+      toast.show(t.account.recovery.regenerateFailed, 'destructive');
     }
   }
 
@@ -158,17 +172,7 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
             </>
           }
         >
-          <Button
-            disabled={regenerate.isPending}
-            onClick={async () => {
-              try {
-                const res = await regenerate.mutateAsync();
-                setRecoveryCodes(res.recovery_codes);
-              } catch {
-                toast.show(t.account.recovery.regenerateFailed, 'destructive');
-              }
-            }}
-          >
+          <Button disabled={regenerate.isPending} onClick={() => setAskRegenerate(true)}>
             {t.account.recovery.regenerate}
           </Button>
         </SettingsRow>
@@ -221,6 +225,19 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
           if (!recoveryCodes && enrolling) leaveTotp();
         }}
       />
+      {/* Its own question rather than useConfirm: this card is also shown
+          where no ConfirmProvider is mounted above it. */}
+      <Dialog open={askRegenerate} onClose={() => setAskRegenerate(false)} title={t.ui.confirm.title}>
+        <p className="text-[13px] text-foreground">{t.account.recovery.regenerateConfirm}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" onClick={() => setAskRegenerate(false)}>
+            {t.ui.confirm.cancel}
+          </Button>
+          <Button type="button" variant="destructive" onClick={() => void regenerateCodes()}>
+            {t.account.recovery.regenerateConfirmLabel}
+          </Button>
+        </div>
+      </Dialog>
       {stepUp.dialog}
     </SettingsCard>
   );

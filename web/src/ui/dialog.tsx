@@ -13,7 +13,8 @@ export interface DialogProps {
    * the native `cancel`), for while a request it started is in flight. It is
    * a request, not a guarantee: under the close-watcher rules a `cancel` is
    * cancelable only with user activation, so a repeated Escape can still
-   * close the dialog. A caller must not keep anything it cannot lose in the
+   * close the dialog; when it does while `open` is still true, the dialog
+   * shows itself again. A caller must not keep anything it cannot lose in the
    * dialog's own lifetime (see features/users/useAccountActionRunner.ts). */
   dismissible?: boolean;
 }
@@ -36,6 +37,13 @@ const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
 export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  // Read by the `close` handler, which may run inside the effect below.
+  const openRef = useRef(open);
+  const dismissibleRef = useRef(dismissible);
+  useEffect(() => {
+    openRef.current = open;
+    dismissibleRef.current = dismissible;
+  });
 
   useEffect(() => {
     const el = ref.current;
@@ -60,8 +68,18 @@ export function Dialog({ open, onClose, title, children, size = 'default', dismi
       // `close` or `cancel` up the component tree like a bubbling event, so
       // a dialog opened from inside this one would otherwise close this one
       // too when it closes (or be kept open by this one's `dismissible`).
+      //
+      // A browser may still close a dialog that is not dismissible (see
+      // `dismissible`). While its owner still has it open, it is shown again
+      // at once rather than left closed under `open` (where nothing could
+      // bring it back, since the effect above runs only when `open` changes).
       onClose={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target !== e.currentTarget) return;
+        if (!dismissibleRef.current && openRef.current) {
+          e.currentTarget.showModal();
+          return;
+        }
+        onClose();
       }}
       // Escape sends `cancel` first; preventing it is the one way to keep
       // the dialog open (the `close` above then never fires).

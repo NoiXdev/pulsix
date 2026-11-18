@@ -1,4 +1,5 @@
 import { Dialog } from '../../ui/dialog.tsx';
+import { Button } from '../../ui/button.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PasswordChangeForm } from './PasswordChangeForm.tsx';
@@ -21,6 +22,11 @@ export function PasswordDialog({ open, onClose }: { open: boolean; onClose: () =
             toast.show(t.account.password.changed);
             onClose();
           }}
+          extra={
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t.common.cancel}
+            </Button>
+          }
         />
       )}
     </Dialog>

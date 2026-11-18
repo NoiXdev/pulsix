@@ -59,6 +59,8 @@ export const deAccount: Messages['account'] = {
     left: 'übrig',
     leftHint: 'jeder gilt nur einmal, und sie sind der Weg zurück ins Konto, falls der Authenticator verloren geht.',
     regenerate: 'Neu erzeugen…',
+    regenerateConfirm: 'Deine bisherigen Wiederherstellungscodes gelten dann nicht mehr.',
+    regenerateConfirmLabel: 'Neu erzeugen',
     dialogTitle: 'Wiederherstellungscodes',
     regenerateFailed: 'Die Wiederherstellungscodes konnten nicht neu erzeugt werden.',
     shownOnce: 'Wiederherstellungscodes — werden nur einmal angezeigt. Jeder gilt nur einmal.',

@@ -69,4 +69,29 @@ describe('Escape on a dialog', () => {
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // A browser may still close a non-dismissible dialog (a repeated Escape
+  // without user activation). The dialog is still meant to be open, so it
+  // comes straight back instead of being left closed under `open`.
+  it('re-opens itself when the browser closes it while not dismissible', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <Dialog open onClose={onClose} title="Recovery codes" dismissible={false}>
+        <p>codes</p>
+      </Dialog>,
+    );
+    const el = screen.getByRole('dialog') as HTMLDialogElement;
+    el.close();
+    expect(el.open).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // The owner closing it on purpose still closes it.
+    rerender(
+      <Dialog open={false} onClose={onClose} title="Recovery codes" dismissible={false}>
+        <p>codes</p>
+      </Dialog>,
+    );
+    expect(el.open).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

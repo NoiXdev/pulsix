@@ -8,6 +8,7 @@ import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { LockStateContext } from '../lock/lockState.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { AccountSecurityPage } from './AccountSecurityPage.tsx';
+import { acceptConfirm, declineConfirm, findConfirmDialog } from '../../test/confirmDialog.ts';
 
 const ME = {
   user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
@@ -118,6 +119,7 @@ describe('Security page cards', () => {
     await waitFor(() => expect(screen.queryByLabelText('Passkey name')).not.toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: 'Regenerate…' }));
+    await acceptConfirm(user);
     const codes = await screen.findByRole('dialog', { name: 'Recovery codes' });
     expect(within(codes).getByText('aaaaa-bbbbb')).toBeInTheDocument();
     await user.click(within(codes).getByRole('button', { name: 'I have saved these' }));
@@ -128,7 +130,7 @@ describe('Security page cards', () => {
     expect(within(pin).getByLabelText('PIN')).toBeInTheDocument();
   });
 
-  it('keeps the recovery codes on screen when Escape is pressed, after Regenerate', async () => {
+  it('keeps the recovery codes on screen when Escape is pressed or the browser closes them, after Regenerate', async () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/auth/me': ME,
@@ -138,14 +140,47 @@ describe('Security page cards', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Regenerate…' }));
-    const codes = await screen.findByRole('dialog', { name: 'Recovery codes' });
+    await acceptConfirm(user);
+    const codes = (await screen.findByRole('dialog', { name: 'Recovery codes' })) as HTMLDialogElement;
     expect(within(codes).getByText('aaaaa-bbbbb')).toBeInTheDocument();
     await user.keyboard('{Escape}');
-    expect(screen.getByRole('dialog', { name: 'Recovery codes' })).toBeInTheDocument();
-    expect(screen.getByText('aaaaa-bbbbb')).toBeInTheDocument();
+    expect(codes.open).toBe(true);
+    expect(screen.getByText('aaaaa-bbbbb')).toBeVisible();
+
+    // A repeated Escape without user activation closes a modal in Chrome
+    // despite the prevented cancel: the native close. The codes come back.
+    codes.close();
+    expect(codes.open).toBe(true);
+    expect(screen.getByText('aaaaa-bbbbb')).toBeVisible();
+
+    await user.click(within(codes).getByRole('button', { name: 'I have saved these' }));
+    await waitFor(() => expect(codes.open).toBe(false));
+    // Regenerating again opens the dialog again.
+    await user.click(screen.getByRole('button', { name: 'Regenerate…' }));
+    await acceptConfirm(user);
+    await waitFor(() => expect(codes.open).toBe(true));
+    expect(screen.getByText('aaaaa-bbbbb')).toBeVisible();
   });
 
-  it('does not count Escape on the recovery codes as saved during enrolment', async () => {
+  it('asks before regenerating the recovery codes, and leaves them alone on Cancel (R7)', async () => {
+    const user = userEvent.setup();
+    const regenerate = vi.fn(() => ({ recovery_codes: ['aaaaa-bbbbb'] }));
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': PASSKEYS, 'POST /api/v1/auth/recovery-codes': regenerate });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Regenerate…' }));
+    const dialog = await findConfirmDialog();
+    expect(within(dialog).getByText('Your current recovery codes stop working.')).toBeInTheDocument();
+    await declineConfirm(user);
+    expect(regenerate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Regenerate…' }));
+    await acceptConfirm(user);
+    await waitFor(() => expect(regenerate).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('aaaaa-bbbbb')).toBeInTheDocument();
+  });
+
+  it('does not count Escape or a native close on the recovery codes as saved during enrolment', async () => {
     const user = userEvent.setup();
     const onEnrolled = vi.fn();
     mockApi({
@@ -161,16 +196,46 @@ describe('Security page cards', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
 
-    // jsdom sends no `cancel` for Escape: send it, and a `close`, ourselves.
-    const dialog = screen.getByRole('dialog', { name: 'Recovery codes' });
+    // jsdom sends no `cancel` for Escape: send it ourselves.
+    const dialog = screen.getByRole('dialog', { name: 'Recovery codes' }) as HTMLDialogElement;
     const cancel = new Event('cancel', { cancelable: true });
     fireEvent(dialog, cancel);
     expect(cancel.defaultPrevented).toBe(true);
-    fireEvent(dialog, new Event('close'));
-    expect(screen.getByText('aaaa-bbbb')).toBeInTheDocument();
+    // The browser closes it anyway (repeated Escape): it re-opens.
+    dialog.close();
+    expect(dialog.open).toBe(true);
+    expect(screen.getByText('aaaa-bbbb')).toBeVisible();
     expect(onEnrolled).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'I have saved these' }));
     await waitFor(() => expect(onEnrolled).toHaveBeenCalledTimes(1));
+  });
+
+  it('leaves the authenticator enrolment with Cancel and forgets the secret', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false },
+      'GET /api/v1/auth/passkeys': PASSKEYS,
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up…' }));
+    const dialog = (await screen.findByRole('dialog', { name: 'Set up the authenticator app' })) as HTMLDialogElement;
+    await user.type(within(dialog).getByPlaceholderText('482913'), '12');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(dialog.open).toBe(false));
+    expect(screen.queryByText('JBSWY3DPEHPK3PXP')).not.toBeInTheDocument();
+  });
+
+  it('leaves the password dialog with Cancel', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': PASSKEYS });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Change password…' }));
+    const dialog = (await screen.findByRole('dialog', { name: 'Change password' })) as HTMLDialogElement;
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(dialog.open).toBe(false));
   });
 
   it('speaks German', async () => {

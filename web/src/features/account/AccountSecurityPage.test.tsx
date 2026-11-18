@@ -6,6 +6,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { fetchMock } from '../../test/fetchMock.ts';
 import { AccountSecurityPage } from './AccountSecurityPage.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 function renderPage(qc: QueryClient) {
   return render(
@@ -334,7 +335,9 @@ describe('recovery codes', () => {
     });
     renderPage(qc);
 
-    await userEvent.click(await screen.findByRole('button', { name: /^Regenerate/ }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /^Regenerate/ }));
+    await acceptConfirm(user);
 
     // The codes themselves must appear — this response is the only time
     // they exist in readable form.

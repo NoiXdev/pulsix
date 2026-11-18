@@ -15,7 +15,8 @@ export interface TotpEnrolment {
  * open while either is on screen (`enrolling` or `recoveryCodes` set).
  * The recovery codes cannot be dismissed (no Escape): they are shown
  * once, so only the explicit "I have saved these" button (`onSaved`)
- * leaves that step. `onClose` is for leaving the enrolment step.
+ * leaves that step. `onClose` is for leaving the enrolment step (Cancel,
+ * Escape), which forgets the secret.
  */
 export function TotpDialog({
   enrolling,
@@ -70,15 +71,18 @@ export function TotpDialog({
             style={{ background: 'var(--px-paper)' }}
           />
           <code className="break-all rounded-md border border-border bg-background p-2 font-mono text-[11px]">{enrolling.secret}</code>
-          <div className="flex items-end gap-2">
-            <Input
-              inputMode="numeric"
-              pattern="[0-9]{6}"
-              placeholder="482913"
-              aria-label={t.account.totp.title}
-              value={code}
-              onChange={(e) => onCode(e.target.value)}
-            />
+          <Input
+            inputMode="numeric"
+            pattern="[0-9]{6}"
+            placeholder="482913"
+            aria-label={t.account.totp.title}
+            value={code}
+            onChange={(e) => onCode(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t.common.cancel}
+            </Button>
             <Button type="submit" variant="primary">
               {t.account.confirm}
             </Button>

@@ -64,6 +64,8 @@ export const enAccount = {
     left: 'left',
     leftHint: 'each works one time, and they are the way back in if you lose your authenticator.',
     regenerate: 'Regenerate…',
+    regenerateConfirm: 'Your current recovery codes stop working.',
+    regenerateConfirmLabel: 'Regenerate',
     dialogTitle: 'Recovery codes',
     regenerateFailed: 'Could not regenerate the recovery codes.',
     shownOnce: 'Recovery codes — shown once. Each works one time.',
