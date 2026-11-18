@@ -23,6 +23,9 @@ import { validateTokensSearch } from '../features/tokens/tokensSearch.ts';
 import { validateSecretsSearch } from '../features/secrets/secretsSearch.ts';
 import { validateChannelsSearch } from '../features/notifications/notificationsSearch.ts';
 import { validateAlertRoutesSearch } from '../features/notifications/notificationsSearch.ts';
+import { validateUsersSearch } from '../features/users/usersSearch.ts';
+import { validateOrganizationsSearch } from '../features/instance/organizationsSearch.ts';
+import { validateSharedChecksSearch, validateSharedSearch } from '../features/instance/shared/sharedSearch.ts';
 import { SettingsLayout } from '../features/settings/SettingsLayout.tsx';
 import { OrgGeneralPage } from '../features/settings/OrgGeneralPage.tsx';
 import { ChannelsPage } from '../features/notifications/ChannelsPage.tsx';
@@ -113,7 +116,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const usersRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/users',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateUsersSearch,
     component: UsersPage,
   });
   const accountRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users/$userId', component: AccountPage });
@@ -122,7 +125,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const organizationsRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/organizations',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateOrganizationsSearch,
     component: OrganizationsPage,
   });
   // The instance's default GUI language (backlog 1.41), for instance
@@ -154,13 +157,13 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
       throw redirect({ to: '/o/$org/settings/shared/repos', params: { org: params.org } });
     },
   });
-  const sharedReposRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos', validateSearch: (s: Record<string, unknown>) => validateListSearch(s), component: SharedReposPage });
+  const sharedReposRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos', validateSearch: validateSharedSearch, component: SharedReposPage });
   const sharedRepoNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos/new', component: SharedRepoFormPage });
   const sharedRepoEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos/$id', component: SharedRepoFormPage });
-  const sharedTemplatesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates', validateSearch: (s: Record<string, unknown>) => validateListSearch(s), component: SharedTemplatesPage });
+  const sharedTemplatesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates', validateSearch: validateSharedSearch, component: SharedTemplatesPage });
   const sharedTemplateNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates/new', component: SharedTemplateFormPage });
   const sharedTemplateEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates/$id', component: SharedTemplateFormPage });
-  const sharedChecksRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks', validateSearch: (s: Record<string, unknown>) => validateListSearch(s), component: SharedChecksPage });
+  const sharedChecksRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks', validateSearch: validateSharedChecksSearch, component: SharedChecksPage });
   const sharedCheckNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/new', component: SharedCheckFormPage });
   const sharedCheckEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/$id', component: SharedCheckFormPage });
   const notificationsRoute = createRoute({

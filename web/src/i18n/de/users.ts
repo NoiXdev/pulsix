@@ -1,6 +1,7 @@
 import type { Messages } from '../types.ts';
 
 export const deUsers: Messages['users'] = {
+  noMatch: 'Keine Konten passen zur Suche.',
   searchLabel: 'Benutzer suchen',
   searchPlaceholder: 'Nach Name oder E-Mail suchen',
   columns: {

@@ -6,6 +6,7 @@ import { renderListPage } from '../../test/renderListPage.tsx';
 import type { AdminUser } from '../../api/types.ts';
 import type { Locale } from '../../i18n/types.ts';
 import { UsersPage } from './UsersPage.tsx';
+import { validateUsersSearch } from './usersSearch.ts';
 
 const user = (id: string, name: string, state: AdminUser['state'], over: Partial<AdminUser> = {}): AdminUser => ({
   id,
@@ -54,6 +55,7 @@ function setup(users: AdminUser[] | ((req: MockRequest) => unknown), initial = '
     path: '/settings/users',
     component: UsersPage,
     initial,
+    extraSearch: (q) => ({ ...validateUsersSearch(q) }),
     others: [{ path: '/settings/users/$userId', component: () => <div>account page</div> }],
     locale: opts.locale,
   });
@@ -138,6 +140,16 @@ describe('UsersPage', () => {
     expect(requests.filter((r) => r.get('q') === 'person07').every((r) => r.get('page') === '1')).toBe(true);
     expect(await screen.findByRole('link', { name: 'person07@acme.io' })).toBeInTheDocument();
     expect(router.state.location.search).not.toHaveProperty('page');
+  });
+
+  it('reads the search from the URL, shows it in the box and asks the server for it', async () => {
+    const u = userEvent.setup();
+    const router = setup((req) => pageOf(many(30).filter((x) => x.email.includes(req.search.get('q') ?? '')), req), '/o/acme/settings/users?q=person07');
+    expect(await screen.findByRole('link', { name: 'person07@acme.io' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search users' })).toHaveValue('person07');
+    expect(requests.at(-1)?.get('q')).toBe('person07');
+    await u.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
   it('opens the account page from a row', async () => {

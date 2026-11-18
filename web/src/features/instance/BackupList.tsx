@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import type { BackupEntry } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useListView } from '../lists/useListView.ts';
 import { backupColumns } from './backupColumns.tsx';
 import type { RestoreDestination } from './restoreCommands.ts';
@@ -18,16 +21,21 @@ const rowKey = (b: BackupEntry) => `${b.name}|${b.created_at}`;
  * cannot authenticate (an older version's, another instance's, or one
  * someone else put there) is marked unverified but keeps its actions.
  *
- * One of several sections of the backups page, so its sort and page live in
- * the component, not in the URL.
+ * One of several sections of the backups page, so its sort, page and the
+ * kind and status filters live in the component, not in the URL.
  */
 export function BackupList({ items, destination }: { items: BackupEntry[]; destination: RestoreDestination }) {
   const t = useT();
   const f = useFormat();
   const actions = useBackupListActions(destination);
   const columns = backupColumns(t, f);
-  const view = useListView('backups', columns, { mode: 'client', urlState: false, rowKey });
-  const { rows, total } = view.view(view.ready ? items : undefined);
+  const [kind, setKind] = useState<string | undefined>();
+  const [state, setState] = useState<string | undefined>();
+  const active = !!kind || !!state;
+  const view = useListView('backups', columns, { mode: 'client', urlState: false, rowKey, resetKey: `${kind}|${state}` });
+  const shown = items.filter((b) => (!kind || b.kind === kind) && (!state || b.state === state));
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const l = t.backups.list;
 
   return (
     <>
@@ -39,7 +47,36 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
         rowLabel={(b) => b.name}
         rowActions={actions.rowActions}
         loading={!view.ready}
-        empty={t.backups.list.empty}
+        empty={active ? l.noMatch : l.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={items.length} noun={l.count} /> : undefined}>
+            <FilterSelect
+              label={l.filters.kind}
+              allLabel={l.filters.allKinds}
+              options={[
+                { value: 'scheduled', label: l.scheduled },
+                { value: 'manual', label: l.manual('') },
+              ]}
+              value={kind}
+              onChange={setKind}
+            />
+            <FilterSelect
+              label={l.filters.state}
+              allLabel={l.filters.anyState}
+              options={(Object.keys(l.states) as Array<keyof typeof l.states>).map((s) => ({ value: s, label: l.states[s] }))}
+              value={state}
+              onChange={setState}
+            />
+            {active && (
+              <ResetFilters
+                onReset={() => {
+                  setKind(undefined);
+                  setState(undefined);
+                }}
+              />
+            )}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.backups.list.count)}
       />
       {actions.dialogs}

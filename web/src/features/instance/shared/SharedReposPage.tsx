@@ -5,10 +5,13 @@ import { sharedRepoColumns } from './sharedRepoColumns.tsx';
 import { useListView } from '../../lists/useListView.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { DataList } from '../../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../../ui/list-toolbar.tsx';
+import { useListFilters } from '../../lists/filterSearch.ts';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useDeleteRepoDefinition, useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { RepoDefinition } from '../../../api/types.ts';
+import { SHARED_FILTERS, filterSharedRepos } from './sharedSearch.ts';
 
 /**
  * SharedReposPage lists the installation's repository definitions: the
@@ -42,12 +45,16 @@ export function SharedReposPage() {
     deletedMessage: (d) => t.instance.shared.repos.deleted(d.name),
   });
   const columns = sharedRepoColumns(t);
-  const view = useListView('shared-repos', columns, { mode: 'client', rowKey: (d) => d.id });
+  const { filters, active, setFilter, reset } = useListFilters(SHARED_FILTERS);
+  const view = useListView('shared-repos', columns, { mode: 'client', rowKey: (d) => d.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? (definitions.data.definitions ?? []) : undefined);
+  const all = definitions.data.definitions ?? [];
+  const shown = filterSharedRepos(all, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const s = t.instance.shared.repos;
 
   return (
     <SharedListFrame
@@ -65,8 +72,14 @@ export function SharedReposPage() {
         rowLink={(d) => ({ to: '/o/$org/settings/shared/repos/$id', params: { org, id: d.id }, label: d.name })}
         rowActions={rowActions}
         loading={!view.ready}
-        empty={t.instance.shared.repos.empty}
-        {...view.listProps(total, t.instance.shared.repos.count)}
+        empty={active ? s.noMatch : s.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={s.count} /> : undefined}>
+            <SearchInput label={s.search} placeholder={s.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
+        {...view.listProps(total, s.count)}
       />
     </SharedListFrame>
   );

@@ -10,6 +10,7 @@ import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy 
 import { SharedReposPage } from './SharedReposPage.tsx';
 import { SharedTemplatesPage } from './SharedTemplatesPage.tsx';
 import { SharedChecksPage } from './SharedChecksPage.tsx';
+import { validateSharedChecksSearch, validateSharedSearch } from './sharedSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const repo = (name: string, over: Record<string, unknown> = {}) => ({ id: `r-${name}`, name, url: `https://git/${name}.git`, branch: 'main', subpath: '', ...over });
@@ -25,9 +26,9 @@ const base = (extra: Record<string, unknown>) => ({
 const others = [{ path: '/settings/shared/repos/$id', component: () => <div>detail page</div> }];
 
 describe('SharedReposPage list', () => {
-  function setup(locale?: 'de', definitions: unknown[] = numbered('repo', 30).map((n) => repo(n))) {
+  function setup(locale?: 'de', definitions: unknown[] = numbered('repo', 30).map((n) => repo(n)), initial?: string) {
     mockApi(base({ 'GET /api/v1/admin/repos/definitions': { definitions }, 'DELETE /api/v1/admin/repos/definitions/r-repo30': {} }));
-    return renderListPage({ path: '/settings/shared/repos', component: SharedReposPage, initial: '/o/acme/settings/shared/repos', locale, others });
+    return renderListPage({ path: '/settings/shared/repos', component: SharedReposPage, initial: initial ?? '/o/acme/settings/shared/repos', locale, others, extraSearch: (q) => ({ ...validateSharedSearch(q) }) });
   }
 
   it('sorts by name in the browser, repo9 before repo10', async () => {
@@ -85,7 +86,7 @@ describe('SharedReposPage list', () => {
 });
 
 describe('SharedTemplatesPage list', () => {
-  function setup(locale?: 'de', definitions: unknown[] = numbered('tpl', 30).map((n) => tpl(n))) {
+  function setup(locale?: 'de', definitions: unknown[] = numbered('tpl', 30).map((n) => tpl(n)), initial?: string) {
     mockApi(
       base({
         'GET /api/v1/admin/templates/definitions': { definitions },
@@ -93,7 +94,7 @@ describe('SharedTemplatesPage list', () => {
         'DELETE /api/v1/admin/templates/definitions/t-tpl30': {},
       }),
     );
-    return renderListPage({ path: '/settings/shared/templates', component: SharedTemplatesPage, initial: '/o/acme/settings/shared/templates', locale, others });
+    return renderListPage({ path: '/settings/shared/templates', component: SharedTemplatesPage, initial: initial ?? '/o/acme/settings/shared/templates', locale, others, extraSearch: (q) => ({ ...validateSharedSearch(q) }) });
   }
 
   it('sorts by name in the browser, tpl9 before tpl10', async () => {
@@ -139,9 +140,9 @@ describe('SharedTemplatesPage list', () => {
 });
 
 describe('SharedChecksPage list', () => {
-  function setup(locale?: 'de', definitions: unknown[] = numbered('chk', 30).map((n) => check(n))) {
+  function setup(locale?: 'de', definitions: unknown[] = numbered('chk', 30).map((n) => check(n)), initial?: string) {
     mockApi(base({ 'GET /api/v1/admin/checks/definitions': { definitions }, 'DELETE /api/v1/admin/checks/definitions/c-chk30': {} }));
-    return renderListPage({ path: '/settings/shared/checks', component: SharedChecksPage, initial: '/o/acme/settings/shared/checks', locale, others });
+    return renderListPage({ path: '/settings/shared/checks', component: SharedChecksPage, initial: initial ?? '/o/acme/settings/shared/checks', locale, others, extraSearch: (q) => ({ ...validateSharedChecksSearch(q) }) });
   }
 
   it('sorts by key in the browser, chk9 before chk10', async () => {
@@ -186,5 +187,49 @@ describe('SharedChecksPage list', () => {
   it('writes the footer in German', async () => {
     setup('de');
     expect(await screen.findByText('1–25 von 30 Check-Definitionen')).toBeInTheDocument();
+  });
+});
+
+function renderTemplates(definitions: unknown[], initial: string) {
+  mockApi(
+    base({
+      'GET /api/v1/admin/templates/definitions': { definitions },
+      'GET /api/v1/admin/repos/definitions': { definitions: [repo('base-0000', { id: 'r-base-0000', name: 'Base repo' })] },
+    }),
+  );
+  return renderListPage({ path: '/settings/shared/templates', component: SharedTemplatesPage, initial, others, extraSearch: (q) => ({ ...validateSharedSearch(q) }) });
+}
+
+describe('Shared lists filters', () => {
+  it('filters the repository definitions by search, through the URL', async () => {
+    const user = userEvent.setup();
+    const router = (() => {
+      mockApi(base({ 'GET /api/v1/admin/repos/definitions': { definitions: [repo('infra'), repo('web', { url: 'https://git/site.git' })] } }));
+      return renderListPage({ path: '/settings/shared/repos', component: SharedReposPage, initial: '/o/acme/settings/shared/repos?q=site', others, extraSearch: (q) => ({ ...validateSharedSearch(q) }) });
+    })();
+    expect(await screen.findByText('1–1 of 1 repository definition')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['web']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    await user.type(screen.getByRole('searchbox', { name: 'Search repository definitions' }), 'inf');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'inf' }));
+    expect(firstCells()).toEqual(['infra']);
+  });
+
+  it('filters the job template definitions by search', async () => {
+    // The shared repository is part of what the search reads: "Base repo" is the one the templates use.
+    renderTemplates([tpl('deploy', { playbook_path: 'deploy.yml' }), tpl('backup', { playbook_path: 'db.yml' })], '/o/acme/settings/shared/templates?q=db.yml');
+    expect(await screen.findByText('1–1 of 1 job template definition')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['backup']);
+  });
+
+  it('filters the check definitions by plugin and writes it to the URL', async () => {
+    mockApi(base({ 'GET /api/v1/admin/checks/definitions': { definitions: [check('a', { plugin: 'cpu' }), check('b', { plugin: 'disk' })] } }));
+    const router = renderListPage({ path: '/settings/shared/checks', component: SharedChecksPage, initial: '/o/acme/settings/shared/checks', others, extraSearch: (q) => ({ ...validateSharedChecksSearch(q) }) });
+    await screen.findByText('1–2 of 2 check definitions');
+    await pickOption(screen, 'Filter by plugin', 'disk');
+    await waitFor(() => expect(router.state.location.search).toEqual({ plugin: 'disk' }));
+    expect(firstCells()).toEqual(['b']);
+    expect(screen.getByText('1 of 2 check definitions')).toBeInTheDocument();
   });
 });

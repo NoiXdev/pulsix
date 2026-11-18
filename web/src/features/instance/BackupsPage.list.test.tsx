@@ -116,3 +116,21 @@ describe('BackupsPage list', () => {
     expect(await screen.findByText('1–25 von 30 Backups')).toBeInTheDocument();
   });
 });
+
+describe('BackupsPage filters', () => {
+  it('narrows the list by kind and status in the component, not the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({
+      items: [backup(3, { kind: 'manual', actor_name: 'Tim' }), backup(2, { state: 'failed' }), backup(1)],
+    });
+    await screen.findByText('1–3 of 3 backups');
+    await pickOption(screen, 'Filter by kind', 'scheduled');
+    await screen.findByText('1–2 of 2 backups');
+    await pickOption(screen, 'Filter by status', 'Failed');
+    expect(await screen.findByText('1–1 of 1 backup')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 backups')).toBeInTheDocument();
+    expect(router.state.location.search).toEqual({});
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    expect(await screen.findByText('1–3 of 3 backups')).toBeInTheDocument();
+  });
+});

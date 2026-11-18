@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useAdminOrgs } from '../../api/hooks/useOrgs.ts';
 import { CreateOrgDialog } from '../orgs/CreateOrgDialog.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { ORGANIZATIONS_FILTERS, filterOrganizations } from './organizationsSearch.ts';
 import { organizationColumns } from './organizationColumns.tsx';
 import { PageHeader } from '../../ui/settings.tsx';
 
@@ -31,11 +34,13 @@ export function OrganizationsPage() {
   const orgs = useAdminOrgs();
   const [creating, setCreating] = useState(false);
   const columns = organizationColumns(t, fmt);
-  const view = useListView('organizations', columns, { mode: 'client', rowKey: (x) => x.id });
+  const { filters, active, setFilter, reset } = useListFilters(ORGANIZATIONS_FILTERS);
+  const view = useListView('organizations', columns, { mode: 'client', rowKey: (x) => x.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(orgs);
   if (guard) return guard;
-  const { rows, total } = view.view(view.ready ? orgs.data : undefined);
+  const shown = filterOrganizations(orgs.data ?? [], filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
 
   return (
     <>
@@ -57,7 +62,13 @@ export function OrganizationsPage() {
           x.actor_is_member ? { to: '/o/$org/hosts', params: { org: x.slug }, search: { q: undefined }, label: x.name } : undefined
         }
         loading={!orgs.data || !view.ready}
-        empty={o.empty}
+        empty={active ? o.noMatch : o.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={orgs.data?.length} noun={o.count} /> : undefined}>
+            <SearchInput label={o.search} placeholder={o.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, o.count)}
       />
       <CreateOrgDialog open={creating} onClose={() => setCreating(false)} />

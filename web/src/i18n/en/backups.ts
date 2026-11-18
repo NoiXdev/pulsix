@@ -86,6 +86,8 @@ export const enBackups = {
     unverified: 'Unverified',
     unverifiedHint:
       'The details of this backup cannot be authenticated: it was written by an older Pulsix version, by another instance, or by someone else. A restore still checks its content against the master key.',
+    noMatch: 'No backups match the filters.',
+    filters: { kind: 'Filter by kind', allKinds: 'All kinds', state: 'Filter by status', anyState: 'Any status' },
     empty: 'No backups yet.',
     download: 'Download',
     deleteItem: 'Delete…',

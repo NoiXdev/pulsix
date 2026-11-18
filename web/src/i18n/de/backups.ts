@@ -83,6 +83,8 @@ export const deBackups: Messages['backups'] = {
     unverified: 'Nicht bestätigt',
     unverifiedHint:
       'Die Angaben zu diesem Backup lassen sich nicht bestätigen: Es stammt von einer älteren Pulsix-Version, von einer anderen Instanz oder wurde von jemand anderem abgelegt. Eine Wiederherstellung prüft seinen Inhalt trotzdem mit dem Master-Key.',
+    noMatch: 'Keine Backups passen zu den Filtern.',
+    filters: { kind: 'Nach Art filtern', allKinds: 'Alle Arten', state: 'Nach Status filtern', anyState: 'Jeder Status' },
     empty: 'Noch keine Backups.',
     download: 'Herunterladen',
     deleteItem: 'Löschen…',

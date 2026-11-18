@@ -5,10 +5,14 @@ import { sharedCheckColumns } from './sharedCheckColumns.tsx';
 import { useListView } from '../../lists/useListView.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { DataList } from '../../../ui/data-list/index.ts';
+import { FilterSelect } from '../../lists/FilterSelect.tsx';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../../ui/list-toolbar.tsx';
+import { useListFilters } from '../../lists/filterSearch.ts';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useCheckDefinitions, useDeleteCheckDefinition } from '../../../api/hooks/useSharedCheckDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { CheckDefinitionDef } from '../../../api/types.ts';
+import { SHARED_CHECKS_FILTERS, filterSharedChecks } from './sharedSearch.ts';
 
 /**
  * SharedChecksPage lists the installation's check definitions
@@ -37,12 +41,18 @@ export function SharedChecksPage() {
     deletedMessage: (d) => t.instance.shared.checks.deleted(d.key),
   });
   const columns = sharedCheckColumns(t);
-  const view = useListView('shared-checks', columns, { mode: 'client', rowKey: (d) => d.id });
+  const { filters, active, setFilter, reset } = useListFilters(SHARED_CHECKS_FILTERS);
+  const view = useListView('shared-checks', columns, { mode: 'client', rowKey: (d) => d.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? (definitions.data.definitions ?? []) : undefined);
+  const all = definitions.data.definitions ?? [];
+  const shown = filterSharedChecks(all, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const s = t.instance.shared.checks;
+  // A plugin only the URL names (a stale link) stays pickable so it can be cleared.
+  const plugins = [...new Set([...all.map((d) => d.plugin), ...(filters.plugin ? [filters.plugin] : [])])].sort();
 
   return (
     <SharedListFrame
@@ -60,8 +70,15 @@ export function SharedChecksPage() {
         rowLink={(d) => ({ to: '/o/$org/settings/shared/checks/$id', params: { org, id: d.id }, label: d.key })}
         rowActions={rowActions}
         loading={!view.ready}
-        empty={t.instance.shared.checks.empty}
-        {...view.listProps(total, t.instance.shared.checks.count)}
+        empty={active ? s.noMatch : s.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={s.count} /> : undefined}>
+            <SearchInput label={s.search} placeholder={s.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            <FilterSelect label={s.filterPlugin} allLabel={s.allPlugins} options={plugins.map((p) => ({ value: p, label: p }))} value={filters.plugin} onChange={(v) => setFilter('plugin', v)} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
+        {...view.listProps(total, s.count)}
       />
     </SharedListFrame>
   );

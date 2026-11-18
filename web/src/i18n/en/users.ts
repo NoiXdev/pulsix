@@ -4,6 +4,7 @@
  * title is `settings.tabs.users`.
  */
 export const enUsers = {
+  noMatch: 'No accounts match the search.',
   searchLabel: 'Search users',
   searchPlaceholder: 'Search by name or e-mail',
   columns: {

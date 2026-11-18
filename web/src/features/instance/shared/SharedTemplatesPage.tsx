@@ -5,11 +5,14 @@ import { sharedTemplateColumns } from './sharedTemplateColumns.tsx';
 import { useListView } from '../../lists/useListView.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { DataList } from '../../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../../ui/list-toolbar.tsx';
+import { useListFilters } from '../../lists/filterSearch.ts';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import { useDeleteTemplateDefinition, useTemplateDefinitions } from '../../../api/hooks/useSharedTemplateDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { TemplateDefinition } from '../../../api/types.ts';
+import { SHARED_FILTERS, filterSharedTemplates } from './sharedSearch.ts';
 
 /**
  * SharedTemplatesPage lists the installation's job template definitions
@@ -39,12 +42,16 @@ export function SharedTemplatesPage() {
   });
   const repoName = new Map((repoDefinitions.data?.definitions ?? []).map((d) => [d.id, d.name]));
   const columns = sharedTemplateColumns(t, repoName);
-  const view = useListView('shared-templates', columns, { mode: 'client', rowKey: (d) => d.id });
+  const { filters, active, setFilter, reset } = useListFilters(SHARED_FILTERS);
+  const view = useListView('shared-templates', columns, { mode: 'client', rowKey: (d) => d.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? (definitions.data.definitions ?? []) : undefined);
+  const all = definitions.data.definitions ?? [];
+  const shown = filterSharedTemplates(all, filters, repoName);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const s = t.instance.shared.templates;
 
   return (
     <SharedListFrame
@@ -62,8 +69,14 @@ export function SharedTemplatesPage() {
         rowLink={(d) => ({ to: '/o/$org/settings/shared/templates/$id', params: { org, id: d.id }, label: d.name })}
         rowActions={rowActions}
         loading={!view.ready}
-        empty={t.instance.shared.templates.empty}
-        {...view.listProps(total, t.instance.shared.templates.count)}
+        empty={active ? s.noMatch : s.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={s.count} /> : undefined}>
+            <SearchInput label={s.search} placeholder={s.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
+        {...view.listProps(total, s.count)}
       />
     </SharedListFrame>
   );

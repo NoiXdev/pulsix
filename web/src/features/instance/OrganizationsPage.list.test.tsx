@@ -6,13 +6,14 @@ import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { OrganizationsPage } from './OrganizationsPage.tsx';
+import { validateOrganizationsSearch } from './organizationsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (slug: string, over: Record<string, unknown> = {}) => ({
   id: `id-${slug}`, slug, name: slug, member_count: 1, created_at: '2026-03-02T09:00:00Z', actor_is_member: true, ...over,
 });
 
-function setup(opts: { locale?: 'de'; orgs?: unknown[] } = {}) {
+function setup(opts: { locale?: 'de'; orgs?: unknown[]; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -21,7 +22,8 @@ function setup(opts: { locale?: 'de'; orgs?: unknown[] } = {}) {
   return renderListPage({
     path: '/settings/organizations',
     component: OrganizationsPage,
-    initial: '/o/acme/settings/organizations',
+    initial: opts.initial ?? '/o/acme/settings/organizations',
+    extraSearch: (q) => ({ ...validateOrganizationsSearch(q) }),
     locale: opts.locale,
     others: [{ path: '/hosts', component: () => <div>hosts page</div> }],
   });
@@ -90,5 +92,25 @@ describe('OrganizationsPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Organisationen')).toBeInTheDocument();
+  });
+});
+
+describe('OrganizationsPage filters', () => {
+  const orgs = [org('alpha'), org('beta', { name: 'Beta Corp' }), org('gamma')];
+
+  it('reads the search from the URL, matching name and slug', async () => {
+    setup({ orgs, initial: '/o/acme/settings/organizations?q=corp' });
+    expect(await screen.findByText('1–1 of 1 organization')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['Beta Corp']);
+    expect(screen.getByText('1 of 3 organizations')).toBeInTheDocument();
+  });
+
+  it('writes the search to the URL and says when nothing matches', async () => {
+    const user = userEvent.setup();
+    const router = setup({ orgs });
+    await screen.findByText('1–3 of 3 organizations');
+    await user.type(screen.getByRole('searchbox', { name: 'Search organizations' }), 'zzz');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'zzz' }));
+    expect(await screen.findByText('No organizations match the filter.')).toBeInTheDocument();
   });
 });
