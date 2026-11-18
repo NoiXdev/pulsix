@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ChannelsPage } from './ChannelsPage.tsx';
+import { validateChannelsSearch } from './notificationsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -14,7 +15,7 @@ const channel = (name: string, over: Record<string, unknown> = {}) => ({
   id: `id-${name}`, kind: 'email', name, enabled: true, revision: 1, created_at: '', updated_at: '', email: { recipients: [`${name}@example.test`] }, ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; channels?: unknown[]; onDelete?: () => void; onTest?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; initial?: string; role?: string; channels?: unknown[]; onDelete?: () => void; onTest?: () => void } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -30,7 +31,7 @@ function setup(opts: { locale?: 'de'; role?: string; channels?: unknown[]; onDel
       return { delivery: { status: 'sent' } };
     },
   });
-  return renderListPage({ path: '/settings/notifications', component: ChannelsPage, initial: '/o/acme/settings/notifications', locale: opts.locale });
+  return renderListPage({ path: '/settings/notifications', component: ChannelsPage, initial: opts.initial ?? '/o/acme/settings/notifications', locale: opts.locale, extraSearch: (q) => ({ ...validateChannelsSearch(q) }) });
 }
 
 describe('ChannelsPage list', () => {
@@ -98,5 +99,36 @@ describe('ChannelsPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Kanäle')).toBeInTheDocument();
+  });
+});
+
+describe('ChannelsPage filters', () => {
+  const channels = [
+    channel('mail-a'),
+    channel('hook-b', { kind: 'webhook', email: undefined, webhook: { method: 'POST', url: 'https://hooks.example.test/x' } }),
+    channel('mail-off', { enabled: false }),
+  ];
+
+  it('reads the filters from the URL and narrows the rows', async () => {
+    setup({ channels, initial: '/o/acme/settings/notifications?kind=webhook' });
+    expect(await screen.findByText('1–1 of 1 channel')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['hook-b']);
+    expect(screen.getByText('1 of 3 channels')).toBeInTheDocument();
+  });
+
+  it('writes the status to the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({ channels });
+    await screen.findByText('1–3 of 3 channels');
+    await pickOption(screen, 'Filter by status', 'disabled');
+    await waitFor(() => expect(router.state.location.search).toEqual({ status: 'disabled' }));
+    expect(firstCells()).toEqual(['mail-off']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+  });
+
+  it('says when no channel matches', async () => {
+    setup({ channels: [channel('a')], initial: '/o/acme/settings/notifications?kind=webhook' });
+    expect(await screen.findByText('No channels match the filters.')).toBeInTheDocument();
   });
 });

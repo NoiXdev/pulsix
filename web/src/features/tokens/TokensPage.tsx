@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { KeyRound } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { useCopy } from '../../ui/useCopy.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -19,7 +20,10 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { ORG_OWNER, TOKEN_KINDS, TOKEN_ROLES, TOKENS_FILTERS, filterTokens } from './tokensSearch.ts';
 import { AssistantConnectGuide } from './AssistantConnectGuide.tsx';
 import { useSettingsOrgs } from './useSettingsOrgs.ts';
 import { AreaGrid } from './AreaGrid.tsx';
@@ -70,7 +74,8 @@ export function TokensPage() {
   const role = useWatch({ control: form.control, name: 'role' });
 
   const columns = tokenColumns(t, fmt);
-  const view = useListView('org-tokens', columns, { mode: 'client', rowKey: tokenRowKey });
+  const { filters, active, setFilter, reset } = useListFilters(TOKENS_FILTERS);
+  const view = useListView('org-tokens', columns, { mode: 'client', rowKey: tokenRowKey, resetKey: JSON.stringify(filters) });
   const actions = useTokenListActions(org);
   const settingsOrgs = useSettingsOrgs([org]);
 
@@ -91,7 +96,19 @@ export function TokensPage() {
     ...(personal.data?.entries ?? []).map((e) => ({ type: 'personal' as const, ...e })),
   ];
   const settled = view.ready && !personal.isPending;
-  const { rows, total } = view.view(settled ? all : undefined);
+  const shown = filterTokens(all, filters);
+  const { rows, total } = view.view(settled ? shown : undefined);
+  const f = t.tokens.filters;
+  // The members whose personal tokens are granted here; an owner only the URL names stays pickable.
+  const owners = new Map<string, string>(
+    (personal.data?.entries ?? []).map((e) => [e.owner_id, e.owner_name] as const),
+  );
+  if (filters.owner && filters.owner !== ORG_OWNER && !owners.has(filters.owner)) owners.set(filters.owner, filters.owner.slice(0, 8));
+  const ownerOptions = [
+    { value: ORG_OWNER, label: f.ownerOrg },
+    ...[...owners].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+  ];
+  const kindLabels = { api: t.tokens.kind.api, assistant: t.tokens.kind.assistant, personal: t.tokens.personal.tag };
 
   return (
     <>
@@ -126,7 +143,36 @@ export function TokensPage() {
         rowActions={actions.rowActions}
         rowLabel={(r) => (r.type === 'personal' ? t.tokens.personal.rowLabel(r.name, r.owner_name) : `${r.name} (${r.role})`)}
         loading={!settled}
-        empty={t.tokens.empty}
+        empty={active ? t.tokens.noMatch : t.tokens.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={t.tokens.count} /> : undefined}>
+            <SearchInput
+              label={t.tokens.search}
+              placeholder={t.tokens.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.kind}
+              allLabel={f.allKinds}
+              options={TOKEN_KINDS.map((k) => ({ value: k, label: kindLabels[k] }))}
+              value={filters.kind}
+              onChange={(v) => setFilter('kind', v as typeof filters.kind)}
+            />
+            <FilterSelect label={f.owner} allLabel={f.allOwners} options={ownerOptions} value={filters.owner} onChange={(v) => setFilter('owner', v)} />
+            <FilterSelect
+              label={f.role}
+              allLabel={f.allRoles}
+              options={roleOptions(t, TOKEN_ROLES)}
+              value={filters.role}
+              onChange={(v) => setFilter('role', v as typeof filters.role)}
+            />
+            <FilterChip pressed={!!filters.expired} tone="crit" onToggle={() => setFilter('expired', filters.expired ? undefined : true)}>
+              {f.expired}
+            </FilterChip>
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.tokens.count)}
       />
 

@@ -9,6 +9,10 @@ export const deSecrets: Messages['secrets'] = {
   add: 'Neues Secret',
   readOnly: 'Nur Inhaber und Admins können Secrets anlegen, ersetzen oder löschen.',
   empty: 'Noch keine Secrets. Lege eines für jeden Geräte-Login an, den ein Check braucht, und nenne es dann im Check.',
+  search: 'Secrets durchsuchen',
+  filterPlaceholder: 'Secrets filtern…',
+  filterUnused: 'Ungenutzt',
+  noMatch: 'Keine Secrets passen zu den Filtern.',
   columns: {
     name: 'Name',
     fields: 'Felder',

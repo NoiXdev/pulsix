@@ -19,6 +19,10 @@ import { SharedChecksPage } from '../features/instance/shared/SharedChecksPage.t
 import { SharedCheckFormPage } from '../features/instance/shared/SharedCheckFormPage.tsx';
 import { validateMembersSearch } from '../features/members/membersSearch.ts';
 import { validateActivitySearch } from '../features/activity/activitySearch.ts';
+import { validateTokensSearch } from '../features/tokens/tokensSearch.ts';
+import { validateSecretsSearch } from '../features/secrets/secretsSearch.ts';
+import { validateChannelsSearch } from '../features/notifications/notificationsSearch.ts';
+import { validateAlertRoutesSearch } from '../features/notifications/notificationsSearch.ts';
 import { SettingsLayout } from '../features/settings/SettingsLayout.tsx';
 import { OrgGeneralPage } from '../features/settings/OrgGeneralPage.tsx';
 import { ChannelsPage } from '../features/notifications/ChannelsPage.tsx';
@@ -76,7 +80,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const tokensRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/tokens',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateTokensSearch,
     component: TokensPage,
   });
   // The organization's secret store (backlog 3.13d): the credentials of the
@@ -84,7 +88,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const secretsRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/secrets',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateSecretsSearch,
     component: SecretsPage,
   });
   const legacyCredentialsRoute = createRoute({
@@ -162,13 +166,13 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const notificationsRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/notifications',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateChannelsSearch,
     component: ChannelsPage,
   });
   const alertRoutesRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/alert-routes',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateAlertRoutesSearch,
     component: AlertRoutesPage,
   });
   const rotationsRoute = createRoute({

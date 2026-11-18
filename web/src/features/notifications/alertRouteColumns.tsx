@@ -47,6 +47,8 @@ export function alertRouteColumns({ t, scopeLabel, channelNames, rotationName, r
       id: 'fires_on',
       label: a.columns.firesOn,
       width: 'minmax(0, 1.2fr)',
+      sortKey: 'fires_on',
+      sortValue: (r) => `${(r.severities ?? []).join(',')} ${(r.events ?? []).join(',')}`,
       defaultVisible: true,
       render: (r) => <RouteFiresOn route={r} />,
     },
@@ -55,6 +57,8 @@ export function alertRouteColumns({ t, scopeLabel, channelNames, rotationName, r
       id: 'delivers_to',
       label: a.columns.deliversTo,
       width: 'minmax(0, 1fr)',
+      sortKey: 'delivers_to',
+      sortValue: (r) => (r.rotation_id ? rotationName(r) : channelNames(r)),
       defaultVisible: true,
       render: (r) =>
         routeReachesNobody(r, rotationOf(r)) ? (

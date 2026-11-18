@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { SecretsPage } from './SecretsPage.tsx';
+import { validateSecretsSearch } from './secretsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -14,7 +15,7 @@ const secret = (name: string, over: Record<string, unknown> = {}) => ({
   name, field_names: ['username'], created_at: '2026-11-01T10:00:00Z', updated_at: '2026-11-10T10:00:00Z', used_by: [], ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; secrets?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; initial?: string; role?: string; secrets?: unknown[]; onDelete?: () => void } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -25,7 +26,7 @@ function setup(opts: { locale?: 'de'; role?: string; secrets?: unknown[]; onDele
       return {};
     },
   });
-  return renderListPage({ path: '/settings/secrets', component: SecretsPage, initial: '/o/acme/settings/secrets', locale: opts.locale });
+  return renderListPage({ path: '/settings/secrets', component: SecretsPage, initial: opts.initial ?? '/o/acme/settings/secrets', locale: opts.locale, extraSearch: (q) => ({ ...validateSecretsSearch(q) }) });
 }
 
 describe('SecretsPage list', () => {
@@ -91,5 +92,33 @@ describe('SecretsPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Secrets')).toBeInTheDocument();
+  });
+});
+
+describe('SecretsPage filters', () => {
+  const secrets = [secret('snmp-core', { used_by: ['snmp.ifaces'] }), secret('idle', { field_names: ['token'] }), secret('mail')];
+
+  it('reads the filters from the URL and narrows the rows', async () => {
+    setup({ secrets, initial: '/o/acme/settings/secrets?unused=true' });
+    expect(await screen.findByText('1–2 of 2 secrets')).toBeInTheDocument();
+    expect(firstCells().sort()).toEqual(['idle', 'mail']);
+    expect(screen.getByText('2 of 3 secrets')).toBeInTheDocument();
+  });
+
+  it('writes the chip and the search to the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({ secrets });
+    await screen.findByText('1–3 of 3 secrets');
+    await user.click(screen.getByRole('button', { name: 'Unused' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ unused: true }));
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search secrets' }), 'ifaces');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'ifaces' }));
+    expect(firstCells()).toEqual(['snmp-core']);
+  });
+
+  it('says when no secret matches', async () => {
+    setup({ secrets, initial: '/o/acme/settings/secrets?q=zzz' });
+    expect(await screen.findByText('No secrets match the filters.')).toBeInTheDocument();
   });
 });

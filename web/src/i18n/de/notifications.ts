@@ -69,6 +69,8 @@ export const deNotifications: Messages['notifications'] = {
       'E-Mail-Kanäle benötigen die Einstellungen für ausgehende E-Mails der Instanz, die ein Instanzadministrator unter Einstellungen → E-Mail-Versand festlegt.',
     label: 'Benachrichtigungskanäle',
     count: (n: number) => (n === 1 ? '1 Kanal' : `${n} Kanäle`),
+    noMatch: 'Keine Kanäle passen zu den Filtern.',
+    filters: { kind: 'Nach Art filtern', allKinds: 'Alle Arten', status: 'Nach Status filtern', anyStatus: 'Jeder Status' },
     columns: {
       channel: 'Kanal',
       kind: 'Art',
@@ -142,6 +144,8 @@ export const deNotifications: Messages['notifications'] = {
     noAccess: 'Alarmrouten sind ab der Rolle Operator sichtbar.',
     subtitle: 'Welche Schweregrade und Alarmereignisse welche Benachrichtigungskanäle erreichen',
     newRoute: 'Neue Route',
+    noMatch: 'Keine Routen passen zu den Filtern.',
+    filters: { status: 'Nach Status filtern', anyStatus: 'Jeder Status' },
     columns: {
       route: 'Route',
       appliesTo: 'Gilt für',

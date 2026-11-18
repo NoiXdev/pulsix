@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { KeyRound } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -9,7 +10,9 @@ import { useSecrets } from '../../api/hooks/useSecrets.ts';
 import { may } from '../../lib/roles.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { SECRETS_FILTERS, filterSecrets } from './secretsSearch.ts';
 import { secretColumns } from './secretColumns.tsx';
 import { useSecretListActions } from './useSecretListActions.tsx';
 import { PageHeader } from '../../ui/settings.tsx';
@@ -33,12 +36,14 @@ export function SecretsPage() {
   const list = secrets.data?.secrets ?? [];
   const actions = useSecretListActions(org, canWrite, list.map((x) => x.name));
   const columns = secretColumns(t, fmt);
-  const view = useListView('secrets', columns, { mode: 'client', rowKey: (x) => x.name });
+  const { filters, active, setFilter, reset } = useListFilters(SECRETS_FILTERS);
+  const view = useListView('secrets', columns, { mode: 'client', rowKey: (x) => x.name, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(secrets);
   if (guard) return guard;
   if (!secrets.data) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterSecrets(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
 
   return (
     <>
@@ -62,7 +67,16 @@ export function SecretsPage() {
         rowLabel={(x) => x.name}
         rowActions={actions.rowActions}
         loading={!view.ready}
-        empty={s.empty}
+        empty={active ? s.noMatch : s.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={s.count} /> : undefined}>
+            <SearchInput label={s.search} placeholder={s.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            <FilterChip pressed={!!filters.unused} onToggle={() => setFilter('unused', filters.unused ? undefined : true)}>
+              {s.filterUnused}
+            </FilterChip>
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, s.count)}
       />
       {actions.dialogs}

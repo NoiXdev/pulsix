@@ -26,6 +26,8 @@ export function secretColumns(t: Messages, fmt: Format): DataListColumn<OrgSecre
       id: 'fields',
       label: c.fields,
       width: 'minmax(0, 1.1fr)',
+      sortKey: 'fields',
+      sortValue: (r) => (r.field_names ?? []).length,
       defaultVisible: true,
       render: (r) => <span className={`block truncate font-mono text-muted-foreground ${CELL_MINOR}`}>{(r.field_names ?? []).join(', ')}</span>,
     },
@@ -42,6 +44,8 @@ export function secretColumns(t: Messages, fmt: Format): DataListColumn<OrgSecre
       id: 'used_by',
       label: c.usedBy,
       width: 'minmax(0, 1fr)',
+      sortKey: 'used_by',
+      sortValue: (r) => (r.used_by ?? []).length,
       defaultVisible: true,
       render: (r) => {
         const usedBy = r.used_by ?? [];

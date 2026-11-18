@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { Bell } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
+import { ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -11,7 +12,10 @@ import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { channelColumns } from './channelColumns.tsx';
 import { useChannelListActions } from './useChannelListActions.tsx';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { CHANNEL_KINDS, CHANNELS_FILTERS, ENABLED_STATES, filterChannels } from './notificationsSearch.ts';
 import { DigestCard } from './DigestCard.tsx';
 import { PageHeader } from '../../ui/settings.tsx';
 
@@ -30,7 +34,8 @@ export function ChannelsPage() {
   const channels = useChannels(org, !!orgInfo.data && canRead);
   const actions = useChannelListActions(org, { canWrite, mailAvailable: channels.data?.mail_available ?? false });
   const columns = channelColumns(t);
-  const view = useListView('channels', columns, { mode: 'client', rowKey: (c) => c.id });
+  const { filters, active, setFilter, reset } = useListFilters(CHANNELS_FILTERS);
+  const view = useListView('channels', columns, { mode: 'client', rowKey: (c) => c.id, resetKey: JSON.stringify(filters) });
 
   // Backlog 2.85: orgInfo was guarded, but the channel list itself was
   // not — a 5xx (or any other refusal) left `channels.data` undefined
@@ -53,7 +58,8 @@ export function ChannelsPage() {
   if (!channels.data) return <QueryLoading />;
   const list = channels.data.channels ?? [];
   const mailAvailable = channels.data.mail_available;
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterChannels(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
 
   return (
     <>
@@ -79,7 +85,26 @@ export function ChannelsPage() {
         rowLabel={(c) => c.name}
         rowActions={actions.rowActions}
         loading={!view.ready}
-        empty={c8.empty}
+        empty={active ? c8.noMatch : c8.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={c8.count} /> : undefined}>
+            <FilterSelect
+              label={c8.filters.kind}
+              allLabel={c8.filters.allKinds}
+              options={CHANNEL_KINDS.map((k) => ({ value: k, label: k === 'email' ? c8.email : c8.webhook }))}
+              value={filters.kind}
+              onChange={(v) => setFilter('kind', v as typeof filters.kind)}
+            />
+            <FilterSelect
+              label={c8.filters.status}
+              allLabel={c8.filters.anyStatus}
+              options={ENABLED_STATES.map((v) => ({ value: v, label: v === 'enabled' ? m.enabled : m.disabled }))}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, c8.count)}
       />
       {/* A settings card: the settings column's width, not the table's. */}

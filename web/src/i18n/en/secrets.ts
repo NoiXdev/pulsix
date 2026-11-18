@@ -11,6 +11,10 @@ export const enSecrets = {
   add: 'New secret',
   readOnly: 'Only owners and admins can create, replace or delete secrets.',
   empty: 'No secrets yet. Add one for each device login a check needs, then name it in the check.',
+  search: 'Search secrets',
+  filterPlaceholder: 'Filter secrets…',
+  filterUnused: 'Unused',
+  noMatch: 'No secrets match the filters.',
   columns: {
     name: 'Name',
     fields: 'Fields',

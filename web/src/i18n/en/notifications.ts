@@ -75,6 +75,8 @@ export const enNotifications = {
       "E-mail channels need the instance's outgoing mail settings, which an instance administrator sets under Settings → Outgoing mail.",
     label: 'Notification channels',
     count: (n: number) => (n === 1 ? '1 channel' : `${n} channels`),
+    noMatch: 'No channels match the filters.',
+    filters: { kind: 'Filter by kind', allKinds: 'All kinds', status: 'Filter by status', anyStatus: 'Any status' },
     columns: {
       channel: 'Channel',
       kind: 'Kind',
@@ -148,6 +150,8 @@ export const enNotifications = {
     noAccess: 'Alert routes are visible to operators and above.',
     subtitle: 'Which severities and alert events reach which notification channels',
     newRoute: 'New route',
+    noMatch: 'No routes match the filters.',
+    filters: { status: 'Filter by status', anyStatus: 'Any status' },
     columns: {
       route: 'Route',
       appliesTo: 'Applies to',

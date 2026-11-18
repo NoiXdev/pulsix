@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { AlertRoutesPage } from './AlertRoutesPage.tsx';
+import { validateAlertRoutesSearch } from './notificationsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -15,7 +16,7 @@ const route = (name: string, over: Record<string, unknown> = {}) => ({
   id: `id-${name}`, name, enabled: true, scope: 'org', severities: ['crit'], events: ['opened'], channels: ['c1'], revision: 3, created_at: '', updated_at: '', ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; routes?: unknown[]; onDelete?: () => void; onPatch?: (req: MockRequest) => void } = {}) {
+function setup(opts: { locale?: 'de'; initial?: string; role?: string; routes?: unknown[]; onDelete?: () => void; onPatch?: (req: MockRequest) => void } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -35,7 +36,7 @@ function setup(opts: { locale?: 'de'; role?: string; routes?: unknown[]; onDelet
       return { route: route('rt30', { enabled: false }) };
     },
   });
-  return renderListPage({ path: '/settings/alert-routes', component: AlertRoutesPage, initial: '/o/acme/settings/alert-routes', locale: opts.locale });
+  return renderListPage({ path: '/settings/alert-routes', component: AlertRoutesPage, initial: opts.initial ?? '/o/acme/settings/alert-routes', locale: opts.locale, extraSearch: (q) => ({ ...validateAlertRoutesSearch(q) }) });
 }
 
 describe('AlertRoutesPage list', () => {
@@ -137,5 +138,36 @@ describe('AlertRoutesPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Routen')).toBeInTheDocument();
+  });
+});
+
+describe('AlertRoutesPage filters', () => {
+  const routes = [route('on-a'), route('off-b', { enabled: false }), route('on-c')];
+
+  it('reads the status from the URL and narrows the rows', async () => {
+    setup({ routes, initial: '/o/acme/settings/alert-routes?status=disabled' });
+    expect(await screen.findByText('1–1 of 1 route')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['off-b']);
+    expect(screen.getByText('1 of 3 routes')).toBeInTheDocument();
+  });
+
+  it('writes the status to the URL and Reset clears it', async () => {
+    const user = userEvent.setup();
+    const router = setup({ routes });
+    await screen.findByText('1–3 of 3 routes');
+    await pickOption(screen, 'Filter by status', 'enabled');
+    await waitFor(() => expect(router.state.location.search).toEqual({ status: 'enabled' }));
+    expect(firstCells().sort()).toEqual(['on-a', 'on-c']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+  });
+
+  it('sorts the Delivers to and Fires on columns', async () => {
+    const user = userEvent.setup();
+    setup({ routes: [route('b', { severities: ['warn'] }), route('a', { severities: ['crit'] })] });
+    await screen.findByText('1–2 of 2 routes');
+    await sortBy(user, 'Fires on');
+    await waitFor(() => expect(firstCells()).toEqual(['a', 'b']));
+    expect(screen.getByRole('button', { name: 'Delivers to' })).toBeInTheDocument();
   });
 });

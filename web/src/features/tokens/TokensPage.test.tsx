@@ -352,10 +352,11 @@ describe('TokensPage edit action', () => {
     const user = userEvent.setup();
     await openRowMenu(user, 'old (viewer)');
     expect(await screen.findByRole('menuitem', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
-    const pill = screen.getByText('Expired');
+    const pill = screen.getByText('Expired', { selector: 'span span' });
     expect(pill.closest('[title]')).toHaveAttribute('title', 'Expired tokens cannot be changed.');
     expect(screen.getByText(/Expired tokens cannot be changed\./)).toHaveClass('sr-only');
-    expect(screen.getAllByText('Expired')).toHaveLength(1);
+    // The pill, beside the toolbar's Expired chip.
+    expect(screen.getAllByText('Expired', { selector: 'span span' })).toHaveLength(1);
     await user.keyboard('{Escape}');
     await openRowMenu(user, 'fresh (viewer)');
     expect(await screen.findByRole('menuitem', { name: 'Edit' })).not.toHaveAttribute('aria-disabled');

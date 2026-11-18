@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { Route as RouteIcon } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
+import { ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -15,7 +16,10 @@ import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 import { RouteDialog } from './RouteDialog.tsx';
 import { alertRouteColumns } from './alertRouteColumns.tsx';
 import { useAlertRouteListActions } from './useAlertRouteListActions.tsx';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { ALERT_ROUTES_FILTERS, ENABLED_STATES, filterAlertRoutes } from './notificationsSearch.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PageHeader } from '../../ui/settings.tsx';
 
@@ -110,7 +114,8 @@ export function AlertRoutesPage() {
   ));
 
   const columns = alertRouteColumns({ t, scopeLabel, channelNames, rotationName, rotationOf });
-  const view = useListView('alert-routes', columns, { mode: 'client', rowKey: (r) => r.id });
+  const { filters, active, setFilter, reset } = useListFilters(ALERT_ROUTES_FILTERS);
+  const view = useListView('alert-routes', columns, { mode: 'client', rowKey: (r) => r.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(orgInfo);
   const routesGuard = useQueryGuard(routes);
@@ -127,7 +132,8 @@ export function AlertRoutesPage() {
   }
   if (!routes.data) return <QueryLoading />;
   const list = routes.data.routes ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterAlertRoutes(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
 
   return (
     <>
@@ -150,7 +156,19 @@ export function AlertRoutesPage() {
         rowLabel={(r) => r.name}
         rowActions={actions.rowActions}
         loading={!view.ready}
-        empty={a.empty}
+        empty={active ? a.noMatch : a.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={a.count} /> : undefined}>
+            <FilterSelect
+              label={a.filters.status}
+              allLabel={a.filters.anyStatus}
+              options={ENABLED_STATES.map((v) => ({ value: v, label: v === 'enabled' ? m.enabled : m.disabled }))}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, a.count)}
       />
       {actions.dialogs}

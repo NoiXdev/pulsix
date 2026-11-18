@@ -7,23 +7,24 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { TokensPage } from './TokensPage.tsx';
+import { validateTokensSearch } from './tokensSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const token = (name: string, over: Record<string, unknown> = {}) => ({
   id: `id-${name}-${over.role ?? 'viewer'}`, name, role: 'viewer', kind: 'api', created_at: '2026-01-01T00:00:00Z', ...over,
 });
 
-function setup(opts: { locale?: 'de'; tokens?: unknown[]; onRevoke?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; tokens?: unknown[]; entries?: unknown[]; initial?: string; onRevoke?: () => void } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
-    'GET /api/v1/orgs/acme/personal-tokens': { entries: [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: opts.tokens ?? numbered('tok', 30).map((n) => token(n)) },
+    'GET /api/v1/orgs/acme/personal-tokens': { entries: opts.entries ?? [] }, 'GET /api/v1/orgs/acme/tokens': { tokens: opts.tokens ?? numbered('tok', 30).map((n) => token(n)) },
     'DELETE /api/v1/orgs/acme/tokens/id-tok30-viewer': () => {
       opts.onRevoke?.();
       return {};
     },
   });
-  return renderListPage({ path: '/settings/tokens', component: TokensPage, initial: '/o/acme/settings/tokens', locale: opts.locale });
+  return renderListPage({ path: '/settings/tokens', component: TokensPage, initial: opts.initial ?? '/o/acme/settings/tokens', locale: opts.locale, extraSearch: (q) => ({ ...validateTokensSearch(q) }) });
 }
 
 describe('TokensPage list', () => {
@@ -95,5 +96,52 @@ describe('TokensPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Tokens')).toBeInTheDocument();
+  });
+});
+
+describe('TokensPage filters', () => {
+  const entry = (name: string, over: Record<string, unknown> = {}) => ({
+    token_id: `pt-${name}`, name, kind: 'api', role: 'operator', owner_id: 'u-bob', owner_name: 'Bob', owner_email: 'bob@acme.io',
+    blocked: false, owner_blocked: false, token_revoked: false, created_at: '2026-01-01T00:00:00Z', ...over,
+  });
+  const tokens = [
+    token('ci', { role: 'admin' }),
+    token('bot', { kind: 'assistant', areas: ['hosts'] }),
+    token('stale', { expires_at: '2020-01-01T00:00:00Z' }),
+  ];
+
+  it('reads the filters from the URL and narrows the rows', async () => {
+    setup({ tokens, entries: [entry('laptop')], initial: '/o/acme/settings/tokens?kind=personal' });
+    expect(await screen.findByText('1–1 of 1 token')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['laptopPersonal']);
+    expect(screen.getByText('1 of 4 tokens')).toBeInTheDocument();
+  });
+
+  it('writes the owner, the expired chip and the search to the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({ tokens, entries: [entry('laptop')] });
+    await screen.findByText('1–4 of 4 tokens');
+    await pickOption(screen, 'Filter by owner', 'Bob');
+    await waitFor(() => expect(router.state.location.search).toEqual({ owner: 'u-bob' }));
+    expect(firstCells()).toEqual(['laptopPersonal']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.click(screen.getByRole('button', { name: 'Expired' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ expired: true }));
+    expect(firstCells()).toEqual(['stale']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search tokens' }), 'ci');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'ci' }));
+    expect(firstCells()).toEqual(['ci']);
+  });
+
+  it('filters by role and says when no token matches', async () => {
+    setup({ tokens, initial: '/o/acme/settings/tokens?role=admin' });
+    await screen.findByText('1–1 of 1 token');
+    expect(firstCells()).toEqual(['ci']);
+  });
+
+  it('says when nothing matches', async () => {
+    setup({ tokens, initial: '/o/acme/settings/tokens?q=zzz' });
+    expect(await screen.findByText('No tokens match the filters.')).toBeInTheDocument();
   });
 });
