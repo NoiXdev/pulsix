@@ -9,10 +9,12 @@ import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useJobsPage } from '../../api/hooks/useJobs.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import { useSchedules } from '../../api/hooks/useSchedules.ts';
 import { usePendingRunRequestCount } from '../../api/hooks/useRunRequests.ts';
 import type { Job } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
@@ -43,9 +45,10 @@ export function RunsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const { filters: search, setFilter, setFilters, active, reset } = useListFilters(RUNS_FILTERS);
-  const filter = { status: search.status, kind: search.kind, trigger: search.trigger, triggerRef: search.schedule, host: search.host };
+  const filter = { status: search.status, kind: search.kind, trigger: search.trigger, template: search.template, triggerRef: search.schedule, host: search.host };
   const schedules = useSchedules(search.trigger === 'schedule' ? org : '');
   const orgInfo = useOrg(org);
+  const templates = useTemplates(org);
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const [adhocOpen, setAdhocOpen] = useState(false);
   const pendingRequests = usePendingRunRequestCount(org);
@@ -57,6 +60,11 @@ export function RunsPage() {
 
   const guard = useQueryGuard(jobs);
   if (guard) return guard;
+
+  // A template only the URL names (a stale link) stays pickable so it can be cleared.
+  const templateList = templates.data?.templates ?? [];
+  const templateOptions = templateList.map((tpl) => ({ value: tpl.id, label: tpl.name }));
+  if (search.template && !templateList.some((tpl) => tpl.id === search.template)) templateOptions.push({ value: search.template, label: shortId(search.template) });
 
   /** A new trigger drops the schedule filter unless it is still "schedule":
    * a schedule filter only makes sense for scheduled runs. */
@@ -128,6 +136,13 @@ export function RunsPage() {
               value={search.trigger ?? ''}
               onChange={filterTrigger}
               placeholder={t.runs.list.allTriggers}
+            />
+            <FilterSelect
+              label={t.runs.list.filterTemplate}
+              allLabel={t.runs.list.allTemplates}
+              options={templateOptions}
+              value={search.template}
+              onChange={(v) => setFilter('template', v)}
             />
             {search.trigger === 'schedule' && (
               <Select

@@ -1,13 +1,16 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Section } from '../../ui/detail-layout.tsx';
+import { ListToolbar, ResetFilters } from '../../ui/list-toolbar.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useListView } from '../lists/useListView.ts';
 import { runColumns } from '../runs/runColumns.tsx';
-import { shortId } from '../runs/status.ts';
+import { RUN_KINDS, RUN_STATUSES } from '../runs/runsSearch.ts';
+import { kindLabel, shortId, statusLabel } from '../runs/status.ts';
 
 /** How many of the host's runs the section shows by default; the rest are one link away. */
 const RECENT = 5;
@@ -23,12 +26,17 @@ const HOST_RUN_DEFAULTS: ReadonlySet<string> = new Set(['run', 'status', 'create
  * picks them here too, but there is no paging, sorting or URL state: the
  * full, sortable list is one link away. The Overview tab shows fewer
  * (`limit`) and puts its own way to the Runs tab in place of that link
- * (`actions`).
+ * (`actions`). Status and kind narrow the section (the jobs list's own
+ * filters, kept in the component: it is a section of the host page, not a
+ * list with a URL).
  */
 export function HostRunsSection({ org, hostId, limit = RECENT, actions }: { org: string; hostId: string; limit?: number; actions?: ReactNode }) {
   const t = useT();
   const fmt = useFormat();
-  const jobs = useJobs(org, { host: hostId, limit });
+  const [status, setStatus] = useState<string | undefined>();
+  const [kind, setKind] = useState<string | undefined>();
+  const active = !!status || !!kind;
+  const jobs = useJobs(org, { host: hostId, limit, status, kind });
   const rows = (jobs.data?.pages[0]?.jobs ?? []).slice(0, limit);
   // The section is narrow (a third of the host page): by default only run, status and
   // created, which is what the old teaser showed; the others can be switched on.
@@ -70,7 +78,33 @@ export function HostRunsSection({ org, hostId, limit = RECENT, actions }: { org:
           defaultColumns={defaultColumns}
           density={density}
           loading={!jobs.data || !view.ready}
-          empty={t.hosts.detail.runs.none}
+          empty={active ? t.hosts.detail.runs.noMatch : t.hosts.detail.runs.none}
+          toolbar={
+            <ListToolbar>
+              <FilterSelect
+                label={t.runs.list.filterStatus}
+                allLabel={t.runs.list.allStatuses}
+                options={[{ value: 'active', label: t.runs.list.statusActive }, ...RUN_STATUSES.map((v) => ({ value: v, label: statusLabel(v, t) }))]}
+                value={status}
+                onChange={setStatus}
+              />
+              <FilterSelect
+                label={t.runs.list.filterKind}
+                allLabel={t.runs.list.allKinds}
+                options={RUN_KINDS.map((v) => ({ value: v, label: kindLabel(v, t) }))}
+                value={kind}
+                onChange={setKind}
+              />
+              {active && (
+                <ResetFilters
+                  onReset={() => {
+                    setStatus(undefined);
+                    setKind(undefined);
+                  }}
+                />
+              )}
+            </ListToolbar>
+          }
         />
       )}
     </Section>

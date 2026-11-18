@@ -224,6 +224,7 @@ export const enHosts = {
       all: 'All runs for this host',
       label: 'Runs of this host',
       none: 'No runs have targeted this host yet.',
+      noMatch: 'No runs of this host match the filters.',
       readFailed: 'Could not read this host’s runs.',
     },
     monitoringOff: {

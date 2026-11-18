@@ -10,6 +10,8 @@ export interface JobListFilter {
   status?: string;
   kind?: string;
   trigger?: string;
+  /** Only the runs of this job template (a template id). */
+  template?: string;
   /** Only the runs this schedule (or webhook trigger) started. */
   triggerRef?: string;
   /** Only the runs that targeted this host (a host id). */
@@ -35,6 +37,7 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
               status: filter.status ?? '',
               kind: filter.kind ?? '',
               trigger: filter.trigger ?? '',
+              template_id: filter.template ?? '',
               trigger_ref: filter.triggerRef ?? '',
               host_id: filter.host ?? '',
               cursor: pageParam || undefined,
@@ -70,6 +73,7 @@ export function useJobsPage(org: string, filter: Omit<JobListFilter, 'limit'>, p
               status: filter.status || undefined,
               kind: filter.kind || undefined,
               trigger: filter.trigger || undefined,
+              template_id: filter.template || undefined,
               trigger_ref: filter.triggerRef || undefined,
               host_id: filter.host || undefined,
               page: page.page,

@@ -7,22 +7,24 @@ import { pickOption } from '../../test/pickOption.ts';
 import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { RunRequestsPage } from './RunRequestsPage.tsx';
 import { request } from './runRequestTestKit.ts';
+import { validateRunRequestsSearch } from './runRequestsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 
-function setup() {
+function setup(initial = '/o/acme/runs/requests', requests?: unknown[]) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
-    'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+    'GET /api/v1/orgs/acme/job-templates': { templates: [{ id: 'tpl1', name: 'deploy' }, { id: 'tpl2', name: 'backup' }] },
     'GET /api/v1/orgs/acme/run-requests': {
-      requests: numbered('ask', 30).map((reason) => request({ id: `id-${reason}`, reason, status: 'approved' })),
+      requests: requests ?? numbered('ask', 30).map((reason) => request({ id: `id-${reason}`, reason, status: 'approved' })),
     },
   });
   return renderListPage({
     path: '/runs/requests',
     component: RunRequestsPage,
-    initial: '/o/acme/runs/requests',
+    initial,
+    extraSearch: (s) => ({ ...validateRunRequestsSearch(s) }),
     others: [{ path: '/runs/requests/$id', component: () => <div>REQUEST DETAIL</div> }],
   });
 }
@@ -59,5 +61,37 @@ describe('RunRequestsPage list', () => {
     expect(await screen.findByText('26–30 of 30 requests')).toBeInTheDocument();
     await pickOption(screen, 'Rows per page', '10');
     expect(await screen.findByText('1–10 of 30 requests')).toBeInTheDocument();
+  });
+  describe('filters', () => {
+    const rows = [
+      request({ id: 'id-a', reason: 'alpha', status: 'pending' }),
+      request({ id: 'id-b', reason: 'beta', status: 'approved', template_id: 'tpl2' }),
+      request({ id: 'id-c', reason: 'gamma', status: 'rejected', kind: 'retry_failed' }),
+    ];
+
+    it('reads the filters from the URL and narrows the rows', async () => {
+      setup('/o/acme/runs/requests?status=approved', rows);
+      expect(await screen.findByText('1–1 of 1 request')).toBeInTheDocument();
+      expect(firstCells()).toEqual(['beta']);
+      expect(screen.getByText('1 of 3 requests')).toBeInTheDocument();
+    });
+
+    it('writes the template and the kind to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup('/o/acme/runs/requests', rows);
+      await screen.findByText('1–3 of 3 requests');
+      await pickOption(screen, 'Filter by template', 'backup');
+      await waitFor(() => expect(router.state.location.search).toEqual({ template: 'tpl2' }));
+      expect(firstCells()).toEqual(['beta']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await pickOption(screen, 'Filter by kind', { value: 'retry_failed' });
+      await waitFor(() => expect(router.state.location.search).toEqual({ kind: 'retry_failed' }));
+      expect(firstCells()).toEqual(['gamma']);
+    });
+
+    it('says when no request matches', async () => {
+      setup('/o/acme/runs/requests?status=expired', rows);
+      expect(await screen.findByText('No run requests match the filters.')).toBeInTheDocument();
+    });
   });
 });

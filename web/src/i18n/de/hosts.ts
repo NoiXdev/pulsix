@@ -215,6 +215,7 @@ export const deHosts: Messages['hosts'] = {
       all: 'Alle Runs für diesen Host',
       label: 'Runs dieses Hosts',
       none: 'Noch kein Run hat diesen Host als Ziel gehabt.',
+      noMatch: 'Keine Runs dieses Hosts passen zu den Filtern.',
       readFailed: 'Die Runs dieses Hosts konnten nicht gelesen werden.',
     },
     monitoringOff: {

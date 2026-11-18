@@ -290,6 +290,24 @@ describe('RunsPage', () => {
     expect(screen.queryByLabelText('Filter by schedule')).not.toBeInTheDocument();
   });
 
+  it('filters by template through the URL and asks the server for template_id', async () => {
+    const seen: string[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search.toString());
+        return { jobs: [job()], next_cursor: '', total: 1 };
+      },
+      'GET /api/v1/orgs/acme/job-templates': { templates: [{ id: 't1', name: 'patch-all' }] },
+    });
+    const router = renderPage();
+    await screen.findByLabelText('Filter by template');
+    await pickOption(screen, 'Filter by template', 'patch-all');
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ template: 't1' }));
+    await waitFor(() => expect(seen.some((q) => q.includes('template_id=t1'))).toBe(true));
+  });
+
   it('filters by host from the URL, names it in a chip and drops it when the chip is removed', async () => {
     const user = userEvent.setup();
     const seen: string[] = [];

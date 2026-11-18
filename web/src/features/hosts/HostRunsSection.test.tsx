@@ -3,6 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderAt } from '../../test/hostDetail.tsx';
+import { pickOption } from '../../test/pickOption.ts';
 import { HostRunsSection } from './HostRunsSection.tsx';
 
 function job(id: string, status: string, kind = 'run') {
@@ -31,6 +32,25 @@ describe('HostRunsSection', () => {
     expect(all).toHaveAttribute('href', '/o/acme/runs?host=h1');
     await user.click(all);
     expect(await screen.findByText('RUNS PAGE host=h1')).toBeInTheDocument();
+  });
+
+  it('narrows the runs by status and kind through the jobs list filters', async () => {
+    const user = userEvent.setup();
+    const asked: Array<Record<string, string>> = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        asked.push(Object.fromEntries(req.search.entries()));
+        return { jobs: [], next_cursor: '' };
+      },
+    });
+    renderAt(() => <HostRunsSection org="acme" hostId="h1" />);
+    await screen.findByText('No runs have targeted this host yet.');
+    await pickOption(screen, 'Filter by status', { value: 'failed' });
+    await pickOption(screen, 'Filter by kind', { value: 'run' });
+    await waitFor(() => expect(asked.at(-1)).toMatchObject({ host_id: 'h1', status: 'failed', kind: 'run' }));
+    expect(await screen.findByText('No runs of this host match the filters.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    expect(await screen.findByText('No runs have targeted this host yet.')).toBeInTheDocument();
   });
 
   it('says so when the host has no runs', async () => {

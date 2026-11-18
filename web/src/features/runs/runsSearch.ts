@@ -8,15 +8,18 @@ export const RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancel
 export const RUN_KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key', 'sync_repo'] as const;
 
 /**
- * The runs list's filters in the URL (?status=&kind=&trigger=&schedule=&host=).
+ * The runs list's filters in the URL (?status=&kind=&trigger=&template=&schedule=&host=).
  * `status=active` asks for the live runs; `host` is the one host the list
  * is narrowed to (linked from the host view and the hosts list's Active
- * runs). A value outside the offered ones is dropped.
+ * runs); `template` is a job template's id (the server's `template_id`).
+ * A value outside the offered ones is dropped. The server has no zone filter,
+ * so the list offers none.
  */
 export const RUNS_FILTERS = {
   status: param.enum(['active', ...RUN_STATUSES]),
   kind: param.enum(RUN_KINDS),
   trigger: param.enum(TRIGGERS),
+  template: param.string(),
   schedule: param.string(),
   host: param.string(),
 };

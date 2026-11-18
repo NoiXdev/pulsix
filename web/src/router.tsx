@@ -60,6 +60,7 @@ import { validateReposSearch } from './features/repos/reposSearch.ts';
 import { validatePlaybooksSearch } from './features/playbooks/playbooksSearch.ts';
 import { validateTemplatesSearch } from './features/templates/templatesSearch.ts';
 import { validateSchedulesSearch } from './features/schedules/schedulesSearch.ts';
+import { validateRunRequestsSearch } from './features/runs/runRequestsSearch.ts';
 import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
 
 /**
@@ -300,7 +301,7 @@ const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/run
 const runRequestsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/runs/requests',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateRunRequestsSearch,
   component: RunRequestsPage,
 });
 const runRequestDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests/$id', component: RunRequestDetailPage });
