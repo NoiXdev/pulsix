@@ -65,6 +65,8 @@ func registerPreferencesRoutes(hapi huma.API, deps Deps) {
 		}
 		return toPreferencesOutput(prefs), nil
 	})
+	// Not audited (backlog 3.105); the operation keeps the name the audit
+	// wrapper gave it, which the generated SPA client keys its types by.
 	huma.Put(hapi, "/api/v1/auth/me/preferences", func(ctx context.Context, in *setPreferencesInput) (*preferencesOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {
@@ -82,5 +84,5 @@ func registerPreferencesRoutes(hapi huma.API, deps Deps) {
 			return nil, mapPreferencesErr(ctx, err)
 		}
 		return toPreferencesOutput(stored), nil
-	})
+	}, func(o *huma.Operation) { o.OperationID = "setPreferences" })
 }
