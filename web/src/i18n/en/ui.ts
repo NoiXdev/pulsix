@@ -107,4 +107,16 @@ export const enUi = {
     label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples} samples`,
     empty: 'No samples in this range.',
   },
+  jsonViewer: {
+    toolbar: 'JSON tools',
+    expandAll: 'Expand all',
+    collapseAll: 'Collapse all',
+    copy: 'Copy',
+    copied: 'JSON copied',
+    root: 'document',
+    toggle: (path: string) => `Expand or collapse ${path}`,
+    keys: (n: number) => (n === 1 ? '1 key' : `${n} keys`),
+    items: (n: number) => (n === 1 ? '1 item' : `${n} items`),
+    masked: 'masked secret',
+  },
 };

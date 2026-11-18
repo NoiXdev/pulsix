@@ -100,4 +100,16 @@ export const deUi: Messages['ui'] = {
     label: (what: string, range: string, samples: number) => `${what}, ${range}, ${samples} Messwerte`,
     empty: 'Keine Messwerte in diesem Zeitraum.',
   },
+  jsonViewer: {
+    toolbar: 'JSON-Werkzeuge',
+    expandAll: 'Alle aufklappen',
+    collapseAll: 'Alle zuklappen',
+    copy: 'Kopieren',
+    copied: 'JSON kopiert',
+    root: 'Dokument',
+    toggle: (path: string) => `${path} auf- oder zuklappen`,
+    keys: (n: number) => (n === 1 ? '1 Schlüssel' : `${n} Schlüssel`),
+    items: (n: number) => (n === 1 ? '1 Eintrag' : `${n} Einträge`),
+    masked: 'maskiertes Geheimnis',
+  },
 };
