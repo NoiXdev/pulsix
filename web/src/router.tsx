@@ -18,6 +18,7 @@ import { LockPinPromptPage } from './features/lock/LockPinPromptPage.tsx';
 import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
+import { validateHostsSearch } from './features/hosts/hostsSearch.ts';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
 import { FleetPage } from './features/fleet/FleetPage.tsx';
 import { AlertsPage } from './features/alerts/AlertsPage.tsx';
@@ -179,12 +180,9 @@ const hostsRoute = createRoute({
   // ⌘K search (ui/shell.tsx) navigates here with ?q=..., wired to the
   // /orgs/{org}/hosts?q= filter the API already supports (finding
   // "Important 6": the search box used to be a static span).
-  // The list's sort and page (?sort=&order=&page=, features/lists) sit
-  // beside it.
-  validateSearch: (search: Record<string, unknown>) => ({
-    ...validateListSearch(search),
-    q: typeof search.q === 'string' ? search.q : undefined,
-  }),
+  // The list's sort and page (?sort=&order=&page=, features/lists) and its
+  // filters (zone, managed, monitored, activeRuns) sit beside it.
+  validateSearch: validateHostsSearch,
   component: HostsListPage,
 });
 const hostDetailRoute = createRoute({

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useParams, useSearch } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Globe, Search, Server } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
@@ -15,6 +15,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { hostColumns } from './hostColumns.tsx';
 import { HostDialog } from './HostDialog.tsx';
+import type { HostsSearch } from './hostsSearch.ts';
 import { hostPresence, type AgentPresence } from './presence.ts';
 import { useHostListActions } from './useHostListActions.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
@@ -22,29 +23,44 @@ import { ZoneDialog } from './ZoneDialog.tsx';
 /**
  * HostsListPage is the org's hosts (list id `hosts`). The server sorts and
  * pages the list; its filters (search, zone, the capability chips, "With
- * active runs") start again at page 1. A tag selector instead shows the
+ * active runs") are in the URL like sort and page, and start again at page 1. A tag selector instead shows the
  * one answer of POST /hosts/query, sorted and paged in the browser with
  * the same columns.
  */
 export function HostsListPage() {
   const { org } = useParams({ strict: false }) as { org: string };
-  // ?q= comes from the shell's ⌘K search box (ui/shell.tsx) navigating
-  // here — finding "Important 6". Synced into local filter state on
-  // mount and whenever it changes, since navigating to this same route
-  // with a new search value does not remount the component.
-  const routeSearch = useSearch({ strict: false }) as { q?: string };
   const t = useT();
-
-  const [filter, setFilter] = useState<HostPageFilter>({ q: routeSearch.q ?? '' });
-  // Adjust local state during render rather than in an effect (React's own
-  // guidance for "state that should reset when a prop changes" —
-  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes):
-  // an effect-then-setState round trip here would render once with the
-  // stale filter before catching up a tick later.
+  const navigate = useNavigate();
+  // The filters live in the URL beside sort and page (hostsSearch.ts), so
+  // Back and a reload bring the same list back. ?q= also comes from the
+  // shell's ⌘K search box navigating here.
+  const routeSearch = useSearch({ strict: false }) as HostsSearch;
+  const filter: HostPageFilter = {
+    q: routeSearch.q ?? '',
+    zone: routeSearch.zone,
+    managed: routeSearch.managed,
+    monitored: routeSearch.monitored,
+    activeRuns: routeSearch.activeRuns,
+  };
+  // A changed filter starts again at page 1. Typing replaces the history
+  // entry instead of adding one per keystroke.
+  function setFilter(patch: Partial<HostsSearch>, replace = false) {
+    void navigate({
+      to: '.',
+      search: (prev: Record<string, unknown>) => ({ ...prev, ...patch, page: undefined }),
+      replace,
+      resetScroll: false,
+    });
+  }
+  // The search box keeps its own text so typing is not at the mercy of the
+  // router round trip; it follows the URL when that changes (Back, ⌘K).
+  // Adjusted during render rather than in an effect (React's own guidance,
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+  const [qText, setQText] = useState(routeSearch.q ?? '');
   const [syncedQ, setSyncedQ] = useState(routeSearch.q);
   if (routeSearch.q !== syncedQ) {
     setSyncedQ(routeSearch.q);
-    setFilter((f) => ({ ...f, q: routeSearch.q ?? '' }));
+    setQText(routeSearch.q ?? '');
   }
   const [addOpen, setAddOpen] = useState(false);
   // The page's own "Add zone" button. The host dialog's Zone picker has its
@@ -103,7 +119,7 @@ export function HostsListPage() {
     loading = hosts.isPending || hosts.isPlaceholderData;
   }
   const filtered = selectorMode || !!filter.q || !!filter.zone || !!filter.managed || !!filter.monitored || !!filter.activeRuns;
-  const toggle = (key: 'managed' | 'monitored' | 'activeRuns') => setFilter((f) => ({ ...f, [key]: f[key] === true ? undefined : true }));
+  const toggle = (key: 'managed' | 'monitored' | 'activeRuns') => setFilter({ [key]: filter[key] === true ? undefined : true });
 
   return (
     <>
@@ -138,8 +154,11 @@ export function HostsListPage() {
               <Search size={13} />
               <input
                 placeholder={t.hosts.list.filterPlaceholder}
-                value={filter.q ?? ''}
-                onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))}
+                value={qText}
+                onChange={(e) => {
+                  setQText(e.target.value);
+                  setFilter({ q: e.target.value || undefined }, true);
+                }}
                 className="w-40 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
@@ -152,7 +171,7 @@ export function HostsListPage() {
               aria-label={t.hosts.list.filterByZone}
               options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
               value={filter.zone ?? ''}
-              onChange={(value) => setFilter((f) => ({ ...f, zone: value || undefined }))}
+              onChange={(value) => setFilter({ zone: value || undefined })}
               placeholder={t.hosts.list.allZones}
             />
             <FilterChip label={t.hosts.capability.managed} on={filter.managed === true} onClick={() => toggle('managed')} />

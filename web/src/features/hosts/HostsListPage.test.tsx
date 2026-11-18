@@ -10,7 +10,7 @@ import { HostsListPage } from './HostsListPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { settled } from '../../test/settled.ts';
-import { validateListSearch } from '../lists/listSearch.ts';
+import { validateHostsSearch } from './hostsSearch.ts';
 
 const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -60,7 +60,7 @@ function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
   const hostsRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/hosts',
-    validateSearch: (s: Record<string, unknown>) => ({ ...validateListSearch(s), q: typeof s.q === 'string' ? s.q : undefined }),
+    validateSearch: validateHostsSearch,
     component: HostsListPage,
   });
   const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
@@ -292,6 +292,56 @@ describe('hosts paging and sorting (server)', () => {
     await waitFor(() => expect(requests.at(-1)?.get('managed')).toBe('true'));
     expect(requests.at(-1)?.get('page')).toBe('1');
     expect(requests.some((r) => r.get('managed') === 'true' && r.get('page') !== '1')).toBe(false);
+  });
+
+  it('writes a chip into the URL and drops the page', async () => {
+    const user = userEvent.setup();
+    const { router } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    await user.click(screen.getByRole('button', { name: 'Managed' }));
+
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ managed: true }));
+    expect(router.state.location.search).not.toHaveProperty('page');
+  });
+
+  it('applies the filters of a loaded URL', async () => {
+    const { requests } = setup({ initial: '/o/acme/hosts?zone=z1&managed=true&monitored=true&activeRuns=true&q=web' });
+
+    await screen.findByRole('link', { name: 'host-01' });
+    const last = requests.at(-1);
+    expect(last?.get('zone')).toBe('z1');
+    expect(last?.get('managed')).toBe('true');
+    expect(last?.get('monitored')).toBe('true');
+    expect(last?.get('active_runs')).toBe('true');
+    expect(last?.get('q')).toBe('web');
+    expect(screen.getByRole('button', { name: 'Managed' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByPlaceholderText('Filter hosts…')).toHaveValue('web');
+  });
+
+  it('writes the zone into the URL', async () => {
+    const { router } = setup();
+
+    await screen.findByRole('link', { name: 'host-01' });
+    await pickOption(screen, 'Filter by zone', { value: 'z1' });
+
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ zone: 'z1' }));
+  });
+
+  it('brings the previous filter and page back on Back', async () => {
+    const user = userEvent.setup();
+    const { router } = setup({ initial: '/o/acme/hosts?page=2' });
+
+    await screen.findByRole('link', { name: 'host-26' });
+    await user.click(screen.getByRole('button', { name: 'Managed' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Managed' })).toHaveAttribute('aria-pressed', 'true'));
+
+    router.history.back();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Managed' })).toHaveAttribute('aria-pressed', 'false'));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ page: 2 }));
+    expect(router.state.location.search).not.toHaveProperty('managed');
+    expect(await screen.findByRole('link', { name: 'host-26' })).toBeInTheDocument();
   });
 
   it('starts again at page 1 when a search is typed', async () => {
