@@ -38,7 +38,7 @@ export function TotpDialog({
   const t = useT();
   const title = recoveryCodes ? t.account.recovery.dialogTitle : t.account.totp.dialogTitle;
   return (
-    <Dialog open={enrolling !== null || recoveryCodes !== null} onClose={onClose} title={title} dismissible={recoveryCodes === null}>
+    <Dialog open={enrolling !== null || recoveryCodes !== null} onClose={onClose} title={title} persistent={recoveryCodes !== null}>
       {recoveryCodes ? (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">{t.account.recovery.shownOnce}</p>

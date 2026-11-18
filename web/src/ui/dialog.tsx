@@ -13,10 +13,14 @@ export interface DialogProps {
    * the native `cancel`), for while a request it started is in flight. It is
    * a request, not a guarantee: under the close-watcher rules a `cancel` is
    * cancelable only with user activation, so a repeated Escape can still
-   * close the dialog; when it does while `open` is still true, the dialog
-   * shows itself again. A caller must not keep anything it cannot lose in the
+   * close the dialog. A caller must not keep anything it cannot lose in the
    * dialog's own lifetime (see features/users/useAccountActionRunner.ts). */
   dismissible?: boolean;
+  /** true for a dialog only its owner may close (recovery codes shown
+   * once): Escape is refused as with `dismissible={false}`, and when the
+   * browser closes it anyway while `open` is still true, it shows itself
+   * again at once instead of calling `onClose`. */
+  persistent?: boolean;
 }
 
 const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
@@ -34,15 +38,15 @@ const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
  * heading inside it, so a test or assistive technology can find the
  * dialog by name: `getByRole('dialog', { name: 'Add credential' })`.
  */
-export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true, persistent = false }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   // Read by the `close` handler, which may run inside the effect below.
   const openRef = useRef(open);
-  const dismissibleRef = useRef(dismissible);
+  const persistentRef = useRef(persistent);
   useEffect(() => {
     openRef.current = open;
-    dismissibleRef.current = dismissible;
+    persistentRef.current = persistent;
   });
 
   useEffect(() => {
@@ -69,13 +73,13 @@ export function Dialog({ open, onClose, title, children, size = 'default', dismi
       // a dialog opened from inside this one would otherwise close this one
       // too when it closes (or be kept open by this one's `dismissible`).
       //
-      // A browser may still close a dialog that is not dismissible (see
-      // `dismissible`). While its owner still has it open, it is shown again
-      // at once rather than left closed under `open` (where nothing could
-      // bring it back, since the effect above runs only when `open` changes).
+      // A browser may still close a dialog that refuses Escape (see
+      // `dismissible`). A `persistent` one its owner still has open is shown
+      // again at once rather than left closed under `open`, where nothing
+      // could bring it back (the effect above runs only when `open` changes).
       onClose={(e) => {
         if (e.target !== e.currentTarget) return;
-        if (!dismissibleRef.current && openRef.current) {
+        if (persistentRef.current && openRef.current) {
           e.currentTarget.showModal();
           return;
         }
@@ -84,7 +88,7 @@ export function Dialog({ open, onClose, title, children, size = 'default', dismi
       // Escape sends `cancel` first; preventing it is the one way to keep
       // the dialog open (the `close` above then never fires).
       onCancel={(e) => {
-        if (e.target === e.currentTarget && !dismissible) e.preventDefault();
+        if (e.target === e.currentTarget && (!dismissible || persistent)) e.preventDefault();
       }}
       aria-labelledby={titleId}
       // m-auto is not decoration: a native <dialog> centres itself in the

@@ -70,27 +70,45 @@ describe('Escape on a dialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  // A browser may still close a non-dismissible dialog (a repeated Escape
-  // without user activation). The dialog is still meant to be open, so it
-  // comes straight back instead of being left closed under `open`.
-  it('re-opens itself when the browser closes it while not dismissible', () => {
+  // A browser may still close a dialog that refuses Escape (a repeated
+  // Escape without user activation). A persistent one is still meant to be
+  // open, so it comes straight back instead of being left closed under `open`.
+  it('re-opens itself when the browser closes it while persistent', async () => {
     const onClose = vi.fn();
     const { rerender } = render(
-      <Dialog open onClose={onClose} title="Recovery codes" dismissible={false}>
+      <Dialog open onClose={onClose} title="Recovery codes" persistent>
         <p>codes</p>
       </Dialog>,
     );
     const el = screen.getByRole('dialog') as HTMLDialogElement;
+    await userEvent.keyboard('{Escape}');
+    expect(el.open).toBe(true);
     el.close();
     expect(el.open).toBe(true);
     expect(onClose).not.toHaveBeenCalled();
 
     // The owner closing it on purpose still closes it.
     rerender(
-      <Dialog open={false} onClose={onClose} title="Recovery codes" dismissible={false}>
+      <Dialog open={false} onClose={onClose} title="Recovery codes" persistent>
         <p>codes</p>
       </Dialog>,
     );
+    expect(el.open).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Unlike a persistent one, a dialog that only refuses Escape while a
+  // request runs is let go when the browser closes it anyway: its owner
+  // keeps the request (features/users/useAccountActionRunner.ts).
+  it('lets a merely non-dismissible dialog close when the browser closes it', () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Add credential" dismissible={false}>
+        <p>body</p>
+      </Dialog>,
+    );
+    const el = screen.getByRole('dialog') as HTMLDialogElement;
+    el.close();
     expect(el.open).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
