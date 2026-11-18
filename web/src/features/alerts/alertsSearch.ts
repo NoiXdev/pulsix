@@ -13,7 +13,7 @@ export const ALERTS_FILTERS = {
   scope: param.enum(['tuple', 'host']),
   acknowledged: param.bool(),
   muted: param.bool(),
-  host: param.string(),
+  host: param.uuid(),
 };
 
 export type AlertsSearch = ListSearch & FilterSearch<typeof ALERTS_FILTERS>;

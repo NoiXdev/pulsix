@@ -22,7 +22,7 @@ export function sinceOf(range: SinceRange | undefined, now = new Date()): string
  * (`since`). The server applies all three; the feed is server-paged.
  */
 export const ACTIVITY_FILTERS = {
-  actor: param.string(),
+  actor: param.uuid(),
   type: param.enum(OBJECT_TYPES),
   since: param.enum(SINCE_RANGES),
 };

@@ -11,7 +11,7 @@ import { validateFleetSearch } from './fleetSearch.ts';
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const TOTALS = { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 };
 const host = (name: string, extra: Record<string, unknown> = {}) => ({
-  host_id: `id-${name}`, name, kind: 'server', zone_id: 'z1', state: 'ok', crit: 0, warn: 0, unknown: 0, all_ignored: false, ...extra,
+  host_id: `id-${name}`, name, kind: 'server', zone_id: '00000000-0000-4000-8000-000000000003', state: 'ok', crit: 0, warn: 0, unknown: 0, all_ignored: false, ...extra,
 });
 
 function setup(locale?: 'de', hosts: unknown[] = numbered('web', 30).map((n) => host(n)), initial = '/o/acme/fleet', seen: URLSearchParams[] = []) {
@@ -19,7 +19,7 @@ function setup(locale?: 'de', hosts: unknown[] = numbered('web', 30).map((n) => 
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
-    'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', name: 'Frankfurt', slug: 'fra' }] },
+    'GET /api/v1/orgs/acme/zones': { zones: [{ id: '00000000-0000-4000-8000-000000000003', name: 'Frankfurt', slug: 'fra' }] },
     'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     'GET /api/v1/orgs/acme/fleet': (req: MockRequest) => {
       seen.push(req.search);
@@ -85,12 +85,12 @@ describe('FleetPage list', () => {
     it('sends zone, group and tag to the server and keeps them in the URL', async () => {
       const seen: URLSearchParams[] = [];
       const user = userEvent.setup();
-      const router = setup(undefined, hosts, '/o/acme/fleet?zone=z1&group=g1', seen);
+      const router = setup(undefined, hosts, '/o/acme/fleet?zone=00000000-0000-4000-8000-000000000003&group=00000000-0000-4000-8000-000000000004', seen);
       await screen.findByText('1–3 of 3 hosts');
-      expect(seen[0].get('zone')).toBe('z1');
-      expect(seen[0].get('group')).toBe('g1');
+      expect(seen[0].get('zone')).toBe('00000000-0000-4000-8000-000000000003');
+      expect(seen[0].get('group')).toBe('00000000-0000-4000-8000-000000000004');
       await user.type(screen.getByLabelText('Filter by tag'), 'role');
-      await waitFor(() => expect(router.state.location.search).toEqual({ zone: 'z1', group: 'g1', tag: 'role' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({ zone: '00000000-0000-4000-8000-000000000003', group: '00000000-0000-4000-8000-000000000004', tag: 'role' }));
       await waitFor(() => expect(seen.at(-1)?.get('tag')).toBe('role'));
       await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
       await waitFor(() => expect(router.state.location.search).toEqual({}));

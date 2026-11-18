@@ -11,9 +11,9 @@ import { validateSchedulesSearch } from './schedulesSearch.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
-const template = { id: 't1', name: 'patch-all', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, created_at: '', updated_at: '' };
+const template = { id: '00000000-0000-4000-8000-000000000007', name: 'patch-all', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, created_at: '', updated_at: '' };
 const schedule = (name: string, paused = false) => ({
-  id: `id-${name}`, template_id: 't1', name, mode: 'cron', cron: '0 3 * * *', description: 'daily',
+  id: `id-${name}`, template_id: '00000000-0000-4000-8000-000000000007', name, mode: 'cron', cron: '0 3 * * *', description: 'daily',
   timezone: 'Europe/Berlin', guards: { overlap: 'skip', catch_up: { enabled: false, window: '1h' } }, paused,
   next_run_at: '2026-09-22T01:00:00Z', revision: 3, created_at: '', updated_at: '', last_run: null,
 });
@@ -117,7 +117,7 @@ describe('SchedulesPage list', () => {
 
     it('shows ?template= as a pill and removes it', async () => {
       const user = userEvent.setup();
-      const router = setup('operator', false, [], '/o/acme/schedules?template=t1', rows);
+      const router = setup('operator', false, [], '/o/acme/schedules?template=00000000-0000-4000-8000-000000000007', rows);
       await screen.findByText('3 schedules');
       expect(screen.getByText('Template: patch-all')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Remove filter Template: patch-all' }));
@@ -130,7 +130,7 @@ describe('SchedulesPage list', () => {
       await screen.findByText('1–3 of 3 schedules');
       await user.click(screen.getByRole('button', { name: '+ Filter' }));
       await user.click(await screen.findByRole('menuitem', { name: 'Template: patch-all' }));
-      await waitFor(() => expect(router.state.location.search).toEqual({ template: 't1' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({ template: '00000000-0000-4000-8000-000000000007' }));
     });
 
     it('writes the status to the URL', async () => {

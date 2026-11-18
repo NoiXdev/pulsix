@@ -19,9 +19,9 @@ export const RUNS_FILTERS = {
   status: param.enum(['active', ...RUN_STATUSES]),
   kind: param.enum(RUN_KINDS),
   trigger: param.enum(TRIGGERS),
-  template: param.string(),
-  schedule: param.string(),
-  host: param.string(),
+  template: param.uuid(),
+  schedule: param.uuid(),
+  host: param.uuid(),
 };
 
 export type RunsSearch = ListSearch & FilterSearch<typeof RUNS_FILTERS>;

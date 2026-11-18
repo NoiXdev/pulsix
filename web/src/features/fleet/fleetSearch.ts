@@ -10,8 +10,8 @@ import type { FleetHost } from '../../api/types.ts';
  */
 export const FLEET_FILTERS = {
   q: param.string(),
-  zone: param.string(),
-  group: param.string(),
+  zone: param.uuid(),
+  group: param.uuid(),
   tag: param.string(),
   state: param.enum(['crit', 'warn', 'ok', 'unknown']),
 };

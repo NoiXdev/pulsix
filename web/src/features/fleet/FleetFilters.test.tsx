@@ -8,10 +8,10 @@ import { FleetFilters } from './FleetFilters.tsx';
 import { FLEET_FILTERS, validateFleetSearch } from './fleetSearch.ts';
 
 const ZONES = [
-  { id: 'z1', name: 'Frankfurt', slug: 'fra' },
-  { id: 'z2', name: 'Amsterdam', slug: 'ams' },
+  { id: '00000000-0000-4000-8000-000000000003', name: 'Frankfurt', slug: 'fra' },
+  { id: '00000000-0000-4000-8000-000000000009', name: 'Amsterdam', slug: 'ams' },
 ];
-const GROUPS = [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 0, created_at: '', updated_at: '' }];
+const GROUPS = [{ id: '00000000-0000-4000-8000-000000000004', name: 'Web tier', selector: 'role=web', priority: 0, created_at: '', updated_at: '' }];
 
 function Harness({ tagError }: { tagError?: string }) {
   const list = useListFilters(FLEET_FILTERS);
@@ -26,12 +26,12 @@ describe('FleetFilters', () => {
   it('writes a zone selection to the URL', async () => {
     const router = setup();
     await screen.findByLabelText('Filter by zone');
-    await pickOption(screen, 'Filter by zone', { value: 'z2' });
-    await waitFor(() => expect(router.state.location.search).toEqual({ zone: 'z2' }));
+    await pickOption(screen, 'Filter by zone', { value: '00000000-0000-4000-8000-000000000009' });
+    await waitFor(() => expect(router.state.location.search).toEqual({ zone: '00000000-0000-4000-8000-000000000009' }));
   });
 
   it('clears the zone filter when "All zones" is chosen again', async () => {
-    const router = setup('/o/acme/fleet?zone=z1&page=2');
+    const router = setup('/o/acme/fleet?zone=00000000-0000-4000-8000-000000000003&page=2');
     await screen.findByLabelText('Filter by zone');
     await pickOption(screen, 'Filter by zone', { value: '' });
     await waitFor(() => expect(router.state.location.search).toEqual({}));
@@ -41,7 +41,7 @@ describe('FleetFilters', () => {
     const router = setup();
     await screen.findByLabelText('Filter by zone');
     await pickOption(screen, 'Filter by monitoring group', 'Web tier');
-    await waitFor(() => expect(router.state.location.search).toEqual({ group: 'g1' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ group: '00000000-0000-4000-8000-000000000004' }));
   });
 
   it('writes the state to the URL', async () => {

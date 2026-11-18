@@ -11,7 +11,7 @@ export const SCHEDULE_STATUSES = ['active', 'paused'] as const;
  */
 export const SCHEDULES_FILTERS = {
   status: param.enum(SCHEDULE_STATUSES),
-  template: param.string(),
+  template: param.uuid(),
 };
 
 /** `id` is the schedule whose editor is open. */

@@ -1,8 +1,6 @@
 import { param, validateFilters, type FilterSearch } from '../lists/filterSearch.ts';
 import { validateListSearch, type ListSearch } from '../lists/listSearch.ts';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * The hosts list's filters in the URL. `q` is the search (also what the
  * shell's ⌘K box sets), `zone` a zone id (only a UUID-shaped string: a
@@ -11,7 +9,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export const HOSTS_FILTERS = {
   q: param.string(),
-  zone: param.string((v) => UUID.test(v)),
+  zone: param.uuid(),
   managed: param.flag(),
   monitored: param.flag(),
   activeRuns: param.flag(),

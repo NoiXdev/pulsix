@@ -31,7 +31,11 @@ export type FilterParam = StringParam | EnumParam | MultiParam | FlagParam | Boo
 export type FilterSchema = Record<string, FilterParam>;
 
 /** The builders of a schema: `{ q: param.string(), state: param.enum(['open', 'closed']) }`. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const param = {
+  /** An id the server takes: a UUID-shaped string, so a hand-typed value is no filter (never a 400). */
+  uuid: (): StringParam => ({ kind: 'string', check: (v) => UUID.test(v) }),
   string: (check?: (value: string) => boolean): StringParam => ({ kind: 'string', check }),
   enum: <const V extends string>(values: readonly V[]): EnumParam<V> => ({ kind: 'enum', values }),
   multi: <const V extends string>(values: readonly V[]): MultiParam<V> => ({ kind: 'multi', values }),

@@ -21,7 +21,7 @@ const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', rol
 
 const alert = (over: Record<string, unknown> = {}) => ({
   id: 'a1',
-  host_id: 'h1',
+  host_id: '00000000-0000-4000-8000-000000000002',
   host_name: 'web-1',
   scope: 'tuple',
   check_key: 'disk',
@@ -503,12 +503,12 @@ describe('AlertsPage', () => {
         askedSearch = Object.fromEntries(req.search.entries());
         return { alerts: [] };
       },
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-1', zone_id: 'z1', address: '10.0.0.1' } },
+      'GET /api/v1/orgs/acme/hosts/00000000-0000-4000-8000-000000000002': { host: { id: '00000000-0000-4000-8000-000000000002', name: 'web-1', zone_id: 'z1', address: '10.0.0.1' } },
     });
-    renderPage('/o/acme/alerts?host=h1');
+    renderPage('/o/acme/alerts?host=00000000-0000-4000-8000-000000000002');
 
     await screen.findByText(/No alerts match this view/);
-    expect(askedSearch?.host).toBe('h1');
+    expect(askedSearch?.host).toBe('00000000-0000-4000-8000-000000000002');
     // The operator must be able to SEE the list is narrowed, not just have
     // it silently be shorter than expected (fix round 2's own review
     // finding) — and must have a way back to the unscoped view: the host
@@ -527,10 +527,10 @@ describe('AlertsPage', () => {
         return { alerts: [] };
       },
     });
-    const { router } = renderPage('/o/acme/alerts?host=h1');
+    const { router } = renderPage('/o/acme/alerts?host=00000000-0000-4000-8000-000000000002');
 
     await screen.findByText(/^Host: /);
-    expect(asked.at(-1)?.host).toBe('h1');
+    expect(asked.at(-1)?.host).toBe('00000000-0000-4000-8000-000000000002');
 
     await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
 
@@ -540,14 +540,14 @@ describe('AlertsPage', () => {
     // — a version that called only setFilter, never navigate, would still
     // pass every assertion above (the request and the notice both read
     // off `filter`, not off the URL) while leaving `router.state.location`
-    // at `?host=h1`. This is the assertion that tells the two apart: the
+    // at `?host=00000000-0000-4000-8000-000000000002`. This is the assertion that tells the two apart: the
     // browser's own address bar must agree that the host scope is gone.
     await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
   it('does not re-impose a cleared host scope on reload, because the URL itself was cleared, not just local state', async () => {
     // The exact bug the previous test's new assertion alone cannot fully
-    // dramatize: if removing the host pill left `?host=h1` in the address bar,
+    // dramatize: if removing the host pill left `?host=00000000-0000-4000-8000-000000000002` in the address bar,
     // a reload — simulated here by unmounting and mounting a fresh
     // AlertsPage at wherever the URL actually pointed afterwards — runs
     // the render-time sync that seeds `filter` from the URL from scratch,
@@ -563,7 +563,7 @@ describe('AlertsPage', () => {
         return { alerts: [] };
       },
     });
-    const { router } = renderPage('/o/acme/alerts?host=h1');
+    const { router } = renderPage('/o/acme/alerts?host=00000000-0000-4000-8000-000000000002');
 
     await screen.findByText(/^Host: /);
     await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
@@ -678,12 +678,12 @@ describe('AlertsPage paging and sorting', () => {
   });
 
   it('reads the sort and page from the URL, with the host scope next to them', async () => {
-    setup(manyAlerts(30), '/o/acme/alerts?sort=peak&order=desc&page=2&host=h1');
+    setup(manyAlerts(30), '/o/acme/alerts?sort=peak&order=desc&page=2&host=00000000-0000-4000-8000-000000000002');
     expect(await screen.findByText('26–30 of 30 alerts')).toBeInTheDocument();
     expect(requests[0].get('sort')).toBe('peak');
     expect(requests[0].get('order')).toBe('desc');
     expect(requests[0].get('page')).toBe('2');
-    expect(requests[0].get('host')).toBe('h1');
+    expect(requests[0].get('host')).toBe('00000000-0000-4000-8000-000000000002');
   });
 
   it('shows the last page for a page past the end, not the empty state', async () => {
@@ -715,7 +715,7 @@ describe('AlertsPage paging and sorting', () => {
 
   it('starts again at page 1 when the host scope is cleared, keeping the sort', async () => {
     const user = userEvent.setup();
-    const { router } = setup(manyAlerts(30), '/o/acme/alerts?host=h1&sort=host&order=asc&page=2');
+    const { router } = setup(manyAlerts(30), '/o/acme/alerts?host=00000000-0000-4000-8000-000000000002&sort=host&order=asc&page=2');
     await screen.findByText(/^Host: /);
     await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
     await waitFor(() => expect(requests.at(-1)?.get('host')).toBeNull());

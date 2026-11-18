@@ -8,7 +8,7 @@ import type { Locale } from '../../i18n/types.ts';
 import { ActivityPage } from './ActivityPage.tsx';
 import { validateActivitySearch } from './activitySearch.ts';
 
-const MEMBERS = { members: [{ user_id: 'u1', display_name: 'Tim R.', email: 'tim@acme.io', role: 'owner', created_at: '2026-01-01T00:00:00Z', disabled_at: null }] };
+const MEMBERS = { members: [{ user_id: '00000000-0000-4000-8000-000000000001', display_name: 'Tim R.', email: 'tim@acme.io', role: 'owner', created_at: '2026-01-01T00:00:00Z', disabled_at: null }] };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 
 const event = (over: Record<string, unknown> = {}) => ({
@@ -50,7 +50,7 @@ function setup(items: unknown[] | ((req: MockRequest) => unknown), initial = '/o
 
 describe('ActivityPage actor names', () => {
   it('resolves a user actor to their name from the members list', async () => {
-    setup([event({ actor_kind: 'user', actor_id: 'u1', summary: 'created host web-04', object_type: 'host' })]);
+    setup([event({ actor_kind: 'user', actor_id: '00000000-0000-4000-8000-000000000001', summary: 'created host web-04', object_type: 'host' })]);
     const row = (await screen.findByText('created host web-04')).closest('[role="row"]') as HTMLElement;
     await waitFor(() => expect(within(row).getByText('Tim R.')).toBeInTheDocument());
     expect(screen.queryByText(/actor_kind/)).not.toBeInTheDocument();
@@ -67,8 +67,8 @@ describe('ActivityPage actor names', () => {
 
   it('names the token a change was made with', async () => {
     setup([
-      event({ id: 'e1', actor_kind: 'token', actor_id: 'u1', token_name: 'helper', summary: 'created host web-06' }),
-      event({ id: 'e2', actor_kind: 'user', actor_id: 'u1', summary: 'created host web-07' }),
+      event({ id: 'e1', actor_kind: 'token', actor_id: '00000000-0000-4000-8000-000000000001', token_name: 'helper', summary: 'created host web-06' }),
+      event({ id: 'e2', actor_kind: 'user', actor_id: '00000000-0000-4000-8000-000000000001', summary: 'created host web-07' }),
     ]);
     expect(await screen.findByText('Tim R. · via token helper')).toBeInTheDocument();
     expect(screen.queryAllByText(/via token/)).toHaveLength(1);
@@ -78,7 +78,7 @@ describe('ActivityPage actor names', () => {
     setup([]);
     await screen.findByText('No activity recorded yet.');
     await pickOption(screen, 'Filter by actor', 'Tim R.');
-    await waitFor(() => expect(requests.at(-1)?.get('actor')).toBe('u1'));
+    await waitFor(() => expect(requests.at(-1)?.get('actor')).toBe('00000000-0000-4000-8000-000000000001'));
   });
 });
 
@@ -135,8 +135,8 @@ describe('ActivityPage paging', () => {
     setup((req) => pageOf(many(30), req), '/o/acme/activity?page=2');
     await screen.findByText('26–30 of 30 events');
     await pickOption(screen, 'Filter by actor', 'Tim R.');
-    await waitFor(() => expect(requests.at(-1)?.get('actor')).toBe('u1'));
-    expect(requests.filter((r) => r.get('actor') === 'u1').every((r) => r.get('page') === '1')).toBe(true);
+    await waitFor(() => expect(requests.at(-1)?.get('actor')).toBe('00000000-0000-4000-8000-000000000001'));
+    expect(requests.filter((r) => r.get('actor') === '00000000-0000-4000-8000-000000000001').every((r) => r.get('page') === '1')).toBe(true);
   });
 
   it('offers the time, actor, action and object as columns', async () => {
@@ -167,10 +167,10 @@ describe('ActivityPage automation object types', () => {
 
 describe('ActivityPage filters in the URL', () => {
   it('reads the actor, the type and the range from the URL and asks the server for them', async () => {
-    setup([], '/o/acme/activity?actor=u1&type=host&since=7d');
+    setup([], '/o/acme/activity?actor=00000000-0000-4000-8000-000000000001&type=host&since=7d');
     await screen.findByText('No activity matches the filters.');
     const last = requests.at(-1)!;
-    expect(last.get('actor')).toBe('u1');
+    expect(last.get('actor')).toBe('00000000-0000-4000-8000-000000000001');
     expect(last.get('object_type')).toBe('host');
     expect(Date.now() - new Date(last.get('since')!).getTime()).toBeGreaterThan(6.9 * 86_400_000);
     expect(screen.getByRole('button', { name: 'host', pressed: true })).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe('ActivityPage filters in the URL', () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ type: 'zone' }));
     await pickOption(screen, 'Filter by actor', 'Tim R.');
     await pickOption(screen, 'Filter by time', 'Last 24 hours');
-    await waitFor(() => expect(router.state.location.search).toEqual({ type: 'zone', actor: 'u1', since: '1d' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ type: 'zone', actor: '00000000-0000-4000-8000-000000000001', since: '1d' }));
     await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
     await waitFor(() => expect(router.state.location.search).toEqual({}));
     expect(screen.getByRole('button', { name: 'all', pressed: true })).toBeInTheDocument();

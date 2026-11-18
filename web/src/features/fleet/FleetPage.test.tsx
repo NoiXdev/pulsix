@@ -10,13 +10,13 @@ import { FleetPage } from './FleetPage.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
-const ZONES = { zones: [{ id: 'z1', name: 'Frankfurt', slug: 'fra' }, { id: 'z2', name: 'Amsterdam', slug: 'ams' }] };
-const GROUPS = { groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 0, created_at: '', updated_at: '' }] };
+const ZONES = { zones: [{ id: '00000000-0000-4000-8000-000000000003', name: 'Frankfurt', slug: 'fra' }, { id: '00000000-0000-4000-8000-000000000005', name: 'Amsterdam', slug: 'ams' }] };
+const GROUPS = { groups: [{ id: '00000000-0000-4000-8000-000000000004', name: 'Web tier', selector: 'role=web', priority: 0, created_at: '', updated_at: '' }] };
 
 const host = (over: Record<string, unknown> = {}) => ({
   host_id: 'h1',
   name: 'web-1',
-  zone_id: 'z1',
+  zone_id: '00000000-0000-4000-8000-000000000003',
   state: 'ok',
   crit: 0,
   warn: 0,
@@ -153,9 +153,9 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByRole('link', { name: 'web-1' });
-    await pickOption(screen, 'Filter by zone', { value: 'z2' });
+    await pickOption(screen, 'Filter by zone', { value: '00000000-0000-4000-8000-000000000005' });
 
-    await waitFor(() => expect(asked.at(-1)?.zone).toBe('z2'));
+    await waitFor(() => expect(asked.at(-1)?.zone).toBe('00000000-0000-4000-8000-000000000005'));
   });
 
   it('applies the monitoring group filter to the fleet request', async () => {
@@ -172,9 +172,9 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByRole('link', { name: 'web-1' });
-    await pickOption(screen, 'Filter by monitoring group', { value: 'g1' });
+    await pickOption(screen, 'Filter by monitoring group', { value: '00000000-0000-4000-8000-000000000004' });
 
-    await waitFor(() => expect(asked.at(-1)?.group).toBe('g1'));
+    await waitFor(() => expect(asked.at(-1)?.group).toBe('00000000-0000-4000-8000-000000000004'));
   });
 
   it('applies the tag filter, and surfaces the API’s own refusal of an unsupported expression', async () => {

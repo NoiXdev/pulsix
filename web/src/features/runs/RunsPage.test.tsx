@@ -217,12 +217,12 @@ describe('RunsPage', () => {
         seen.push(req.search);
         return { jobs: [job({ status: 'running' })], next_cursor: '', total: 1 };
       },
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+      'GET /api/v1/orgs/acme/hosts/00000000-0000-4000-8000-000000000002': { host: { id: '00000000-0000-4000-8000-000000000002', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
-    renderPage('/o/acme/runs?host=h1&status=active');
+    renderPage('/o/acme/runs?host=00000000-0000-4000-8000-000000000002&status=active');
     expect(await screen.findByText('Host: web-04.fra')).toBeInTheDocument();
     expect(seen[0].get('status')).toBe('active');
-    expect(seen[0].get('host_id')).toBe('h1');
+    expect(seen[0].get('host_id')).toBe('00000000-0000-4000-8000-000000000002');
   });
 
   it('keeps the sort and starts again at page 1 when a filter changes', async () => {
@@ -278,14 +278,14 @@ describe('RunsPage', () => {
         seen.push(req.search.toString());
         return { jobs: [job({ trigger: 'schedule' })], next_cursor: '', total: 1 };
       },
-      'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: 's1', name: 'Nightly' }] },
+      'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: '00000000-0000-4000-8000-000000000006', name: 'Nightly' }] },
     });
     renderPage();
     expect(await screen.findByText('Schedule', { selector: 'span' })).toBeInTheDocument();
     await pickOption(screen, 'Filter by trigger', { value: 'schedule' });
     await screen.findByLabelText('Filter by schedule');
-    await pickOption(screen, 'Filter by schedule', { value: 's1' });
-    expect(seen.some((q) => q.includes('trigger=schedule') && q.includes('trigger_ref=s1'))).toBe(true);
+    await pickOption(screen, 'Filter by schedule', { value: '00000000-0000-4000-8000-000000000006' });
+    expect(seen.some((q) => q.includes('trigger=schedule') && q.includes('trigger_ref=00000000-0000-4000-8000-000000000006'))).toBe(true);
     await pickOption(screen, 'Filter by trigger', { value: 'webhook' });
     expect(screen.queryByLabelText('Filter by schedule')).not.toBeInTheDocument();
   });
@@ -299,13 +299,13 @@ describe('RunsPage', () => {
         seen.push(req.search.toString());
         return { jobs: [job()], next_cursor: '', total: 1 };
       },
-      'GET /api/v1/orgs/acme/job-templates': { templates: [{ id: 't1', name: 'patch-all' }] },
+      'GET /api/v1/orgs/acme/job-templates': { templates: [{ id: '00000000-0000-4000-8000-000000000007', name: 'patch-all' }] },
     });
     const router = renderPage();
     await screen.findByLabelText('Filter by template');
     await pickOption(screen, 'Filter by template', 'patch-all');
-    await waitFor(() => expect(router.state.location.search).toMatchObject({ template: 't1' }));
-    await waitFor(() => expect(seen.some((q) => q.includes('template_id=t1'))).toBe(true));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ template: '00000000-0000-4000-8000-000000000007' }));
+    await waitFor(() => expect(seen.some((q) => q.includes('template_id=00000000-0000-4000-8000-000000000007'))).toBe(true));
   });
 
   it('filters by host from the URL, names it in a chip and drops it when the chip is removed', async () => {
@@ -318,15 +318,15 @@ describe('RunsPage', () => {
         seen.push(req.search.toString());
         return { jobs: [job()], next_cursor: '', total: 1 };
       },
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+      'GET /api/v1/orgs/acme/hosts/00000000-0000-4000-8000-000000000002': { host: { id: '00000000-0000-4000-8000-000000000002', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
-    renderPage('/o/acme/runs?host=h1');
+    renderPage('/o/acme/runs?host=00000000-0000-4000-8000-000000000002');
     expect(await screen.findByText('Host: web-04.fra')).toBeInTheDocument();
-    expect(seen.some((q) => q.includes('host_id=h1'))).toBe(true);
+    expect(seen.some((q) => q.includes('host_id=00000000-0000-4000-8000-000000000002'))).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
     await waitFor(() => expect(screen.queryByText('Host: web-04.fra')).not.toBeInTheDocument());
-    expect(seen[seen.length - 1]).not.toContain('host_id=h1');
+    expect(seen[seen.length - 1]).not.toContain('host_id=00000000-0000-4000-8000-000000000002');
   });
 
   it('keeps the host filter when another filter changes', async () => {
@@ -338,12 +338,12 @@ describe('RunsPage', () => {
         seen.push(req.search.toString());
         return { jobs: [], next_cursor: '', total: 0 };
       },
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+      'GET /api/v1/orgs/acme/hosts/00000000-0000-4000-8000-000000000002': { host: { id: '00000000-0000-4000-8000-000000000002', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
-    renderPage('/o/acme/runs?host=h1');
+    renderPage('/o/acme/runs?host=00000000-0000-4000-8000-000000000002');
     await screen.findByLabelText('Filter by status');
     await pickOption(screen, 'Filter by status', { value: 'failed' });
-    await waitFor(() => expect(seen.some((q) => q.includes('status=failed') && q.includes('host_id=h1'))).toBe(true));
+    await waitFor(() => expect(seen.some((q) => q.includes('status=failed') && q.includes('host_id=00000000-0000-4000-8000-000000000002'))).toBe(true));
   });
 
   it('drops the schedule from the URL when the trigger changes away from schedule', async () => {
@@ -351,9 +351,9 @@ describe('RunsPage', () => {
       'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
-      'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: 's1', name: 'Nightly' }] },
+      'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: '00000000-0000-4000-8000-000000000006', name: 'Nightly' }] },
     });
-    const router = renderPage('/o/acme/runs?trigger=schedule&schedule=s1&page=2');
+    const router = renderPage('/o/acme/runs?trigger=schedule&schedule=00000000-0000-4000-8000-000000000006&page=2');
     await screen.findByLabelText('Filter by schedule');
     await pickOption(screen, 'Filter by trigger', { value: 'webhook' });
     await waitFor(() => expect(router.state.location.search).toEqual({ trigger: 'webhook' }));
@@ -403,9 +403,9 @@ describe('RunsPage', () => {
       'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_OPERATOR,
       'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
-      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+      'GET /api/v1/orgs/acme/hosts/00000000-0000-4000-8000-000000000002': { host: { id: '00000000-0000-4000-8000-000000000002', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
     });
-    const router = renderPage('/o/acme/runs?sort=kind&host=h1&status=failed&kind=run');
+    const router = renderPage('/o/acme/runs?sort=kind&host=00000000-0000-4000-8000-000000000002&status=failed&kind=run');
     await screen.findByText('Host: web-04.fra');
 
     await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
