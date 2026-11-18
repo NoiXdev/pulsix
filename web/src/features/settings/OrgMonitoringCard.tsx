@@ -63,6 +63,8 @@ export function OrgMonitoringCard({
   const form = useCardForm(saved, { guard: false });
   const { draft, dirty } = form;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  // A card that goes away (an error state) leaves nothing unsaved behind.
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const retentionOptions: SelectOption[] =
     maxDays === undefined
@@ -110,6 +112,7 @@ export function OrgMonitoringCard({
     <form id="org-monitoring-form" noValidate onSubmit={(e) => void onSubmit(e)}>
       <SettingsCard
         title={m.title}
+        description={m.description}
         footer={
           settings.isError ? null : canWrite ? (
             <CardSaveBar

@@ -65,6 +65,7 @@ export function AppearancePage() {
         <SettingsRow label={t.appearance.pageSize.title} htmlFor="appearance-page-size">
           <div className="w-28">
             <Select
+              portal
               id="appearance-page-size"
               options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
               value={String(prefs.page_size)}

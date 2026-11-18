@@ -33,6 +33,8 @@ export function OrgNameCard({
   const form = useCardForm(name, { guard: false });
   const { dirty } = form;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  // A card that goes away (an error state) leaves nothing unsaved behind.
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +53,7 @@ export function OrgNameCard({
     <form id="org-name-form" onSubmit={(e) => void onSubmit(e)}>
       <SettingsCard
         title={g.card}
+        description={g.cardDescription}
         footer={
           canManage ? (
             <CardSaveBar formId="org-name-form" dirty={dirty} saving={update.isPending} onDiscard={form.discard} saveLabel={g.save} />

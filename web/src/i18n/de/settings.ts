@@ -28,6 +28,7 @@ export const deSettings: Messages['settings'] = {
     title: 'Allgemein',
     hint: 'Name, Überwachung und Zugänge dieser Organisation.',
     card: 'Organisation',
+    cardDescription: 'So heißt die Organisation überall in Pulsix.',
     name: 'Name',
     slug: 'Slug',
     slugHint: 'Teil jeder Adresse dieser Organisation; lässt sich nicht ändern.',
@@ -38,6 +39,7 @@ export const deSettings: Messages['settings'] = {
   },
   monitoring: {
     title: 'Überwachung',
+    description: 'Wann Pulsix warnt und wie lange Messwerte bleiben.',
     clientAbsentDays: 'Warnung bei fehlendem Kontakt',
     days: 'Tage',
     clientAbsentDaysHint:

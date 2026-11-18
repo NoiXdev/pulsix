@@ -30,6 +30,7 @@ export const enSettings = {
     title: 'General',
     hint: 'Name, monitoring and access of this organization.',
     card: 'Organization',
+    cardDescription: 'What this organization is called everywhere in Pulsix.',
     name: 'Name',
     slug: 'Slug',
     slugHint: 'Part of every address of this organization; cannot be changed.',
@@ -41,6 +42,7 @@ export const enSettings = {
   // Backlog 3.57: the organization's monitoring settings, on the General page.
   monitoring: {
     title: 'Monitoring',
+    description: 'When Pulsix warns and how long metrics are kept.',
     clientAbsentDays: 'Warning without contact',
     days: 'days',
     clientAbsentDaysHint:

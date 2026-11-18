@@ -54,6 +54,7 @@ export function LanguageCard() {
       <SettingsRow label={t.language.account.row} htmlFor="account-language">
         <div className="w-60">
           <Select
+            portal
             id="account-language"
             options={options}
             value={isLocale(own) ? own : INSTANCE_DEFAULT}
