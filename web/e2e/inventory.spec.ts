@@ -69,7 +69,9 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   dialog = page.getByRole('dialog', { name: 'Add group' });
   await dialog.getByLabel('Name').fill('inv_production');
   await dialog.getByRole('button', { name: 'Create group' }).click();
-  // A field is edited in its own dialog (backlog 7.75), titled by its name.
+  // A new group's page opens on its fields (Manage fields); a field is
+  // edited in its own dialog (backlog 7.75), titled by its name.
+  const fields = page.getByRole('dialog', { name: 'Manage fields' });
   await page.getByRole('button', { name: 'Add field' }).click();
   let editor = page.getByRole('dialog', { name: 'Field field_1' });
   await editor.getByLabel('Name').fill('env');
@@ -78,22 +80,22 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await editor.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Save schema' }).click();
   await toast(page, 'Schema saved');
-  // The group page is one scrolling detail page: its sections sit under the
-  // sidebar's section nav, Members among them exactly once.
-  await expect(page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Members' })).toHaveCount(1);
-  // The schema editor is on the same page now, its field env a table row
-  // with a dialog of its own: the values form's own input is the textbox.
+  await fields.getByRole('button', { name: 'Close' }).click();
+  // The group page has a header and tabs, Members among them exactly once;
+  // Variables, the default, holds the group's values.
+  await expect(page.getByRole('tablist', { name: 'Group sections' }).getByRole('tab', { name: /^Members/ })).toHaveCount(1);
   await page.getByRole('textbox', { name: 'env', exact: true }).fill('prod');
   await page.getByRole('button', { name: 'Save values' }).click();
   await toast(page, 'Group values saved');
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: 'More actions for inv_production' }).click();
+  await page.getByRole('menuitem', { name: 'Edit …' }).click();
   dialog = page.getByRole('dialog', { name: 'Edit group' });
   await pickOption(dialog, 'Jump host', 'inv-bastion');
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Group saved');
 
   // Child group with a host-scoped repeater holding a secret.
-  await page.getByRole('button', { name: 'Add child group' }).click();
+  await page.getByRole('button', { name: 'Subgroup …' }).click();
   dialog = page.getByRole('dialog', { name: 'Add child group' });
   await dialog.getByLabel('Name').fill('inv_web');
   await dialog.getByRole('button', { name: 'Create group' }).click();
@@ -120,6 +122,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await pickOption(page.getByRole('group', { name: 'Sub-field password' }), 'Type', { value: 'secret' });
   await page.getByRole('button', { name: 'Save schema' }).click();
   await toast(page, 'Schema saved');
+  await fields.getByRole('button', { name: 'Close' }).click();
 
   // Assign the host: a missing required value is rejected at its field.
   await page.getByRole('button', { name: 'Assign host' }).click();
@@ -135,14 +138,18 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await dialog.getByLabel('password').fill('e2e-hunter2');
   await dialog.getByRole('button', { name: 'Assign to inv_web' }).click();
   await toast(page, 'Host assigned to inv_web');
-  // Scoped to the member's own row: the sidebar's group pill reads "Complete" too.
+  // Scoped to the member's own row: the header's group pill reads "Complete" too.
+  await page.getByRole('tab', { name: /^Members/ }).click();
   await expect(page.locator('[data-list-row]', { hasText: 'inv-web-01' }).getByText('complete', { exact: true })).toBeVisible();
-  // The whole group page (schema editor, values, members) fits its column at
-  // the default 1280px viewport.
+  // The group page (header, members) fits its column at the default 1280px
+  // viewport.
   await expectNoClippedCards(page);
 
-  // The preview renders the jump host chain and masks the secret.
-  const json = page.getByLabel('Inventory JSON');
+  // The preview renders the jump host chain and masks the secret; the
+  // hosts' vars start folded.
+  await page.getByRole('tab', { name: 'Inventory' }).click();
+  const json = page.getByRole('region', { name: 'Inventory JSON' });
+  await json.getByRole('button', { name: 'Expand all' }).click();
   await expect(json).toContainText('-o ProxyJump=ops@bastion.inv.example:2222');
   await expect(json).toContainText('"password": "********"');
   await expect(json).toContainText('"env": "prod"');

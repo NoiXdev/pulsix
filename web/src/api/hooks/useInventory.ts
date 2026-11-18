@@ -19,11 +19,11 @@ function useInvalidate(org: string) {
   return () => qc.invalidateQueries({ queryKey: ['inventory', org] });
 }
 
-export function useGroups(org: string) {
+export function useGroups(org: string, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['inventory', org, 'groups'],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/inventory/groups', { params: { path: { org } } })),
-    enabled: !!org,
+    enabled: enabled && !!org,
   });
 }
 

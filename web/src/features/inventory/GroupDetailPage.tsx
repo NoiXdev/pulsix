@@ -1,5 +1,8 @@
-import { useParams } from '@tanstack/react-router';
-import { DetailLayout, type SectionNavItem } from '../../ui/detail-layout.tsx';
+import { useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router';
+import { Button } from '../../ui/button.tsx';
+import { Dialog } from '../../ui/dialog.tsx';
+import { PageTabs, type PageTabItem } from '../../ui/page-tabs.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useGroup, useGroups } from '../../api/hooks/useInventory.ts';
@@ -7,9 +10,11 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import type { InventoryGroup } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
-import { GroupSidebar } from './GroupSidebar.tsx';
+import { GroupHeader } from './GroupHeader.tsx';
+import { GroupInheritanceTab } from './GroupInheritanceTab.tsx';
+import { GROUP_PANEL_ID, groupTabId, parseGroupTab, type GroupTab } from './groupTabs.ts';
 import { MembersSection } from './sections/MembersSection.tsx';
-import { ValuesSection } from './sections/ValuesSection.tsx';
+import { VariablesTab } from './sections/VariablesTab.tsx';
 import { SchemaSection } from './sections/SchemaSection.tsx';
 import { ChildrenSection } from './sections/ChildrenSection.tsx';
 import { PreviewSection } from './sections/PreviewSection.tsx';
@@ -17,9 +22,11 @@ import { OwnStepsContext, useOwnStepsRecord } from './ownSteps.ts';
 
 /**
  * GroupDetailPage is one inventory group on one page, laid out like the host
- * page: a sticky sidebar with who the group is and its actions, and the
- * sections Members, Group values, Variable schema, Child groups and Preview
- * inventory, reachable from the sidebar's nav.
+ * page (spec 2026-11-18-groups-and-list-filters-design.md, "Group page"): a
+ * full-width header with who the group is and its actions, and below it
+ * tabs — Variables, Members, Subgroups, Inheritance, Inventory — the open one
+ * in the URL (`?tab=`, Variables when absent). The schema is edited in the
+ * Manage fields dialog the header opens.
  */
 export function GroupDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
@@ -35,47 +42,98 @@ export function GroupDetailPage() {
   if (orgGuard) return orgGuard;
   if (groupGuard) return groupGuard;
   if (!orgInfo.data || !group.data) return <QueryLoading />;
-  return <GroupDetail org={org} group={group.data.group} role={orgInfo.data.org.role} />;
+  // Keyed by the group: a draft, an open dialog or the fields dialog opened
+  // for a new group never follows the user to another group.
+  return <GroupDetail key={group.data.group.id} org={org} group={group.data.group} role={orgInfo.data.org.role} />;
 }
 
 function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup; role: string }) {
   const t = useT();
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { tab?: unknown };
+  const tab = parseGroupTab(search.tab);
+  const hash = useRouterState({ select: (s) => s.location.hash });
   const groups = useGroups(org);
   const all = groups.data?.groups ?? [];
   const own = all.find((g) => g.id === group.id);
   const children = all.filter((g) => g.parent_id === group.id).length;
   const canWrite = may(role, 'inventory.write');
-  const s = t.inventory.detail.section;
+  const tabs = t.inventory.groupPage.tabs;
   // The page's own writes to the group, which an edited draft may follow
   // (useRevisionDraft); the record starts over with another group.
   const ownSteps = useOwnStepsRecord(group.id, group.revision);
+  // A group just created ("#schema") opens on its fields.
+  const [fieldsOpen, setFieldsOpen] = useState(() => canWrite && hash === 'schema');
 
-  const nav: SectionNavItem[] = [
-    { id: 'members', label: s.members, count: own?.members },
-    { id: 'values', label: s.values },
-    { id: 'schema', label: s.schema },
-    { id: 'children', label: s.children, count: groups.data ? children : undefined },
-    { id: 'preview', label: s.preview },
+  // Arrow/Home/End roving replaces the history entry: stepping through the
+  // tabs with the keyboard must not fill the back button.
+  const select = (next: GroupTab, via: 'click' | 'key' = 'click') =>
+    void navigate({ to: '/o/$org/groups/$id', params: { org, id: group.id }, search: { tab: next === 'variables' ? undefined : next }, replace: via === 'key' });
+
+  const items: PageTabItem<GroupTab>[] = [
+    { id: 'variables', label: tabs.variables },
+    { id: 'members', label: tabs.members, count: own?.members },
+    { id: 'subgroups', label: tabs.subgroups, count: groups.data ? children : undefined },
+    { id: 'inheritance', label: tabs.inheritance },
+    { id: 'inventory', label: tabs.inventory },
   ];
+
+  const openFields = () => setFieldsOpen(true);
+  // The "#schema" a new group was opened with has done its job: a reload
+  // must not open the fields again.
+  const closeFields = () => {
+    setFieldsOpen(false);
+    if (hash === 'schema') {
+      void navigate({ to: '/o/$org/groups/$id', params: { org, id: group.id }, search: { tab: tab === 'variables' ? undefined : tab }, hash: '', replace: true });
+    }
+  };
+  const panels: Record<GroupTab, () => ReactNode> = {
+    // Never keyed by the revision: a save of the schema bumps it, and must
+    // not throw away an unsaved values draft. Nor by the values: the draft
+    // follows the stored values itself while it is unedited
+    // (useRevisionDraft), and such a key would remount it when its own save
+    // lands, losing an edit typed during that save (backlogs 7.89, 7.90).
+    // It is keyed by the schema, so a schema change restarts the values,
+    // because their fields changed with it.
+    variables: () => <VariablesTab key={JSON.stringify(group.schema)} org={org} group={group} groups={all} canWrite={canWrite} onManageFields={openFields} />,
+    members: () => <MembersSection org={org} group={group} canWrite={canWrite} />,
+    subgroups: () => <ChildrenSection org={org} group={group} groups={all} />,
+    inheritance: () => <GroupInheritanceTab org={org} group={group} />,
+    inventory: () => <PreviewSection org={org} group={group} />,
+  };
 
   return (
     <OwnStepsContext.Provider value={ownSteps}>
-      <DetailLayout sidebar={<GroupSidebar org={org} group={group} groups={all} role={role} />} nav={nav} navLabel={t.common.sections}>
-        <MembersSection org={org} group={group} canWrite={canWrite} />
-        {/* Never keyed by the revision: a save in one section bumps it, and
-            must not throw away an unsaved draft in the other. Nor by the
-            content a section edits: its draft follows the stored content
-            itself while it is unedited (useRevisionDraft), and such a key
-            would remount it when its own save lands, losing an edit typed
-            during that save (backlogs 7.89, 7.90). The values are keyed by
-            the schema, so a schema change restarts them, because their
-            fields changed with it. The id keeps a draft from following the
-            user to another group with the same content. */}
-        <ValuesSection key={JSON.stringify([group.id, group.schema])} org={org} group={group} canWrite={canWrite} />
-        <SchemaSection key={group.id} org={org} group={group} canWrite={canWrite} />
-        <ChildrenSection org={org} group={group} groups={all} canWrite={canWrite} />
-        <PreviewSection org={org} group={group} />
-      </DetailLayout>
+      <div className="flex flex-col gap-5">
+        <GroupHeader org={org} group={group} groups={all} role={role} onManageFields={openFields} />
+        <PageTabs label={tabs.label} tabs={items} active={tab} onSelect={select} tabId={groupTabId} panelId={GROUP_PANEL_ID} />
+        <div role="tabpanel" id={GROUP_PANEL_ID} aria-labelledby={groupTabId(tab)} className="flex min-w-0 flex-col gap-8">
+          {panels[tab]()}
+        </div>
+        <FieldsDialog open={fieldsOpen} onClose={closeFields}>
+          <SchemaSection org={org} group={group} canWrite={canWrite} />
+        </FieldsDialog>
+      </div>
     </OwnStepsContext.Provider>
+  );
+}
+
+/** FieldsDialog holds the schema editor (Manage fields …). It stays mounted
+ * while closed, so a schema draft outlives closing it, as it outlived
+ * scrolling away from the section it was before. */
+function FieldsDialog({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
+  const t = useT();
+  const p = t.inventory.groupPage;
+  return (
+    <Dialog open={open} onClose={onClose} title={p.fieldsTitle} size="wide">
+      <div className="flex flex-col gap-4">
+        {children}
+        <div className="flex justify-end">
+          <Button type="button" onClick={onClose}>
+            {p.close}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   );
 }

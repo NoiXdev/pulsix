@@ -47,11 +47,12 @@ function renderAt(initialPath: string, locale?: 'de') {
   });
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
   const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
+  const groupRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups/$id', component: () => <div>GROUP PAGE</div> });
   const routeTree = rootRoute.addChildren([
     loginRoute,
     enrolRoute,
     passwordRoute,
-    orgRoute.addChildren([hostsRoute, hostRoute, membersRoute, generalRoute]),
+    orgRoute.addChildren([hostsRoute, hostRoute, groupRoute, membersRoute, generalRoute]),
   ]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -119,6 +120,26 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(await screen.findByText('HOST PAGE')).toBeInTheDocument();
     const header = document.querySelector('header');
     await waitFor(() => expect(header).toHaveTextContent('Hostsweb-04.fra'));
+  });
+
+  it('names a group and its ancestors in the breadcrumbs', async () => {
+    const summary = (id: string, name: string, parent_id?: string) => ({
+      id, name, parent_id, description: '', members: 0, group_fields: 0, host_fields: 0, complete: true, revision: 1,
+    });
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/orgs/acme/inventory/groups': {
+        groups: [summary('p1', 'prod'), summary('g1', 'web', 'p1'), summary('c1', 'web_eu', 'g1'), summary('x1', 'other')],
+      },
+    });
+    renderAt('/o/acme/groups/c1');
+
+    expect(await screen.findByText('GROUP PAGE')).toBeInTheDocument();
+    const header = document.querySelector('header');
+    await waitFor(() => expect(header).toHaveTextContent('Groupsprodwebweb_eu'));
+    expect(within(header as HTMLElement).getByText('web_eu')).toHaveClass('font-semibold');
   });
 
   it('swaps the organization navigation for the settings navigation under /settings', async () => {

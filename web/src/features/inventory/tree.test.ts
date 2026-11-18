@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { descendantIds, orderTree } from './tree.ts';
+import { ancestorsOf, descendantIds, orderTree } from './tree.ts';
 
 const groups = [
   { id: 'php', name: 'php', parent_id: 'web' },
@@ -19,5 +19,17 @@ describe('tree', () => {
   it('collects descendants', () => {
     expect([...descendantIds(groups, 'prod')].sort()).toEqual(['db', 'php', 'web']);
     expect(descendantIds(groups, 'php').size).toBe(0);
+  });
+
+  it('lists the ancestors from the root down, and stops at a missing parent or a cycle', () => {
+    expect(ancestorsOf(groups, 'php').map((g) => g.name)).toEqual(['production', 'webserver']);
+    expect(ancestorsOf(groups, 'prod')).toEqual([]);
+    expect(ancestorsOf(groups, 'lost')).toEqual([]);
+    expect(ancestorsOf(groups, 'unknown')).toEqual([]);
+    const cycle = [
+      { id: 'a', name: 'a', parent_id: 'b' },
+      { id: 'b', name: 'b', parent_id: 'a' },
+    ];
+    expect(ancestorsOf(cycle, 'a').map((g) => g.id)).toEqual(['b']);
   });
 });

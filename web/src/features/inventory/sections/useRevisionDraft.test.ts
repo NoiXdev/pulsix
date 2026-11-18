@@ -37,6 +37,29 @@ function setup(initial: Props) {
 }
 
 describe('useRevisionDraft', () => {
+  it('is touched from the first edit until a save, a reload with other content or a discard', () => {
+    const { result } = setup({ stored: A, revision: 3 });
+    expect(result.current.touched).toBe(false);
+    act(() => result.current.edit({ built: 'x' }));
+    expect(result.current.touched).toBe(true);
+    // An edit typed back to the start still counts.
+    act(() => result.current.edit({ built: 'a' }));
+    expect(result.current.touched).toBe(true);
+    act(() => result.current.discard());
+    expect(result.current.touched).toBe(false);
+
+    act(() => result.current.edit({ built: 'x' }));
+    act(() => result.current.reloaded(A, 4));
+    expect(result.current.touched).toBe(true);
+    act(() => result.current.reloaded(B, 5));
+    expect(result.current.touched).toBe(false);
+
+    act(() => result.current.edit({ built: 'y' }));
+    const ticket = result.current.startSave();
+    act(() => result.current.saved(ticket, C, 6));
+    expect(result.current.touched).toBe(false);
+  });
+
   it('starts untouched from the stored content, on the stored revision', () => {
     const { result } = setup({ stored: A, revision: 3 });
     expect(result.current.draft).toEqual({ built: 'a' });

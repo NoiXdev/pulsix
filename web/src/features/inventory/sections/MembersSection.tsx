@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { Button } from '../../../ui/button.tsx';
 import { DataList } from '../../../ui/data-list/index.ts';
-import { Section } from '../../../ui/detail-layout.tsx';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useGroupMembers } from '../../../api/hooks/useInventory.ts';
@@ -12,34 +10,23 @@ import { memberColumns } from './memberColumns.tsx';
 import { useMemberListActions } from './useMemberListActions.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-/** MembersSection lists the group's direct members (list id `group-members`,
- * sorted and paged in the browser, never in the URL: the page's own list is
- * the group's), each a row to its host page; Assign host sits in the section
- * header for a writer. */
+/** MembersSection is the Members tab: the group's direct members (list id
+ * `group-members`, sorted and paged in the browser, never in the URL: the
+ * page's own list is the group's), each a row to its host page, whose menu
+ * edits a member's values for a writer. Assign host sits in the page
+ * header. */
 export function MembersSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
-  const t = useT();
   const members = useGroupMembers(org, group.id);
-  const [dialog, setDialog] = useState<{ member?: InventoryMember } | null>(null);
+  const [editing, setEditing] = useState<InventoryMember | null>(null);
   const list = members.data?.members ?? [];
 
   return (
-    <Section
-      id="members"
-      title={t.inventory.detail.section.members}
-      actions={
-        canWrite ? (
-          // Disabled until the members are known: the picker leaves them out.
-          <Button variant="primary" disabled={!members.data} onClick={() => setDialog({})}>
-            {t.inventory.members.assign}
-          </Button>
-        ) : undefined
-      }
-    >
-      <MembersList org={org} group={group} members={members} canWrite={canWrite} onEdit={(member) => setDialog({ member })} />
-      {dialog && (
-        <AssignHostDialog org={org} group={group} member={dialog.member} existing={list.map((m) => m.host_id)} onClose={() => setDialog(null)} />
+    <>
+      <MembersList org={org} group={group} members={members} canWrite={canWrite} onEdit={setEditing} />
+      {editing && (
+        <AssignHostDialog org={org} group={group} member={editing} existing={list.map((m) => m.host_id)} onClose={() => setEditing(null)} />
       )}
-    </Section>
+    </>
   );
 }
 

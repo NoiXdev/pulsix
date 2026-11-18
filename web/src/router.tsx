@@ -27,6 +27,7 @@ import { FleetPage } from './features/fleet/FleetPage.tsx';
 import { AlertsPage } from './features/alerts/AlertsPage.tsx';
 import { GroupsPage } from './features/inventory/GroupsPage.tsx';
 import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
+import { formerSection, validateGroupSearch } from './features/inventory/groupTabs.ts';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
@@ -241,23 +242,18 @@ const groupsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
   component: GroupsPage,
 });
-/** The section each tab of the former tabbed group page became; Settings
- * became the Edit dialog, so it (like an unknown tab) maps to no hash. */
-const GROUP_TAB_SECTION: Record<string, string> = { schema: 'schema', values: 'values', members: 'members', children: 'children', preview: 'preview' };
-
 const groupDetailRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/groups/$id',
-  // `?tab=` is kept only to read links from before the page had sections
-  // (bookmarks, older docs): they are sent on to the section's hash.
-  validateSearch: (search: Record<string, unknown>) => ({
-    tab: typeof search.tab === 'string' ? search.tab : undefined,
-  }),
-  beforeLoad: ({ search, params }) => {
-    if (search.tab) {
-      const hash = Object.hasOwn(GROUP_TAB_SECTION, search.tab) ? GROUP_TAB_SECTION[search.tab] : undefined;
-      throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: undefined }, hash, replace: true });
-    }
+  // The open tab (?tab=members); Variables, the default, is left out. The
+  // earlier pages' names (?tab=values, ?tab=children) are read as the tab
+  // they became.
+  validateSearch: validateGroupSearch,
+  // A section anchor of the page before the tabs (#members, bookmarks and
+  // older docs) is sent on to its tab.
+  beforeLoad: ({ search, params, location }) => {
+    const former = search.tab === undefined ? formerSection(location.hash) : undefined;
+    if (former && former !== 'variables') throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: former }, hash: '', replace: true });
   },
   component: GroupDetailPage,
 });

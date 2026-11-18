@@ -23,6 +23,10 @@ export interface SchemaFormProps {
   idPrefix?: string;
   /** Path of this (nested) form inside the document. */
   pathPrefix?: string;
+  /** Keeps the labels of the top-level scalar and secret fields for
+   * assistive technology only, for a caller that shows each field's name
+   * beside its input itself (the group page's variable rows). */
+  hideLabels?: boolean;
 }
 
 /**
@@ -32,7 +36,7 @@ export interface SchemaFormProps {
  * paths this component uses for its inputs. Only active fields are shown;
  * an edit replaces one key, so an inactive field's value is kept as it is.
  */
-export function SchemaForm({ fields, value, onChange, problems, disabled, idPrefix = 'sf', pathPrefix = '' }: SchemaFormProps) {
+export function SchemaForm({ fields, value, onChange, problems, disabled, idPrefix = 'sf', pathPrefix = '', hideLabels }: SchemaFormProps) {
   const t = useT();
   const shown = activeFields(fields);
   if (shown.length === 0) return <p className="text-xs text-muted-foreground">{t.variables.form.noFields}</p>;
@@ -48,6 +52,7 @@ export function SchemaForm({ fields, value, onChange, problems, disabled, idPref
           problems={problems}
           disabled={disabled}
           idPrefix={idPrefix}
+          labelHidden={hideLabels}
         />
       ))}
     </div>
@@ -69,10 +74,11 @@ interface FieldInputProps {
   problems?: readonly Problem[];
   disabled?: boolean;
   idPrefix: string;
+  labelHidden?: boolean;
 }
 
 function FieldInput(props: FieldInputProps) {
-  const { field, path, value, onChange, problems, disabled, idPrefix } = props;
+  const { field, path, value, onChange, problems, disabled, idPrefix, labelHidden } = props;
   const id = inputId(idPrefix, path);
   const error = problemAt(problems, path);
   const label = field.label || field.name;
@@ -98,7 +104,7 @@ function FieldInput(props: FieldInputProps) {
   }
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1">
+      <div className={labelHidden ? 'sr-only' : 'flex items-center gap-1'}>
         <Label htmlFor={id}>{label}</Label>
         {field.required && (
           <span aria-hidden="true" className="text-[11px] text-destructive">

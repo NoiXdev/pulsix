@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crumbLabels as crumbLabelsFor, hostIdInPath } from './breadcrumbs.ts';
+import { crumbLabels as crumbLabelsFor, groupIdInPath, hostIdInPath } from './breadcrumbs.ts';
 import { en } from '../i18n/en/index.ts';
 import { de } from '../i18n/de/index.ts';
 
@@ -59,6 +59,20 @@ describe('crumbLabels', () => {
     expect(crumbLabelsFor(`/o/acme/hosts/${id}`, 'acme', en, names)).toEqual(['Hosts', 'web-04.fra']);
     // Only under the segment it was given for: a run with the same id is not the host.
     expect(crumbLabelsFor(`/o/acme/runs/${id}`, 'acme', en, names)).toEqual(['Runs', '550e8400']);
+  });
+
+  it('names a group by its ancestors and its name, one crumb each', () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    const names = { [`groups/${id}`]: ['prod', 'web', 'web_eu'] };
+    expect(crumbLabelsFor(`/o/acme/groups/${id}`, 'acme', en, names)).toEqual(['Groups', 'prod', 'web', 'web_eu']);
+    expect(crumbLabelsFor(`/o/acme/groups/${id}`, 'acme', en, { [`groups/${id}`]: [] })).toEqual(['Groups', '550e8400']);
+  });
+
+  it('finds the group id in a group page path', () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    expect(groupIdInPath(`/o/acme/groups/${id}`, 'acme')).toBe(id);
+    expect(groupIdInPath('/o/acme/groups', 'acme')).toBeUndefined();
+    expect(groupIdInPath(`/o/acme/hosts/${id}`, 'acme')).toBeUndefined();
   });
 
   it('finds the host id in a host page path', () => {

@@ -161,11 +161,14 @@ describe('GroupDetailPage values revision', () => {
     await act(async () => {
       await qc.refetchQueries();
     });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
+    // The rebuilt draft is unedited, so there is nothing to save until the
+    // next edit, and that one sends the secret as a keep marker.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeDisabled());
+    await typeEnv(user, 'qa');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1].headers.get('If-Match')).toBe('"5"');
-    expect(puts[1].body).toEqual({ vars: { env: 'prod', db_password: { $secret: 'keep', from: 'db_password' } } });
+    expect(puts[1].body).toEqual({ vars: { env: 'qa', db_password: { $secret: 'keep', from: 'db_password' } } });
   });
 
   it('keeps an edit typed while a save was in flight, on the revision that save stored', async () => {
@@ -185,7 +188,7 @@ describe('GroupDetailPage values revision', () => {
       }),
     );
     const { qc } = renderAt('/o/acme/groups/g1');
-    await screen.findByLabelText('env');
+    await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(1));
     await typeEnv(user, 'typed meanwhile');
@@ -221,12 +224,13 @@ describe('GroupDetailPage values revision', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await screen.findByLabelText('env');
 
-    // Saving the values unchanged stores a new revision with the same
-    // values, so the form stays as it is and the next save builds on it.
+    // The save stores a new revision, which the draft rebuilt from it is
+    // on, so the next save builds on it.
+    await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
+    await typeEnv(user, 'qa');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(2));
@@ -293,6 +297,7 @@ describe('GroupDetailPage values revision', () => {
     current = withSecret(4, 'staging');
     await refetch(qc);
     await waitFor(() => expect(screen.getByLabelText('env')).toHaveValue('staging'));
+    await typeEnv(user, 'qa');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(puts).toHaveLength(1);
@@ -323,7 +328,10 @@ describe('GroupDetailPage values revision', () => {
     await user.click(await within(values).findByRole('button', { name: 'Reload' }));
     await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
     expect(screen.getByLabelText('env')).toHaveValue('staging');
+    // Started over, the draft is the stored values: nothing to save.
+    expect(screen.getByRole('button', { name: 'Save values' })).toBeDisabled();
 
+    await typeEnv(user, 'mine again');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(puts).toHaveLength(2);

@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
+import { validateGroupSearch } from './groupTabs.ts';
+import { openFields } from './groupPageTestKit.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 
@@ -41,7 +43,7 @@ function renderAt(path: string) {
   const detail = createRoute({
     getParentRoute: () => orgRoute,
     path: '/groups/$id',
-    validateSearch: (s: Record<string, unknown>) => ({ tab: typeof s.tab === 'string' ? s.tab : undefined }),
+    validateSearch: validateGroupSearch,
     component: GroupDetailPage,
   });
   const list = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: () => <div>GROUPS</div> });
@@ -72,9 +74,11 @@ const base = {
   'GET /api/v1/orgs/acme/inventory/preview': { inventory: {}, connections: {}, warnings: [] },
 };
 
-/** Opens the sidebar's Edit dialog, which holds the former Settings tab. */
+/** Opens the header's Edit dialog (⋯ → Edit …), which holds the former
+ * Settings tab. */
 async function openSettings(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: 'Edit' }));
+  await user.click(await screen.findByRole('button', { name: 'More actions for webserver' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Edit …' }));
   return screen.findByRole('dialog', { name: 'Edit group' });
 }
 
@@ -84,12 +88,15 @@ async function memberAction(user: ReturnType<typeof userEvent.setup>, host: stri
 }
 
 describe('GroupDetailPage', () => {
-  it('renders the schema builder and the group values together', async () => {
+  it('renders the group values and keeps the schema builder in the fields dialog', async () => {
+    const user = userEvent.setup();
     mockApi(base);
     renderAt('/o/acme/groups/g1');
-    expect(await screen.findByRole('table', { name: 'Fields' })).toBeInTheDocument();
-    expect(screen.getByLabelText('env')).toBeInTheDocument();
+    expect(await screen.findByLabelText('env')).toBeInTheDocument();
     expect(screen.getByText(/Values of removed fields are still stored/)).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Fields' })).not.toBeInTheDocument();
+    const dialog = await openFields(user);
+    expect(within(dialog).getByRole('table', { name: 'Fields' })).toBeInTheDocument();
   });
 
   it('saves group values with If-Match, a keep marker for the stored secret, and without orphans', async () => {
@@ -121,7 +128,9 @@ describe('GroupDetailPage', () => {
         }),
     });
     renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Save values' }));
+    await screen.findByLabelText('env');
+    await pickOption(screen, 'env', { value: 'staging' });
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('must be one of prod, staging');
   });
 
@@ -133,8 +142,9 @@ describe('GroupDetailPage', () => {
         new Response(JSON.stringify({ status: 412, detail: 'changed' }), { status: 412, headers: { 'Content-Type': 'application/json' } }),
     });
     renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Save schema' }));
-    expect(await screen.findByText(/changed since you loaded it/)).toBeInTheDocument();
+    const dialog = await openFields(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Save schema' }));
+    expect(await within(dialog).findByText(/changed since you loaded it/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
   });
 
@@ -159,7 +169,7 @@ describe('GroupDetailPage', () => {
       },
     });
     renderAt('/o/acme/groups/g1');
-    expect(await screen.findByText('1 to fill in')).toBeInTheDocument();
+    expect(await screen.findByText('1, 1 to fill in')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Assign host' }));
     const dialog = screen.getByRole('dialog');
     // Opened by hand, not through pickOption: pickOption's own click would
@@ -264,8 +274,8 @@ describe('GroupDetailPage', () => {
         warnings: [{ host: 'web-03', message: 'groups dmz and edge set different jump hosts; dmz wins' }],
       },
     });
-    renderAt('/o/acme/groups/g1');
-    expect(await screen.findByLabelText('Inventory JSON')).toHaveTextContent('"db_password": "********"');
+    renderAt('/o/acme/groups/g1?tab=inventory');
+    expect(await screen.findByRole('region', { name: 'Inventory JSON' })).toHaveTextContent('"db_password": "********"');
     expect(screen.getByText(/dmz wins/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Copy' }));
     expect(await navigator.clipboard.readText()).toContain('"webserver"');
@@ -295,7 +305,7 @@ describe('GroupDetailPage', () => {
     expect(patched?.headers.get('If-Match')).toBe('"3"');
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
     await user.click(screen.getByRole('button', { name: 'More actions for webserver' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Delete group…' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete …' }));
     await acceptConfirm(user);
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
   });
@@ -375,7 +385,7 @@ describe('GroupDetailPage', () => {
         return { member: { ...MEMBER, revision: 8 } };
       },
     });
-    renderAt('/o/acme/groups/g1');
+    renderAt('/o/acme/groups/g1?tab=members');
     await memberAction(user, 'web-01', 'Edit values');
     const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
     expect(within(dialog).getByLabelText('domain')).toHaveValue('shop.acme.io');
@@ -392,7 +402,7 @@ describe('GroupDetailPage', () => {
       'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () =>
         new Response(JSON.stringify({ detail: 'host no longer exists' }), { status: 404 }),
     });
-    renderAt('/o/acme/groups/g1');
+    renderAt('/o/acme/groups/g1?tab=members');
     await memberAction(user, 'web-01', 'Remove from group…');
     await acceptConfirm(user);
 

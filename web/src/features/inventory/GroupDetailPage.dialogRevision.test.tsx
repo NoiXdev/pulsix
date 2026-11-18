@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, member, MEMBERS, refetch, renderAt, routes } from './groupPageTestKit.tsx';
+import { group, member, MEMBERS, openEdit, refetch, renderAt, routes, typeEnv } from './groupPageTestKit.tsx';
 
 /** Backlog 7.89 (Ruling 2): an open dialog keeps the revision it was filled
  * from; a background refetch of a newer one must not become what its save
@@ -22,8 +22,7 @@ describe('GroupDetailPage dialog revision', () => {
       }),
     );
     const { qc } = renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
 
     current = group({ revision: 4, description: 'Refetched' });
     await refetch(qc);
@@ -62,17 +61,17 @@ describe('GroupDetailPage dialog revision', () => {
       }),
     );
     const { qc } = renderAt('/o/acme/groups/g1');
-    await screen.findByLabelText('env');
+    await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(1));
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
 
     release();
     await screen.findByText('Group values saved');
     await refetch(qc);
     // A second save, on the revision the first one stored, and its refetch:
     // the page now shows revision 5, above the one the dialog was filled from.
+    await typeEnv(user, 'qa');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(2));
     await refetch(qc);
@@ -112,8 +111,7 @@ describe('GroupDetailPage dialog revision', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
-    let dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    let dialog = await openEdit(user);
     await user.clear(within(dialog).getByLabelText('Name'));
     await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -122,8 +120,7 @@ describe('GroupDetailPage dialog revision', () => {
     await waitFor(() => expect(reads).toBeGreaterThan(0));
 
     // Reopened, the form is filled from the group the page still shows.
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    dialog = await openEdit(user);
     expect(within(dialog).getByLabelText('Name')).toHaveValue('web');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(patches).toHaveLength(2));
@@ -144,7 +141,7 @@ describe('GroupDetailPage dialog revision', () => {
         },
       }),
     );
-    const { qc } = renderAt('/o/acme/groups/g1');
+    const { qc } = renderAt('/o/acme/groups/g1?tab=members');
     await user.click(await screen.findByRole('button', { name: 'Actions for web-01' }));
     await user.click(screen.getByRole('menuitem', { name: 'Edit values' }));
     const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });

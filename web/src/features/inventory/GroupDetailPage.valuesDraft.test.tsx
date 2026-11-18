@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, refetch, routes, renderAt, schemaSaved, stale, typeEnv, withSecret } from './groupPageTestKit.tsx';
+import { closeFields, group, openEdit, openFields, refetch, routes, renderAt, schemaSaved, stale, typeEnv, withSecret } from './groupPageTestKit.tsx';
 
 /** A group whose stored values miss the required `env`: the server flags it. */
 const flagged = () => group({ revision: 3, vars: {}, problems: [{ path: 'env', message: 'is required' }] });
@@ -94,7 +94,7 @@ describe('GroupDetailPage values draft', () => {
     expect(within(valuesRegion()).queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('drops the stale notice when the draft follows values someone else saved', async () => {
+  it('drops the stale notice on Discard, and the discarded draft follows values someone else saved', async () => {
     const user = userEvent.setup();
     let current = group();
     const puts: MockRequest[] = [];
@@ -103,22 +103,33 @@ describe('GroupDetailPage values draft', () => {
         'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
         'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
           puts.push(req);
-          return puts.length === 1 ? stale() : group({ revision: 5, vars: { env: 'staging' } });
+          return puts.length === 1 ? stale() : group({ revision: 5, vars: { env: 'qa' } });
         },
       }),
     );
     const { qc } = renderAt('/o/acme/groups/g1');
+    // Nothing to save or discard before an edit.
     await screen.findByLabelText('env');
+    expect(screen.getByRole('button', { name: 'Save values' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+    await typeEnv(user, 'mine');
+    expect(within(valuesRegion()).getByText('Unsaved changes')).toBeInTheDocument();
 
     // Someone else saved other values; the page has not read them yet.
     current = group({ revision: 4, vars: { env: 'staging' } });
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     expect(await within(valuesRegion()).findByRole('button', { name: 'Reload' })).toBeInTheDocument();
 
-    // The unedited draft follows them, so the notice no longer applies.
+    // Discard starts the draft over from the group, without the notice ...
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(within(valuesRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('env')).toHaveValue('prod');
+    expect(screen.getByRole('button', { name: 'Save values' })).toBeDisabled();
+
+    // ... and follows the group again.
     await refetch(qc);
     expect(screen.getByLabelText('env')).toHaveValue('staging');
-    expect(within(valuesRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    await typeEnv(user, 'qa');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(puts[1].headers.get('If-Match')).toBe('"4"');
@@ -155,15 +166,16 @@ describe('GroupDetailPage values draft', () => {
 
     // The page's own rename (3 → 4) and schema save (4 → 5): nobody else
     // wrote in between, so the edited draft follows them.
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
     await user.clear(within(dialog).getByLabelText('Name'));
     await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await screen.findByRole('heading', { level: 1, name: 'web_fe' });
+    await openFields(user);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save schema' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Save schema' }));
     await screen.findByText('Schema saved');
+    await closeFields(user);
     expect(schemaPuts[0].headers.get('If-Match')).toBe('"4"');
     expect(screen.getByLabelText('env')).toHaveValue('staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
@@ -175,9 +187,11 @@ describe('GroupDetailPage values draft', () => {
     await typeEnv(user, 'mine');
     current = group({ ...current.group, revision: 7 });
     await refetch(qc);
+    await openFields(user);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save schema' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Save schema' }));
     await waitFor(() => expect(schemaPuts).toHaveLength(2));
+    await closeFields(user);
     expect(schemaPuts[1].headers.get('If-Match')).toBe('"7"');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Save values' }));

@@ -29,6 +29,22 @@ const vhosts: SchemaField = {
 };
 
 describe('SchemaForm', () => {
+  it('keeps top-level scalar labels for assistive technology only when asked', () => {
+    render(
+      <SchemaForm
+        fields={[{ name: 'env', type: 'string', required: true }, { name: 'token', type: 'secret' }, { name: 'tags', type: 'list', item: { name: 'tag', type: 'string' } }]}
+        value={{}}
+        onChange={() => {}}
+        hideLabels
+      />,
+    );
+    expect(screen.getByLabelText('env')).toBeInTheDocument();
+    expect(screen.getByText('env').closest('.sr-only')).not.toBeNull();
+    expect(screen.getByText('token').closest('.sr-only')).not.toBeNull();
+    // A list keeps its own heading.
+    expect(screen.getByText('tags').closest('.sr-only')).toBeNull();
+  });
+
   it('edits scalar fields and clears a key when the input is emptied', async () => {
     const user = userEvent.setup();
     render(

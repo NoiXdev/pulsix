@@ -2,15 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { addField, fieldCount, group, routes, renderAt, stale, typeEnv } from './groupPageTestKit.tsx';
+import { addField, closeFields, fieldCount, group, openEdit, openFields, openTab, routes, renderAt, stale, typeEnv } from './groupPageTestKit.tsx';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The sections are no longer behind tabs: a save, a reload or a rename in
- * one place must not throw away an unsaved draft in another, and a draft
- * must never follow the user to another group. */
+/** A save, a reload or a rename in one place must not throw away an unsaved
+ * draft in another (the schema's lives on in the closed fields dialog), and
+ * a draft must never follow the user to another group. */
 describe('GroupDetailPage drafts', () => {
   it('keeps an unsaved schema draft when the group values are saved', async () => {
     const user = userEvent.setup();
@@ -25,10 +25,11 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
     expect(fieldCount()).toBe(before + 1);
+    await closeFields(user);
 
     await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
@@ -36,6 +37,7 @@ describe('GroupDetailPage drafts', () => {
     // The refetched group (revision 4) is on the page ...
     expect(await screen.findByText('Refetched')).toBeInTheDocument();
     // ... and has left the unsaved schema draft alone.
+    await openFields(user);
     expect(fieldCount()).toBe(before + 1);
     expect(screen.getByLabelText('env')).toHaveValue('staging');
   });
@@ -55,8 +57,7 @@ describe('GroupDetailPage drafts', () => {
     renderAt('/o/acme/groups/g1');
     await typeEnv(user, 'typed but not saved');
 
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
     await user.clear(within(dialog).getByLabelText('Name'));
     await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -78,9 +79,10 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
+    await closeFields(user);
     await typeEnv(user, 'mine');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
 
@@ -89,6 +91,7 @@ describe('GroupDetailPage drafts', () => {
     expect(await screen.findByText('Changed elsewhere')).toBeInTheDocument();
     await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
     expect(screen.getByLabelText('env')).toHaveValue('mine');
+    await openFields(user);
     expect(fieldCount()).toBe(before + 1);
   });
 
@@ -106,12 +109,14 @@ describe('GroupDetailPage drafts', () => {
     );
     renderAt('/o/acme/groups/g1');
     await typeEnv(user, 'mine');
+    await openFields(user);
     await user.click(screen.getByRole('button', { name: 'Save schema' }));
 
     const schema = screen.getByRole('region', { name: 'Variable schema' });
     await user.click(await within(schema).findByRole('button', { name: 'Reload' }));
     expect(await screen.findByText('Changed elsewhere')).toBeInTheDocument();
     await waitFor(() => expect(within(schema).queryByRole('alert')).not.toBeInTheDocument());
+    await closeFields(user);
     expect(screen.getByLabelText('env')).toHaveValue('mine');
   });
 
@@ -129,7 +134,8 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Save schema' }));
+    await openFields(user);
+    await user.click(screen.getByRole('button', { name: 'Save schema' }));
     const schema = screen.getByRole('region', { name: 'Variable schema' });
     await user.click(await within(schema).findByRole('button', { name: 'Reload' }));
     expect(await within(schema).findByText('Reloading failed. Try again.')).toBeInTheDocument();
@@ -154,8 +160,7 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
     await user.clear(within(dialog).getByLabelText('Name'));
     await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
@@ -187,14 +192,17 @@ describe('GroupDetailPage drafts', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     await user.click(await screen.findByRole('link', { name: 'web' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web' })).toBeInTheDocument();
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
+    await closeFields(user);
     await typeEnv(user, 'only for web');
 
-    await user.click(screen.getByRole('link', { name: 'web_eu' }));
+    await openTab(user, /^Subgroups/);
+    await user.click(await screen.findByRole('link', { name: 'web_eu' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
-    expect(screen.getByLabelText('env')).toHaveValue('prod');
+    expect(await screen.findByLabelText('env')).toHaveValue('prod');
+    await openFields(user);
     expect(fieldCount()).toBe(before);
   });
 });

@@ -14,11 +14,13 @@ import {
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
+import { formerSection, validateGroupSearch } from './groupTabs.ts';
 
 /* The group page's test harness, shared by the GroupDetailPage.*.test.tsx
  * files: one group `web` (g1) below `prod`, with a child group, two members
- * and a jump host, a router that redirects old `?tab=` links the way the
- * app's does, and the steps the draft and revision tests share. */
+ * and a jump host, a router that reads `?tab=` and sends old section
+ * anchors on the way the app's does, and the steps the draft and revision
+ * tests share. */
 
 export const SCHEMA = {
   fields: [
@@ -77,9 +79,6 @@ export const routes = (role = 'admin', extra: Record<string, unknown> = {}) => (
   ...extra,
 });
 
-/** The section an old `?tab=` link names, as the app router maps it. */
-const TAB_SECTION: Record<string, string> = { members: 'members', values: 'values', schema: 'schema', children: 'children', preview: 'preview' };
-
 export function renderAt(path: string, { browser = false } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
@@ -87,11 +86,10 @@ export function renderAt(path: string, { browser = false } = {}) {
   const detail = createRoute({
     getParentRoute: () => orgRoute,
     path: '/groups/$id',
-    validateSearch: (s: Record<string, unknown>) => ({ tab: typeof s.tab === 'string' ? s.tab : undefined }),
-    beforeLoad: ({ search, params }) => {
-      if (search.tab) {
-        throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: undefined }, hash: Object.hasOwn(TAB_SECTION, search.tab) ? TAB_SECTION[search.tab] : undefined, replace: true });
-      }
+    validateSearch: validateGroupSearch,
+    beforeLoad: ({ search, params, location }) => {
+      const former = search.tab === undefined ? formerSection(location.hash) : undefined;
+      if (former && former !== 'variables') throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: former }, hash: '', replace: true });
     },
     component: GroupDetailPage,
   });
@@ -131,6 +129,36 @@ export async function typeEnv(user: User, text: string) {
   await user.type(env, text);
 }
 
+/** valuesCard is the Variables tab's card of group values. */
+export const valuesCard = () => screen.getByRole('region', { name: 'Group values' });
+
+/** openFields opens the Manage fields dialog, which holds the schema
+ * editor, and returns it. */
+export async function openFields(user: User) {
+  await user.click(await screen.findByRole('button', { name: /^(Manage fields|Fields) …$/ }));
+  return screen.findByRole('dialog', { name: 'Manage fields' });
+}
+
+/** closeFields closes the Manage fields dialog; its draft stays. */
+export async function closeFields(user: User) {
+  const dialog = screen.getByRole('dialog', { name: 'Manage fields' });
+  const buttons = within(dialog).getAllByRole('button', { name: 'Close' });
+  await user.click(buttons[buttons.length - 1]);
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage fields' })).not.toBeInTheDocument());
+}
+
+/** openEdit opens the Edit dialog from the header's ⋯ menu. */
+export async function openEdit(user: User, name = 'web') {
+  await user.click(await screen.findByRole('button', { name: `More actions for ${name}` }));
+  await user.click(screen.getByRole('menuitem', { name: 'Edit …' }));
+  return screen.findByRole('dialog', { name: 'Edit group' });
+}
+
+/** openTab opens one of the group page's tabs. */
+export async function openTab(user: User, name: RegExp | string) {
+  await user.click(await screen.findByRole('tab', { name }));
+}
+
 /** The number of fields in the schema editor (its rows past the header;
  * no field is expanded in these tests, so one row is one field). */
 export const fieldCount = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').length - 1;
@@ -140,7 +168,7 @@ export async function addField(user: User) {
   await user.click(screen.getByRole('button', { name: 'Add field' }));
   const dialog = await screen.findByRole('dialog', { name: /^Field / });
   await user.click(within(dialog).getByRole('button', { name: 'Done' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Field / })).not.toBeInTheDocument());
 }
 
 /** refetch refetches every query and lets the page render the result

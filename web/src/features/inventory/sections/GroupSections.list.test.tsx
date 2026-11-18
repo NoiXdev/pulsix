@@ -33,7 +33,7 @@ function children(locale?: 'de') {
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
   });
   return renderListPage({
-    path: '/groups/$id', component: () => <ChildrenSection org="acme" group={GROUP} groups={numbered('kid', 30).map(child)} canWrite />, initial: '/o/acme/groups/g1', locale,
+    path: '/groups/$id', component: () => <ChildrenSection org="acme" group={GROUP} groups={numbered('kid', 30).map(child)} />, initial: '/o/acme/groups/g1', locale,
   });
 }
 

@@ -47,3 +47,21 @@ export function descendantIds(groups: readonly TreeNode[], id: string): Set<stri
   visit(id);
   return out;
 }
+
+/** ancestorsOf returns the groups above id, from the root down to its
+ * parent. A missing parent ends the chain, and so does a cycle (the group
+ * itself is never its own ancestor). */
+export function ancestorsOf<T extends TreeNode>(groups: readonly T[], id: string): T[] {
+  const byId = new Map(groups.map((g) => [g.id, g]));
+  const out: T[] = [];
+  const seen = new Set([id]);
+  let parent = byId.get(id)?.parent_id;
+  while (parent && !seen.has(parent)) {
+    const g = byId.get(parent);
+    if (!g) break;
+    seen.add(parent);
+    out.unshift(g);
+    parent = g.parent_id;
+  }
+  return out;
+}

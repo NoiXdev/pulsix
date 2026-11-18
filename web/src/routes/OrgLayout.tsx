@@ -9,11 +9,13 @@ import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useHost } from '../api/hooks/useHosts.ts';
+import { useGroups } from '../api/hooks/useInventory.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
-import { crumbLabels, hostIdInPath } from '../lib/breadcrumbs.ts';
+import { crumbLabels, groupIdInPath, hostIdInPath } from '../lib/breadcrumbs.ts';
+import { ancestorsOf } from '../features/inventory/tree.ts';
 import { rememberOrg } from '../lib/lastOrg.ts';
 import { may } from '../lib/roles.ts';
 import { useT } from '../i18n/useT.ts';
@@ -65,6 +67,10 @@ export function OrgLayout() {
   // so it costs no extra request. Until it answers the crumb is the id.
   const hostId = hostIdInPath(pathname, orgSlug);
   const crumbHost = useHost(orgSlug, complete && hostId ? hostId : '');
+  // A group page's crumbs are its ancestors and its name, from the group
+  // list the page reads anyway.
+  const groupId = groupIdInPath(pathname, orgSlug);
+  const crumbGroups = useGroups(orgSlug, { enabled: complete && !!groupId });
 
   // The personal settings area is outside any organization; its "Back"
   // link returns to the one this person was in.
@@ -82,7 +88,11 @@ export function OrgLayout() {
   if (orgsGuard) return orgsGuard;
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
-  const crumbNames: Record<string, string> = hostId && crumbHost.data ? { [`hosts/${hostId}`]: crumbHost.data.host.name } : {};
+  const crumbNames: Record<string, string | string[]> = hostId && crumbHost.data ? { [`hosts/${hostId}`]: crumbHost.data.host.name } : {};
+  const crumbGroup = groupId ? crumbGroups.data?.groups?.find((g) => g.id === groupId) : undefined;
+  if (groupId && crumbGroup && crumbGroups.data) {
+    crumbNames[`groups/${groupId}`] = [...ancestorsOf(crumbGroups.data.groups ?? [], groupId).map((g) => g.name), crumbGroup.name];
+  }
   const crumbs = crumbLabels(pathname, orgSlug, t, crumbNames);
   const inSettings = pathname === `/o/${orgSlug}/settings` || pathname.startsWith(`/o/${orgSlug}/settings/`);
   const settingsNav = inSettings

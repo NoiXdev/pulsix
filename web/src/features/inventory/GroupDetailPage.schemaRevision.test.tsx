@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { addField, fieldCount, group, refetch, routes, renderAt, SCHEMA, schemaSaved, stale, typeEnv } from './groupPageTestKit.tsx';
+import { addField, closeFields, fieldCount, group, openEdit, openFields, refetch, routes, renderAt, SCHEMA, schemaSaved, stale, typeEnv } from './groupPageTestKit.tsx';
 
 /** A schema someone else saved: one more group field. */
 const OTHER = { fields: [...SCHEMA.fields, { name: 'region', type: 'string' }] };
@@ -59,7 +59,7 @@ describe('GroupDetailPage schema revision', () => {
   it('a refetch that only bumps the revision keeps the schema save on the revision the draft started from', async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req, n) => (n === 1 ? stale() : schemaSaved(5, (req.body as { schema: unknown }).schema)));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
 
@@ -82,7 +82,7 @@ describe('GroupDetailPage schema revision', () => {
   it('lets an unedited schema draft follow a refetched revision', async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req) => schemaSaved(5, (req.body as { schema: unknown }).schema));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     state.current = group({ revision: 4 });
     await refetch(qc);
     await addField(user);
@@ -94,7 +94,7 @@ describe('GroupDetailPage schema revision', () => {
   it('follows a schema someone else saved while the draft is unedited', async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req) => schemaSaved(5, (req.body as { schema: unknown }).schema));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     state.current = group({ revision: 4, schema: OTHER });
     await refetch(qc);
     await waitFor(() => expect(fieldCount()).toBe(3));
@@ -107,7 +107,7 @@ describe('GroupDetailPage schema revision', () => {
   it("keeps an edited draft over someone else's schema, and Reload starts it over", async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req, n) => (n === 1 ? stale() : schemaSaved(5, (req.body as { schema: unknown }).schema)));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
     expect(fieldCount()).toBe(3);
 
@@ -137,7 +137,7 @@ describe('GroupDetailPage schema revision', () => {
       st.current = { group: saved.group };
       return saved;
     });
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
     await saveSchema(user);
     await screen.findByText('Schema saved');
@@ -156,7 +156,7 @@ describe('GroupDetailPage schema revision', () => {
     const { state, qc } = schemaPage((req, n) =>
       n === 1 ? new Promise((resolve) => (release = resolve)) : schemaSaved(5, (req.body as { schema: unknown }).schema),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
     await saveSchema(user);
@@ -186,7 +186,7 @@ describe('GroupDetailPage schema revision', () => {
     const { state } = schemaPage((req, n) =>
       n === 1 ? new Promise((resolve) => (release = resolve)) : schemaSaved(5, (req.body as { schema: unknown }).schema),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
     await saveSchema(user);
@@ -211,7 +211,7 @@ describe('GroupDetailPage schema revision', () => {
   it('saves the next schema on the revision the previous save stored', async () => {
     const user = userEvent.setup();
     const { state } = schemaPage((req, n) => schemaSaved(3 + n, (req.body as { schema: unknown }).schema));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await saveSchema(user);
     await screen.findByText('Schema saved');
     await saveSchema(user);
@@ -223,7 +223,7 @@ describe('GroupDetailPage schema revision', () => {
   it('discard lets the draft follow the group again', async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req) => schemaSaved(5, (req.body as { schema: unknown }).schema));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     const before = fieldCount();
     await addField(user);
     state.current = group({ revision: 4 });
@@ -238,7 +238,7 @@ describe('GroupDetailPage schema revision', () => {
   it('drops the stale notice when the draft is discarded', async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage((req, n) => (n === 1 ? stale() : schemaSaved(5, (req.body as { schema: unknown }).schema)));
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
     state.current = group({ revision: 4 });
     await refetch(qc);
@@ -263,7 +263,7 @@ describe('GroupDetailPage schema revision', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await saveSchema(user);
     expect(await within(schemaRegion()).findByText(/The schema has 1 problem/)).toBeInTheDocument();
 
@@ -291,13 +291,15 @@ describe('GroupDetailPage schema revision', () => {
         },
       }),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
+    await closeFields(user);
     await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(varPuts[0].headers.get('If-Match')).toBe('"3"');
 
+    await openFields(user);
     await saveSchema(user);
     await screen.findByText('Schema saved');
     expect(state.puts[0].headers.get('If-Match')).toBe('"4"');
@@ -316,17 +318,18 @@ describe('GroupDetailPage schema revision', () => {
         },
       }),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
+    await closeFields(user);
 
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Edit group' });
+    const dialog = await openEdit(user);
     await user.clear(within(dialog).getByLabelText('Name'));
     await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web_fe' })).toBeInTheDocument();
     expect(patches[0].headers.get('If-Match')).toBe('"3"');
 
+    await openFields(user);
     await saveSchema(user);
     await screen.findByText('Schema saved');
     expect(state.puts[0].headers.get('If-Match')).toBe('"4"');
@@ -345,19 +348,23 @@ describe('GroupDetailPage schema revision', () => {
         },
       }),
     );
-    await screen.findByRole('table', { name: 'Fields' });
+    await openFields(user);
     await addField(user);
+    await closeFields(user);
 
     // Someone else saved the group: revision 4.
     state.current = group({ revision: 4 });
     await refetch(qc);
 
-    // The unedited values follow revision 4; their save is the page's own
-    // step from 4 to 5, which the schema draft (pinned at 3) does not take.
+    // The unedited values follow revision 4, an edit made then saves on it:
+    // the page's own step from 4 to 5, which the schema draft (pinned at 3)
+    // does not take.
+    await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(varPuts[0].headers.get('If-Match')).toBe('"4"');
 
+    await openFields(user);
     await saveSchema(user);
     await waitFor(() => expect(state.puts).toHaveLength(1));
     expect(state.puts[0].headers.get('If-Match')).toBe('"3"');

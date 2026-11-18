@@ -101,27 +101,46 @@ describe('an invitation link mailed before the token moved into the fragment (ba
   });
 });
 
-describe('a group link from before the group page had sections (backlog 7.67)', () => {
-  it('an old group link with ?tab= lands on that section', async () => {
-    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab: 'members' } });
+describe('the group page tabs and the links from before them (backlog 7.67)', () => {
+  const groupSearch = () => (router.state.matches.at(-1)?.search ?? {}) as { tab?: string };
+
+  it.each([
+    ['members', 'members'],
+    ['inventory', 'inventory'],
+    // The first group page's tab names.
+    ['values', undefined],
+    ['schema', undefined],
+    ['children', 'subgroups'],
+    ['preview', 'inventory'],
+    ['settings', undefined],
+    ['constructor', undefined],
+  ])('reads ?tab=%s as the tab %j', async (tab, want) => {
+    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab: tab as never } });
     await router.load();
 
     expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
-    expect(router.state.location.hash).toBe('members');
-    expect((router.state.location.search as { tab?: string }).tab).toBeUndefined();
+    expect(groupSearch().tab).toBe(want);
   });
 
   it.each([
-    ['settings', ''],
-    ['constructor', ''],
-    ['preview', 'preview'],
-  ])('maps ?tab=%s to the hash %j', async (tab, hash) => {
-    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab } });
+    ['members', 'members'],
+    ['children', 'subgroups'],
+    ['preview', 'inventory'],
+  ])('sends the section anchor #%s on to the tab %s', async (hash, tab) => {
+    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab: undefined }, hash });
     await router.load();
 
     expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
-    expect(router.state.location.hash).toBe(hash);
-    expect((router.state.location.search as { tab?: string }).tab).toBeUndefined();
+    expect(router.state.location.hash).toBe('');
+    expect(groupSearch().tab).toBe(tab);
+  });
+
+  it('keeps #schema, which opens the fields of a group just created', async () => {
+    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab: undefined }, hash: 'schema' });
+    await router.load();
+
+    expect(router.state.location.hash).toBe('schema');
+    expect(groupSearch().tab).toBeUndefined();
   });
 });
 

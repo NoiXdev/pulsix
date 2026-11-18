@@ -23,6 +23,9 @@ export interface RevisionDraft<D> {
   /** Bumps whenever the draft is replaced wholesale (editor key; a save's
    * problems and stale notice belong to one generation). */
   generation: number;
+  /** Edited since it was last built from stored content (an edit typed
+   * back to the start still counts): what a save bar calls dirty. */
+  touched: boolean;
   edit(next: D): void;
   startSave(): SaveTicket;
   saved(ticket: SaveTicket, stored: unknown, revision: number): void;
@@ -115,6 +118,7 @@ export function useRevisionDraft<D>(
     draft: s.draft,
     revision: current(s),
     generation: s.generation,
+    touched: s.touched,
     edit(next) {
       edits.current += 1;
       setState((st) => (st.touched ? { ...st, draft: next } : { ...st, draft: next, touched: true, pinned: current(st) }));
