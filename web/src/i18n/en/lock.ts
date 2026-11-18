@@ -13,6 +13,8 @@ export const enLock = {
   lockFailed: 'The session could not be locked. Try again.',
   wrongPin: 'Wrong PIN.',
   attemptsLeft: (n: number) => (n === 1 ? '1 attempt left' : `${n} attempts left`),
+  legacyNote:
+    'Your PIN is from an older version and longer than 4 digits. After unlocking, set a new 4-digit PIN under Security.',
   failed: 'The session could not be unlocked. Try again.',
   endedAfterFailures: 'Too many wrong PINs: the session was ended. Sign in again.',
   setPin: {
@@ -20,9 +22,8 @@ export const enLock = {
     intro: 'To lock the session you need a PIN. Whoever has the PIN can unlock the session, so keep it to yourself.',
     pinLabel: 'PIN',
     repeatLabel: 'Repeat the PIN',
-    hint: '4 to 8 digits.',
-    invalid: 'The PIN is 4 to 8 digits.',
-    mismatch: 'The two PINs do not match.',
+    hint: '4 digits. Avoid 1234 or 0000.',
+    mismatch: 'The PINs do not match. Repeat it once more.',
     submit: 'Set PIN and lock',
     cancel: 'Cancel',
     failed: 'The PIN could not be set. Try again.',

@@ -123,7 +123,7 @@ describe('RootLayout', () => {
       mockApi({ 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': refusal('session_locked') });
       await qcRef.invalidateQueries({ queryKey: ['orgs'] });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument();
       expect(qcRef.getQueryData(['orgs', 'secret'])).toBeUndefined();
       expect(qcRef.getQueryData(['me'])).toBeDefined();
@@ -138,7 +138,7 @@ describe('RootLayout', () => {
 
       postSessionMessage({ type: 'locked' });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       await waitFor(() => expect(JSON.stringify(qcRef.getMutationCache().getAll().map((m) => m.state.variables))).not.toContain('4711'));
     });
 
@@ -146,7 +146,7 @@ describe('RootLayout', () => {
       const orgs = vi.fn(() => ({ orgs: [] }));
       renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(true), 'GET /api/v1/orgs': orgs });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument();
       expect(orgs).not.toHaveBeenCalled();
     });
@@ -171,7 +171,7 @@ describe('RootLayout', () => {
 
       postSessionMessage({ type: 'locked' });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       expect(screen.queryByText('Forget secret-item?')).not.toBeInTheDocument();
       expect(screen.getByLabelText('PIN')).toBeEnabled();
     });
@@ -185,7 +185,7 @@ describe('RootLayout', () => {
       router.history.push('/orgs');
 
       expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Unlock' })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('PIN')).not.toBeInTheDocument();
     });
 
     it('follows a lock another tab announces', async () => {
@@ -194,7 +194,7 @@ describe('RootLayout', () => {
 
       postSessionMessage({ type: 'locked' });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       await waitFor(() => expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument());
     });
 
@@ -208,7 +208,6 @@ describe('RootLayout', () => {
         },
       });
       await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-      await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
       expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
     });
   });
@@ -229,7 +228,7 @@ describe('RootLayout', () => {
 
     it('does not warn while the session is locked', async () => {
       renderAt('/orgs', { 'GET /api/v1/auth/me': meExpiring({ locked: true }), 'GET /api/v1/orgs': { orgs: [] } });
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       expect(screen.queryByRole('dialog', { name: 'Your session is about to end' })).not.toBeInTheDocument();
     });
 
@@ -276,7 +275,7 @@ describe('RootLayout', () => {
 
       postSessionMessage({ type: 'locked' });
 
-      expect(await screen.findByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
       expect(document.documentElement).not.toHaveAttribute('data-density');
     });
 

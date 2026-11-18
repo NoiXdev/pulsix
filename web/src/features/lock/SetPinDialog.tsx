@@ -20,7 +20,6 @@ export function SetPinDialog({ open, onClose, onLocked }: { open: boolean; onClo
     <Dialog open={open} onClose={onClose} title={t.lock.setPin.title}>
       <p className="mb-3 text-xs text-muted-foreground">{t.lock.setPin.intro}</p>
       <PinForm
-        submitLabel={t.lock.setPin.submit}
         busy={busy}
         onSubmit={async (pin) => {
           await setPin.mutateAsync(pin);

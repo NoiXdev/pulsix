@@ -35,7 +35,6 @@ export function LockPinCard() {
         {editing ? (
           <PinForm
             idPrefix="account-lock-pin"
-            submitLabel={t.account.lockPin.save}
             onSubmit={async (pin) => {
               let failure: unknown = null;
               // stepUp.run reports every failure but the step-up refusal

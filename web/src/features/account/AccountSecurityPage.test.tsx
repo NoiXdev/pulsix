@@ -474,7 +474,6 @@ describe('lock PIN card', () => {
     await user.click(await screen.findByRole('button', { name: 'Set PIN' }));
     await user.type(screen.getByLabelText('PIN'), '1234');
     await user.type(screen.getByLabelText('Repeat the PIN'), '1234');
-    await user.click(screen.getByRole('button', { name: 'Save PIN' }));
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Confirm it is you')).not.toBeInTheDocument();
   });
@@ -501,7 +500,6 @@ describe('lock PIN card', () => {
     await user.click(screen.getByRole('button', { name: 'Change PIN' }));
     await user.type(screen.getByLabelText('PIN'), '4321');
     await user.type(screen.getByLabelText('Repeat the PIN'), '4321');
-    await user.click(screen.getByRole('button', { name: 'Save PIN' }));
     expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
     await user.type(screen.getByLabelText('Authenticator or recovery code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));

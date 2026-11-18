@@ -9,7 +9,7 @@ import { LockScreen } from './LockScreen.tsx';
 import { LockStateContext } from './lockState.ts';
 import { meQueryKey } from '../../api/hooks/useMe.ts';
 
-const me = { locked: false, lock_pin_set: true, user: { display_name: 'Tim' } };
+const me = { locked: false, lock_pin_set: true, lock_pin_legacy: false, user: { display_name: 'Tim' } };
 
 function Harness() {
   const [locked, setLocked] = useState(true);
@@ -42,19 +42,44 @@ const wrong = (left: number) => () =>
   new Response(JSON.stringify({ title: 'Unprocessable', status: 422, detail: 'wrong pin', attempts_left: left }), { status: 422 });
 
 describe('LockScreen', () => {
-  it('offers a numeric PIN field, Unlock and Sign out', async () => {
-    renderIt({});
+  it('offers four PIN boxes and Sign out, without an Unlock button', async () => {
+    renderIt({}, me);
     const pin = await screen.findByLabelText('PIN');
     expect(pin).toHaveAttribute('inputmode', 'numeric');
     expect(pin).toHaveAttribute('autocomplete', 'off');
-    expect(screen.getByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+    expect(pin).toHaveAttribute('maxlength', '4');
+    expect(document.querySelectorAll('[data-pin-box]')).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: 'Unlock' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/older version/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+  });
+
+  it('keeps the single field, Unlock and a note for a legacy PIN', async () => {
+    const unlock = vi.fn(() => ({ ok: true }));
+    renderIt({ 'POST /api/v1/auth/lock/unlock': unlock }, { ...me, lock_pin_legacy: true });
+    const pin = await screen.findByLabelText('PIN');
+    expect(pin).toHaveAttribute('maxlength', '8');
+    expect(document.querySelectorAll('[data-pin-box]')).toHaveLength(0);
+    expect(screen.getByText(/older version and longer than 4 digits/)).toBeInTheDocument();
+    await userEvent.type(pin, '12345678');
+    expect(unlock).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
+    expect(unlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the boxes, shows the attempts left and refocuses after a wrong PIN', async () => {
+    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(3) }, me);
+    const pin = await screen.findByLabelText('PIN');
+    await userEvent.type(pin, '0000');
+    expect(await screen.findByText(/Wrong PIN\. 3 attempts left/)).toBeInTheDocument();
+    await vi.waitFor(() => expect(pin).toHaveFocus());
+    expect(pin).toHaveValue('');
   });
 
   it('shows the attempts left after a wrong PIN', async () => {
     renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) });
     await userEvent.type(await screen.findByLabelText('PIN'), '0000');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
     expect(screen.queryByText('UNLOCKED PAGE')).not.toBeInTheDocument();
   });
@@ -62,7 +87,6 @@ describe('LockScreen', () => {
   it('keeps no wrong PIN in the mutation cache', async () => {
     renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) });
     await userEvent.type(await screen.findByLabelText('PIN'), '0815');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
     await vi.waitFor(() =>
       expect(JSON.stringify(qcRef.getMutationCache().getAll().map((m) => m.state.variables))).not.toContain('0815'),
@@ -73,7 +97,6 @@ describe('LockScreen', () => {
     const unlock = vi.fn(() => ({ ok: true }));
     renderIt({ 'POST /api/v1/auth/lock/unlock': unlock });
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
     expect(unlock).toHaveBeenCalledTimes(1);
   });
@@ -84,7 +107,6 @@ describe('LockScreen', () => {
     other.onmessage = (e) => heard(e.data);
     renderIt({ 'POST /api/v1/auth/lock/unlock': { ok: true } });
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     await vi.waitFor(() => expect(heard).toHaveBeenCalledWith({ type: 'unlocked' }));
     other.close();
   });
@@ -94,7 +116,6 @@ describe('LockScreen', () => {
       'POST /api/v1/auth/lock/unlock': () => new Response(JSON.stringify({ detail: 'not locked' }), { status: 409 }),
     });
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
   });
 
@@ -104,7 +125,6 @@ describe('LockScreen', () => {
         new Response(JSON.stringify({ title: 'Unauthorized', status: 401, detail: 'too many wrong pins' }), { status: 401 }),
     });
     await userEvent.type(await screen.findByLabelText('PIN'), '0000');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');
     expect(router.state.location.search).toMatchObject({ notice: 'lock_ended' });
@@ -119,7 +139,6 @@ describe('LockScreen', () => {
       { ...me, session_expires_at: new Date(Date.now() + 3_600_000).toISOString() },
     );
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');
     expect(router.state.location.search).not.toHaveProperty('notice');
@@ -131,7 +150,6 @@ describe('LockScreen', () => {
       { ...me, session_expires_at: new Date(Date.now() - 60_000).toISOString() },
     );
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
     expect(router.state.location.search).toMatchObject({ notice: 'session_expired' });
   });

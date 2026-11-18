@@ -21,21 +21,13 @@ function setup() {
 async function fill(pin: string, again: string) {
   await userEvent.type(screen.getByLabelText('PIN'), pin);
   await userEvent.type(screen.getByLabelText('Repeat the PIN'), again);
-  await userEvent.click(screen.getByRole('button', { name: 'Set PIN and lock' }));
 }
 
 describe('SetPinDialog', () => {
   it('refuses a mismatch without calling the server', async () => {
     const { put } = setup();
     await fill('1234', '1235');
-    expect(await screen.findByText('The two PINs do not match.')).toBeInTheDocument();
-    expect(put).not.toHaveBeenCalled();
-  });
-
-  it.each(['12a4', '123', '123456789'])('refuses %s client-side', async (pin) => {
-    const { put } = setup();
-    await fill(pin, pin);
-    expect(await screen.findByText('The PIN is 4 to 8 digits.')).toBeInTheDocument();
+    expect(await screen.findByText('The PINs do not match. Repeat it once more.')).toBeInTheDocument();
     expect(put).not.toHaveBeenCalled();
   });
 

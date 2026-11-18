@@ -35,7 +35,6 @@ export function LockPinPromptPage() {
         <h1 className="text-xl font-semibold">{t.lock.prompt.title}</h1>
         <p className="text-muted-foreground">{t.lock.prompt.intro}</p>
         <PinForm
-          submitLabel={t.lock.prompt.submit}
           busy={skip.isPending}
           onSubmit={async (pin) => {
             await setPin.mutateAsync(pin);

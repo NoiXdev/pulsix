@@ -53,7 +53,6 @@ describe('LockPinPromptPage', () => {
     const { put, skipped } = setup();
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
     await userEvent.type(screen.getByLabelText('Repeat the PIN'), '1234');
-    await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
     expect(await screen.findByText('ROOT')).toBeInTheDocument();
     expect(put).toHaveBeenCalledTimes(1);
     expect(skipped).not.toHaveBeenCalled();
@@ -63,8 +62,7 @@ describe('LockPinPromptPage', () => {
     const { put } = setup();
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
     await userEvent.type(screen.getByLabelText('Repeat the PIN'), '1235');
-    await userEvent.click(screen.getByRole('button', { name: 'Set PIN' }));
-    expect(await screen.findByText('The two PINs do not match.')).toBeInTheDocument();
+    expect(await screen.findByText('The PINs do not match. Repeat it once more.')).toBeInTheDocument();
     await waitFor(() => expect(put).not.toHaveBeenCalled());
     expect(screen.queryByText('ROOT')).not.toBeInTheDocument();
   });
