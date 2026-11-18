@@ -12,6 +12,7 @@ export const deAppearance: Messages['appearance'] = {
     standardHint: 'Wie bisher',
     compactHint: 'Enge Zeilen, kleinere Schrift',
   },
+  lists: 'Listen',
   pageSize: {
     title: 'Seitengröße',
     label: 'Zeilen pro Seite',

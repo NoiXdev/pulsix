@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Card } from '../../ui/table.tsx';
+import { SettingsCard, SettingsPage, SettingsRow } from '../../ui/settings.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -24,7 +24,8 @@ const PREVIEW: Record<Density, { rows: number; height: number }> = {
  * AppearancePage is Settings > Appearance: how lists look for this person
  * in every browser. The density and page size apply to every list; the
  * columns a list remembers are listed with a Reset each; the language card
- * moved here from the security page.
+ * moved here from the security page. Everything applies at once, so no
+ * card has a save bar.
  */
 export function AppearancePage() {
   const t = useT();
@@ -48,76 +49,62 @@ export function AppearancePage() {
   }
 
   return (
-    <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">{t.appearance.title}</h1>
-        <span className="text-[13px] text-muted-foreground">{t.appearance.subtitle}</span>
-      </div>
+    <SettingsPage title={t.appearance.title} description={t.appearance.subtitle}>
+      {ready && !loaded && (
+        <p role="alert" className="rounded-md border border-destructive/40 px-3 py-2 text-xs text-destructive">
+          {t.appearance.loadFailed}
+        </p>
+      )}
+      <SettingsCard title={t.appearance.density.title}>
+        <div className="border-t border-border px-5 py-4">
+          <DensityPicker value={prefs.density} disabled={!loaded} onChange={(density) => change((p) => ({ ...p, density }))} />
+        </div>
+      </SettingsCard>
 
-      <div className="flex max-w-[760px] flex-col gap-4">
-        {ready && !loaded && (
-          <p role="alert" className="rounded-md border border-destructive/40 px-3 py-2 text-xs text-destructive">
-            {t.appearance.loadFailed}
-          </p>
-        )}
-        <Card>
-          <div className="flex flex-col gap-3 p-4">
-            <h2 className="text-sm font-semibold">{t.appearance.density.title}</h2>
-            <DensityPicker value={prefs.density} disabled={!loaded} onChange={(density) => change((p) => ({ ...p, density }))} />
+      <SettingsCard title={t.appearance.lists}>
+        <SettingsRow label={t.appearance.pageSize.title} htmlFor="appearance-page-size" help={t.appearance.pageSize.hint}>
+          <div className="w-28">
+            <Select
+              id="appearance-page-size"
+              options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+              value={String(prefs.page_size)}
+              onChange={(v) => change((p) => ({ ...p, page_size: Number(v) as PageSize }))}
+              disabled={!loaded}
+            />
           </div>
-        </Card>
+        </SettingsRow>
+      </SettingsCard>
 
-        <Card>
-          <div className="flex flex-col gap-3 p-4">
-            <h2 className="text-sm font-semibold">{t.appearance.pageSize.title}</h2>
-            <div className="w-28">
-              <Select
-                aria-label={t.appearance.pageSize.label}
-                options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
-                value={String(prefs.page_size)}
-                onChange={(v) => change((p) => ({ ...p, page_size: Number(v) as PageSize }))}
-                disabled={!loaded}
-              />
-            </div>
-            <p className="text-[11px] text-muted-foreground">{t.appearance.pageSize.hint}</p>
-          </div>
-        </Card>
+      <LanguageCard />
 
-        <LanguageCard />
-
-        <Card>
-          <div className="flex flex-col gap-3 p-4">
-            <h2 className="text-sm font-semibold">{t.appearance.columns.title}</h2>
-            <p className="text-[11px] text-muted-foreground">{t.appearance.columns.hint}</p>
-            <ul className="flex flex-col divide-y divide-border">
-              {lists.map((id) => {
-                const own = Object.hasOwn(prefs.lists, id);
-                return (
-                  <li key={id} className="flex items-center gap-3 py-2">
-                    <span className="flex-1 text-[13px]">{listName(id, t)}</span>
-                    <span className="text-xs text-muted-foreground">{state(id)}</span>
-                    <Button
-                      variant="default"
-                      aria-label={t.appearance.columns.resetAria(listName(id, t))}
-                      disabled={!own || !loaded}
-                      onClick={() =>
-                        change((p) => {
-                          const next = { ...p.lists };
-                          delete next[id];
-                          return { ...p, lists: next };
-                        })
-                      }
-                    >
-                      {t.appearance.columns.reset}
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </Card>
-      </div>
-    </>
+      <SettingsCard title={t.appearance.columns.title} description={t.appearance.columns.hint}>
+        <ul>
+          {lists.map((id) => {
+            const own = Object.hasOwn(prefs.lists, id);
+            return (
+              <li key={id}>
+                <SettingsRow label={listName(id, t)} help={state(id)}>
+                  <Button
+                    variant="default"
+                    aria-label={t.appearance.columns.resetAria(listName(id, t))}
+                    disabled={!own || !loaded}
+                    onClick={() =>
+                      change((p) => {
+                        const next = { ...p.lists };
+                        delete next[id];
+                        return { ...p, lists: next };
+                      })
+                    }
+                  >
+                    {t.appearance.columns.reset}
+                  </Button>
+                </SettingsRow>
+              </li>
+            );
+          })}
+        </ul>
+      </SettingsCard>
+    </SettingsPage>
   );
 }
 

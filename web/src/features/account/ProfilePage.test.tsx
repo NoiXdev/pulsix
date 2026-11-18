@@ -39,6 +39,16 @@ describe('ProfilePage', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('has a card with the Name and Email rows and an Organizations card', async () => {
+    setup();
+
+    await screen.findByText('Tim R.');
+    const account = screen.getByRole('region', { name: 'My account' });
+    expect(within(account).getByText('Name')).toBeInTheDocument();
+    expect(within(account).getByText('Email')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Organizations' })).getByText('Acme')).toBeInTheDocument();
+  });
+
   it('says so when the person belongs to no organization', async () => {
     setup({ orgs: [] });
     expect(await screen.findByText('You do not belong to any organization yet.')).toBeInTheDocument();

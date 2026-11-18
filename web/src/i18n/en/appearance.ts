@@ -11,6 +11,7 @@ export const enAppearance = {
     standardHint: 'As it has been',
     compactHint: 'Tight rows, smaller type',
   },
+  lists: 'Lists',
   pageSize: {
     title: 'Page size',
     label: 'Rows per page',

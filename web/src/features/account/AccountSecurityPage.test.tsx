@@ -19,6 +19,15 @@ function renderPage(qc: QueryClient) {
 
 const NO_PASSKEYS = { passkeys: [] };
 
+/** Opens the Change password dialog and fills and submits its form. */
+async function changePassword(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'Change password…' }));
+  await user.type(await screen.findByLabelText('Current password'), 'my-old-long-password');
+  await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
+  await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
+  await user.click(screen.getByRole('button', { name: 'Change password' }));
+}
+
 describe('AccountSecurityPage status pill (Important 4)', () => {
   let qc: QueryClient;
   beforeEach(() => {
@@ -38,8 +47,8 @@ describe('AccountSecurityPage status pill (Important 4)', () => {
 
     renderPage(qc);
 
-    expect(await screen.findByText('second factor required')).toBeInTheDocument();
-    expect(screen.queryByText('second factor active')).not.toBeInTheDocument();
+    expect(await screen.findByText('Second factor required')).toBeInTheDocument();
+    expect(screen.queryByText('Second factor active')).not.toBeInTheDocument();
   });
 
   it('does not show "active" merely because mfa_complete is true with no factor enrolled', async () => {
@@ -57,7 +66,7 @@ describe('AccountSecurityPage status pill (Important 4)', () => {
 
     renderPage(qc);
 
-    await screen.findByText('second factor required');
+    await screen.findByText('Second factor required');
   });
 
   it('shows "second factor active" when totp_confirmed is true', async () => {
@@ -73,7 +82,7 @@ describe('AccountSecurityPage status pill (Important 4)', () => {
 
     renderPage(qc);
 
-    expect(await screen.findByText('second factor active')).toBeInTheDocument();
+    expect(await screen.findByText('Second factor active')).toBeInTheDocument();
   });
 
   it('shows "second factor active" when a passkey exists even if totp is unconfirmed', async () => {
@@ -91,7 +100,7 @@ describe('AccountSecurityPage status pill (Important 4)', () => {
 
     renderPage(qc);
 
-    expect(await screen.findByText('second factor active')).toBeInTheDocument();
+    expect(await screen.findByText('Second factor active')).toBeInTheDocument();
   });
 });
 
@@ -115,7 +124,7 @@ describe('AccountSecurityPage TOTP secret handling (Critical fix)', () => {
     });
 
     renderPage(qc);
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
     await screen.findByText('JBSWY3DPEHPK3PXP');
 
     const call = enrol.mock.calls.find(([req]) => (req instanceof Request ? req.url : req.toString()).includes('/auth/totp/enrol'));
@@ -144,7 +153,7 @@ describe('AccountSecurityPage TOTP secret handling (Critical fix)', () => {
 
     renderPage(qc);
 
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
     expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText('482913'), '111111');
@@ -210,7 +219,7 @@ describe('AccountSecurityPage error handling', () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
 
     const toast = await screen.findByRole('status');
     expect(within(toast).getByText('a fresh code is required to re-enrol')).toBeInTheDocument();
@@ -241,7 +250,7 @@ describe('step-up (backlog 1.28)', () => {
     });
     renderPage(qc);
 
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
 
     // No error toast — a dialog asking for the factor.
     expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
@@ -278,10 +287,7 @@ describe('step-up refused again', () => {
     });
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-    await user.type(await screen.findByLabelText('Current password'), 'my-old-long-password');
-    await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
-    await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
-    await user.click(screen.getByRole('button', { name: 'Change password' }));
+    await changePassword(user);
     await user.type(await screen.findByLabelText('Authenticator or recovery code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
 
@@ -328,7 +334,7 @@ describe('recovery codes', () => {
     });
     renderPage(qc);
 
-    await userEvent.click(await screen.findByRole('button', { name: /regenerate recovery codes/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Regenerate/ }));
 
     // The codes themselves must appear — this response is the only time
     // they exist in readable form.
@@ -353,12 +359,12 @@ describe('the Language card', () => {
       'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en' },
     });
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-    await screen.findByRole('heading', { name: 'Password' });
-    expect(screen.queryByLabelText('Language')).not.toBeInTheDocument();
+    await screen.findByRole('region', { name: 'Sign-in' });
+    expect(screen.queryByLabelText(/language/i)).not.toBeInTheDocument();
   });
 });
 
-describe('the Password card', () => {
+describe('the Password row', () => {
   const ME = {
     user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
     mfa_complete: true,
@@ -368,18 +374,18 @@ describe('the Password card', () => {
     must_change_password: false,
   };
 
-  async function change(user: ReturnType<typeof userEvent.setup>) {
-    await user.type(await screen.findByLabelText('Current password'), 'my-old-long-password');
-    await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
-    await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
-    await user.click(screen.getByRole('button', { name: 'Change password' }));
-  }
+  const change = changePassword;
 
-  it('renders on Account security with the current and the new password', async () => {
+  it('has a Password row whose button opens a dialog with the current and the new password', async () => {
+    const user = userEvent.setup();
     mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': NO_PASSKEYS });
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-    expect(await screen.findByRole('heading', { name: 'Password' })).toBeInTheDocument();
+    const signIn = await screen.findByRole('region', { name: 'Sign-in' });
+    expect(within(signIn).getByText('Password')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument();
+    await user.click(within(signIn).getByRole('button', { name: 'Change password…' }));
+    expect(await screen.findByRole('dialog', { name: 'Change password' })).toBeInTheDocument();
     expect(screen.getByLabelText('Current password')).toHaveAttribute('type', 'password');
     expect(screen.getByLabelText('New password')).toHaveAttribute('type', 'password');
     expect(screen.getByLabelText('Repeat the new password')).toHaveAttribute('type', 'password');
@@ -416,8 +422,8 @@ describe('the Password card', () => {
     expect(toast).toHaveTextContent(/other sessions/);
     expect(posted).toEqual([{ current_password: 'my-old-long-password', new_password: 'my-new-long-password' }]);
     // The form starts over: no password stays in a field.
-    expect(screen.getByLabelText('Current password')).toHaveValue('');
-    expect(screen.getByLabelText('New password')).toHaveValue('');
+    // The dialog closes once the password is changed.
+    await waitFor(() => expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument());
   });
 
   it('says so when the current password is wrong', async () => {
@@ -446,12 +452,14 @@ describe('the Password card', () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByRole('button', { name: 'Enrol authenticator app' });
-    expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument();
+    await screen.findByRole('button', { name: /^Set up/ });
+    expect(screen.queryByRole('button', { name: 'Change password…' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Session' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('region')).toHaveLength(1);
   });
 });
 
-describe('lock PIN card', () => {
+describe('the Session card', () => {
   const ME = {
     user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
     mfa_complete: true,
@@ -471,7 +479,8 @@ describe('lock PIN card', () => {
     renderPage(qcNew());
 
     expect(screen.queryByRole('button', { name: 'Remove PIN' })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole('button', { name: 'Set PIN' }));
+    await user.click(await screen.findByRole('button', { name: 'Set PIN…' }));
+    expect(await screen.findByRole('dialog', { name: 'Set a lock PIN' })).toBeInTheDocument();
     await user.type(screen.getByLabelText('PIN'), '1234');
     await user.type(screen.getByLabelText('Repeat the PIN'), '1234');
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
@@ -497,7 +506,7 @@ describe('lock PIN card', () => {
     renderPage(qcNew());
 
     expect(await screen.findByRole('button', { name: 'Remove PIN' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Change PIN' }));
+    await user.click(screen.getByRole('button', { name: 'Change PIN…' }));
     await user.type(screen.getByLabelText('PIN'), '4321');
     await user.type(screen.getByLabelText('Repeat the PIN'), '4321');
     expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();

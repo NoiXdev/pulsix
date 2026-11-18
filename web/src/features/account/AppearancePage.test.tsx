@@ -80,8 +80,8 @@ describe('AppearancePage', () => {
     setup();
 
     await screen.findByRole('radiogroup', { name: 'Density' });
-    await waitFor(() => expect(screen.getByLabelText('Rows per page')).toBeEnabled());
-    await pickOption(screen, 'Rows per page', '50');
+    await waitFor(() => expect(screen.getByLabelText('Page size')).toBeEnabled());
+    await pickOption(screen, 'Page size', '50');
 
     await waitFor(() => expect(puts).toEqual([{ density: 'standard', page_size: 50, lists: {} }]));
   });
@@ -124,9 +124,19 @@ describe('AppearancePage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('is four cards without a save bar: Density, Lists, Language and Saved columns', async () => {
+    setup();
+
+    await screen.findByRole('radiogroup', { name: 'Density' });
+    for (const name of ['Density', 'Lists', 'Language', 'Saved column choices']) {
+      expect(screen.getByRole('region', { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+
   it('has the language card, moved here from the security page', async () => {
     setup();
-    expect(await screen.findByLabelText('Language')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Interface language')).toBeInTheDocument();
   });
 
   it('speaks German', async () => {

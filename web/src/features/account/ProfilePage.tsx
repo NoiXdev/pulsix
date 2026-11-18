@@ -1,4 +1,5 @@
-import { Card } from '../../ui/table.tsx';
+import { SettingsCard, SettingsPage, SettingsRow } from '../../ui/settings.tsx';
+import { Pill } from '../../ui/badge.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useMe } from '../../api/hooks/useMe.ts';
@@ -20,39 +21,30 @@ export function ProfilePage() {
 
   const list = orgs.data.orgs ?? [];
   return (
-    <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">{t.profile.title}</h1>
-        <span className="text-[13px] text-muted-foreground">{t.profile.subtitle}</span>
-      </div>
-      <div className="flex max-w-[760px] flex-col gap-4">
-        <Card>
-          <dl className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-4 gap-y-3 p-4">
-            <dt className="text-muted-foreground">{t.profile.name}</dt>
-            <dd className="font-medium">{me.data.user.display_name}</dd>
-            <dt className="text-muted-foreground">{t.profile.email}</dt>
-            <dd className="font-mono">{me.data.user.email}</dd>
-          </dl>
-          <p className="border-t border-border px-4 py-3 text-[11px] text-muted-foreground">{t.profile.adminNote}</p>
-        </Card>
-        <Card>
-          <div className="flex flex-col gap-2 p-4">
-            <h2 className="text-sm font-semibold">{t.profile.organizations}</h2>
-            {list.length === 0 ? (
-              <p className="text-xs text-muted-foreground">{t.profile.noOrganizations}</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-border">
-                {list.map((o) => (
-                  <li key={o.id} className="flex items-center justify-between gap-3 py-2">
-                    <span className="truncate">{o.name}</span>
-                    <span className="text-xs text-muted-foreground">{roleLabel(t, o.role)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
-      </div>
-    </>
+    <SettingsPage title={t.profile.title} description={t.profile.subtitle}>
+      <SettingsCard title={t.account.nav.myAccount} description={t.profile.adminNote}>
+        <SettingsRow label={t.profile.name}>
+          <span className="font-medium">{me.data.user.display_name}</span>
+        </SettingsRow>
+        <SettingsRow label={t.profile.email}>
+          <span className="font-mono">{me.data.user.email}</span>
+        </SettingsRow>
+      </SettingsCard>
+      <SettingsCard title={t.profile.organizations}>
+        {list.length === 0 ? (
+          <p className="border-t border-border px-5 py-3.5 text-[12.5px] text-muted-foreground">{t.profile.noOrganizations}</p>
+        ) : (
+          <ul>
+            {list.map((o) => (
+              <li key={o.id}>
+                <SettingsRow label={o.name}>
+                  <Pill tone="accent">{roleLabel(t, o.role)}</Pill>
+                </SettingsRow>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SettingsCard>
+    </SettingsPage>
   );
 }

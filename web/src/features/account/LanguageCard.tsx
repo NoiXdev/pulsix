@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card } from '../../ui/table.tsx';
+import { SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useMe } from '../../api/hooks/useMe.ts';
@@ -50,18 +50,18 @@ export function LanguageCard() {
   }
 
   return (
-    <Card>
-      <div className="flex flex-col gap-3 p-4">
-        <h2 className="text-sm font-semibold">{t.language.label}</h2>
-        <Select
-          aria-label={t.language.label}
-          options={options}
-          value={isLocale(own) ? own : INSTANCE_DEFAULT}
-          onChange={(v) => void choose(v)}
-          disabled={saving || !me.data}
-        />
-        <p className="text-[11px] text-muted-foreground">{t.language.account.hint}</p>
-      </div>
-    </Card>
+    <SettingsCard title={t.language.label}>
+      <SettingsRow label={t.language.account.row} htmlFor="account-language" help={t.language.account.hint}>
+        <div className="w-60">
+          <Select
+            id="account-language"
+            options={options}
+            value={isLocale(own) ? own : INSTANCE_DEFAULT}
+            onChange={(v) => void choose(v)}
+            disabled={saving || !me.data}
+          />
+        </div>
+      </SettingsRow>
+    </SettingsCard>
   );
 }

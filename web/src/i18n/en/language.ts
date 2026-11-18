@@ -10,6 +10,7 @@ export const enLanguage = {
   instanceDefault: (language: string) => `Instance default (${language})`,
   instanceDefaultUnknown: 'Instance default',
   account: {
+    row: 'Interface language',
     hint: 'The language of this interface for your account, on every browser and device.',
     saveFailed: 'Failed to save the language',
   },

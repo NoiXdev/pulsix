@@ -77,8 +77,9 @@ describe('AccountLayout', () => {
     renderAt();
 
     expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
-    expect(screen.getByText('second factor active')).toBeInTheDocument();
-    const crumbs = screen.getByRole('banner');
+    expect(within(await screen.findByRole('region', { name: 'Sign-in' })).getByText('Second factor active')).toBeInTheDocument();
+    // The shell's top bar comes first; the page's own header is a banner to jsdom too.
+    const crumbs = screen.getAllByRole('banner')[0];
     expect(within(crumbs).getByText('Settings')).toBeInTheDocument();
     expect(within(crumbs).getByText('Security')).toBeInTheDocument();
   });

@@ -67,7 +67,7 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     renderAt();
 
     expect(await screen.findByRole('heading', { name: 'Set up a second factor' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Enrol authenticator app' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Set up/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add passkey/ })).toBeInTheDocument();
     const requested = fetchMock.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
     expect(requested.some((p) => p.startsWith('/api/v1/orgs'))).toBe(false);
@@ -87,14 +87,14 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     });
 
     renderAt();
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
     await user.type(await screen.findByPlaceholderText('482913'), '123456');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
     // /auth/me now reports a complete session (useConfirmTotp invalidates
     // it); the codes must survive that refetch.
-    await waitFor(() => expect(screen.getByText('second factor active')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Second factor active')).toBeInTheDocument());
     expect(screen.getByText('aaaa-bbbb')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'I have saved these' }));
@@ -243,8 +243,9 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
       </QueryClientProvider>,
     );
 
+    await user.click(await screen.findByRole('button', { name: /Add passkey/ }));
     await user.type(await screen.findByPlaceholderText('e.g. MacBook Pro'), 'Laptop');
-    await user.click(screen.getByRole('button', { name: /Add passkey/ }));
+    await user.click(screen.getByRole('button', { name: 'Register' }));
 
     expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/account/password');
@@ -293,12 +294,12 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.click(await screen.findByRole('button', { name: /^Set up/ }));
     await user.type(await screen.findByPlaceholderText('482913'), '123456');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
 
     expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('second factor active')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Second factor active')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Add passkey/ })).not.toBeInTheDocument();
     expect(screen.getByText('aaaa-bbbb')).toBeInTheDocument();
 

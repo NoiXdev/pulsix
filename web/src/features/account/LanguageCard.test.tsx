@@ -42,16 +42,16 @@ describe('LanguageCard', () => {
     });
     renderCard();
 
-    const field = await screen.findByLabelText('Language');
+    const field = await screen.findByLabelText('Interface language');
     await waitFor(() => expect(field).toHaveValue('Instance default (English)'));
 
-    await pickOption(screen, 'Language', 'Deutsch');
+    await pickOption(screen, 'Interface language', 'Deutsch');
     // The whole page follows, not just the card.
     expect(await screen.findByRole('heading', { name: 'Sprache' })).toBeInTheDocument();
     expect(saved).toEqual([{ locale: 'de' }]);
     expect(document.documentElement.lang).toBe('de');
 
-    await pickOption(screen, 'Sprache', 'Standard der Instanz (English)');
+    await pickOption(screen, 'Sprache der Oberfläche', 'Standard der Instanz (English)');
     expect(await screen.findByRole('heading', { name: 'Language' })).toBeInTheDocument();
     expect(saved).toEqual([{ locale: 'de' }, { locale: null }]);
   });
@@ -67,8 +67,8 @@ describe('LanguageCard', () => {
         }),
     });
     renderCard();
-    await screen.findByLabelText('Language');
-    await pickOption(screen, 'Language', 'Deutsch');
+    await screen.findByLabelText('Interface language');
+    await pickOption(screen, 'Interface language', 'Deutsch');
     const toast = await screen.findByRole('status');
     expect(within(toast).getByText('this needs a signed-in session')).toBeInTheDocument();
   });

@@ -32,16 +32,17 @@ test('add a passkey, log out, and sign back in with the passkey alone', async ({
 
   await page.goto('/account/security');
   await expect(page.getByRole('heading', { name: 'Security' })).toBeVisible();
-  await expect(page.getByText('No passkeys registered yet.')).toBeVisible();
+  await expect(page.getByText('None', { exact: true })).toBeVisible();
 
+  await page.getByRole('button', { name: 'Add passkey…' }).click();
   await page.getByPlaceholder('e.g. MacBook Pro').fill(PASSKEY_NAME);
-  await page.getByRole('button', { name: 'Add passkey' }).click();
+  await page.getByRole('button', { name: 'Register' }).click();
 
   // The real assertion for "registration actually worked": the API's own
   // list of the account's passkeys (usePasskeys, refetched after the
   // mutation) shows the credential, named — not just a client-side toast.
   await expect(page.getByText(PASSKEY_NAME)).toBeVisible();
-  await expect(page.getByText('No passkeys registered yet.')).toHaveCount(0);
+  await expect(page.getByText('None', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Account menu' }).click();
   await page.getByRole('button', { name: 'Log out' }).click();

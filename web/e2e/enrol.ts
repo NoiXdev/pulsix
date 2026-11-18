@@ -22,7 +22,7 @@ export async function enrolTotp(
 ): Promise<string> {
   await expect(page).toHaveURL(/\/account\/enrol$/);
   await expect(page.getByRole('heading', { name: 'Set up a second factor' })).toBeVisible();
-  await page.getByRole('button', { name: 'Enrol authenticator app' }).click();
+  await page.getByRole('button', { name: 'Set up…' }).click();
   const secret = (await page.locator('code').textContent())?.trim();
   if (!secret) throw new Error('TOTP secret was not rendered on the enrolment screen');
   mkdirSync(path.dirname(secretPath), { recursive: true });
