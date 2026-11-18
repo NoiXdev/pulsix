@@ -56,6 +56,10 @@ import { validateChecksSearch } from './features/checks/checksSearch.ts';
 import { validateMonitoringGroupsSearch } from './features/checks/monitoringGroupsSearch.ts';
 import { validateRulesSearch } from './features/checks/rulesSearch.ts';
 import { validateDecisionsSearch } from './features/checks/decisionsSearch.ts';
+import { validateReposSearch } from './features/repos/reposSearch.ts';
+import { validatePlaybooksSearch } from './features/playbooks/playbooksSearch.ts';
+import { validateTemplatesSearch } from './features/templates/templatesSearch.ts';
+import { validateSchedulesSearch } from './features/schedules/schedulesSearch.ts';
 import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
 
 /**
@@ -261,30 +265,26 @@ const groupDetailRoute = createRoute({
 const reposRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/repos',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateReposSearch,
   component: ReposPage,
 });
 const playbooksRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/playbooks',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validatePlaybooksSearch,
   component: PlaybooksPage,
 });
 const templatesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/templates',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateTemplatesSearch,
   component: TemplatesPage,
 });
 const templateVariablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: TemplateVariablesPage });
 const schedulesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/schedules',
-  validateSearch: (search: Record<string, unknown>) => ({
-    ...validateListSearch(search),
-    id: typeof search.id === 'string' ? search.id : undefined,
-    template: typeof search.template === 'string' ? search.template : undefined,
-  }),
+  validateSearch: validateSchedulesSearch,
   component: SchedulesPage,
 });
 const runsRoute = createRoute({

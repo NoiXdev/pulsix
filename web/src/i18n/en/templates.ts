@@ -7,6 +7,17 @@ export const enTemplates = {
     add: 'Add template',
     label: 'Job templates',
     count: (n: number) => (n === 1 ? '1 template' : `${n} templates`),
+    search: 'Search templates',
+    filterPlaceholder: 'Filter templates…',
+    noMatch: 'No templates match the filters.',
+    filters: {
+      playbook: 'Filter by playbook',
+      allPlaybooks: 'All playbooks',
+      scope: 'Filter by scope',
+      anyScope: 'Any scope',
+      scopeGroup: 'A group',
+      scopeHosts: 'Chosen hosts',
+    },
     columns: {
       name: 'Name',
       playbook: 'Playbook',

@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { ListPlus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -11,8 +12,11 @@ import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { templateColumns } from './templateColumns.tsx';
+import { TEMPLATE_SCOPES, TEMPLATES_FILTERS, filterTemplates } from './templatesSearch.ts';
 import { useTemplateListActions } from './useTemplateListActions.tsx';
 
 /** TemplatesPage lists the job templates (spec §7, backlog 2.10): a
@@ -53,13 +57,20 @@ export function TemplatesPage() {
   };
 
   const columns = templateColumns({ t, playbookLabel, groupName, credentialName });
-  const view = useListView('templates', columns, { mode: 'client', rowKey: (tpl) => tpl.id });
+  const { filters, active, setFilter, reset } = useListFilters(TEMPLATES_FILTERS);
+  const view = useListView('templates', columns, { mode: 'client', rowKey: (tpl) => tpl.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(templates);
   if (guard) return guard;
   if (!templates.data) return <QueryLoading />;
   const list = templates.data.templates ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterTemplates(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.templates.list.filters;
+  // Only playbooks a template runs are offered; one only the URL names stays so it can be cleared.
+  const playbookIds = [...new Set([...list.map((tpl) => tpl.playbook_id).filter(Boolean), ...(filters.playbook ? [filters.playbook] : [])])];
+  const playbookOptions = playbookIds.map((id) => ({ value: id, label: playbookLabel(id) })).sort((a, b) => a.label.localeCompare(b.label));
+  const scopeLabels = { whole: t.templates.scope.whole, group: f.scopeGroup, hosts: f.scopeHosts };
 
   return (
     <>
@@ -84,7 +95,26 @@ export function TemplatesPage() {
         rowLabel={(tpl) => tpl.name}
         rowActions={actions.rowActions}
         loading={!view.ready}
-        empty={t.templates.list.empty}
+        empty={active ? t.templates.list.noMatch : t.templates.list.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.templates.list.count} /> : undefined}>
+            <SearchInput
+              label={t.templates.list.search}
+              placeholder={t.templates.list.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect label={f.playbook} allLabel={f.allPlaybooks} options={playbookOptions} value={filters.playbook} onChange={(v) => setFilter('playbook', v)} />
+            <FilterSelect
+              label={f.scope}
+              allLabel={f.anyScope}
+              options={TEMPLATE_SCOPES.map((v) => ({ value: v, label: scopeLabels[v] }))}
+              value={filters.scope}
+              onChange={(v) => setFilter('scope', v as typeof filters.scope)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.templates.list.count)}
       />
       {actions.dialogs}

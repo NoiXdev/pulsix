@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { SchedulesPage } from './SchedulesPage.tsx';
+import { validateSchedulesSearch } from './schedulesSearch.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -17,7 +18,7 @@ const schedule = (name: string, paused = false) => ({
   next_run_at: '2026-09-22T01:00:00Z', revision: 3, created_at: '', updated_at: '', last_run: null,
 });
 
-function setup(role = 'operator', paused = false, posts: string[] = []) {
+function setup(role = 'operator', paused = false, posts: string[] = [], initial = '/o/acme/schedules', schedules?: unknown[]) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -31,13 +32,13 @@ function setup(role = 'operator', paused = false, posts: string[] = []) {
       return {};
     },
     'GET /api/v1/orgs/acme/job-templates': { templates: [template] },
-    'GET /api/v1/orgs/acme/schedules': { schedules: numbered('plan', 30).map((n) => schedule(n, paused)) },
+    'GET /api/v1/orgs/acme/schedules': { schedules: schedules ?? numbered('plan', 30).map((n) => schedule(n, paused)) },
   });
   return renderListPage({
     path: '/schedules',
     component: SchedulesPage,
-    initial: '/o/acme/schedules',
-    extraSearch: (s) => ({ id: typeof s.id === 'string' ? s.id : undefined, template: typeof s.template === 'string' ? s.template : undefined }),
+    initial,
+    extraSearch: (s) => ({ ...validateSchedulesSearch(s) }),
   });
 }
 
@@ -103,5 +104,46 @@ describe('SchedulesPage list', () => {
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Resume', 'Edit', 'Delete']);
     await user.click(screen.getByRole('menuitem', { name: 'Resume' }));
     await waitFor(() => expect(posts).toEqual(['resume']));
+  });
+  describe('filters', () => {
+    const rows = [schedule('nightly'), schedule('weekly', true), schedule('monthly')];
+
+    it('reads the status from the URL and narrows the rows', async () => {
+      setup('operator', false, [], '/o/acme/schedules?status=paused', rows);
+      expect(await screen.findByText('1–1 of 1 schedule')).toBeInTheDocument();
+      expect(firstCells()).toEqual(['weekly']);
+      expect(screen.getByText('1 of 3 schedules')).toBeInTheDocument();
+    });
+
+    it('shows ?template= as a pill and removes it', async () => {
+      const user = userEvent.setup();
+      const router = setup('operator', false, [], '/o/acme/schedules?template=t1', rows);
+      await screen.findByText('3 schedules');
+      expect(screen.getByText('Template: patch-all')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Remove filter Template: patch-all' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
+
+    it('picks a template from the Filter menu and writes it to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup('operator', false, [], '/o/acme/schedules', rows);
+      await screen.findByText('1–3 of 3 schedules');
+      await user.click(screen.getByRole('button', { name: '+ Filter' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Template: patch-all' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({ template: 't1' }));
+    });
+
+    it('writes the status to the URL', async () => {
+      const router = setup('operator', false, [], '/o/acme/schedules', rows);
+      await screen.findByText('1–3 of 3 schedules');
+      await pickOption(screen, 'Filter by status', 'active');
+      await waitFor(() => expect(router.state.location.search).toEqual({ status: 'active' }));
+      expect(firstCells().sort()).toEqual(['monthly', 'nightly']);
+    });
+
+    it('says when no schedule matches', async () => {
+      setup('operator', false, [], '/o/acme/schedules?status=paused', [schedule('nightly')]);
+      expect(await screen.findByText('No schedules match the filters.')).toBeInTheDocument();
+    });
   });
 });

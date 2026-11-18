@@ -7,22 +7,23 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ReposPage } from './ReposPage.tsx';
+import { validateReposSearch } from './reposSearch.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
-const repo = (name: string) => ({
-  id: `id-${name}`, name, url: `https://git.example/acme/${name}.git`, branch: 'main', subpath: '', created_at: '', updated_at: '',
+const repo = (name: string, extra: Record<string, unknown> = {}) => ({
+  id: `id-${name}`, name, url: `https://git.example/acme/${name}.git`, branch: 'main', subpath: '', created_at: '', updated_at: '', ...extra,
 });
 
-function setup(initial = '/o/acme/repos', locale?: 'de', role = 'operator') {
+function setup(initial = '/o/acme/repos', locale?: 'de', role = 'operator', repos: unknown[] = numbered('repo', 30).map((n) => repo(n))) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { ...ORG.org, role } },
-    'GET /api/v1/orgs/acme/repos': { repos: numbered('repo', 30).map(repo) },
+    'GET /api/v1/orgs/acme/repos': { repos },
     'GET /api/v1/orgs/acme/credentials': { credentials: [] },
   });
-  return renderListPage({ path: '/repos', component: ReposPage, initial, locale, others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }] });
+  return renderListPage({ path: '/repos', component: ReposPage, initial, locale, extraSearch: (s) => ({ ...validateReposSearch(s) }), others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }] });
 }
 
 describe('ReposPage list', () => {
@@ -82,5 +83,36 @@ describe('ReposPage list', () => {
     await screen.findByText('1–25 of 30 repositories');
     await openRowMenu(user, 'repo30');
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Triggers']);
+  });
+  describe('filters', () => {
+    const rows = [
+      repo('fresh', { last_sync: '2026-06-01T00:00:00Z', credential_id: 'c1' }),
+      repo('broken', { last_sync_error: 'boom', credential_id: 'c2' }),
+      repo('idle'),
+    ];
+
+    it('reads the filters from the URL and narrows the rows', async () => {
+      setup('/o/acme/repos?sync=failed', undefined, 'operator', rows);
+      expect(await screen.findByText('1–1 of 1 repository')).toBeInTheDocument();
+      expect(firstCells()).toEqual(['broken']);
+      expect(screen.getByText('1 of 3 repositories')).toBeInTheDocument();
+    });
+
+    it('filters by credential and writes the search to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup('/o/acme/repos?credential=c1', undefined, 'operator', rows);
+      await screen.findByText('1–1 of 1 repository');
+      expect(firstCells()).toEqual(['fresh']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+      await user.type(screen.getByRole('searchbox', { name: 'Search repositories' }), 'idl');
+      await waitFor(() => expect(router.state.location.search).toEqual({ q: 'idl' }));
+      expect(firstCells()).toEqual(['idle']);
+    });
+
+    it('says when no repository matches', async () => {
+      setup('/o/acme/repos?q=zzz', undefined, 'operator', rows);
+      expect(await screen.findByText('No repositories match the filters.')).toBeInTheDocument();
+    });
   });
 });

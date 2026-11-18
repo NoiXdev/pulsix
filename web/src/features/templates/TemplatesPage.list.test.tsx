@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
+import { validateTemplatesSearch } from './templatesSearch.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -15,12 +16,12 @@ const template = (name: string, over: Record<string, unknown> = {}) => ({
   limit: '', extra_vars: {}, revision: 1, vars_mode: 'off', created_at: '', updated_at: '', ...over,
 });
 
-function setup(over: Record<string, unknown> = {}, started: string[] = [], role = 'operator') {
+function setup(over: Record<string, unknown> = {}, started: string[] = [], role = 'operator', initial = '/o/acme/templates', templates?: unknown[]) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { ...ORG.org, role } },
-    'GET /api/v1/orgs/acme/job-templates': { templates: numbered('tpl', 30).map((n) => template(n, over)) },
+    'GET /api/v1/orgs/acme/job-templates': { templates: templates ?? numbered('tpl', 30).map((n) => template(n, over)) },
     'GET /api/v1/orgs/acme/playbooks': { playbooks: [{ id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' }] },
     'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
     'GET /api/v1/orgs/acme/credentials': { credentials: [] },
@@ -32,7 +33,8 @@ function setup(over: Record<string, unknown> = {}, started: string[] = [], role 
   return renderListPage({
     path: '/templates',
     component: TemplatesPage,
-    initial: '/o/acme/templates',
+    initial,
+    extraSearch: (s) => ({ ...validateTemplatesSearch(s) }),
     others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }, { path: '/templates/$id/variables', component: () => <div>VARIABLES</div> }],
   });
 }
@@ -110,5 +112,37 @@ describe('TemplatesPage list', () => {
     await screen.findByText('1–25 of 30 templates');
     await openRowMenu(user, 'tpl30');
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Run', 'Variables', 'Triggers', 'Schedules', 'Edit']);
+  });
+  describe('filters', () => {
+    const rows = [
+      template('web', { playbook_id: 'pb1' }),
+      template('db', { playbook_id: 'pb2', scope: { group_id: 'g1', host_ids: [] } }),
+      template('cache', { playbook_id: 'pb1', scope: { group_id: null, host_ids: ['h1'] } }),
+    ];
+
+    it('reads the filters from the URL and narrows the rows', async () => {
+      setup({}, [], 'operator', '/o/acme/templates?scope=group', rows);
+      expect(await screen.findByText('1–1 of 1 template')).toBeInTheDocument();
+      expect(firstCells()).toEqual(['db']);
+      expect(screen.getByText('1 of 3 templates')).toBeInTheDocument();
+    });
+
+    it('writes the playbook and the search to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({}, [], 'operator', '/o/acme/templates', rows);
+      await screen.findByText('1–3 of 3 templates');
+      await pickOption(screen, 'Filter by playbook', 'Install nginx');
+      await waitFor(() => expect(router.state.location.search).toEqual({ playbook: 'pb1' }));
+      expect(firstCells().sort()).toEqual(['cache', 'web']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await user.type(screen.getByRole('searchbox', { name: 'Search templates' }), 'cac');
+      await waitFor(() => expect(router.state.location.search).toEqual({ q: 'cac' }));
+      expect(firstCells()).toEqual(['cache']);
+    });
+
+    it('says when no template matches', async () => {
+      setup({}, [], 'operator', '/o/acme/templates?q=zzz', rows);
+      expect(await screen.findByText('No templates match the filters.')).toBeInTheDocument();
+    });
   });
 });

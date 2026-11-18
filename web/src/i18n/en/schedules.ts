@@ -11,7 +11,11 @@ export const enSchedules = {
   pauseAll: 'Pause all',
   newSchedule: 'New schedule',
   template: (name: string) => `Template: ${name}`,
-  showAll: 'Show all',
+  noMatch: 'No schedules match the filters.',
+  filters: {
+    status: 'Filter by status',
+    anyStatus: 'Any status',
+  },
   columns: {
     status: 'Status',
     schedule: 'Schedule',

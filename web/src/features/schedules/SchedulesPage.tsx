@@ -2,6 +2,7 @@ import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Clock, Pause } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
+import { ActiveFilter, FilterMenu, ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -13,7 +14,10 @@ import { ScheduleCalendar } from '../calendar/ScheduleCalendar.tsx';
 import { ScheduleEditor } from './ScheduleEditor.tsx';
 import { scheduleColumns } from './scheduleColumns.tsx';
 import { useScheduleActions } from './useScheduleActions.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { SCHEDULE_STATUSES, SCHEDULES_FILTERS, filterSchedules } from './schedulesSearch.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
 
@@ -27,14 +31,15 @@ export function SchedulesPage() {
   const t = useT();
   const m = t.schedules;
   const { org } = useParams({ strict: false }) as { org: string };
-  const search = useSearch({ strict: false }) as { id?: string; template?: string };
+  const search = useSearch({ strict: false }) as { id?: string };
+  const { filters, active, setFilter, reset } = useListFilters(SCHEDULES_FILTERS);
   const navigate = useNavigate();
   const toast = useToast();
   const ask = useConfirm();
   const orgInfo = useOrg(org);
   const canWrite = may(orgInfo.data?.org.role, 'templates.write');
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
-  const schedules = useSchedules(org, search.template);
+  const schedules = useSchedules(org, filters.template);
   const templates = useTemplates(org);
   const pauseAll = usePauseAllSchedules(org);
 
@@ -50,13 +55,15 @@ export function SchedulesPage() {
   const templateName = (id: string) => templateList.find((tpl) => tpl.id === id)?.name ?? id.slice(0, 8);
   const now = new Date();
   const columns = scheduleColumns({ t, templateName, now });
-  const view = useListView('schedules', columns, { mode: 'client', resetKey: search.template ?? '', rowKey: (s) => s.id });
+  const view = useListView('schedules', columns, { mode: 'client', resetKey: JSON.stringify(filters), rowKey: (s) => s.id });
 
   const guard = useQueryGuard(schedules);
   if (guard) return guard;
   if (!schedules.data) return <QueryLoading />;
   const list = schedules.data.schedules ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterSchedules(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = m.filters;
 
   async function onPauseAll() {
     if (!(await ask({ message: m.pauseAllConfirm, confirmLabel: m.pauseAll }))) return;
@@ -88,24 +95,34 @@ export function SchedulesPage() {
           </div>
         )}
       </div>
-      {search.template && (
-        <div className="flex items-center gap-2 text-xs">
-          <span>{m.template(templateName(search.template))}</span>
-          <button type="button" className="text-primary" onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: (prev) => ({ ...prev, id: undefined, template: undefined, page: undefined }) })}>
-            {m.showAll}
-          </button>
-        </div>
-      )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
         <DataList
           label={m.label}
           columns={columns}
           rows={rows}
           rowKey={(sc) => sc.id}
-          rowLink={(sc) => ({ to: '/o/$org/schedules', params: { org }, search: { sort: view.sort?.key, order: view.sort?.order, page: view.page > 1 ? view.page : undefined, template: search.template, id: sc.id }, label: sc.name })}
+          rowLink={(sc) => ({ to: '/o/$org/schedules', params: { org }, search: { sort: view.sort?.key, order: view.sort?.order, page: view.page > 1 ? view.page : undefined, status: filters.status, template: filters.template, id: sc.id }, label: sc.name })}
           rowActions={rowActions}
           loading={!view.ready}
-          empty={m.empty}
+          empty={active ? m.noMatch : m.empty}
+          toolbar={
+            <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={m.count} /> : undefined}>
+              <FilterSelect
+                label={f.status}
+                allLabel={f.anyStatus}
+                options={SCHEDULE_STATUSES.map((v) => ({ value: v, label: v === 'paused' ? m.paused : m.active }))}
+                value={filters.status}
+                onChange={(v) => setFilter('status', v as typeof filters.status)}
+              />
+              {!filters.template && (
+                <FilterMenu
+                  items={templateList.map((tpl) => ({ id: tpl.id, label: m.template(tpl.name), onSelect: () => setFilter('template', tpl.id) }))}
+                />
+              )}
+              {filters.template && <ActiveFilter label={m.template(templateName(filters.template))} onRemove={() => setFilter('template', undefined)} />}
+              {active && <ResetFilters onReset={reset} />}
+            </ListToolbar>
+          }
           {...view.listProps(total, m.count)}
         />
         <div className="lg:col-start-1">
@@ -117,7 +134,7 @@ export function SchedulesPage() {
             org={org}
             id={search.id}
             templates={templateList}
-            defaultTemplate={search.template}
+            defaultTemplate={filters.template}
             canWrite={canWrite}
             canRun={canRun}
             onClose={() => select(undefined)}

@@ -6,6 +6,15 @@ export const enPlaybooks = {
     add: 'New editor playbook',
     label: 'Playbooks',
     count: (n: number) => (n === 1 ? '1 playbook' : `${n} playbooks`),
+    search: 'Search playbooks',
+    filterPlaceholder: 'Filter playbooks…',
+    noMatch: 'No playbooks match the filters.',
+    filters: {
+      source: 'Filter by source',
+      allSources: 'All sources',
+      repo: 'Filter by repository',
+      allRepos: 'All repositories',
+    },
     columns: {
       source: 'Source',
       summaryPath: 'Summary / path',

@@ -6,7 +6,11 @@ export const deSchedules: Messages['schedules'] = {
   pauseAll: 'Alle pausieren',
   newSchedule: 'Neuer Zeitplan',
   template: (name: string) => `Vorlage: ${name}`,
-  showAll: 'Alle anzeigen',
+  noMatch: 'Keine Zeitpläne passen zu den Filtern.',
+  filters: {
+    status: 'Nach Status filtern',
+    anyStatus: 'Jeder Status',
+  },
   columns: {
     status: 'Status',
     schedule: 'Zeitplan',

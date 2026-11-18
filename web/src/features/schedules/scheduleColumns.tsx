@@ -77,6 +77,8 @@ export function scheduleColumns({ t, templateName, now }: ScheduleColumnsContext
       id: 'notify',
       label: m.columns.notify,
       width: '150px',
+      sortKey: 'notify',
+      sortValue: (s) => (s.notify_on ?? []).length,
       defaultVisible: true,
       render: (s) => (
         <span className="flex flex-wrap gap-1">

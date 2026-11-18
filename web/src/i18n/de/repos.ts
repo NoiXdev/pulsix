@@ -10,6 +10,16 @@ export const deRepos: Messages['repos'] = {
     add: 'Repository hinzufügen',
     label: 'Repositories',
     count: (n: number) => (n === 1 ? '1 Repository' : `${n} Repositories`),
+    search: 'Repositories durchsuchen',
+    filterPlaceholder: 'Repositories filtern…',
+    noMatch: 'Keine Repositories passen zu den Filtern.',
+    filters: {
+      sync: 'Nach letzter Synchronisierung filtern',
+      anySync: 'Jede Synchronisierung',
+      syncState: { ok: 'Synchronisiert', failed: 'Fehlgeschlagen', never: 'Nie synchronisiert' },
+      credential: 'Nach Zugangsdaten filtern',
+      allCredentials: 'Alle Zugangsdaten',
+    },
     columns: {
       name: 'Name',
       url: 'URL',

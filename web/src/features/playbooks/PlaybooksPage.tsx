@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { FilePlus2 } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList, type RowAction } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -10,9 +11,12 @@ import { useRepos } from '../../api/hooks/useRepos.ts';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { PlaybookEditor } from './PlaybookEditor.tsx';
 import { playbookColumns, playbookLabel } from './playbookColumns.tsx';
+import { PLAYBOOK_SOURCES, PLAYBOOKS_FILTERS, filterPlaybooks } from './playbooksSearch.ts';
 import type { Playbook } from '../../api/types.ts';
 
 /** PlaybooksPage lists the playbooks jobs run against (spec §7, backlog
@@ -30,13 +34,21 @@ export function PlaybooksPage() {
   const [dialog, setDialog] = useState<'new' | Playbook | null>(null);
 
   const columns = playbookColumns({ t, repoName: (id) => (repos.data?.repos ?? []).find((r) => r.id === id)?.name });
-  const view = useListView('playbooks', columns, { mode: 'client', rowKey: (p) => p.id });
+  const { filters, active, setFilter, reset } = useListFilters(PLAYBOOKS_FILTERS);
+  const view = useListView('playbooks', columns, { mode: 'client', rowKey: (p) => p.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(playbooks);
   if (guard) return guard;
   if (!playbooks.data) return <QueryLoading />;
   const list = playbooks.data.playbooks ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterPlaybooks(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.playbooks.list.filters;
+  // Only repositories that hold a playbook are offered; one only the URL names stays so it can be cleared.
+  const repoIds = [...new Set([...list.map((p) => p.repo_id).filter((id): id is string => !!id), ...(filters.repo ? [filters.repo] : [])])];
+  const repoOptions = repoIds
+    .map((id) => ({ value: id, label: (repos.data?.repos ?? []).find((r) => r.id === id)?.name ?? id.slice(0, 8) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   // Repo playbooks have no editor: they are edited in their repository.
   const rowActions = (p: Playbook): RowAction[] =>
@@ -65,7 +77,26 @@ export function PlaybooksPage() {
         rowLabel={(p) => playbookLabel(p, t)}
         rowActions={rowActions}
         loading={!view.ready}
-        empty={t.playbooks.list.empty}
+        empty={active ? t.playbooks.list.noMatch : t.playbooks.list.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.playbooks.list.count} /> : undefined}>
+            <SearchInput
+              label={t.playbooks.list.search}
+              placeholder={t.playbooks.list.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.source}
+              allLabel={f.allSources}
+              options={PLAYBOOK_SOURCES.map((v) => ({ value: v, label: v === 'repo' ? t.playbooks.list.sourceRepo : t.playbooks.list.sourceEditor }))}
+              value={filters.source}
+              onChange={(v) => setFilter('source', v as typeof filters.source)}
+            />
+            <FilterSelect label={f.repo} allLabel={f.allRepos} options={repoOptions} value={filters.repo} onChange={(v) => setFilter('repo', v)} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.playbooks.list.count)}
       />
       {dialog === 'new' ? (

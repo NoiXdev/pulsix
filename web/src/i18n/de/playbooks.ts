@@ -10,6 +10,15 @@ export const dePlaybooks: Messages['playbooks'] = {
     add: 'Neues Editor-Playbook',
     label: 'Playbooks',
     count: (n: number) => (n === 1 ? '1 Playbook' : `${n} Playbooks`),
+    search: 'Playbooks durchsuchen',
+    filterPlaceholder: 'Playbooks filtern…',
+    noMatch: 'Keine Playbooks passen zu den Filtern.',
+    filters: {
+      source: 'Nach Quelle filtern',
+      allSources: 'Alle Quellen',
+      repo: 'Nach Repository filtern',
+      allRepos: 'Alle Repositories',
+    },
     columns: {
       source: 'Quelle',
       summaryPath: 'Zusammenfassung / Pfad',

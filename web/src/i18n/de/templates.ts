@@ -10,6 +10,17 @@ export const deTemplates: Messages['templates'] = {
     add: 'Vorlage hinzufügen',
     label: 'Job-Vorlagen',
     count: (n: number) => (n === 1 ? '1 Vorlage' : `${n} Vorlagen`),
+    search: 'Vorlagen durchsuchen',
+    filterPlaceholder: 'Vorlagen filtern…',
+    noMatch: 'Keine Vorlagen passen zu den Filtern.',
+    filters: {
+      playbook: 'Nach Playbook filtern',
+      allPlaybooks: 'Alle Playbooks',
+      scope: 'Nach Geltungsbereich filtern',
+      anyScope: 'Jeder Geltungsbereich',
+      scopeGroup: 'Eine Gruppe',
+      scopeHosts: 'Ausgewählte Hosts',
+    },
     columns: {
       name: 'Name',
       playbook: 'Playbook',

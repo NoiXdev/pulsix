@@ -7,6 +7,16 @@ export const enRepos = {
     add: 'Add repository',
     label: 'Repositories',
     count: (n: number) => (n === 1 ? '1 repository' : `${n} repositories`),
+    search: 'Search repositories',
+    filterPlaceholder: 'Filter repositories…',
+    noMatch: 'No repositories match the filters.',
+    filters: {
+      sync: 'Filter by last sync',
+      anySync: 'Any last sync',
+      syncState: { ok: 'Synced', failed: 'Failed', never: 'Never synced' },
+      credential: 'Filter by credential',
+      allCredentials: 'All credentials',
+    },
     columns: {
       name: 'Name',
       url: 'URL',
