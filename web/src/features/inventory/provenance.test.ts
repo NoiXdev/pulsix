@@ -22,6 +22,8 @@ describe('provenanceOf', () => {
     ['an unknown ancestor past the answer', env, undefined, [unknown('root'), known('eu', { env: 'b' })], { kind: 'inherits', group: 'eu', value: 'b' }],
     ['no ancestors', env, 'prod', [], null],
     ['a top-level group with a default', level, undefined, [], { kind: 'default', value: 'info' }],
+    // schema.Resolve writes no nil default: a null one is none.
+    ['a null default, which renders nothing', { ...env, default: null }, undefined, [known('root', { env: 'a' })], { kind: 'inherits', group: 'root', value: 'a' }],
   ])('%s', (_, field, own, ancestors, want) => {
     expect(provenanceOf(field, own, ancestors)).toEqual(want);
   });

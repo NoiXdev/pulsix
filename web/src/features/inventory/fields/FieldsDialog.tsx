@@ -1,4 +1,3 @@
-import type { KeyboardEvent } from 'react';
 import { Button } from '../../../ui/button.tsx';
 import { Dialog } from '../../../ui/dialog.tsx';
 import { useConfirm } from '../../../ui/confirmContext.ts';
@@ -47,21 +46,20 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
     if (await s.save()) onClose();
   }
 
-  // Escape asks too while there are changes: preventing the keydown's
-  // default is what stops the native <dialog>'s close request. A picker
-  // or menu that closes itself on Escape has already prevented it, and
-  // that press is left to it; so is one inside a sub-field's own dialog
-  // (React bubbles it through this tree).
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Escape' || e.defaultPrevented || !dirty) return;
-    if ((e.target as Element).closest('dialog') !== e.currentTarget.closest('dialog')) return;
-    e.preventDefault();
+  // Escape asks too while there are changes, wherever the focus is in the
+  // dialog: its close request (the native `cancel`) is refused and the
+  // question asked instead. A picker or menu that closes itself on Escape
+  // prevents the keydown, so no close request comes; a sub-field's own
+  // dialog gets its own.
+  function onCancel(): boolean {
+    if (!dirty) return true;
     void requestClose();
+    return false;
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title={canWrite ? f.manageTitle : f.viewTitle} size="xl">
-      <div className="flex flex-col gap-4" onKeyDown={onKeyDown}>
+    <Dialog open={open} onClose={onClose} onCancel={onCancel} title={canWrite ? f.manageTitle : f.viewTitle} size="xl">
+      <div className="flex flex-col gap-4">
         {s.stale && <StaleNotice onReload={s.reload} />}
         {s.problems.length > 0 && (
           <p role="alert" className="text-xs text-destructive">

@@ -8,18 +8,17 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
   RouterProvider,
 } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
-import { formerSection, validateGroupSearch } from './groupTabs.ts';
+import { formerGroupLink, validateGroupSearch } from './groupTabs.ts';
 
 /* The group page's test harness, shared by the GroupDetailPage.*.test.tsx
  * files: one group `web` (g1) below `prod`, with a child group, two members
- * and a jump host, a router that reads `?tab=` and sends old section
- * anchors on the way the app's does, and the steps the draft and revision
+ * and a jump host, a router that reads `?tab=` and sends old links
+ * on with the app's own beforeLoad, and the steps the draft and revision
  * tests share. */
 
 export const SCHEMA = {
@@ -87,10 +86,7 @@ export function renderAt(path: string, { browser = false } = {}) {
     getParentRoute: () => orgRoute,
     path: '/groups/$id',
     validateSearch: validateGroupSearch,
-    beforeLoad: ({ search, params, location }) => {
-      const former = search.tab === undefined ? formerSection(location.hash) : undefined;
-      if (former && former !== 'variables') throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: former }, hash: '', replace: true });
-    },
+    beforeLoad: formerGroupLink,
     component: GroupDetailPage,
   });
   const list = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: () => <div>GROUPS</div> });

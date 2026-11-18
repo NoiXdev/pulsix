@@ -26,6 +26,9 @@ interface GroupHeaderProps {
   role: string;
   /** Opens the group's fields (the "Manage fields …" button). */
   onManageFields: () => void;
+  /** Called before a deleted group's page is left: the page's unsaved
+   * values went with the group, so leaving must not ask about them. */
+  onLeave?: () => Promise<void>;
 }
 
 /**
@@ -36,7 +39,7 @@ interface GroupHeaderProps {
  * Every write needs `inventory.write`; a reader still opens the fields,
  * read-only ("Fields …").
  */
-export function GroupHeader({ org, group, groups, role, onManageFields }: GroupHeaderProps) {
+export function GroupHeader({ org, group, groups, role, onManageFields, onLeave }: GroupHeaderProps) {
   const t = useT();
   const own = groups.find((g) => g.id === group.id);
   return (
@@ -49,13 +52,15 @@ export function GroupHeader({ org, group, groups, role, onManageFields }: GroupH
         {group.description && <p className="text-[13px] text-muted-foreground">{group.description}</p>}
         <GroupFacts org={org} group={group} groups={groups} />
       </div>
-      <GroupHeaderActions org={org} group={group} groups={groups} role={role} onManageFields={onManageFields} />
+      <GroupHeaderActions org={org} group={group} groups={groups} role={role} onManageFields={onManageFields} onLeave={onLeave} />
     </div>
   );
 }
 
-/** The header's facts: the parent (a link), the hosts — direct, with how
- * many still need values, and with the subgroups' when the preview says —
+/** The header's facts: the parent (a link), the hosts — direct members,
+ * with how many still need values, and the managed hosts with the
+ * subgroups' when the preview says (it renders managed hosts only, so that
+ * count says "managed": it may be lower than the direct one) —
  * the subgroups and the jump host, the group's own or the one it inherits
  * from the nearest ancestor that sets one. */
 function GroupFacts({ org, group, groups }: { org: string; group: InventoryGroup; groups: readonly InventoryGroupSummary[] }) {
@@ -120,7 +125,7 @@ function GroupFacts({ org, group, groups }: { org: string; group: InventoryGroup
 }
 
 /** The header's actions and the dialogs they open. */
-function GroupHeaderActions({ org, group, groups, role, onManageFields }: GroupHeaderProps) {
+function GroupHeaderActions({ org, group, groups, role, onManageFields, onLeave }: GroupHeaderProps) {
   const t = useT();
   const p = t.inventory.groupPage;
   const toast = useToast();
@@ -136,6 +141,7 @@ function GroupHeaderActions({ org, group, groups, role, onManageFields }: GroupH
     try {
       await remove.mutateAsync(group.id);
       toast.show(t.inventory.settings.deleted(group.name));
+      await onLeave?.();
       await navigate({ to: '/o/$org/groups', params: { org } });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.inventory.settings.deleteFailed, 'destructive');

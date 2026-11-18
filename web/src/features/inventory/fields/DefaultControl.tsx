@@ -37,6 +37,9 @@ export function DefaultControl({ field, id, error, optionsError, onChange }: Def
         <div className="flex flex-col gap-1">
           <span className="text-[11px] font-medium text-muted-foreground">{f.default}</span>
           <p className="text-xs text-muted-foreground">{field.type === 'secret' ? f.secretNote : f.noDefaultFor}</p>
+          {/* A default stored before (or sent by the API) is still refused:
+              the problem shows here, where it belongs. */}
+          <FieldMessages error={error} />
         </div>
       );
     case 'bool':

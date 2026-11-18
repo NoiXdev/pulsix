@@ -17,8 +17,12 @@ import { useLeaveQuestion } from './useLeaveQuestion.ts';
  *
  * Refs, so the blocker always sees the latest state without re-registering
  * and `release` takes effect before React renders the page as clean.
+ *
+ * `samePath` lets a navigation that keeps the pathname through without a
+ * question: a page whose tabs live in the search (`?tab=`) and keep the
+ * unsaved form mounted is not left by a tab switch.
  */
-export function useUnsavedGuard(dirty: boolean): () => Promise<void> {
+export function useUnsavedGuard(dirty: boolean, { samePath = false }: { samePath?: boolean } = {}): () => Promise<void> {
   const t = useT();
   const ask = useConfirm();
   const dirtyRef = useRef(dirty);
@@ -32,6 +36,7 @@ export function useUnsavedGuard(dirty: boolean): () => Promise<void> {
   useBlocker({
     shouldBlockFn: async (args) => {
       if (released.current || !dirtyRef.current) return false;
+      if (samePath && args.next.pathname === args.current.pathname) return false;
       return leave.shouldBlock(args);
     },
     enableBeforeUnload: () => dirtyRef.current && !released.current,

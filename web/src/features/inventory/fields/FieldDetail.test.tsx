@@ -129,4 +129,21 @@ describe('FieldDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
     expect(now().fields?.map((f) => f.name)).toEqual(['domain', 'field_2']);
   });
+
+  it.each([
+    ['secret', { name: 'token', type: 'secret', default: 'x' }],
+    ['repeater', { name: 'vhosts', type: 'repeater', fields: [], default: [] }],
+    ['object', { name: 'db', type: 'object', fields: [], default: {} }],
+  ] as const)("shows the server's problem at a %s's default, which it takes none of", (_, field) => {
+    render(
+      <FieldDetail
+        field={field as SchemaField}
+        path="fields[0]"
+        problems={[{ path: 'fields[0].default', message: 'takes no default' }]}
+        onChange={() => undefined}
+        onRemove={() => undefined}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('takes no default');
+  });
 });

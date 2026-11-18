@@ -67,6 +67,9 @@ describe('GroupInheritanceTab', () => {
     expect(states('ntp')).toEqual(['win', 'unset', 'unset']);
     expect(within(row('ntp')).getAllByText('not set')).toHaveLength(2);
     expect(result('ntp')).toBe('prod · parent group');
+    // Not only a colour and a strike: the cells say which value is used.
+    expect(within(row('env')).getByText('(overridden)')).toHaveClass('sr-only');
+    expect(within(row('env')).getByText('(used)')).toHaveClass('sr-only');
 
     const legend = screen.getByRole('list', { name: 'Legend' });
     expect(within(legend).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
@@ -133,7 +136,8 @@ describe('GroupInheritanceTab', () => {
       },
     });
     await screen.findByRole('table', { name: 'Variable inheritance' });
-    expect(asked).toEqual(['g1', '']);
+    // The Variables tab, mounted behind, may ask for the organization's too.
+    expect([...new Set(asked)]).toEqual(['g1', '']);
     expect(states('env')).toEqual(['lost', 'unset', 'win']);
     expect(screen.getByRole('button', { name: 'Host' })).toBeDisabled();
     expect(screen.getByText('No managed host is in this group or its subgroups.')).toBeInTheDocument();
@@ -148,5 +152,17 @@ describe('GroupInheritanceTab', () => {
     );
     renderAt('/o/acme/groups/g1?tab=inheritance');
     expect(await screen.findByText('No variable is set anywhere on this path.')).toBeInTheDocument();
+  });
+
+  it('calls the direct parent the parent group and those above it ancestor groups', async () => {
+    setup({
+      all: { children: ['root'] },
+      root: { vars: { ntp: 'ntp.example.test' }, children: ['prod'] },
+      prod: { vars: { env: 'staging' }, children: ['web'] },
+      web: { vars: { env: 'prod' } },
+    });
+    await screen.findByRole('table', { name: 'Variable inheritance' });
+    expect(headers()).toEqual(['Variable', 'rootancestor group', 'prodparent group', 'schema defaultof web', 'webthis group', 'Result']);
+    expect(result('ntp')).toBe('root · ancestor group');
   });
 });

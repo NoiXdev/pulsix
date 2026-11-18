@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { addField, closeFields, fieldCount, fieldsDialog, group, openEdit, openFields, openTab, routes, renderAt, saveFields, stale, typeEnv } from './groupPageTestKit.tsx';
 
 afterEach(() => {
@@ -37,6 +38,21 @@ describe('GroupDetailPage drafts', () => {
     await openFields(user);
     expect(fieldCount()).toBe(before);
     expect(within(fieldsDialog()).queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('asks on Escape with an edited draft wherever the focus is', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin'));
+    renderAt('/o/acme/groups/g1');
+    await openFields(user);
+    await addField(user);
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard('{Escape}');
+    const ask = await screen.findByRole('dialog', { name: 'Discard changes?' });
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument());
+    expect(fieldsDialog()).toBeInTheDocument();
+    expect(within(fieldsDialog()).getByText('Unsaved changes')).toBeInTheDocument();
   });
 
   it('closes unedited fields at once, on Cancel and on Escape', async () => {
@@ -179,7 +195,54 @@ describe('GroupDetailPage drafts', () => {
 
     await openTab(user, /^Subgroups/);
     await user.click(await screen.findByRole('link', { name: 'web_eu' }));
+    // Leaving with the edit asks first.
+    await acceptConfirm(user);
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     expect(await screen.findByLabelText('env')).toHaveValue('prod');
+  });
+
+  it('keeps unsaved values across the tabs without asking', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin'));
+    renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'kept');
+    await openTab(user, /^Members/);
+    expect(await screen.findByRole('link', { name: 'web-01' })).toBeInTheDocument();
+    // Hidden, not gone: one labelled panel per tab, the open one shown.
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('env')).not.toBeVisible();
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getByRole('tab', { name: /^Members/ }).id);
+    expect(screen.getByRole('tab', { name: /^Members/ })).toHaveAttribute('aria-controls', screen.getByRole('tabpanel').id);
+    await openTab(user, /^Variables/);
+    expect(await screen.findByLabelText('env')).toHaveValue('kept');
+    expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled();
+  });
+
+  it('asks before the page is left with unsaved values', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin'));
+    const { router } = renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'kept');
+    await user.click(screen.getByRole('link', { name: 'prod' }));
+    expect(await declineConfirm(user)).toBe('Leave this page? Your unsaved changes will be lost.');
+    expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
+    expect(screen.getByLabelText('env')).toHaveValue('kept');
+
+    await user.click(screen.getByRole('link', { name: 'prod' }));
+    await acceptConfirm(user);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/groups/p1'));
+  });
+
+  it('does not ask about unsaved values once the group is deleted', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin', { 'DELETE /api/v1/orgs/acme/inventory/groups/g1': { ok: true } }));
+    const { router } = renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'gone with the group');
+    await user.click(screen.getByRole('button', { name: 'More actions for web' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete …' }));
+    expect(await acceptConfirm(user)).toMatch(/^Delete group web\?/);
+    expect(await screen.findByText('GROUPS')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/groups');
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 });

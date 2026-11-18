@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../../../ui/button.tsx';
 import { Tag } from '../../../ui/badge.tsx';
 import { DisabledHint } from '../../../ui/detail-layout.tsx';
@@ -27,12 +27,15 @@ interface VariablesTabProps {
   canWrite: boolean;
   /** Opens the group's fields, from the hint a schema without group fields gets. */
   onManageFields: () => void;
+  /** Told whether the form holds an edit not saved yet (false for a
+   * reader), for the page's leave question. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /** VariablesTab holds the group's own (group-scoped) values, one row per
  * field. A reader sees them disabled and without the save bar; a schema
  * without any group field gets a hint in their place. */
-export function VariablesTab({ org, group, groups, canWrite, onManageFields }: VariablesTabProps) {
+export function VariablesTab({ org, group, groups, canWrite, onManageFields, onDirtyChange }: VariablesTabProps) {
   const t = useT();
   const v = t.inventory.valuesTab;
   if (groupFields(toVarSchema(group.schema)).length === 0) {
@@ -44,7 +47,7 @@ export function VariablesTab({ org, group, groups, canWrite, onManageFields }: V
       />
     );
   }
-  return <ValuesForm org={org} group={group} groups={groups} canWrite={canWrite} />;
+  return <ValuesForm org={org} group={group} groups={groups} canWrite={canWrite} onDirtyChange={onDirtyChange} />;
 }
 
 const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map((p) => ({ path: p.path, message: p.message }));
@@ -61,21 +64,39 @@ const FORM_ID = 'group-values-form';
  * answer's revision (then the group's). Until a save
  * reports anything, and after a rebuild that no answer made, the form shows
  * the group's current problems, also beside an edit (backlog 7.91). Save
- * waits for an edit; Discard starts the draft over from the group. */
-function ValuesForm({ org, group, groups, canWrite }: Omit<VariablesTabProps, 'onManageFields'>) {
+ * waits for an edit, or for stored values of removed fields, which a save
+ * drops (as the notice above the form says); Discard starts the draft over
+ * from the group. */
+function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<VariablesTabProps, 'onManageFields'>) {
   const t = useT();
   const toast = useToast();
   const fields = groupFields(toVarSchema(group.schema));
   const save = useSetGroupVars(org, group.id);
   const own = useOwnSteps();
   // Where each value comes from is read off the preview, which renders the
-  // ancestors' vars as Ansible gets them.
-  const preview = useInventoryPreview(org, group.id);
-  const ancestors = ancestorVarsFrom(preview.data?.inventory, ancestorsOf(groups, group.id));
+  // ancestors' vars as Ansible gets them. The group's own preview renders
+  // only the groups above a managed host at or below it; when it lacks an
+  // ancestor, the organization's is read instead (as the Inheritance tab
+  // does).
+  const path = ancestorsOf(groups, group.id);
+  const scoped = useInventoryPreview(org, group.id);
+  const scopedAncestors = ancestorVarsFrom(scoped.data?.inventory, path);
+  const needWhole = !!scoped.data && scopedAncestors.some((a) => a.vars === undefined);
+  const whole = useInventoryPreview(org, undefined, { enabled: needWhole });
+  const ancestors = needWhole ? ancestorVarsFrom(whole.data?.inventory, path) : scopedAncestors;
   // A draft is built from stored values the same way on mount and after a
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
   const { draft, revision, generation, touched, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.vars, group.revision, draftOf, own);
+  const orphaned = group.orphaned ?? [];
+  // Stored values of removed fields are something to save too: a save
+  // drops them. Only an edit counts for the leave question, though.
+  const savable = touched || orphaned.length > 0;
+  const edited = canWrite && touched;
+  useEffect(() => {
+    onDirtyChange?.(edited);
+  }, [edited, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   // What was reported for a draft; nothing (the group's problems) at mount.
   const [reported, setReported] = useState<Reported | null>(null);
   // The problems a save's or reload's answer brought along, with the
@@ -138,7 +159,7 @@ function ValuesForm({ org, group, groups, canWrite }: Omit<VariablesTabProps, 'o
       footer={
         canWrite ? (
           <CardSaveBar
-            dirty={touched}
+            dirty={savable}
             saving={save.isPending}
             formId={FORM_ID}
             saveLabel={t.inventory.valuesTab.save}
@@ -155,10 +176,10 @@ function ValuesForm({ org, group, groups, canWrite }: Omit<VariablesTabProps, 'o
           <StaleNotice onReload={onReload} />
         </div>
       )}
-      {(group.orphaned ?? []).length > 0 && (
+      {orphaned.length > 0 && (
         <p className="mx-5 mb-3.5 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
           {t.inventory.valuesTab.orphanedBefore}
-          <span className="font-mono">{(group.orphaned ?? []).join(', ')}</span>
+          <span className="font-mono">{orphaned.join(', ')}</span>
           {t.inventory.valuesTab.orphanedAfter}
         </p>
       )}
@@ -166,7 +187,7 @@ function ValuesForm({ org, group, groups, canWrite }: Omit<VariablesTabProps, 'o
         id={FORM_ID}
         onSubmit={(e) => {
           e.preventDefault();
-          if (canWrite && touched && !save.isPending) void onSave();
+          if (canWrite && savable && !save.isPending) void onSave();
         }}
         className="flex flex-col"
       >
@@ -196,6 +217,7 @@ function VariableRow({
 }) {
   const t = useT();
   const v = t.inventory.groupPage.variables;
+  const types = t.inventory.fields.types;
   const from = provenanceOf(field, draft[field.name], ancestors);
   let line: string | null = null;
   if (from?.kind === 'overrides') line = v.overrides(from.group, formatValue(from.value));
@@ -208,7 +230,7 @@ function VariableRow({
         <span aria-hidden="true" className="font-mono text-[13px] font-semibold break-all">
           {field.name}
         </span>
-        <Tag>{field.type}</Tag>
+        <Tag>{Object.hasOwn(types, field.type) ? types[field.type as keyof typeof types].label : field.type}</Tag>
         {field.required && <span className="text-[11px] text-destructive">{v.required}</span>}
         {field.label && <span className="w-full text-[12px] text-muted-foreground">{field.label}</span>}
       </div>

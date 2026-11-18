@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router';
 import { PageTabs, type PageTabItem } from '../../ui/page-tabs.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
 import { useGroup, useGroups } from '../../api/hooks/useInventory.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import type { InventoryGroup } from '../../api/types.ts';
@@ -10,7 +11,7 @@ import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { GroupHeader } from './GroupHeader.tsx';
 import { GroupInheritanceTab } from './GroupInheritanceTab.tsx';
-import { GROUP_PANEL_ID, groupTabId, parseGroupTab, type GroupTab } from './groupTabs.ts';
+import { groupPanelId, groupTabId, parseGroupTab, type GroupTab } from './groupTabs.ts';
 import { MembersSection } from './sections/MembersSection.tsx';
 import { VariablesTab } from './sections/VariablesTab.tsx';
 import { ChildrenSection } from './sections/ChildrenSection.tsx';
@@ -25,6 +26,10 @@ import { FieldsDialog } from './fields/FieldsDialog.tsx';
  * tabs — Variables, Members, Subgroups, Inheritance, Inventory — the open one
  * in the URL (`?tab=`, Variables when absent). The schema is edited in the
  * Manage fields dialog the header opens.
+ *
+ * The Variables panel stays mounted (hidden) while another tab is open, so
+ * unsaved values survive a tab switch; leaving the page with them asks
+ * first (useUnsavedGuard), a tab switch does not.
  */
 export function GroupDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
@@ -45,6 +50,8 @@ export function GroupDetailPage() {
   return <GroupDetail key={group.data.group.id} org={org} group={group.data.group} role={orgInfo.data.org.role} />;
 }
 
+const PANEL_CLASS = 'flex min-w-0 flex-col gap-8';
+
 function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup; role: string }) {
   const t = useT();
   const navigate = useNavigate();
@@ -60,8 +67,18 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
   // The page's own writes to the group, which an edited draft may follow
   // (useRevisionDraft); the record starts over with another group.
   const ownSteps = useOwnStepsRecord(group.id, group.revision);
-  // A group just created ("#schema") opens on its fields.
+  // A group just created ("#schema", also where an old `?tab=schema` link
+  // is sent) opens on its fields; a reader stays on Variables.
   const [fieldsOpen, setFieldsOpen] = useState(() => canWrite && hash === 'schema');
+  const [valuesDirty, setValuesDirty] = useState(false);
+  const release = useUnsavedGuard(valuesDirty, { samePath: true });
+
+  // A reader's "#schema" opens nothing, so it goes at once.
+  useEffect(() => {
+    if (!canWrite && hash === 'schema') {
+      void navigate({ to: '/o/$org/groups/$id', params: { org, id: group.id }, search: (prev) => prev, hash: '', replace: true });
+    }
+  }, [canWrite, hash, navigate, org, group.id]);
 
   // Arrow/Home/End roving replaces the history entry: stepping through the
   // tabs with the keyboard must not fill the back button.
@@ -85,15 +102,8 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
       void navigate({ to: '/o/$org/groups/$id', params: { org, id: group.id }, search: { tab: tab === 'variables' ? undefined : tab }, hash: '', replace: true });
     }
   };
-  const panels: Record<GroupTab, () => ReactNode> = {
-    // Never keyed by the revision: a save of the schema bumps it, and must
-    // not throw away an unsaved values draft. Nor by the values: the draft
-    // follows the stored values itself while it is unedited
-    // (useRevisionDraft), and such a key would remount it when its own save
-    // lands, losing an edit typed during that save (backlogs 7.89, 7.90).
-    // It is keyed by the schema, so a schema change restarts the values,
-    // because their fields changed with it.
-    variables: () => <VariablesTab key={JSON.stringify(group.schema)} org={org} group={group} groups={all} canWrite={canWrite} onManageFields={openFields} />,
+  // Variables is not among them: it is always mounted (below).
+  const panels: Record<Exclude<GroupTab, 'variables'>, () => ReactNode> = {
     members: () => <MembersSection org={org} group={group} canWrite={canWrite} />,
     subgroups: () => <ChildrenSection org={org} group={group} groups={all} />,
     inheritance: () => <GroupInheritanceTab org={org} group={group} />,
@@ -103,11 +113,37 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
   return (
     <OwnStepsContext.Provider value={ownSteps}>
       <div className="flex flex-col gap-5">
-        <GroupHeader org={org} group={group} groups={all} role={role} onManageFields={openFields} />
-        <PageTabs label={tabs.label} tabs={items} active={tab} onSelect={select} tabId={groupTabId} panelId={GROUP_PANEL_ID} />
-        <div role="tabpanel" id={GROUP_PANEL_ID} aria-labelledby={groupTabId(tab)} className="flex min-w-0 flex-col gap-8">
-          {panels[tab]()}
+        <GroupHeader org={org} group={group} groups={all} role={role} onManageFields={openFields} onLeave={release} />
+        <PageTabs label={tabs.label} tabs={items} active={tab} onSelect={select} tabId={groupTabId} panelId={groupPanelId} />
+        <div
+          role="tabpanel"
+          id={groupPanelId('variables')}
+          aria-labelledby={groupTabId('variables')}
+          hidden={tab !== 'variables'}
+          className={tab === 'variables' ? PANEL_CLASS : 'hidden'}
+        >
+          {/* Never keyed by the revision: a save of the schema bumps it, and
+              must not throw away an unsaved values draft. Nor by the values:
+              the draft follows the stored values itself while it is unedited
+              (useRevisionDraft), and such a key would remount it when its own
+              save lands, losing an edit typed during that save (backlogs
+              7.89, 7.90). It is keyed by the schema, so a schema change
+              restarts the values, because their fields changed with it. */}
+          <VariablesTab
+            key={JSON.stringify(group.schema)}
+            org={org}
+            group={group}
+            groups={all}
+            canWrite={canWrite}
+            onManageFields={openFields}
+            onDirtyChange={setValuesDirty}
+          />
         </div>
+        {tab !== 'variables' && (
+          <div role="tabpanel" id={groupPanelId(tab)} aria-labelledby={groupTabId(tab)} className={PANEL_CLASS}>
+            {panels[tab]()}
+          </div>
+        )}
         <FieldsDialog org={org} group={group} canWrite={canWrite} open={fieldsOpen} onClose={closeFields} />
       </div>
     </OwnStepsContext.Provider>

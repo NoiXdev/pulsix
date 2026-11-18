@@ -80,13 +80,19 @@ function levelName(l: Level, m: M): string {
   return l.kind === 'default' ? m.schemaDefault : l.name;
 }
 
-function levelKind(l: Level, m: M): string {
+/** levelKind says what a level is to the viewed group. `parentDepth` is
+ * the depth of the viewed group's direct parent: an ancestor there is the
+ * parent group, one further up an ancestor group. */
+function levelKind(l: Level, m: M, parentDepth: number): string {
   if (l.kind === 'default') return m.kind.default(l.name);
   if (l.kind === 'all' || l.kind === 'host') return m.kind[l.kind];
+  if (l.role === 'ancestor' && l.depth === parentDepth) return m.kind.parent;
   return m.kind[l.role ?? 'other'];
 }
 
 function InheritanceTable({ inh, m }: { inh: Inheritance; m: M }) {
+  const self = inh.levels.find((l) => l.kind === 'group' && l.role === 'self');
+  const parentDepth = self ? self.depth - 1 : Number.NaN;
   return (
     <Card>
       <div className="overflow-x-auto">
@@ -99,7 +105,7 @@ function InheritanceTable({ inh, m }: { inh: Inheritance; m: M }) {
               {inh.levels.map((l) => (
                 <th key={l.id} scope="col" className="px-3 py-2 font-medium">
                   <span className={l.kind === 'default' ? 'block text-foreground' : 'block font-mono text-foreground'}>{levelName(l, m)}</span>
-                  <span className="block font-normal">{levelKind(l, m)}</span>
+                  <span className="block font-normal">{levelKind(l, m, parentDepth)}</span>
                 </th>
               ))}
               <th scope="col" className="px-4 py-2 font-medium">
@@ -117,12 +123,12 @@ function InheritanceTable({ inh, m }: { inh: Inheritance; m: M }) {
                   </th>
                   {r.cells.map((c, i) => (
                     <td key={inh.levels[i].id} data-state={c.state} className="px-3 py-2 align-top">
-                      <CellValue cell={c} notSet={m.notSet} />
+                      <CellValue cell={c} m={m} />
                     </td>
                   ))}
                   <td className="px-4 py-2 align-top" data-result="">
                     <span className={w.kind === 'default' ? '' : 'font-mono'}>{levelName(w, m)}</span>
-                    <span className="text-muted-foreground"> · {levelKind(w, m)}</span>
+                    <span className="text-muted-foreground"> · {levelKind(w, m, parentDepth)}</span>
                     {r.tie.length > 0 && <span className="block text-xs text-muted-foreground">{m.tie(r.tie.join(', '))}</span>}
                   </td>
                 </tr>
@@ -136,14 +142,15 @@ function InheritanceTable({ inh, m }: { inh: Inheritance; m: M }) {
 }
 
 /** CellValue is one level's value: the winner in the accent pill, an
- * overridden one struck through, an unset one a muted dot. A masked secret
- * is the renderer's mask and stays one. */
-function CellValue({ cell, notSet }: { cell: Cell; notSet: string }) {
+ * overridden one struck through, an unset one a muted dot — each also said
+ * in words for a screen reader, which hears neither colour nor strike. A
+ * masked secret is the renderer's mask and stays one. */
+function CellValue({ cell, m }: { cell: Cell; m: M }) {
   if (cell.state === 'unset') {
     return (
       <span className="text-muted-foreground">
         <span aria-hidden="true">·</span>
-        <span className="sr-only">{notSet}</span>
+        <span className="sr-only">{m.notSet}</span>
       </span>
     );
   }
@@ -151,15 +158,21 @@ function CellValue({ cell, notSet }: { cell: Cell; notSet: string }) {
   const full = typeof cell.value === 'string' ? cell.value : JSON.stringify(cell.value);
   if (cell.state === 'win') {
     return (
-      <span title={full} className="font-mono">
-        <Pill tone="accent">{text}</Pill>
-      </span>
+      <>
+        <span title={full} className="font-mono">
+          <Pill tone="accent">{text}</Pill>
+        </span>
+        <span className="sr-only"> {m.cell.win}</span>
+      </>
     );
   }
   return (
-    <s title={full} className="font-mono text-muted-foreground">
-      {text}
-    </s>
+    <>
+      <s title={full} className="font-mono text-muted-foreground">
+        {text}
+      </s>
+      <span className="sr-only"> {m.cell.lost}</span>
+    </>
   );
 }
 

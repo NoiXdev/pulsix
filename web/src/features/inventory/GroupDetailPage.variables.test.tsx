@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { mockApi } from '../../test/mockApi.ts';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { group, routes, renderAt } from './groupPageTestKit.tsx';
 
 const SCHEMA = {
@@ -34,9 +34,10 @@ describe('GroupDetailPage variables', () => {
     // Only the group's own fields; the host-scoped one is the members'.
     expect(screen.queryByTestId('variable-domain')).not.toBeInTheDocument();
     expect(row('env').getByText('env')).toHaveClass('font-mono');
-    expect(row('env').getByText('string')).toBeInTheDocument();
+    // The type as the fields dialog names it.
+    expect(row('env').getByText('Text')).toBeInTheDocument();
     expect(row('env').getByText('required')).toBeInTheDocument();
-    expect(row('level').getByText('enum')).toBeInTheDocument();
+    expect(row('level').getByText('Choice')).toBeInTheDocument();
 
     await waitFor(() => expect(row('env').getByText('overrides prod (staging)')).toBeInTheDocument());
     expect(row('level').getByText('schema default info')).toBeInTheDocument();
@@ -88,5 +89,42 @@ describe('GroupDetailPage variables', () => {
     expect(await screen.findByLabelText('Environment')).toHaveValue('prod');
     expect(screen.getByRole('button', { name: 'Save values' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+  });
+
+  it('reads the ancestors from the organization preview when the scoped one lacks them', async () => {
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema: SCHEMA, vars: { env: 'prod' } }),
+        // No managed host below web: its own preview renders nothing above it.
+        'GET /api/v1/orgs/acme/inventory/preview': (req: MockRequest) => ({
+          inventory: req.search.get('group') ? { all: {} } : { all: { children: ['prod'] }, prod: { vars: { ntp: 'ntp.example.test' }, children: ['web'] }, web: {} },
+          connections: {},
+          warnings: [],
+        }),
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await waitFor(() => expect(row('ntp').getByText('inherits ntp.example.test from prod')).toBeInTheDocument());
+  });
+
+  it('lets the orphaned values be dropped without an edit, as the notice says', async () => {
+    const user = userEvent.setup();
+    let seen: MockRequest | undefined;
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema: SCHEMA, vars: { env: 'prod', gone: 1 }, orphaned: ['gone'] }),
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          seen = req;
+          return group({ schema: SCHEMA, vars: { env: 'prod' }, revision: 4 });
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    expect(await screen.findByText(/Saving this form drops them/)).toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save values' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    await screen.findByText('Group values saved');
+    expect(seen?.body).toEqual({ vars: { env: 'prod' } });
   });
 });

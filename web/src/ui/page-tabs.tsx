@@ -17,8 +17,11 @@ const TONE_VAR = { warn: 'var(--px-warn)', crit: 'var(--px-crit)' } as const;
  * the arrow keys, Home and End move between them and open the one they
  * land on (`via` tells the page which, so a click may add a history entry
  * and keyboard roving does not). The page owns which tab is open (it lives
- * in the URL) and the one tab panel, whose id is `panelId`; `tabId` names
- * each tab's button, which labels that panel while its tab is open.
+ * in the URL) and the tab panel, whose id is `panelId`; `tabId` names
+ * each tab's button, which labels that panel while its tab is open. A page
+ * that keeps a panel mounted while another tab is open (a form whose
+ * unsaved input must survive a tab switch) has one panel per tab, and
+ * `panelId` is then a function naming each tab's own.
  */
 export function PageTabs<T extends string>({
   label,
@@ -33,7 +36,7 @@ export function PageTabs<T extends string>({
   active: T;
   onSelect: (tab: T, via: 'click' | 'key') => void;
   tabId: (id: T) => string;
-  panelId: string;
+  panelId: string | ((id: T) => string);
 }) {
   const refs = useRef(new Map<T, HTMLButtonElement>());
 
@@ -62,7 +65,7 @@ export function PageTabs<T extends string>({
             role="tab"
             id={tabId(tab.id)}
             aria-selected={selected}
-            aria-controls={panelId}
+            aria-controls={typeof panelId === 'string' ? panelId : panelId(tab.id)}
             tabIndex={selected ? 0 : -1}
             onClick={() => onSelect(tab.id, 'click')}
             className={cn(

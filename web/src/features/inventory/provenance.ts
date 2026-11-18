@@ -44,7 +44,8 @@ export function ancestorVarsFrom(inventory: Readonly<Record<string, unknown>> | 
  * there is none (null) — as there is when nothing applies.
  */
 export function provenanceOf(field: SchemaField, own: unknown, ancestors: readonly AncestorVars[]): Provenance | null {
-  if (own === undefined && field.default !== undefined) return { kind: 'default', value: field.default };
+  // A null default is none: schema.Resolve writes no nil default.
+  if (own === undefined && field.default !== undefined && field.default !== null) return { kind: 'default', value: field.default };
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const { name, vars } = ancestors[i];
     if (vars === undefined) return null;

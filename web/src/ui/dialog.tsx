@@ -22,6 +22,12 @@ export interface DialogProps {
    * browser closes it anyway while `open` is still true, it shows itself
    * again at once instead of calling `onClose`. */
   persistent?: boolean;
+  /** Asked when Escape requests this dialog's close (the native `cancel`),
+   * after `dismissible` and `persistent` have let it through: false keeps
+   * the dialog open, and the caller closes it itself once it is done (a
+   * form with unsaved input asks first). Not called for a close the owner
+   * makes by passing `open={false}`. */
+  onCancel?: () => boolean;
 }
 
 const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
@@ -40,7 +46,7 @@ const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
  * heading inside it, so a test or assistive technology can find the
  * dialog by name: `getByRole('dialog', { name: 'Add credential' })`.
  */
-export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true, persistent = false }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true, persistent = false, onCancel }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   // Read by the `close` handler, which may run inside the effect below.
@@ -88,9 +94,11 @@ export function Dialog({ open, onClose, title, children, size = 'default', dismi
         onClose();
       }}
       // Escape sends `cancel` first; preventing it is the one way to keep
-      // the dialog open (the `close` above then never fires).
+      // the dialog open (the `close` above then never fires). It fires for
+      // the dialog whatever has the focus inside it.
       onCancel={(e) => {
-        if (e.target === e.currentTarget && (!dismissible || persistent)) e.preventDefault();
+        if (e.target !== e.currentTarget) return;
+        if (!dismissible || persistent || (onCancel && !onCancel())) e.preventDefault();
       }}
       aria-labelledby={titleId}
       // m-auto is not decoration: a native <dialog> centres itself in the

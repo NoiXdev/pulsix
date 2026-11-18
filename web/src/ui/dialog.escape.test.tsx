@@ -112,4 +112,29 @@ describe('Escape on a dialog', () => {
     expect(el.open).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // A dialog holding unsaved input asks before Escape throws it away,
+  // wherever the focus is inside it: onCancel returning false keeps it open
+  // and leaves the closing to the caller.
+  it('lets onCancel keep the dialog open on Escape, and let it go otherwise', async () => {
+    const onClose = vi.fn();
+    const onCancel = vi.fn(() => false);
+    const { rerender } = render(
+      <Dialog open onClose={onClose} title="Manage fields" onCancel={onCancel}>
+        <p>body</p>
+      </Dialog>,
+    );
+    await userEvent.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    expect(onClose).not.toHaveBeenCalled();
+
+    rerender(
+      <Dialog open onClose={onClose} title="Manage fields" onCancel={() => true}>
+        <p>body</p>
+      </Dialog>,
+    );
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

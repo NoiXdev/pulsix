@@ -26,7 +26,7 @@ import { FleetPage } from './features/fleet/FleetPage.tsx';
 import { AlertsPage } from './features/alerts/AlertsPage.tsx';
 import { GroupsPage } from './features/inventory/GroupsPage.tsx';
 import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
-import { formerSection, validateGroupSearch } from './features/inventory/groupTabs.ts';
+import { formerGroupLink, validateGroupSearch } from './features/inventory/groupTabs.ts';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
@@ -256,12 +256,9 @@ const groupDetailRoute = createRoute({
   // earlier pages' names (?tab=values, ?tab=children) are read as the tab
   // they became.
   validateSearch: validateGroupSearch,
-  // A section anchor of the page before the tabs (#members, bookmarks and
-  // older docs) is sent on to its tab.
-  beforeLoad: ({ search, params, location }) => {
-    const former = search.tab === undefined ? formerSection(location.hash) : undefined;
-    if (former && former !== 'variables') throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: former }, hash: '', replace: true });
-  },
+  // A link of an earlier page (#members, ?tab=schema; bookmarks and older
+  // docs) is sent on to where it meant.
+  beforeLoad: formerGroupLink,
   component: GroupDetailPage,
 });
 

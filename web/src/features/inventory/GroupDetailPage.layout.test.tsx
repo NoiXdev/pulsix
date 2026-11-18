@@ -56,7 +56,7 @@ describe('GroupDetailPage header', () => {
     );
     renderAt('/o/acme/groups/g1');
     await screen.findByTestId('group-facts');
-    await waitFor(() => expect(fact('Hosts')).toHaveTextContent('2, 1 to fill in · 3 with subgroups'));
+    await waitFor(() => expect(fact('Hosts')).toHaveTextContent('2, 1 to fill in · 3 managed incl. subgroups'));
   });
 
   it('says which group a jump host is inherited from', async () => {
@@ -388,6 +388,31 @@ describe('GroupDetailPage links from before the tabs', () => {
     renderAt('/o/acme/groups/g1?tab=children');
     expect(await screen.findByRole('link', { name: 'web_eu' })).toBeInTheDocument();
     expect(selectedTab()).toBe('Subgroups');
+  });
+
+  it('opens the fields for an old ?tab=schema link, for a writer', async () => {
+    mockApi(routes());
+    const { router } = renderAt('/o/acme/groups/g1?tab=schema', { browser: true });
+    expect(await screen.findByRole('dialog', { name: 'Manage fields' })).toBeInTheDocument();
+    expect(selectedTab()).toBe('Variables');
+    expect(router.state.location.search).toEqual({});
+  });
+
+  it('leaves a reader on Variables for an old ?tab=schema link', async () => {
+    mockApi(routes('viewer'));
+    const { router } = renderAt('/o/acme/groups/g1?tab=schema', { browser: true });
+    expect(await screen.findByLabelText('env')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Fields' })).not.toBeInTheDocument();
+    expect(selectedTab()).toBe('Variables');
+    await waitFor(() => expect(router.state.location.hash).toBe(''));
+  });
+
+  it('drops an old #values anchor', async () => {
+    mockApi(routes());
+    const { router } = renderAt('/o/acme/groups/g1#values', { browser: true });
+    expect(await screen.findByLabelText('env')).toBeInTheDocument();
+    expect(selectedTab()).toBe('Variables');
+    expect(router.state.location.hash).toBe('');
   });
 
   it('sends an old section anchor on to its tab', async () => {

@@ -69,7 +69,7 @@ export const deInventory: Messages['inventory'] = {
       subgroups: 'Untergruppen',
       jumpHost: 'Sprunghost',
     },
-    withSubgroups: (n: number) => `${n} mit Untergruppen`,
+    withSubgroups: (n: number) => `${n} verwaltet inkl. Untergruppen`,
     inheritedJumpHost: (name: string, group: string) => `${name} (von ${group})`,
     assignHost: 'Host zuweisen',
     subgroup: 'Untergruppe …',
@@ -109,7 +109,8 @@ export const deInventory: Messages['inventory'] = {
     schemaDefault: 'Schema-Standard',
     kind: {
       all: 'alle Hosts',
-      ancestor: 'übergeordnete Gruppe',
+      parent: 'übergeordnete Gruppe',
+      ancestor: 'Vorfahrengruppe',
       self: 'diese Gruppe',
       descendant: 'Untergruppe',
       other: 'weitere Gruppe des Hosts',
@@ -117,6 +118,7 @@ export const deInventory: Messages['inventory'] = {
       host: 'Host',
     },
     notSet: 'nicht gesetzt',
+    cell: { win: '(verwendet)', lost: '(überschrieben)' },
     tie: (groups: string) => `gleiche Tiefe wie ${groups}: die alphabetische Reihenfolge entscheidet`,
     legend: {
       label: 'Legende',

@@ -1,3 +1,5 @@
+import { redirect } from '@tanstack/react-router';
+
 /** The group page's tabs, in the order the strip shows them. */
 export const GROUP_TABS = ['variables', 'members', 'subgroups', 'inheritance', 'inventory'] as const;
 
@@ -6,6 +8,9 @@ export type GroupTab = (typeof GROUP_TABS)[number];
 /** The group page's search params: the open tab, absent for Variables. */
 export interface GroupSearch {
   tab?: GroupTab;
+  /** An old `?tab=schema` link, which the route's beforeLoad turns into
+   * `#schema` at once (formerGroupLink). The app never builds it. */
+  schema?: true;
 }
 
 /** The tab each earlier name of a part of the page became: the tabs of the
@@ -38,14 +43,40 @@ export function formerSection(hash: string): GroupTab | undefined {
 
 /** validateGroupSearch is the group route's validateSearch. Variables is the
  * default, so it — and anything unknown, which falls back to it — stays out
- * of the URL. */
+ * of the URL. An old `?tab=schema` is kept apart (`schema`), because the
+ * router hands beforeLoad the validated search only. */
 export function validateGroupSearch(search: Record<string, unknown>): GroupSearch {
+  if (search.tab === 'schema' || search.schema === true) return { tab: undefined, schema: true };
   const tab = parseGroupTab(search.tab);
   return { tab: tab === 'variables' ? undefined : tab };
 }
 
-/** The id of a tab's button, which labels the tab panel. */
+/** What the group route's beforeLoad gets, as far as formerGroupLink reads
+ * it. */
+export interface GroupRouteLoad {
+  search: GroupSearch;
+  params: { org: string; id: string };
+  location: { hash: string };
+}
+
+/**
+ * formerGroupLink is the group route's beforeLoad: it sends a link of an
+ * earlier page on to where it meant. A section anchor (`#members`) becomes
+ * its tab; `?tab=schema` becomes `#schema`, which opens the fields dialog
+ * for a writer (and leaves a reader on Variables); a `#values` anchor, which
+ * Variables already is, is dropped.
+ */
+export function formerGroupLink({ search, params, location }: GroupRouteLoad): void {
+  if (search.schema) {
+    throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: undefined }, hash: 'schema', replace: true });
+  }
+  const former = search.tab === undefined ? formerSection(location.hash) : undefined;
+  if (former && former !== 'variables') throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: former }, hash: '', replace: true });
+  if (location.hash === 'values') throw redirect({ to: '/o/$org/groups/$id', params, search, hash: '', replace: true });
+}
+
+/** The id of a tab's button, which labels its tab panel. */
 export const groupTabId = (id: GroupTab) => `group-tab-${id}`;
 
-/** The id of the one tab panel, which every tab controls. */
-export const GROUP_PANEL_ID = 'group-tab-panel';
+/** The id of a tab's panel, which its tab controls. */
+export const groupPanelId = (id: GroupTab) => `group-panel-${id}`;

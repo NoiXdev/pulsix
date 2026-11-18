@@ -64,7 +64,7 @@ export const enInventory = {
       subgroups: 'Subgroups',
       jumpHost: 'Jump host',
     },
-    withSubgroups: (n: number) => `${n} with subgroups`,
+    withSubgroups: (n: number) => `${n} managed incl. subgroups`,
     inheritedJumpHost: (name: string, group: string) => `${name} (from ${group})`,
     assignHost: 'Assign host',
     subgroup: 'Subgroup …',
@@ -104,7 +104,8 @@ export const enInventory = {
     schemaDefault: 'schema default',
     kind: {
       all: 'all hosts',
-      ancestor: 'parent group',
+      parent: 'parent group',
+      ancestor: 'ancestor group',
       self: 'this group',
       descendant: 'subgroup',
       other: 'other group of the host',
@@ -112,6 +113,7 @@ export const enInventory = {
       host: 'host',
     },
     notSet: 'not set',
+    cell: { win: '(used)', lost: '(overridden)' },
     tie: (groups: string) => `same depth as ${groups}: alphabetical order decides`,
     legend: {
       label: 'Legend',
