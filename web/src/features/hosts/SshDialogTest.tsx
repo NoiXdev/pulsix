@@ -26,7 +26,7 @@ export function SshDialogTest({
   const s = t.hosts.sshDialog;
   const latest = useHostTest(org, hostId);
   const latestTest = latest.data?.test;
-  const result = test.started?.read && latestTest && latestTest.at !== test.started.before ? latestTest : undefined;
+  const result = test.started?.read && latestTest && test.isThisRun(latestTest.at) ? latestTest : undefined;
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -44,7 +44,7 @@ export function SshDialogTest({
       )}
       {test.started && (
         <div className="flex flex-col gap-2" aria-live="polite">
-          {!test.started.read && <p className="text-xs text-muted-foreground">{s.testing}</p>}
+          {!test.started.read && <p className="text-xs text-muted-foreground">{test.queued ? s.queued : s.testing}</p>}
           {result && <ConnectionTestResult org={org} hostId={hostId} test={result} canWrite />}
           {test.started.read && !result && test.status && <p className="text-xs text-muted-foreground">{s.testEnded(test.status)}</p>}
           <Link to="/o/$org/runs/$id" params={{ org, id: test.started.jobId }} className="text-xs text-primary hover:underline">

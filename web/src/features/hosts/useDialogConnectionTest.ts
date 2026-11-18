@@ -7,8 +7,8 @@ import { useT } from '../../i18n/useT.ts';
 const POLL_MS = 1000;
 
 /** A started test: the run, the time of the result the host had before it
- * (a result with that time is not this test's), and whether the result has
- * been read since the run ended. */
+ * (the fallback while the run's own times are unknown), and whether the
+ * result has been read since the run ended. */
 interface Started {
   jobId: string;
   before?: string;
@@ -48,9 +48,23 @@ export function useDialogConnectionTest(org: string, hostId: string) {
     };
   }, [finished, jobId, qc, org, hostId]);
 
+  // A result is this run's when it was recorded at or after the run began
+  // (its own start, else its creation); only while the run's times are not
+  // known does "not the one the host had before" stand in.
+  const began = job.data?.job.started_at ?? job.data?.job.created_at;
+  const isThisRun = (at: string): boolean => {
+    if (!started) return false;
+    const from = began ? Date.parse(began) : NaN;
+    const when = Date.parse(at);
+    if (Number.isNaN(from) || Number.isNaN(when)) return at !== started.before;
+    return when >= from;
+  };
+
   return {
     started,
     status,
+    queued: status === 'queued',
+    isThisRun,
     error,
     pending: start.isPending || (!!started && !started.read),
     run: async () => {

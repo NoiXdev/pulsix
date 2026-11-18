@@ -4,11 +4,13 @@ import { Pill } from '../../ui/badge.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
 import { useHostChecks } from '../../api/hooks/useChecks.ts';
 import { useHostTest } from '../../api/hooks/useHostOps.ts';
+import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useHostSSH } from '../../api/hooks/useSsh.ts';
 import type { Host } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { routeLabel } from '../credentials/labels.ts';
 import { checkCounts, type CheckCounts } from './hostOverview.ts';
+import { effectiveUser } from './sshDraft.ts';
 import { useHostRoute } from './useHostRoute.ts';
 
 const NONE = '—';
@@ -43,14 +45,17 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
  * that may change it) opens the SSH settings. An unmanaged host is not
  * reached over SSH, and the card says so.
  */
-export function ConnectionSummary({ org, host, canChange, onChange }: { org: string; host: Host; canChange: boolean; onChange: () => void }) {
+export function ConnectionSummary({ org, host, canChange, canReadCredentials, onChange }: { org: string; host: Host; canChange: boolean; canReadCredentials: boolean; onChange: () => void }) {
   const t = useT();
   const o = t.hosts.detail.overview;
   const ssh = useHostSSH(org, host.managed ? host.id : '');
   const test = useHostTest(org, host.managed ? host.id : '');
   const route = useHostRoute(org, host);
+  const credentials = useCredentials(org, { enabled: host.managed && canReadCredentials });
   const s = ssh.data?.ssh;
-  const target = s ? `${s.username ? `${s.username}@` : ''}${host.address || host.name}:${s.port}` : NONE;
+  const credential = s?.credential_id ? credentials.data?.credentials?.find((x) => x.id === s.credential_id) : undefined;
+  const user = effectiveUser(s?.username, credential?.username);
+  const target = s ? `${user ? `${user}@` : ''}${host.address || host.name}:${s.port}` : NONE;
   const last = test.data?.test;
 
   return (

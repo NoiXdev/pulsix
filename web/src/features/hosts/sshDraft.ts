@@ -113,3 +113,9 @@ export function draftRoute({
 export function sshTarget(user: string, address: string, port: string | number): string {
   return `${user ? `${user}@` : ''}${address}:${port}`;
 }
+
+/** effectiveUser is the login name Pulsix uses: the one set on the host,
+ * else the credential's own, else none. */
+export function effectiveUser(username: string | undefined, credentialUsername: string | undefined): string {
+  return username?.trim() || credentialUsername || '';
+}

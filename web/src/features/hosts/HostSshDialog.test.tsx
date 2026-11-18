@@ -179,7 +179,7 @@ describe('HostSshDialog', () => {
     await user.type(d.getByLabelText('User'), 'x');
     await user.click(save(d));
 
-    expect(await d.findByRole('alert')).toHaveTextContent('credential is not an SSH credential');
+    expect(await d.findByRole('alert')).toHaveTextContent('Address saved; SSH settings not saved: credential is not an SSH credential');
     expect(screen.queryByText('CLOSED')).not.toBeInTheDocument();
     expect(patched).toBe(1);
     // The address is stored now; what is left to save is the SSH side.
@@ -273,6 +273,44 @@ describe('HostSshDialog', () => {
     expect(d.getByText('ok')).toBeInTheDocument();
     expect(d.getByRole('link', { name: 'Open run' })).toHaveAttribute('href', '/o/acme/runs/j1');
     expect(screen.queryByText('CLOSED')).not.toBeInTheDocument();
+  });
+
+  it('says Queued while the run waits for a worker', async () => {
+    const user = userEvent.setup();
+    mockApi(
+      routes({
+        'POST /api/v1/orgs/acme/hosts/h1/connection-test': { job_id: 'j1' },
+        'GET /api/v1/orgs/acme/jobs/j1': { job: { id: 'j1', kind: 'connection_test', status: 'queued', created_at: '2026-11-18T10:00:00Z' } },
+      }),
+    );
+    renderDialog();
+    const d = await dialog();
+
+    await user.click(await d.findByRole('button', { name: 'Test connection' }));
+
+    expect(await d.findByText('Queued…')).toBeInTheDocument();
+    expect(d.queryByText('Testing…')).not.toBeInTheDocument();
+  });
+
+  it('says the run ended without a result, and shows no result from before it', async () => {
+    const user = userEvent.setup();
+    mockApi(
+      routes({
+        'POST /api/v1/orgs/acme/hosts/h1/connection-test': { job_id: 'j1' },
+        'GET /api/v1/orgs/acme/jobs/j1': {
+          job: { id: 'j1', kind: 'connection_test', status: 'failed', created_at: '2026-11-18T10:00:00Z', started_at: '2026-11-18T10:00:01Z' },
+        },
+        // The only result is the old one, recorded long before this run.
+        'GET /api/v1/orgs/acme/hosts/h1/connection-test': TEST_RESULT('2026-11-01T10:00:00Z', false),
+      }),
+    );
+    renderDialog();
+    const d = await dialog();
+
+    await user.click(await d.findByRole('button', { name: 'Test connection' }));
+
+    expect(await d.findByText('The test ended (failed) without a result — the run says why.')).toBeInTheDocument();
+    expect(d.queryByText('connected (via bastion-a)')).not.toBeInTheDocument();
   });
 
   it('saves first, then tests, while there are changes: Save and test', async () => {

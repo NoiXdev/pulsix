@@ -29,13 +29,18 @@ export function HostAlertsTab({ org, host, role, actions, openAlerts }: { org: s
         <button
           type="button"
           aria-expanded={routesOpen}
+          aria-controls={routesOpen ? 'host-alert-routes' : undefined}
           onClick={() => setRoutesOpen((open) => !open)}
           className="flex items-center gap-1.5 self-start rounded text-[13px] font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           <ChevronRight size={14} className={cn('transition-transform', routesOpen && 'rotate-90')} />
           {t.hosts.detail.whoIsNotified}
         </button>
-        {routesOpen && <HostAlertRoutesCard org={org} hostId={host.id} canRead={may(role, 'channels.read')} />}
+        {routesOpen && (
+          <div id="host-alert-routes">
+            <HostAlertRoutesCard org={org} hostId={host.id} canRead={may(role, 'channels.read')} />
+          </div>
+        )}
       </div>
     </Section>
   );

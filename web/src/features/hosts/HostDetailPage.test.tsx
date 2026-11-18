@@ -105,6 +105,7 @@ describe('HostDetailPage', () => {
     expect(overview).toHaveAttribute('tabindex', '0');
     expect(tab('Checks')).toHaveAttribute('tabindex', '-1');
     overview.focus();
+    const entries = router.history.length;
     await user.keyboard('{ArrowRight}');
     expect(tab('Checks')).toHaveFocus();
     expect(router.state.location.search).toEqual({ tab: 'checks' });
@@ -112,6 +113,10 @@ describe('HostDetailPage', () => {
     expect(tab('Connection')).toHaveFocus();
     await user.keyboard('{ArrowRight}');
     expect(tab('Overview')).toHaveFocus();
+    // Roving with the keyboard replaces the entry; a click adds one.
+    expect(router.history.length).toBe(entries);
+    await user.click(tab('Alerts'));
+    expect(router.history.length).toBe(entries + 1);
   });
 
   it('opens the tab the URL names', async () => {
@@ -122,7 +127,7 @@ describe('HostDetailPage', () => {
     expect(selectedTab()).toBe('Connection');
     expect(await panel().findByRole('heading', { level: 3, name: 'SSH access' })).toBeInTheDocument();
     expect(panel().getByRole('heading', { level: 3, name: 'Agent' })).toBeInTheDocument();
-    expect(panel().getByRole('heading', { level: 2, name: 'Connection & SSH' })).toBeInTheDocument();
+    expect(panel().getByRole('heading', { level: 2, name: 'Connection' })).toBeInTheDocument();
   });
 
   it('falls back to Overview for a tab it does not know', async () => {
@@ -598,6 +603,8 @@ describe('HostDetailPage', () => {
       expect(await screen.findByText('last state: 2 warnings')).toBeInTheDocument();
       expect(screen.queryByText('2 warnings')).not.toBeInTheDocument();
       expect(screen.getByText(/This client is off/)).toBeInTheDocument();
+      // The Overview's checks summary says why its verdicts are muted.
+      expect(await screen.findByText('Not judged while the client is off.')).toBeInTheDocument();
       await waitFor(() => expect(document.querySelector('[data-tile]')).not.toBeNull());
       for (const tile of document.querySelectorAll('[data-tile]')) expect(tile).toHaveAttribute('data-tone', 'unknown');
     });

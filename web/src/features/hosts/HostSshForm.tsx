@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { ApiError } from '../../api/client.ts';
 import { useUpdateHost } from '../../api/hooks/useHosts.ts';
 import { useSetHostSSH } from '../../api/hooks/useSsh.ts';
@@ -18,7 +18,7 @@ import { SshDialogTest } from './SshDialogTest.tsx';
 import { SshJumpChoices } from './SshJumpChoices.tsx';
 import { SshKeySnippets } from './SshKeySnippets.tsx';
 import { StaleNotice } from './StaleNotice.tsx';
-import { addressChanged, draftOf, draftProblem, draftRoute, sameDraft, sshBody, sshChanged, sshTarget, type SshDraft } from './sshDraft.ts';
+import { addressChanged, draftOf, draftProblem, draftRoute, effectiveUser, sameDraft, sshBody, sshChanged, sshTarget, type SshDraft } from './sshDraft.ts';
 import { useDialogConnectionTest } from './useDialogConnectionTest.ts';
 import type { HostRoute } from './useHostRoute.ts';
 
@@ -72,6 +72,10 @@ export function HostSshForm({
   const [newCredentialName, setNewCredentialName] = useState<string | null>(null);
   const [newBastionName, setNewBastionName] = useState<string | null>(null);
 
+  // A save or a save-and-test in flight: pending is state and lags a
+  // double click in the same tick, this does not.
+  const busy = useRef(false);
+
   const dirty = !sameDraft(draft, saved);
   const pending = update.isPending || saveSsh.isPending;
   const set = (patch: Partial<SshDraft>) => {
@@ -85,7 +89,7 @@ export function HostSshForm({
   const inherited = draftRoute({ mode: 'inherit', bastionId: '', savedMode: current.bastion_mode, resolved: route, zoneBastionId: zone?.bastion_id, bastions });
   const inheritHint = inherited.approximate ? s.inheritZone(bastionNames(inherited.hops)) : s.inheritNow(`${routeLabel(inherited.source, t)} · ${bastionNames(inherited.hops)}`);
   const preview = draftRoute({ mode: draft.mode, bastionId: draft.bastionId, savedMode: current.bastion_mode, resolved: route, zoneBastionId: zone?.bastion_id, bastions });
-  const user = draft.username.trim() || credential?.username || '';
+  const user = effectiveUser(draft.username, credential?.username);
   const target = sshTarget(user, draft.address.trim() || host.name, draft.port.trim() || '22');
 
   /** save writes what changed; true when everything is stored. */
@@ -97,6 +101,7 @@ export function HostSshForm({
       return false;
     }
     const sent = draft;
+    let addressSaved = false;
     try {
       let revision = host.revision;
       let address = saved.address;
@@ -106,6 +111,7 @@ export function HostSshForm({
         });
         revision = res.host.revision;
         address = res.host.address;
+        addressSaved = true;
       }
       let ssh = current;
       if (sshChanged(sent, saved)) ssh = (await saveSsh.mutateAsync({ body: sshBody(sent), revision })).ssh;
@@ -114,26 +120,40 @@ export function HostSshForm({
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 412) setStale(true);
-      else setError(err instanceof Error ? err.message : t.hosts.ssh.saveFailed);
+      else {
+        const why = err instanceof Error ? err.message : t.hosts.ssh.saveFailed;
+        setError(addressSaved ? s.addressSavedSshFailed(why) : why);
+      }
       return false;
     }
   }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!dirty || pending) return;
-    if (await save()) {
-      toast.show(t.hosts.ssh.saved);
-      onClose();
+    if (!dirty || pending || busy.current) return;
+    busy.current = true;
+    try {
+      if (await save()) {
+        toast.show(t.hosts.ssh.saved);
+        onClose();
+      }
+    } finally {
+      busy.current = false;
     }
   }
 
   async function saveAndTest() {
-    if (dirty) {
-      if (!(await save())) return;
-      toast.show(t.hosts.ssh.saved);
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      if (dirty) {
+        if (!(await save())) return;
+        toast.show(t.hosts.ssh.saved);
+      }
+      await test.run();
+    } finally {
+      busy.current = false;
     }
-    await test.run();
   }
 
   async function requestClose() {

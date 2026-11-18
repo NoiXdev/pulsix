@@ -9,7 +9,7 @@ import { useT } from '../../i18n/useT.ts';
 import { kindName, routeLabel } from '../credentials/labels.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
 import { RouteChain } from './RouteChain.tsx';
-import { sshTarget } from './sshDraft.ts';
+import { effectiveUser, sshTarget } from './sshDraft.ts';
 import { useHostRoute } from './useHostRoute.ts';
 
 const NONE = '—';
@@ -50,7 +50,7 @@ export function HostSshSummary({
   const credential = s?.credential_id ? credentials.data?.credentials?.find((x) => x.id === s.credential_id) : undefined;
   const zone = zones.data?.zones?.find((z) => z.id === host.zone_id);
   const address = host.address || host.name;
-  const user = s?.username || credential?.username || '';
+  const user = effectiveUser(s?.username, credential?.username);
 
   let credentialText: ReactNode = c.none;
   if (credential) {

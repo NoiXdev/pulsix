@@ -75,8 +75,10 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
   const openAlerts = alerts?.open ?? 0;
   const tabs = t.hosts.detail.tabs;
 
-  const select = (next: HostTab) =>
-    void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id }, search: { tab: next === 'overview' ? undefined : next } });
+  // Arrow/Home/End roving replaces the history entry: stepping through the
+  // tabs with the keyboard must not fill the back button.
+  const select = (next: HostTab, via: 'click' | 'key' = 'click') =>
+    void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id }, search: { tab: next === 'overview' ? undefined : next }, replace: via === 'key' });
   // SSH access is a dialog over whichever tab is open; the Connection
   // tab's key snippets card opens it with the snippets unfolded.
   const [sshDialog, setSshDialog] = useState<{ snippets: boolean } | null>(null);

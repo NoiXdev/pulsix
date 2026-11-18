@@ -16,9 +16,10 @@ const TONE_VAR = { warn: 'var(--px-warn)', crit: 'var(--px-crit)' } as const;
  * HostTabs is the host page's tab strip (the WAI-ARIA tabs pattern): one
  * button per tab, the open one selected and the only one in the Tab order;
  * the arrow keys, Home and End move between them and open the one they
- * land on. The page owns which tab is open (it lives in the URL).
+ * land on (`via` tells the page which, so a click may add a history
+ * entry and keyboard roving does not). The page owns which tab is open (it lives in the URL).
  */
-export function HostTabs({ label, tabs, active, onSelect }: { label: string; tabs: HostTabItem[]; active: HostTab; onSelect: (tab: HostTab) => void }) {
+export function HostTabs({ label, tabs, active, onSelect }: { label: string; tabs: HostTabItem[]; active: HostTab; onSelect: (tab: HostTab, via: 'click' | 'key') => void }) {
   const refs = useRef(new Map<HostTab, HTMLButtonElement>());
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -27,7 +28,7 @@ export function HostTabs({ label, tabs, active, onSelect }: { label: string; tab
     if (!(e.key in next)) return;
     e.preventDefault();
     const target = tabs[(next[e.key] + tabs.length) % tabs.length];
-    onSelect(target.id);
+    onSelect(target.id, 'key');
     refs.current.get(target.id)?.focus();
   }
 
@@ -48,7 +49,7 @@ export function HostTabs({ label, tabs, active, onSelect }: { label: string; tab
             aria-selected={selected}
             aria-controls={HOST_PANEL_ID}
             tabIndex={selected ? 0 : -1}
-            onClick={() => onSelect(tab.id)}
+            onClick={() => onSelect(tab.id, 'click')}
             className={cn(
               '-mb-px flex shrink-0 items-center gap-1.5 border-b-2 py-2.5 text-[13px] whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
               selected ? 'border-primary font-semibold text-foreground' : 'border-transparent font-medium text-muted-foreground hover:text-foreground',

@@ -40,7 +40,7 @@ export function HostOverviewTab({ org, host, role, actions, openAlerts, frozen, 
   const runs = (
     <HostRunsSection org={org} hostId={host.id} limit={OVERVIEW_RUNS} actions={<SectionAction onClick={() => onTab('runs')}>{o.allRuns}</SectionAction>} />
   );
-  const connection = <ConnectionSummary org={org} host={host} canChange={may(role, 'inventory.write')} onChange={onSshAccess} />;
+  const connection = <ConnectionSummary org={org} host={host} canChange={may(role, 'inventory.write')} canReadCredentials={may(role, 'credentials.read')} onChange={onSshAccess} />;
 
   if (!host.monitored) {
     return (
