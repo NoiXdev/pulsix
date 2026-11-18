@@ -95,8 +95,15 @@ func (l *ExpiryLoop) Run(ctx context.Context) {
 // forget up to ExpiryRoundLimit quiet items and then up to as many dead
 // metrics under one deadline, log one line with both per-organization
 // counts — INFO, or ERROR naming what failed. The metric half runs even
-// when the item half failed. A panic is recovered and logged with its
-// stack so it cannot take the manager down.
+// when the item half failed. The deadline is shared, not split: an item
+// half that used all of ExpiryRoundTimeout (a host whose evaluation lock
+// stays held) leaves the metric half an expired context, so it forgets
+// nothing that round and reports the deadline as its error; the next
+// round tries again. The messages keep their "item expiry" names for log
+// continuity although the round covers metrics too; the ERROR line's
+// failed attribute says which half failed: items, metrics or
+// items,metrics. A panic is recovered and logged with its stack so it
+// cannot take the manager down.
 func (l *ExpiryLoop) Round(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -119,11 +126,24 @@ func (l *ExpiryLoop) Round(ctx context.Context) {
 	counts, itemErr := l.forgetter.ForgetExpired(rctx, l.period, ExpiryRoundLimit)
 	metrics, metricErr := l.forgetter.ForgetExpiredMetrics(rctx, l.period, ExpiryRoundLimit)
 	if err := errors.Join(itemErr, metricErr); err != nil {
-		l.log.ErrorContext(ctx, "item expiry round failed", "err", err,
+		l.log.ErrorContext(ctx, "item expiry round failed", "err", err, "failed", failedHalves(itemErr, metricErr),
 			"forgotten", orgCounts(counts), "forgotten_metrics", orgCounts(metrics))
 		return
 	}
 	l.log.InfoContext(ctx, "item expiry round", "forgotten", orgCounts(counts), "forgotten_metrics", orgCounts(metrics))
+}
+
+// failedHalves names the halves of a round that failed, for the ERROR
+// line's failed attribute.
+func failedHalves(itemErr, metricErr error) string {
+	switch {
+	case itemErr != nil && metricErr != nil:
+		return "items,metrics"
+	case itemErr != nil:
+		return "items"
+	default:
+		return "metrics"
+	}
 }
 
 // orgCounts renders the per-organization counts as a loggable map.

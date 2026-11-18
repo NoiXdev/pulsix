@@ -15,8 +15,10 @@ import (
 // in the same order and for the same reasons (ForgetItem's doc comment):
 //
 //  1. LockHostEvalCursor, waited for.
-//  2. steps.Proceed, with the metric's reading and its item's newest read
-//     under the lock.
+//  2. steps.Proceed, with the metric's reading, its item's newest
+//     error-free reading and the item's other row count, read under the
+//     lock — the expiry's re-check and the manual forget's last-row
+//     refusal.
 //  3. DeleteMetricCurrent, skipping a row an in-flight ingest holds;
 //     nothing deleted means nothing to forget.
 //  4. The metric's states and state-change history. The item's
@@ -50,7 +52,9 @@ func forgetMetric(ctx context.Context, tx pgx.Tx, ref MetricRef, steps MetricFor
 		if err != nil {
 			return fmt.Errorf("read metric newest: %w", err)
 		}
-		if !steps.Proceed(MetricNewest{Found: n.MetricRows > 0, Metric: n.MetricAt, Item: n.ItemNewest}) {
+		if !steps.Proceed(MetricNewest{
+			Found: n.MetricRows > 0, Metric: n.MetricAt, Item: n.ItemNewest, Siblings: int(n.ItemRows - n.MetricRows),
+		}) {
 			return errForgetDeclined
 		}
 	}

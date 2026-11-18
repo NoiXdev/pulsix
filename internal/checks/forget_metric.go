@@ -16,12 +16,22 @@ package checks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// ErrLastMetric refuses a manual metric forget that would remove its
+// item's last current row (backlog 3.88, final review): the item's
+// discovery row (check_items) would stay behind with nothing that could
+// ever remove it — the item expiry and the item forget both start from
+// check_current. Forgetting the whole item is the way. The metric expiry
+// never meets it: an item's newest error-free reading is never due, and
+// an item with none has nothing due at all.
+var ErrLastMetric = errors.New("this is the item's last value; forget the item instead")
 
 // MetricRef names one metric of one item of one host.
 type MetricRef struct {
@@ -31,12 +41,16 @@ type MetricRef struct {
 
 // MetricNewest is what the store reads about a metric inside its forget
 // transaction, after the host's evaluation lock: whether the metric still
-// has a current row, when that reading was taken, and the newest reading
-// of its item over all of the item's metrics. Metric is meaningless when
-// Found is false.
+// has a current row, when that reading was taken, the newest error-free
+// reading of its item over all of the item's metrics, and how many other
+// current rows (Siblings) the item has, error rows included. Metric is
+// meaningless when Found is false; Item is the Unix epoch when the item
+// has no error-free reading at all — only an error-free reading proves
+// the item still reports (rules.Vanished's doc comment).
 type MetricNewest struct {
 	Found        bool
 	Metric, Item time.Time
+	Siblings     int
 }
 
 // MetricForgetSteps are ForgetSteps for one metric: Proceed (optional)
@@ -50,10 +64,10 @@ type MetricForgetSteps struct {
 
 // metricExpired is the metric expiry's rule (ListExpiredMetrics is the
 // same rule in SQL, for the selection): the metric's reading is older than
-// its item's newest reading by strictly more than period. The item's
-// newer reading is the proof that the check still runs on the item; a
-// whole item that went quiet together has none, and is the item expiry's
-// to judge.
+// its item's newest error-free reading by strictly more than period. The
+// item's newer reading is the proof that the check still reports the
+// item; a whole item that went quiet together has none, and is the item
+// expiry's to judge, and an item with nothing but errors has none either.
 func metricExpired(n MetricNewest, period time.Duration) bool {
 	return n.Found && n.Metric.Before(n.Item.Add(-period))
 }
@@ -64,8 +78,10 @@ func metricExpired(n MetricNewest, period time.Duration) bool {
 // transaction. The item's other metrics and its discovery row stay.
 // ErrNotFound means the metric has no current value to forget (never
 // reported, already forgotten, or its row being written by an ingest at
-// this very moment, which then lands after the forget anyway). item may
-// be "", the whole-host item; checkKey and metric are required.
+// this very moment, which then lands after the forget anyway).
+// ErrLastMetric means it is its item's last current row, checked under
+// the host's evaluation lock: forget the item instead. item may be "", the
+// whole-host item; checkKey and metric are required.
 func (s *Service) ForgetMetric(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item, metric string) error {
 	if s.alerts == nil {
 		return errNoAlertCloser
@@ -74,9 +90,19 @@ func (s *Service) ForgetMetric(ctx context.Context, orgID, hostID uuid.UUID, che
 		return fmt.Errorf("%w: check_key and metric are required", ErrInvalidInput)
 	}
 	ref := MetricRef{OrgID: orgID, HostID: hostID, CheckKey: checkKey, Item: item, Metric: metric}
-	forgot, err := s.store.ForgetMetric(ctx, ref, MetricForgetSteps{Within: s.closeMetricAlerts(ctx, ref, s.now())})
+	last := false
+	forgot, err := s.store.ForgetMetric(ctx, ref, MetricForgetSteps{
+		Proceed: func(n MetricNewest) bool {
+			last = n.Found && n.Siblings == 0
+			return !last
+		},
+		Within: s.closeMetricAlerts(ctx, ref, s.now()),
+	})
 	if err != nil {
 		return fmt.Errorf("forget metric: %w", err)
+	}
+	if last {
+		return ErrLastMetric
 	}
 	if !forgot {
 		return ErrNotFound

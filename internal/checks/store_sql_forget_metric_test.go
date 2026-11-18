@@ -36,6 +36,18 @@ func metricRows(t *testing.T, d *db.DB, table string, host uuid.UUID, key, item,
 	return n
 }
 
+// putCurrentErr is putCurrent for a reading that failed: an error row,
+// no value.
+func putCurrentErr(t *testing.T, d *db.DB, org, host uuid.UUID, key, item, metric string, at time.Time) {
+	t.Helper()
+	msg := "cannot open device"
+	if err := gen.New(d.Pool()).UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
+		OrgID: org, HostID: host, CheckKey: key, Item: item, Metric: metric, At: at, Error: &msg,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // metricRuleRows is a metric's check_states plus check_state_changes rows.
 func metricRuleRows(t *testing.T, d *db.DB, host uuid.UUID, key, item, metric string) int {
 	t.Helper()
@@ -230,6 +242,7 @@ func TestIngestRacingTheMetricForgetLandsAfter(t *testing.T) {
 	}
 	ingestDone := make(chan error, 1)
 	within := false
+	var seen checks.MetricNewest
 
 	// Bounded: a forget that waited for the ingest's row would wait for
 	// ever (the ingest waits on the forget's cursor), so the bound turns
@@ -238,7 +251,8 @@ func TestIngestRacingTheMetricForgetLandsAfter(t *testing.T) {
 	defer cancel()
 	forgot, err := st.ForgetMetric(bounded, checks.MetricRef{OrgID: org, HostID: host, CheckKey: "http", Item: "", Metric: "http.dns_ms"},
 		checks.MetricForgetSteps{
-			Proceed: func(checks.MetricNewest) bool {
+			Proceed: func(n checks.MetricNewest) bool {
+				seen = n
 				// The forget holds the cursor now; the ingest reaches its
 				// MarkHostDirty and has to wait for the forget to end.
 				go func() {
@@ -255,6 +269,12 @@ func TestIngestRacingTheMetricForgetLandsAfter(t *testing.T) {
 		})
 	if err != nil || forgot {
 		t.Fatalf("forget = %v, %v; want false, nil (the only row was the ingest's)", forgot, err)
+	}
+	// READ COMMITTED: the re-check saw the last committed reading, not the
+	// ingest's uncommitted one — which is why the expiry's own Proceed can
+	// say yes here and the SKIP LOCKED delete is what declines.
+	if !seen.Found || !seen.Metric.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("Proceed saw %+v, want the committed reading at %v", seen, now.Add(-time.Minute))
 	}
 	if within {
 		t.Fatal("Within ran for a forget that deleted nothing")
@@ -275,6 +295,108 @@ func TestIngestRacingTheMetricForgetLandsAfter(t *testing.T) {
 	}
 }
 
+// TestIngestHoldingASiblingDoesNotStopTheMetricForget: the SKIP LOCKED
+// delete skips only the forgotten metric's own row. An ingest that holds a
+// sibling of the same item — updated, not yet committed, then waiting on
+// the forget's cursor — leaves the target free: the forget deletes it and
+// succeeds, and the ingest's sibling reading lands after it.
+func TestIngestHoldingASiblingDoesNotStopTheMetricForget(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-forget-metric-sibling")
+	host := seedHost(t, d, org, "forget-metric-sibling-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	putCurrent(t, d, org, host, "http", "", "http.dns_ms", now.Add(-time.Hour))
+	putCurrent(t, d, org, host, "http", "", "http.up", now.Add(-time.Minute))
+	st := checks.NewSQLStore(d)
+
+	ingest, pid := beginHolder(t, d)
+	q := gen.New(ingest)
+	if _, err := q.UpdateCheckCurrent(ctx, gen.UpdateCheckCurrentParams{
+		OrgID: org, HostID: host, CheckKey: "http", Item: "", Metric: "http.up", Value: f64(1), At: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ingestDone := make(chan error, 1)
+	within := false
+
+	bounded, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	forgot, err := st.ForgetMetric(bounded, checks.MetricRef{OrgID: org, HostID: host, CheckKey: "http", Item: "", Metric: "http.dns_ms"},
+		checks.MetricForgetSteps{
+			Proceed: func(checks.MetricNewest) bool {
+				go func() {
+					if err := q.MarkHostDirty(ctx, gen.MarkHostDirtyParams{OrgID: org, HostID: host}); err != nil {
+						ingestDone <- err
+						return
+					}
+					ingestDone <- ingest.Commit(ctx)
+				}()
+				waitBlockedByAny(t, d, pid)
+				return true
+			},
+			Within: func(pgx.Tx) error { within = true; return nil },
+		})
+	if err != nil || !forgot {
+		t.Fatalf("forget = %v, %v; want true, nil (only a sibling was held)", forgot, err)
+	}
+	if !within {
+		t.Fatal("Within did not run for a forget that deleted the metric")
+	}
+	if err := <-ingestDone; err != nil {
+		t.Fatalf("the ingest racing the forget failed: %v", err)
+	}
+	if n := metricRows(t, d, "check_current", host, "http", "", "http.dns_ms"); n != 0 {
+		t.Fatalf("the forgotten metric keeps %d rows", n)
+	}
+	var at time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT at FROM check_current WHERE host_id = $1 AND check_key = 'http' AND item = '' AND metric = 'http.up'`,
+		host).Scan(&at); err != nil {
+		t.Fatalf("the sibling's reading: %v", err)
+	}
+	if !at.Equal(now) {
+		t.Fatalf("sibling's reading at %v, want the ingest's %v", at, now)
+	}
+}
+
+// TestForgetMetricRefusesTheItemsLastValueInTheStore (backlog 3.88, final review):
+// forgetting the metric that is its item's only current row would leave
+// the item's discovery row behind with nothing that could ever remove it
+// (the item expiry and the item forget both start from check_current), so
+// the manual forget refuses it with ErrLastMetric and changes nothing;
+// forgetting the whole item is the way. A sibling is still forgotten.
+func TestForgetMetricRefusesTheItemsLastValueInTheStore(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-forget-metric-last")
+	host := seedHost(t, d, org, "forget-metric-last-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := newForgetService(d, now)
+	scoped := db.WithOrgScope(ctx, org)
+	putCurrent(t, d, org, host, "docker", "web", "running", now.Add(-time.Hour))
+	putCurrent(t, d, org, host, "docker", "web", "restarts", now)
+	putRuleState(t, gen.New(d.Pool()), org, host, "docker", "web", "running")
+	dirtyBefore, _ := cursorDirtyAt(t, d, host)
+
+	if err := svc.ForgetMetric(scoped, org, host, "docker", "web", "running"); err != nil {
+		t.Fatalf("forget a sibling: %v", err)
+	}
+	if err := svc.ForgetMetric(scoped, org, host, "docker", "web", "restarts"); !errors.Is(err, checks.ErrLastMetric) {
+		t.Fatalf("forget the last value = %v, want ErrLastMetric", err)
+	}
+	if n := metricRows(t, d, "check_current", host, "docker", "web", "restarts"); n != 1 {
+		t.Fatalf("a refused forget removed the row: %d left", n)
+	}
+	dirtyAfterSibling, _ := cursorDirtyAt(t, d, host)
+	if !dirtyAfterSibling.After(dirtyBefore) {
+		t.Fatal("the sibling forget did not mark the host dirty")
+	}
+	// An item whose only row is an error is no different: it is still the
+	// item's last current row.
+	putCurrentErr(t, d, org, host, "smart", "/dev/sda", "smart.passed", now)
+	if err := svc.ForgetMetric(scoped, org, host, "smart", "/dev/sda", "smart.passed"); !errors.Is(err, checks.ErrLastMetric) {
+		t.Fatalf("forget an error-only item's last row = %v, want ErrLastMetric", err)
+	}
+}
+
 // TestForgetMetricProceedSeesTheReadingsAndCanDecline: the expiry's
 // re-check runs inside the forget transaction with the metric's own
 // reading and its item's newest, and a decline leaves everything as it
@@ -287,6 +409,9 @@ func TestForgetMetricProceedSeesTheReadingsAndCanDecline(t *testing.T) {
 	old := now.Add(-time.Hour)
 	putCurrent(t, d, org, host, "http", "", "http.dns_ms", old)
 	putCurrent(t, d, org, host, "http", "", "http.up", now)
+	// A fresher error is a sibling but not the item's newest: only an
+	// error-free reading proves the item still reports (spec item 1).
+	putCurrentErr(t, d, org, host, "http", "", "http.status_code", now.Add(time.Minute))
 	putCurrent(t, d, org, host, "cpu", "", "usage", now.Add(time.Minute)) // another check: no say
 	dirtyBefore, _ := cursorDirtyAt(t, d, host)
 
@@ -301,8 +426,8 @@ func TestForgetMetricProceedSeesTheReadingsAndCanDecline(t *testing.T) {
 	if err != nil || forgot {
 		t.Fatalf("declined forget = %v, %v, want false, nil", forgot, err)
 	}
-	if !seen.Found || !seen.Metric.Equal(old) || !seen.Item.Equal(now) {
-		t.Fatalf("Proceed saw %+v, want found, metric %v, item newest %v", seen, old, now)
+	if !seen.Found || !seen.Metric.Equal(old) || !seen.Item.Equal(now) || seen.Siblings != 2 {
+		t.Fatalf("Proceed saw %+v, want found, metric %v, item newest %v, 2 siblings", seen, old, now)
 	}
 	if within {
 		t.Fatal("Within ran for a declined forget")
@@ -342,30 +467,43 @@ func TestExpiredMetricsBoundaries(t *testing.T) {
 	type reading struct {
 		key, item, metric string
 		at                time.Time
+		failed            bool
 	}
 	cases := []struct {
 		name     string
 		readings []reading
 		due      map[string]bool // metric of ("http", "") -> due
 	}{
-		{"exactly the period behind", []reading{{"http", "", "dns", newest.Add(-period)}, {"http", "", "up", newest}},
+		{"exactly the period behind", []reading{{"http", "", "dns", newest.Add(-period), false}, {"http", "", "up", newest, false}},
 			map[string]bool{"dns": false, "up": false}},
-		{"a second more", []reading{{"http", "", "dns", newest.Add(-period - sec)}, {"http", "", "up", newest}},
+		{"a second more", []reading{{"http", "", "dns", newest.Add(-period - sec), false}, {"http", "", "up", newest, false}},
 			map[string]bool{"dns": true, "up": false}},
-		{"wholly dead item", []reading{{"http", "", "dns", now.Add(-60 * 24 * time.Hour)}, {"http", "", "up", now.Add(-60*24*time.Hour + time.Minute)}},
+		{"wholly dead item", []reading{{"http", "", "dns", now.Add(-60 * 24 * time.Hour), false}, {"http", "", "up", now.Add(-60*24*time.Hour + time.Minute), false}},
 			map[string]bool{"dns": false, "up": false}},
-		{"fresh metrics", []reading{{"http", "", "dns", now}, {"http", "", "up", now}},
+		{"fresh metrics", []reading{{"http", "", "dns", now, false}, {"http", "", "up", now, false}},
 			map[string]bool{"dns": false, "up": false}},
+		// Only an error-free reading is the item's newest (spec item 1):
+		// an item whose only fresh row is an error — the SMART disk
+		// smartctl cannot open — has no metric selected; an old error row
+		// behind a fresh error-free sibling is due like any other.
+		{"the only fresh row is an error", []reading{{"http", "", "dns", now.Add(-30 * 24 * time.Hour), false}, {"http", "", "up", newest, true}},
+			map[string]bool{"dns": false, "up": false}},
+		{"an old error behind a fresh value", []reading{{"http", "", "dns", now.Add(-30 * 24 * time.Hour), true}, {"http", "", "up", newest, false}},
+			map[string]bool{"dns": true, "up": false}},
 		// Only the metric's own item counts: a fresh reading of another
 		// item of the check, or of another check, proves nothing about it.
 		{"another item and another check are fresh", []reading{
-			{"http", "", "dns", now.Add(-30 * 24 * time.Hour)}, {"http", "api", "dns", now}, {"cpu", "", "dns", now}},
+			{"http", "", "dns", now.Add(-30 * 24 * time.Hour), false}, {"http", "api", "dns", now, false}, {"cpu", "", "dns", now, false}},
 			map[string]bool{"dns": false}},
 	}
 	hosts := make([]uuid.UUID, len(cases))
 	for i, tc := range cases {
 		hosts[i] = seedHost(t, d, org, "metric-expiry-"+uuid.NewString()[:8])
 		for _, r := range tc.readings {
+			if r.failed {
+				putCurrentErr(t, d, org, hosts[i], r.key, r.item, r.metric, r.at)
+				continue
+			}
 			putCurrent(t, d, org, hosts[i], r.key, r.item, r.metric, r.at)
 		}
 	}

@@ -767,7 +767,7 @@ const listExpiredMetrics = `-- name: ListExpiredMetrics :many
 SELECT m.org_id, m.host_id, m.check_key, m.item, m.metric
 FROM (
   SELECT org_id, host_id, check_key, item, metric, at,
-         max(at) OVER (PARTITION BY host_id, check_key, item) AS item_newest
+         max(at) FILTER (WHERE error IS NULL) OVER (PARTITION BY host_id, check_key, item) AS item_newest
   FROM check_current
 ) m
 WHERE m.at < m.item_newest - make_interval(secs => $1::double precision)
@@ -791,14 +791,18 @@ type ListExpiredMetricsRow struct {
 // The metric expiry's selection (backlog 3.88, spec 2026-11-18 item 5),
 // across every organization — unscoped on the bare pool like
 // ListExpiredItems, in the same hourly round. A metric is due when its
-// reading is older than its own item's newest reading (max at over the
-// item's metrics) by strictly more than period: the item's newer reading
-// is the proof of life, so a host that stopped reporting, or an item that
-// went quiet as a whole, never has a metric selected here — those are the
-// item expiry's business. The item's newest itself is never due. Oldest
-// first, one pass over check_current with a window per item.
-// checks.metricExpired is the same rule in Go, over MetricNewest, for the
-// re-check inside each metric's own forget transaction.
+// reading is older than its own item's newest error-free reading (max at
+// over the item's metrics, errors left out) by strictly more than period:
+// the item's newer reading is the proof of life, so a host that stopped
+// reporting, or an item that went quiet as a whole, never has a metric
+// selected here — those are the item expiry's business. Only an
+// error-free reading counts (spec 2026-11-18 item 1): an error proves the
+// collection ran, not that the other metrics stopped, so an item whose
+// only fresh rows are errors (a SMART disk smartctl cannot open) has a
+// NULL item_newest and nothing selected. The item's newest itself is
+// never due. Oldest first, one pass over check_current with a window per
+// item. checks.metricExpired is the same rule in Go, over MetricNewest,
+// for the re-check inside each metric's own forget transaction.
 func (q *Queries) ListExpiredMetrics(ctx context.Context, arg ListExpiredMetricsParams) ([]ListExpiredMetricsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredMetrics, arg.PeriodSeconds, arg.Lim)
 	if err != nil {
@@ -913,7 +917,8 @@ const metricNewest = `-- name: MetricNewest :one
 SELECT
   count(*) FILTER (WHERE c.metric = $1) AS metric_rows,
   COALESCE(max(c.at) FILTER (WHERE c.metric = $1), 'epoch')::timestamptz AS metric_at,
-  COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest
+  COALESCE(max(c.at) FILTER (WHERE c.error IS NULL), 'epoch')::timestamptz AS item_newest,
+  count(*) AS item_rows
 FROM check_current c
 WHERE c.org_id = $2 AND c.host_id = $3
   AND c.check_key = $4 AND c.item = $5
@@ -931,14 +936,19 @@ type MetricNewestRow struct {
 	MetricRows int64     `json:"metric_rows"`
 	MetricAt   time.Time `json:"metric_at"`
 	ItemNewest time.Time `json:"item_newest"`
+	ItemRows   int64     `json:"item_rows"`
 }
 
-// The metric expiry's re-check inside the forget transaction (backlog
-// 3.88), after the cursor lock: whether the metric still has a current
-// row and when it was taken, and its item's newest reading over all of
-// the item's metrics. checks.metricExpired applies ListExpiredMetrics'
-// rule to them. 'epoch' stands in for "no row" so the generated scan never
-// meets a NULL; metric_rows says whether metric_at is real.
+// The metric forget's re-check inside its transaction (backlog 3.88),
+// after the cursor lock: whether the metric still has a current row and
+// when it was taken, its item's newest error-free reading over all of the
+// item's metrics, and how many current rows the item has in all.
+// checks.metricExpired applies ListExpiredMetrics' rule to the first
+// three; the manual forget refuses the item's last row (item_rows equal
+// to metric_rows). Only an error-free reading proves the item still
+// reports (spec 2026-11-18 item 1): an item with nothing but errors has
+// no item_newest. 'epoch' stands in for "no row" so the generated scan
+// never meets a NULL; metric_rows says whether metric_at is real.
 func (q *Queries) MetricNewest(ctx context.Context, arg MetricNewestParams) (MetricNewestRow, error) {
 	row := q.db.QueryRow(ctx, metricNewest,
 		arg.Metric,
@@ -948,7 +958,12 @@ func (q *Queries) MetricNewest(ctx context.Context, arg MetricNewestParams) (Met
 		arg.Item,
 	)
 	var i MetricNewestRow
-	err := row.Scan(&i.MetricRows, &i.MetricAt, &i.ItemNewest)
+	err := row.Scan(
+		&i.MetricRows,
+		&i.MetricAt,
+		&i.ItemNewest,
+		&i.ItemRows,
+	)
 	return i, err
 }
 

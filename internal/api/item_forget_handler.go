@@ -25,13 +25,15 @@ import (
 // item — the host page's Forget on a vanished row. Left out, the whole
 // item is forgotten as before. Sent, it must be non-empty and sent once:
 // metric= (empty) is refused rather than read as "no metric", which would
-// forget every metric of the item.
+// forget every metric of the item. The item's last current row is refused
+// with 409 (checks.ErrLastMetric): forgetting it alone would leave the
+// item's discovery row behind for good, so the item forget is the way.
 type forgetItemInput struct {
 	Org       string `path:"org"`
 	ID        string `path:"id"`
 	CheckKey  string `query:"check_key" doc:"Required, once: the check the item belongs to"`
 	Item      string `query:"item" doc:"Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item"`
-	Metric    string `query:"metric" doc:"Optional, once, non-empty: forget only this metric of the item, URL-encoded; left out, the whole item is forgotten"`
+	Metric    string `query:"metric" doc:"Optional, once, non-empty: forget only this metric of the item, URL-encoded; left out, the whole item is forgotten. 409 when it is the item's last current value: forget the item instead"`
 	itemSet   bool
 	metricSet bool
 	repeated  bool
@@ -63,8 +65,9 @@ func (in *forgetItemInput) Resolve(ctx huma.Context) []error {
 // With metric set (backlog 3.88) the route forgets that one metric of the
 // item instead (checks.ForgetMetric): its current value, rule state and
 // history, and its open alert; the item's other metrics and its discovery
-// row stay. Same role, same 404 when there is nothing to forget, an audit
-// summary naming the metric.
+// row stay. Same role, same 404 when there is nothing to forget, 409 when
+// the metric is the item's last current value, an audit summary naming
+// the metric.
 //
 // The audit entry is the middleware's, written after the forget's own
 // transaction has committed — the same order every other audited route

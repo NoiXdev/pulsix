@@ -506,6 +506,11 @@ func mapChecksErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict("a monitoring group with this name already exists")
 	case errors.Is(err, checks.ErrKeyTaken):
 		return huma.Error409Conflict("a check with this key already exists at this scope")
+	case errors.Is(err, checks.ErrLastMetric):
+		// Backlog 3.88: the metric is its item's last current row. Not a
+		// value the caller could fix in this request, but a different one
+		// works — the item forget, which leaves metric out.
+		return huma.Error409Conflict("this is the item's last value; forget the item instead (leave out metric)")
 	case errors.Is(err, checks.ErrForbidden):
 		// spec v0.2f decision 6: a projected check definition cannot be
 		// deleted from inside an organization. repos.ErrForbidden's own

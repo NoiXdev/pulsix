@@ -131,6 +131,11 @@ func TestExpiryRoundForgetsMetricsAfterAnItemFailure(t *testing.T) {
 	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "1 of 3 failed") || !strings.Contains(out, metricOrg.String()) {
 		t.Fatalf("log: %s", out)
 	}
+	// The message keeps its name for log continuity; failed says which
+	// half of the round it was.
+	if !strings.Contains(out, "failed=items ") {
+		t.Fatalf("log does not name the failed half: %s", out)
+	}
 }
 
 // TestExpiryRoundLogsAMetricFailure: the metric half's error makes the
@@ -142,6 +147,21 @@ func TestExpiryRoundLogsAMetricFailure(t *testing.T) {
 	newLoop(f, &fakeLocker{got: true}, time.Hour, &buf).Round(context.Background())
 	out := buf.String()
 	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "metric boom") || !strings.Contains(out, org.String()) {
+		t.Fatalf("log: %s", out)
+	}
+	if !strings.Contains(out, "failed=metrics ") {
+		t.Fatalf("log does not name the failed half: %s", out)
+	}
+}
+
+// TestExpiryRoundNamesBothFailedHalves: both halves failing is one failed
+// round naming both.
+func TestExpiryRoundNamesBothFailedHalves(t *testing.T) {
+	f := &fakeForgetter{err: errors.New("item boom"), metricErr: errors.New("metric boom")}
+	var buf bytes.Buffer
+	newLoop(f, &fakeLocker{got: true}, time.Hour, &buf).Round(context.Background())
+	out := buf.String()
+	if !strings.Contains(out, "item boom") || !strings.Contains(out, "metric boom") || !strings.Contains(out, "failed=items,metrics ") {
 		t.Fatalf("log: %s", out)
 	}
 }

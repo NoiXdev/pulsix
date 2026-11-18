@@ -145,6 +145,36 @@ func TestForgetMetricRefusals(t *testing.T) {
 	}
 }
 
+// TestForgetMetricRefusesTheItemsLastValue (backlog 3.88, final review):
+// the manual forget reads, under the host's evaluation lock, how many
+// other current rows the metric's item has; with none it refuses with
+// ErrLastMetric — the item forget is the way — and nothing is deleted or
+// closed. With a sibling left it forgets as before.
+func TestForgetMetricRefusesTheItemsLastValue(t *testing.T) {
+	now := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	ref := checks.MetricRef{OrgID: uuid.New(), HostID: uuid.New(), CheckKey: "docker", Item: "web", Metric: "running"}
+	st := newMetricStore()
+	st.exists[ref] = true
+	st.newest[ref] = checks.MetricNewest{Found: true, Metric: now, Item: now, Siblings: 0}
+	closer := &fakeCloser{}
+	svc := checks.NewService(st, fixedClock(now), checks.WithAlertCloser(closer))
+
+	if err := svc.ForgetMetric(ctx, ref.OrgID, ref.HostID, ref.CheckKey, ref.Item, ref.Metric); !errors.Is(err, checks.ErrLastMetric) {
+		t.Fatalf("forget the last value = %v, want ErrLastMetric", err)
+	}
+	if len(st.forgot) != 0 || len(closer.metricCalls) != 0 {
+		t.Fatalf("a refused forget forgot %+v and closed %+v", st.forgot, closer.metricCalls)
+	}
+
+	st.newest[ref] = checks.MetricNewest{Found: true, Metric: now.Add(-time.Hour), Item: now, Siblings: 1}
+	if err := svc.ForgetMetric(ctx, ref.OrgID, ref.HostID, ref.CheckKey, ref.Item, ref.Metric); err != nil {
+		t.Fatalf("forget with a sibling left: %v", err)
+	}
+	if len(st.forgot) != 1 {
+		t.Fatalf("store forgot %+v, want the metric", st.forgot)
+	}
+}
+
 // TestForgetMetricWithoutAlertCloserRefuses: like the item forget, a
 // Service wired without the alert port must not forget a metric and leave
 // its alert open for ever.
@@ -267,6 +297,9 @@ func TestForgetExpiredMetricsRecheckBoundaries(t *testing.T) {
 		// prove the metric gone — that is the item expiry's case.
 		{"a wholly quiet item", checks.MetricNewest{Found: true, Metric: now.Add(-60 * 24 * time.Hour), Item: now.Add(-60 * 24 * time.Hour)}, false},
 		{"no row left", checks.MetricNewest{Found: false, Metric: time.Unix(0, 0), Item: itemNewest}, false},
+		// Only errors besides it (the SMART disk smartctl cannot open):
+		// no error-free newest, which the store reads as 'epoch'.
+		{"an item with no error-free reading", checks.MetricNewest{Found: true, Metric: now.Add(-60 * 24 * time.Hour), Item: time.Unix(0, 0), Siblings: 1}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

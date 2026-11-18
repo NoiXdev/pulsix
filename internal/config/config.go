@@ -69,10 +69,13 @@ type Config struct {
 	RetestInterval time.Duration
 	// ItemExpiry is how long a check's item may stay silent, while its host
 	// keeps reporting, before the manager forgets it, and how far a metric
-	// may trail its own item's newest reading before it is forgotten,
-	// backlog 3.88 (PULSIX_ITEM_EXPIRY, a Go duration of at least
+	// may trail its own item's newest error-free reading before it is
+	// forgotten, backlog 3.88 (PULSIX_ITEM_EXPIRY, a Go duration of at least
 	// MinItemExpiry, 48h; the default 168h; 0 switches the automatic expiry
-	// off).
+	// off). Below three of a check's intervals (only a check slower than
+	// every 16 h, with a period under 72 h) a metric can be forgotten
+	// before it vanishes (rules.Vanished), while it is still judged; a
+	// documented caveat (docs/upgrades.md, 3.88), not corrected in code.
 	ItemExpiry time.Duration
 	// SampleRetentionDays is the instance maximum, in whole days, for
 	// keeping measurements — check_samples and check_state_changes

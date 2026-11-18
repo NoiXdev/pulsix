@@ -338,6 +338,22 @@ func TestForgetMetricRoute(t *testing.T) {
 		}
 	})
 
+	// Backlog 3.88, final review: forgetting the item's last current row
+	// would orphan its discovery row, so it is refused with 409 and a
+	// message pointing to the item forget; nothing changes.
+	t.Run("the item's last value is 409 and forgets nothing", func(t *testing.T) {
+		resp := requestJSON(t, f.operatorC, http.MethodDelete, forgetMetricURL(host, "disk", "/a b", "used_percent"), nil)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("forget the last value = %d %s, want 409", resp.StatusCode, mustReadBody(t, resp))
+		}
+		if body := mustReadBody(t, resp); !strings.Contains(body, "forget the item") {
+			t.Fatalf("409 body %s does not point to forgetting the item", body)
+		}
+		if n := metricCurrentRows(t, f, f.web, "disk", "/a b", "used_percent"); n != 1 {
+			t.Fatalf("a refused forget removed the row: %d left", n)
+		}
+	})
+
 	t.Run("each metric forget is audited with its metric", func(t *testing.T) {
 		resp := requestJSON(t, f.ownerC, http.MethodGet, f.activityURL(), nil)
 		var found []eventDTO
