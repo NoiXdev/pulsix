@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { firstCells, numbered, openRowMenu } from '../../test/wholeList.ts';
 import { AgentsPage } from './AgentsPage.tsx';
+import { validateAgentsSearch } from './agentsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -16,16 +17,16 @@ const agent = (name: string) => ({
 });
 const token = (name: string) => ({ id: `t-${name}`, zone_id: 'z1', name_hint: name, max_uses: 3, uses: 1, expires_at: inDays(0.02), created_at: '' });
 
-function setup(opts: { role?: string; locale?: 'de'; initial?: string } = {}) {
+function setup(opts: { role?: string; locale?: 'de'; initial?: string; agents?: unknown[]; tokens?: unknown[] } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: opts.role ?? 'operator', created_at: '' } },
-    'GET /api/v1/orgs/acme/agents': { agents: numbered('agent', 30).map(agent) },
-    'GET /api/v1/orgs/acme/agents/tokens': { tokens: numbered('tok', 30).map(token) },
+    'GET /api/v1/orgs/acme/agents': { agents: opts.agents ?? numbered('agent', 30).map(agent) },
+    'GET /api/v1/orgs/acme/agents/tokens': { tokens: opts.tokens ?? numbered('tok', 30).map(token) },
   });
   return renderListPage({
-    path: '/agents', component: AgentsPage, initial: opts.initial ?? '/o/acme/agents', locale: opts.locale,
+    path: '/agents', component: AgentsPage, initial: opts.initial ?? '/o/acme/agents', locale: opts.locale, extraSearch: (q) => ({ ...validateAgentsSearch(q) }),
     others: [{ path: '/hosts/$id', component: () => <div>HOST VIEW</div> }],
   });
 }
@@ -112,5 +113,45 @@ describe('AgentsPage lists', () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Agents')).toBeInTheDocument();
     expect(screen.getByText('1–25 von 30 Token')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const agents = [
+      agent('web-1'),
+      { ...agent('web-2'), status: 'offline' },
+      { ...agent('db-1'), version_status: 'update_required' },
+    ];
+
+    it('reads the filters from the URL and narrows the rows', async () => {
+      setup({ agents, tokens: [], initial: '/o/acme/agents?status=offline' });
+      await screen.findByText('1–1 of 1 agent');
+      expect(firstCells()).toEqual(['web-2']);
+      expect(screen.getByText('1 of 3 agents')).toBeInTheDocument();
+    });
+
+    it('writes the search and the update chip to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({ agents, tokens: [], initial: '/o/acme/agents?sort=host&order=asc' });
+      await screen.findByText('1–3 of 3 agents');
+      await user.click(screen.getByRole('button', { name: 'Outdated' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({ sort: 'host', order: 'asc', outdated: true }));
+      expect(firstCells()).toEqual(['db-1']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await user.type(screen.getByRole('searchbox', { name: 'Search agents' }), 'web');
+      await waitFor(() => expect(router.state.location.search).toEqual({ sort: 'host', order: 'asc', q: 'web' }));
+      expect(firstCells()).toEqual(['web-1', 'web-2']);
+    });
+
+    it('filters the pending tokens to the expired ones without touching the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({
+        agents,
+        tokens: [token('fresh'), { ...token('stale'), expires_at: inDays(-1) }].map((tok) => ({ ...tok, expires_at: tok.name_hint === 'stale' ? inDays(-1) : inDays(1) })),
+      });
+      await screen.findByText('1–2 of 2 tokens');
+      await user.click(within(tokenTable().parentElement?.parentElement as HTMLElement).getByRole('button', { name: 'Expired' }));
+      expect(await screen.findByText('1–1 of 1 token')).toBeInTheDocument();
+      expect(router.state.location.search).toEqual({});
+    });
   });
 });

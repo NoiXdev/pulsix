@@ -21,6 +21,14 @@ export const enWorkers = {
   count: (n: number) => (n === 1 ? '1 worker' : `${n} workers`),
   enrollmentsLabel: 'Pending enrollments',
   enrollmentsCount: (n: number) => (n === 1 ? '1 enrollment' : `${n} enrollments`),
+  noMatch: 'No workers match the filters.',
+  filters: {
+    zone: 'Zone',
+    allZones: 'All zones',
+    status: 'Status',
+    anyStatus: 'Any status',
+    expired: 'Expired',
+  },
   columns: {
     worker: 'Worker',
     zone: 'Zone',

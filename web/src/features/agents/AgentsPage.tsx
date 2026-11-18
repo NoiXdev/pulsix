@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Radio } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -10,9 +11,12 @@ import { useAgentTokens, useAgents } from '../../api/hooks/useAgents.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AddAgentDialog } from './AddAgentDialog.tsx';
 import { agentColumns } from './agentColumns.tsx';
+import { AGENTS_FILTERS, filterAgents } from './agentsSearch.ts';
 import { agentTokenColumns, agentTokenName } from './agentTokenColumns.tsx';
 import { useAgentListActions } from './useAgentListActions.ts';
 
@@ -39,9 +43,12 @@ export function AgentsPage() {
   const actions = useAgentListActions(org, canWrite);
 
   const columns = agentColumns({ t, now });
-  const view = useListView('agents', columns, { mode: 'client', rowKey: (a) => a.host_id });
+  const { filters, active, setFilter, reset } = useListFilters(AGENTS_FILTERS);
+  const view = useListView('agents', columns, { mode: 'client', rowKey: (a) => a.host_id, resetKey: JSON.stringify(filters) });
+  // The pending tokens keep their filter in component state, like their sort and page.
+  const [expiredTokens, setExpiredTokens] = useState(false);
   const tokenColumns = agentTokenColumns(t, fmt);
-  const tokenView = useListView('agent-tokens', tokenColumns, { mode: 'client', urlState: false, rowKey: (tok) => tok.id });
+  const tokenView = useListView('agent-tokens', tokenColumns, { mode: 'client', urlState: false, rowKey: (tok) => tok.id, resetKey: String(expiredTokens) });
 
   const orgGuard = useQueryGuard(orgInfo);
   if (orgGuard) return orgGuard;
@@ -52,8 +59,11 @@ export function AgentsPage() {
   if (!list.data) return <QueryLoading />;
   const agents = list.data.agents ?? [];
   const tokens = pending.data?.tokens ?? [];
-  const agentRows = view.view(view.ready ? agents : undefined);
-  const tokenRows = tokenView.view(tokenView.ready ? tokens : undefined);
+  const shownAgents = filterAgents(agents, filters);
+  const shownTokens = expiredTokens ? tokens.filter((tok) => new Date(tok.expires_at).getTime() <= now.getTime()) : tokens;
+  const agentRows = view.view(view.ready ? shownAgents : undefined);
+  const tokenRows = tokenView.view(tokenView.ready ? shownTokens : undefined);
+  const f = t.agents.filters;
 
   return (
     <>
@@ -79,7 +89,31 @@ export function AgentsPage() {
         rowLabel={(a) => a.host_name}
         rowActions={actions.agentActions}
         loading={!view.ready}
-        empty={t.agents.empty}
+        empty={active ? t.agents.noMatch : t.agents.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shownAgents.length} total={agents.length} noun={t.agents.count} /> : undefined}>
+            <SearchInput
+              label={t.agents.search}
+              placeholder={t.agents.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.status}
+              allLabel={f.anyStatus}
+              options={[
+                { value: 'online', label: t.agents.status.online },
+                { value: 'offline', label: t.agents.status.offline },
+              ]}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            <FilterChip pressed={!!filters.outdated} tone="warn" onToggle={() => setFilter('outdated', filters.outdated ? undefined : true)}>
+              {f.outdated}
+            </FilterChip>
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(agentRows.total, t.agents.count)}
       />
       {tokens.length > 0 && (
@@ -92,6 +126,14 @@ export function AgentsPage() {
           rowActions={actions.tokenActions}
           loading={!tokenView.ready}
           empty={null}
+          toolbar={
+            <ListToolbar count={expiredTokens ? <ResultCount shown={shownTokens.length} total={tokens.length} noun={t.agents.tokensCount} /> : undefined}>
+              <FilterChip pressed={expiredTokens} tone="crit" onToggle={() => setExpiredTokens(!expiredTokens)}>
+                {f.expired}
+              </FilterChip>
+              {expiredTokens && <ResetFilters onReset={() => setExpiredTokens(false)} />}
+            </ListToolbar>
+          }
           {...tokenView.listProps(tokenRows.total, t.agents.tokensCount)}
         />
       )}

@@ -9,6 +9,15 @@ export const deAgents: Messages['agents'] = {
   count: (n: number) => (n === 1 ? '1 Agent' : `${n} Agents`),
   tokensLabel: 'Ausstehende Registrierungstoken',
   tokensCount: (n: number) => `${n} Token`,
+  search: 'Agents durchsuchen',
+  filterPlaceholder: 'Agents filtern …',
+  noMatch: 'Keine Agents passen zu den Filtern.',
+  filters: {
+    status: 'Status',
+    anyStatus: 'Beliebiger Status',
+    outdated: 'Veraltet',
+    expired: 'Abgelaufen',
+  },
   columns: {
     host: 'Host',
     agent: 'Agent',

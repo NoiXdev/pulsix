@@ -9,6 +9,15 @@ export const enAgents = {
   count: (n: number) => (n === 1 ? '1 agent' : `${n} agents`),
   tokensLabel: 'Pending enrollment tokens',
   tokensCount: (n: number) => (n === 1 ? '1 token' : `${n} tokens`),
+  search: 'Search agents',
+  filterPlaceholder: 'Filter agents…',
+  noMatch: 'No agents match the filters.',
+  filters: {
+    status: 'Status',
+    anyStatus: 'Any status',
+    outdated: 'Outdated',
+    expired: 'Expired',
+  },
   columns: {
     host: 'Host',
     agent: 'Agent',

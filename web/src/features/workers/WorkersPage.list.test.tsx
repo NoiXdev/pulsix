@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { firstCells, numbered, openRowMenu } from '../../test/wholeList.ts';
 import { WorkersPage } from './WorkersPage.tsx';
+import { validateWorkersSearch } from './workersSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -16,15 +17,15 @@ const worker = (name: string, extra: Record<string, unknown> = {}) => ({
 });
 const enrollment = (name: string) => ({ id: `e-${name}`, name, zone_id: 'z1', expires_at: inDays(0.02), created_at: '' });
 
-function setup(opts: { role?: string; locale?: 'de'; workers?: unknown[] } = {}) {
+function setup(opts: { role?: string; locale?: 'de'; workers?: unknown[]; initial?: string; enrollments?: unknown[] } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: opts.role ?? 'admin', created_at: '' } },
     'GET /api/v1/orgs/acme/workers': { workers: opts.workers ?? numbered('wrk', 30).map((n) => worker(n)) },
-    'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: numbered('enr', 30).map(enrollment) },
+    'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: opts.enrollments ?? numbered('enr', 30).map(enrollment) },
   });
-  return renderListPage({ path: '/workers', component: WorkersPage, initial: '/o/acme/workers', locale: opts.locale, others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }] });
+  return renderListPage({ path: '/workers', component: WorkersPage, initial: opts.initial ?? '/o/acme/workers', locale: opts.locale, extraSearch: (q) => ({ ...validateWorkersSearch(q) }), others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }] });
 }
 
 /** The list's card: the table and its pager (the pager sits beside the table). */
@@ -102,5 +103,40 @@ describe('WorkersPage lists', () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Worker')).toBeInTheDocument();
     expect(screen.getByText('1–25 von 30 Registrierungen')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const workers = [worker('a'), worker('b', { zone_slug: 'fra' }), worker('c', { status: 'revoked' })];
+
+    it('reads the zone and status from the URL', async () => {
+      setup({ workers, enrollments: [], initial: '/o/acme/workers?zone=fra' });
+      await screen.findByText('1–1 of 1 worker');
+      expect(firstCells()).toEqual(['b']);
+      expect(screen.getByText('1 of 3 workers')).toBeInTheDocument();
+    });
+
+    it('writes the status to the URL and resets', async () => {
+      const user = userEvent.setup();
+      const router = setup({ workers, enrollments: [], initial: '/o/acme/workers?page=2' });
+      await screen.findByText('1–3 of 3 workers');
+      await pickOption(screen, 'Status', 'revoked');
+      await waitFor(() => expect(router.state.location.search).toEqual({ status: 'revoked' }));
+      expect(firstCells()).toEqual(['c']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+      expect(firstCells()).toHaveLength(3);
+    });
+
+    it('filters the pending enrollments to the expired ones without touching the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({
+        workers,
+        enrollments: [{ ...enrollment('fresh'), expires_at: inDays(1) }, { ...enrollment('stale'), expires_at: inDays(-1) }],
+      });
+      await screen.findByText('1–2 of 2 enrollments');
+      await user.click(screen.getByRole('button', { name: 'Expired' }));
+      expect(await screen.findByText('1–1 of 1 enrollment')).toBeInTheDocument();
+      expect(router.state.location.search).toEqual({});
+    });
   });
 });

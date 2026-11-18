@@ -48,6 +48,8 @@ import { settingsRouteTree } from './routes/settingsRoutes.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
 import { validateCredentialsSearch } from './features/credentials/credentialsSearch.ts';
 import { validateJumpHostsSearch } from './features/credentials/jumpHostsSearch.ts';
+import { validateAgentsSearch } from './features/agents/agentsSearch.ts';
+import { validateWorkersSearch } from './features/workers/workersSearch.ts';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -303,13 +305,13 @@ const runRequestDetailRoute = createRoute({ getParentRoute: () => orgRoute, path
 const workersRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/workers',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateWorkersSearch,
   component: WorkersPage,
 });
 const agentsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/agents',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateAgentsSearch,
   component: AgentsPage,
 });
 const maintenanceRoute = createRoute({

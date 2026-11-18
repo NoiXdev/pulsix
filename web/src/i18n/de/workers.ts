@@ -19,6 +19,14 @@ export const deWorkers: Messages['workers'] = {
   count: (n: number) => `${n} Worker`,
   enrollmentsLabel: 'Ausstehende Registrierungen',
   enrollmentsCount: (n: number) => (n === 1 ? '1 Registrierung' : `${n} Registrierungen`),
+  noMatch: 'Keine Worker passen zu den Filtern.',
+  filters: {
+    zone: 'Zone',
+    allZones: 'Alle Zonen',
+    status: 'Status',
+    anyStatus: 'Beliebiger Status',
+    expired: 'Abgelaufen',
+  },
   columns: {
     worker: 'Worker',
     zone: 'Zone',

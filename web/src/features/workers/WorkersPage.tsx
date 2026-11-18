@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Cpu } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -10,11 +11,14 @@ import { useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts'
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
 import { enrollmentColumns } from './enrollmentColumns.tsx';
 import { useWorkerListActions } from './useWorkerListActions.ts';
 import { workerColumns } from './workerColumns.tsx';
+import { WORKER_STATUSES, WORKERS_FILTERS, filterWorkers } from './workersSearch.ts';
 
 /** WorkersPage lists the organization's zone workers (spec 2026-09-18 §4):
  * status (online = seen within 2 minutes), zone, last seen, version,
@@ -38,9 +42,12 @@ export function WorkersPage() {
   const actions = useWorkerListActions(org, canWrite);
 
   const columns = workerColumns({ t, org, now });
-  const view = useListView('workers', columns, { mode: 'client', rowKey: (w) => w.id });
+  const { filters, active, setFilter, reset } = useListFilters(WORKERS_FILTERS);
+  const view = useListView('workers', columns, { mode: 'client', rowKey: (w) => w.id, resetKey: JSON.stringify(filters) });
+  // The pending enrollments keep their filter in component state, like their sort and page.
+  const [expiredEnrollments, setExpiredEnrollments] = useState(false);
   const enrollColumns = enrollmentColumns(t, fmt);
-  const enrollView = useListView('worker-enrollments', enrollColumns, { mode: 'client', urlState: false, rowKey: (e) => e.id });
+  const enrollView = useListView('worker-enrollments', enrollColumns, { mode: 'client', urlState: false, rowKey: (e) => e.id, resetKey: String(expiredEnrollments) });
 
   const orgGuard = useQueryGuard(orgInfo);
   if (orgGuard) return orgGuard;
@@ -51,8 +58,13 @@ export function WorkersPage() {
   if (!list.data) return <QueryLoading />;
   const workers = list.data.workers ?? [];
   const enrollments = pending.data?.enrollments ?? [];
-  const workerRows = view.view(view.ready ? workers : undefined);
-  const enrollmentRows = enrollView.view(enrollView.ready ? enrollments : undefined);
+  const shownWorkers = filterWorkers(workers, filters);
+  const shownEnrollments = expiredEnrollments ? enrollments.filter((e) => new Date(e.expires_at).getTime() <= now.getTime()) : enrollments;
+  const workerRows = view.view(view.ready ? shownWorkers : undefined);
+  const enrollmentRows = enrollView.view(enrollView.ready ? shownEnrollments : undefined);
+  const f = t.workers.filters;
+  // A zone only the URL names (a stale link) stays pickable so it can be cleared.
+  const zones = [...new Set([...workers.map((w) => w.zone_slug), ...(filters.zone ? [filters.zone] : [])])].sort();
 
   return (
     <>
@@ -77,7 +89,26 @@ export function WorkersPage() {
         rowLabel={(w) => w.name}
         rowActions={actions.workerActions}
         loading={!view.ready}
-        empty={t.workers.empty}
+        empty={active ? t.workers.noMatch : t.workers.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shownWorkers.length} total={workers.length} noun={t.workers.count} /> : undefined}>
+            <FilterSelect
+              label={f.zone}
+              allLabel={f.allZones}
+              options={zones.map((z) => ({ value: z, label: z }))}
+              value={filters.zone}
+              onChange={(v) => setFilter('zone', v)}
+            />
+            <FilterSelect
+              label={f.status}
+              allLabel={f.anyStatus}
+              options={WORKER_STATUSES.map((v) => ({ value: v, label: t.workers.status[v] }))}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(workerRows.total, t.workers.count)}
       />
       {enrollments.length > 0 && (
@@ -90,6 +121,16 @@ export function WorkersPage() {
           rowActions={actions.enrollmentActions}
           loading={!enrollView.ready}
           empty={null}
+          toolbar={
+            <ListToolbar
+              count={expiredEnrollments ? <ResultCount shown={shownEnrollments.length} total={enrollments.length} noun={t.workers.enrollmentsCount} /> : undefined}
+            >
+              <FilterChip pressed={expiredEnrollments} tone="crit" onToggle={() => setExpiredEnrollments(!expiredEnrollments)}>
+                {f.expired}
+              </FilterChip>
+              {expiredEnrollments && <ResetFilters onReset={() => setExpiredEnrollments(false)} />}
+            </ListToolbar>
+          }
           {...enrollView.listProps(enrollmentRows.total, t.workers.enrollmentsCount)}
         />
       )}
