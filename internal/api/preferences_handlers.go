@@ -12,6 +12,7 @@ import (
 // listPrefBody is one list's chosen columns.
 type listPrefBody struct {
 	Columns []string `json:"columns" maxItems:"40" doc:"Column ids in display order."`
+	Known   []string `json:"known,omitempty" maxItems:"80" doc:"Every column id the list offered when the choice was saved; a column missing here is new since. Absent in older data: then equal to columns."`
 }
 
 // preferencesBody is the whole preferences document of the signed-in user.
@@ -35,7 +36,7 @@ func toPreferencesOutput(p preferences.Prefs) *preferencesOutput {
 		if cols == nil {
 			cols = []string{}
 		}
-		out.Body.Lists[id] = listPrefBody{Columns: cols}
+		out.Body.Lists[id] = listPrefBody{Columns: cols, Known: l.Known}
 	}
 	return out
 }
@@ -73,7 +74,7 @@ func registerPreferencesRoutes(hapi huma.API, deps Deps) {
 			Lists: make(map[string]preferences.List, len(in.Body.Lists)),
 		}
 		for id, l := range in.Body.Lists {
-			prefs.Lists[id] = preferences.List{Columns: l.Columns}
+			prefs.Lists[id] = preferences.List{Columns: l.Columns, Known: l.Known}
 		}
 		stored, err := deps.Preferences.Set(ctx, p.UserID, prefs)
 		if err != nil {

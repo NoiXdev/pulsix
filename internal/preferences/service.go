@@ -26,6 +26,7 @@ const (
 	defaultPageSize = 25
 	maxLists        = 64
 	maxColumns      = 40
+	maxKnown        = 80
 	maxListsBytes   = 16 * 1024
 )
 
@@ -39,9 +40,13 @@ var (
 	pageSizes = map[int]bool{10: true, 25: true, 50: true, 100: true}
 )
 
-// List is the per-list choice: the columns shown, in order.
+// List is the per-list choice: the columns shown, in order, and the ids of
+// every column the list offered when the choice was saved (backlog 3.101), so
+// a column added later can be told from one the person hid. Known is empty in
+// data saved before it existed; readers then treat it as equal to Columns.
 type List struct {
 	Columns []string `json:"columns"`
+	Known   []string `json:"known,omitempty"`
 }
 
 // Prefs is the whole preferences document of one user.
@@ -124,15 +129,22 @@ func validate(p Prefs) error {
 		if len(l.Columns) > maxColumns {
 			return invalid("list %q has more than %d columns", id, maxColumns)
 		}
-		seen := make(map[string]bool, len(l.Columns))
-		for _, c := range l.Columns {
-			if !idPattern.MatchString(c) {
-				return invalid("column id %q of list %q is not a valid identifier", c, id)
+		if _, err := checkIDs(id, "column", l.Columns); err != nil {
+			return err
+		}
+		if len(l.Known) > maxKnown {
+			return invalid("list %q has more than %d known columns", id, maxKnown)
+		}
+		known, err := checkIDs(id, "known column", l.Known)
+		if err != nil {
+			return err
+		}
+		if len(l.Known) > 0 {
+			for _, c := range l.Columns {
+				if !known[c] {
+					return invalid("column %q of list %q is not among its known columns", c, id)
+				}
 			}
-			if seen[c] {
-				return invalid("column %q is repeated in list %q", c, id)
-			}
-			seen[c] = true
 		}
 	}
 	raw, err := json.Marshal(p.Lists)
@@ -143,4 +155,19 @@ func validate(p Prefs) error {
 		return invalid("lists document is larger than %d bytes", maxListsBytes)
 	}
 	return nil
+}
+
+// checkIDs refuses ids that are malformed or repeated and returns them as a set.
+func checkIDs(list, what string, ids []string) (map[string]bool, error) {
+	seen := make(map[string]bool, len(ids))
+	for _, c := range ids {
+		if !idPattern.MatchString(c) {
+			return nil, invalid("%s id %q of list %q is not a valid identifier", what, c, list)
+		}
+		if seen[c] {
+			return nil, invalid("%s %q is repeated in list %q", what, c, list)
+		}
+		seen[c] = true
+	}
+	return seen, nil
 }

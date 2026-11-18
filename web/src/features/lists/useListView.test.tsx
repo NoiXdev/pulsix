@@ -344,8 +344,16 @@ describe('useListView with a paged query', () => {
 });
 
 describe('useListView columns', () => {
+  it('shows a default column added since the save and hides a known hidden one', async () => {
+    // The save knew name and os only: zone and tags are new since, os stays hidden.
+    api({ lists: { hosts: { columns: ['name'], known: ['name', 'os'] } } });
+    server('/o/acme/hosts', { total: 2 });
+
+    await waitFor(() => expect(headers()).toEqual(['Host', 'Zone', 'Tags']));
+  });
+
   it('shows saved columns with the required one first and drops stale ids', async () => {
-    api({ lists: { hosts: { columns: ['zone', 'gone', 'name', 'zone', 'os'] } } });
+    api({ lists: { hosts: { columns: ['zone', 'gone', 'name', 'zone', 'os'], known: ['name', 'zone', 'tags', 'os', 'gone'] } } });
     server('/o/acme/hosts', { total: 2 });
 
     await waitFor(() => expect(headers()).toEqual(['Host', 'Zone', 'Operating system']));
@@ -367,7 +375,7 @@ describe('useListView columns', () => {
     await waitFor(() => expect(puts).toHaveLength(1));
     await sleep(500);
     expect(puts).toHaveLength(1);
-    expect(puts[0].lists).toEqual({ runs: { columns: ['run'] }, hosts: { columns: ['name', 'tags', 'os'] } });
+    expect(puts[0].lists).toEqual({ runs: { columns: ['run'] }, hosts: { columns: ['name', 'tags', 'os'], known: ['name', 'zone', 'tags', 'os'] } });
     expect(headers()).toEqual(['Host', 'Tags', 'Operating system']);
   });
 
@@ -385,13 +393,13 @@ describe('useListView columns', () => {
 
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[0].page_size).toBe(50);
-    expect(puts[1]).toEqual({ density: 'standard', page_size: 50, lists: { hosts: { columns: ['name', 'tags'] } } });
+    expect(puts[1]).toEqual({ density: 'standard', page_size: 50, lists: { hosts: { columns: ['name', 'tags'], known: ['name', 'zone', 'tags', 'os'] } } });
     expect(query().per_page).toBe(50);
     expect(headers()).toEqual(['Host', 'Tags']);
   });
 
   it('removes the saved list on Restore defaults', async () => {
-    api({ lists: { hosts: { columns: ['name', 'os'] }, runs: { columns: ['run'] } } });
+    api({ lists: { hosts: { columns: ['name', 'os'], known: ['name', 'zone', 'tags', 'os'] }, runs: { columns: ['run'] } } });
     const user = userEvent.setup();
     server('/o/acme/hosts', { total: 2 });
     await waitFor(() => expect(headers()).toEqual(['Host', 'Operating system']));
@@ -416,7 +424,7 @@ describe('useListView columns', () => {
     await screen.findByText('ELSEWHERE');
 
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0].lists).toEqual({ hosts: { columns: ['name', 'zone'] } });
+    expect(puts[0].lists).toEqual({ hosts: { columns: ['name', 'zone'], known: ['name', 'zone', 'tags', 'os'] } });
   });
 
   it('says so and shows the saved columns again when the save fails', async () => {

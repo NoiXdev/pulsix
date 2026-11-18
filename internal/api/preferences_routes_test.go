@@ -70,6 +70,32 @@ func TestPutPreferencesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPutPreferencesKnownRoundTrip(t *testing.T) {
+	s := apitest.New(t)
+	c := s.LoginAs(s.SeedUser("prefs-known@example.test", "correct horse battery"))
+	in := map[string]any{"density": "standard", "page_size": 25, "lists": map[string]any{
+		"hosts": map[string]any{"columns": []string{"name"}, "known": []string{"name", "zone"}},
+		"runs":  map[string]any{"columns": []string{"run"}},
+	}}
+	resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, in)
+	if raw := mustReadBody(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT: status %d, body %s", resp.StatusCode, raw)
+	}
+	r := requestJSON(t, c, http.MethodGet, s.HTTP.URL+preferencesPath, nil)
+	got := decodePrefs(t, mustReadBody(t, r))
+	if k := got.Lists["hosts"]["known"]; len(k) != 2 || k[0] != "name" || k[1] != "zone" {
+		t.Fatalf("hosts known = %v", k)
+	}
+	if _, ok := got.Lists["runs"]["known"]; ok {
+		t.Fatalf("an entry saved without known came back with one: %+v", got.Lists["runs"])
+	}
+	bad := map[string]any{"density": "standard", "page_size": 25, "lists": map[string]any{
+		"hosts": map[string]any{"columns": []string{"name", "zone"}, "known": []string{"name"}}}}
+	if resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, bad); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("column outside known: status %d, want 422", resp.StatusCode)
+	}
+}
+
 func TestPutPreferencesInvalidIs422(t *testing.T) {
 	s := apitest.New(t)
 	c := s.LoginAs(s.SeedUser("prefs-422@example.test", "correct horse battery"))

@@ -5971,6 +5971,8 @@ export interface components {
         ListPrefBody: {
             /** @description Column ids in display order. */
             columns: string[] | null;
+            /** @description Every column id the list offered when the choice was saved; a column missing here is new since. Absent in older data: then equal to columns. */
+            known?: string[] | null;
         };
         LocaleSettingsBody: {
             /**

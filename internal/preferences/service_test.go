@@ -79,6 +79,10 @@ func TestSetValidates(t *testing.T) {
 		{"65 lists", preferences.Prefs{Density: "standard", PageSize: 25, Lists: manyLists}},
 		{"41 columns", preferences.Prefs{Density: "standard", PageSize: 25, Lists: map[string]preferences.List{"hosts": {Columns: cols(41)}}}},
 		{"repeated column", preferences.Prefs{Density: "standard", PageSize: 25, Lists: one("hosts", "name", "zone", "name")}},
+		{"81 known columns", preferences.Prefs{Density: "standard", PageSize: 25, Lists: map[string]preferences.List{"hosts": {Columns: []string{"c0"}, Known: cols(81)}}}},
+		{"known id malformed", preferences.Prefs{Density: "standard", PageSize: 25, Lists: map[string]preferences.List{"hosts": {Columns: []string{"name"}, Known: []string{"name", "1x"}}}}},
+		{"known repeated", preferences.Prefs{Density: "standard", PageSize: 25, Lists: map[string]preferences.List{"hosts": {Columns: []string{"name"}, Known: []string{"name", "name"}}}}},
+		{"column not in known", preferences.Prefs{Density: "standard", PageSize: 25, Lists: map[string]preferences.List{"hosts": {Columns: []string{"name", "zone"}, Known: []string{"name"}}}}},
 		{"document over 16 KiB", preferences.Prefs{Density: "standard", PageSize: 25, Lists: bigLists}},
 	}
 	for _, tc := range invalid {
@@ -95,7 +99,7 @@ func TestSetValidates(t *testing.T) {
 	}
 
 	valid := preferences.Prefs{Density: "compact", PageSize: 100, Lists: map[string]preferences.List{
-		"hosts":  {Columns: []string{"name", "zone", "active_runs"}},
+		"hosts":  {Columns: []string{"name", "zone", "active_runs"}, Known: []string{"name", "zone", "active_runs", "os"}},
 		"agents": {Columns: []string{"agent.version", "last_seen"}},
 	}}
 	got, err := preferences.NewService(newFake()).Set(t.Context(), uuid.New(), valid)

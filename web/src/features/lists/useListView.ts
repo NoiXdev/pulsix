@@ -65,6 +65,8 @@ export interface ListView<Row> {
 
 interface PendingColumns {
   ids: string[];
+  /** Every column the list offered at the change: stored as `known`. */
+  known: string[];
   /** The list's defaults: saved by removing the list's entry. */
   isDefault: boolean;
 }
@@ -152,9 +154,10 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
   }, [fixPage, urlState, writeUrl, search.sort, search.order, page]);
 
   // Columns: the saved choice, or a change still waiting to be saved.
-  const saved = prefs.lists[listId]?.columns;
+  const saved = prefs.lists[listId];
   const [draft, setDraft] = useState<string[] | null>(null);
-  const visibleColumns = mergeColumns(draft ?? saved, columns);
+  const offeredIds = columns.map((c) => c.id);
+  const visibleColumns = mergeColumns(draft ? { columns: draft, known: offeredIds } : saved, columns);
   const defaultColumns = mergeColumns(undefined, columns);
 
   const failed = useCallback(() => toast.show(t.lists.saveFailed, 'destructive'), [toast, t.lists.saveFailed]);
@@ -181,7 +184,7 @@ export function useListView<Row>(listId: ListId, columns: DataListColumn<Row>[],
 
   const onVisibleColumnsChange = (ids: string[]) => {
     setDraft(ids);
-    pending.current = { ids, isDefault: sameList(ids, defaultColumns) };
+    pending.current = { ids, known: offeredIds, isDefault: sameList(ids, defaultColumns) };
     clearTimeout(timer.current);
     timer.current = setTimeout(flush, COLUMN_SAVE_DELAY_MS);
   };
@@ -247,7 +250,7 @@ function clampPage(page: number, total: number | undefined, perPage: number): nu
 function withColumns(prev: Preferences, listId: ListId, next: PendingColumns): Preferences {
   const lists = { ...prev.lists };
   if (next.isDefault) delete lists[listId];
-  else lists[listId] = { columns: next.ids };
+  else lists[listId] = { columns: next.ids, known: next.known };
   return { ...prev, lists };
 }
 
