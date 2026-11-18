@@ -6,6 +6,7 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { mockApi, type MockRoute } from '../test/mockApi.ts';
 import { api, unwrap } from '../api/client.ts';
 import { RootLayout } from './RootLayout.tsx';
+import { RootRedirect } from './RootRedirect.tsx';
 import { useConfirm } from '../ui/confirmContext.ts';
 import { postSessionMessage } from '../features/lock/lockChannel.ts';
 import { waitFor } from '@testing-library/react';
@@ -36,10 +37,11 @@ function renderAt(initial: string, routes: Record<string, MockRoute>) {
       );
     },
   });
+  const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: RootRedirect });
   const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: () => <div>LOGIN</div> });
   const passwordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/password', component: () => <div>CHANGE PASSWORD</div> });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgsRoute, enrolRoute, passwordRoute, loginRoute]),
+    routeTree: rootRoute.addChildren([indexRoute, orgsRoute, enrolRoute, passwordRoute, loginRoute]),
     history: createMemoryHistory({ initialEntries: [initial] }),
   });
   render(
@@ -91,6 +93,22 @@ describe('RootLayout', () => {
   it('shows the loading state, not a blank screen, while /auth/me is in flight', async () => {
     renderAt('/orgs', { 'GET /api/v1/auth/me': () => new Promise(() => {}) });
     expect(await screen.findByText('Loading…')).toBeInTheDocument();
+  });
+
+  // A cold load of / without a session: RootRedirect fetches /auth/me
+  // again on mount, and with no data that refetch puts the query back to
+  // pending. The loading gate must not take the page away for it, or the
+  // page unmounts, remounts, refetches — for ever, never reaching /login.
+  it('sends a cold load of / without a session to /login instead of refetching /auth/me for ever', async () => {
+    const me = vi.fn(() => new Response(JSON.stringify({ title: 'Unauthorized', status: 401 }), { status: 401 }));
+    const router = renderAt('/', {
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/setup/status': { completed: true, version: 'test' },
+    });
+
+    expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/login');
+    expect(me.mock.calls.length).toBeLessThanOrEqual(3);
   });
 
   describe('session lock', () => {

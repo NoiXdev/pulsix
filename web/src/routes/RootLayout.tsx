@@ -116,7 +116,13 @@ export function RootLayout() {
   // handles it (useSettledMe's recovery, the page's own error state) — if
   // /auth/me cannot be fetched its data cannot either, and a 403
   // session_locked still locks.
-  const waiting = !publicPage && me.isPending && me.fetchStatus === 'fetching' && !lockedHere;
+  //
+  // Only the first answer is waited for (`isFetched`): a refetch of a query
+  // that has no data (the 401 of a signed-out visitor) turns it pending
+  // again, and hiding the page for that unmounted RootRedirect, whose
+  // remount refetched /auth/me, for ever. A lock arrives with data or as
+  // a session_locked refusal, never as such a refetch.
+  const waiting = !publicPage && !me.isFetched && me.fetchStatus === 'fetching' && !lockedHere;
 
   return (
     <LockStateContext.Provider value={value}>
