@@ -68,6 +68,22 @@ describe('LockScreen', () => {
     expect(unlock).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back to the single field and Unlock, without the note, when /auth/me is not cached', async () => {
+    renderIt({});
+    const pin = await screen.findByLabelText('PIN');
+    expect(pin).toHaveAttribute('maxlength', '8');
+    expect(document.querySelectorAll('[data-pin-box]')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Unlock' })).toBeInTheDocument();
+    expect(screen.queryByText(/older version/)).not.toBeInTheDocument();
+  });
+
+  it('does not post a partial PIN on Enter', async () => {
+    const unlock = vi.fn(() => ({ ok: true }));
+    renderIt({ 'POST /api/v1/auth/lock/unlock': unlock }, me);
+    await userEvent.type(await screen.findByLabelText('PIN'), '12{Enter}');
+    expect(unlock).not.toHaveBeenCalled();
+  });
+
   it('clears the boxes, shows the attempts left and refocuses after a wrong PIN', async () => {
     renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(3) }, me);
     const pin = await screen.findByLabelText('PIN');
@@ -78,14 +94,14 @@ describe('LockScreen', () => {
   });
 
   it('shows the attempts left after a wrong PIN', async () => {
-    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) });
+    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '0000');
     expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
     expect(screen.queryByText('UNLOCKED PAGE')).not.toBeInTheDocument();
   });
 
   it('keeps no wrong PIN in the mutation cache', async () => {
-    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) });
+    renderIt({ 'POST /api/v1/auth/lock/unlock': wrong(4) }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '0815');
     expect(await screen.findByText(/4 attempts left/)).toBeInTheDocument();
     await vi.waitFor(() =>
@@ -95,7 +111,7 @@ describe('LockScreen', () => {
 
   it('goes away when the PIN is right', async () => {
     const unlock = vi.fn(() => ({ ok: true }));
-    renderIt({ 'POST /api/v1/auth/lock/unlock': unlock });
+    renderIt({ 'POST /api/v1/auth/lock/unlock': unlock }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
     expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
     expect(unlock).toHaveBeenCalledTimes(1);
@@ -105,7 +121,7 @@ describe('LockScreen', () => {
     const heard = vi.fn();
     const other = new BroadcastChannel('pulsix-session');
     other.onmessage = (e) => heard(e.data);
-    renderIt({ 'POST /api/v1/auth/lock/unlock': { ok: true } });
+    renderIt({ 'POST /api/v1/auth/lock/unlock': { ok: true } }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
     await vi.waitFor(() => expect(heard).toHaveBeenCalledWith({ type: 'unlocked' }));
     other.close();
@@ -114,7 +130,7 @@ describe('LockScreen', () => {
   it('treats a 409 not-locked answer as unlocked', async () => {
     renderIt({
       'POST /api/v1/auth/lock/unlock': () => new Response(JSON.stringify({ detail: 'not locked' }), { status: 409 }),
-    });
+    }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '1234');
     expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
   });
@@ -123,7 +139,7 @@ describe('LockScreen', () => {
     const router = renderIt({
       'POST /api/v1/auth/lock/unlock': () =>
         new Response(JSON.stringify({ title: 'Unauthorized', status: 401, detail: 'too many wrong pins' }), { status: 401 }),
-    });
+    }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '0000');
     expect(await screen.findByText('LOGIN')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');

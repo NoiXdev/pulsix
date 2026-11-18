@@ -1,10 +1,10 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { PinInput } from '../../ui/pin-input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useT } from '../../i18n/useT.ts';
+import { useShake } from './useShake.ts';
 
 const PIN_LENGTH = 4;
-const SHAKE_MS = 350;
 
 /**
  * PinForm asks for a 4-digit PIN twice, in two rows of boxes, and hands it
@@ -32,26 +32,44 @@ export function PinForm({
   const [again, setAgain] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
-  const [shake, setShake] = useState(false);
+  const [mismatch, setMismatch] = useState(false);
+  const [shake, playShake] = useShake();
+  // Where the cursor goes once the rows are enabled (they are disabled while
+  // `onSubmit` runs).
+  const focusReq = useRef<'first' | 'second' | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
+  function focusAfter(to: 'first' | 'second') {
+    focusReq.current = to;
+    setFocusTick((n) => n + 1);
+  }
   const firstRef = useRef<HTMLInputElement>(null);
   const againRef = useRef<HTMLInputElement>(null);
   const disabled = busy || working;
 
-  function playShake() {
-    setShake(true);
-    setTimeout(() => setShake(false), SHAKE_MS);
-  }
+  useEffect(() => {
+    if (!focusReq.current || disabled) return;
+    (focusReq.current === 'first' ? firstRef : againRef).current?.focus();
+    focusReq.current = null;
+  }, [focusTick, disabled]);
 
   async function submit(repeated: string) {
-    if (disabled || pin.length !== PIN_LENGTH) return;
+    if (disabled) return;
+    if (pin.length !== PIN_LENGTH) {
+      // The first row is not done: send the person back to it.
+      setAgain('');
+      focusAfter('first');
+      return;
+    }
     if (pin !== repeated) {
       setError(t.lock.setPin.mismatch);
+      setMismatch(true);
       setAgain('');
       playShake();
-      againRef.current?.focus();
+      focusAfter('second');
       return;
     }
     setError(null);
+    setMismatch(false);
     setWorking(true);
     try {
       await onSubmit(pin);
@@ -61,8 +79,7 @@ export function PinForm({
       setAgain('');
       playShake();
       setWorking(false);
-      // The rows are disabled while working; focus once they are enabled.
-      setTimeout(() => firstRef.current?.focus(), 0);
+      focusAfter('first');
       return;
     }
     setWorking(false);
@@ -80,6 +97,7 @@ export function PinForm({
         onComplete={() => againRef.current?.focus()}
         autoFocus
         disabled={disabled}
+        shake={shake}
         autoComplete="new-password"
         aria-describedby={`${idPrefix}-hint`}
         inputRef={firstRef}
@@ -91,7 +109,7 @@ export function PinForm({
         onChange={setAgain}
         onComplete={(digits) => void submit(digits)}
         disabled={disabled}
-        invalid={error === t.lock.setPin.mismatch}
+        invalid={mismatch}
         shake={shake}
         autoComplete="new-password"
         inputRef={againRef}

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Lock } from 'lucide-react';
@@ -14,6 +14,7 @@ import { meQueryKey, refetchMe } from '../../api/hooks/useMe.ts';
 import { resetSessionCache } from '../../lib/session.ts';
 import { loginSearchAfter401 } from '../../lib/sessionEnd.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useShake } from './useShake.ts';
 import { postSessionMessage } from './lockChannel.ts';
 import { useLockState } from './lockState.ts';
 
@@ -37,15 +38,18 @@ export function LockScreen() {
   const { setLocked } = useLockState();
   const unlock = useUnlockSession();
   // A PIN from before the 4-digit rule can be up to 8 digits; it cannot be
-  // typed into four boxes, so those accounts keep the single field.
-  // Read from the cache RootLayout's useMe filled, without subscribing: a
-  // background refetch must not swap the field under the person's fingers.
-  const [legacy] = useState(() => qc.getQueryData<{ lock_pin_legacy?: boolean }>(meQueryKey)?.lock_pin_legacy === true);
+  // typed into four boxes, so those accounts keep the single field, and so
+  // does a lock that cannot tell (no cached /auth/me yet, or one without the
+  // flag): the single field takes a 4-digit PIN too. Decided once, from the
+  // cache RootLayout's useMe filled and without subscribing, so a background
+  // refetch does not swap the field under the person's fingers.
+  const [flag] = useState(() => qc.getQueryData<{ lock_pin_legacy?: boolean }>(meQueryKey)?.lock_pin_legacy);
+  const legacy = flag !== false;
   const [pin, setPin] = useState('');
-  const [shake, setShake] = useState(false);
+  const [shake, playShake] = useShake();
+  const [wrong, setWrong] = useState(false);
   const pinRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const wrongText = t.lock.wrongPin;
   const [signingOut, setSigningOut] = useState(false);
 
   async function leaveToLogin(search: { step: undefined; notice?: string }) {
@@ -60,6 +64,7 @@ export function LockScreen() {
   async function attempt(value: string) {
     if (!value || unlock.isPending) return;
     setError(null);
+    setWrong(false);
     try {
       await unlock.mutateAsync(value);
     } catch (err) {
@@ -87,13 +92,11 @@ export function LockScreen() {
       const left = attemptsLeft(err);
       if (err instanceof ApiError && err.status === 422) {
         setError(left === undefined ? t.lock.wrongPin : `${t.lock.wrongPin} ${t.lock.attemptsLeft(left)}`);
-        setShake(true);
-        setTimeout(() => setShake(false), 350);
+        setWrong(true);
+        playShake();
       } else {
         setError(t.lock.failed);
       }
-      // The boxes are disabled while the request runs; focus once enabled.
-      setTimeout(() => pinRef.current?.focus(), 0);
       return;
     }
     postSessionMessage({ type: 'unlocked' });
@@ -104,8 +107,16 @@ export function LockScreen() {
     void qc.invalidateQueries();
   }
 
+  // The boxes are disabled while the request runs; once they are enabled
+  // again after a failure, the cursor goes back into them.
+  useEffect(() => {
+    if (error && !unlock.isPending && !legacy) pinRef.current?.focus();
+  }, [error, unlock.isPending, legacy]);
+
   function submit(e: FormEvent) {
     e.preventDefault();
+    // Enter on a partial PIN must not post: it would burn an attempt.
+    if (!legacy && pin.length !== 4) return;
     void attempt(pin);
   }
 
@@ -142,11 +153,13 @@ export function LockScreen() {
                   className="font-mono"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
-                  aria-describedby="lock-pin-legacy"
+                  aria-describedby={flag === true ? 'lock-pin-legacy' : undefined}
                 />
-                <p id="lock-pin-legacy" className="text-xs text-muted-foreground">
-                  {t.lock.legacyNote}
-                </p>
+                {flag === true && (
+                  <p id="lock-pin-legacy" className="text-xs text-muted-foreground">
+                    {t.lock.legacyNote}
+                  </p>
+                )}
               </>
             ) : (
               <PinInput
@@ -156,7 +169,7 @@ export function LockScreen() {
                 onComplete={(digits) => void attempt(digits)}
                 autoFocus
                 disabled={unlock.isPending}
-                invalid={error?.startsWith(wrongText) ?? false}
+                invalid={wrong}
                 shake={shake}
                 inputRef={pinRef}
               />

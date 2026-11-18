@@ -53,4 +53,14 @@ describe('PinForm', () => {
     expect(again).toHaveValue('');
     await vi.waitFor(() => expect(first).toHaveFocus());
   });
+
+  it('sends the person back to the first row when the second is filled first', async () => {
+    const { spy, first, again } = setup();
+    await userEvent.type(first, '04');
+    await userEvent.type(again, '0427');
+    expect(again).toHaveValue('');
+    await vi.waitFor(() => expect(first).toHaveFocus());
+    expect(first).toHaveValue('04');
+    expect(spy).not.toHaveBeenCalled();
+  });
 });

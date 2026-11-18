@@ -24,7 +24,6 @@ export const enLock = {
     repeatLabel: 'Repeat the PIN',
     hint: '4 digits. Avoid 1234 or 0000.',
     mismatch: 'The PINs do not match. Repeat it once more.',
-    submit: 'Set PIN and lock',
     cancel: 'Cancel',
     failed: 'The PIN could not be set. Try again.',
   },
@@ -32,7 +31,6 @@ export const enLock = {
     title: 'Set a lock PIN',
     intro:
       'A PIN lets you lock this session when you step away, for example from the lock icon at the top. You can also set or change it later under Security.',
-    submit: 'Set PIN',
     skip: 'Skip',
     skipFailed: 'Could not continue. Try again.',
   },
