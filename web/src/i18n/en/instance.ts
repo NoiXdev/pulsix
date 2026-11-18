@@ -35,6 +35,7 @@ export const enInstance = {
     saved: 'Mail settings saved',
     saveFailed: 'failed to save mail settings',
     serverTitle: 'SMTP server',
+    serverDescription: 'The mail server Pulsix sends invitation e-mails through.',
     host: 'Host',
     port: 'Port',
     username: 'Username',
@@ -45,8 +46,8 @@ export const enInstance = {
     startTls: 'Use STARTTLS',
     save: 'Save mail settings',
     test: {
-      title: 'Send a test e-mail',
-      hint: "Uses the saved settings. A failure shows the mail server's own answer.",
+      title: 'Test e-mail',
+      description: "Sends a message with the saved settings. A failure shows the mail server's own answer.",
       recipient: 'Recipient',
       send: 'Send test e-mail',
       sent: (to: string) => `Test e-mail sent to ${to}`,

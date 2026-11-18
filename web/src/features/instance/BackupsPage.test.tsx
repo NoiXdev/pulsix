@@ -111,6 +111,8 @@ describe('BackupsPage', () => {
     expect(screen.getByLabelText('Time zone')).toHaveValue('Europe/Berlin');
     expect(screen.getByLabelText('Daily backups kept')).toHaveValue(7);
 
+    expect(screen.getByRole('heading', { name: 'Destination', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Schedule and retention', level: 2 })).toBeInTheDocument();
     const strip = screen.getByRole('region', { name: 'Backup status' });
     expect(within(strip).getByText('Folder /var/lib/pulsix/backups')).toBeInTheDocument();
     expect(within(strip).getByText(/412 MB/)).toBeInTheDocument();
@@ -150,7 +152,7 @@ describe('BackupsPage', () => {
 
     await user.clear(screen.getByLabelText('Bucket'));
     await user.type(screen.getByLabelText('Bucket'), 'other-bucket');
-    await user.click(screen.getByRole('button', { name: 'Save backup settings' }));
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
     expect(await screen.findByText('Backup settings saved')).toBeInTheDocument();
     expect(puts).toHaveLength(1);
     expect(puts[0]).toMatchObject({
@@ -165,7 +167,7 @@ describe('BackupsPage', () => {
     expect(puts[0].s3).not.toHaveProperty('secret_key');
 
     await user.type(screen.getByLabelText('Secret key'), 'hunter2');
-    await user.click(screen.getByRole('button', { name: 'Save backup settings' }));
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1].s3).toMatchObject({ secret_key: 'hunter2' });
   });
@@ -185,7 +187,7 @@ describe('BackupsPage', () => {
     renderPage();
     await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
     await user.click(screen.getByLabelText('Remove the stored secret key'));
-    await user.click(screen.getByRole('button', { name: 'Save backup settings' }));
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
     await waitFor(() => expect(puts).toHaveLength(1));
     expect(puts[0].s3).toMatchObject({ secret_key: '' });
   });
@@ -205,7 +207,7 @@ describe('BackupsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Time zone')).toHaveValue('Europe/Berlin'));
     await user.clear(screen.getByLabelText('Time of day'));
     await user.type(screen.getByLabelText('Time of day'), '3pm');
-    await user.click(screen.getByRole('button', { name: 'Save backup settings' }));
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
     expect(await screen.findByText('Enter the time as HH:MM')).toBeInTheDocument();
     expect(called).toBe(false);
   });
@@ -410,6 +412,84 @@ describe('BackupsPage', () => {
         '-e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY cli restore',
     );
     expect(command.textContent).not.toContain('AKIA123');
+  });
+});
+
+describe('BackupsPage cards', () => {
+  it('keeps the save buttons off until a card changed, and puts Back up now in the page header', async () => {
+    mockApi(base());
+    renderPage();
+    await screen.findByLabelText('Time zone');
+    expect(screen.getByRole('button', { name: 'Save destination' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
+    const strip = screen.getByRole('region', { name: 'Backup status' });
+    expect(within(strip).queryByRole('button', { name: 'Back up now' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back up now' })).toBeInTheDocument();
+  });
+
+  it('saves one card on top of the last saved values of the other, and leaves the other card dirty (Review Focus 4)', async () => {
+    const user = userEvent.setup();
+    const puts: Array<Record<string, unknown>> = [];
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups/settings': S3_SETTINGS,
+        'PUT /api/v1/admin/backups/settings': (req: MockRequest) => {
+          puts.push(req.body as Record<string, unknown>);
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
+
+    await user.clear(screen.getByLabelText('Bucket'));
+    await user.type(screen.getByLabelText('Bucket'), 'other-bucket');
+    await user.clear(screen.getByLabelText('Time of day'));
+    await user.type(screen.getByLabelText('Time of day'), '05:30');
+    await user.clear(screen.getByLabelText('Daily backups kept'));
+    await user.type(screen.getByLabelText('Daily backups kept'), '14');
+
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    // The new destination, but the schedule as last saved, not the draft.
+    expect(puts[0]).toMatchObject({
+      destination: 's3',
+      time_of_day: '03:00',
+      retention: { daily: 7, weekly: 4, monthly: 6 },
+    });
+    expect((puts[0].s3 as Record<string, unknown>).bucket).toBe('other-bucket');
+
+    // The schedule card still carries its draft and is still unsaved.
+    expect(screen.getByLabelText('Time of day')).toHaveValue('05:30');
+    expect(screen.getByLabelText('Daily backups kept')).toHaveValue(14);
+    expect(screen.getByRole('button', { name: 'Save schedule' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save destination' })).toBeDisabled();
+  });
+
+  it('saving the schedule leaves the unsaved destination draft out of the request', async () => {
+    const user = userEvent.setup();
+    const puts: Array<Record<string, unknown>> = [];
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups/settings': S3_SETTINGS,
+        'PUT /api/v1/admin/backups/settings': (req: MockRequest) => {
+          puts.push(req.body as Record<string, unknown>);
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
+    await user.clear(screen.getByLabelText('Bucket'));
+    await user.type(screen.getByLabelText('Bucket'), 'other-bucket');
+    await user.clear(screen.getByLabelText('Time of day'));
+    await user.type(screen.getByLabelText('Time of day'), '05:30');
+    await user.click(screen.getByRole('button', { name: 'Save schedule' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toMatchObject({ time_of_day: '05:30' });
+    expect((puts[0].s3 as Record<string, unknown>).bucket).toBe('firma-backups');
+    expect(screen.getByLabelText('Bucket')).toHaveValue('other-bucket');
+    expect(screen.getByRole('button', { name: 'Save destination' })).toBeEnabled();
   });
 });
 

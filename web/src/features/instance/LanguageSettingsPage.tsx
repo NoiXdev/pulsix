@@ -1,10 +1,7 @@
-import { useState } from 'react';
-import { Languages } from 'lucide-react';
-import { Card } from '../../ui/table.tsx';
-import { Button } from '../../ui/button.tsx';
-import { Label } from '../../ui/label.tsx';
+import { CardSaveBar, SettingsCard, SettingsPage, SettingsRow } from '../../ui/settings.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useCardForm } from '../../ui/useCardForm.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useMe } from '../../api/hooks/useMe.ts';
@@ -27,57 +24,60 @@ export function LanguageSettingsPage() {
   const me = useMe({ enabled: true });
   const settings = useInstanceLocale();
   const save = useSaveInstanceLocale();
-  const [chosen, setChosen] = useState<Locale | null>(null);
+  const form = useCardForm<Locale>(settings.data?.default_locale ?? 'en');
 
   const guard = useQueryGuard(settings);
   if (guard) return guard;
   if (!settings.data) return <QueryLoading />;
 
-  const value = chosen ?? settings.data.default_locale;
-  return (
-    <>
-      <h1 className="text-xl font-semibold">{t.language.instance.title}</h1>
-      <span className="text-[13px] text-muted-foreground">{t.language.instance.hint}</span>
+  const value = form.draft;
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.dirty) return;
+    try {
+      await save.mutateAsync(value);
+      form.markSaved(value);
+      // The page may have just switched language (an administrator without
+      // a language of their own follows the default), so the confirmation
+      // is said in the language the page is in now, not the one it was in.
+      const own = me.data?.locale;
+      toast.show(CATALOGUES[isLocale(own) ? own : value].language.instance.saved);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.language.instance.saveFailed, 'destructive');
+    }
+  }
 
-      <div className="grid grid-cols-2 items-start gap-4">
-        <Card>
-          <form
-            className="flex flex-col gap-3 p-4"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                await save.mutateAsync(value);
-                setChosen(null);
-                // The page may have just switched language (an
-                // administrator without a language of their own follows
-                // the default), so the confirmation is said in the
-                // language the page is in now, not the one it was in.
-                const own = me.data?.locale;
-                toast.show(CATALOGUES[isLocale(own) ? own : value].language.instance.saved);
-              } catch (err) {
-                toast.show(err instanceof Error ? err.message : t.language.instance.saveFailed, 'destructive');
-              }
-            }}
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="instance_locale">{t.language.instance.field}</Label>
+  return (
+    <SettingsPage title={t.language.instance.title} description={t.language.instance.hint}>
+      <form id="instance-language-form" onSubmit={(e) => void onSubmit(e)}>
+        <SettingsCard
+          title={t.language.label}
+          description={t.language.instance.description}
+          footer={
+            <CardSaveBar
+              formId="instance-language-form"
+              dirty={form.dirty}
+              saving={save.isPending}
+              onDiscard={form.discard}
+              saveLabel={t.language.instance.save}
+            />
+          }
+        >
+          <SettingsRow label={t.language.instance.field} htmlFor="instance_locale">
+            <div className="w-60">
               <Select
                 id="instance_locale"
+                portal
                 options={LOCALES.map((l) => ({ value: l, label: LOCALE_NAMES[l] }))}
                 value={value}
                 onChange={(v) => {
-                  if (isLocale(v)) setChosen(v);
+                  if (isLocale(v)) form.setDraft(v);
                 }}
               />
             </div>
-            <div className="flex justify-end">
-              <Button type="submit" variant="primary" disabled={save.isPending}>
-                <Languages size={14} /> {t.language.instance.save}
-              </Button>
-            </div>
-          </form>
-        </Card>
-      </div>
-    </>
+          </SettingsRow>
+        </SettingsCard>
+      </form>
+    </SettingsPage>
   );
 }

@@ -7,6 +7,7 @@ export const deBackups: Messages['backups'] = {
   storageError: (detail: string) => `Das Backup-Ziel kann nicht gelesen werden: ${detail}`,
   strip: {
     label: 'Backup-Status',
+    description: 'Der Stand deiner Backups auf einen Blick.',
     last: 'Letztes Backup',
     none: 'Noch kein Backup',
     next: 'Nächstes Backup',
@@ -18,6 +19,11 @@ export const deBackups: Messages['backups'] = {
   },
   destination: {
     title: 'Ziel',
+    description: 'Wo die Backups gespeichert werden.',
+    typeLabel: 'Zieltyp',
+    testLabel: 'Verbindung',
+    testHint: 'Prüft das Ziel wie oben eingegeben, ohne es zu speichern.',
+    save: 'Ziel speichern',
     folder: 'Ordner auf dem Server',
     s3: 'S3-kompatibler Speicher',
     endpoint: 'Endpoint',
@@ -37,6 +43,8 @@ export const deBackups: Messages['backups'] = {
   },
   schedule: {
     title: 'Zeitplan und Aufbewahrung',
+    description: 'Wann Backups automatisch laufen und wie viele behalten werden.',
+    save: 'Zeitplan speichern',
     enabled: 'Täglich automatisch sichern',
     timeOfDay: 'Uhrzeit',
     timeZone: 'Zeitzone',
@@ -49,9 +57,9 @@ export const deBackups: Messages['backups'] = {
     invalidTime: 'Uhrzeit als HH:MM eingeben',
     invalidRetention: 'Ganze Zahlen ab 0 eingeben',
   },
+  masterKeyLabel: 'Verschlüsselung',
   masterKey:
     'Jedes Backup ist verschlüsselt. Zum Wiederherstellen wird der Master-Key der Instanz gebraucht, die es erstellt hat. Den Key getrennt von den Backups aufbewahren.',
-  save: 'Backup-Einstellungen speichern',
   saved: 'Backup-Einstellungen gespeichert',
   saveFailed: 'Backup-Einstellungen konnten nicht gespeichert werden',
   list: {

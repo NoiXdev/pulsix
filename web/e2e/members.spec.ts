@@ -159,8 +159,15 @@ test('the Outgoing mail settings show the configured server and send a test e-ma
   await expect(page.getByLabel('Host', { exact: true })).toHaveValue(SMTP.host);
   await expect(page.getByLabel('From address', { exact: true })).toHaveValue(SMTP.from);
 
-  await page.getByRole('button', { name: /Save mail settings/ }).click();
+  // Save is live only once something changed: change the sender, save, put it back, save.
+  const save = page.getByRole('button', { name: /Save mail settings/ });
+  await expect(save).toBeDisabled();
+  await page.getByLabel('From address', { exact: true }).fill('changed-' + SMTP.from);
+  await save.click();
   await expect(page.getByText('Mail settings saved')).toBeVisible();
+  await page.getByLabel('From address', { exact: true }).fill(SMTP.from);
+  await save.click();
+  await expect(save).toBeDisabled();
 
   const recipient = 'smtp-test@example.test';
   await page.getByLabel('Recipient').fill(recipient);

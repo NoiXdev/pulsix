@@ -1,22 +1,20 @@
 import { DatabaseBackup } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { SettingsPage } from '../../ui/settings.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useBackupSettings, useBackups, useCreateBackup } from '../../api/hooks/useBackups.ts';
-import type { BackupEntry } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
-import { useFormat } from '../../i18n/format.ts';
-import { formatSize } from './backupFormat.ts';
 import { BackupList } from './BackupList.tsx';
 import { BackupSettingsForm } from './BackupSettingsForm.tsx';
+import { BackupStatusCard } from './BackupStatusCard.tsx';
 
 /**
  * BackupsPage is the instance's backup management, for instance
- * administrators (Settings → Backups): a status strip with Back up now, the
- * destination and schedule form, and the list of backups with Download,
- * Delete and Restore…. Like mail and language it is filed under an
+ * administrators (Settings → Backups): Back up now in the page header, a
+ * status card, the Destination and Schedule cards (each saved on its own) and
+ * the list of backups with Download, Delete and Restore…. Like mail and language it is filed under an
  * organization's Settings only for navigation; it is instance-wide.
  */
 export function BackupsPage() {
@@ -32,10 +30,11 @@ export function BackupsPage() {
 
   const items = backups.data.items ?? [];
   return (
-    <>
-      <h1 className="text-xl font-semibold">{t.backups.title}</h1>
-      <span className="text-[13px] text-muted-foreground">{t.backups.hint}</span>
-
+    <SettingsPage
+      title={t.backups.title}
+      description={t.backups.hint}
+      actions={<BackUpNowButton running={items.some((i) => i.state === 'running')} />}
+    >
       {backups.data.storage_error && (
         <div
           role="alert"
@@ -45,11 +44,9 @@ export function BackupsPage() {
         </div>
       )}
 
-      <StatusStrip items={items} nextRunAt={backups.data.next_run_at} destinationLabel={backups.data.destination_label} />
+      <BackupStatusCard items={items} nextRunAt={backups.data.next_run_at} destinationLabel={backups.data.destination_label} />
 
-      <div className="grid grid-cols-1 items-start gap-4">
-        <BackupSettingsForm key={JSON.stringify(settings.data)} settings={settings.data} />
-      </div>
+      <BackupSettingsForm settings={settings.data} />
 
       <h2 className="text-sm font-semibold">{t.backups.list.title}</h2>
       <BackupList
@@ -63,72 +60,29 @@ export function BackupsPage() {
           pathStyle: settings.data.s3.path_style,
         }}
       />
-    </>
+    </SettingsPage>
   );
 }
 
-function StatusStrip({
-  items,
-  nextRunAt,
-  destinationLabel,
-}: {
-  items: BackupEntry[];
-  nextRunAt: string | null;
-  destinationLabel: string;
-}) {
+function BackUpNowButton({ running }: { running: boolean }) {
   const t = useT();
-  const f = useFormat();
   const toast = useToast();
   const create = useCreateBackup();
-  // The newest entry that has an outcome; a running one has none yet.
-  const last = items.find((i) => i.state !== 'running');
-  const running = items.some((i) => i.state === 'running');
-
   return (
-    <section aria-label={t.backups.strip.label} className="flex flex-wrap items-stretch gap-3">
-      <Stat label={t.backups.strip.last}>
-        {last ? (
-          <span className="flex flex-wrap items-center gap-2">
-            <span>{f.dateTime(last.created_at)}</span>
-            {last.size_bytes > 0 && <span className="text-muted-foreground">{formatSize(f, last.size_bytes)}</span>}
-            <Pill tone={last.state === 'succeeded' ? 'ok' : last.state === 'abandoned' ? 'warn' : 'crit'}>
-              {t.backups.list.states[last.state]}
-            </Pill>
-          </span>
-        ) : (
-          <span className="text-muted-foreground">{t.backups.strip.none}</span>
-        )}
-      </Stat>
-      <Stat label={t.backups.strip.next}>
-        {nextRunAt ? f.dateTime(nextRunAt) : <span className="text-muted-foreground">{t.backups.strip.scheduleOff}</span>}
-      </Stat>
-      <Stat label={t.backups.strip.destination}>{destinationLabel}</Stat>
-      <div className="flex items-center">
-        <Button
-          type="button"
-          variant="primary"
-          disabled={running || create.isPending}
-          onClick={async () => {
-            try {
-              await create.mutateAsync();
-              toast.show(t.backups.strip.started);
-            } catch (err) {
-              toast.show(err instanceof Error ? err.message : t.backups.strip.startFailed, 'destructive');
-            }
-          }}
-        >
-          <DatabaseBackup size={14} /> {t.backups.strip.backUpNow}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex min-w-[180px] flex-1 flex-col gap-1 rounded-[10px] border border-border bg-card px-4 py-3">
-      <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</span>
-      <span className="text-[13px] break-words">{children}</span>
-    </div>
+    <Button
+      type="button"
+      variant="primary"
+      disabled={running || create.isPending}
+      onClick={async () => {
+        try {
+          await create.mutateAsync();
+          toast.show(t.backups.strip.started);
+        } catch (err) {
+          toast.show(err instanceof Error ? err.message : t.backups.strip.startFailed, 'destructive');
+        }
+      }}
+    >
+      <DatabaseBackup size={14} /> {t.backups.strip.backUpNow}
+    </Button>
   );
 }

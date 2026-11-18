@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { ADMIN } from '../../test/renderRoutes.tsx';
 import { SmtpSettingsPage } from './SmtpSettingsPage.tsx';
@@ -19,9 +20,11 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -47,6 +50,10 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
     renderPage();
     expect(await screen.findByText('not configured')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Outgoing mail', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'SMTP server', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Test e-mail', level: 2 })).toBeInTheDocument();
+    // Nothing to save until something changed.
+    expect(screen.getByRole('button', { name: /Save mail settings/ })).toBeDisabled();
 
     await user.type(screen.getByLabelText('Host'), 'smtp.acme.io');
     await user.clear(screen.getByLabelText('Port'));
@@ -70,6 +77,27 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
     expect(screen.getByLabelText('Host')).toHaveValue('smtp.acme.io');
     // The stored password is never shown back.
     expect(screen.getByLabelText('Password')).toHaveValue('');
+    // Saved: clean again.
+    expect(screen.getByRole('button', { name: /Save mail settings/ })).toBeDisabled();
+  });
+
+  it('treats the STARTTLS switch as a form field and lets Discard restore it', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/settings/smtp': {
+        configured: true, host: 'smtp.acme.io', port: 587, username: 'mailer', from: 'pulsix@acme.io', start_tls: true,
+      },
+    });
+    renderPage();
+    const save = await screen.findByRole('button', { name: /Save mail settings/ });
+    expect(save).toBeDisabled();
+    await user.click(screen.getByLabelText('Use STARTTLS'));
+    expect(save).toBeEnabled();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByLabelText('Use STARTTLS')).toHaveAttribute('aria-checked', 'true');
+    expect(save).toBeDisabled();
   });
 
   it('keeps the stored password when the field is left empty, and removes it on request', async () => {
@@ -148,7 +176,8 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
     });
 
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /Save mail settings/ }));
+    await user.type(await screen.findByLabelText('Username'), 'mailer');
+    await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
 
     expect(await screen.findByText('required')).toBeInTheDocument();
     expect(saves).toBe(0);

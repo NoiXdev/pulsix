@@ -28,6 +28,7 @@ export const deInstance: Messages['instance'] = {
     saved: 'Mail-Einstellungen gespeichert',
     saveFailed: 'Mail-Einstellungen konnten nicht gespeichert werden',
     serverTitle: 'SMTP-Server',
+    serverDescription: 'Der Mailserver, über den Pulsix Einladungs-E-Mails versendet.',
     host: 'Host',
     port: 'Port',
     username: 'Benutzername',
@@ -39,8 +40,8 @@ export const deInstance: Messages['instance'] = {
     startTls: 'STARTTLS verwenden',
     save: 'Mail-Einstellungen speichern',
     test: {
-      title: 'Test-E-Mail senden',
-      hint: 'Verwendet die gespeicherten Einstellungen. Bei einem Fehler wird die Antwort des Mailservers angezeigt.',
+      title: 'Test-E-Mail',
+      description: 'Sendet eine Nachricht mit den gespeicherten Einstellungen. Bei einem Fehler wird die Antwort des Mailservers angezeigt.',
       recipient: 'Empfänger',
       send: 'Test-E-Mail senden',
       sent: (to: string) => `Test-E-Mail an ${to} gesendet`,

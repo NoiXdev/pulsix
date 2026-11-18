@@ -10,6 +10,7 @@ export const enBackups = {
   storageError: (detail: string) => `The backup destination cannot be read: ${detail}`,
   strip: {
     label: 'Backup status',
+    description: 'The state of your backups at a glance.',
     last: 'Last backup',
     none: 'No backup yet',
     next: 'Next backup',
@@ -21,6 +22,11 @@ export const enBackups = {
   },
   destination: {
     title: 'Destination',
+    description: 'Where backups are stored.',
+    typeLabel: 'Destination type',
+    testLabel: 'Connection',
+    testHint: 'Checks the destination as entered above, without saving it.',
+    save: 'Save destination',
     folder: 'Folder on the server',
     s3: 'S3-compatible storage',
     endpoint: 'Endpoint',
@@ -40,6 +46,8 @@ export const enBackups = {
   },
   schedule: {
     title: 'Schedule and retention',
+    description: 'When backups run automatically and how many are kept.',
+    save: 'Save schedule',
     enabled: 'Back up automatically every day',
     timeOfDay: 'Time of day',
     timeZone: 'Time zone',
@@ -52,9 +60,9 @@ export const enBackups = {
     invalidTime: 'Enter the time as HH:MM',
     invalidRetention: 'Enter whole numbers, 0 or more',
   },
+  masterKeyLabel: 'Encryption',
   masterKey:
     'Every backup is encrypted. Restoring it needs the master key of the instance that made it. Keep that key apart from the backups.',
-  save: 'Save backup settings',
   saved: 'Backup settings saved',
   saveFailed: 'failed to save the backup settings',
   list: {

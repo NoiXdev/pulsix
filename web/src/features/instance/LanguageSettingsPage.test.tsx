@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { ADMIN } from '../../test/renderRoutes.tsx';
 import { pickOption } from '../../test/pickOption.ts';
@@ -26,9 +27,11 @@ function renderPage() {
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider>
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );
@@ -55,7 +58,10 @@ describe('LanguageSettingsPage', () => {
     expect(await screen.findByRole('heading', { name: 'Default language' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('Default language')).toHaveValue('English'));
 
+    expect(screen.getByRole('heading', { name: 'Language', level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save default language' })).toBeDisabled();
     await pickOption(screen, 'Default language', 'Deutsch');
+    expect(screen.getByRole('button', { name: 'Save default language' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Save default language' }));
 
     // The 204 carries nothing: the admin's own effective language comes
@@ -82,6 +88,7 @@ describe('LanguageSettingsPage', () => {
     renderPage();
 
     await waitFor(() => expect(screen.getByLabelText('Default language')).toHaveValue('English'));
+    await pickOption(screen, 'Default language', 'Deutsch');
     await user.click(screen.getByRole('button', { name: 'Save default language' }));
     const toast = await screen.findByRole('status');
     expect(within(toast).getByText('instance administrators only')).toBeInTheDocument();

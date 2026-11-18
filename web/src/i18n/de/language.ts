@@ -16,6 +16,7 @@ export const deLanguage: Messages['language'] = {
     tab: 'Sprache',
     title: 'Standardsprache',
     hint: 'Für die ganze Instanz: gilt auf den Anmeldeseiten und für alle, die keine eigene Sprache gewählt haben.',
+    description: 'Die Sprache, die alle sehen, bis sie eine eigene wählen.',
     field: 'Standardsprache',
     save: 'Standardsprache speichern',
     saved: 'Standardsprache gespeichert',

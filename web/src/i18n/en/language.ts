@@ -21,6 +21,7 @@ export const enLanguage = {
     tab: 'Language',
     title: 'Default language',
     hint: 'Instance-wide: used on the sign-in pages and for everyone who has not chosen a language of their own.',
+    description: 'The language people see until they choose their own.',
     field: 'Default language',
     save: 'Save default language',
     saved: 'Default language saved',
