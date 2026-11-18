@@ -51,6 +51,11 @@ import { validateJumpHostsSearch } from './features/credentials/jumpHostsSearch.
 import { validateAgentsSearch } from './features/agents/agentsSearch.ts';
 import { validateWorkersSearch } from './features/workers/workersSearch.ts';
 import { validateFleetSearch } from './features/fleet/fleetSearch.ts';
+import { validateChecksSearch } from './features/checks/checksSearch.ts';
+import { validateMonitoringGroupsSearch } from './features/checks/monitoringGroupsSearch.ts';
+import { validateRulesSearch } from './features/checks/rulesSearch.ts';
+import { validateDecisionsSearch } from './features/checks/decisionsSearch.ts';
+import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -318,7 +323,7 @@ const agentsRoute = createRoute({
 const maintenanceRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/maintenance',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateMaintenanceSearch,
   component: MaintenancePage,
 });
 
@@ -362,25 +367,25 @@ const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks
 const checksIndexRoute = createRoute({
   getParentRoute: () => checksRoute,
   path: '/',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateChecksSearch,
   component: ChecksPage,
 });
 const monitoringGroupsRoute = createRoute({
   getParentRoute: () => checksRoute,
   path: '/monitoring-groups',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateMonitoringGroupsSearch,
   component: MonitoringGroupsPage,
 });
 const rulesRoute = createRoute({
   getParentRoute: () => checksRoute,
   path: '/rules',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateRulesSearch,
   component: RulesPage,
 });
 const itemsRoute = createRoute({
   getParentRoute: () => checksRoute,
   path: '/items',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateDecisionsSearch,
   component: ItemsPage,
 });
 

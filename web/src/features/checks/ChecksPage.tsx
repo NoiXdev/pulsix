@@ -2,15 +2,19 @@ import { useParams } from '@tanstack/react-router';
 import { Activity } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useChecks, useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { may } from '../../lib/roles.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
 import { checkColumns } from './checkColumns.tsx';
+import { CHECKS_FILTERS, filterChecks } from './checksSearch.ts';
 import { bindingText } from './binding.ts';
 import { useCheckListActions } from './useCheckListActions.tsx';
 
@@ -34,7 +38,8 @@ export function ChecksPage() {
   const groupList = groups.data?.groups ?? [];
   const actions = useCheckListActions(org, { canWrite, groups: groupList });
   const columns = checkColumns({ org, t, groups: groupList });
-  const view = useListView('checks', columns, { mode: 'client', rowKey: (c) => c.id });
+  const { filters, active, setFilter, reset } = useListFilters(CHECKS_FILTERS);
+  const view = useListView('checks', columns, { mode: 'client', rowKey: (c) => c.id, resetKey: JSON.stringify(filters) });
 
   // The header is built before anything can return early, and every early
   // return carries it: a failed list used to replace the whole page,
@@ -82,7 +87,11 @@ export function ChecksPage() {
     );
   }
   const list = checks.data.checks ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterChecks(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.checks.list.filters;
+  // A plugin only the URL names (a stale link) stays pickable so it can be cleared.
+  const plugins = [...new Set([...list.map((c) => c.plugin), ...(filters.plugin ? [filters.plugin] : [])])].sort();
 
   return (
     <>
@@ -107,7 +116,35 @@ export function ChecksPage() {
         // and a host's override): the binding tells each row's menu apart.
         rowLabel={(c) => `${c.key} (${bindingText(c, groupList, t)})`}
         loading={!view.ready}
-        empty={t.checks.list.empty}
+        empty={active ? t.checks.list.noMatch : t.checks.list.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.list.count} /> : undefined}>
+            <SearchInput
+              label={t.checks.list.search}
+              placeholder={t.checks.list.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.plugin}
+              allLabel={f.allPlugins}
+              options={plugins.map((p) => ({ value: p, label: p }))}
+              value={filters.plugin}
+              onChange={(v) => setFilter('plugin', v)}
+            />
+            <FilterSelect
+              label={f.state}
+              allLabel={f.anyState}
+              options={[
+                { value: 'enabled', label: t.checks.enabled },
+                { value: 'disabled', label: t.checks.disabled },
+              ]}
+              value={filters.state}
+              onChange={(v) => setFilter('state', v as typeof filters.state)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.checks.list.count)}
       />
       {actions.dialogs}

@@ -7,11 +7,12 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ChecksPage } from './ChecksPage.tsx';
+import { validateChecksSearch } from './checksSearch.ts';
 import { check, GROUPS, org } from './checksPageTestKit.tsx';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 
-function setup(opts: { locale?: 'de'; role?: string; checks?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; role?: string; checks?: unknown[]; onDelete?: () => void; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -24,7 +25,7 @@ function setup(opts: { locale?: 'de'; role?: string; checks?: unknown[]; onDelet
     },
   });
   return renderListPage({
-    path: '/checks', component: ChecksPage, initial: '/o/acme/checks', locale: opts.locale,
+    path: '/checks', component: ChecksPage, initial: opts.initial ?? '/o/acme/checks', locale: opts.locale, extraSearch: (s) => ({ ...validateChecksSearch(s) }),
     others: [
       { path: '/checks/monitoring-groups', component: () => <div>GROUPS</div> },
       { path: '/checks/rules', component: () => <div>RULES</div> },
@@ -113,5 +114,35 @@ describe('ChecksPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Checks')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const checks = [
+      check({ id: 'a', key: 'cpu', plugin: 'cpu', origin: 'custom' }),
+      check({ id: 'b', key: 'web-up', plugin: 'http', origin: 'custom' }),
+      check({ id: 'c', key: 'web-slow', plugin: 'http', enabled: false, origin: 'custom' }),
+    ];
+    const keys = () => firstCells().map((c) => c.replace(/custom$/, ''));
+
+    it('reads the plugin and state from the URL and narrows the rows', async () => {
+      setup({ checks, initial: '/o/acme/checks?plugin=http&state=disabled' });
+      await screen.findByText('1–1 of 1 check');
+      expect(keys()).toEqual(['web-slow']);
+      expect(screen.getByText('1 of 3 checks')).toBeInTheDocument();
+    });
+
+    it('writes the plugin and the search to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({ checks, initial: '/o/acme/checks?page=2' });
+      await screen.findByText('1–3 of 3 checks');
+      await pickOption(screen, 'Filter by plugin', 'http');
+      await waitFor(() => expect(router.state.location.search).toEqual({ plugin: 'http' }));
+      expect(keys()).toEqual(['web-up', 'web-slow']);
+      await user.type(screen.getByRole('searchbox', { name: 'Search checks' }), 'slow');
+      await waitFor(() => expect(router.state.location.search).toEqual({ plugin: 'http', q: 'slow' }));
+      expect(keys()).toEqual(['web-slow']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
   });
 });

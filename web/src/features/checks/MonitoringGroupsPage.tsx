@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -14,9 +15,11 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useCreateMonitoringGroup, useMonitoringGroupPreview, useMonitoringGroups, useUpdateMonitoringGroup } from '../../api/hooks/useChecks.ts';
 import { may } from '../../lib/roles.ts';
 import type { MonitoringGroup } from '../../api/types.ts';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
 import { monitoringGroupColumns } from './monitoringGroupColumns.tsx';
+import { MONITORING_GROUPS_FILTERS, filterMonitoringGroups } from './monitoringGroupsSearch.ts';
 import { useMonitoringGroupListActions } from './useMonitoringGroupListActions.tsx';
 
 /** How long the selector field stays quiet before the preview asks. The
@@ -43,7 +46,8 @@ export function MonitoringGroupsPage() {
   const groups = useMonitoringGroups(org, !!orgInfo.data && canRead);
   const actions = useMonitoringGroupListActions(org, canWrite, (group, onClose) => <GroupDialog org={org} group={group} onClose={onClose} />);
   const columns = monitoringGroupColumns(t);
-  const view = useListView('monitoring-groups', columns, { mode: 'client', rowKey: (g) => g.id });
+  const { filters, active, setFilter, reset } = useListFilters(MONITORING_GROUPS_FILTERS);
+  const view = useListView('monitoring-groups', columns, { mode: 'client', rowKey: (g) => g.id, resetKey: JSON.stringify(filters) });
 
   // Built before any early return, and carried by every one of them: a
   // failed list used to replace the whole page, taking ChecksTabs with it
@@ -91,7 +95,8 @@ export function MonitoringGroupsPage() {
     );
   }
   const list = groups.data.groups ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterMonitoringGroups(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
 
   return (
     <>
@@ -114,7 +119,18 @@ export function MonitoringGroupsPage() {
         rowActions={actions.rowActions}
         rowLabel={(g) => g.name}
         loading={!view.ready}
-        empty={t.checks.groups.empty}
+        empty={active ? t.checks.groups.noFilterMatch : t.checks.groups.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.groups.count} /> : undefined}>
+            <SearchInput
+              label={t.checks.groups.search}
+              placeholder={t.checks.groups.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.checks.groups.count)}
       />
       {actions.dialogs}

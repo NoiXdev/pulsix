@@ -7,12 +7,13 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { MonitoringGroupsPage } from './MonitoringGroupsPage.tsx';
+import { validateMonitoringGroupsSearch } from './monitoringGroupsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const group = (name: string, priority = 0) => ({ id: `id-${name}`, name, selector: 'role=web', priority, created_at: '', updated_at: '' });
 
-function setup(opts: { locale?: 'de'; role?: string; groups?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; role?: string; groups?: unknown[]; onDelete?: () => void; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -24,7 +25,7 @@ function setup(opts: { locale?: 'de'; role?: string; groups?: unknown[]; onDelet
     },
   });
   return renderListPage({
-    path: '/checks/monitoring-groups', component: MonitoringGroupsPage, initial: '/o/acme/checks/monitoring-groups', locale: opts.locale,
+    path: '/checks/monitoring-groups', component: MonitoringGroupsPage, initial: opts.initial ?? '/o/acme/checks/monitoring-groups', locale: opts.locale, extraSearch: (s) => ({ ...validateMonitoringGroupsSearch(s) }),
     others: [{ path: '/checks', component: () => <div>CHECKS</div> }, { path: '/checks/rules', component: () => <div>RULES</div> }, { path: '/checks/items', component: () => <div>ITEMS</div> }],
   });
 }
@@ -85,5 +86,25 @@ describe('MonitoringGroupsPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Überwachungsgruppen')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const groups = [group('web-tier'), { ...group('db-tier'), selector: 'role=db' }];
+
+    it('reads the search from the URL, over the name and the selector', async () => {
+      setup({ groups, initial: '/o/acme/checks/monitoring-groups?q=role%3Ddb' });
+      await screen.findByText('1–1 of 1 monitoring group');
+      expect(firstCells()).toEqual(['db-tier']);
+      expect(screen.getByText('1 of 2 monitoring groups')).toBeInTheDocument();
+    });
+
+    it('writes the search to the URL and says when nothing matches', async () => {
+      const user = userEvent.setup();
+      const router = setup({ groups, initial: '/o/acme/checks/monitoring-groups?page=2' });
+      await screen.findByText('1–2 of 2 monitoring groups');
+      await user.type(screen.getByRole('searchbox', { name: 'Search monitoring groups' }), 'zzz');
+      await waitFor(() => expect(router.state.location.search).toEqual({ q: 'zzz' }));
+      expect(await screen.findByText('No monitoring groups match the filter.')).toBeInTheDocument();
+    });
   });
 });

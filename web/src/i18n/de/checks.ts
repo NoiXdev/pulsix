@@ -82,6 +82,10 @@ export const deChecks: Messages['checks'] = {
     newCheck: 'Neuer Check',
     label: 'Check-Definitionen',
     count: (n: number) => (n === 1 ? '1 Check' : `${n} Checks`),
+    search: 'Checks durchsuchen',
+    filterPlaceholder: 'Checks filtern …',
+    noMatch: 'Keine Check-Definitionen passen zu den Filtern.',
+    filters: { plugin: 'Nach Plugin filtern', allPlugins: 'Alle Plugins', state: 'Nach Zustand filtern', anyState: 'Beliebiger Zustand' },
     columns: {
       check: 'Check',
       plugin: 'Plugin',
@@ -449,6 +453,9 @@ export const deChecks: Messages['checks'] = {
     newGroup: 'Neue Gruppe',
     label: 'Überwachungsgruppen',
     count: (n: number) => (n === 1 ? '1 Überwachungsgruppe' : `${n} Überwachungsgruppen`),
+    search: 'Überwachungsgruppen durchsuchen',
+    filterPlaceholder: 'Gruppen filtern …',
+    noFilterMatch: 'Keine Überwachungsgruppen passen zum Filter.',
     columns: {
       group: 'Gruppe',
       selector: 'Selektor',
@@ -476,6 +483,10 @@ export const deChecks: Messages['checks'] = {
     noMetricsBody: 'Eine Regel bewertet einen gemessenen Wert, daher bleibt „Neue Regel“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
     label: 'Regeln',
     count: (n: number) => (n === 1 ? '1 Regel' : `${n} Regeln`),
+    search: 'Regeln durchsuchen',
+    filterPlaceholder: 'Regeln filtern …',
+    noMatch: 'Keine Regeln passen zu den Filtern.',
+    filters: { severity: 'Nach Schweregrad filtern', anySeverity: 'Beliebiger Schweregrad', state: 'Nach Zustand filtern', anyState: 'Beliebiger Zustand' },
     columns: {
       rule: 'Regel',
       metric: 'Metrik',
@@ -535,6 +546,8 @@ export const deChecks: Messages['checks'] = {
     noMetricsBody: 'Eine Entscheidung nennt ein Element eines Checks, daher bleibt „Neue Entscheidung“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
     label: 'Element-Entscheidungen',
     count: (n: number) => (n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`),
+    noMatch: 'Keine Entscheidungen passen zu den Filtern.',
+    filters: { verdict: 'Nach Entscheidung filtern', anyVerdict: 'Beliebige Entscheidung', check: 'Nach Check filtern', allChecks: 'Alle Checks' },
     columns: {
       target: 'Ziel',
       check: 'Check',

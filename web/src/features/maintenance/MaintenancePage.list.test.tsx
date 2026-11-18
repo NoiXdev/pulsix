@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
+import { validateMaintenanceSearch, windowStatus } from './maintenanceSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -15,7 +16,7 @@ const win = (name: string, over: Record<string, unknown> = {}) => ({
   active_now: false, revision: 1, created_at: '', updated_at: '', ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; windows?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; role?: string; windows?: unknown[]; onDelete?: () => void; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -26,7 +27,7 @@ function setup(opts: { locale?: 'de'; role?: string; windows?: unknown[]; onDele
       return {};
     },
   });
-  return renderListPage({ path: '/maintenance', component: MaintenancePage, initial: '/o/acme/maintenance', locale: opts.locale });
+  return renderListPage({ path: '/maintenance', component: MaintenancePage, initial: opts.initial ?? '/o/acme/maintenance', locale: opts.locale, extraSearch: (s) => ({ ...validateMaintenanceSearch(s) }) });
 }
 
 describe('MaintenancePage list', () => {
@@ -92,5 +93,42 @@ describe('MaintenancePage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Fenster')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const future = '2999-01-01T00:00:00Z';
+    const windows = [
+      win('now', { active_now: true }),
+      win('later', { starts_at: future, ends_at: '2999-01-02T00:00:00Z' }),
+      win('earlier'),
+      win('nightly', { cron: '0 3 * * *', starts_at: undefined, ends_at: undefined }),
+    ];
+
+    it('reads the status from the URL: upcoming covers a recurring window between occurrences', async () => {
+      setup({ windows, initial: '/o/acme/maintenance?status=upcoming' });
+      await screen.findByText('1–2 of 2 windows');
+      expect(firstCells().sort()).toEqual(['later', 'nightly']);
+      expect(screen.getByText('2 of 4 windows')).toBeInTheDocument();
+    });
+
+    it('writes the status to the URL and resets', async () => {
+      const user = userEvent.setup();
+      const router = setup({ windows, initial: '/o/acme/maintenance?page=2' });
+      await screen.findByText('1–4 of 4 windows');
+      await pickOption(screen, 'Filter by status', 'Past');
+      await waitFor(() => expect(router.state.location.search).toEqual({ status: 'past' }));
+      expect(firstCells()).toEqual(['earlier']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
+
+    it.each([
+      [{ active_now: true }, 'active'],
+      [{ active_now: false, cron: '0 3 * * *' }, 'upcoming'],
+      [{ active_now: false, ends_at: '2020-01-01T00:00:00Z' }, 'past'],
+      [{ active_now: false, ends_at: '2999-01-01T00:00:00Z' }, 'upcoming'],
+    ])('reads %j as %s', (w, want) => {
+      expect(windowStatus(w, new Date('2026-11-18T12:00:00Z'))).toBe(want);
+    });
   });
 });

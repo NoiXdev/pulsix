@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { RulesPage } from './RulesPage.tsx';
+import { validateRulesSearch } from './rulesSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -15,7 +16,7 @@ const rule = (name: string, over: Record<string, unknown> = {}) => ({
   form: { metric: 'cpu.used_pct', op: '>=', value: 90 }, source: 'cpu.used_pct >= 90', for_seconds: 0, created_at: '', updated_at: '', ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; rules?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; role?: string; rules?: unknown[]; onDelete?: () => void; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -29,7 +30,7 @@ function setup(opts: { locale?: 'de'; role?: string; rules?: unknown[]; onDelete
     },
   });
   return renderListPage({
-    path: '/checks/rules', component: RulesPage, initial: '/o/acme/checks/rules', locale: opts.locale,
+    path: '/checks/rules', component: RulesPage, initial: opts.initial ?? '/o/acme/checks/rules', locale: opts.locale, extraSearch: (s) => ({ ...validateRulesSearch(s) }),
     others: [
       { path: '/checks', component: () => <div>CHECKS</div> },
       { path: '/checks/monitoring-groups', component: () => <div>GROUPS</div> },
@@ -97,5 +98,28 @@ describe('RulesPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Regeln')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const rules = [rule('cpu-hot', { severity: 'crit' }), rule('cpu-warm'), rule('disk-full', { severity: 'crit', enabled: false, metric: 'disk.used_pct' })];
+
+    it('reads severity and state from the URL and narrows the rows', async () => {
+      setup({ rules, initial: '/o/acme/checks/rules?severity=crit&state=enabled' });
+      await screen.findByText('1–1 of 1 rule');
+      expect(names()).toEqual(['cpu-hot']);
+      expect(screen.getByText('1 of 3 rules')).toBeInTheDocument();
+    });
+
+    it('writes the severity and the search to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({ rules, initial: '/o/acme/checks/rules?page=2' });
+      await screen.findByText('1–3 of 3 rules');
+      await pickOption(screen, 'Filter by severity', 'crit');
+      await waitFor(() => expect(router.state.location.search).toEqual({ severity: 'crit' }));
+      expect(names().sort()).toEqual(['cpu-hot', 'disk-full']);
+      await user.type(screen.getByRole('searchbox', { name: 'Search rules' }), 'disk');
+      await waitFor(() => expect(router.state.location.search).toEqual({ severity: 'crit', q: 'disk' }));
+      expect(names()).toEqual(['disk-full']);
+    });
   });
 });

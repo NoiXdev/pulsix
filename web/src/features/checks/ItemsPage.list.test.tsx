@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { ItemsPage } from './ItemsPage.tsx';
+import { validateDecisionsSearch } from './decisionsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -15,7 +16,7 @@ const decision = (pattern: string, over: Record<string, unknown> = {}) => ({
   updated_at: '2026-09-01T00:00:00Z', ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; decisions?: unknown[]; onDelete?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; role?: string; decisions?: unknown[]; onDelete?: () => void; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -28,7 +29,7 @@ function setup(opts: { locale?: 'de'; role?: string; decisions?: unknown[]; onDe
     },
   });
   return renderListPage({
-    path: '/checks/items', component: ItemsPage, initial: '/o/acme/checks/items', locale: opts.locale,
+    path: '/checks/items', component: ItemsPage, initial: opts.initial ?? '/o/acme/checks/items', locale: opts.locale, extraSearch: (s) => ({ ...validateDecisionsSearch(s) }),
     others: [
       { path: '/checks', component: () => <div>CHECKS</div> },
       { path: '/checks/monitoring-groups', component: () => <div>GROUPS</div> },
@@ -100,5 +101,27 @@ describe('ItemsPage list', () => {
   it('writes the footer in German', async () => {
     setup({ locale: 'de' });
     expect(await screen.findByText('1–25 von 30 Entscheidungen')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    const decisions = [decision('a'), decision('b', { decision: 'watch' }), decision('c', { check_key: 'service' })];
+
+    it('reads the verdict and check from the URL and narrows the rows', async () => {
+      setup({ decisions, initial: '/o/acme/checks/items?check=disk&verdict=watch' });
+      await screen.findByText('1–1 of 1 decision');
+      expect(patterns()).toEqual(['b']);
+      expect(screen.getByText('1 of 3 decisions')).toBeInTheDocument();
+    });
+
+    it('writes the check to the URL and resets', async () => {
+      const user = userEvent.setup();
+      const router = setup({ decisions, initial: '/o/acme/checks/items?page=2' });
+      await screen.findByText('1–3 of 3 decisions');
+      await pickOption(screen, 'Filter by check', 'service');
+      await waitFor(() => expect(router.state.location.search).toEqual({ check: 'service' }));
+      expect(patterns()).toEqual(['c']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
   });
 });

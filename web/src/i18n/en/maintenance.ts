@@ -10,6 +10,16 @@ export const enMaintenance = {
   newWindow: 'New window',
   label: 'Maintenance windows',
   count: (n: number) => (n === 1 ? '1 window' : `${n} windows`),
+  search: 'Search windows',
+  filterPlaceholder: 'Filter windows…',
+  noMatch: 'No windows match the filters.',
+  filters: {
+    status: 'Filter by status',
+    anyStatus: 'Any status',
+    active: 'Active now',
+    upcoming: 'Upcoming',
+    past: 'Past',
+  },
   columns: {
     window: 'Window',
     why: 'Why',

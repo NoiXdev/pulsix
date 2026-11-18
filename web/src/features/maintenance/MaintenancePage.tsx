@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { Wrench } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useT } from '../../i18n/useT.ts';
@@ -9,7 +10,10 @@ import { useFormat } from '../../i18n/format.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useMaintenanceWindows } from '../../api/hooks/useMaintenance.ts';
 import { may } from '../../lib/roles.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { MAINTENANCE_FILTERS, WINDOW_STATUSES, filterWindows } from './maintenanceSearch.ts';
 import { useWindowListActions } from './useWindowListActions.tsx';
 import { windowColumns } from './windowColumns.tsx';
 
@@ -33,13 +37,16 @@ export function MaintenancePage() {
   const windows = useMaintenanceWindows(org);
   const actions = useWindowListActions(org, canWrite);
   const columns = windowColumns(t, fmt);
-  const view = useListView('maintenance', columns, { mode: 'client', rowKey: (w) => w.id });
+  const { filters, active, setFilter, reset } = useListFilters(MAINTENANCE_FILTERS);
+  const view = useListView('maintenance', columns, { mode: 'client', rowKey: (w) => w.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(windows);
   if (guard) return guard;
   if (!windows.data) return <QueryLoading />;
   const list = windows.data.windows ?? [];
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterWindows(list, filters, new Date());
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.maintenance.filters;
 
   return (
     <>
@@ -64,7 +71,25 @@ export function MaintenancePage() {
         rowActions={actions.rowActions}
         rowLabel={(w) => w.name}
         loading={!view.ready}
-        empty={t.maintenance.empty}
+        empty={active ? t.maintenance.noMatch : t.maintenance.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.maintenance.count} /> : undefined}>
+            <SearchInput
+              label={t.maintenance.search}
+              placeholder={t.maintenance.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.status}
+              allLabel={f.anyStatus}
+              options={WINDOW_STATUSES.map((s) => ({ value: s, label: f[s] }))}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.maintenance.count)}
       />
       {actions.dialogs}

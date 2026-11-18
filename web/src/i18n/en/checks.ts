@@ -97,6 +97,10 @@ export const enChecks = {
     newCheck: 'New check',
     label: 'Check definitions',
     count: (n: number) => (n === 1 ? '1 check' : `${n} checks`),
+    search: 'Search checks',
+    filterPlaceholder: 'Filter checks…',
+    noMatch: 'No check definitions match the filters.',
+    filters: { plugin: 'Filter by plugin', allPlugins: 'All plugins', state: 'Filter by state', anyState: 'Any state' },
     columns: {
       check: 'Check',
       plugin: 'Plugin',
@@ -473,6 +477,9 @@ export const enChecks = {
     newGroup: 'New group',
     label: 'Monitoring groups',
     count: (n: number) => (n === 1 ? '1 monitoring group' : `${n} monitoring groups`),
+    search: 'Search monitoring groups',
+    filterPlaceholder: 'Filter groups…',
+    noFilterMatch: 'No monitoring groups match the filter.',
     columns: {
       group: 'Group',
       selector: 'Selector',
@@ -499,6 +506,10 @@ export const enChecks = {
     noMetricsBody: 'A rule judges a measured value, so New rule stays unavailable until an agent reports its first metric.',
     label: 'Rules',
     count: (n: number) => (n === 1 ? '1 rule' : `${n} rules`),
+    search: 'Search rules',
+    filterPlaceholder: 'Filter rules…',
+    noMatch: 'No rules match the filters.',
+    filters: { severity: 'Filter by severity', anySeverity: 'Any severity', state: 'Filter by state', anyState: 'Any state' },
     columns: {
       rule: 'Rule',
       metric: 'Metric',
@@ -557,6 +568,8 @@ export const enChecks = {
     noMetricsBody: 'A decision names an item of a check, so New decision stays unavailable until an agent reports its first metric.',
     label: 'Item decisions',
     count: (n: number) => (n === 1 ? '1 decision' : `${n} decisions`),
+    noMatch: 'No item decisions match the filters.',
+    filters: { verdict: 'Filter by verdict', anyVerdict: 'Any verdict', check: 'Filter by check', allChecks: 'All checks' },
     columns: {
       target: 'Target',
       check: 'Check',

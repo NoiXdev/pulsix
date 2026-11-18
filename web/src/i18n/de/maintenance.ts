@@ -7,6 +7,16 @@ export const deMaintenance: Messages['maintenance'] = {
   newWindow: 'Neues Fenster',
   label: 'Wartungsfenster',
   count: (n: number) => (n === 1 ? '1 Fenster' : `${n} Fenster`),
+  search: 'Fenster durchsuchen',
+  filterPlaceholder: 'Fenster filtern …',
+  noMatch: 'Keine Fenster passen zu den Filtern.',
+  filters: {
+    status: 'Nach Status filtern',
+    anyStatus: 'Beliebiger Status',
+    active: 'Jetzt aktiv',
+    upcoming: 'Anstehend',
+    past: 'Vergangen',
+  },
   columns: {
     window: 'Fenster',
     why: 'Grund',

@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -11,11 +12,14 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useRuleMetrics, useRules } from '../../api/hooks/useRules.ts';
 import { may } from '../../lib/roles.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { RuleDialog } from './RuleDialog.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
 import { orderByMetric } from './ruleOrder.ts';
 import { ruleColumns } from './ruleColumns.tsx';
+import { RULES_FILTERS, filterRules } from './rulesSearch.ts';
 import { useRuleListActions } from './useRuleListActions.tsx';
 
 /**
@@ -42,7 +46,8 @@ export function RulesPage() {
     <RuleDialog org={org} rule={rule} metrics={metricList} groups={groupList} onClose={onClose} />
   ));
   const columns = ruleColumns({ org, t, groups: groupList });
-  const view = useListView('rules', columns, { mode: 'client', rowKey: (r) => r.id });
+  const { filters, active, setFilter, reset } = useListFilters(RULES_FILTERS);
+  const view = useListView('rules', columns, { mode: 'client', rowKey: (r) => r.id, resetKey: JSON.stringify(filters) });
   const hintId = useId();
 
   // Built before any early return, and carried by every one of them: a
@@ -91,7 +96,9 @@ export function RulesPage() {
     );
   }
   const list = rules.data.rules ?? [];
-  const { rows, total } = view.view(view.ready ? orderByMetric(list) : undefined);
+  const shown = filterRules(list, filters);
+  const { rows, total } = view.view(view.ready ? orderByMetric(shown) : undefined);
+  const f = t.checks.rules.filters;
   // Nothing reports a metric yet: say why New rule is disabled (a viewer has
   // no button, so nothing to explain).
   const noMetrics = canWrite && metrics.isSuccess && metricList.length === 0;
@@ -122,7 +129,38 @@ export function RulesPage() {
         rowActions={actions.rowActions}
         rowLabel={(r) => r.name}
         loading={!view.ready}
-        empty={t.checks.rules.empty}
+        empty={active ? t.checks.rules.noMatch : t.checks.rules.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.rules.count} /> : undefined}>
+            <SearchInput
+              label={t.checks.rules.search}
+              placeholder={t.checks.rules.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.severity}
+              allLabel={f.anySeverity}
+              options={[
+                { value: 'crit', label: t.checks.severity.crit },
+                { value: 'warn', label: t.checks.severity.warn },
+              ]}
+              value={filters.severity}
+              onChange={(v) => setFilter('severity', v as typeof filters.severity)}
+            />
+            <FilterSelect
+              label={f.state}
+              allLabel={f.anyState}
+              options={[
+                { value: 'enabled', label: t.checks.enabled },
+                { value: 'disabled', label: t.checks.disabled },
+              ]}
+              value={filters.state}
+              onChange={(v) => setFilter('state', v as typeof filters.state)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.checks.rules.count)}
       />
       {actions.dialogs}
