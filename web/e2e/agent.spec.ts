@@ -69,7 +69,7 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     await row.click();
     await expect(page.getByRole('heading', { name: AGENT_HOST })).toBeVisible();
     // The Agent card, with the state the list showed.
-    const agentCard = page.locator('section, div').filter({ hasText: 'Agent' }).first();
+    const agentCard = page.getByRole('main').locator('section, div').filter({ hasText: 'Agent' }).first();
     await expect(agentCard).toBeVisible();
     // Facts the agent collected from the machine it runs on, and the
     // automatic tag derived from them.

@@ -8,10 +8,9 @@
 export const enAccount = {
   /** The personal settings area's sidebar (ui/shell-nav.tsx). */
   nav: {
-    label: 'Settings',
+    label: 'My account',
     back: (org: string) => `Back to ${org}`,
     roleIn: (role: string, org: string) => `${role} · ${org}`,
-    myAccount: 'My account',
     security: 'Security',
     appearance: 'Appearance',
     profile: 'Profile',

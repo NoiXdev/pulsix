@@ -30,7 +30,6 @@ export const deShell: Messages['shell'] = {
     label: 'Hosts suchen',
   },
   accountMenu: 'Kontomenü',
-  settingsMenu: 'Einstellungen',
   logOut: 'Abmelden',
   apiExplorer: 'API-Explorer',
   lockSession: 'Sitzung sperren',

@@ -2,10 +2,9 @@ import type { Messages } from '../types.ts';
 
 export const deAccount: Messages['account'] = {
   nav: {
-    label: 'Einstellungen',
+    label: 'Mein Konto',
     back: (org: string) => `Zurück zu ${org}`,
     roleIn: (role: string, org: string) => `${role} · ${org}`,
-    myAccount: 'Mein Konto',
     security: 'Sicherheit',
     appearance: 'Darstellung',
     profile: 'Profil',

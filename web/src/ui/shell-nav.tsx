@@ -185,36 +185,38 @@ type SettingsOrgPath =
   | '/o/$org/settings/shared/templates'
   | '/o/$org/settings/shared/checks';
 
-/**
- * SettingsNav replaces the organization sidebar in every settings page
- * (/account/* and /o/$org/settings/*): a way back to the organization, who
- * the person is, then My account, the organization's settings, Alerting
- * (role-gated) and Instance (instance administrators). The organization
- * groups always point at the back-org, so one nav serves both areas.
- */
-export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
+type AccountNavProps = Extract<ShellSettingsNav, { kind: 'account' }>;
+type SettingsNavProps = Extract<ShellSettingsNav, { kind: 'settings' }>;
+
+function BackLink({ backOrg }: { backOrg: AccountNavProps['backOrg'] }) {
   const t = useT();
-  const orgLink = (to: SettingsOrgPath, label: string) => (
-    <Link key={to} to={to} params={{ org: nav.backOrg.slug }} {...NAV_LINK_PROPS}>
-      <span className="flex-1 truncate">{label}</span>
+  return (
+    <Link
+      to="/o/$org/hosts"
+      params={{ org: backOrg.slug }}
+      search={{ q: undefined }}
+      className="flex h-9 items-center gap-2 rounded-md px-3 font-medium text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft size={16} aria-hidden="true" />
+      <span className="truncate">{t.account.nav.back(backOrg.name)}</span>
     </Link>
   );
+}
+
+/**
+ * AccountNav is the sidebar of the personal area (/account/*): a way back
+ * to the organization, who the person is, then their own pages.
+ */
+export function AccountNav({ nav }: { nav: AccountNavProps }) {
+  const t = useT();
   return (
     <nav aria-label={t.account.nav.label} className="flex min-h-0 flex-col overflow-y-auto px-3 py-3">
-      <Link
-        to="/o/$org/hosts"
-        params={{ org: nav.backOrg.slug }}
-        search={{ q: undefined }}
-        className="flex h-9 items-center gap-2 rounded-md px-3 font-medium text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft size={16} aria-hidden="true" />
-        <span className="truncate">{t.account.nav.back(nav.backOrg.name)}</span>
-      </Link>
+      <BackLink backOrg={nav.backOrg} />
       <div className="mx-3 mt-3 mb-3 flex min-w-0 flex-col border-b border-border pb-3">
         <span className="truncate font-semibold">{nav.personName}</span>
         <span className="truncate text-[11px] text-muted-foreground">{nav.personRole}</span>
       </div>
-      <NavGroup label={t.account.nav.myAccount}>
+      <div className="flex flex-col gap-0.5">
         <Link to="/account/security" {...NAV_LINK_PROPS}>
           <ShieldCheck size={16} />
           <span className="flex-1">{t.account.nav.security}</span>
@@ -235,7 +237,29 @@ export function SettingsNav({ nav }: { nav: ShellSettingsNav }) {
           <History size={16} />
           <span className="flex-1">{t.account.nav.activity}</span>
         </Link>
-      </NavGroup>
+      </div>
+    </nav>
+  );
+}
+
+/**
+ * SettingsNav is the sidebar of the organization's settings
+ * (/o/$org/settings/*): a way back, a heading, then the Organization
+ * group, Alerting (role-gated) and Instance (instance administrators).
+ */
+export function SettingsNav({ nav }: { nav: SettingsNavProps }) {
+  const t = useT();
+  const orgLink = (to: SettingsOrgPath, label: string) => (
+    <Link key={to} to={to} params={{ org: nav.backOrg.slug }} {...NAV_LINK_PROPS}>
+      <span className="flex-1 truncate">{label}</span>
+    </Link>
+  );
+  return (
+    <nav aria-label={t.settings.nav.label} className="flex min-h-0 flex-col overflow-y-auto px-3 py-3">
+      <BackLink backOrg={nav.backOrg} />
+      <div className="mx-3 mt-3 mb-3 flex min-w-0 flex-col border-b border-border pb-3">
+        <span className="truncate font-semibold">{t.settings.nav.label}</span>
+      </div>
       <NavGroup label={t.settings.nav.organizationIn(nav.backOrg.name)}>
         {orgLink('/o/$org/settings/general', t.settings.tabs.general)}
         {orgLink('/o/$org/settings/members', t.settings.tabs.members)}

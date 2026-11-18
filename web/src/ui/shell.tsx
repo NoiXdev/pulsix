@@ -3,7 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { Bell, Lock, MoreHorizontal, Search } from 'lucide-react';
 import { PulsixMark } from './PulsixMark.tsx';
 import { Select } from './Select.tsx';
-import { OrgNav, SettingsNav } from './shell-nav.tsx';
+import { AccountNav, OrgNav, SettingsNav } from './shell-nav.tsx';
 import { useT } from '../i18n/useT.ts';
 
 export interface ShellOrg {
@@ -21,19 +21,26 @@ export interface ShellUser {
   subtitle: string;
 }
 
-/** The settings sidebar (personal, organization and instance settings in
- * one): a way back, who the person is and the grouped pages (see
- * SettingsNav). The route layouts decide which groups the person may see. */
-export interface ShellSettingsNav {
-  /** The organization "Back to …" returns to. */
-  backOrg: Pick<ShellOrg, 'slug' | 'name'>;
-  personName: string;
-  personRole: string;
-  /** Show the Alerting group (the role may read channels). */
-  showAlerting: boolean;
-  /** Show the Instance group (instance administrators). */
-  showInstance: boolean;
-}
+/** The two settings sidebars. `account` is the personal one (/account/*):
+ * a way back, who the person is and their pages (AccountNav). `settings`
+ * is the organization's (/o/$org/settings/*): a way back and the grouped
+ * pages (SettingsNav). The route layouts decide which groups are shown. */
+export type ShellSettingsNav =
+  | {
+      kind: 'account';
+      /** The organization "Back to …" returns to. */
+      backOrg: Pick<ShellOrg, 'slug' | 'name'>;
+      personName: string;
+      personRole: string;
+    }
+  | {
+      kind: 'settings';
+      backOrg: Pick<ShellOrg, 'slug' | 'name'>;
+      /** Show the Alerting group (the role may read channels). */
+      showAlerting: boolean;
+      /** Show the Instance group (instance administrators). */
+      showInstance: boolean;
+    };
 
 export interface AppShellProps {
   org: ShellOrg;
@@ -133,7 +140,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
   }
 
   return (
-    <div className="flex h-screen bg-background text-foreground text-[13px]">
+    <div className="fixed inset-0 flex overflow-hidden bg-background text-foreground text-[13px]">
       <aside className="flex w-[232px] shrink-0 flex-col border-r border-border bg-card">
         <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
           <PulsixMark size={24} />
@@ -178,7 +185,13 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
             </div>
           </>
         )}
-        {settingsNav ? <SettingsNav nav={settingsNav} /> : <OrgNav org={org} pendingRunRequests={pendingRunRequests} />}
+        {settingsNav?.kind === 'account' ? (
+          <AccountNav nav={settingsNav} />
+        ) : settingsNav ? (
+          <SettingsNav nav={settingsNav} />
+        ) : (
+          <OrgNav org={org} pendingRunRequests={pendingRunRequests} />
+        )}
 
         <div className="mt-auto flex items-center gap-2.5 border-t border-border px-4 py-3.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
@@ -201,7 +214,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
                 to="/account/security"
                 className="rounded px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-background"
               >
-                {t.shell.settingsMenu}
+                {t.account.nav.label}
               </Link>
               {/* Served by the manager, not an SPA route: a plain link. It
                   answers only an MFA-complete session, like the shell. */}
@@ -226,7 +239,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border px-6">
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">{crumbs}</div>
           <form
@@ -274,7 +287,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
 
         {notice}
 
-        <main className="flex flex-1 flex-col gap-5 overflow-auto p-6">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto overscroll-contain p-6">{children}</main>
       </div>
     </div>
   );

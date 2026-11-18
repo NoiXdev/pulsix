@@ -80,9 +80,8 @@ export function OrgLayout() {
   const inSettings = pathname === `/o/${orgSlug}/settings` || pathname.startsWith(`/o/${orgSlug}/settings/`);
   const settingsNav = inSettings
     ? {
+        kind: 'settings' as const,
         backOrg: { slug: orgSlug, name: org.data.org.name },
-        personName: me.data.user.display_name,
-        personRole: t.account.nav.roleIn(roleLabel(t, org.data.org.role), org.data.org.name),
         showAlerting: may(org.data.org.role, 'channels.read'),
         showInstance: me.data.instance_admin === true,
       }

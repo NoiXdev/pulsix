@@ -98,7 +98,8 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(await screen.findByText('GENERAL PAGE')).toBeInTheDocument();
     const nav = screen.getByRole('navigation', { name: 'Settings' });
     expect(within(nav).getByRole('link', { name: 'Back to Acme Hosting' })).toBeInTheDocument();
-    expect(within(nav).getByRole('group', { name: 'My account' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('group', { name: 'My account' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('link', { name: 'Security' })).not.toBeInTheDocument();
     expect(within(nav).getByRole('group', { name: 'Organization · Acme Hosting' })).toBeInTheDocument();
     expect(within(nav).getByRole('group', { name: 'Alerting' })).toBeInTheDocument();
     expect(within(nav).getByRole('group', { name: 'Instance' })).toBeInTheDocument();
@@ -107,7 +108,7 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(document.querySelector('header')).toHaveTextContent('SettingsGeneral');
   });
 
-  it('shows a viewer only My account and Organization, and keeps the organization navigation elsewhere', async () => {
+  it('shows a viewer only Organization, and keeps the organization navigation elsewhere', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': { org: { ...ORG_OK.org, role: 'viewer' } },
       'GET /api/v1/auth/me': ME_OK,

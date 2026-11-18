@@ -229,7 +229,7 @@ describe('AppShell', () => {
     await user.click(await screen.findByRole('button', { name: 'Account menu' }));
     // The org nav has a "Settings" entry too: scope to the account menu.
     const menu = screen.getByRole('button', { name: 'Account menu' }).closest('details') as HTMLElement;
-    expect(within(menu).getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/account/security');
+    expect(within(menu).getByRole('link', { name: 'My account' })).toHaveAttribute('href', '/account/security');
     expect(within(menu).queryByRole('link', { name: 'Account security' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Log out' }));
@@ -327,36 +327,59 @@ describe('AppShell nav grouping', () => {
   });
 
   describe('with the settings navigation', () => {
-    const settingsNav: ShellSettingsNav = { backOrg: { slug: 'acme', name: 'Acme' }, personName: 'Tim R.', personRole: 'Owner', showAlerting: true, showInstance: true };
+    const accountNav: ShellSettingsNav = { kind: 'account', backOrg: { slug: 'acme', name: 'Acme' }, personName: 'Tim R.', personRole: 'Owner' };
+    const settingsNav: ShellSettingsNav = { kind: 'settings', backOrg: { slug: 'acme', name: 'Acme' }, showAlerting: true, showInstance: true };
 
-    it('replaces the organization switcher and navigation by the back link, the person and the pages', async () => {
-      renderShellAt('/account/appearance', { settingsNav });
+    it('pins the app frame to the window so the document cannot scroll behind it', async () => {
+      const { container } = renderShellAt('/o/acme/hosts');
+      await screen.findByText('page content');
+      const root = container.firstElementChild as HTMLElement;
+      expect(root).toHaveClass('fixed', 'inset-0', 'overflow-hidden');
+    });
 
-      const nav = await screen.findByRole('navigation', { name: 'Settings' });
+    it('shows exactly the five account pages in the account sidebar', async () => {
+      renderShellAt('/account/appearance', { settingsNav: accountNav });
+
+      const nav = await screen.findByRole('navigation', { name: 'My account' });
       expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
       expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
       expect(within(nav).getByText('Owner')).toBeInTheDocument();
+      expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual([
+        'Back to Acme',
+        'Security',
+        'Appearance',
+        'Profile',
+        'API tokens',
+        'My activity',
+      ]);
       expect(within(nav).getByRole('link', { name: 'Appearance' })).toHaveAttribute('data-nav-active', 'true');
       expect(within(nav).getByRole('link', { name: 'Security' })).not.toHaveAttribute('data-nav-active');
       expect(within(nav).getByRole('link', { name: 'Profile' })).toHaveAttribute('href', '/account/profile');
       expect(within(nav).getByRole('link', { name: 'My activity' })).toHaveAttribute('href', '/account/activity');
+      expect(within(nav).queryByRole('group')).not.toBeInTheDocument();
+      expect(within(nav).queryByRole('link', { name: 'General' })).not.toBeInTheDocument();
       expect(screen.queryByRole('combobox', { name: 'Organization' })).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /^Hosts/ })).not.toBeInTheDocument();
     });
 
-    it('groups My account, Organization, Alerting and Instance, the organization links pointing at the back-org', async () => {
+    it('groups Organization, Alerting and Instance in the settings sidebar, without account links', async () => {
       renderShellAt('/o/acme/settings/members/u2', { settingsNav });
       const nav = await screen.findByRole('navigation', { name: 'Settings' });
-      for (const name of ['My account', 'Organization · Acme', 'Alerting', 'Instance']) {
+      expect(within(nav).getByRole('link', { name: 'Back to Acme' })).toHaveAttribute('href', '/o/acme/hosts');
+      expect(within(nav).getByText('Settings')).toBeInTheDocument();
+      for (const name of ['Organization · Acme', 'Alerting', 'Instance']) {
         expect(within(nav).getByRole('group', { name })).toBeInTheDocument();
       }
+      expect(within(nav).queryByRole('group', { name: 'My account' })).not.toBeInTheDocument();
+      expect(within(nav).queryByRole('link', { name: 'Security' })).not.toBeInTheDocument();
+      expect(within(nav).queryByRole('link', { name: 'My activity' })).not.toBeInTheDocument();
+      expect(within(nav).queryByText('Tim R.')).not.toBeInTheDocument();
       const org = within(nav).getByRole('group', { name: 'Organization · Acme' });
       expect(within(org).getByRole('link', { name: 'General' })).toHaveAttribute('href', '/o/acme/settings/general');
       expect(within(org).getByRole('link', { name: 'Secrets' })).toHaveAttribute('href', '/o/acme/settings/secrets');
       expect(within(org).getByRole('link', { name: 'Members' })).toHaveAttribute('data-nav-active', 'true');
       const instance = within(nav).getByRole('group', { name: 'Instance' });
       expect(within(instance).getByRole('link', { name: 'Shared check definitions' })).toHaveAttribute('href', '/o/acme/settings/shared/checks');
-      expect(within(nav).getByRole('group', { name: 'Alerting' })).toBeInTheDocument();
     });
 
     it('hides Alerting and Instance when the booleans are false', async () => {
@@ -367,9 +390,10 @@ describe('AppShell nav grouping', () => {
       expect(within(nav).queryByRole('group', { name: 'Instance' })).not.toBeInTheDocument();
     });
 
-    it('keeps the account footer menu', async () => {
-      renderShellAt('/account/security', { settingsNav });
+    it('keeps the account footer menu, whose first entry is My account', async () => {
+      renderShellAt('/account/security', { settingsNav: accountNav });
       expect(await screen.findByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'My account' })).toHaveAttribute('href', '/account/security');
     });
   });
 });

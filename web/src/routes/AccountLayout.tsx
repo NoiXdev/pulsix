@@ -9,7 +9,6 @@ import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { usePasskeys } from '../api/hooks/usePasskeys.ts';
 import { useSignOut } from '../lib/session.ts';
 import { lastOrg } from '../lib/lastOrg.ts';
-import { may } from '../lib/roles.ts';
 import { useT } from '../i18n/useT.ts';
 import { roleLabel } from '../i18n/roleLabel.ts';
 import { useLockAction } from '../features/lock/useLockAction.tsx';
@@ -81,16 +80,15 @@ export function AccountLayout() {
       orgs={[]}
       onSelectOrg={() => {}}
       settingsNav={{
+        kind: 'account',
         backOrg: { slug: backOrg.slug, name: backOrg.name },
         personName: me.data.user.display_name,
         personRole: t.account.nav.roleIn(roleLabel(t, backOrg.role), backOrg.name),
-        showAlerting: may(backOrg.role, 'channels.read'),
-        showInstance: me.data.instance_admin === true,
       }}
       onLockSession={lockAction.lock}
       crumbs={
         <>
-          <span>{t.shell.settingsMenu}</span>
+          <span>{t.account.nav.label}</span>
           {page && (
             <>
               <span className="text-border">/</span>
