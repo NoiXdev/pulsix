@@ -135,6 +135,11 @@ describe('JumpHostsPage list', () => {
       expect(screen.getByText('1 of 3 jump hosts')).toBeInTheDocument();
     });
 
+    it('keeps a credential only the URL names in the picker, so it can be cleared', async () => {
+      setup({ bastions, extra, initial: '/o/acme/jump-hosts?credential=gone-credential' });
+      expect(await screen.findByLabelText('Filter by credential')).toHaveValue('gone-cre');
+    });
+
     it('filters by credential and writes the search to the URL', async () => {
       const user = userEvent.setup();
       const router = setup({ bastions, extra, initial: '/o/acme/jump-hosts?credential=c1' });

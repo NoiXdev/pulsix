@@ -13,10 +13,11 @@ export interface FilterSelectProps {
 }
 
 /**
- * A picker for a list filter, named for assistive technology and showing
- * its empty choice ("All zones", "Any status") as the placeholder, as the
- * hosts list's zone picker does. The name should say "Filter by …" so it
- * never clashes with a form field of the same name in a dialog above the list.
+ * The one picker every list's filter bar uses for a filter with a fixed set
+ * of values: named for assistive technology and showing its empty choice
+ * ("All zones", "Any status") as the placeholder. The name should say
+ * "Filter by …" so it never clashes with a form field of the same name in a
+ * dialog above the list.
  */
 export function FilterSelect({ label, options, value, onChange, allLabel }: FilterSelectProps) {
   return <Select aria-label={label} options={options} value={value ?? ''} onChange={(v) => onChange(v || undefined)} placeholder={allLabel} />;

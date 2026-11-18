@@ -1,6 +1,6 @@
 import { useT } from '../../i18n/useT.ts';
 import { ActiveFilter, FilterMenu, ListToolbar, ResetFilters, type FilterMenuItem } from '../../ui/list-toolbar.tsx';
-import { Select } from '../../ui/Select.tsx';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
 import type { ListFilters } from '../lists/filterSearch.ts';
 import { HostFilterChip } from '../runs/HostFilterChip.tsx';
 import type { ALERTS_FILTERS } from './alertsSearch.ts';
@@ -39,40 +39,27 @@ export function AlertFilters({ org, list }: AlertFiltersProps) {
 
   return (
     <ListToolbar>
-      {/* Each label is a sibling of its Select, not a wrapper around it, with
-          htmlFor carrying the association instead: an <li role="option"> in
-          Select's own dropdown is not interactive content, so wrapping it
-          inside the label would make clicking a row trigger the label's own
-          activation behaviour — a synthetic click at the input that reopens
-          the list downshift just closed (its InputClick reducer toggles
-          isOpen unconditionally). */}
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-state">{f.state}</label>
-        <Select
-          id="alert-filter-state"
-          options={[
-            { value: 'open', label: f.open },
-            { value: 'closed', label: f.closed },
-          ]}
-          value={filters.state ?? ''}
-          onChange={(v) => setFilter('state', (v || undefined) as typeof filters.state)}
-          placeholder={f.all}
-        />
-      </div>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-severity">{f.severity}</label>
-        <Select
-          id="alert-filter-severity"
-          options={[
-            { value: 'warn', label: f.warn },
-            { value: 'crit', label: f.crit },
-            { value: 'unknown', label: f.unknown },
-          ]}
-          value={filters.severity ?? ''}
-          onChange={(v) => setFilter('severity', (v || undefined) as typeof filters.severity)}
-          placeholder={f.all}
-        />
-      </div>
+      <FilterSelect
+        label={f.state}
+        allLabel={f.anyState}
+        options={[
+          { value: 'open', label: f.open },
+          { value: 'closed', label: f.closed },
+        ]}
+        value={filters.state}
+        onChange={(v) => setFilter('state', v as typeof filters.state)}
+      />
+      <FilterSelect
+        label={f.severity}
+        allLabel={f.anySeverity}
+        options={[
+          { value: 'warn', label: f.warn },
+          { value: 'crit', label: f.crit },
+          { value: 'unknown', label: f.unknown },
+        ]}
+        value={filters.severity}
+        onChange={(v) => setFilter('severity', v as typeof filters.severity)}
+      />
       <FilterMenu items={menu} />
       {filters.host && <HostFilterChip org={org} hostId={filters.host} onRemove={() => setFilter('host', undefined)} />}
       {filters.scope && <ActiveFilter label={scopeLabel(filters.scope)} onRemove={() => setFilter('scope', undefined)} />}

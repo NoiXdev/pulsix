@@ -4,7 +4,7 @@ import { Globe, Server } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
 import { FilterChip, ListToolbar, ResetFilters, SearchInput } from '../../ui/list-toolbar.tsx';
-import { Select } from '../../ui/Select.tsx';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useHostsPage, useZones, type HostPageFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
@@ -77,6 +77,9 @@ export function HostsListPage() {
   // each host's agent as its status dot, and the agents read is org-wide
   // anyway (v0.3a, spec §8).
   const agentByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a]));
+  const zoneOptions = (zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }));
+  // A zone only the URL names (a stale link) stays pickable so it can be cleared.
+  if (filter.zone && !zoneOptions.some((o) => o.value === filter.zone)) zoneOptions.push({ value: filter.zone, label: filter.zone.slice(0, 8) });
   const columns = hostColumns({ org, t, zones: new Map((zones.data?.zones ?? []).map((z) => [z.id, z])), agents: agentByHost });
   const selectorMode = selector !== null;
   const view = useListView('hosts', columns, {
@@ -147,12 +150,12 @@ export function HostsListPage() {
                 control that would do nothing on most pages and fight the
                 fleet page's own. A plain filter never offers to create —
                 narrowing a view is not building one (v0.4g Move 3). */}
-            <Select
-              aria-label={t.hosts.list.filterByZone}
-              options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
-              value={filter.zone ?? ''}
-              onChange={(value) => setFilter('zone', value || undefined)}
-              placeholder={t.hosts.list.allZones}
+            <FilterSelect
+              label={t.hosts.list.filterByZone}
+              allLabel={t.hosts.list.allZones}
+              options={zoneOptions}
+              value={filter.zone}
+              onChange={(v) => setFilter('zone', v)}
             />
             <FilterChip pressed={filter.managed === true} onToggle={() => toggle('managed')}>
               {t.hosts.capability.managed}

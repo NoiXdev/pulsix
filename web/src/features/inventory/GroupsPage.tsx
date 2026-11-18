@@ -57,6 +57,12 @@ export function GroupsPage() {
   const f = g.filters;
   // A parent is worth offering when something sits below it.
   const parents = tree.filter((r) => all.some((c) => c.parent_id === r.group.id));
+  const parentOptions = parents.map(({ group: p }) => ({ value: p.id, label: p.name, hint: pathOf(p.id) || undefined }));
+  // A parent only the URL names (a stale link) stays pickable so it can be cleared.
+  if (filters.parent && !parents.some((r) => r.group.id === filters.parent)) {
+    const known = all.find((c) => c.id === filters.parent);
+    parentOptions.push({ value: filters.parent, label: known?.name ?? filters.parent.slice(0, 8), hint: undefined });
+  }
 
   return (
     <>
@@ -82,7 +88,7 @@ export function GroupsPage() {
             <FilterSelect
               label={f.parent}
               allLabel={f.anyParent}
-              options={parents.map(({ group: p }) => ({ value: p.id, label: p.name, hint: pathOf(p.id) || undefined }))}
+              options={parentOptions}
               value={filters.parent}
               onChange={(v) => setFilter('parent', v)}
             />

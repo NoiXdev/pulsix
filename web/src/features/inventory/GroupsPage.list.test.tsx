@@ -128,6 +128,11 @@ describe('GroupsPage list', () => {
       expect(firstCells()).toEqual(['web in all_servers', 'web_eu in all_servers › web']);
     });
 
+    it('keeps a parent only the URL names in the picker, so it can be cleared', async () => {
+      setup(undefined, rows, '?parent=ghost-group-id');
+      expect(await screen.findByLabelText('Filter by parent group')).toHaveValue('ghost-gr');
+    });
+
     it('writes the search, the parent and the chip to the URL', async () => {
       const user = userEvent.setup();
       const router = setup(undefined, rows, '?page=2');

@@ -221,7 +221,7 @@ describe('AlertsPage', () => {
     renderPage();
 
     await screen.findByText(/No alerts match this view/);
-    await pickOption(screen, 'State', { value: 'open' });
+    await pickOption(screen, 'Filter by state', { value: 'open' });
 
     await waitFor(() => expect(asked.at(-1)?.state).toBe('open'));
   });
@@ -238,7 +238,7 @@ describe('AlertsPage', () => {
     renderPage();
 
     await screen.findByText(/No alerts match this view/);
-    await pickOption(screen, 'Severity', { value: 'crit' });
+    await pickOption(screen, 'Filter by severity', { value: 'crit' });
     await waitFor(() => expect(asked.at(-1)?.severity).toBe('crit'));
     await pickFilter('Scope: Host');
     await waitFor(() => expect(asked.at(-1)?.scope).toBe('host'));
@@ -265,7 +265,7 @@ describe('AlertsPage', () => {
 
     await screen.findByText(/No alerts match this view/);
     expect(asked.at(-1)?.state).toBe('open');
-    await pickOption(screen, 'Severity', { value: 'crit' });
+    await pickOption(screen, 'Filter by severity', { value: 'crit' });
     await waitFor(() => expect(router.state.location.search).toEqual({ state: 'open', severity: 'crit' }));
     await pickFilter('Unacknowledged');
     await waitFor(() => expect(router.state.location.search).toEqual({ state: 'open', severity: 'crit', acknowledged: false }));
@@ -697,8 +697,8 @@ describe('AlertsPage paging and sorting', () => {
     await screen.findByText('26–30 of 30 alerts');
 
     const filters: Array<[() => Promise<void>, string, string]> = [
-      [() => pickOption(screen, 'State', { value: 'open' }), 'open', 'state'],
-      [() => pickOption(screen, 'Severity', { value: 'crit' }), 'crit', 'severity'],
+      [() => pickOption(screen, 'Filter by state', { value: 'open' }), 'open', 'state'],
+      [() => pickOption(screen, 'Filter by severity', { value: 'crit' }), 'crit', 'severity'],
       [() => pickFilter('Scope: Host'), 'host', 'scope'],
       [() => pickFilter('Acknowledged'), 'true', 'acknowledged'],
       [() => pickFilter('Not muted'), 'false', 'muted'],

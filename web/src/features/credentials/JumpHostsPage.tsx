@@ -67,6 +67,11 @@ export function JumpHostsPage() {
   const { rows, total } = view.view(view.ready ? shown : undefined);
   const f = t.credentials.jumpHosts.filters;
   const keyStates = t.hosts.connection.keyState;
+  const credentialOptions = creds.map((c) => ({ value: c.id, label: c.name }));
+  // A credential only the URL names (a stale link) stays pickable so it can be cleared.
+  if (filters.credential && !creds.some((c) => c.id === filters.credential)) {
+    credentialOptions.push({ value: filters.credential, label: filters.credential.slice(0, 8) });
+  }
 
   return (
     <>
@@ -115,7 +120,7 @@ export function JumpHostsPage() {
               <FilterSelect
                 label={f.credential}
                 allLabel={f.allCredentials}
-                options={creds.map((c) => ({ value: c.id, label: c.name }))}
+                options={credentialOptions}
                 value={filters.credential}
                 onChange={(v) => setFilter("credential", v)}
               />

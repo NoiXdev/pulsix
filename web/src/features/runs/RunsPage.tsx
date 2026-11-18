@@ -5,7 +5,6 @@ import { Button } from '../../ui/button.tsx';
 import { buttonClass } from '../../ui/buttonStyles.ts';
 import { DataList, type RowAction } from '../../ui/data-list/index.ts';
 import { ListToolbar, ResetFilters } from '../../ui/list-toolbar.tsx';
-import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useJobsPage } from '../../api/hooks/useJobs.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -64,12 +63,14 @@ export function RunsPage() {
   // A template only the URL names (a stale link) stays pickable so it can be cleared.
   const templateList = templates.data?.templates ?? [];
   const templateOptions = templateList.map((tpl) => ({ value: tpl.id, label: tpl.name }));
+  const scheduleOptions = (schedules.data?.schedules ?? []).map((sc) => ({ value: sc.id, label: sc.name }));
+  if (search.schedule && !scheduleOptions.some((o) => o.value === search.schedule)) scheduleOptions.push({ value: search.schedule, label: shortId(search.schedule) });
   if (search.template && !templateList.some((tpl) => tpl.id === search.template)) templateOptions.push({ value: search.template, label: shortId(search.template) });
 
   /** A new trigger drops the schedule filter unless it is still "schedule":
    * a schedule filter only makes sense for scheduled runs. */
-  function filterTrigger(value: string) {
-    const trigger = (value || undefined) as typeof search.trigger;
+  function filterTrigger(value: string | undefined) {
+    const trigger = value as typeof search.trigger;
     setFilters({ trigger, schedule: trigger === 'schedule' ? search.schedule : undefined });
   }
 
@@ -113,29 +114,29 @@ export function RunsPage() {
         empty={t.runs.list.empty}
         toolbar={
           <ListToolbar>
-            <Select
-              aria-label={t.runs.list.filterStatus}
+            <FilterSelect
+              label={t.runs.list.filterStatus}
+              allLabel={t.runs.list.allStatuses}
               options={[
                 { value: 'active', label: t.runs.list.statusActive },
                 ...RUN_STATUSES.map((s) => ({ value: s, label: statusLabel(s, t) })),
               ]}
-              value={search.status ?? ''}
-              onChange={(value) => setFilter('status', (value || undefined) as typeof search.status)}
-              placeholder={t.runs.list.allStatuses}
+              value={search.status}
+              onChange={(v) => setFilter('status', v as typeof search.status)}
             />
-            <Select
-              aria-label={t.runs.list.filterKind}
+            <FilterSelect
+              label={t.runs.list.filterKind}
+              allLabel={t.runs.list.allKinds}
               options={RUN_KINDS.map((k) => ({ value: k, label: kindLabel(k, t) }))}
-              value={search.kind ?? ''}
-              onChange={(value) => setFilter('kind', (value || undefined) as typeof search.kind)}
-              placeholder={t.runs.list.allKinds}
+              value={search.kind}
+              onChange={(v) => setFilter('kind', v as typeof search.kind)}
             />
-            <Select
-              aria-label={t.runs.list.filterTrigger}
+            <FilterSelect
+              label={t.runs.list.filterTrigger}
+              allLabel={t.runs.list.allTriggers}
               options={TRIGGERS.map((k) => ({ value: k, label: triggerLabel(k, t) }))}
-              value={search.trigger ?? ''}
+              value={search.trigger}
               onChange={filterTrigger}
-              placeholder={t.runs.list.allTriggers}
             />
             <FilterSelect
               label={t.runs.list.filterTemplate}
@@ -145,12 +146,12 @@ export function RunsPage() {
               onChange={(v) => setFilter('template', v)}
             />
             {search.trigger === 'schedule' && (
-              <Select
-                aria-label={t.runs.list.filterSchedule}
-                options={(schedules.data?.schedules ?? []).map((sc) => ({ value: sc.id, label: sc.name }))}
-                value={search.schedule ?? ''}
-                onChange={(value) => setFilter('schedule', value || undefined)}
-                placeholder={t.runs.list.allSchedules}
+              <FilterSelect
+                label={t.runs.list.filterSchedule}
+                allLabel={t.runs.list.allSchedules}
+                options={scheduleOptions}
+                value={search.schedule}
+                onChange={(v) => setFilter('schedule', v)}
               />
             )}
             {search.host && <HostFilterChip org={org} hostId={search.host} onRemove={() => setFilter('host', undefined)} />}
