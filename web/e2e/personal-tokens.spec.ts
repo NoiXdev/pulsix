@@ -61,9 +61,11 @@ test('a new assistant token shows the connect guide under the secret', async ({ 
 
   await expect(dialog.getByText(/you will not see it again/)).toBeVisible();
   await expect(dialog.getByRole('heading', { name: 'Connect an assistant' })).toBeVisible();
-  await expect(dialog.getByText(`assistant-mcp.sh add `).first()).toBeVisible();
-  await expect(dialog.getByText(`--org ${ORG.slug}`)).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Copy command' }).first()).toBeVisible();
+  // The e2e stack is served over plain HTTP, which the connect script
+  // refuses: the guide says so instead of printing commands that would fail
+  // (the commands themselves are covered by the unit tests).
+  await expect(dialog.getByText('The script needs Pulsix over HTTPS; this address uses HTTP.')).toBeVisible();
+  await expect(dialog.getByText('assistant-mcp.sh add ')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
 });
 
