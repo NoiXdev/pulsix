@@ -51,7 +51,7 @@ export function BackupDestinationCard({
       save.reset();
       // Whatever was typed into the secret field has been sent; the stored
       // secret is now the source of truth again.
-      form.markSaved({ ...draft, secretKey: '', removeSecret: false });
+      form.markSaved({ ...draft, secretKey: '', removeSecret: false }, draft);
       toast.show(t.backups.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.backups.saveFailed, 'destructive');

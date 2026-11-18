@@ -11,14 +11,20 @@ export interface CardForm<T> {
   setDraft: (next: SetStateAction<T>) => void;
   dirty: boolean;
   discard: () => void;
-  markSaved: (next?: T) => void;
+  /** markSaved records a successful save: `saved` (what the server now
+   * holds) becomes the baseline. The draft becomes `saved` only while it
+   * still equals `submitted` (what the save sent; `saved` when omitted);
+   * an edit typed while the save was in flight is kept and stays dirty
+   * against the new baseline. */
+  markSaved: (saved: T, submitted?: T) => void;
 }
 
 /**
  * useCardForm holds the draft of one settings card against the saved value
  * it was loaded from. `dirty` is structural (JSON-safe values). When `saved`
  * changes content — a refetch after a save — a clean draft follows it, a
- * dirty one is left alone. It also registers the unsaved-changes guard,
+ * dirty one is left alone, and Discard brings back that latest saved value
+ * rather than the one the draft started from. It also registers the unsaved-changes guard,
  * unless `guard` is false.
  */
 export function useCardForm<T>(saved: T, { guard = true }: { guard?: boolean } = {}): CardForm<T> {
@@ -40,15 +46,14 @@ export function useCardForm<T>(saved: T, { guard = true }: { guard?: boolean } =
   const setDraft = useCallback((next: SetStateAction<T>) => {
     setDraftState((cur) => (typeof next === 'function' ? (next as (c: T) => T)(cur) : next));
   }, []);
-  const discard = useCallback(() => setDraftState(base), [base]);
-  const markSaved = useCallback(
-    (next?: T) => {
-      const value = next === undefined ? draft : next;
-      setBase(value);
-      setDraftState(value);
-    },
-    [draft],
-  );
+  const discard = useCallback(() => {
+    setBase(seen);
+    setDraftState(seen);
+  }, [seen]);
+  const markSaved = useCallback((value: T, submitted: T = value) => {
+    setBase(value);
+    setDraftState((cur) => (same(cur, submitted) ? value : cur));
+  }, []);
 
   const dirty = !same(draft, base);
   // A page with several card forms passes guard: false to each and calls

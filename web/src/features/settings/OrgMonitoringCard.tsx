@@ -101,7 +101,7 @@ export function OrgMonitoringCard({
     }
     try {
       await update.mutateAsync({ clientAbsentDays: days, retentionDays });
-      form.markSaved({ days: String(days), retention: draft.retention });
+      form.markSaved({ days: String(days), retention: draft.retention }, draft);
       toast.show(m.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : m.saveFailed, 'destructive');

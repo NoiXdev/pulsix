@@ -52,7 +52,7 @@ export function BackupScheduleCard({
     try {
       await save.mutateAsync(toBody(toDestinationDraft(settings), draft));
       save.reset();
-      form.markSaved();
+      form.markSaved(draft);
       toast.show(t.backups.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.backups.saveFailed, 'destructive');

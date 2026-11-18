@@ -137,19 +137,22 @@ export function SettingsRow({
 }
 
 /** CardSaveBar — the card footer of a form: unsaved hint and Discard while
- * dirty, a Save that submits the card's form. */
+ * dirty, a Save that submits the card's form. `canSave` false keeps Save off
+ * for a draft that differs but cannot be saved (an empty name). */
 export function CardSaveBar({
   dirty,
   saving,
   onDiscard,
   saveLabel,
   formId,
+  canSave = true,
 }: {
   dirty: boolean;
   saving: boolean;
   onDiscard: () => void;
   saveLabel?: string;
   formId?: string;
+  canSave?: boolean;
 }) {
   const t = useT();
   return (
@@ -168,7 +171,7 @@ export function CardSaveBar({
             {t.ui.settings.discard}
           </Button>
         ) : null}
-        <Button type="submit" variant="primary" form={formId} disabled={!dirty || saving}>
+        <Button type="submit" variant="primary" form={formId} disabled={!dirty || saving || !canSave}>
           {saveLabel ?? t.ui.settings.save}
         </Button>
       </div>

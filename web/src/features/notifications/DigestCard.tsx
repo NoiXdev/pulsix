@@ -59,7 +59,7 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
     if (!canWrite) return;
     try {
       await save.mutateAsync(draft);
-      form.markSaved();
+      form.markSaved(draft);
       toast.show(m.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : m.saveFailed, 'destructive');

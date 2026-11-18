@@ -90,6 +90,12 @@ describe('CardSaveBar', () => {
     expect(onDiscard).toHaveBeenCalledOnce();
   });
 
+  it('disables Save while the draft cannot be saved', () => {
+    render(<CardSaveBar dirty saving={false} canSave={false} onDiscard={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeEnabled();
+  });
+
   it('disables Save while saving', () => {
     render(<CardSaveBar dirty saving onDiscard={() => {}} />);
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
@@ -142,17 +148,54 @@ describe('useCardForm', () => {
     expect(result.current.dirty).toBe(false);
   });
 
-  it('markSaved makes the draft the new baseline', () => {
-    const { result } = renderForm({ a: 1 });
+  it('markSaved makes the saved value the new baseline', () => {
+    const { result, rerender } = renderForm({ a: 1 });
     act(() => result.current.setDraft({ a: 5 }));
-    act(() => result.current.markSaved());
+    act(() => result.current.markSaved({ a: 5 }));
     expect(result.current.dirty).toBe(false);
+    // The save's refetch brings the stored value back as `saved`.
+    rerender({ saved: { a: 5 } });
     act(() => result.current.setDraft({ a: 6 }));
     act(() => result.current.discard());
     expect(result.current.draft).toEqual({ a: 5 });
+    act(() => result.current.setDraft({ a: 9 }));
     act(() => result.current.markSaved({ a: 9 }));
     expect(result.current.draft).toEqual({ a: 9 });
     expect(result.current.dirty).toBe(false);
+  });
+
+  it('markSaved takes a normalised saved value when the draft is still what was submitted', () => {
+    const { result } = renderForm({ name: 'a', secret: '' });
+    act(() => result.current.setDraft({ name: 'b', secret: 'x' }));
+    act(() => result.current.markSaved({ name: 'b', secret: '' }, { name: 'b', secret: 'x' }));
+    expect(result.current.draft).toEqual({ name: 'b', secret: '' });
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it('markSaved keeps edits typed while the save was in flight (R6)', () => {
+    const { result } = renderForm({ a: 1 });
+    act(() => result.current.setDraft({ a: 2 }));
+    const submitted = result.current.draft;
+    // Typed after Save was pressed, before the answer came.
+    act(() => result.current.setDraft({ a: 3 }));
+    act(() => result.current.markSaved(submitted));
+    expect(result.current.draft).toEqual({ a: 3 });
+    expect(result.current.dirty).toBe(true);
+    act(() => result.current.setDraft({ a: 2 }));
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it('discard restores the latest server value, not the one the draft started from', () => {
+    const { result, rerender } = renderForm({ a: 1 });
+    act(() => result.current.setDraft({ a: 7 }));
+    // Someone else saved meanwhile; the dirty draft is left alone.
+    rerender({ saved: { a: 2 } });
+    expect(result.current.draft).toEqual({ a: 7 });
+    act(() => result.current.discard());
+    expect(result.current.draft).toEqual({ a: 2 });
+    expect(result.current.dirty).toBe(false);
+    rerender({ saved: { a: 3 } });
+    expect(result.current.draft).toEqual({ a: 3 });
   });
 
   it('follows a refetched saved value while clean, but not while dirty', () => {

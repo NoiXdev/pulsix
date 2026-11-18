@@ -36,13 +36,19 @@ export function OrgNameCard({
   // A card that goes away (an error state) leaves nothing unsaved behind.
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
+  // A name that is empty or only differs from the saved one by surrounding
+  // spaces has nothing to save; Discard still clears it.
+  const trimmed = form.draft.trim();
+  const canSave = trimmed !== '' && trimmed !== name;
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const next = form.draft.trim();
-    if (!canManage || !dirty || next === '') return;
+    const submitted = form.draft;
+    const next = submitted.trim();
+    if (!canManage || !dirty || !canSave) return;
     try {
       await update.mutateAsync(next);
-      form.markSaved(next);
+      form.markSaved(next, submitted);
       toast.show(g.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : g.saveFailed, 'destructive');
@@ -56,7 +62,14 @@ export function OrgNameCard({
         description={g.cardDescription}
         footer={
           canManage ? (
-            <CardSaveBar formId="org-name-form" dirty={dirty} saving={update.isPending} onDiscard={form.discard} saveLabel={g.save} />
+            <CardSaveBar
+              formId="org-name-form"
+              dirty={dirty}
+              saving={update.isPending}
+              canSave={canSave}
+              onDiscard={form.discard}
+              saveLabel={g.save}
+            />
           ) : (
             <ReadOnlyNote>{g.readOnlyHint}</ReadOnlyNote>
           )
