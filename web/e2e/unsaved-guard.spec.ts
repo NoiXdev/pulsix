@@ -174,3 +174,26 @@ test('a save that finishes during a Back keeps the next form guarded', async ({ 
   await expectFormKept(page);
   await expectNextBackAsks(page);
 });
+
+// A settings card page guards its unsaved card the same way: a click in
+// the settings navigation asks once, and after the card's Discard it does
+// not ask at all.
+test('a dirty card on Organization › General asks before Members, and not after Discard', async ({ page }) => {
+  await page.goto(`/o/${ORG.slug}/settings/general`);
+  const name = page.locator('#org_name');
+  await expect(name).toHaveValue(ORG.name);
+  await name.fill(`${ORG.name} e2e-unsaved`);
+
+  const nav = page.getByRole('navigation', { name: 'Settings' });
+  await nav.getByRole('link', { name: 'Members', exact: true }).click();
+  await expect(leaveDialog(page)).toHaveCount(1);
+  await cancelLeave(page);
+  await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/general$`));
+  await expect(name).toHaveValue(`${ORG.name} e2e-unsaved`);
+
+  await page.getByRole('button', { name: enUi.settings.discard, exact: true }).click();
+  await expect(name).toHaveValue(ORG.name);
+  await nav.getByRole('link', { name: 'Members', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/members$`));
+  await expect(leaveDialog(page)).toHaveCount(0);
+});
