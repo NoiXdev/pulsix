@@ -80,7 +80,6 @@ export const deUi: Messages['ui'] = {
     nextPage: 'Nächste Seite',
   },
   listToolbar: {
-    search: 'Suche',
     clearSearch: 'Suche leeren',
     addFilter: '+ Filter',
     moreFilters: 'Weitere Filter',

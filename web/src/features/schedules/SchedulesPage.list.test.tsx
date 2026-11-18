@@ -115,21 +115,20 @@ describe('SchedulesPage list', () => {
       expect(screen.getByText('1 of 3 schedules')).toBeInTheDocument();
     });
 
-    it('shows ?template= as a pill and removes it', async () => {
+    it('reads ?template= into its picker and says the count is of that template', async () => {
       const user = userEvent.setup();
       const router = setup('operator', false, [], '/o/acme/schedules?template=00000000-0000-4000-8000-000000000007', rows);
-      await screen.findByText('3 schedules');
-      expect(screen.getByText('Template: patch-all')).toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'Remove filter Template: patch-all' }));
+      await screen.findByText('1–3 of 3 schedules');
+      expect(screen.getByLabelText('Filter by template')).toHaveValue('patch-all');
+      expect(screen.getByText('3 schedules of this template')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
       await waitFor(() => expect(router.state.location.search).toEqual({}));
     });
 
-    it('picks a template from the Filter menu and writes it to the URL', async () => {
-      const user = userEvent.setup();
+    it('picks a template from its picker and writes it to the URL', async () => {
       const router = setup('operator', false, [], '/o/acme/schedules', rows);
       await screen.findByText('1–3 of 3 schedules');
-      await user.click(screen.getByRole('button', { name: '+ Filter' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Template: patch-all' }));
+      await pickOption(screen, 'Filter by template', 'patch-all');
       await waitFor(() => expect(router.state.location.search).toEqual({ template: '00000000-0000-4000-8000-000000000007' }));
     });
 

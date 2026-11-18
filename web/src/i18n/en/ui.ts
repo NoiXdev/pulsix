@@ -87,7 +87,6 @@ export const enUi = {
     nextPage: 'Next page',
   },
   listToolbar: {
-    search: 'Search',
     clearSearch: 'Clear the search',
     addFilter: '+ Filter',
     moreFilters: 'More filters',

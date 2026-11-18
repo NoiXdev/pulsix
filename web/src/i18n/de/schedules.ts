@@ -5,11 +5,12 @@ export const deSchedules: Messages['schedules'] = {
   summary: (total: number, active: number) => `${total === 1 ? '1 Zeitplan' : `${total} Zeitpläne`} · aktiv: ${active}`,
   pauseAll: 'Alle pausieren',
   newSchedule: 'Neuer Zeitplan',
-  template: (name: string) => `Vorlage: ${name}`,
   noMatch: 'Keine Zeitpläne passen zu den Filtern.',
   filters: {
     status: 'Nach Status filtern',
     anyStatus: 'Jeder Status',
+    template: 'Nach Vorlage filtern',
+    allTemplates: 'Alle Vorlagen',
   },
   columns: {
     status: 'Status',
@@ -22,6 +23,7 @@ export const deSchedules: Messages['schedules'] = {
   },
   label: 'Zeitpläne',
   count: (n: number) => (n === 1 ? '1 Zeitplan' : `${n} Zeitpläne`),
+  countOfTemplate: (n: number) => (n === 1 ? '1 Zeitplan dieser Vorlage' : `${n} Zeitpläne dieser Vorlage`),
   paused: 'pausiert',
   active: 'aktiv',
   empty: 'Noch keine Zeitpläne.',

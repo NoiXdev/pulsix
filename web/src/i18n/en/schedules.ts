@@ -10,11 +10,12 @@ export const enSchedules = {
   summary: (total: number, active: number) => `${total} schedules · ${active} active`,
   pauseAll: 'Pause all',
   newSchedule: 'New schedule',
-  template: (name: string) => `Template: ${name}`,
   noMatch: 'No schedules match the filters.',
   filters: {
     status: 'Filter by status',
     anyStatus: 'Any status',
+    template: 'Filter by template',
+    allTemplates: 'All templates',
   },
   columns: {
     status: 'Status',
@@ -27,6 +28,7 @@ export const enSchedules = {
   },
   label: 'Schedules',
   count: (n: number) => (n === 1 ? '1 schedule' : `${n} schedules`),
+  countOfTemplate: (n: number) => (n === 1 ? '1 schedule of this template' : `${n} schedules of this template`),
   paused: 'paused',
   active: 'active',
   empty: 'No schedules yet.',

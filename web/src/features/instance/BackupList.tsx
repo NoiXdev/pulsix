@@ -12,6 +12,9 @@ import { useBackupListActions } from './useBackupListActions.tsx';
 
 const rowKey = (b: BackupEntry) => `${b.name}|${b.created_at}`;
 
+/** The kind labels are lower case in the table ("manual (Ada)"); a picker's options start with a capital. */
+const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /**
  * BackupList is the table of backups at the destination merged with recent
  * attempts (list id `backups`). A stored file can be downloaded and deleted,
@@ -54,8 +57,8 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
               label={l.filters.kind}
               allLabel={l.filters.allKinds}
               options={[
-                { value: 'scheduled', label: l.scheduled },
-                { value: 'manual', label: l.manual('') },
+                { value: 'scheduled', label: capitalised(l.scheduled) },
+                { value: 'manual', label: capitalised(l.manual('')) },
               ]}
               value={kind}
               onChange={setKind}

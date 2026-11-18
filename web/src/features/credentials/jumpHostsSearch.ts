@@ -8,7 +8,7 @@ import { bastionKeyState } from './bastionKeyState.ts';
 export const BASTION_KEY_STATES = ['pinned', 'unpinned', 'changed'] as const;
 
 /**
- * The jump hosts list's filters in the URL: a search over the name and the
+ * The jump hosts list's filters in the URL: a search over the name, the address and the
  * login, the host key's state (a jump host has no zone, and no reachability
  * beyond what its last connection test saw of the key) and the credential
  * it logs in with.

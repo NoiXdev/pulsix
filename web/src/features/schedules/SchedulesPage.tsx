@@ -2,7 +2,7 @@ import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Clock, Pause } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
-import { ActiveFilter, FilterMenu, ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
+import { ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -64,6 +64,9 @@ export function SchedulesPage() {
   const shown = filterSchedules(list, filters);
   const { rows, total } = view.view(view.ready ? shown : undefined);
   const f = m.filters;
+  const templateOptions = templateList.map((tpl) => ({ value: tpl.id, label: tpl.name }));
+  // A template only the URL names (a stale link) stays pickable so it can be cleared.
+  if (filters.template && !templateList.some((tpl) => tpl.id === filters.template)) templateOptions.push({ value: filters.template, label: templateName(filters.template) });
 
   async function onPauseAll() {
     if (!(await ask({ message: m.pauseAllConfirm, confirmLabel: m.pauseAll }))) return;
@@ -106,7 +109,7 @@ export function SchedulesPage() {
           loading={!view.ready}
           empty={active ? m.noMatch : m.empty}
           toolbar={
-            <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={m.count} />}>
+            <ListToolbar count={<ResultCount active={active} shown={shown.length} total={filters.template ? undefined : list.length} noun={filters.template ? m.countOfTemplate : m.count} />}>
               <FilterSelect
                 label={f.status}
                 allLabel={f.anyStatus}
@@ -114,12 +117,13 @@ export function SchedulesPage() {
                 value={filters.status}
                 onChange={(v) => setFilter('status', v as typeof filters.status)}
               />
-              {!filters.template && (
-                <FilterMenu
-                  items={templateList.map((tpl) => ({ id: tpl.id, label: m.template(tpl.name), onSelect: () => setFilter('template', tpl.id) }))}
-                />
-              )}
-              {filters.template && <ActiveFilter label={m.template(templateName(filters.template))} onRemove={() => setFilter('template', undefined)} />}
+              <FilterSelect
+                label={f.template}
+                allLabel={f.allTemplates}
+                options={templateOptions}
+                value={filters.template}
+                onChange={(v) => setFilter('template', v)}
+              />
               {active && <ResetFilters onReset={reset} />}
             </ListToolbar>
           }

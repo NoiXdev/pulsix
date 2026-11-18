@@ -124,7 +124,7 @@ describe('BackupsPage filters', () => {
       items: [backup(3, { kind: 'manual', actor_name: 'Tim' }), backup(2, { state: 'failed' }), backup(1)],
     });
     await screen.findByText('1–3 of 3 backups');
-    await pickOption(screen, 'Filter by kind', 'scheduled');
+    await pickOption(screen, 'Filter by kind', 'Scheduled');
     await screen.findByText('1–2 of 2 backups');
     await pickOption(screen, 'Filter by status', 'Failed');
     expect(await screen.findByText('1–1 of 1 backup')).toBeInTheDocument();
