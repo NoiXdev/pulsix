@@ -246,3 +246,55 @@ func TestRenewalKeepsTheAgentReports(t *testing.T) {
 		t.Fatalf("after a re-enrollment: local %+v, secrets %+v; want both unknown", local, secrets)
 	}
 }
+
+// TestHeartbeatLocalChecksChangeSequence walks the report through changed,
+// identical, changed, zero checks and unknown on the real store, so the
+// IS DISTINCT FROM guards of RecordAgentHeartbeat (backlog 3.64) never keep
+// a stale report or skip a needed write.
+func TestHeartbeatLocalChecksChangeSequence(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-local-checks-seq")
+	h := createHost(t, d, org, zone, "db-seq")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-a", "v1", "9601")); err != nil {
+		t.Fatal(err)
+	}
+	cpu := func(interval int32) agents.LocalCheckInput {
+		return agents.LocalCheckInput{Key: "local-cpu", Plugin: "cpu", ParamsJSON: `{}`, IntervalSeconds: interval}
+	}
+	steps := []struct {
+		name     string
+		report   agents.HeartbeatReport
+		known    bool
+		interval time.Duration // of the single check, 0 for none
+		problems []string
+	}{
+		{"changed", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{cpu(10)}, LocalCheckProblems: []string{"p1"}}, true, 10 * time.Second, []string{"p1"}},
+		{"identical", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{cpu(10)}, LocalCheckProblems: []string{"p1"}}, true, 10 * time.Second, []string{"p1"}},
+		{"changed again", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{cpu(30)}, LocalCheckProblems: []string{"p2", "p3"}}, true, 30 * time.Second, []string{"p2", "p3"}},
+		{"zero checks", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"}, true, 0, []string{}},
+		{"changed after zero", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{cpu(60)}}, true, 60 * time.Second, []string{}},
+		{"unknown", agents.HeartbeatReport{Version: "v1"}, false, 0, nil},
+		{"known again", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{cpu(10)}}, true, 10 * time.Second, []string{}},
+	}
+	for _, st := range steps {
+		if err := svc.Heartbeat(ctx, "9601", st.report); err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		got, err := svc.LocalChecksByHost(db.WithOrgScope(ctx, org), org, h.ID)
+		if err != nil {
+			t.Fatalf("%s: %v", st.name, err)
+		}
+		if got.Known != st.known {
+			t.Fatalf("%s: Known = %v, want %v", st.name, got.Known, st.known)
+		}
+		if st.interval == 0 {
+			if len(got.Checks) != 0 {
+				t.Fatalf("%s: checks = %+v, want none", st.name, got.Checks)
+			}
+		} else if len(got.Checks) != 1 || got.Checks[0].Interval != st.interval {
+			t.Fatalf("%s: checks = %+v, want one with interval %v", st.name, got.Checks, st.interval)
+		}
+		if !slices.Equal(got.Problems, st.problems) || (st.problems == nil) != (got.Problems == nil) {
+			t.Fatalf("%s: problems = %#v, want %#v", st.name, got.Problems, st.problems)
+		}
+	}
+}

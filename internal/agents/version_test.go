@@ -73,7 +73,7 @@ func TestHeartbeatQueryWritesReportsOnlyOnChange(t *testing.T) {
 	}
 	q := m[1]
 	for _, col := range []string{"local_checks", "local_check_problems"} {
-		re := regexp.MustCompile(`(?s)` + col + ` = CASE WHEN ` + col + ` IS DISTINCT FROM`)
+		re := regexp.MustCompile(`(?s)` + col + ` = CASE WHEN ` + col + ` IS DISTINCT FROM[^;]*?ELSE ` + col + ` END`)
 		if !re.MatchString(q) {
 			t.Errorf("RecordAgentHeartbeat writes %s unconditionally; want CASE WHEN %s IS DISTINCT FROM ...", col, col)
 		}
@@ -96,5 +96,28 @@ func TestAuthQueriesSelectIdentityOnly(t *testing.T) {
 		if strings.Contains(body, "sqlc.embed") || strings.Contains(body, "SELECT *") || strings.Contains(body, "h.*") {
 			t.Errorf("%s selects whole rows; want the identity columns only", name)
 		}
+	}
+}
+
+// TestRegisterAndRenewBoundVersion: the enrollment and renewal paths write
+// host_agents.version too and bound it with the same rule.
+func TestRegisterAndRenewBoundVersion(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	dirty := "v\x00" + strings.Repeat("ü", 100)
+	want := "v" + strings.Repeat("ü", agents.MaxVersionRunes-1)
+	if err := svc.Register(ctx, reg(org, host, "agent-a", dirty, "serial-reg-1")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetByHost(ctx, org, host)
+	if err != nil || got.Version != want {
+		t.Fatalf("registered version = %q, %v; want %q", got.Version, err, want)
+	}
+	if err := svc.Renew(ctx, reg(org, host, "agent-a", dirty, "serial-reg-2"), "serial-reg-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = svc.GetByHost(ctx, org, host)
+	if err != nil || got.Version != want {
+		t.Fatalf("renewed version = %q, %v; want %q", got.Version, err, want)
 	}
 }

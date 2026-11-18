@@ -537,7 +537,7 @@ func (r Registration) agent() (Agent, error) {
 	}
 	notAfter := r.NotAfter
 	return Agent{
-		HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.Serial, Version: r.Version,
+		HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.Serial, Version: boundVersion(r.Version),
 		CertNotBefore: r.NotBefore, CertNotAfter: &notAfter, CertPublicKeySHA256: r.PublicKeySHA256,
 	}, nil
 }
