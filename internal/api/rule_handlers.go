@@ -12,7 +12,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -374,7 +373,7 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 // Items are filtered too (backlog 3.56): a mount taken off a disk check's
 // list is no longer judged since 3.55, so it is not listed here either. The
 // predicate is the evaluation's (internal/app asksFor): the whole-host item
-// "" is always asked, every other item by checkplugins.AsksForItem.
+// "" is always asked, every other item by checks.Resolved.AsksForItem.
 func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []rules.Tuple {
 	out := make([]rules.Tuple, 0, len(current))
 	for _, c := range current {
@@ -382,7 +381,7 @@ func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []r
 		if !ok {
 			continue
 		}
-		if c.Item != "" && !checkplugins.AsksForItem(r.Plugin, r.Params, c.Item) {
+		if c.Item != "" && !r.AsksForItem(c.Item) {
 			continue
 		}
 		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})

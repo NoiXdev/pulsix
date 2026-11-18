@@ -376,6 +376,14 @@ func TestOrgSecretsCreateOnly(t *testing.T) {
 	if list := f.list(t, f.viewer); len(list) != 1 || strings.Join(list[0].FieldNames, ",") != "community" {
 		t.Fatalf("the refused create changed the secret: %+v", list)
 	}
+	var created int
+	if err := f.s.DB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_events WHERE object_type = 'secret' AND object_id = 'sw' AND summary LIKE 'created secret sw%'`).Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created != 1 {
+		t.Fatalf("created-secret audit rows = %d, want 1", created)
+	}
 	if code, text := f.putWith(t, f.ownerC, "/secrets/sw", `"abc"`, fields(secretLeak)); code != http.StatusBadRequest {
 		t.Fatalf("PUT with an ETag in If-None-Match: %d %s, want 400", code, text)
 	}

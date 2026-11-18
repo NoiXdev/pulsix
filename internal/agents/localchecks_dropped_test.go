@@ -71,8 +71,8 @@ func TestHeartbeatAppendsDroppedChecksToTheProblems(t *testing.T) {
 		LocalCheckProblems: []string{"line 7: refused"}})
 	want := []string{
 		"line 7: refused",
-		"local-new: not supported by this manager (an unknown plugin)",
-		"local-x: not supported by this manager (the interval is out of bounds)",
+		"local-new: ignored by the server (an unknown plugin)",
+		"local-x: ignored by the server (the interval is out of bounds)",
 	}
 	if fmt.Sprint(got.Problems) != fmt.Sprint(want) {
 		t.Fatalf("problems = %q, want %q", got.Problems, want)

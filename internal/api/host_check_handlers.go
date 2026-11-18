@@ -685,12 +685,13 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID,
 // ResolveHostWithLocal's set, so "present here" and "the evaluator would still
 // evaluate this tuple" are the same question asked of the same data.
 //
-// It is a helper rather than two copies because two routes read the same
-// host and must agree about which of its tuples exist: this one
-// (currentTupleStates, for the states on the host page) and the effective-
-// rules view (rule_handlers.go). A tuple missing from one and listed by
-// the other is two reads of one host contradicting each other. The route
-// resolves once for its states and for the checks defined on the host.
+// Two routes read the same host and must agree about which of its tuples
+// exist: this one (currentTupleStates, for the states on the host page) and
+// the effective-rules view (toTuples in rule_handlers.go), which applies the
+// same key set from the same resolved set plus the item filter. A tuple
+// missing from one and listed by the other is two reads of one host
+// contradicting each other. The route resolves once for its states and for
+// the checks defined on the host.
 func resolvedKeysOf(resolved checks.ResolvedSet) map[string]bool {
 	// Synthetic and local checks included: their results are tuples like
 	// any other (backlogs 3.13, 3.5a), and ContextForHost resolves them an

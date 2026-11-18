@@ -537,6 +537,12 @@ repositories as before. An older worker never asks.
   run this version with the same value, or a sign-in lands complete on one and
   pending on another. Turning it off leaves the sessions it opened usable until
   they expire or are revoked (`deploy/compose/README.md`).
+- **Secret audit summary:** the activity log entry of `PUT /api/v1/orgs/{org}/secrets/{name}`
+  now reads "created secret ..." or "replaced secret ..." (it was "stored secret ...").
+  Anything that filters or exports the activity log by that text needs the new wording.
+- **Local check problems:** the problems list of a host agent now also holds one line
+  per local check the server ignores, `<key>: ignored by the server (<reason>)`, after
+  the agent's own problems; the list stays capped at 32 lines.
 - **Four-digit lock PINs:** a new lock PIN is exactly four digits (it was 4 to 8). A
   PIN set under the previous release keeps working and is reported as older
   (`lock_pin_legacy` on `/api/v1/auth/me`) so the interface can ask for a new one.

@@ -56,7 +56,7 @@ type agentDTO struct {
 	// in its agent.yaml (backlog 3.5a): why entries do not run. Null when
 	// the agent has not reported, like the secret names; an agent from 3.5
 	// (agent.yaml, but no checks section yet) reports an empty list.
-	LocalCheckProblems []string `json:"local_check_problems" nullable:"true" doc:"Why checks defined in the agent's agent.yaml do not run, one line each, as the agent reported them; empty when all run or the agent predates checks in agent.yaml, null when unknown (an agent older than agent.yaml, or no heartbeat yet)"`
+	LocalCheckProblems []string `json:"local_check_problems" nullable:"true" doc:"The problems with the checks defined in the agent's agent.yaml, one line each: the agent's own reported problems first, then one line per local check the server ignores (key and reason, never its params); empty when there is none or the agent predates checks in agent.yaml, null when unknown (an agent older than agent.yaml, or no heartbeat yet)"`
 	// ConfigVersion, ConfigExpected and ConfigCheckedAt are the manager's
 	// latest comparison of the check configuration the agent runs against
 	// the one it resolved for the host (backlog 3.13c). All three are

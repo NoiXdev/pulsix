@@ -54,8 +54,8 @@ type enrollingSession struct {
 
 // lockLiveForEnrolment is LockLive for finishing an enrolment (confirming
 // TOTP, finishing a passkey registration), and reports whether sessionID is
-// password-only (PULSIX_MFA_OPTIONAL) and complete. The enrolment of an account's first
-// factor takes the account row exclusively (LockAccountForRemoval) instead
+// password-only (PULSIX_MFA_OPTIONAL) and complete. The enrolment of an
+// account's first factor takes the account row exclusively (LockAccountForRemoval) instead
 // of in key-share mode: it re-checks that the account still has no factor,
 // may revoke its tokens, and must not interleave with a second first
 // enrolment, a passkey login, or a credential mint (WithCompleteSession,

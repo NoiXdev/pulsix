@@ -590,9 +590,9 @@ type HeartbeatReport struct {
 // well-formed names, one bounded line of state, checks the agent could run
 // and a short list of bounded problems are stored. Each local check
 // dropped is logged by key and reason, never its params, once per change
-// of the agent's dropped set, and is listed among the local check problems. An agent that
-// sends no secrets state (older than agent.yaml) is stored as unknown in
-// both reports.
+// of the agent's dropped set, and is listed among the local check
+// problems. An agent that sends no secrets state (older than agent.yaml)
+// is stored as unknown in both reports.
 func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatReport) error {
 	local, dropped := localChecksReportOf(r.SecretsState, r.LocalChecks, r.LocalCheckProblems)
 	if s.drops.changed(serial, dropped) {

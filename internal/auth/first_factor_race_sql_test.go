@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/auth"
 )
@@ -116,8 +117,9 @@ func TestWithCompleteSessionRunsInTheOrganization(t *testing.T) {
 			return err
 		})
 	}
-	if err := mint(other); err == nil {
-		t.Fatal("a token of another organization was inserted")
+	var pgErr *pgconn.PgError
+	if err := mint(other); !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Fatalf("a token of another organization: %v, want SQLSTATE 42501 (row-level security)", err)
 	}
 	if err := mint(own); err != nil {
 		t.Fatalf("a token of the organization itself: %v", err)

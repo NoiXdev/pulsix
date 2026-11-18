@@ -114,7 +114,7 @@ type localCheckDrops struct {
 // first checkplugins.MaxLocalCheckProblems, each bounded by boundLine to
 // MaxLocalCheckProblemBytes (which also replaces a NUL, as PostgreSQL text
 // refuses one). Each dropped check then adds one problem after them,
-// notSupportedProblem, while the 32 are not full.
+// ignoredProblem, while the 32 are not full.
 func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []string) (LocalChecksReport, localCheckDrops) {
 	if secretsState == "" {
 		return LocalChecksReport{}, localCheckDrops{}
@@ -148,10 +148,10 @@ func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []s
 	return LocalChecksReport{Known: true, Checks: kept, Problems: bounded}, drops
 }
 
-// notSupportedProblem is the stored problem of a check the manager
-// refused: the key as it may be shown and the fixed reason, never params.
-func notSupportedProblem(subject, reason string) string {
-	return subject + ": not supported by this manager (" + reason + ")"
+// ignoredProblem is the stored problem of a check the server ignores: the
+// key as it may be shown and the fixed reason, never params.
+func ignoredProblem(subject, reason string) string {
+	return subject + ": ignored by the server (" + reason + ")"
 }
 
 // problems is one line per dropped check in key order, and one more for the
@@ -159,10 +159,10 @@ func notSupportedProblem(subject, reason string) string {
 func (d localCheckDrops) problems() []string {
 	out := make([]string, 0, len(d.examined)+1)
 	for _, c := range d.examined {
-		out = append(out, notSupportedProblem(c.key, c.reason))
+		out = append(out, ignoredProblem(c.key, c.reason))
 	}
 	if d.unexamined > 0 {
-		out = append(out, notSupportedProblem(strconv.Itoa(d.unexamined)+" more local checks",
+		out = append(out, ignoredProblem(strconv.Itoa(d.unexamined)+" more local checks",
 			"more than "+strconv.Itoa(maxExaminedLocalChecks)+" local checks reported"))
 	}
 	return out
@@ -188,9 +188,11 @@ func (d localCheckDrops) fingerprint() string {
 
 // dropLog remembers, per agent, the dropped set last logged, so the
 // warnings are written once per change instead of on every heartbeat. An
-// agent whose dropped set becomes empty is forgotten, so the map holds only
-// agents that currently report a dropped check. It lives per process: after
-// a restart each set is logged once more.
+// agent whose dropped set becomes empty is forgotten. The map is keyed by
+// certificate serial and not bounded: the entry of an agent that was
+// renewed or revoked while it reported a dropped check stays until the
+// process restarts. It lives per process: after a restart each set is
+// logged once more.
 type dropLog struct {
 	mu   sync.Mutex
 	last map[string]string
