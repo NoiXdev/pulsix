@@ -50,6 +50,7 @@ type Store interface {
 // SessionStore is the subset of *Sessions the service uses (fakeable in tests).
 type SessionStore interface {
 	Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error)
+	CreatePasswordOnly(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, error)
 	Revoke(ctx context.Context, id uuid.UUID) error
 }
 
@@ -204,9 +205,21 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 	// it, and an account without one must enrol one first (the API's
 	// requireEnrolmentSession admits exactly that and nothing else). With
 	// the second factor optional, an account without one is complete on
-	// its password; one with a factor still verifies it.
+	// its password; one with a factor still verifies it. That session is
+	// password-only (Sessions.CreatePasswordOnly): a factor that commits
+	// after the check above, or any time later, makes every lookup of it
+	// read pending, so no lock is needed to keep the check and the insert
+	// together.
 	complete := s.mfaOptional && !hasFactor
-	id, cookie, err := s.sessions.Create(ctx, u.ID, complete)
+	var (
+		id     uuid.UUID
+		cookie string
+	)
+	if complete {
+		id, cookie, err = s.sessions.CreatePasswordOnly(ctx, u.ID)
+	} else {
+		id, cookie, err = s.sessions.Create(ctx, u.ID, false)
+	}
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("create session: %w", err)
 	}

@@ -32,6 +32,10 @@ func (noopSessions) Create(context.Context, uuid.UUID, bool) (uuid.UUID, string,
 	return uuid.Nil, "", nil
 }
 
+func (noopSessions) CreatePasswordOnly(context.Context, uuid.UUID) (uuid.UUID, string, error) {
+	return uuid.Nil, "", nil
+}
+
 func (noopSessions) Revoke(context.Context, uuid.UUID) error { return nil }
 
 // TestLoginUnknownUserStillVerifiesDummyHash asserts that Login's timing

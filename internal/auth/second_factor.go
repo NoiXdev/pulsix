@@ -14,6 +14,11 @@ import (
 // silently demoting the account to password-only.
 var ErrLastSecondFactor = errors.New("an account must keep at least one second factor")
 
+// ErrPasswordNotTheFactor refuses the password step-up of PULSIX_MFA_OPTIONAL
+// (Enrolment.RefreshPasswordProof) for an account that has a second factor:
+// the password stands in for a factor only while the account has none.
+var ErrPasswordNotTheFactor = errors.New("the account has a second factor; the password is not its step-up")
+
 // SecondFactors is the account-level view over both kinds of second factor,
 // for the rules that span them: whether the account has any factor at all,
 // and that it never loses its last one.

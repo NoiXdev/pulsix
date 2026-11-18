@@ -46,6 +46,11 @@ func TestLoginOptionalSecondFactor(t *testing.T) {
 			if len(sess.mfa) != 1 || sess.mfa[0] != tc.wantComplete {
 				t.Fatalf("session complete = %v, want %v", sess.mfa, tc.wantComplete)
 			}
+			// A session complete because of the mode is marked as resting on
+			// the password alone, so a factor enrolled later supersedes it.
+			if sess.passwordOnly[0] != tc.wantComplete {
+				t.Fatalf("session password-only = %v, want %v", sess.passwordOnly, tc.wantComplete)
+			}
 			if res.MFARequired != tc.wantRequired || res.EnrolmentRequired != tc.wantEnrol {
 				t.Fatalf("result = %+v, want MFARequired %v, EnrolmentRequired %v", res, tc.wantRequired, tc.wantEnrol)
 			}

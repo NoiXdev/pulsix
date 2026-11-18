@@ -190,6 +190,12 @@ func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete b
 	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
 }
 
+// CreatePasswordOnly panics for the same reason: these tests run with the
+// second factor mandatory.
+func (f *fakeSessions) CreatePasswordOnly(context.Context, uuid.UUID) (uuid.UUID, string, error) {
+	panic("setup.Complete must never open an MFA-complete session with the second factor mandatory")
+}
+
 var ctx = context.Background()
 
 func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
@@ -556,11 +562,19 @@ func TestDefaultLocaleDegradesAnUnusableStoredValueToEnglish(t *testing.T) {
 }
 
 // recordingSessions is a setup.SessionStore that remembers whether it was
-// asked for a complete session.
-type recordingSessions struct{ complete []bool }
+// asked for a complete session, and whether that one rests on the password
+// alone (CreatePasswordOnly).
+type recordingSessions struct{ complete, passwordOnly []bool }
 
 func (f *recordingSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
 	f.complete = append(f.complete, mfaComplete)
+	f.passwordOnly = append(f.passwordOnly, false)
+	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
+}
+
+func (f *recordingSessions) CreatePasswordOnly(_ context.Context, userID uuid.UUID) (uuid.UUID, string, error) {
+	f.complete = append(f.complete, true)
+	f.passwordOnly = append(f.passwordOnly, true)
 	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
 }
 
@@ -579,6 +593,11 @@ func TestCompleteWithTheSecondFactorOptional(t *testing.T) {
 		}
 		if len(sess.complete) != 1 || sess.complete[0] != optional {
 			t.Fatalf("optional=%v: sessions opened complete = %v", optional, sess.complete)
+		}
+		// Complete on the mode, so marked password-only: a factor the
+		// administrator enrols later supersedes it in every other session.
+		if sess.passwordOnly[0] != optional {
+			t.Fatalf("optional=%v: sessions opened password-only = %v", optional, sess.passwordOnly)
 		}
 		if res.WithoutSecondFactor != optional {
 			t.Fatalf("optional=%v: WithoutSecondFactor = %v", optional, res.WithoutSecondFactor)

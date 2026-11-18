@@ -9,6 +9,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/clientip"
 )
 
 // The optional second factor (PULSIX_MFA_OPTIONAL, Deps.MFAOptional) is for
@@ -19,6 +20,19 @@ import (
 // factor is proven: the step-up (POST /auth/password/reauth below) and the
 // session renewal. An account WITH a factor is unaffected: it verifies the
 // factor at sign-in, and its step-up and renewal still need the factor.
+//
+// Every session completed on the password alone in this mode is
+// password-only (auth.Sessions.CreatePasswordOnly, and the renewal and the
+// step-up below keep the mark). It holds only while the account has no
+// factor: once the owner enrols one, in any session, every password-only
+// session of the account reads as pending and stale on its next request and
+// must verify the new factor (TOTP verify or the passkey step-up), which
+// clears the mark. So a session someone opened with a known password before
+// the owner secured the account does not outlive that enrolment.
+
+// passwordNotTheFactor is the refusal of the password step-up for an
+// account that has a second factor.
+const passwordNotTheFactor = "the password is not a step-up for this account; prove the second factor"
 
 // signInWithoutSecondFactor is the audit action of a sign-in that completed
 // without a second factor because the mode is on.
@@ -71,9 +85,16 @@ type passwordReauthInput struct {
 // Gate: requirePasswordChangeSession, like the passkey step-up — a
 // complete cookie session, locked and bearer principals refused, and still
 // reachable while the account must change its password (that change needs
-// a fresh step-up). It is on the auth rate limiter: it is where a password
-// is guessed.
-func registerPasswordStepUpRoute(hapi huma.API, deps Deps) {
+// a fresh step-up). It is on the auth rate limiter it shares with the
+// renewal by password (passwordGuesses, registerSessionRenewRoutes): both
+// guess the same password of the same session, so the step-up adds no
+// budget of its own.
+//
+// The completion is conditional (Enrolment.RefreshPasswordProof): the
+// account's lack of a factor is checked again in the statement that
+// refreshes the proof, after the password's argon2 time, and a factor
+// enrolled after even that supersedes the session on lookup.
+func registerPasswordStepUpRoute(hapi huma.API, deps Deps, passwordGuesses *clientip.Limiter) {
 	huma.Post(hapi, "/api/v1/auth/password/reauth", func(ctx context.Context, in *passwordReauthInput) (*sessionUpgradeOutput, error) {
 		p, err := requirePasswordChangeSession(ctx)
 		if err != nil {
@@ -84,25 +105,27 @@ func registerPasswordStepUpRoute(hapi huma.API, deps Deps) {
 			return nil, mapAuthErr(ctx, err)
 		}
 		if !ok {
-			return nil, huma.Error403Forbidden("the password is not a step-up for this account; prove the second factor")
+			return nil, huma.Error403Forbidden(passwordNotTheFactor)
 		}
 		if err := deps.Auth.VerifyOwnPassword(ctx, p.UserID, in.Body.Password); err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
-		cookie, err := deps.Enrolment.CompleteVerifiedSession(ctx, p.UserID, p.SessionID)
+		cookie, err := deps.Enrolment.RefreshPasswordProof(ctx, p.UserID, p.SessionID)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
 		c := sessionCookie(cookie, deps.Secure)
 		return &sessionUpgradeOutput{SetCookie: &c}, nil
-	}, withAuthRateLimit(deps))
+	}, withAuthRateLimitOn(deps, passwordGuesses))
 }
 
 // passwordStepUp is /auth/me's password_step_up: whether this session's
-// step-up is the password (passwordIsTheFactor). A bearer token has no
-// step-up at all.
+// step-up is the password (passwordIsTheFactor). Only a complete session
+// has a step-up: a pending one (opened before the mode was turned on, or
+// superseded by a factor) proves a factor instead, and the password step-up
+// route refuses it. A bearer token has no step-up at all.
 func passwordStepUp(ctx context.Context, deps Deps, p auth.Principal) (bool, error) {
-	if p.TokenID != nil {
+	if p.TokenID != nil || !p.MFAComplete {
 		return false, nil
 	}
 	return passwordIsTheFactor(ctx, deps, p.UserID)

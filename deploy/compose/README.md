@@ -267,11 +267,22 @@ optional. **Never turn it on for a production instance.** While it is on:
   account's own activity ("signed in without a second factor").
 - An account **with** a second factor (an authenticator app or a passkey)
   still has to prove it at sign-in, for its step-up and for a session
-  renewal, exactly as before. Adding a factor stays possible on the
-  Security page; removing the last one is still refused.
+  renewal, exactly as in the default mode. Adding a factor stays possible on
+  the Security page; removing the last one is still refused.
 - For an account without a factor, the password takes the factor's place:
   the account-security actions ask for it again after five minutes, and a
   session renewal asks for the password only.
+- Enrolling a first factor takes effect on **every** session of the account
+  at once, not only on new sign-ins: a session that was signed in with the
+  password alone, anywhere, is asked for the new factor on its next request
+  and can do nothing else until it proves it (the session that enrolled the
+  factor carries on). Someone who knew the password and signed in before the
+  owner added a factor keeps nothing from that sign-in.
+- An administrator's **Reset second factor** (Users page) removes the
+  account's factors and ends its sessions as usual, but with the mode on the
+  account then signs in with its password alone: it is **not** asked to
+  enrol a new factor. Set a new password as well if the password may be
+  known, and have the owner add a factor again on the Security page.
 - The manager logs a warning at every start, and every page, the sign-in
   page included, shows a notice that the second factor is optional.
 

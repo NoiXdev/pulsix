@@ -86,6 +86,12 @@ func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID
 // its new cookie ("" when the session was already complete and is left as
 // it is). p is the Principal the request resolved before it read its body.
 //
+// A session that is complete on its password alone (p.PasswordOnly,
+// PULSIX_MFA_OPTIONAL) is completed the same way: the account has a factor
+// from now on, and a password-only session of an account with a factor is
+// pending (Sessions.Lookup), so the registering session must carry the new
+// factor's proof or it would lock itself out.
+//
 // Storing the credential and upgrading the session are one transaction, and
 // it runs only while the session is still live (backlog 7.109): an
 // administrator's second-factor reset ends every session of the account, so
@@ -104,7 +110,7 @@ func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID u
 		if err := e.passkeys.store.AddCredential(ctx, p.UserID, name, c); err != nil {
 			return err
 		}
-		if p.MFAComplete {
+		if p.MFAComplete && !p.PasswordOnly {
 			return nil
 		}
 		var err error
@@ -222,6 +228,32 @@ func (e *Enrolment) CompleteVerifiedSession(ctx context.Context, userID, session
 	return cookie, nil
 }
 
+// RefreshPasswordProof is CompleteVerifiedSession for the password step-up
+// of PULSIX_MFA_OPTIONAL (POST /auth/password/reauth), once the caller has
+// verified userID's password: it refreshes the complete session sessionID's
+// proof in place, keeps it password-only, and returns its new cookie, which
+// the caller must send. It takes the account row first (LockLive), like
+// CompleteVerifiedSession. The account's lack of a second factor is checked
+// in the same statement that writes (Sessions.RefreshPasswordProof): an
+// account with a factor at that moment is ErrPasswordNotTheFactor and
+// nothing changes. A session that is no longer live is ErrNotFound.
+func (e *Enrolment) RefreshPasswordProof(ctx context.Context, userID, sessionID uuid.UUID) (cookie string, err error) {
+	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockLive(ctx, userID, sessionID); err != nil {
+			return fmt.Errorf("refresh the password proof: %w", err)
+		}
+		var err error
+		if cookie, err = e.sessions.RefreshPasswordProof(ctx, sessionID); err != nil {
+			return fmt.Errorf("refresh the password proof: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return cookie, nil
+}
+
 // RenewSession replaces userID's session oldID with a new MFA-complete one
 // (Sessions.Replace) in one instance transaction, once the caller has
 // verified the password and a second factor, or a passkey, for userID
@@ -230,10 +262,23 @@ func (e *Enrolment) CompleteVerifiedSession(ctx context.Context, userID, session
 // a wrong code spent. A session that is no longer live, or is locked, is
 // ErrNotFound and nothing changes.
 func (e *Enrolment) RenewSession(ctx context.Context, userID, oldID uuid.UUID) (RenewedSession, error) {
+	return e.renew(ctx, userID, oldID, false)
+}
+
+// RenewSessionByPassword is RenewSession for an account whose password is
+// its factor (PULSIX_MFA_OPTIONAL, no second factor): the caller verified
+// the password alone, so the new session is password-only
+// (Sessions.CreatePasswordOnly) and reads as pending should the account
+// have a factor by now or gain one later.
+func (e *Enrolment) RenewSessionByPassword(ctx context.Context, userID, oldID uuid.UUID) (RenewedSession, error) {
+	return e.renew(ctx, userID, oldID, true)
+}
+
+func (e *Enrolment) renew(ctx context.Context, userID, oldID uuid.UUID, passwordOnly bool) (RenewedSession, error) {
 	var r RenewedSession
 	err := e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
 		var err error
-		if r, err = e.sessions.Replace(ctx, userID, oldID); err != nil {
+		if r, err = e.sessions.Replace(ctx, userID, oldID, passwordOnly); err != nil {
 			return fmt.Errorf("renew the session: %w", err)
 		}
 		return nil

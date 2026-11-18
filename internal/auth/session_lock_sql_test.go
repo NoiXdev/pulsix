@@ -74,7 +74,7 @@ func TestReplaceReportsTheStoredExpiry(t *testing.T) {
 	nanos := time.Now().UTC().Truncate(time.Second).Add(123456789)
 	s := auth.NewSessions(q, func() time.Time { return nanos })
 
-	renewed, err := s.Replace(ctx, uid, id)
+	renewed, err := s.Replace(ctx, uid, id, false)
 	if err != nil {
 		t.Fatal(err)
 	}

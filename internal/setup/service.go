@@ -181,6 +181,10 @@ type Store interface {
 // SessionStore seam.
 type SessionStore interface {
 	Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error)
+	// CreatePasswordOnly opens a session complete on the password alone
+	// (PULSIX_MFA_OPTIONAL): it reads as pending once the account has a
+	// second factor (auth.Sessions.CreatePasswordOnly).
+	CreatePasswordOnly(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, error)
 }
 
 // smtpSettingsKey is the instance_settings row SMTP configuration lives
@@ -373,8 +377,17 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	}
 
 	// mfaComplete = false unless the second factor is optional: see
-	// Result.Cookie's own doc comment.
-	sid, cookie, err := s.sessions.Create(ctx, res.UserID, s.mfaOptional)
+	// Result.Cookie's own doc comment. Complete on the mode is password-only,
+	// so the administrator's first enrolment supersedes it everywhere else.
+	var (
+		sid    uuid.UUID
+		cookie string
+	)
+	if s.mfaOptional {
+		sid, cookie, err = s.sessions.CreatePasswordOnly(ctx, res.UserID)
+	} else {
+		sid, cookie, err = s.sessions.Create(ctx, res.UserID, false)
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("open admin session: %w", err)
 	}

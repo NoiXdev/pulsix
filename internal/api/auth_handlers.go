@@ -243,6 +243,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error429TooManyRequests("too many attempts; try again later")
 	case errors.Is(err, auth.ErrLastSecondFactor):
 		return huma.Error409Conflict("cannot remove the last second factor; add another one first")
+	case errors.Is(err, auth.ErrPasswordNotTheFactor):
+		return huma.Error403Forbidden(passwordNotTheFactor)
 	default:
 		slog.ErrorContext(ctx, "unmapped auth error", "err", err)
 		return huma.Error500InternalServerError("internal error")

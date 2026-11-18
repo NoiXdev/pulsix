@@ -47,12 +47,18 @@ type renewOutput struct {
 // one and a bearer token.
 //
 // Every route is on the auth rate limiter: each one is where a password, a
-// code or an assertion is guessed or replayed.
+// code or an assertion is guessed or replayed. The renewal by password shares
+// its limiter with the password step-up of PULSIX_MFA_OPTIONAL
+// (registerPasswordStepUpRoute, registered here for that reason): both guess
+// the same password, so together they get the budget the renewal has alone.
 //
 // A refusal never touches the session or its cookie. Neither renewal
 // extends a session's lifetime: success opens a new session with a fresh
 // auth.SessionTTL and ends the old one (Enrolment.RenewSession).
 func registerSessionRenewRoutes(hapi huma.API, deps Deps) {
+	passwordGuesses := newAuthRateLimiter(deps)
+	registerPasswordStepUpRoute(hapi, deps, passwordGuesses)
+
 	huma.Post(hapi, "/api/v1/auth/session/renew", func(ctx context.Context, in *renewInput) (*renewOutput, error) {
 		p, err := requireInteractiveSession(ctx)
 		if err != nil {
@@ -76,8 +82,10 @@ func registerSessionRenewRoutes(hapi huma.API, deps Deps) {
 				return nil, err
 			}
 		}
-		return renewed(ctx, deps, p)
-	}, withAudit("renewSession", "session"), withAuthRateLimit(deps))
+		// Renewed on the password alone, the new session stays
+		// password-only (Enrolment.RenewSessionByPassword).
+		return renewed(ctx, deps, p, passwordOnly)
+	}, withAudit("renewSession", "session"), withAuthRateLimitOn(deps, passwordGuesses))
 
 	huma.Post(hapi, "/api/v1/auth/passkeys/reauth/begin", func(ctx context.Context, _ *struct{}) (*passkeyBeginOutput, error) {
 		p, err := requirePasswordChangeSession(ctx)
@@ -121,7 +129,7 @@ func registerSessionRenewRoutes(hapi huma.API, deps Deps) {
 		if err := finishReauth(ctx, deps, p, in); err != nil {
 			return nil, err
 		}
-		return renewed(ctx, deps, p)
+		return renewed(ctx, deps, p, false)
 	}, withAudit("renewSessionWithPasskey", "session"), withAuthRateLimit(deps))
 }
 
@@ -139,9 +147,14 @@ func finishReauth(ctx context.Context, deps Deps, p auth.Principal, in *passkeyL
 }
 
 // renewed replaces p's session once the caller has proved itself, records
-// the event and answers with the new session.
-func renewed(ctx context.Context, deps Deps, p auth.Principal) (*renewOutput, error) {
-	r, err := deps.Enrolment.RenewSession(ctx, p.UserID, p.SessionID)
+// the event and answers with the new session. passwordOnly says the proof was
+// the password alone (PULSIX_MFA_OPTIONAL, an account without a factor).
+func renewed(ctx context.Context, deps Deps, p auth.Principal, passwordOnly bool) (*renewOutput, error) {
+	renew := deps.Enrolment.RenewSession
+	if passwordOnly {
+		renew = deps.Enrolment.RenewSessionByPassword
+	}
+	r, err := renew(ctx, p.UserID, p.SessionID)
 	if err != nil {
 		return nil, mapAuthErr(ctx, err)
 	}

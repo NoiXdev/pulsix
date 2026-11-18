@@ -44,6 +44,13 @@ type Principal struct {
 	MustChangePassword bool
 	// Locked is true while the session is locked behind the owner's PIN.
 	Locked bool
+	// PasswordOnly is true for a session that is complete on its password
+	// alone because the second factor is optional (PULSIX_MFA_OPTIONAL) and
+	// has proven no factor since. Lookup already reads such a session as
+	// pending and stale once its account has a factor; while it has none,
+	// the session's first enrolment must still prove the new factor
+	// (Enrolment.FinishPasskey) so the session stops resting on the password.
+	PasswordOnly bool
 	// ExpiresAt is when the session's cookie stops authenticating; zero for
 	// a bearer token principal, which has no session.
 	ExpiresAt time.Time
@@ -80,7 +87,19 @@ func NewSessions(q *gen.Queries, now func() time.Time) *Sessions {
 
 // Create inserts a session and returns the cookie value "<id>.<secret>".
 func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
-	r, err := s.create(ctx, userID, mfaComplete)
+	r, err := s.create(ctx, userID, mfaComplete, false)
+	return r.ID, r.Cookie, err
+}
+
+// CreatePasswordOnly inserts a session that is complete on the password
+// alone because the second factor is optional (PULSIX_MFA_OPTIONAL) and
+// userID has none, and returns its id and cookie value. It is complete and
+// fresh only while the account has no factor: once a TOTP secret is
+// confirmed or a passkey registered, Lookup reads it as pending and stale
+// (GetSession's password_superseded), so a factor that commits after the
+// caller checked for one cannot leave it complete.
+func (s *Sessions) CreatePasswordOnly(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, error) {
+	r, err := s.create(ctx, userID, true, true)
 	return r.ID, r.Cookie, err
 }
 
@@ -92,7 +111,7 @@ type RenewedSession struct {
 	ExpiresAt time.Time
 }
 
-func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (RenewedSession, error) {
+func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete, passwordOnly bool) (RenewedSession, error) {
 	id := uuid.Must(uuid.NewV7())
 	secret, sum, err := newSessionSecret()
 	if err != nil {
@@ -103,7 +122,7 @@ func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 	expiresAt := s.now().Add(SessionTTL).Truncate(time.Microsecond)
 	err = s.q.CreateSession(ctx, gen.CreateSessionParams{
 		ID: id, UserID: userID, SecretHash: sum, MfaComplete: mfaComplete,
-		ExpiresAt: expiresAt,
+		ExpiresAt: expiresAt, PasswordOnly: passwordOnly,
 	})
 	if err != nil {
 		return RenewedSession{}, err
@@ -128,7 +147,11 @@ func (s *Sessions) create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 // oldID that is not a live session of userID, or is locked, is ErrNotFound
 // and nothing changes; so is one a concurrent renewal already replaced
 // (RevokeReplacedSession matches it once).
-func (s *Sessions) Replace(ctx context.Context, userID, oldID uuid.UUID) (RenewedSession, error) {
+//
+// passwordOnly marks the new session as complete on the password alone
+// (CreatePasswordOnly): the renewal of a factor-less account while the
+// second factor is optional.
+func (s *Sessions) Replace(ctx context.Context, userID, oldID uuid.UUID, passwordOnly bool) (RenewedSession, error) {
 	if err := s.LockLive(ctx, userID, oldID); err != nil {
 		return RenewedSession{}, err
 	}
@@ -139,7 +162,7 @@ func (s *Sessions) Replace(ctx context.Context, userID, oldID uuid.UUID) (Renewe
 	if n == 0 {
 		return RenewedSession{}, ErrNotFound
 	}
-	r, err := s.create(ctx, userID, true)
+	r, err := s.create(ctx, userID, true, passwordOnly)
 	if err != nil {
 		return RenewedSession{}, fmt.Errorf("open the renewed session: %w", err)
 	}
@@ -183,7 +206,13 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 	if subtle.ConstantTimeCompare(sum[:], row.SecretHash) != 1 {
 		return Principal{}, ErrUnauthenticated
 	}
-	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete, MustChangePassword: row.MustChangePassword, Locked: row.LockedAt.Valid, ExpiresAt: row.ExpiresAt}
+	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete, MustChangePassword: row.MustChangePassword, Locked: row.LockedAt.Valid, ExpiresAt: row.ExpiresAt, PasswordOnly: row.PasswordOnly}
+	// A password-only session whose account has a factor now is pending
+	// and has proven nothing: it must verify that factor (GetSession).
+	if row.PasswordSuperseded {
+		p.MFAComplete = false
+		return p, nil
+	}
 	if row.MfaAt.Valid {
 		at := row.MfaAt.Time
 		p.MFAAt = &at
@@ -208,7 +237,7 @@ func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bo
 	if row.LockedAt.Valid {
 		return false, ErrSessionLocked
 	}
-	return row.MfaComplete, nil
+	return row.MfaComplete && !row.PasswordSuperseded, nil
 }
 
 // MarkMFAComplete upgrades a session after a successful second factor and
@@ -233,6 +262,29 @@ func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, e
 		// believe a second factor had been completed for a session that
 		// cannot carry it.
 		return "", ErrNotFound
+	}
+	return cookieValue(id, secret), nil
+}
+
+// RefreshPasswordProof is MarkMFAComplete for the password step-up of
+// PULSIX_MFA_OPTIONAL: it refreshes the complete session id's proof and
+// replaces its secret, keeping it password-only, and returns the new cookie
+// value. Whether the account still has no second factor is decided in the
+// same statement (RefreshPasswordProof), so a factor that is there when it
+// runs refuses it with ErrPasswordNotTheFactor and nothing changes. The
+// caller has checked that the session is live (LockLive); a session that
+// matches nothing here has a factor or is not complete.
+func (s *Sessions) RefreshPasswordProof(ctx context.Context, id uuid.UUID) (string, error) {
+	secret, sum, err := newSessionSecret()
+	if err != nil {
+		return "", err
+	}
+	n, err := s.q.RefreshPasswordProof(ctx, gen.RefreshPasswordProofParams{ID: id, SecretHash: sum})
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return "", ErrPasswordNotTheFactor
 	}
 	return cookieValue(id, secret), nil
 }

@@ -45,6 +45,16 @@ func withAuthRateLimit(deps Deps) func(o *huma.Operation) {
 	return withAuthRateLimitCharging(deps)
 }
 
+// withAuthRateLimitOn is withAuthRateLimit on a limiter the caller built
+// (newAuthRateLimiter) and attaches to more than one route, so they spend one
+// budget between them: the renewal by password and the password step-up,
+// which guess the same password.
+func withAuthRateLimitOn(deps Deps, lim *clientip.Limiter) func(o *huma.Operation) {
+	return func(o *huma.Operation) {
+		o.Middlewares = append(o.Middlewares, authRateLimitMiddleware(deps, lim, nil))
+	}
+}
+
 // withAuthRateLimitCharging is withAuthRateLimit for a route where only some
 // refusals are guesses (backlog 7.82): when charged names statuses, only a
 // response with one of them keeps its slot, and every other one is refunded.

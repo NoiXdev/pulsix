@@ -1036,6 +1036,7 @@ type Session struct {
 	MfaAt          pgtype.Timestamptz `json:"mfa_at"`
 	LockedAt       pgtype.Timestamptz `json:"locked_at"`
 	UnlockFailures int32              `json:"unlock_failures"`
+	PasswordOnly   bool               `json:"password_only"`
 }
 
 type SharedCheckDefinition struct {

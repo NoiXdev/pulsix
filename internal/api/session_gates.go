@@ -40,6 +40,11 @@ import (
 //     3.94) and every instance-admin route — MFA-complete and never a
 //     bearer token.
 //
+// A session complete on the password alone (PULSIX_MFA_OPTIONAL,
+// auth.Principal.PasswordOnly) whose account has gained a factor since is
+// "pending, factor to verify": the session lookup reads it that way
+// (mfa_optional.go).
+//
 // A locked session (auth.Principal.Locked, backlog 3.93) is refused by every
 // gate below except requireSession with 403 session_locked, before the
 // MFA and password-change checks (refuseWhileLocked): only /auth/me,

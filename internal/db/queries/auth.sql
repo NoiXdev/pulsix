@@ -7,9 +7,12 @@
 -- A session created complete is also a completed sign-in, so it stamps
 -- users.last_sign_in_at in the same statement (backlog 7.74); a pending one
 -- stamps nothing until MarkSessionMFAComplete completes it.
+-- password_only marks a session complete on the password alone because the
+-- second factor is optional (PULSIX_MFA_OPTIONAL): GetSession reads it as
+-- pending once the account has a factor.
 WITH new_session AS (
-    INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
-    VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
+    INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at, password_only)
+    VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END, $6)
     RETURNING user_id, mfa_complete
 )
 UPDATE users SET last_sign_in_at = now()
@@ -23,7 +26,20 @@ WHERE users.id = new_session.user_id AND new_session.mfa_complete;
 -- or future caller of Sessions.Lookup to forget the check — a disabled
 -- user's session simply stops resolving here, the same way an expired or
 -- revoked one already does.
-SELECT s.*, u.instance_admin, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id
+-- password_superseded is true for a password-only session (PULSIX_MFA_OPTIONAL)
+-- whose account has a second factor now — a confirmed TOTP secret or a
+-- passkey. The password stood in for a factor the account did not have; once
+-- it has one, the session must prove that factor like any pending session:
+-- Sessions.Lookup reads it as not complete and not fresh. It is derived here,
+-- on every lookup, so an enrolment in any other session, committed at any
+-- moment after this session was opened or refreshed, takes effect on this
+-- session's very next request.
+SELECT s.*, u.instance_admin, u.must_change_password,
+    (s.password_only AND (
+        EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = s.user_id AND t.confirmed_at IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = s.user_id)
+    ))::boolean AS password_superseded
+FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL;
 
 -- name: MarkSessionMFAComplete :execrows
@@ -59,8 +75,25 @@ WITH previous AS (
     UPDATE users SET last_sign_in_at = now()
     WHERE users.id IN (SELECT user_id FROM previous WHERE NOT mfa_complete)
 )
-UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash)
+-- password_only is cleared: a factor was just proven, so the session no
+-- longer rests on the password alone (PULSIX_MFA_OPTIONAL).
+UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash), password_only = false
 WHERE sessions.id = (SELECT previous.id FROM previous);
+
+-- name: RefreshPasswordProof :execrows
+-- The password step-up of PULSIX_MFA_OPTIONAL (POST /auth/password/reauth):
+-- a complete session of an account without a second factor re-proves its
+-- password, which stands in for the factor. It refreshes mfa_at and replaces
+-- the secret like MarkSessionMFAComplete, and keeps the session
+-- password-only. The account's lack of a factor is checked in this same
+-- statement, so a factor that is visible when it runs refuses it (zero rows)
+-- and nothing is refreshed; one that commits afterwards supersedes the
+-- session through GetSession's password_superseded. A revoked or expired
+-- session, or a pending one, matches nothing as well.
+UPDATE sessions s SET mfa_at = now(), secret_hash = sqlc.arg(secret_hash), password_only = true
+WHERE s.id = sqlc.arg(id) AND s.revoked_at IS NULL AND s.expires_at > now() AND s.mfa_complete
+  AND NOT EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = s.user_id AND t.confirmed_at IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = s.user_id);
 
 -- name: LockUserForEnrolment :one
 -- Finishing a second-factor enrolment takes the account row in key-share

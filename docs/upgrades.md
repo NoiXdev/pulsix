@@ -477,20 +477,37 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
-- **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`, no
-  migration):** off by default, so nothing changes unless it is set (`1` or
-  `true`; any value `strconv.ParseBool` refuses stops the start). When on, an
-  account without a second factor gets a complete session from its password
-  (login, the first-run wizard and an invitation's new account), recorded as
-  the audit action `signInWithoutSecondFactor`; for that account the password
-  is the step-up (new `POST /api/v1/auth/password/reauth`) and the session
+- **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
+  migration 00113):** off by default, so nothing changes unless it is set (`1`
+  or `true`; any value `strconv.ParseBool` refuses stops the start). When on,
+  an account without a second factor gets a complete session from its
+  password (login, the first-run wizard and an invitation's new account, the
+  latter only when the account has no factor), recorded as the audit action
+  `signInWithoutSecondFactor`; for that account the password is the step-up
+  (new `POST /api/v1/auth/password/reauth`, which shares the per-address
+  failure budget of `POST /api/v1/auth/session/renew`) and the session
   renewal needs the password only. Accounts with a factor are unaffected.
   `GET /api/v1/setup/status` gains `mfa_optional` and `GET /api/v1/auth/me`
-  gains `password_step_up`; the manager logs a warning at start. **Rolling
-  upgrade or mixed settings:** every manager instance must run this version
-  with the same value, or a sign-in lands complete on one and pending on
-  another. Turning it off leaves the sessions it opened usable until they
-  expire or are revoked (`deploy/compose/README.md`).
+  gains `password_step_up` (true only on a complete session); the manager
+  logs a warning at start.
+  Migration 00113 adds `sessions.password_only` (boolean, default false; every
+  existing session keeps false). A session completed on the password alone in
+  this mode is marked, and keeps the mark through the password step-up and a
+  renewal by password; only a real factor proof (TOTP verify, the passkey
+  step-up, a first enrolment in that session) clears it. The session lookup
+  reads a marked session as pending and its step-up as stale once the account
+  has a confirmed TOTP secret or a passkey, so the owner's first enrolment
+  sends every other password-only session to the factor prompt on its next
+  request; the password step-up refreshes a session only while the account has
+  no factor, checked in the same statement that writes. An administrator's
+  second-factor reset leaves the account factor-less, so with the mode on it
+  signs in with its password alone afterwards and is not made to enrol again.
+  Nothing is dropped or rewritten, workers and agents are not affected, and a
+  backup carries the column with `sessions` (a restore ends the sessions as
+  before). **Rolling upgrade or mixed settings:** every manager instance must
+  run this version with the same value, or a sign-in lands complete on one and
+  pending on another. Turning it off leaves the sessions it opened usable until
+  they expire or are revoked (`deploy/compose/README.md`).
 - **Four-digit lock PINs:** a new lock PIN is exactly four digits (it was 4 to 8). A
   PIN set under the previous release keeps working and is reported as older
   (`lock_pin_legacy` on `/api/v1/auth/me`) so the interface can ask for a new one.

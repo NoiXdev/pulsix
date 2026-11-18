@@ -44,7 +44,10 @@ func (f *fakeStore) SetLocale(_ context.Context, id uuid.UUID, l *string) error 
 type fakeSessions struct {
 	created []uuid.UUID
 	mfa     []bool
-	revoked []uuid.UUID
+	// passwordOnly records, per created session, whether it was opened
+	// complete on the password alone (CreatePasswordOnly).
+	passwordOnly []bool
+	revoked      []uuid.UUID
 }
 
 // LockAccount makes fakeSessions an auth.LoginSessions; the fakes hold no
@@ -54,6 +57,14 @@ func (f *fakeSessions) LockAccount(context.Context, uuid.UUID) error { return ni
 func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
 	f.created = append(f.created, userID)
 	f.mfa = append(f.mfa, mfaComplete)
+	f.passwordOnly = append(f.passwordOnly, false)
+	return uuid.Must(uuid.NewV7()), "cookie", nil
+}
+
+func (f *fakeSessions) CreatePasswordOnly(_ context.Context, userID uuid.UUID) (uuid.UUID, string, error) {
+	f.created = append(f.created, userID)
+	f.mfa = append(f.mfa, true)
+	f.passwordOnly = append(f.passwordOnly, true)
 	return uuid.Must(uuid.NewV7()), "cookie", nil
 }
 func (f *fakeSessions) Revoke(_ context.Context, id uuid.UUID) error {

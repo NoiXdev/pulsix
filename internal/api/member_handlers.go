@@ -266,13 +266,28 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 			// so this session can reach only the enrolment routes until it
 			// enrols one (requireEnrolmentSession), exactly like a password
 			// login to a factor-less account. With the second factor
-			// optional (PULSIX_MFA_OPTIONAL) it is complete, as that login
-			// is.
-			sid, cookie, err := deps.Sessions.Create(ctx, uid, deps.MFAOptional)
+			// optional (PULSIX_MFA_OPTIONAL) it is complete and
+			// password-only, as that login is — but only for an account
+			// that has no factor (passwordIsTheFactor): an existing account
+			// that had no password yet may well have a passkey, and must
+			// verify it.
+			passwordOnly, err := passwordIsTheFactor(ctx, deps, uid)
+			if err != nil {
+				return nil, mapAuthErr(ctx, err)
+			}
+			var (
+				sid    uuid.UUID
+				cookie string
+			)
+			if passwordOnly {
+				sid, cookie, err = deps.Sessions.CreatePasswordOnly(ctx, uid)
+			} else {
+				sid, cookie, err = deps.Sessions.Create(ctx, uid, false)
+			}
 			if err != nil {
 				return nil, mapAuthErr(ctx, fmt.Errorf("open session for accepted invite: %w", err))
 			}
-			if deps.MFAOptional {
+			if passwordOnly {
 				recordSignInWithoutSecondFactor(ctx, deps, uid, sid)
 			}
 			c := sessionCookie(cookie, deps.Secure)
