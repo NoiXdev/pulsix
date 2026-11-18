@@ -9,7 +9,8 @@ import { expect, type Page } from '@playwright/test';
 export async function expandChecks(page: Page, timeout = 10_000): Promise<void> {
   const table = page.getByRole('table', { name: 'Checks of this host' });
   await expect(table).toBeVisible({ timeout });
-  // A collapsed row's toggle has no aria-controls (its region is not rendered).
-  const collapsed = table.locator('tbody button[aria-expanded="false"]');
+  // The row toggles, by their accessible name (other buttons inside an open
+  // row, like Graph, carry aria-expanded too).
+  const collapsed = table.getByRole('button', { name: /^Show readings of / });
   while ((await collapsed.count()) > 0) await collapsed.first().click();
 }
