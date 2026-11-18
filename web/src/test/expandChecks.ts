@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 /**
@@ -7,16 +7,17 @@ import userEvent from '@testing-library/user-event';
  * actions without clicking each row first. A table of rows that are all
  * collapsed is what the page shows; tests about the collapsed state do not
  * call this.
+ *
+ * The table is expected by default and its absence fails the test. A test
+ * whose host has no checks (or no access, or a failed read) passes
+ * `{ expectTable: false }`: then it opens whatever table is there, if any,
+ * without waiting for one.
  */
-export async function expandChecks(): Promise<void> {
-  // No table means no checks (or no access, or a failed read): nothing to open.
-  try {
-    await screen.findByRole('table', {}, { timeout: 800 });
-  } catch {
-    return;
-  }
+export async function expandChecks({ expectTable = true }: { expectTable?: boolean } = {}): Promise<void> {
+  const table = expectTable ? await screen.findByRole('table') : screen.queryByRole('table');
+  if (!table) return;
   const user = userEvent.setup();
-  for (const button of screen.queryAllByRole('button', { expanded: false })) {
-    if (button.getAttribute('aria-controls')?.startsWith('check-detail-')) await user.click(button);
+  for (const button of within(table).queryAllByRole('button', { expanded: false })) {
+    await user.click(button);
   }
 }

@@ -12,7 +12,6 @@ export interface HostTabItem {
 
 const TONE_VAR = { warn: 'var(--px-warn)', crit: 'var(--px-crit)' } as const;
 
-
 /**
  * HostTabs is the host page's tab strip (the WAI-ARIA tabs pattern): one
  * button per tab, the open one selected and the only one in the Tab order;

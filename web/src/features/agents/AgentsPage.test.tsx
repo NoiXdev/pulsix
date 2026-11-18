@@ -147,7 +147,7 @@ describe('AgentsPage', () => {
     });
     renderPage();
     const link = await screen.findByRole('link', { name: 'web-1' });
-    expect(link).toHaveAttribute('href', '/o/acme/hosts/h1#connection');
+    expect(link).toHaveAttribute('href', '/o/acme/hosts/h1?tab=connection');
     // A row is one link: no nested link or button, the menu sits beside it.
     expect(within(link).queryAllByRole('link')).toEqual([]);
     expect(within(link).queryAllByRole('button')).toEqual([]);
@@ -185,7 +185,7 @@ describe('AgentsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for web-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Open host' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/hosts/h1'));
-    expect(router.state.location.hash).toBe('connection');
+    expect(router.state.location.search).toMatchObject({ tab: 'connection' });
   });
 
   it('withdraws a pending token from its row menu', async () => {

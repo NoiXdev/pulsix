@@ -30,7 +30,7 @@ export function useAgentListActions(org: string, canWrite: boolean): { agentActi
   return {
     agentActions: (a) => {
       const items: RowAction[] = [
-        { id: 'open', label: t.agents.openHost, onSelect: () => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, hash: 'connection' }) },
+        { id: 'open', label: t.agents.openHost, onSelect: () => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, search: { tab: 'connection' } }) },
       ];
       if (canWrite) items.push({ id: 'revoke', label: t.agents.revokeItem, destructive: true, onSelect: () => void revoke(a, t.agents.revoked(a.host_name)) });
       return items;

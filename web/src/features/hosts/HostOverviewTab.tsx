@@ -66,7 +66,7 @@ export function HostOverviewTab({ org, host, role, actions, openAlerts, frozen, 
         </div>
         <div className="flex min-w-0 flex-col gap-8">
           {connection}
-          <ChecksSummary org={org} hostId={host.id} canRead={canRead} onAll={() => onTab('checks')} />
+          <ChecksSummary org={org} hostId={host.id} canRead={canRead} frozen={frozen} onAll={() => onTab('checks')} />
         </div>
       </div>
     </div>

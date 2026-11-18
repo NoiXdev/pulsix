@@ -62,7 +62,7 @@ const THREE_SOURCES = {
  * missing `retry: false` on useHostMetric would be invisible, because the
  * client would already be doing it. One test raises it on purpose.
  */
-async function renderCard(canRead = true, canWrite = true, retry: number | boolean = false) {
+async function renderCard(canRead = true, canWrite = true, retry: number | boolean = false, expectTable = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -92,7 +92,7 @@ async function renderCard(canRead = true, canWrite = true, retry: number | boole
       </ToastProvider>
     </QueryClientProvider>,
   );
-  await expandChecks();
+  await expandChecks({ expectTable });
   return view;
 }
 
@@ -683,7 +683,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [] },
     });
-    const { unmount } = await renderCard();
+    const { unmount } = await renderCard(true, true, false, false);
 
     expect(await screen.findByText('No checks resolve for this host yet.')).toBeInTheDocument();
     expect(screen.queryByText(/not being monitored/)).not.toBeInTheDocument();
@@ -697,7 +697,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: false, checks: null },
     });
-    await renderCard();
+    await renderCard(true, true, false, false);
 
     expect(await screen.findByText(/This host is not being monitored/)).toBeInTheDocument();
     expect(screen.getByText('No checks resolve for this host yet.')).toBeInTheDocument();
@@ -1010,7 +1010,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    await renderCard(false);
+    await renderCard(false, true, false, false);
 
     expect(await screen.findByText(/Monitoring is visible to members/)).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
@@ -1023,7 +1023,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': () => new Response(JSON.stringify({ detail: 'checks unavailable' }), { status: 500 }),
     });
-    await renderCard();
+    await renderCard(true, true, false, false);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('checks unavailable');
   });

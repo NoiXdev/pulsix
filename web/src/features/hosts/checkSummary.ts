@@ -1,6 +1,7 @@
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { formatNumber } from './hostChecks.ts';
+import { checkStatus, type TileTone } from './hostOverview.ts';
 
 /**
  * What the Checks tab's table says about one check at a glance: its worst
@@ -9,21 +10,9 @@ import { formatNumber } from './hostChecks.ts';
  * and readings are the server's, only picked and worded.
  */
 
-export type CheckStatus = 'crit' | 'warn' | 'ok' | 'none';
+export type CheckStatus = TileTone;
 
-/** checkStatus is the worst verdict among a check's items. An ignored
- * item is not judged (its state is meaningless) and `unknown`/never
- * evaluated carry no verdict, so a check with nothing else is `none`. */
-export function checkStatus(check: HostCheck): CheckStatus {
-  let worst: CheckStatus = 'none';
-  for (const v of check.values ?? []) {
-    if (v.ignored) continue;
-    if (v.state === 'crit') return 'crit';
-    if (v.state === 'warn') worst = 'warn';
-    else if (v.state === 'ok' && worst === 'none') worst = 'ok';
-  }
-  return worst;
-}
+export { checkStatus };
 
 /** isFailing: warning or critical. */
 export function isFailing(check: HostCheck): boolean {
@@ -31,12 +20,16 @@ export function isFailing(check: HostCheck): boolean {
   return s === 'crit' || s === 'warn';
 }
 
-/** orderChecks puts the failing checks first and keeps the given order
- * otherwise. While the verdicts are frozen (an offline client) they are
+/** orderChecks puts the critical checks first, then the warning ones, and
+ * keeps the given order otherwise. While the verdicts are frozen (an offline client) they are
  * from before and are not a reason to reorder. */
 export function orderChecks(checks: readonly HostCheck[], frozen: boolean): HostCheck[] {
   if (frozen) return [...checks];
-  return [...checks.filter(isFailing), ...checks.filter((c) => !isFailing(c))];
+  const rank = (c: HostCheck) => ({ crit: 0, warn: 1 })[checkStatus(c) as 'crit' | 'warn'] ?? 2;
+  return checks
+    .map((c, i) => ({ c, i, r: rank(c) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.c);
 }
 
 function reading(check: HostCheck, metric: string): HostCheckValue | undefined {
@@ -44,8 +37,8 @@ function reading(check: HostCheck, metric: string): HostCheckValue | undefined {
 }
 
 /** The metric a plugin's one-number summary comes from, with how it reads. */
-const MS_METRIC: Record<string, string> = { icmp: 'icmp.rtt_ms', tcp: 'tcp.response_ms', dns: 'dns.resolve_ms' };
-const PERCENT_METRIC: Record<string, string> = { cpu: 'cpu.used_pct', memory: 'memory.used_pct' };
+const MS_METRIC: Record<string, string> = { icmp: 'icmp.rtt_ms', tcp: 'tcp.connect_ms', dns: 'dns.resolve_ms' };
+const PERCENT_METRIC: Record<string, string> = { cpu: 'cpu.used_pct', memory: 'mem.used_pct' };
 
 /** keyValue is a short summary of a check from what it already measured,
  * or null when it has no usable reading. */

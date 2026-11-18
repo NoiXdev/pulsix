@@ -126,8 +126,9 @@ const WORST: readonly TileTone[] = ['crit', 'warn', 'unknown', 'ok'];
 
 /** A check's verdict: the worst current one among its readings (an ignored
  * reading is not judged, so it does not count). A disabled check, or one
- * with no current verdict at all, is unknown. */
-function checkTone(c: HostCheck): TileTone {
+ * with no current verdict at all, is unknown. The one rule behind the
+ * Overview's summary and the Checks table. */
+export function checkStatus(c: HostCheck): TileTone {
   if (!c.enabled) return 'unknown';
   const tones = (c.values ?? []).filter((v) => !v.ignored).map(toneOf);
   if (tones.length === 0) return 'unknown';
@@ -137,6 +138,6 @@ function checkTone(c: HostCheck): TileTone {
 /** checkCounts counts each check once, by its worst current verdict. */
 export function checkCounts(checks: readonly HostCheck[]): CheckCounts {
   const counts: CheckCounts = { total: checks.length, ok: 0, warn: 0, crit: 0, unknown: 0 };
-  for (const c of checks) counts[checkTone(c)] += 1;
+  for (const c of checks) counts[checkStatus(c)] += 1;
   return counts;
 }

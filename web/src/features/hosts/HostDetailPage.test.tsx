@@ -618,6 +618,7 @@ describe('HostDetailPage', () => {
       expect(await screen.findByText('Client')).toBeInTheDocument();
       expect(screen.queryByText('Off')).not.toBeInTheDocument();
       expect(await screen.findByText('2 warnings')).toBeInTheDocument();
+      await expandChecks();
       expect((await screen.findAllByText('stale verdict')).length).toBeGreaterThan(0);
       expect(screen.queryByText(/Not judged while the client is off/)).not.toBeInTheDocument();
     });

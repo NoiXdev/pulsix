@@ -97,10 +97,11 @@ const ORDER: ReadonlyArray<keyof Omit<CheckCounts, 'total'>> = ['crit', 'warn', 
 /**
  * ChecksSummary is the Overview's Checks card: how many of the host's
  * checks stand at each verdict (only the verdicts some check has), and
- * "All N" to the Checks tab. It reads the same host-checks query the
+ * "All N" to the Checks tab. `frozen` (an offline agent, backlog 3.57)
+ * mutes the verdicts and says why. It reads the same host-checks query the
  * Checks tab and the key metrics read.
  */
-export function ChecksSummary({ org, hostId, canRead, onAll }: { org: string; hostId: string; canRead: boolean; onAll: () => void }) {
+export function ChecksSummary({ org, hostId, canRead, frozen = false, onAll }: { org: string; hostId: string; canRead: boolean; frozen?: boolean; onAll: () => void }) {
   const t = useT();
   const o = t.hosts.detail.overview;
   const checks = useHostChecks(org, hostId, canRead);
@@ -122,13 +123,16 @@ export function ChecksSummary({ org, hostId, canRead, onAll }: { org: string; ho
         {body !== undefined || !counts ? (
           <p className="text-[13px] text-muted-foreground">{body}</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {ORDER.filter((k) => counts[k] > 0).map((k) => (
-              <Pill key={k} tone={k}>
-                {o.count[k](counts[k])}
-              </Pill>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-2">
+              {ORDER.filter((k) => counts[k] > 0).map((k) => (
+                <Pill key={k} tone={frozen ? 'unknown' : k}>
+                  {o.count[k](counts[k])}
+                </Pill>
+              ))}
+            </div>
+            {frozen && <p className="mt-2 text-xs text-muted-foreground">{o.checksFrozen}</p>}
+          </>
         )}
       </Card>
     </Section>

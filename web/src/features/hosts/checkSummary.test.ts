@@ -23,11 +23,18 @@ describe('checkStatus', () => {
     [['ok', 'crit', 'warn'], 'crit'],
     [['ok', 'warn'], 'warn'],
     [['ok', 'ok'], 'ok'],
-    [['unknown', null], 'none'],
-    [[], 'none'],
+    [['ok', 'unknown'], 'unknown'],
+    [['unknown', null], 'unknown'],
+    [[], 'unknown'],
   ] as const)('%j is %s', (states, want) => {
     const c = chk('disk', states.map((state, i) => val({ item: `/${i}`, state })));
     expect(checkStatus(c)).toBe(want);
+  });
+
+  it('counts a disabled check and a stale verdict as unknown, like the Overview', () => {
+    expect(checkStatus({ ...chk('cpu', [val({ state: 'crit' })]), enabled: false })).toBe('unknown');
+    expect(checkStatus(chk('cpu', [val({ state: 'crit', state_stale: true })]))).toBe('unknown');
+    expect(checkStatus(chk('cpu', [val({ state: 'ok', stale: true })]))).toBe('unknown');
   });
 
   it('does not count an ignored item', () => {
@@ -36,12 +43,12 @@ describe('checkStatus', () => {
 });
 
 describe('orderChecks', () => {
-  it('puts warning and critical first and keeps the given order otherwise', () => {
+  it('puts critical first, then warning, and keeps the given order otherwise', () => {
     const a = chk('cpu', [val({ state: 'ok' })], 'a');
     const b = chk('cpu', [val({ state: 'warn' })], 'b');
     const c = chk('cpu', [], 'c');
     const d = chk('cpu', [val({ state: 'crit' })], 'd');
-    expect(orderChecks([a, b, c, d], false).map((x) => x.key)).toEqual(['b', 'd', 'a', 'c']);
+    expect(orderChecks([a, b, c, d], false).map((x) => x.key)).toEqual(['d', 'b', 'a', 'c']);
   });
 
   it('keeps the order while the verdicts are frozen', () => {
@@ -74,11 +81,11 @@ describe('keyValue', () => {
   });
   it('cpu and memory: the used percentage', () => {
     expect(kv(chk('cpu', [val({ value: 12.5 })]))).toBe('12.5 %');
-    expect(kv(chk('memory', [val({ metric: 'memory.used_pct', value: 70 })]))).toBe('70 %');
+    expect(kv(chk('memory', [val({ metric: 'mem.used_pct', value: 70 })]))).toBe('70 %');
   });
   it('icmp, tcp, dns: the response time', () => {
     expect(kv(chk('icmp', [val({ metric: 'icmp.rtt_ms', value: 4 })]))).toBe('4 ms');
-    expect(kv(chk('tcp', [val({ metric: 'tcp.response_ms', value: 9 })]))).toBe('9 ms');
+    expect(kv(chk('tcp', [val({ metric: 'tcp.connect_ms', value: 9 })]))).toBe('9 ms');
     expect(kv(chk('dns', [val({ metric: 'dns.resolve_ms', value: 2 })]))).toBe('2 ms');
   });
   it('default: the first metric with a reading, a label as it is', () => {

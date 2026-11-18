@@ -75,7 +75,7 @@ export function AgentsPage() {
         columns={columns}
         rows={agentRows.rows}
         rowKey={(a) => a.host_id}
-        rowLink={(a) => ({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, hash: 'connection', label: a.host_name })}
+        rowLink={(a) => ({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, search: { tab: 'connection' }, label: a.host_name })}
         rowLabel={(a) => a.host_name}
         rowActions={actions.agentActions}
         loading={!view.ready}

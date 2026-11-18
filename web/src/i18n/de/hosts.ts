@@ -183,6 +183,7 @@ export const deHosts: Messages['hosts'] = {
       noTest: 'noch keiner',
       checks: 'Checks',
       allChecks: (n: number) => `Alle ${n}`,
+      checksFrozen: 'Wird nicht bewertet, solange der Client aus ist.',
       noChecks: 'Für diesen Host gelten keine Checks.',
       count: {
         ok: (n: number) => `${n} ok`,
@@ -395,7 +396,7 @@ export const deHosts: Messages['hosts'] = {
     columns: { check: 'Check', source: 'Quelle', interval: 'Intervall', status: 'Status', value: 'Kennwert' },
     expand: (key: string) => `Messwerte von ${key} anzeigen`,
     collapse: (key: string) => `Messwerte von ${key} ausblenden`,
-    status: { noValue: 'kein Wert', notJudged: 'nicht bewertet' },
+    status: { notJudged: 'nicht bewertet' },
     value: {
       http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
       daysLeft: (n: string) => `noch ${n} Tage`,

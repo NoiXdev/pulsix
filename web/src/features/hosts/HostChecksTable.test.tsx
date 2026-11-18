@@ -93,16 +93,16 @@ const names = async () => (await screen.findAllByRole('heading', { level: 3 })).
 const toggle = (key: string) => screen.getByRole('button', { name: key });
 
 describe('HostChecksCard — compact table', () => {
-  it('lists failing checks first and the rest in the given order', async () => {
+  it('lists critical checks first, then warning ones, and the rest in the given order', async () => {
     mock();
     renderCard();
-    expect(await names()).toEqual(['disk', 'site', 'cpu', 'cert', 'quiet']);
+    expect(await names()).toEqual(['site', 'disk', 'cpu', 'cert', 'quiet']);
   });
 
   it('shows source, interval, worst status and a key value per row', async () => {
     mock();
     renderCard();
-    const [disk, site, cpu, cert, quiet] = await bodies();
+    const [site, disk, cpu, cert, quiet] = await bodies();
     const cells = (b: HTMLElement) => within(b).getAllByRole('cell').slice(0, 5).map((c) => c.textContent);
     expect(cells(disk)).toEqual(['diskdisk', 'Web tier', 'every 5 min', 'warn', '91 % on /var']);
     expect(cells(site)[3]).toBe('crit');
@@ -111,7 +111,7 @@ describe('HostChecksCard — compact table', () => {
     expect(cells(cpu)[3]).toBe('ok');
     expect(cells(cpu)[4]).toBe('12.5 %');
     expect(cells(cert)[4]).toBe('41 days left');
-    expect(cells(quiet)[3]).toBe('no value');
+    expect(cells(quiet)[3]).toBe('unknown');
     expect(cells(quiet)[4]).toBe('—');
   });
 
@@ -120,10 +120,10 @@ describe('HostChecksCard — compact table', () => {
     mock();
     renderCard();
     await names();
-    expect(toggle('disk')).toHaveAttribute('aria-expanded', 'true');
-    expect(toggle('site')).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle('site')).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle('disk')).toHaveAttribute('aria-expanded', 'false');
     expect(toggle('cpu')).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText('/var disk.used_pct')).toBeInTheDocument();
+    expect(screen.getByText('http.status_code')).toBeInTheDocument();
     expect(screen.queryByText('cpu.used_pct')).not.toBeInTheDocument();
 
     await user.click(toggle('cpu'));
@@ -145,7 +145,8 @@ describe('HostChecksCard — compact table', () => {
     expect(toggle('cpu')).toHaveAttribute('aria-expanded', 'true');
     // Whole-host metrics have no item to ignore; the graph is there.
     expect(screen.getByRole('button', { name: 'Graph cpu cpu.used_pct' })).toBeInTheDocument();
-    // The disk row that opened by itself carries its item decision.
+    await user.click(toggle('disk'));
+    // The opened disk row carries its item decision.
     expect(screen.getByRole('button', { name: 'Ignore disk /var' })).toBeInTheDocument();
   });
 

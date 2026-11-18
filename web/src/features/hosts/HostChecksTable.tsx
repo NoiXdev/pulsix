@@ -24,10 +24,9 @@ export interface HostChecksTableProps {
   groups: MonitoringGroup[];
 }
 
-const STATUS_TONE: Record<CheckStatus, Tone> = { crit: 'crit', warn: 'warn', ok: 'ok', none: 'unknown' };
+const STATUS_TONE: Record<CheckStatus, Tone> = { crit: 'crit', warn: 'warn', ok: 'ok', unknown: 'unknown' };
 
 function statusText(s: CheckStatus, t: Messages): string {
-  if (s === 'none') return t.hosts.checksTab.status.noValue;
   return t.hosts.state[s];
 }
 
@@ -75,7 +74,7 @@ export function HostChecksTable({ org, hostId, canWrite, frozen, monitored, chec
             server lists it in place of a definition with the same key. */}
         {ordered.map((check) => {
           const isOpen = monitored && expanded.has(check.key);
-          const status = monitored && !frozen ? checkStatus(check) : 'none';
+          const status = monitored && !frozen ? checkStatus(check) : 'unknown';
           const value = monitored ? keyValue(check, t) : null;
           const detailId = `check-detail-${check.key}`;
           return (
@@ -87,7 +86,7 @@ export function HostChecksTable({ org, hostId, canWrite, frozen, monitored, chec
                       <button
                         type="button"
                         aria-expanded={isOpen}
-                        aria-controls={detailId}
+                        aria-controls={isOpen ? detailId : undefined}
                         title={isOpen ? t.hosts.checksTab.collapse(check.key) : t.hosts.checksTab.expand(check.key)}
                         onClick={() => toggle(check.key)}
                         className="inline-flex items-center gap-1 rounded text-left hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"

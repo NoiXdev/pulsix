@@ -193,6 +193,7 @@ export const enHosts = {
       checks: 'Checks',
       allChecks: (n: number) => `All ${n}`,
       noChecks: 'No checks apply to this host.',
+      checksFrozen: 'Not judged while the client is off.',
       count: {
         ok: (n: number) => `${n} ok`,
         warn: (n: number) => (n === 1 ? '1 warning' : `${n} warnings`),
@@ -401,7 +402,7 @@ export const enHosts = {
     columns: { check: 'Check', source: 'Source', interval: 'Interval', status: 'Status', value: 'Key value' },
     expand: (key: string) => `Show readings of ${key}`,
     collapse: (key: string) => `Hide readings of ${key}`,
-    status: { noValue: 'no value', notJudged: 'not judged' },
+    status: { notJudged: 'not judged' },
     value: {
       http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
       daysLeft: (n: string) => `${n} days left`,
