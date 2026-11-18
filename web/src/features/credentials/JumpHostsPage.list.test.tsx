@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
 import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { JumpHostsPage } from './JumpHostsPage.tsx';
+import { validateJumpHostsSearch } from './jumpHostsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const FP = 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -14,7 +15,7 @@ const bastion = (name: string, extra: Record<string, unknown> = {}) => ({
   id: `id-${name}`, name, address: `${name}.example`, port: 22, username: 'ops', ...extra,
 });
 
-function setup(opts: { role?: string; bastions?: unknown[]; locale?: 'de'; extra?: Record<string, unknown> } = {}) {
+function setup(opts: { role?: string; bastions?: unknown[]; locale?: 'de'; extra?: Record<string, unknown>; initial?: string } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -24,7 +25,7 @@ function setup(opts: { role?: string; bastions?: unknown[]; locale?: 'de'; extra
     'GET /api/v1/orgs/acme/zones': { zones: [] },
     ...opts.extra,
   });
-  return renderListPage({ path: '/jump-hosts', component: JumpHostsPage, initial: '/o/acme/jump-hosts', locale: opts.locale });
+  return renderListPage({ path: '/jump-hosts', component: JumpHostsPage, initial: opts.initial ?? '/o/acme/jump-hosts', locale: opts.locale, extraSearch: (s) => ({ ...validateJumpHostsSearch(s) }) });
 }
 
 describe('JumpHostsPage list', () => {
@@ -117,5 +118,33 @@ describe('JumpHostsPage list', () => {
     expect(await screen.findByText(/^1–25 von 30 Sprunghosts/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Aktionen für jump30' }));
     expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+  });
+
+  describe('filters', () => {
+    const bastions = [
+      bastion('edge', { credential_id: 'c1', ssh_host_key: FP }),
+      bastion('core', { credential_id: 'c2', observed_state: 'changed' }),
+      bastion('lab', { credential_id: 'c1' }),
+    ];
+    const extra = { 'GET /api/v1/orgs/acme/credentials': { credentials: [{ id: 'c1', name: 'ops-key' }, { id: 'c2', name: 'other-key' }] } };
+
+    it('reads the host key and credential filters from the URL', async () => {
+      setup({ bastions, extra, initial: '/o/acme/jump-hosts?key=changed' });
+      await screen.findByText('1–1 of 1 jump host');
+      expect(firstCells()).toEqual(['core']);
+      expect(screen.getByText('1 of 3 jump hosts')).toBeInTheDocument();
+    });
+
+    it('filters by credential and writes the search to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup({ bastions, extra, initial: '/o/acme/jump-hosts?credential=c1' });
+      await screen.findByText('1–2 of 2 jump hosts');
+      expect(firstCells().sort()).toEqual(['edge', 'lab']);
+      await user.type(screen.getByRole('searchbox', { name: 'Search jump hosts' }), 'la');
+      await waitFor(() => expect(router.state.location.search).toEqual({ credential: 'c1', q: 'la' }));
+      expect(firstCells()).toEqual(['lab']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
   });
 });

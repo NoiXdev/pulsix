@@ -46,6 +46,8 @@ import { RulesPage } from './features/checks/RulesPage.tsx';
 import { ItemsPage } from './features/checks/ItemsPage.tsx';
 import { settingsRouteTree } from './routes/settingsRoutes.tsx';
 import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
+import { validateCredentialsSearch } from './features/credentials/credentialsSearch.ts';
+import { validateJumpHostsSearch } from './features/credentials/jumpHostsSearch.ts';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -331,13 +333,13 @@ const maintenanceRoute = createRoute({
 const credentialsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/credentials',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateCredentialsSearch,
   component: CredentialsPage,
 });
 const jumpHostsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/jump-hosts',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateJumpHostsSearch,
   component: JumpHostsPage,
 });
 

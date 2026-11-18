@@ -91,7 +91,7 @@ describe('CredentialsPage', () => {
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Add credential' }));
-    await pickOption(screen, 'Kind', { value: 'ssh_password' });
+    await pickOption(within(await screen.findByRole('dialog')), 'Kind', { value: 'ssh_password' });
     await user.type(screen.getByLabelText('Name'), 'fs-admin');
     await user.type(screen.getByLabelText('Password'), 'hunter2');
     await user.click(screen.getByRole('button', { name: 'Create credential' }));

@@ -35,6 +35,16 @@ export const deCredentials: Messages['credentials'] = {
     add: 'Zugangsdaten hinzufügen',
     label: 'Zugangsdaten',
     count: (n: number) => `${n} Zugangsdaten`,
+    search: 'Zugangsdaten durchsuchen',
+    filterPlaceholder: 'Zugangsdaten filtern …',
+    noMatch: 'Keine Zugangsdaten passen zu den Filtern.',
+    filters: {
+      kind: 'Art',
+      allKinds: 'Alle Arten',
+      expiring: 'Läuft bald ab',
+      expired: 'Abgelaufen',
+      unused: 'Ungenutzt',
+    },
     summary: (n: number) =>
       `Zugangsdaten: ${n} · verschlüsselt mit dem Master-Schlüssel der Instanz · Werte werden nie wieder angezeigt`,
     columns: {
@@ -111,6 +121,15 @@ export const deCredentials: Messages['credentials'] = {
     via: (name: string) => `über ${name}`,
     label: 'Sprunghosts',
     count: (n: number) => (n === 1 ? '1 Sprunghost' : `${n} Sprunghosts`),
+    search: 'Sprunghosts durchsuchen',
+    filterPlaceholder: 'Sprunghosts filtern …',
+    noMatch: 'Keine Sprunghosts passen zu den Filtern.',
+    filters: {
+      keyState: 'Hostschlüssel',
+      anyKeyState: 'Beliebiger Hostschlüssel',
+      credential: 'Zugangsdaten',
+      allCredentials: 'Alle Zugangsdaten',
+    },
     confirmDelete: (name: string) => `Sprunghost ${name} löschen?`,
     deleted: (name: string) => `Sprunghost ${name} gelöscht`,
     deleteFailed: 'Löschen fehlgeschlagen',

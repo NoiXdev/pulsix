@@ -4,6 +4,7 @@ import { Server } from "lucide-react";
 import { Card, GridRow } from "../../ui/table.tsx";
 import { Button } from "../../ui/button.tsx";
 import { DataList } from "../../ui/data-list/index.ts";
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from "../../ui/list-toolbar.tsx";
 import { Select } from "../../ui/Select.tsx";
 import { useToast } from "../../ui/toastContext.ts";
 import { useQueryGuard } from "../../ui/useQueryGuard.tsx";
@@ -14,9 +15,12 @@ import { useOrg } from "../../api/hooks/useOrgs.ts";
 import { useZones } from "../../api/hooks/useHosts.ts";
 import { may } from "../../lib/roles.ts";
 import type { Bastion } from "../../api/types.ts";
+import { FilterSelect } from "../lists/FilterSelect.tsx";
+import { useListFilters } from "../lists/filterSearch.ts";
 import { useListView } from "../lists/useListView.ts";
 import { BastionDialog } from "./BastionDialog.tsx";
 import { bastionColumns } from "./bastionColumns.tsx";
+import { BASTION_KEY_STATES, filterBastions, JUMP_HOST_FILTERS } from "./jumpHostsSearch.ts";
 import { useBastionListActions } from "./useBastionListActions.tsx";
 import { useT } from "../../i18n/useT.ts";
 
@@ -52,13 +56,17 @@ export function JumpHostsPage() {
     bastionName,
     credentialName: (id) => creds.find((c) => c.id === id)?.name ?? "—",
   });
-  const view = useListView("jump-hosts", columns, { mode: "client", rowKey: (b) => b.id });
+  const { filters, active, setFilter, reset } = useListFilters(JUMP_HOST_FILTERS);
+  const view = useListView("jump-hosts", columns, { mode: "client", rowKey: (b) => b.id, resetKey: JSON.stringify(filters) });
   const rowActions = useBastionListActions(org, canWrite, (bastion) => setDialog({ bastion }));
 
   const guard = useQueryGuard(bastions);
   if (guard) return guard;
   if (!bastions.data) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? list : undefined);
+  const shown = filterBastions(list, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.credentials.jumpHosts.filters;
+  const keyStates = t.hosts.connection.keyState;
 
   return (
     <>
@@ -85,7 +93,36 @@ export function JumpHostsPage() {
         rowActions={rowActions}
         rowLabel={(b) => b.name}
         loading={!view.ready}
-        empty={t.credentials.jumpHosts.empty}
+        empty={active ? t.credentials.jumpHosts.noMatch : t.credentials.jumpHosts.empty}
+        toolbar={
+          <ListToolbar
+            count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.credentials.jumpHosts.count} /> : undefined}
+          >
+            <SearchInput
+              label={t.credentials.jumpHosts.search}
+              placeholder={t.credentials.jumpHosts.filterPlaceholder}
+              value={filters.q ?? ""}
+              onChange={(q) => setFilter("q", q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.keyState}
+              allLabel={f.anyKeyState}
+              options={BASTION_KEY_STATES.map((k) => ({ value: k, label: keyStates[k] }))}
+              value={filters.key}
+              onChange={(v) => setFilter("key", v as typeof filters.key)}
+            />
+            {(creds.length > 0 || filters.credential) && (
+              <FilterSelect
+                label={f.credential}
+                allLabel={f.allCredentials}
+                options={creds.map((c) => ({ value: c.id, label: c.name }))}
+                value={filters.credential}
+                onChange={(v) => setFilter("credential", v)}
+              />
+            )}
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.credentials.jumpHosts.count)}
       />
 
