@@ -269,7 +269,7 @@ test('one alert episode: a host goes crit, the alert is acknowledged, and it clo
 
     // Leaves the open list: the same host-scoped page, narrowed further by
     // its own State filter, now shows no rows at all.
-    await pickOption(page, 'State', 'Open');
+    await pickOption(page, 'Filter by state', 'Open');
     await expect(page.getByTestId('alert-open')).toHaveCount(0);
     await expect(page.getByText('No alerts match this view.')).toBeVisible();
   } finally {
