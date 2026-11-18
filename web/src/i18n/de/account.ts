@@ -15,9 +15,10 @@ export const deAccount: Messages['account'] = {
   title: 'Sicherheit',
   secondFactorActive: 'Zweiter Faktor aktiv',
   secondFactorRequired: 'Zweiter Faktor erforderlich',
-  signIn: { title: 'Anmeldung' },
+  signIn: { title: 'Anmeldung', description: 'So meldest du dich an: Passwort plus zweiter Faktor; Passkeys ersetzen beides.' },
   session: {
     title: 'Sitzung',
+    description: 'Kurz weg vom Platz? Sperre die Sitzung über das Schloss oben, ohne dich abzumelden.',
     noPin: 'Keine PIN',
     thisSession: 'Diese Sitzung',
     expires: (time: string) => `Läuft um ${time} ab`,

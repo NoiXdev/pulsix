@@ -1,10 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useMe } from '../../api/hooks/useMe.ts';
-import { useLockSession } from '../../api/hooks/useScreenLock.ts';
-import { useToast } from '../../ui/toastContext.ts';
-import { useT } from '../../i18n/useT.ts';
-import { postSessionMessage } from './lockChannel.ts';
-import { useLockState } from './lockState.ts';
+import { useLockNow } from './useLockNow.ts';
 import { SetPinDialog } from './SetPinDialog.tsx';
 
 /**
@@ -14,17 +10,13 @@ import { SetPinDialog } from './SetPinDialog.tsx';
  * `dialog` somewhere in the layout.
  */
 export function useLockAction(): { lock: () => void; dialog: ReactNode } {
-  const t = useT();
-  const toast = useToast();
   const me = useMe();
-  const { setLocked } = useLockState();
-  const lockSession = useLockSession();
   const [asking, setAsking] = useState(false);
+  const { lockNow, locked: markLocked } = useLockNow({ onMissing: () => setAsking(true), onLocked: () => setAsking(false) });
 
   function locked() {
     setAsking(false);
-    postSessionMessage({ type: 'locked' });
-    setLocked(true);
+    markLocked();
   }
 
   function lock() {
@@ -32,14 +24,7 @@ export function useLockAction(): { lock: () => void; dialog: ReactNode } {
       setAsking(true);
       return;
     }
-    lockSession.mutate(undefined, {
-      onSuccess: locked,
-      onError: (err) => {
-        // 409 lock_pin_missing: the PIN was removed in another tab.
-        if (err instanceof Error && err.message === 'lock_pin_missing') setAsking(true);
-        else toast.show(t.lock.lockFailed, 'destructive');
-      },
-    });
+    lockNow();
   }
 
   return { lock, dialog: <SetPinDialog open={asking} onClose={() => setAsking(false)} onLocked={locked} /> };

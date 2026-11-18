@@ -12,9 +12,10 @@ export interface TotpEnrolment {
 /**
  * TotpDialog walks the authenticator app flow: scan the secret and confirm
  * it with a code, then the recovery codes, which are shown once. It is
- * open while either is on screen (`enrolling` or `recoveryCodes` set);
- * `onClose` is for leaving it, which for the recovery codes counts as
- * having saved them.
+ * open while either is on screen (`enrolling` or `recoveryCodes` set).
+ * The recovery codes cannot be dismissed (no Escape): they are shown
+ * once, so only the explicit "I have saved these" button (`onSaved`)
+ * leaves that step. `onClose` is for leaving the enrolment step.
  */
 export function TotpDialog({
   enrolling,
@@ -36,7 +37,7 @@ export function TotpDialog({
   const t = useT();
   const title = recoveryCodes ? t.account.recovery.dialogTitle : t.account.totp.dialogTitle;
   return (
-    <Dialog open={enrolling !== null || recoveryCodes !== null} onClose={onClose} title={title}>
+    <Dialog open={enrolling !== null || recoveryCodes !== null} onClose={onClose} title={title} dismissible={recoveryCodes === null}>
       {recoveryCodes ? (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">{t.account.recovery.shownOnce}</p>

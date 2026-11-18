@@ -2,6 +2,7 @@
 export const enProfile = {
   title: 'Profile',
   subtitle: 'Who you are on this installation.',
+  cardTitle: 'My account',
   name: 'Name',
   email: 'Email',
   organizations: 'Organizations',

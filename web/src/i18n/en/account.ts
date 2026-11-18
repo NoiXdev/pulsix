@@ -21,9 +21,10 @@ export const enAccount = {
   title: 'Security',
   secondFactorActive: 'Second factor active',
   secondFactorRequired: 'Second factor required',
-  signIn: { title: 'Sign-in' },
+  signIn: { title: 'Sign-in', description: 'How you sign in: password plus a second factor; passkeys replace both.' },
   session: {
     title: 'Session',
+    description: 'Away from your desk? Lock the session with the lock at the top instead of signing out.',
     noPin: 'No PIN',
     thisSession: 'This session',
     expires: (time: string) => `Expires at ${time}`,

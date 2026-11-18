@@ -114,6 +114,7 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
   return (
     <SettingsCard
       title={t.account.signIn.title}
+      description={t.account.signIn.description}
       badge={
         <Pill tone={hasSecondFactor ? 'ok' : 'warn'}>
           {hasSecondFactor ? t.account.secondFactorActive : t.account.secondFactorRequired}
@@ -215,9 +216,9 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
         onConfirm={() => void confirm()}
         onSaved={() => void saved()}
         onClose={() => {
-          // Also fires after the dialog was closed by the code itself.
-          if (recoveryCodes) void saved();
-          else if (enrolling) leaveTotp();
+          // Also fires after the dialog was closed by the code itself. The
+          // recovery codes are left only through "I have saved these".
+          if (!recoveryCodes && enrolling) leaveTotp();
         }}
       />
       {stepUp.dialog}

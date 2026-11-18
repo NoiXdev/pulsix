@@ -3,6 +3,7 @@ import type { Messages } from '../types.ts';
 export const deProfile: Messages['profile'] = {
   title: 'Profil',
   subtitle: 'Wer du auf dieser Installation bist.',
+  cardTitle: 'Mein Konto',
   name: 'Name',
   email: 'E-Mail',
   organizations: 'Organisationen',

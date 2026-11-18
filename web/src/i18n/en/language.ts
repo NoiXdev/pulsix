@@ -11,7 +11,7 @@ export const enLanguage = {
   instanceDefaultUnknown: 'Instance default',
   account: {
     row: 'Interface language',
-    hint: 'The language of this interface for your account, on every browser and device.',
+    description: 'The language of this interface for your account.',
     saveFailed: 'Failed to save the language',
   },
   wizard: {

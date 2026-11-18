@@ -5,6 +5,7 @@ export const deAppearance: Messages['appearance'] = {
   subtitle: 'Gilt für dein Konto, in jedem Browser.',
   density: {
     title: 'Dichte',
+    description: 'Wie eng Listen gesetzt sind.',
     comfortable: 'Komfortabel',
     standard: 'Standard',
     compact: 'Kompakt',
@@ -13,10 +14,10 @@ export const deAppearance: Messages['appearance'] = {
     compactHint: 'Enge Zeilen, kleinere Schrift',
   },
   lists: 'Listen',
+  listsDescription: 'Wie viele Zeilen eine Liste pro Seite zeigt.',
   pageSize: {
     title: 'Seitengröße',
     label: 'Zeilen pro Seite',
-    hint: 'Wie viele Zeilen eine Liste pro Seite zeigt, in jeder Liste.',
   },
   columns: {
     title: 'Gespeicherte Spaltenauswahl',

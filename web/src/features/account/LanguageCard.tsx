@@ -50,8 +50,8 @@ export function LanguageCard() {
   }
 
   return (
-    <SettingsCard title={t.language.label}>
-      <SettingsRow label={t.language.account.row} htmlFor="account-language" help={t.language.account.hint}>
+    <SettingsCard title={t.language.label} description={t.language.account.description}>
+      <SettingsRow label={t.language.account.row} htmlFor="account-language">
         <div className="w-60">
           <Select
             id="account-language"

@@ -22,7 +22,7 @@ export function ProfilePage() {
   const list = orgs.data.orgs ?? [];
   return (
     <SettingsPage title={t.profile.title} description={t.profile.subtitle}>
-      <SettingsCard title={t.account.nav.myAccount} description={t.profile.adminNote}>
+      <SettingsCard title={t.profile.cardTitle} description={t.profile.adminNote}>
         <SettingsRow label={t.profile.name}>
           <span className="font-medium">{me.data.user.display_name}</span>
         </SettingsRow>

@@ -6,7 +6,7 @@ export const deLanguage: Messages['language'] = {
   instanceDefaultUnknown: 'Standard der Instanz',
   account: {
     row: 'Sprache der Oberfläche',
-    hint: 'Die Sprache dieser Oberfläche für das eigene Konto, in jedem Browser und auf jedem Gerät.',
+    description: 'Die Sprache dieser Oberfläche für dein Konto.',
     saveFailed: 'Sprache konnte nicht gespeichert werden',
   },
   wizard: {

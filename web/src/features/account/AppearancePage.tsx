@@ -55,14 +55,14 @@ export function AppearancePage() {
           {t.appearance.loadFailed}
         </p>
       )}
-      <SettingsCard title={t.appearance.density.title}>
+      <SettingsCard title={t.appearance.density.title} description={t.appearance.density.description}>
         <div className="border-t border-border px-5 py-4">
           <DensityPicker value={prefs.density} disabled={!loaded} onChange={(density) => change((p) => ({ ...p, density }))} />
         </div>
       </SettingsCard>
 
-      <SettingsCard title={t.appearance.lists}>
-        <SettingsRow label={t.appearance.pageSize.title} htmlFor="appearance-page-size" help={t.appearance.pageSize.hint}>
+      <SettingsCard title={t.appearance.lists} description={t.appearance.listsDescription}>
+        <SettingsRow label={t.appearance.pageSize.title} htmlFor="appearance-page-size">
           <div className="w-28">
             <Select
               id="appearance-page-size"

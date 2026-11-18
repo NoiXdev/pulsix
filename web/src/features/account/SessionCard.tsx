@@ -4,9 +4,8 @@ import { Pill } from '../../ui/badge.tsx';
 import { SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useMe } from '../../api/hooks/useMe.ts';
-import { useLockSession, useRemoveLockPin, useSetLockPin } from '../../api/hooks/useScreenLock.ts';
-import { postSessionMessage } from '../lock/lockChannel.ts';
-import { useLockState } from '../lock/lockState.ts';
+import { useRemoveLockPin, useSetLockPin } from '../../api/hooks/useScreenLock.ts';
+import { useLockNow } from '../lock/useLockNow.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useStepUp } from './stepUp.tsx';
@@ -17,7 +16,7 @@ import { PinDialog } from './PinDialog.tsx';
  * change, remove) and this session, with a Lock now when a PIN is set. The
  * server asks for a recently proven factor to replace or remove a PIN (not
  * to set the first one); useStepUp re-asks and repeats the action. Lock
- * now locks the way the top bar does (a PIN is set, so no PIN dialog).
+ * now locks the way the top bar does (useLockNow).
  */
 export function SessionCard() {
   const t = useT();
@@ -27,15 +26,18 @@ export function SessionCard() {
   const setPin = useSetLockPin();
   const removePin = useRemoveLockPin();
   const stepUp = useStepUp();
-  const lockSession = useLockSession();
-  const { setLocked } = useLockState();
   const [editing, setEditing] = useState(false);
+  // A 409 lock_pin_missing (the PIN was removed in another tab) offers to set one.
+  const lock = useLockNow({ onMissing: () => setEditing(true) });
   const hasPin = me.data?.lock_pin_set === true;
   const legacy = me.data?.lock_pin_legacy === true;
   const expires = me.data?.session_expires_at;
 
   return (
-    <SettingsCard title={t.account.session.title} badge={hasPin ? undefined : <Pill tone="warn">{t.account.session.noPin}</Pill>}>
+    <SettingsCard
+      title={t.account.session.title}
+      description={t.account.session.description}
+      badge={hasPin ? undefined : <Pill tone="warn">{t.account.session.noPin}</Pill>}>
       <SettingsRow
         label={
           <span className="flex items-center gap-2">
@@ -73,18 +75,11 @@ export function SessionCard() {
         label={t.account.session.thisSession}
         help={expires ? t.account.session.expires(fmt.time(expires, { hour: '2-digit', minute: '2-digit' })) : undefined}
       >
-        {hasPin && <Button
-            disabled={lockSession.isPending}
-            onClick={() =>
-              lockSession.mutate(undefined, {
-                onSuccess: () => {
-                  postSessionMessage({ type: 'locked' });
-                  setLocked(true);
-                },
-                onError: () => toast.show(t.lock.lockFailed, 'destructive'),
-              })
-            }
-          >{t.account.session.lockNow}</Button>}
+        {hasPin && (
+          <Button disabled={lock.pending} onClick={lock.lockNow}>
+            {t.account.session.lockNow}
+          </Button>
+        )}
       </SettingsRow>
 
       <PinDialog

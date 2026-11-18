@@ -4,6 +4,7 @@ export const enAppearance = {
   subtitle: 'Applies to your account, in every browser.',
   density: {
     title: 'Density',
+    description: 'How tightly lists are laid out.',
     comfortable: 'Comfortable',
     standard: 'Standard',
     compact: 'Compact',
@@ -12,10 +13,10 @@ export const enAppearance = {
     compactHint: 'Tight rows, smaller type',
   },
   lists: 'Lists',
+  listsDescription: 'How many rows a list shows per page.',
   pageSize: {
     title: 'Page size',
     label: 'Rows per page',
-    hint: 'How many rows a list shows per page, in every list.',
   },
   columns: {
     title: 'Saved column choices',

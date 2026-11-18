@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import * as lockChannel from '../lock/lockChannel.ts';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
@@ -90,6 +91,7 @@ describe('Security page cards', () => {
     const user = userEvent.setup();
     const lock = vi.fn(() => ({ ok: true }));
     const setLocked = vi.fn();
+    const post = vi.spyOn(lockChannel, 'postSessionMessage').mockImplementation(() => {});
     mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': PASSKEYS, 'POST /api/v1/auth/lock': lock });
     renderPage({}, undefined, setLocked);
 
@@ -97,6 +99,7 @@ describe('Security page cards', () => {
 
     await waitFor(() => expect(lock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(setLocked).toHaveBeenCalledWith(true));
+    expect(post).toHaveBeenCalledWith({ type: 'locked' });
   });
 
   it('opens each bigger flow in a dialog', async () => {
@@ -123,6 +126,51 @@ describe('Security page cards', () => {
     await user.click(screen.getByRole('button', { name: 'Change PIN…' }));
     const pin = await screen.findByRole('dialog', { name: 'Change the lock PIN' });
     expect(within(pin).getByLabelText('PIN')).toBeInTheDocument();
+  });
+
+  it('keeps the recovery codes on screen when Escape is pressed, after Regenerate', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/auth/passkeys': PASSKEYS,
+      'POST /api/v1/auth/recovery-codes': { recovery_codes: ['aaaaa-bbbbb', 'ccccc-ddddd'] },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Regenerate…' }));
+    const codes = await screen.findByRole('dialog', { name: 'Recovery codes' });
+    expect(within(codes).getByText('aaaaa-bbbbb')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Recovery codes' })).toBeInTheDocument();
+    expect(screen.getByText('aaaaa-bbbbb')).toBeInTheDocument();
+  });
+
+  it('does not count Escape on the recovery codes as saved during enrolment', async () => {
+    const user = userEvent.setup();
+    const onEnrolled = vi.fn();
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, lock_pin_set: false },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' },
+      'POST /api/v1/auth/totp/confirm': { recovery_codes: ['aaaa-bbbb'] },
+    });
+    renderPage({ onEnrolled });
+
+    await user.click(await screen.findByRole('button', { name: 'Set up…' }));
+    await user.type(await screen.findByPlaceholderText('482913'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
+
+    // jsdom sends no `cancel` for Escape: send it, and a `close`, ourselves.
+    const dialog = screen.getByRole('dialog', { name: 'Recovery codes' });
+    const cancel = new Event('cancel', { cancelable: true });
+    fireEvent(dialog, cancel);
+    expect(cancel.defaultPrevented).toBe(true);
+    fireEvent(dialog, new Event('close'));
+    expect(screen.getByText('aaaa-bbbb')).toBeInTheDocument();
+    expect(onEnrolled).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'I have saved these' }));
+    await waitFor(() => expect(onEnrolled).toHaveBeenCalledTimes(1));
   });
 
   it('speaks German', async () => {
