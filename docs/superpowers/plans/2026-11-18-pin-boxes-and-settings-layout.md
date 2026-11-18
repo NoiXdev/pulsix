@@ -180,3 +180,27 @@
 - [ ] **Step 1:** Run the full Playwright suite the repo's way (it builds its own stack; never touch other containers); fix fallout.
 - [ ] **Step 2:** Backlog rows, docs commit.
 - [ ] **Step 3:** `make test` (repo root), `golangci-lint run`, `cd web && npx vitest run && npx tsc -b && npx eslint .`. Commit `docs: backlog 3.106-3.108` / `test(e2e): …`.
+
+### Task 12: Server — serve the connect script
+
+**Files:**
+- Create: an embed home for the script (builder's call, e.g. `internal/assistantscript/` with a copy of `scripts/assistant-mcp.sh` and `//go:embed`), plus a test that fails when the copy differs from `scripts/assistant-mcp.sh`
+- Modify: the router where `/install.sh` is registered (`internal/api/agent_install.go` or the router setup) to add `GET /assistant-mcp.sh`
+- Test: API test for the route (200, `text/x-shellscript; charset=utf-8`, body equals the script, no auth needed)
+
+- [ ] **Step 1:** Failing tests (route, equality).
+- [ ] **Step 2:** Implement; `go test -race -timeout 1800s ./internal/api/...`, the new package with 900s, `golangci-lint run`.
+- [ ] **Step 3:** Commit `feat(api): serve the assistant connect script`.
+
+### Task 13: SPA — connect guide under the token
+
+**Files:**
+- Create: `web/src/features/tokens/AssistantConnectGuide.tsx` (+ test): props `{ origin: string; orgSlugs: string[]; personal: boolean; showSecretStep: boolean }` → numbered steps with a code block + copy button per command, per the spec addendum (name `<host label>-<slug>`; personal → `--org <slug>` per slug; organization token → one `add` without `--org`).
+- Modify: `web/src/features/tokens/TokensPage.tsx` (created dialog: guide below the secret when kind is assistant; row menu "Connect an assistant…" for assistant tokens), `web/src/features/account/PersonalTokenDialog.tsx` (created state, assistant kind), the personal tokens row actions, i18n en/de.
+- Test: guide renders the exact commands for a host `pulsix.example.com`, orgs `acme`,`beta`; copy buttons copy the command; the created dialog shows the guide only for assistant tokens; the menu entry opens it without the secret.
+
+- [ ] **Step 1:** Failing tests. **Step 2:** Implement. **Step 3:** vitest (tokens, account), tsc, eslint; extend `web/e2e/personal-tokens.spec.ts` with the guide's presence. Commit `feat(web): click guide to connect an assistant under the token`.
+
+### Task 14: User docs — connect an assistant
+
+- In the docs scratch clone on `docs/pulsix-pin-settings-layout`: a "Connect an assistant" section per the spec addendum, linked from the assistant token passages. Commit `docs(pulsix): connect an assistant with the helper script`.

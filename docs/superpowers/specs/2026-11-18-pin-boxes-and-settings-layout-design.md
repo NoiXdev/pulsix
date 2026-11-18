@@ -130,3 +130,39 @@ Builder's calls:
   `expectNoClippedCards`.
 - User docs: the lock PIN (4 digits, boxes, older PINs), the settings
   navigation and the save model.
+
+## Addendum: connecting an assistant (backlog 3.110)
+
+Owner's request, 2026-11-18 ("bei den API-Tokens … das Helper-Script unter der
+Einrichtung beschreiben für MCP-Server + Klick-Anleitung unter dem erstellten
+Token, wo man die Befehle einfach kopieren kann"); the shape below was played
+back to the owner in chat.
+
+- **The manager serves the connect script** (`scripts/assistant-mcp.sh`) at a
+  public route, `GET /assistant-mcp.sh`, like the agent installer
+  (`/install.sh`): `text/x-shellscript`, no templating, the exact bytes of the
+  repository's script (a test keeps the served copy equal to it).
+- **Click guide under a newly created assistant token** (organization token
+  dialog and personal token dialog), below the shown-once secret: numbered
+  steps, each command in a code block with its own copy button:
+  1. Download: `mkdir -p ~/.local/bin && curl -fsSL <origin>/assistant-mcp.sh -o ~/.local/bin/assistant-mcp.sh && chmod +x ~/.local/bin/assistant-mcp.sh`
+  2. Register: `~/.local/bin/assistant-mcp.sh add <name> <origin>` — for a
+     personal token one command per granted organization with
+     `--org <slug>`; `<name>` is suggested as `<first label of the host>-<org slug>`
+     (lowercase letters, digits, `-`).
+  3. "Paste the token when the script asks for it" (the copy button of the
+     secret above; the token is never part of a command).
+  4. Check: `~/.local/bin/assistant-mcp.sh check <name>`.
+  A short note: needs macOS or Linux and Claude Code; assistant access must
+  be on in the organization (link to Settings → General when the viewer may
+  change it, else the text).
+- **Later:** every assistant token row (both token pages) gets a menu entry
+  "Connect an assistant…" that opens the same guide without the secret
+  (step 3 then says to paste the token saved when it was created, or to
+  create a new one).
+- `<origin>` is the address the browser uses (`window.location.origin`).
+- **User docs:** a section "Connect an assistant" describing the script:
+  download, `add` (with `--org`), `token` (after a rotation), `check`,
+  `list`, `remove`, where the token is kept (macOS keychain, else
+  `~/.config/pulsix/<name>.token` mode 600), and that it registers the server
+  with Claude Code (`pulsix-<name>`).
