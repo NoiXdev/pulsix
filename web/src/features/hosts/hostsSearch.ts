@@ -20,17 +20,18 @@ function on(v: unknown): true | undefined {
   return v === true || v === 'true' ? true : undefined;
 }
 
-/** A zone id as the router hands it: a numeric-looking id arrives parsed. */
-function text(v: unknown): string | undefined {
-  if (typeof v === 'number') return String(v);
-  return typeof v === 'string' && v !== '' ? v : undefined;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A zone id: only a UUID-shaped string; a hand-typed value means no filter. */
+function zoneId(v: unknown): string | undefined {
+  return typeof v === 'string' && UUID.test(v) ? v : undefined;
 }
 
 export function validateHostsSearch(search: Record<string, unknown>): HostsSearch {
   return {
     ...validateListSearch(search),
     q: typeof search.q === 'string' && search.q !== '' ? search.q : undefined,
-    zone: text(search.zone),
+    zone: zoneId(search.zone),
     managed: on(search.managed),
     monitored: on(search.monitored),
     activeRuns: on(search.activeRuns),

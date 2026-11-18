@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Globe, Search, Server } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
@@ -53,15 +53,22 @@ export function HostsListPage() {
     });
   }
   // The search box keeps its own text so typing is not at the mercy of the
-  // router round trip; it follows the URL when that changes (Back, ⌘K).
-  // Adjusted during render rather than in an effect (React's own guidance,
-  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+  // router round trip. It follows the URL only for changes this box did not
+  // write itself (Back, ⌘K): `written` holds the values sent and not yet seen
+  // come back, so a stale echo ("a" after the box already holds "ab") is
+  // skipped instead of resetting the box.
   const [qText, setQText] = useState(routeSearch.q ?? '');
-  const [syncedQ, setSyncedQ] = useState(routeSearch.q);
-  if (routeSearch.q !== syncedQ) {
-    setSyncedQ(routeSearch.q);
-    setQText(routeSearch.q ?? '');
-  }
+  const written = useRef<string[]>([]);
+  const urlQ = routeSearch.q ?? '';
+  useEffect(() => {
+    const at = written.current.indexOf(urlQ);
+    if (at >= 0) {
+      written.current = written.current.slice(at + 1);
+      return;
+    }
+    written.current = [];
+    setQText(urlQ);
+  }, [urlQ]);
   const [addOpen, setAddOpen] = useState(false);
   // The page's own "Add zone" button. The host dialog's Zone picker has its
   // own ZoneDialog, since it is what selects the zone it creates.
@@ -157,6 +164,7 @@ export function HostsListPage() {
                 value={qText}
                 onChange={(e) => {
                   setQText(e.target.value);
+                  written.current.push(e.target.value);
                   setFilter({ q: e.target.value || undefined }, true);
                 }}
                 className="w-40 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"

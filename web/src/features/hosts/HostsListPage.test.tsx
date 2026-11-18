@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -12,12 +12,13 @@ import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { settled } from '../../test/settled.ts';
 import { validateHostsSearch } from './hostsSearch.ts';
 
-const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
+const Z1 = '3f2b8c1e-7a4d-4e6b-9c0a-1d2e3f4a5b6c';
+const ZONES = { zones: [{ id: Z1, slug: 'fra', name: 'Frankfurt' }] };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const WEB_04 = {
   id: 'h1',
   name: 'web-04.fra',
-  zone_id: 'z1',
+  zone_id: Z1,
   address: '203.0.113.4',
   managed: true,
   monitored: false,
@@ -29,7 +30,7 @@ const HOSTS = { hosts: [WEB_04], next_cursor: '', total: 1 };
 const DB_01 = {
   id: 'h2',
   name: 'db-01.fra',
-  zone_id: 'z1',
+  zone_id: Z1,
   address: '203.0.113.9',
   managed: false,
   monitored: true,
@@ -94,7 +95,7 @@ describe('HostsListPage', () => {
     renderPage(newClient());
 
     expect(await screen.findByText('fra')).toBeInTheDocument();
-    expect(screen.queryByText('z1')).not.toBeInTheDocument();
+    expect(screen.queryByText(Z1.slice(0, 8))).not.toBeInTheDocument();
   });
 
   it('reads the initial ?q= from the URL (the shell\'s ⌘K search, Important 6) and applies it as a filter', async () => {
@@ -132,11 +133,11 @@ describe('HostsListPage', () => {
 
     await user.click(await screen.findByRole('button', { name: /Add host/ }));
     await user.type(screen.getByPlaceholderText('web-04.fra'), 'web-09.fra');
-    await pickOption(screen, 'Zone', { value: 'z1' });
+    await pickOption(screen, 'Zone', { value: Z1 });
     await user.click(screen.getByRole('button', { name: 'Create host' }));
 
     expect(await screen.findByText('Host web-09.fra created')).toBeInTheDocument();
-    expect(created).toMatchObject({ name: 'web-09.fra', zone_id: 'z1' });
+    expect(created).toMatchObject({ name: 'web-09.fra', zone_id: Z1 });
   });
 
   it('shows the friendly error page instead of "No hosts yet" when the list request fails (Important 7)', async () => {
@@ -306,11 +307,11 @@ describe('hosts paging and sorting (server)', () => {
   });
 
   it('applies the filters of a loaded URL', async () => {
-    const { requests } = setup({ initial: '/o/acme/hosts?zone=z1&managed=true&monitored=true&activeRuns=true&q=web' });
+    const { requests } = setup({ initial: '/o/acme/hosts?zone=3f2b8c1e-7a4d-4e6b-9c0a-1d2e3f4a5b6c&managed=true&monitored=true&activeRuns=true&q=web' });
 
     await screen.findByRole('link', { name: 'host-01' });
     const last = requests.at(-1);
-    expect(last?.get('zone')).toBe('z1');
+    expect(last?.get('zone')).toBe(Z1);
     expect(last?.get('managed')).toBe('true');
     expect(last?.get('monitored')).toBe('true');
     expect(last?.get('active_runs')).toBe('true');
@@ -323,9 +324,9 @@ describe('hosts paging and sorting (server)', () => {
     const { router } = setup();
 
     await screen.findByRole('link', { name: 'host-01' });
-    await pickOption(screen, 'Filter by zone', { value: 'z1' });
+    await pickOption(screen, 'Filter by zone', { value: Z1 });
 
-    await waitFor(() => expect(router.state.location.search).toMatchObject({ zone: 'z1' }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ zone: Z1 }));
   });
 
   it('brings the previous filter and page back on Back', async () => {
@@ -440,10 +441,10 @@ describe('zone filter', () => {
     expect(asked[0]).toBeFalsy();
 
     await screen.findByLabelText('Filter by zone');
-    await pickOption(screen, 'Filter by zone', { value: 'z1' });
+    await pickOption(screen, 'Filter by zone', { value: Z1 });
 
     await waitFor(() => {
-      expect(asked.at(-1)).toBe('z1');
+      expect(asked.at(-1)).toBe(Z1);
     });
   });
 });
@@ -838,5 +839,49 @@ describe('host rows', () => {
       expect(screen.getByRole('link', { name: 'web-1' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Actions for laptop-1' })).toBeInTheDocument();
     });
+  });
+});
+
+describe('the search box and the q URL param', () => {
+  function mount(initial = '/o/acme/hosts') {
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme/hosts': HOSTS,
+      'GET /api/v1/orgs/acme/zones': ZONES,
+    });
+    return renderPage(newClient(), initial);
+  }
+
+  it('keeps every character when the router round trip lags behind typing', async () => {
+    const user = userEvent.setup();
+    const { router } = mount();
+    const box = await screen.findByPlaceholderText('Filter hosts…');
+    // Delay each navigation so the URL still holds an older value when the
+    // box has already moved on.
+    // Hold every URL write back, then let them through one by one while the
+    // box already holds more than the URL being delivered.
+    const held: Array<() => void> = [];
+    const real = router.history.replace.bind(router.history);
+    router.history.replace = ((href: string, state?: never) => {
+      held.push(() => real(href, state));
+    }) as typeof router.history.replace;
+
+    await user.type(box, 'abc');
+    expect(held.length).toBeGreaterThan(1);
+    act(() => held.shift()?.()); // the URL now says "a"; the box holds "abc"
+    await settled();
+    expect(box).toHaveValue('abc');
+    await user.type(box, 'd');
+    expect(box).toHaveValue('abcd');
+  });
+
+  it('follows an outside navigation to ?q=other', async () => {
+    const { router } = mount('/o/acme/hosts?q=first');
+    const box = await screen.findByPlaceholderText('Filter hosts…');
+    expect(box).toHaveValue('first');
+
+    await router.navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, q: 'other' }) } as never);
+
+    await waitFor(() => expect(box).toHaveValue('other'));
   });
 });

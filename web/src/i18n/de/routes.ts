@@ -1,7 +1,6 @@
 import type { Messages } from '../types.ts';
 
 export const deRoutes: Messages['routes'] = {
-  noOrganization: 'Dieses Konto gehört noch keiner Organisation an.',
   noOrganizationInvite:
     'Dieses Konto gehört noch keiner Organisation an. Ein Admin kann eine Einladung ausstellen.',
   accountSecurity: {

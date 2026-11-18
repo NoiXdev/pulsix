@@ -1,6 +1,5 @@
 /** What the route-connected layouts (src/routes) say around their pages. */
 export const enRoutes = {
-  noOrganization: 'This account does not belong to any organization yet.',
   noOrganizationInvite: 'This account does not belong to any organization yet. Ask an administrator to invite you.',
   accountSecurity: {
     secondFactorActive: 'Second factor active',

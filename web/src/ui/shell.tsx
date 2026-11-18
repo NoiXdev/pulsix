@@ -248,24 +248,28 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border px-6">
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">{crumbs}</div>
-          {org ? <form
-            className="ml-auto flex h-[34px] w-[300px] items-center gap-2.5 rounded-md border border-border bg-card px-3 text-muted-foreground"
-            onSubmit={(e) => {
-              e.preventDefault();
-              runSearch();
-            }}
-          >
-            <Search size={15} />
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t.shell.search.placeholder}
-              aria-label={t.shell.search.label}
-              className="flex-1 truncate bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
-            />
-            <span className="rounded border border-border px-1.5 py-px font-mono text-[11px]">⌘K</span>
-          </form> : <span className="ml-auto" />}
+          {org ? (
+            <form
+              className="ml-auto flex h-[34px] w-[300px] items-center gap-2.5 rounded-md border border-border bg-card px-3 text-muted-foreground"
+              onSubmit={(e) => {
+                e.preventDefault();
+                runSearch();
+              }}
+            >
+              <Search size={15} />
+              <input
+                ref={searchRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t.shell.search.placeholder}
+                aria-label={t.shell.search.label}
+                className="flex-1 truncate bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+              />
+              <span className="rounded border border-border px-1.5 py-px font-mono text-[11px]">⌘K</span>
+            </form>
+          ) : (
+            <span className="ml-auto" />
+          )}
           {/* Backlog 1.12: the global zone control that used to sit here was
               a label and a chevron that opened nothing. Only two endpoints
               take a zone filter, the fleet page already has its own, and the
