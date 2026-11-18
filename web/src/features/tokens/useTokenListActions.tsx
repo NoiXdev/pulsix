@@ -7,6 +7,7 @@ import type { RowAction } from '../../ui/data-list/index.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
+import { AssistantConnectDialog } from './AssistantConnectDialog.tsx';
 import { EditTokenDialog } from './EditTokenDialog.tsx';
 import { isExpired } from './expiry.ts';
 import type { TokenRow } from './tokenColumns.tsx';
@@ -50,7 +51,8 @@ function useUnblock(org: string) {
  * personal token: "Revoke for this organization…", which blocks its owner
  * here; once the owner is blocked here, Unblock…, which lifts it (beside
  * Revoke on an entry that is blocked only through its owner).
- * `dialogs` holds the edit dialog.
+ * An assistant token also gets "Connect an assistant…", the click guide.
+ * `dialogs` holds the edit and connect dialogs.
  */
 export function useTokenListActions(org: string): { rowActions: (row: TokenRow) => RowAction[]; dialogs: ReactNode } {
   const t = useT();
@@ -60,6 +62,7 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
   const revokeGrant = useRevokePersonalTokenGrant(org);
   const unblock = useUnblock(org);
   const [editing, setEditing] = useState<Token | null>(null);
+  const [connecting, setConnecting] = useState<Token | null>(null);
   const del = useConfirmedDelete<Token>({
     message: (tok) => t.tokens.revokeConfirm(tok.name),
     failed: t.tokens.revokeFailed,
@@ -88,7 +91,10 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
       if (row.blocked) return [unblockItem];
       return row.owner_blocked ? [unblockItem, revokeItem] : [revokeItem];
     }
+    const connect: RowAction[] =
+      row.kind === 'assistant' ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(row) }] : [];
     return [
+      ...connect,
       { id: 'edit', label: t.tokens.editItem, onSelect: () => setEditing(row), disabled: isExpired(row.expires_at) },
       { id: 'revoke', label: t.tokens.revokeItem, destructive: true, onSelect: () => void del.run(row), disabled: del.pending.has(row.id) },
     ];
@@ -96,6 +102,11 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
 
   return {
     rowActions,
-    dialogs: editing && <EditTokenDialog key={editing.id} org={org} token={editing} open onClose={() => setEditing(null)} />,
+    dialogs: (
+      <>
+        {editing && <EditTokenDialog key={editing.id} org={org} token={editing} open onClose={() => setEditing(null)} />}
+        {connecting && <AssistantConnectDialog key={connecting.id} name={connecting.name} orgSlugs={[org]} personal={false} onClose={() => setConnecting(null)} />}
+      </>
+    ),
   };
 }

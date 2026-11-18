@@ -9,6 +9,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
 import { useListView } from '../lists/useListView.ts';
+import { AssistantConnectDialog } from '../tokens/AssistantConnectDialog.tsx';
 import { isExpired } from '../tokens/expiry.ts';
 import { PersonalTokenDialog } from './PersonalTokenDialog.tsx';
 import { personalTokenColumns } from './personalTokenColumns.tsx';
@@ -21,7 +22,7 @@ type Editing = { kind: 'create' } | { kind: 'edit'; token: PersonalToken };
  * PersonalTokensPage is Settings → API tokens (/account/tokens, backlog
  * 3.100): the person's own API and assistant tokens, each valid only in the
  * organizations chosen on it, with a cap per organization. The row menu
- * edits (not an expired token) or revokes a token; revoking ends it in
+ * edits (not an expired token), connects an assistant (assistant tokens) or revokes a token; revoking ends it in
  * every organization.
  */
 export function PersonalTokensPage() {
@@ -32,6 +33,7 @@ export function PersonalTokensPage() {
   const tokens = usePersonalTokens();
   const revoke = useRevokePersonalToken();
   const [editing, setEditing] = useState<Editing | null>(null);
+  const [connecting, setConnecting] = useState<PersonalToken | null>(null);
 
   const columns = personalTokenColumns(t, fmt);
   const view = useListView('personal-tokens', columns, { mode: 'client', rowKey: (tok) => tok.id });
@@ -49,7 +51,10 @@ export function PersonalTokensPage() {
   const { rows, total } = view.view(view.ready ? all : undefined);
 
   function rowActions(tok: PersonalToken): RowAction[] {
+    const connect: RowAction[] =
+      tok.kind === 'assistant' ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(tok) }] : [];
     return [
+      ...connect,
       { id: 'edit', label: p.editItem, onSelect: () => setEditing({ kind: 'edit', token: tok }), disabled: isExpired(tok.expires_at) },
       { id: 'revoke', label: p.revokeItem, destructive: true, onSelect: () => void del.run(tok), disabled: del.pending.has(tok.id) },
     ];
@@ -77,6 +82,15 @@ export function PersonalTokensPage() {
         empty={p.empty}
         {...view.listProps(total, p.count)}
       />
+      {connecting && (
+        <AssistantConnectDialog
+          key={connecting.id}
+          name={connecting.name}
+          orgSlugs={(connecting.grants ?? []).filter((g) => g.state === 'active').map((g) => g.org_slug)}
+          personal
+          onClose={() => setConnecting(null)}
+        />
+      )}
       {editing && (
         <PersonalTokenDialog
           key={editing.kind === 'edit' ? editing.token.id : 'create'}

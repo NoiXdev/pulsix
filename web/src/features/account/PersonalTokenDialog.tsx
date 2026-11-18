@@ -16,6 +16,7 @@ import {
 } from '../../api/hooks/usePersonalTokens.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
+import { AssistantConnectGuide } from '../tokens/AssistantConnectGuide.tsx';
 import { AreaGrid } from '../tokens/AreaGrid.tsx';
 import { allowedAreas, sameAreas, type Area } from '../tokens/areas.ts';
 import { endOfLocalDay, localDay } from '../tokens/expiry.ts';
@@ -86,6 +87,8 @@ export function PersonalTokenDialog({
   const draft = draftState ?? initialDraft(rows);
   const [errors, setErrors] = useState<{ name?: string; grants?: string; areas?: string; expiry?: string; form?: string }>({});
   const [secret, setSecret] = useState<string | null>(null);
+  // What the guide under the secret needs: the organizations the new token works in.
+  const [created, setCreated] = useState<{ kind: (typeof KINDS)[number]; slugs: string[] } | null>(null);
 
   const body = grantsBody(rows, draft);
   const highest = highestRole(body.map((g) => g.role));
@@ -93,6 +96,7 @@ export function PersonalTokenDialog({
 
   function close() {
     setSecret(null);
+    setCreated(null);
     create.reset();
     onClose();
   }
@@ -119,6 +123,7 @@ export function PersonalTokenDialog({
     if (expiry !== '') input.expires_at = endOfLocalDay(expiry);
     try {
       const res = await create.mutateAsync(input);
+      setCreated({ kind, slugs: body.map((g) => g.org) });
       setSecret(res.token);
     } catch (err) {
       refuse(err, d.createFailed);
@@ -155,7 +160,7 @@ export function PersonalTokenDialog({
   const title = token ? d.editTitle(token.name) : d.createTitle;
 
   return (
-    <Dialog open onClose={close} title={title}>
+    <Dialog open onClose={close} title={title} size={secret && created?.kind === 'assistant' ? 'wide' : 'default'}>
       {secret ? (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">{d.shownOnce}</p>
@@ -166,6 +171,9 @@ export function PersonalTokenDialog({
               {d.done}
             </Button>
           </div>
+          {created?.kind === 'assistant' && (
+            <AssistantConnectGuide origin={window.location.origin} orgSlugs={created.slugs} personal showSecretStep />
+          )}
         </div>
       ) : (
         <form className="flex flex-col gap-4" onSubmit={submit} noValidate>

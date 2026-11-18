@@ -51,6 +51,22 @@ test('create a personal token with operator in one organization and viewer in th
   await expect(row).toContainText(`${ORG_B.slug}: Viewer`);
 });
 
+test('a new assistant token shows the connect guide under the secret', async ({ page }) => {
+  const dialog = await openCreateDialog(page);
+  await dialog.getByLabel('Name', { exact: true }).fill('e2e personal token guide');
+  await dialog.getByLabel(`Use in ${ORG.name}`).check();
+  await dialog.getByRole('radio', { name: 'Assistant token' }).check();
+  await dialog.getByRole('checkbox', { name: 'Inventory: read' }).check();
+  await dialog.getByRole('button', { name: 'Create token', exact: true }).click();
+
+  await expect(dialog.getByText(/you will not see it again/)).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Connect an assistant' })).toBeVisible();
+  await expect(dialog.getByText(`assistant-mcp.sh add `).first()).toBeVisible();
+  await expect(dialog.getByText(`--org ${ORG.slug}`)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Copy command' }).first()).toBeVisible();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+});
+
 test('the token reads in both organizations and writes only where its cap allows', async () => {
   const api = await asToken();
   try {
@@ -108,7 +124,7 @@ test.afterAll(async ({ browser }) => {
   const context = await browser.newContext({ storageState: ADMIN_STORAGE_STATE });
   try {
     const list = (await (await context.request.get('/api/v1/auth/me/tokens')).json()) as { tokens: { id: string; name: string }[] };
-    for (const tok of list.tokens.filter((x) => x.name === TOKEN_NAME)) {
+    for (const tok of list.tokens.filter((x) => x.name === TOKEN_NAME || x.name === 'e2e personal token guide')) {
       await context.request.delete(`/api/v1/auth/me/tokens/${tok.id}`);
     }
   } finally {

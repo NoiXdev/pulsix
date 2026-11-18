@@ -27,6 +27,21 @@ export const enTokens = {
   nameLabel: 'Name',
   roleLabel: 'Role',
   roleHint: 'Capped at your own role — the server never mints a token more privileged than you.',
+  /** The click guide to connect an assistant, under a new assistant token
+   * and from the row menu. */
+  connect: {
+    item: 'Connect an assistant…',
+    dialogTitle: (name: string) => `Connect an assistant: ${name}`,
+    title: 'Connect an assistant',
+    download: 'Download the connect script.',
+    register: 'Register the server with Claude Code.',
+    registerPersonal: 'Register one server per organization with Claude Code.',
+    pasteHere: 'Paste the token when the script asks for it: use the Copy button above.',
+    pasteSaved: 'Paste the token when the script asks for it: the one you saved when it was created, or create a new token.',
+    check: 'Check the connection.',
+    copyCommand: 'Copy command',
+    note: 'Needs macOS or Linux and Claude Code. Assistant access must be on in the organization (Settings → General).',
+  },
   /** The kind of token: an API token for the REST API, or an assistant
    * token limited to the assistant endpoint and the ticked areas. */
   kind: {

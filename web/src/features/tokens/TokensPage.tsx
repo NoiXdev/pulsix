@@ -20,6 +20,7 @@ import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useListView } from '../lists/useListView.ts';
+import { AssistantConnectGuide } from './AssistantConnectGuide.tsx';
 import { AreaGrid } from './AreaGrid.tsx';
 import { tokenColumns, tokenRowKey, type TokenRow } from './tokenColumns.tsx';
 import { useTokenListActions } from './useTokenListActions.tsx';
@@ -61,6 +62,7 @@ export function TokensPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [justCreated, setJustCreated] = useState<string | null>(null);
+  const [createdKind, setCreatedKind] = useState<TokenFormValues['kind']>('api');
 
   const form = useForm<TokenFormValues>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
   const kind = useWatch({ control: form.control, name: 'kind' });
@@ -130,6 +132,7 @@ export function TokensPage() {
           form.reset();
         }}
         title={t.tokens.create}
+        size={justCreated && createdKind === 'assistant' ? 'wide' : 'default'}
       >
         {justCreated ? (
           <div className="flex flex-col gap-3">
@@ -157,6 +160,9 @@ export function TokensPage() {
                 {t.tokens.done}
               </Button>
             </div>
+            {createdKind === 'assistant' && (
+              <AssistantConnectGuide origin={window.location.origin} orgSlugs={[org]} personal={false} showSecretStep />
+            )}
           </div>
         ) : (
           <form
@@ -168,6 +174,7 @@ export function TokensPage() {
                     ? { name: values.name, role: values.role, kind: 'assistant', areas: allowedAreas(values.areas, values.role) }
                     : { name: values.name, role: values.role, kind: 'api' },
                 );
+                setCreatedKind(values.kind);
                 setJustCreated(res.token);
               } catch (err) {
                 toast.show(err instanceof Error ? err.message : t.tokens.createFailed, 'destructive');
