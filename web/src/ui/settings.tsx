@@ -31,24 +31,28 @@ export function PageHeader({
   );
 }
 
-/** SettingsPage — the header plus one column of section cards. */
+/** SettingsPage — the header plus one column of section cards. `after` is
+ * shown below the column at the page's full width (a table of records). */
 export function SettingsPage({
   title,
   description,
   badge,
   actions,
   children,
+  after,
 }: {
   title: ReactNode;
   description?: ReactNode;
   badge?: ReactNode;
   actions?: ReactNode;
   children?: ReactNode;
+  after?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader title={title} description={description} badge={badge} actions={actions} />
       <div className="flex max-w-[880px] flex-col gap-5">{children}</div>
+      {after ? <div className="flex min-w-0 flex-col gap-3">{after}</div> : null}
     </div>
   );
 }

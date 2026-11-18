@@ -4,8 +4,7 @@ import { Switch } from '../../ui/switch.tsx';
 import { CardSaveBar, SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCardForm } from '../../ui/useCardForm.ts';
-import { useSaveBackupSettings } from '../../api/hooks/useBackups.ts';
-import type { BackupSettings } from '../../api/types.ts';
+import type { BackupSettings, BackupSettingsInput } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { toBody, toDestinationDraft, toScheduleDraft, type ScheduleDraft } from './backupDraft.ts';
 
@@ -16,19 +15,23 @@ const COUNT_RE = /^\d+$/;
  * BackupScheduleCard is the Schedule and retention card of Settings →
  * Backups. Saving sends this draft on top of the last saved destination,
  * never the destination card's unsaved draft; the stored S3 secret is left
- * alone because the request carries no `secret_key`.
+ * alone because the request carries no `secret_key`. The save is shared
+ * with the destination card (`onSave`, `saving`).
  */
 export function BackupScheduleCard({
   settings,
+  onSave,
+  saving,
   onDirtyChange,
 }: {
   settings: BackupSettings;
+  onSave: (body: BackupSettingsInput) => Promise<void>;
+  saving: boolean;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
   const sc = t.backups.schedule;
   const toast = useToast();
-  const save = useSaveBackupSettings();
   const form = useCardForm(toScheduleDraft(settings, true), { guard: false });
   const { draft, dirty } = form;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
@@ -50,8 +53,7 @@ export function BackupScheduleCard({
     e.preventDefault();
     if (!dirty || !validate()) return;
     try {
-      await save.mutateAsync(toBody(toDestinationDraft(settings), draft));
-      save.reset();
+      await onSave(toBody(toDestinationDraft(settings), draft));
       form.markSaved(draft);
       toast.show(t.backups.saved);
     } catch (err) {
@@ -81,7 +83,7 @@ export function BackupScheduleCard({
           <CardSaveBar
             formId="backup-schedule-form"
             dirty={dirty}
-            saving={save.isPending}
+            saving={saving}
             onDiscard={() => {
               form.discard();
               setErrors({});

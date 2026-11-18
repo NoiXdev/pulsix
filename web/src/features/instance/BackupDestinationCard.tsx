@@ -6,8 +6,8 @@ import { Switch } from '../../ui/switch.tsx';
 import { CardSaveBar, SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCardForm } from '../../ui/useCardForm.ts';
-import { useSaveBackupSettings, useTestBackupSettings } from '../../api/hooks/useBackups.ts';
-import type { BackupSettings } from '../../api/types.ts';
+import { useTestBackupSettings } from '../../api/hooks/useBackups.ts';
+import type { BackupSettings, BackupSettingsInput } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { toBody, toDestinationDraft, toScheduleDraft, type DestinationDraft } from './backupDraft.ts';
 
@@ -20,19 +20,23 @@ type TestResult = { ok: boolean; text: string } | null;
  * BackupDestinationCard is the Destination card of Settings → Backups:
  * folder or S3-compatible storage, with Test connection probing the
  * destination as drafted, without saving. Saving sends this draft on top of
- * the last saved schedule.
+ * the last saved schedule, through the save it shares with the schedule
+ * card (`onSave`, `saving`).
  */
 export function BackupDestinationCard({
   settings,
+  onSave,
+  saving,
   onDirtyChange,
 }: {
   settings: BackupSettings;
+  onSave: (body: BackupSettingsInput) => Promise<void>;
+  saving: boolean;
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const t = useT();
   const d = t.backups.destination;
   const toast = useToast();
-  const save = useSaveBackupSettings();
   const test = useTestBackupSettings();
   const form = useCardForm(toDestinationDraft(settings), { guard: false });
   const { draft, dirty } = form;
@@ -47,8 +51,7 @@ export function BackupDestinationCard({
     e.preventDefault();
     if (!dirty) return;
     try {
-      await save.mutateAsync(toBody(draft, lastSavedSchedule()));
-      save.reset();
+      await onSave(toBody(draft, lastSavedSchedule()));
       // Whatever was typed into the secret field has been sent; the stored
       // secret is now the source of truth again.
       form.markSaved({ ...draft, secretKey: '', removeSecret: false }, draft);
@@ -77,7 +80,7 @@ export function BackupDestinationCard({
           <CardSaveBar
             formId="backup-destination-form"
             dirty={dirty}
-            saving={save.isPending}
+            saving={saving}
             onDiscard={form.discard}
             saveLabel={d.save}
           />

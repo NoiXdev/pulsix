@@ -493,6 +493,45 @@ describe('BackupsPage cards', () => {
   });
 });
 
+describe('BackupsPage shared save', () => {
+  it('keeps the other card\'s Save off while one card is saving (one PUT at a time)', async () => {
+    const user = userEvent.setup();
+    let answer!: () => void;
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups/settings': S3_SETTINGS,
+        'PUT /api/v1/admin/backups/settings': async () => {
+          await new Promise<void>((resolve) => (answer = resolve));
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
+    await user.clear(screen.getByLabelText('Bucket'));
+    await user.type(screen.getByLabelText('Bucket'), 'other-bucket');
+    await user.clear(screen.getByLabelText('Time of day'));
+    await user.type(screen.getByLabelText('Time of day'), '05:30');
+    expect(screen.getByRole('button', { name: 'Save schedule' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(answer).toBeDefined());
+    expect(screen.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
+    answer();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save schedule' })).toBeEnabled());
+  });
+});
+
+describe('BackupsPage layout', () => {
+  it('puts the backup list beside the settings column, not inside its 880px', async () => {
+    mockApi(base());
+    renderPage();
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Backups' });
+    expect(heading.closest('.max-w-\\[880px\\]')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Destination' }).closest('.max-w-\\[880px\\]')).not.toBeNull();
+  });
+});
+
 describe('backupsRefetchInterval', () => {
   it('polls every 5 s while an entry is running, and not otherwise', () => {
     expect(backupsRefetchInterval(undefined)).toBe(false);

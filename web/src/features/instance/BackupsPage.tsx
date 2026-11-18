@@ -34,6 +34,23 @@ export function BackupsPage() {
       title={t.backups.title}
       description={t.backups.hint}
       actions={<BackUpNowButton running={items.some((i) => i.state === 'running')} />}
+      // The list is a wide table: full width, below the settings column.
+      after={
+        <>
+          <h2 className="text-sm font-semibold">{t.backups.list.title}</h2>
+          <BackupList
+            items={items}
+            destination={{
+              destination: settings.data.destination,
+              bucket: settings.data.s3.bucket,
+              prefix: settings.data.s3.prefix,
+              endpoint: settings.data.s3.endpoint,
+              region: settings.data.s3.region,
+              pathStyle: settings.data.s3.path_style,
+            }}
+          />
+        </>
+      }
     >
       {backups.data.storage_error && (
         <div
@@ -47,19 +64,6 @@ export function BackupsPage() {
       <BackupStatusCard items={items} nextRunAt={backups.data.next_run_at} destinationLabel={backups.data.destination_label} />
 
       <BackupSettingsForm settings={settings.data} />
-
-      <h2 className="text-sm font-semibold">{t.backups.list.title}</h2>
-      <BackupList
-        items={items}
-        destination={{
-          destination: settings.data.destination,
-          bucket: settings.data.s3.bucket,
-          prefix: settings.data.s3.prefix,
-          endpoint: settings.data.s3.endpoint,
-          region: settings.data.s3.region,
-          pathStyle: settings.data.s3.path_style,
-        }}
-      />
     </SettingsPage>
   );
 }

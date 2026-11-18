@@ -27,6 +27,16 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('heading', { name: 'Account', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('inside').parentElement).toHaveClass('max-w-[880px]', 'gap-5');
   });
+
+  it('puts `after` below the column, outside its max width', () => {
+    render(
+      <SettingsPage title="Backups" after={<p>the list</p>}>
+        <p>inside</p>
+      </SettingsPage>,
+    );
+    expect(screen.getByText('the list').closest('.max-w-\\[880px\\]')).toBeNull();
+    expect(screen.getByText('inside').compareDocumentPosition(screen.getByText('the list'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
 });
 
 describe('SettingsCard', () => {
