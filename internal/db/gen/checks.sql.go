@@ -265,6 +265,103 @@ func (q *Queries) DeleteItemStates(ctx context.Context, arg DeleteItemStatesPara
 	return err
 }
 
+const deleteMetricCurrent = `-- name: DeleteMetricCurrent :execrows
+DELETE FROM check_current c
+USING (
+  SELECT l.host_id, l.check_key, l.item, l.metric FROM check_current l
+  WHERE l.org_id = $1 AND l.host_id = $2
+    AND l.check_key = $3 AND l.item = $4
+    AND l.metric = $5
+  FOR UPDATE SKIP LOCKED
+) locked
+WHERE c.host_id = locked.host_id AND c.check_key = locked.check_key
+  AND c.item = locked.item AND c.metric = locked.metric
+`
+
+type DeleteMetricCurrentParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// DeleteItemCurrent for one metric (backlog 3.88), with the same FOR
+// UPDATE SKIP LOCKED and for the same reason: a row an in-flight ingest
+// holds is a reading that commits after the forget and re-creates the
+// metric; waiting for it would wait on a transaction that waits on the
+// forget's cursor lock.
+func (q *Queries) DeleteMetricCurrent(ctx context.Context, arg DeleteMetricCurrentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMetricCurrent,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteMetricStateChanges = `-- name: DeleteMetricStateChanges :exec
+DELETE FROM check_state_changes
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4
+  AND metric = $5
+`
+
+type DeleteMetricStateChangesParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// One metric's state-change history, so a reappearance starts fresh.
+// check_state_changes_lookup_idx (org, host, key, item, metric, at)
+// serves it.
+func (q *Queries) DeleteMetricStateChanges(ctx context.Context, arg DeleteMetricStateChangesParams) error {
+	_, err := q.db.Exec(ctx, deleteMetricStateChanges,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	return err
+}
+
+const deleteMetricStates = `-- name: DeleteMetricStates :exec
+DELETE FROM check_states
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4
+  AND metric = $5
+`
+
+type DeleteMetricStatesParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// One metric's rule state — written only by the evaluator, under the
+// cursor lock the forget holds.
+func (q *Queries) DeleteMetricStates(ctx context.Context, arg DeleteMetricStatesParams) error {
+	_, err := q.db.Exec(ctx, deleteMetricStates,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	return err
+}
+
 const deleteMonitoringGroup = `-- name: DeleteMonitoringGroup :execrows
 DELETE FROM monitoring_groups WHERE org_id = $1 AND id = $2
 `
@@ -666,6 +763,68 @@ func (q *Queries) ListExpiredItems(ctx context.Context, arg ListExpiredItemsPara
 	return items, nil
 }
 
+const listExpiredMetrics = `-- name: ListExpiredMetrics :many
+SELECT m.org_id, m.host_id, m.check_key, m.item, m.metric
+FROM (
+  SELECT org_id, host_id, check_key, item, metric, at,
+         max(at) OVER (PARTITION BY host_id, check_key, item) AS item_newest
+  FROM check_current
+) m
+WHERE m.at < m.item_newest - make_interval(secs => $1::double precision)
+ORDER BY m.at, m.org_id, m.host_id, m.check_key, m.item, m.metric
+LIMIT $2
+`
+
+type ListExpiredMetricsParams struct {
+	PeriodSeconds float64 `json:"period_seconds"`
+	Lim           int32   `json:"lim"`
+}
+
+type ListExpiredMetricsRow struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// The metric expiry's selection (backlog 3.88, spec 2026-11-18 item 5),
+// across every organization — unscoped on the bare pool like
+// ListExpiredItems, in the same hourly round. A metric is due when its
+// reading is older than its own item's newest reading (max at over the
+// item's metrics) by strictly more than period: the item's newer reading
+// is the proof of life, so a host that stopped reporting, or an item that
+// went quiet as a whole, never has a metric selected here — those are the
+// item expiry's business. The item's newest itself is never due. Oldest
+// first, one pass over check_current with a window per item.
+// checks.metricExpired is the same rule in Go, over MetricNewest, for the
+// re-check inside each metric's own forget transaction.
+func (q *Queries) ListExpiredMetrics(ctx context.Context, arg ListExpiredMetricsParams) ([]ListExpiredMetricsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredMetrics, arg.PeriodSeconds, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredMetricsRow
+	for rows.Next() {
+		var i ListExpiredMetricsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMonitoringGroups = `-- name: ListMonitoringGroups :many
 SELECT id, org_id, name, selector, priority, created_at, updated_at FROM monitoring_groups WHERE org_id = $1 ORDER BY name
 `
@@ -748,6 +907,49 @@ type MarkHostDirtyNowParams struct {
 func (q *Queries) MarkHostDirtyNow(ctx context.Context, arg MarkHostDirtyNowParams) error {
 	_, err := q.db.Exec(ctx, markHostDirtyNow, arg.OrgID, arg.HostID)
 	return err
+}
+
+const metricNewest = `-- name: MetricNewest :one
+SELECT
+  count(*) FILTER (WHERE c.metric = $1) AS metric_rows,
+  COALESCE(max(c.at) FILTER (WHERE c.metric = $1), 'epoch')::timestamptz AS metric_at,
+  COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest
+FROM check_current c
+WHERE c.org_id = $2 AND c.host_id = $3
+  AND c.check_key = $4 AND c.item = $5
+`
+
+type MetricNewestParams struct {
+	Metric   string    `json:"metric"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+type MetricNewestRow struct {
+	MetricRows int64     `json:"metric_rows"`
+	MetricAt   time.Time `json:"metric_at"`
+	ItemNewest time.Time `json:"item_newest"`
+}
+
+// The metric expiry's re-check inside the forget transaction (backlog
+// 3.88), after the cursor lock: whether the metric still has a current
+// row and when it was taken, and its item's newest reading over all of
+// the item's metrics. checks.metricExpired applies ListExpiredMetrics'
+// rule to them. 'epoch' stands in for "no row" so the generated scan never
+// meets a NULL; metric_rows says whether metric_at is real.
+func (q *Queries) MetricNewest(ctx context.Context, arg MetricNewestParams) (MetricNewestRow, error) {
+	row := q.db.QueryRow(ctx, metricNewest,
+		arg.Metric,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	var i MetricNewestRow
+	err := row.Scan(&i.MetricRows, &i.MetricAt, &i.ItemNewest)
+	return i, err
 }
 
 const seriesForHost = `-- name: SeriesForHost :many

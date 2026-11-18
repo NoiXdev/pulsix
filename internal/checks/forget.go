@@ -28,10 +28,13 @@ import (
 // through the service untouched.
 type AlertCloser interface {
 	CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error)
+	// CloseForgottenMetric closes the open alert on one metric of the
+	// item, for the metric forget (backlog 3.88).
+	CloseForgottenMetric(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item, metric string, now time.Time) (int, error)
 }
 
-// WithAlertCloser wires the alert-closing port ForgetItem and
-// ForgetExpired need. A Service built without it refuses to forget rather
+// WithAlertCloser wires the alert-closing port ForgetItem, ForgetMetric
+// and their expiry rounds need. A Service built without it refuses to forget rather
 // than leave an open alert on an item that no longer exists.
 func WithAlertCloser(c AlertCloser) Option { return func(s *Service) { s.alerts = c } }
 

@@ -1090,6 +1090,22 @@ repositories as before. An older worker never asks.
   the agent runs the current configuration. Re-enrollment and certificate renewal
   reset the check, so the badge is absent until the next comparison, normally
   within seconds.
+- **3.88, metrics a check stops reporting:** a metric whose last reading trails
+  its own item's newest reading by more than three of the check's intervals is
+  *vanished*: the evaluation no longer judges it (an alert open on it closes as
+  `stale`, with the usual notifications, on the first evaluation after the
+  upgrade), it no longer counts towards the host's state, and the host-check API
+  marks the value row `vanished: true`. An `http` check without `body_contains`
+  no longer asks for `http.body_match`. During an http outage longer than three
+  intervals the timing metrics a down probe does not report become vanished too
+  (the `http.up` and failure alerts carry the outage). The hourly expiry
+  (`PULSIX_ITEM_EXPIRY`, same period, same off switch) now also forgets a metric
+  whose reading trails its item's newest by more than that period — current
+  value, rule state and history, any open alert closed as `forgotten`; graphs and
+  the item itself stay. The first round after the upgrade, an hour after start,
+  can therefore forget many such metrics at once. The forget route
+  `DELETE /api/v1/orgs/{org}/hosts/{id}/items` takes an optional `metric` query
+  parameter that forgets just that metric (additive; an old SPA never sends it).
 
 ## Roll order
 

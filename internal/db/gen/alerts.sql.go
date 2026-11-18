@@ -134,6 +134,48 @@ func (q *Queries) CloseForgottenAlerts(ctx context.Context, arg CloseForgottenAl
 	return result.RowsAffected(), nil
 }
 
+const closeForgottenMetricAlerts = `-- name: CloseForgottenMetricAlerts :execrows
+WITH forgotten AS (
+  UPDATE alerts a SET closed_at = $1, closed_reason = 'forgotten'
+  WHERE a.org_id = $2 AND a.host_id = $3 AND a.scope = 'tuple'
+    AND a.check_key = $4 AND a.item = $5 AND a.metric = $6
+    AND a.closed_at IS NULL
+  RETURNING id, org_id
+)
+INSERT INTO alert_events (org_id, alert_id, at, kind)
+SELECT org_id, id, $1, 'closed' FROM forgotten
+`
+
+type CloseForgottenMetricAlertsParams struct {
+	Now      time.Time `json:"now"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// CloseForgottenAlerts narrowed to one metric (backlog 3.88): forgetting a
+// single metric of an item — the metric expiry, or the host page's Forget
+// on a vanished row — closes that metric's open alert and leaves the
+// item's other metrics alone. Everything else is CloseForgottenAlerts':
+// the UPDATE and its 'closed' event in one statement, closed_at IS NULL
+// against a racing close, scope = 'tuple', org_id named explicitly.
+func (q *Queries) CloseForgottenMetricAlerts(ctx context.Context, arg CloseForgottenMetricAlertsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeForgottenMetricAlerts,
+		arg.Now,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countAlerts = `-- name: CountAlerts :one
 SELECT count(*) FROM alerts a
 WHERE a.org_id = $1

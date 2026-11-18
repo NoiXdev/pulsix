@@ -27,6 +27,24 @@ type fakeForgetter struct {
 	deadline    time.Time
 	hadDeadline bool
 	called      chan struct{}
+
+	// The metric half of a round (backlog 3.88).
+	metricCalls       int
+	metricPeriod      time.Duration
+	metricLimit       int
+	metricCounts      map[uuid.UUID]int
+	metricErr         error
+	metricDeadline    time.Time
+	metricHadDeadline bool
+}
+
+func (f *fakeForgetter) ForgetExpiredMetrics(ctx context.Context, period time.Duration, limit int) (map[uuid.UUID]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.metricCalls++
+	f.metricPeriod, f.metricLimit = period, limit
+	f.metricDeadline, f.metricHadDeadline = ctx.Deadline()
+	return f.metricCounts, f.metricErr
 }
 
 func (f *fakeForgetter) ForgetExpired(ctx context.Context, period time.Duration, limit int) (map[uuid.UUID]int, error) {
@@ -63,8 +81,8 @@ func newLoop(f checks.ExpiryForgetter, l checks.ExpiryLocker, period time.Durati
 }
 
 func TestExpiryRoundForgetsOnceWithFullLimitAndDeadline(t *testing.T) {
-	org := uuid.New()
-	f := &fakeForgetter{counts: map[uuid.UUID]int{org: 3}}
+	org, metricOrg := uuid.New(), uuid.New()
+	f := &fakeForgetter{counts: map[uuid.UUID]int{org: 3}, metricCounts: map[uuid.UUID]int{metricOrg: 4}}
 	l := &fakeLocker{got: true}
 	var buf bytes.Buffer
 	newLoop(f, l, 168*time.Hour, &buf).Round(context.Background())
@@ -78,12 +96,53 @@ func TestExpiryRoundForgetsOnceWithFullLimitAndDeadline(t *testing.T) {
 	if !f.hadDeadline || time.Until(f.deadline) > checks.ExpiryRoundTimeout {
 		t.Fatalf("round has no deadline within %v", checks.ExpiryRoundTimeout)
 	}
+	// The same round forgets dead metrics too (backlog 3.88), under the
+	// same lock and deadline, with the same period and limit.
+	if f.metricCalls != 1 || f.metricPeriod != 168*time.Hour || f.metricLimit != checks.ExpiryRoundLimit {
+		t.Fatalf("metric calls=%d period=%v limit=%d", f.metricCalls, f.metricPeriod, f.metricLimit)
+	}
+	if !f.metricHadDeadline || !f.metricDeadline.Equal(f.deadline) {
+		t.Fatalf("metric forget deadline = %v (%v), want the round's %v", f.metricDeadline, f.metricHadDeadline, f.deadline)
+	}
 	if l.unlocked != 1 {
 		t.Fatalf("unlocked %d times, want 1", l.unlocked)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, org.String()) || !strings.Contains(out, "3") {
 		t.Fatalf("log lacks the per-org count: %s", out)
+	}
+	if !strings.Contains(out, metricOrg.String()) || !strings.Contains(out, "4") {
+		t.Fatalf("log lacks the per-org metric count: %s", out)
+	}
+}
+
+// TestExpiryRoundForgetsMetricsAfterAnItemFailure: a failing item half
+// does not keep the round from forgetting dead metrics; both outcomes are
+// logged as one failed round.
+func TestExpiryRoundForgetsMetricsAfterAnItemFailure(t *testing.T) {
+	metricOrg := uuid.New()
+	f := &fakeForgetter{err: errors.New("1 of 3 failed"), metricCounts: map[uuid.UUID]int{metricOrg: 2}}
+	var buf bytes.Buffer
+	newLoop(f, &fakeLocker{got: true}, time.Hour, &buf).Round(context.Background())
+	if f.metricCalls != 1 {
+		t.Fatalf("metric calls = %d, want 1 after the item half failed", f.metricCalls)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "1 of 3 failed") || !strings.Contains(out, metricOrg.String()) {
+		t.Fatalf("log: %s", out)
+	}
+}
+
+// TestExpiryRoundLogsAMetricFailure: the metric half's error makes the
+// round a failed one, with the item counts still reported.
+func TestExpiryRoundLogsAMetricFailure(t *testing.T) {
+	org := uuid.New()
+	f := &fakeForgetter{counts: map[uuid.UUID]int{org: 1}, metricErr: errors.New("metric boom")}
+	var buf bytes.Buffer
+	newLoop(f, &fakeLocker{got: true}, time.Hour, &buf).Round(context.Background())
+	out := buf.String()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "metric boom") || !strings.Contains(out, org.String()) {
+		t.Fatalf("log: %s", out)
 	}
 }
 
@@ -92,8 +151,8 @@ func TestExpiryRoundSkipsWithoutTheLock(t *testing.T) {
 	l := &fakeLocker{got: false}
 	var buf bytes.Buffer
 	newLoop(f, l, time.Hour, &buf).Round(context.Background())
-	if f.calls != 0 || l.unlocked != 0 {
-		t.Fatalf("calls=%d unlocked=%d, want none", f.calls, l.unlocked)
+	if f.calls != 0 || f.metricCalls != 0 || l.unlocked != 0 {
+		t.Fatalf("calls=%d metric calls=%d unlocked=%d, want none", f.calls, f.metricCalls, l.unlocked)
 	}
 }
 

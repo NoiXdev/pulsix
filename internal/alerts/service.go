@@ -170,6 +170,18 @@ func (s *Service) CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID u
 	return n, nil
 }
 
+// CloseForgottenMetric is CloseForgotten for one metric of the item
+// (backlog 3.88): the metric expiry and the host page's metric-level
+// Forget close that metric's open alert, on the forget's own tx, and
+// leave the item's other metrics alone.
+func (s *Service) CloseForgottenMetric(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item, metric string, now time.Time) (int, error) {
+	n, err := s.store.CloseForgottenMetric(ctx, tx, orgID, hostID, checkKey, item, metric, now)
+	if err != nil {
+		return 0, fmt.Errorf("close forgotten %s/%q/%s on host %s: %w", checkKey, item, metric, hostID, err)
+	}
+	return n, nil
+}
+
 // suppression computes Mute's verdict for one alert, fetching the windows
 // that cover its host right now — or, when cache is non-nil, reusing a
 // prior fetch for the same host within this same call. Get passes a nil

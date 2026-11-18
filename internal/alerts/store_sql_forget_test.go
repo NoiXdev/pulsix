@@ -306,3 +306,55 @@ func TestCloseForgottenRacingAConcurrentClose(t *testing.T) {
 		t.Fatalf("closed events = %d, want exactly 1", got)
 	}
 }
+
+// TestCloseForgottenMetricClosesOnlyThatMetric (backlog 3.88): forgetting
+// one metric of an item closes its open alert, and only its — the item's
+// other metrics, the same metric of another item, another check's alert
+// with the same metric name, another organization's and a host-scope
+// alert all stay open. The close is the same 'forgotten' one with one
+// 'closed' event.
+func TestCloseForgottenMetricClosesOnlyThatMetric(t *testing.T) {
+	d := testdb.Open(t)
+	org, host := seedHost(t, d)
+	orgB, _ := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+
+	tx := beginTx(t, d)
+	target := openAlertID(t, st, tx, org, tuple(host, "http", "", "http.dns_ms"))
+	sibling := openAlertID(t, st, tx, org, tuple(host, "http", "", "http.total_ms"))
+	otherItem := openAlertID(t, st, tx, org, tuple(host, "http", "api", "http.dns_ms"))
+	otherCheck := openAlertID(t, st, tx, org, tuple(host, "web", "", "http.dns_ms"))
+	hostScope := openAlertID(t, st, tx, org, alerts.Subject{HostID: host, Scope: alerts.ScopeHost})
+
+	if n, err := st.CloseForgottenMetric(ctx, tx, orgB, host, "http", "", "http.dns_ms", now); err != nil || n != 0 {
+		t.Fatalf("close forgotten metric as another organization = %d, %v; want 0, nil", n, err)
+	}
+	n, err := st.CloseForgottenMetric(ctx, tx, org, host, "http", "", "http.dns_ms", now)
+	if err != nil {
+		t.Fatalf("close forgotten metric: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("closed %d alerts, want 1", n)
+	}
+	row := alertRowByID(t, tx, target)
+	if row.closedAt == nil || !row.closedAt.Equal(now) || row.closedReason == nil || *row.closedReason != string(alerts.Forgotten) {
+		t.Fatalf("target alert closed_at/reason = %v/%v, want %v/forgotten", row.closedAt, row.closedReason, now)
+	}
+	if got := closedEvents(t, tx, target); got != 1 {
+		t.Fatalf("target alert has %d closed events, want 1", got)
+	}
+	for name, id := range map[string]uuid.UUID{"sibling metric": sibling, "other item": otherItem, "other check": otherCheck, "host scope": hostScope} {
+		if row := alertRowByID(t, tx, id); row.closedAt != nil {
+			t.Errorf("%s alert was closed (%v), want it left open", name, row.closedReason)
+		}
+	}
+	// A second close finds nothing open: no second event.
+	if n, err := st.CloseForgottenMetric(ctx, tx, org, host, "http", "", "http.dns_ms", now); err != nil || n != 0 {
+		t.Fatalf("second close = %d, %v; want 0, nil", n, err)
+	}
+	if got := closedEvents(t, tx, target); got != 1 {
+		t.Fatalf("target alert has %d closed events after a second close, want 1", got)
+	}
+}

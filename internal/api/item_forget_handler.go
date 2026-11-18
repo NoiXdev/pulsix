@@ -20,20 +20,29 @@ import (
 // ErrInvalidInput. Resolve also records a repeated check_key or item: the
 // request is ambiguous, and huma would quietly keep just one of them, so
 // it is refused rather than forgetting whichever item the decoder picked.
+//
+// metric (optional, backlog 3.88) narrows the forget to one metric of the
+// item — the host page's Forget on a vanished row. Left out, the whole
+// item is forgotten as before. Sent, it must be non-empty and sent once:
+// metric= (empty) is refused rather than read as "no metric", which would
+// forget every metric of the item.
 type forgetItemInput struct {
-	Org      string `path:"org"`
-	ID       string `path:"id"`
-	CheckKey string `query:"check_key" doc:"Required, once: the check the item belongs to"`
-	Item     string `query:"item" doc:"Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item"`
-	itemSet  bool
-	repeated bool
+	Org       string `path:"org"`
+	ID        string `path:"id"`
+	CheckKey  string `query:"check_key" doc:"Required, once: the check the item belongs to"`
+	Item      string `query:"item" doc:"Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item"`
+	Metric    string `query:"metric" doc:"Optional, once, non-empty: forget only this metric of the item, URL-encoded; left out, the whole item is forgotten"`
+	itemSet   bool
+	metricSet bool
+	repeated  bool
 }
 
 func (in *forgetItemInput) Resolve(ctx huma.Context) []error {
 	u := ctx.URL()
 	q := u.Query()
 	in.itemSet = q.Has("item")
-	in.repeated = len(q["item"]) > 1 || len(q["check_key"]) > 1
+	in.metricSet = q.Has("metric")
+	in.repeated = len(q["item"]) > 1 || len(q["check_key"]) > 1 || len(q["metric"]) > 1
 	return nil
 }
 
@@ -51,6 +60,12 @@ func (in *forgetItemInput) Resolve(ctx huma.Context) []error {
 // host_check_handlers.go), so on the host page only stale rows carry the
 // action and the not-asked ones are left to the automatic expiry.
 //
+// With metric set (backlog 3.88) the route forgets that one metric of the
+// item instead (checks.ForgetMetric): its current value, rule state and
+// history, and its open alert; the item's other metrics and its discovery
+// row stay. Same role, same 404 when there is nothing to forget, an audit
+// summary naming the metric.
+//
 // The audit entry is the middleware's, written after the forget's own
 // transaction has committed — the same order every other audited route
 // here has, and no outer transaction holds the host's evaluation lock
@@ -66,10 +81,20 @@ func registerItemForgetRoute(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		if in.repeated {
-			return nil, huma.Error400BadRequest("check_key and item may each be sent only once")
+			return nil, huma.Error400BadRequest("check_key, item and metric may each be sent only once")
 		}
 		if !in.itemSet {
 			return nil, huma.Error400BadRequest("item is required; send item= (empty) for the whole-host item")
+		}
+		if in.metricSet {
+			if in.Metric == "" {
+				return nil, huma.Error400BadRequest("metric may not be empty; leave it out to forget the whole item")
+			}
+			if err := deps.Checks.ForgetMetric(ctx, scope.OrgID, hostID, in.CheckKey, in.Item, in.Metric); err != nil {
+				return nil, mapChecksErr(ctx, err)
+			}
+			setAuditObject(ctx, hostID.String(), fmt.Sprintf("forgot metric %q of item %q of check %q", in.Metric, in.Item, in.CheckKey))
+			return &noContentOutput{}, nil
 		}
 		if err := deps.Checks.ForgetItem(ctx, scope.OrgID, hostID, in.CheckKey, in.Item); err != nil {
 			return nil, mapChecksErr(ctx, err)

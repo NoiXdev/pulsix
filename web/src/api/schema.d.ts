@@ -13121,6 +13121,8 @@ export interface operations {
                 check_key?: string;
                 /** @description Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item */
                 item?: string;
+                /** @description Optional, once, non-empty: forget only this metric of the item, URL-encoded; left out, the whole item is forgotten */
+                metric?: string;
             };
             header?: never;
             path: {

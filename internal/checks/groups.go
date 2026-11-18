@@ -170,9 +170,9 @@ type Store interface {
 	// Accepted, UnknownHost and OverCap are set, and they sum to len(obs).
 	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error)
 	// CurrentForHost returns hostID's latest known value per (check_key,
-	// item, metric). Rows are never deleted (Current's own doc comment),
-	// so an item that stopped being reported is still listed, however
-	// stale its At.
+	// item, metric). Ingest never deletes a row (Current's own doc
+	// comment), so an item that stopped being reported is still listed,
+	// however stale its At, until a forget or the expiry removes it.
 	CurrentForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Current, error)
 	// SeriesForHost returns metric's samples for hostID's (checkKey, item)
 	// in [from, to), downsampled server-side into at most buckets points.
@@ -190,6 +190,16 @@ type Store interface {
 	// whose newest reading is older than cutoff while their host has a
 	// reading newer than that item's newest plus period — oldest first.
 	ExpiredItems(ctx context.Context, cutoff time.Time, period time.Duration, limit int) ([]ItemRef, error)
+	// ForgetMetric (backlog 3.88, forget_metric.go) is ForgetItem for one
+	// metric of the item: the same lock order, the metric's current
+	// value, rule state and state-change history deleted, the item's
+	// discovery row kept. It reports false — with nothing changed — when
+	// Proceed declined or no current row was deleted.
+	ForgetMetric(ctx context.Context, ref MetricRef, steps MetricForgetSteps) (bool, error)
+	// ExpiredMetrics lists up to limit metrics, across every
+	// organization, whose reading is older than their own item's newest
+	// by more than period — oldest first.
+	ExpiredMetrics(ctx context.Context, period time.Duration, limit int) ([]MetricRef, error)
 }
 
 // Service manages monitoring groups. Later tasks (check definitions, the

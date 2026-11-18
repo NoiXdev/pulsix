@@ -155,6 +155,9 @@ type Store interface {
 	// many it closed. tx is the forget's own (backlog 3.12b), so the
 	// closes commit with the item's deletes or not at all.
 	CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error)
+	// CloseForgottenMetric is CloseForgotten narrowed to one metric of
+	// the item (backlog 3.88): the forget of a single metric.
+	CloseForgottenMetric(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item, metric string, now time.Time) (int, error)
 
 	// GetAlert returns one alert by id, org-scoped, with its host's name
 	// (query-joined — see the ListAlerts SQL's own doc comment on why the

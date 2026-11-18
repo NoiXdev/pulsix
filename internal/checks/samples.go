@@ -49,17 +49,19 @@ type Observation struct {
 // tuple on a host — what the host page's monitoring section renders
 // without scanning the hypertable.
 //
-// A Current row is never deleted when the thing it measures disappears —
-// a disk unmounted, a service uninstalled: nothing observes a
+// Ingest never deletes a Current row when the thing it measures
+// disappears — a disk unmounted, a service uninstalled: nothing observes a
 // "disappearance", the agent simply stops sending that tuple. This
 // mirrors how a fact tag survives its fact (internal/hosts/tags.go): the
 // row is left exactly as it was last reported, and its own At is what
-// makes it recognisable as stale. A later task renders any Current older
-// than three times the check's own interval as stale rather than
-// current; this package makes no attempt to guess an interval or delete
-// anything on its own. Do not "fix" RecordObservations to delete a
-// Current row for a key/item/metric a batch no longer mentions — that is
-// the one behaviour this type exists to prevent.
+// makes it recognisable as stale (three of the check's intervals behind
+// the clock) or vanished (as far behind its own item's newest reading,
+// rules.Vanished). Only a forget removes it: the host page's Forget, or
+// the hourly expiry once the item (forget.go) or the metric
+// (forget_metric.go) has been silent for the expiry period. Do not "fix"
+// RecordObservations to delete a Current row for a key/item/metric a
+// batch no longer mentions — one run is not one complete batch, and that
+// is the one behaviour this type exists to prevent.
 type Current struct {
 	CheckKey, Item, Metric string
 	At                     time.Time

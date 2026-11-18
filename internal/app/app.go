@@ -789,7 +789,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	// The item expiry (backlog 3.12b): once per hour, one manager forgets the
 	// items that have been silent for PULSIX_ITEM_EXPIRY while their host
-	// kept reporting, under its own advisory key. A period of 0 disables it.
+	// kept reporting, and the metrics that trail their own item's newest
+	// reading by as much (backlog 3.88), under its own advisory key. A
+	// period of 0 disables it.
 	// Stopped in Close.
 	itemExpiryStop := startLoop(checks.NewExpiryLoop(checksSvc, schedule.NewAdvisoryLocker(lockDB.Pool(), checks.ExpiryAdvisoryKey), cfg.ItemExpiry, checks.DefaultExpiryInterval, slog.Default()).Run)
 

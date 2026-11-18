@@ -218,6 +218,19 @@ func (s *SQLStore) CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID 
 	return int(n), nil
 }
 
+// CloseForgottenMetric implements Store: CloseForgotten for one metric
+// (queries/alerts.sql's CloseForgottenMetricAlerts), on the caller's
+// transaction.
+func (s *SQLStore) CloseForgottenMetric(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item, metric string, now time.Time) (int, error) {
+	n, err := gen.New(tx).CloseForgottenMetricAlerts(ctx, gen.CloseForgottenMetricAlertsParams{
+		Now: now, OrgID: orgID, HostID: hostID, CheckKey: checkKey, Item: item, Metric: metric,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("close forgotten metric alerts: %w", err)
+	}
+	return int(n), nil
+}
+
 // Sweep implements Store. It runs in its own transaction on the bare
 // pool — never the pgx.Tx OpenForHost and Execute take — because it is
 // not scoped to one host or one organization (design doc "The sweep"): it

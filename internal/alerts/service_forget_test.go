@@ -17,11 +17,17 @@ type forgetCall struct {
 	tx             pgx.Tx
 	org, host      uuid.UUID
 	checkKey, item string
+	metric         string // set only by CloseForgottenMetric
 	at             time.Time
 }
 
 func (f *fakeStore) CloseForgotten(_ context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error) {
 	f.forgetCalls = append(f.forgetCalls, forgetCall{tx: tx, org: orgID, host: hostID, checkKey: checkKey, item: item, at: now})
+	return f.forgetN, f.forgetErr
+}
+
+func (f *fakeStore) CloseForgottenMetric(_ context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item, metric string, now time.Time) (int, error) {
+	f.forgetCalls = append(f.forgetCalls, forgetCall{tx: tx, org: orgID, host: hostID, checkKey: checkKey, item: item, metric: metric, at: now})
 	return f.forgetN, f.forgetErr
 }
 
@@ -59,6 +65,33 @@ func TestCloseForgottenWrapsTheStoreError(t *testing.T) {
 
 	_, err := svc.CloseForgotten(context.Background(), nil, uuid.New(), uuid.New(), "disk", "/", time.Now())
 	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap the store's error", err)
+	}
+}
+
+// TestCloseForgottenMetricPassesTheCallersTransaction (backlog 3.88): the
+// metric-level close is CloseForgotten narrowed to one metric — the
+// caller's transaction and instant, the store's count, its error wrapped.
+func TestCloseForgottenMetricPassesTheCallersTransaction(t *testing.T) {
+	store := newFakeStore()
+	store.forgetN = 1
+	svc := alerts.NewService(store, clockAt(time.Now()))
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	at := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	var tx pgx.Tx
+
+	n, err := svc.CloseForgottenMetric(context.Background(), tx, org, host, "http", "", "http.dns_ms", at)
+	if err != nil || n != 1 {
+		t.Fatalf("close forgotten metric = %d, %v; want 1, nil", n, err)
+	}
+	want := forgetCall{tx: tx, org: org, host: host, checkKey: "http", item: "", metric: "http.dns_ms", at: at}
+	if len(store.forgetCalls) != 1 || store.forgetCalls[0] != want {
+		t.Fatalf("store calls = %+v, want exactly %+v", store.forgetCalls, want)
+	}
+
+	boom := errors.New("boom")
+	store.forgetErr = boom
+	if _, err := svc.CloseForgottenMetric(context.Background(), nil, org, host, "http", "", "http.dns_ms", at); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap the store's error", err)
 	}
 }

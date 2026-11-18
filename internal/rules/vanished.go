@@ -13,10 +13,12 @@ import "time"
 // running and reporting on the item, just no longer this metric — a
 // timing metric a down http probe does not report, a metric a parameter
 // switched on and a removed parameter switched off again, or one a
-// changed host simply stopped having. Nothing deletes its check_current
-// row, so without this the row turns stale, the rules turn it unknown and
-// the host stays unknown for ever, with a fresh sibling keeping the item
-// itself from expiring.
+// changed host simply stopped having. Its check_current row stays until
+// the metric expiry forgets it (the item expiry period behind its item,
+// checks.Service.ForgetExpiredMetrics) or someone forgets it on the host
+// page, so without this the row turns stale, the rules turn it unknown and
+// the host stays unknown for that whole period, with a fresh sibling
+// keeping the item itself from expiring.
 //
 // The rule reads only when rows were written, never what they carry: an
 // error row is a reading like a value, so a fresh error is never vanished

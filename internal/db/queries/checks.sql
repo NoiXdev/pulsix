@@ -303,3 +303,74 @@ WHERE i.newest < sqlc.arg(cutoff)::timestamptz
       > i.newest + make_interval(secs => sqlc.arg(period_seconds)::double precision)
 ORDER BY i.newest, i.org_id, i.host_id, i.check_key, i.item
 LIMIT sqlc.arg(lim);
+
+-- name: MetricNewest :one
+-- The metric expiry's re-check inside the forget transaction (backlog
+-- 3.88), after the cursor lock: whether the metric still has a current
+-- row and when it was taken, and its item's newest reading over all of
+-- the item's metrics. checks.metricExpired applies ListExpiredMetrics'
+-- rule to them. 'epoch' stands in for "no row" so the generated scan never
+-- meets a NULL; metric_rows says whether metric_at is real.
+SELECT
+  count(*) FILTER (WHERE c.metric = sqlc.arg(metric)) AS metric_rows,
+  COALESCE(max(c.at) FILTER (WHERE c.metric = sqlc.arg(metric)), 'epoch')::timestamptz AS metric_at,
+  COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest
+FROM check_current c
+WHERE c.org_id = sqlc.arg(org_id) AND c.host_id = sqlc.arg(host_id)
+  AND c.check_key = sqlc.arg(check_key) AND c.item = sqlc.arg(item);
+
+-- name: DeleteMetricCurrent :execrows
+-- DeleteItemCurrent for one metric (backlog 3.88), with the same FOR
+-- UPDATE SKIP LOCKED and for the same reason: a row an in-flight ingest
+-- holds is a reading that commits after the forget and re-creates the
+-- metric; waiting for it would wait on a transaction that waits on the
+-- forget's cursor lock.
+DELETE FROM check_current c
+USING (
+  SELECT l.host_id, l.check_key, l.item, l.metric FROM check_current l
+  WHERE l.org_id = sqlc.arg(org_id) AND l.host_id = sqlc.arg(host_id)
+    AND l.check_key = sqlc.arg(check_key) AND l.item = sqlc.arg(item)
+    AND l.metric = sqlc.arg(metric)
+  FOR UPDATE SKIP LOCKED
+) locked
+WHERE c.host_id = locked.host_id AND c.check_key = locked.check_key
+  AND c.item = locked.item AND c.metric = locked.metric;
+
+-- name: DeleteMetricStates :exec
+-- One metric's rule state — written only by the evaluator, under the
+-- cursor lock the forget holds.
+DELETE FROM check_states
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item)
+  AND metric = sqlc.arg(metric);
+
+-- name: DeleteMetricStateChanges :exec
+-- One metric's state-change history, so a reappearance starts fresh.
+-- check_state_changes_lookup_idx (org, host, key, item, metric, at)
+-- serves it.
+DELETE FROM check_state_changes
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item)
+  AND metric = sqlc.arg(metric);
+
+-- name: ListExpiredMetrics :many
+-- The metric expiry's selection (backlog 3.88, spec 2026-11-18 item 5),
+-- across every organization — unscoped on the bare pool like
+-- ListExpiredItems, in the same hourly round. A metric is due when its
+-- reading is older than its own item's newest reading (max at over the
+-- item's metrics) by strictly more than period: the item's newer reading
+-- is the proof of life, so a host that stopped reporting, or an item that
+-- went quiet as a whole, never has a metric selected here — those are the
+-- item expiry's business. The item's newest itself is never due. Oldest
+-- first, one pass over check_current with a window per item.
+-- checks.metricExpired is the same rule in Go, over MetricNewest, for the
+-- re-check inside each metric's own forget transaction.
+SELECT m.org_id, m.host_id, m.check_key, m.item, m.metric
+FROM (
+  SELECT org_id, host_id, check_key, item, metric, at,
+         max(at) OVER (PARTITION BY host_id, check_key, item) AS item_newest
+  FROM check_current
+) m
+WHERE m.at < m.item_newest - make_interval(secs => sqlc.arg(period_seconds)::double precision)
+ORDER BY m.at, m.org_id, m.host_id, m.check_key, m.item, m.metric
+LIMIT sqlc.arg(lim);

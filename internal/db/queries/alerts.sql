@@ -263,6 +263,23 @@ WITH forgotten AS (
 INSERT INTO alert_events (org_id, alert_id, at, kind)
 SELECT org_id, id, @now, 'closed' FROM forgotten;
 
+-- name: CloseForgottenMetricAlerts :execrows
+-- CloseForgottenAlerts narrowed to one metric (backlog 3.88): forgetting a
+-- single metric of an item — the metric expiry, or the host page's Forget
+-- on a vanished row — closes that metric's open alert and leaves the
+-- item's other metrics alone. Everything else is CloseForgottenAlerts':
+-- the UPDATE and its 'closed' event in one statement, closed_at IS NULL
+-- against a racing close, scope = 'tuple', org_id named explicitly.
+WITH forgotten AS (
+  UPDATE alerts a SET closed_at = @now, closed_reason = 'forgotten'
+  WHERE a.org_id = @org_id AND a.host_id = @host_id AND a.scope = 'tuple'
+    AND a.check_key = @check_key AND a.item = @item AND a.metric = @metric
+    AND a.closed_at IS NULL
+  RETURNING id, org_id
+)
+INSERT INTO alert_events (org_id, alert_id, at, kind)
+SELECT org_id, id, @now, 'closed' FROM forgotten;
+
 -- Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
 -- "Suppression": the read and operator-action statements alerts.Service
 -- issues directly on the bare pool (never the evaluator's tx above) —

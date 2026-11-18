@@ -84,8 +84,9 @@ type closeCall struct {
 }
 
 type fakeCloser struct {
-	calls []closeCall
-	err   error
+	calls       []closeCall
+	metricCalls []metricCloseCall
+	err         error
 }
 
 func (c *fakeCloser) CloseForgotten(_ context.Context, _ pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error) {

@@ -68,9 +68,11 @@ type Config struct {
 	// re-test's 24 h window is a plan constant, not configuration.
 	RetestInterval time.Duration
 	// ItemExpiry is how long a check's item may stay silent, while its host
-	// keeps reporting, before the manager forgets it (PULSIX_ITEM_EXPIRY, a
-	// Go duration of at least MinItemExpiry, 48h; the default 168h; 0
-	// switches the automatic expiry off).
+	// keeps reporting, before the manager forgets it, and how far a metric
+	// may trail its own item's newest reading before it is forgotten,
+	// backlog 3.88 (PULSIX_ITEM_EXPIRY, a Go duration of at least
+	// MinItemExpiry, 48h; the default 168h; 0 switches the automatic expiry
+	// off).
 	ItemExpiry time.Duration
 	// SampleRetentionDays is the instance maximum, in whole days, for
 	// keeping measurements — check_samples and check_state_changes

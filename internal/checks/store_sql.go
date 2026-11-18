@@ -419,7 +419,7 @@ func writeHostObservations(ctx context.Context, q *gen.Queries, orgID, hostID uu
 }
 
 // CurrentForHost returns hostID's latest known value per (check_key,
-// item, metric), rows never deleted (Current's own doc comment).
+// item, metric) — rows ingest never deletes (Current's own doc comment).
 func (s *SQLStore) CurrentForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]Current, error) {
 	rows, err := s.q.ListCheckCurrent(ctx, gen.ListCheckCurrentParams{OrgID: orgID, HostID: hostID})
 	if err != nil {

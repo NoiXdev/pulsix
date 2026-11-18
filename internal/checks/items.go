@@ -4,9 +4,11 @@ import "github.com/noixdev/pulsix/internal/checkplugins"
 
 // AsksForItem reports whether d still asks the host for `item`.
 //
-// Nothing ever deletes a check_current row, deliberately: no event says
+// Ingest never deletes a check_current row, deliberately: no event says
 // "this mount is gone", the agent simply stops sending that (key, item,
-// metric) — see Current's own doc comment and migration 00044. That leaves
+// metric) — see Current's own doc comment and migration 00044. Only a
+// forget or the expiry, long after, removes one (forget.go,
+// forget_metric.go). That leaves
 // the read side to tell two situations apart which look identical in the
 // table. A mount the host no longer has is the agent's silence, and the
 // stale badge is the right answer for it. A mount the operator removed
