@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -86,5 +88,33 @@ func TestAgentBinaryRouteWithoutADistributionOnTheRealRouter(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "make agent-binaries") {
 		t.Errorf("the refusal must name the build step: %s", body)
+	}
+}
+
+// The assistant connect script is public like install.sh and is served
+// byte for byte, untemplated, even on a manager with no public URL.
+func TestAssistantConnectScriptIsPublicOnTheRealRouter(t *testing.T) {
+	s := apitest.New(t)
+	resp, err := http.Get(s.HTTP.URL + "/assistant-mcp.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got, want := resp.Header.Get("Content-Type"), "text/x-shellscript; charset=utf-8"; got != want {
+		t.Errorf("Content-Type = %q, want %q", got, want)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	want, err := os.ReadFile("../../scripts/assistant-mcp.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, want) {
+		t.Error("the served body must equal scripts/assistant-mcp.sh")
 	}
 }

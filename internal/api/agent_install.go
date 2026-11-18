@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/noixdev/pulsix/internal/agentdist"
+	"github.com/noixdev/pulsix/internal/assistantscript"
 	"github.com/noixdev/pulsix/internal/clientip"
 )
 
@@ -86,6 +87,9 @@ func registerInstallRoutes(r chi.Router, deps Deps) error {
 	}
 	r.Get("/install.sh", s.serveScript)
 	r.Get("/install.ps1", s.servePowerShellScript)
+	// The assistant connect script is static (no public URL needed): it is
+	// the same bytes as scripts/assistant-mcp.sh, see internal/assistantscript.
+	r.Get("/assistant-mcp.sh", s.serveAssistantScript)
 	r.Get("/agents/bin/{os}/{arch}", s.serveBinary)
 	return nil
 }
@@ -99,6 +103,13 @@ func (s *installServer) serveScript(w http.ResponseWriter, r *http.Request) {
 // needed, and a browser shows it instead of offering a download.
 func (s *installServer) servePowerShellScript(w http.ResponseWriter, r *http.Request) {
 	s.writeScript(w, r, s.psScript, "text/plain; charset=utf-8")
+}
+
+// serveAssistantScript serves the assistant connect script exactly as
+// embedded: unlike install.sh it names no host, so it works on a manager
+// without a public URL.
+func (s *installServer) serveAssistantScript(w http.ResponseWriter, r *http.Request) {
+	s.writeScript(w, r, assistantscript.Script(), "text/x-shellscript; charset=utf-8")
 }
 
 func (s *installServer) writeScript(w http.ResponseWriter, r *http.Request, script []byte, contentType string) {
