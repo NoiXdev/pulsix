@@ -752,6 +752,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password/reauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 auth password reauth */
+        post: operations["post-api-v1-auth-password-reauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/password/reset": {
         parameters: {
             query?: never;
@@ -6105,6 +6122,7 @@ export interface components {
             mfa_complete: boolean;
             mfa_enrolment_required: boolean;
             must_change_password: boolean;
+            password_step_up: boolean;
             /** Format: int64 */
             recovery_codes_remaining: number;
             /** Format: date-time */
@@ -6889,6 +6907,15 @@ export interface components {
             ceremony_id: string;
             name: string;
             response: unknown;
+        };
+        PasswordReauthInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PasswordReauthInputBody.json
+             */
+            readonly $schema?: string;
+            password: string;
         };
         PendingInviteDTO: {
             /** Format: date-time */
@@ -7864,6 +7891,7 @@ export interface components {
             completed: boolean;
             /** @enum {string} */
             default_locale: "en" | "de";
+            mfa_optional: boolean;
             version: string;
         };
         SimpleDTO: {
@@ -10438,6 +10466,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForgotPasswordOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-auth-password-reauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordReauthInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionUpgradeOutputBody"];
                 };
             };
             /** @description Error */

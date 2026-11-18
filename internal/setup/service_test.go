@@ -554,3 +554,34 @@ func TestDefaultLocaleDegradesAnUnusableStoredValueToEnglish(t *testing.T) {
 		})
 	}
 }
+
+// recordingSessions is a setup.SessionStore that remembers whether it was
+// asked for a complete session.
+type recordingSessions struct{ complete []bool }
+
+func (f *recordingSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
+	f.complete = append(f.complete, mfaComplete)
+	return uuid.Must(uuid.NewV7()), "cookie-for-" + userID.String(), nil
+}
+
+// TestCompleteWithTheSecondFactorOptional (PULSIX_MFA_OPTIONAL): the
+// wizard's administrator has no second factor, so with the mode on the
+// first session is complete and the wizard needs no enrolment step; with
+// it off nothing changes.
+func TestCompleteWithTheSecondFactorOptional(t *testing.T) {
+	for _, optional := range []bool{false, true} {
+		sess := &recordingSessions{}
+		svc := setup.NewService(newFakeSetupStore(), sess, crypto.NewBox([32]byte{}), time.Now, testToken)
+		svc.SetSecondFactorOptional(optional)
+		res, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sess.complete) != 1 || sess.complete[0] != optional {
+			t.Fatalf("optional=%v: sessions opened complete = %v", optional, sess.complete)
+		}
+		if res.WithoutSecondFactor != optional {
+			t.Fatalf("optional=%v: WithoutSecondFactor = %v", optional, res.WithoutSecondFactor)
+		}
+	}
+}

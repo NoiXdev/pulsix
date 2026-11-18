@@ -51,8 +51,10 @@ type loginOutput struct {
 		MFARequired bool `json:"mfa_required"`
 		// MFAEnrolmentRequired: the account has no second factor yet, and
 		// the session can reach only the enrolment routes until it enrols
-		// one. Exactly one of the two is always true — a password never
-		// completes a session on its own.
+		// one. Exactly one of the two is true — a password never completes
+		// a session on its own — unless the second factor is optional on
+		// this instance (PULSIX_MFA_OPTIONAL) and the account has none:
+		// then both are false and the session is complete.
 		MFAEnrolmentRequired bool `json:"mfa_enrolment_required"`
 		// RecoveryCodesRemaining is how many recovery codes the account can
 		// still redeem — the account page shows it beside the regenerate
@@ -87,7 +89,12 @@ type meOutput struct {
 		// returns any credential, it tells the account security page
 		// which factors exist.
 		TOTPConfirmed bool `json:"totp_confirmed"`
-		InstanceAdmin bool `json:"instance_admin"`
+		// PasswordStepUp says this session's step-up is a fresh password
+		// (POST /auth/password/reauth), not a second factor: true only
+		// while the second factor is optional on this instance
+		// (PULSIX_MFA_OPTIONAL) and the account has none.
+		PasswordStepUp bool `json:"password_step_up"`
+		InstanceAdmin  bool `json:"instance_admin"`
 		// Locale is the user's own GUI language, null until they choose
 		// one; EffectiveLocale is the language that applies: that choice,
 		// else the instance default, else English (backlog 1.41).
@@ -132,6 +139,9 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		res, err := deps.Auth.Login(ctx, in.Body.Email, in.Body.Password)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
+		}
+		if res.WithoutSecondFactor {
+			recordSignInWithoutSecondFactor(ctx, deps, res.UserID, res.SessionID)
 		}
 		out := &loginOutput{}
 		out.SetCookie = sessionCookie(res.Cookie, deps.Secure)
@@ -193,6 +203,9 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 			return nil, mapAuthErr(ctx, err)
 		}
 		out.Body.RecoveryCodesRemaining = remaining
+		if out.Body.PasswordStepUp, err = passwordStepUp(ctx, deps, p); err != nil {
+			return nil, mapAuthErr(ctx, err)
+		}
 		if !p.MFAComplete {
 			enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
 			if err != nil {

@@ -22,6 +22,10 @@ type setupStatusOutput struct {
 		// DefaultLocale is public like Completed: the sign-in page and the
 		// wizard need it before any session exists.
 		DefaultLocale string `json:"default_locale" enum:"en,de"`
+		// MFAOptional is public too: the sign-in page shows that the
+		// second factor is optional on this instance (PULSIX_MFA_OPTIONAL)
+		// before anyone signs in.
+		MFAOptional bool `json:"mfa_optional"`
 	}
 }
 
@@ -71,7 +75,7 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &setupStatusOutput{}
 		out.Body.Completed, out.Body.Version = st.Completed, managerVersion(deps)
-		out.Body.DefaultLocale = st.DefaultLocale
+		out.Body.DefaultLocale, out.Body.MFAOptional = st.DefaultLocale, deps.MFAOptional
 		// Completed and Version stay public unconditionally — the SPA calls
 		// this route on load, before it has any session, to decide whether
 		// to redirect into the wizard. AdminMFAEnrolled is different: it
@@ -111,6 +115,9 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		// registerInviteAcceptRoute's own reasoning for the same call.
 		setAuditScopeAs(ctx, &res.OrgID, res.UserID, audit.ActorKindUser)
 		setAuditObject(ctx, res.UserID.String(), "completed first-run setup, created instance admin and organization "+input.OrgSlug)
+		if res.WithoutSecondFactor {
+			recordSignInWithoutSecondFactor(ctx, deps, res.UserID, res.SessionID)
+		}
 		out := &setupCompleteOutput{}
 		out.SetCookie = sessionCookie(res.Cookie, deps.Secure)
 		out.Body.UserID, out.Body.OrgID = res.UserID.String(), res.OrgID.String()

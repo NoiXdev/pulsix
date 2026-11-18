@@ -224,12 +224,21 @@ const stepUpRequired = "step_up_required"
 // conditional on the account already carrying a factor, which is also
 // what makes it meaningful for a passkey-only account — where TOTP
 // enrolment's own code check proves nothing at all.
+//
+// With the second factor optional (PULSIX_MFA_OPTIONAL, mfa_optional.go) a
+// factor-less account holds a complete session on its password alone, and
+// the password is its factor: such a session must have proved it within the
+// window too — at sign-in or through POST /auth/password/reauth — before
+// any of these actions, its first enrolment included.
 func requireFreshFactor(ctx context.Context, deps Deps, p auth.Principal) error {
 	enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)
 	if err != nil {
 		return mapAuthErr(ctx, err)
 	}
-	if !enrolled {
+	// The password stands in for the factor only on a complete session with
+	// the mode on; otherwise a factor-less account is exempt, as above.
+	passwordIsFactor := deps.MFAOptional && p.MFAComplete
+	if !enrolled && !passwordIsFactor {
 		return nil
 	}
 	if !p.FactorFresh(time.Now()) {

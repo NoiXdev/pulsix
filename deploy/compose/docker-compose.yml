@@ -52,6 +52,10 @@ x-manager-base: &manager-base
     # and this image has no Ansible runtime, so only connection tests
     # would work. The `worker` service below is the default instead.
     PULSIX_EMBEDDED_WORKER: "${PULSIX_EMBEDDED_WORKER:-0}"
+    # Off by default, and only for demo and test instances: when on, an
+    # account without a second factor signs in with its password alone.
+    # The manager warns at start and every page says so.
+    PULSIX_MFA_OPTIONAL: "${PULSIX_MFA_OPTIONAL:-0}"
     # The reverse proxies whose X-Forwarded-For the manager believes
     # (CIDRs or addresses, comma separated). The default is the bundled
     # Traefik's fixed address below (PULSIX_PROXY_ADDR), which no other

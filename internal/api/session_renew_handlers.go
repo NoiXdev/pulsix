@@ -63,10 +63,18 @@ func registerSessionRenewRoutes(hapi huma.API, deps Deps) {
 		if err := deps.Auth.VerifyOwnPassword(ctx, p.UserID, in.Body.Password); err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
-		code := &codeInput{}
-		code.Body.Code, code.Body.RecoveryCode = in.Body.Code, in.Body.RecoveryCode
-		if err := verifyFactorCode(ctx, deps, p.UserID, code); err != nil {
-			return nil, err
+		// With the second factor optional, a factor-less account's
+		// password is its factor (mfa_optional.go): nothing more to prove.
+		passwordOnly, err := passwordIsTheFactor(ctx, deps, p.UserID)
+		if err != nil {
+			return nil, mapAuthErr(ctx, err)
+		}
+		if !passwordOnly {
+			code := &codeInput{}
+			code.Body.Code, code.Body.RecoveryCode = in.Body.Code, in.Body.RecoveryCode
+			if err := verifyFactorCode(ctx, deps, p.UserID, code); err != nil {
+				return nil, err
+			}
 		}
 		return renewed(ctx, deps, p)
 	}, withAudit("renewSession", "session"), withAuthRateLimit(deps))

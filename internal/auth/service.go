@@ -118,24 +118,51 @@ type Service struct {
 	sessions SessionStore
 	mfa      MFAChecker
 	now      func() time.Time
+	// mfaOptional is PULSIX_MFA_OPTIONAL: an account without a second
+	// factor signs in with its password alone (WithOptionalSecondFactor).
+	mfaOptional bool
+}
+
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithOptionalSecondFactor makes the second factor optional when on
+// (PULSIX_MFA_OPTIONAL, demo and test instances only): a password login to
+// an account that has no second factor opens a complete session instead of
+// one that must enrol a factor first. An account that has a factor still
+// gets a pending session that must verify it.
+func WithOptionalSecondFactor(on bool) Option {
+	return func(s *Service) { s.mfaOptional = on }
 }
 
 // NewService wires the dependencies. now is the clock a temporary
 // password's expiry is measured against.
-func NewService(store Store, sessions SessionStore, mfa MFAChecker, now func() time.Time) *Service {
-	return &Service{store: store, sessions: sessions, mfa: mfa, now: now}
+func NewService(store Store, sessions SessionStore, mfa MFAChecker, now func() time.Time, opts ...Option) *Service {
+	s := &Service{store: store, sessions: sessions, mfa: mfa, now: now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
-// LoginResult is what the transport needs to answer a login. A password
-// never completes a session on its own — a second factor is mandatory — so
-// exactly one of the two flags is always set: MFARequired when the account
-// has a second factor to verify (POST /auth/totp/verify, or a passkey), and
-// EnrolmentRequired when it has none yet and must enrol one before the
-// session can do anything else.
+// LoginResult is what the transport needs to answer a login. By default a
+// password never completes a session on its own — a second factor is
+// mandatory — so exactly one of the two flags is set: MFARequired when the
+// account has a second factor to verify (POST /auth/totp/verify, or a
+// passkey), and EnrolmentRequired when it has none yet and must enrol one
+// before the session can do anything else.
+//
+// With the second factor optional (WithOptionalSecondFactor) an account
+// without a factor gets a complete session instead: neither flag is set and
+// WithoutSecondFactor is, so the transport can record that sign-in.
 type LoginResult struct {
-	Cookie            string
-	MFARequired       bool
-	EnrolmentRequired bool
+	Cookie              string
+	MFARequired         bool
+	EnrolmentRequired   bool
+	WithoutSecondFactor bool
+	// UserID and SessionID name the account and the session just opened.
+	UserID    uuid.UUID
+	SessionID uuid.UUID
 }
 
 // Login verifies the password and opens a session.
@@ -173,14 +200,20 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("check mfa: %w", err)
 	}
-	// Never MFA-complete: an account with a factor must verify it, and an
-	// account without one must enrol one first (the API's
-	// requireEnrolmentSession admits exactly that and nothing else).
-	_, cookie, err := s.sessions.Create(ctx, u.ID, false)
+	// Never MFA-complete by default: an account with a factor must verify
+	// it, and an account without one must enrol one first (the API's
+	// requireEnrolmentSession admits exactly that and nothing else). With
+	// the second factor optional, an account without one is complete on
+	// its password; one with a factor still verifies it.
+	complete := s.mfaOptional && !hasFactor
+	id, cookie, err := s.sessions.Create(ctx, u.ID, complete)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("create session: %w", err)
 	}
-	return LoginResult{Cookie: cookie, MFARequired: hasFactor, EnrolmentRequired: !hasFactor}, nil
+	return LoginResult{
+		Cookie: cookie, MFARequired: hasFactor, EnrolmentRequired: !hasFactor && !complete,
+		WithoutSecondFactor: complete, UserID: u.ID, SessionID: id,
+	}, nil
 }
 
 // VerifyOwnPassword checks password against userID's own account with

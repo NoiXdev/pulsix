@@ -56,6 +56,13 @@ type Config struct {
 	// requires GRPCListen to be set: the embedded worker is just another
 	// gRPC client, dialing the manager's own endpoint over loopback.
 	EmbeddedWorker bool
+	// MFAOptional makes the second factor optional (PULSIX_MFA_OPTIONAL, a
+	// bool, default false), for demo and test instances only: an account
+	// without a second factor signs in with its password alone and its
+	// step-up is a fresh password; an account with a factor still has to
+	// prove it exactly as before. The manager warns at start while it is
+	// on, and the GUI shows a strip saying so to everyone.
+	MFAOptional bool
 	// RetestInterval is the connection re-test scheduler's pass period
 	// (PULSIX_RETEST_INTERVAL, a Go duration; the default 1h). The daily
 	// re-test's 24 h window is a plan constant, not configuration.
@@ -213,6 +220,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.EmbeddedWorker && cfg.GRPCListen == "" {
 		return cfg, errors.New("PULSIX_EMBEDDED_WORKER requires PULSIX_GRPC_LISTEN to be set")
+	}
+	if raw := getenv("PULSIX_MFA_OPTIONAL"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("PULSIX_MFA_OPTIONAL %q is not a boolean: %v", raw, err)
+		}
+		cfg.MFAOptional = b
 	}
 	cfg.RetestInterval = DefaultRetestInterval
 	if raw := getenv("PULSIX_RETEST_INTERVAL"); raw != "" {

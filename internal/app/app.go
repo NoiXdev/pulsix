@@ -335,10 +335,18 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// live (backlogs 1.26, 7.109).
 	enrolment := auth.NewEnrolment(totp, passkeys, sessions, appDB)
 	tokens := auth.NewTokens(auth.NewSQLTokenStore(appDB), time.Now)
-	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys), time.Now)
+	// PULSIX_MFA_OPTIONAL (demo and test instances): an account without a
+	// second factor signs in with its password alone. The login service,
+	// the first-run wizard and the API (Deps.MFAOptional) all follow it.
+	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys), time.Now,
+		auth.WithOptionalSecondFactor(cfg.MFAOptional))
+	if cfg.MFAOptional {
+		warnMFAOptional(slog.Default())
+	}
 
 	setupToken := setup.Token(cfg.MasterKey)
 	setupSvc := setup.NewService(setup.NewSQLStore(appDB), sessions, box, time.Now, setupToken)
+	setupSvc.SetSecondFactorOptional(cfg.MFAOptional)
 	// While nobody has completed setup, every start logs the token the
 	// wizard asks for, so only whoever can read this log can claim a
 	// fresh instance.
@@ -701,6 +709,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// Backlog 1.20: the auth endpoints' per-address limiter size
 		// (PULSIX_AUTH_RATE_LIMIT; 0 from config disables it).
 		AuthRateLimit: cfg.AuthRateLimit,
+		MFAOptional:   cfg.MFAOptional,
 		Credentials:   credsSvc, SSH: sshSvc, OrgSecrets: orgSecretsSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,

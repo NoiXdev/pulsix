@@ -120,7 +120,13 @@ type Result struct {
 	// requireEnrolmentSession), plus /auth/me and logout, and becomes
 	// MFA-complete the moment a TOTP secret is confirmed or a passkey
 	// registered. The SPA takes it straight to enrolment.
-	Cookie string
+	//
+	// With the second factor optional (SetSecondFactorOptional) the session
+	// is complete from the start instead, and WithoutSecondFactor says so.
+	Cookie              string
+	WithoutSecondFactor bool
+	// SessionID is the session Cookie authenticates.
+	SessionID uuid.UUID
 }
 
 // Status is what GET /setup/status reports.
@@ -200,6 +206,8 @@ type Service struct {
 	// token is the setup token Complete requires (Token of the master
 	// key); empty refuses every attempt.
 	token string
+	// mfaOptional is PULSIX_MFA_OPTIONAL (SetSecondFactorOptional).
+	mfaOptional bool
 }
 
 // NewService wires the store, session opener, the box used to seal secrets
@@ -216,6 +224,12 @@ func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() 
 // SetLogger replaces the logger (slog.Default() unless set) that records
 // an unreadable stored default language (DefaultLocale).
 func (s *Service) SetLogger(log *slog.Logger) { s.log = log }
+
+// SetSecondFactorOptional follows PULSIX_MFA_OPTIONAL (off unless set):
+// when on, Complete opens the administrator's first session complete, the
+// way auth.Service.Login does for any account without a second factor in
+// that mode, and the wizard needs no enrolment step.
+func (s *Service) SetSecondFactorOptional(on bool) { s.mfaOptional = on }
 
 // SetOrgCreatedHook installs hook to run once Complete's transaction has
 // committed the wizard's first organization — the same
@@ -358,12 +372,13 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 		}
 	}
 
-	// mfaComplete = false: see Result.Cookie's own doc comment.
-	_, cookie, err := s.sessions.Create(ctx, res.UserID, false)
+	// mfaComplete = false unless the second factor is optional: see
+	// Result.Cookie's own doc comment.
+	sid, cookie, err := s.sessions.Create(ctx, res.UserID, s.mfaOptional)
 	if err != nil {
 		return Result{}, fmt.Errorf("open admin session: %w", err)
 	}
-	res.Cookie = cookie
+	res.Cookie, res.SessionID, res.WithoutSecondFactor = cookie, sid, s.mfaOptional
 	return res, nil
 }
 

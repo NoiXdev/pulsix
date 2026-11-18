@@ -477,6 +477,20 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`, no
+  migration):** off by default, so nothing changes unless it is set (`1` or
+  `true`; any value `strconv.ParseBool` refuses stops the start). When on, an
+  account without a second factor gets a complete session from its password
+  (login, the first-run wizard and an invitation's new account), recorded as
+  the audit action `signInWithoutSecondFactor`; for that account the password
+  is the step-up (new `POST /api/v1/auth/password/reauth`) and the session
+  renewal needs the password only. Accounts with a factor are unaffected.
+  `GET /api/v1/setup/status` gains `mfa_optional` and `GET /api/v1/auth/me`
+  gains `password_step_up`; the manager logs a warning at start. **Rolling
+  upgrade or mixed settings:** every manager instance must run this version
+  with the same value, or a sign-in lands complete on one and pending on
+  another. Turning it off leaves the sessions it opened usable until they
+  expire or are revoked (`deploy/compose/README.md`).
 - **Four-digit lock PINs:** a new lock PIN is exactly four digits (it was 4 to 8). A
   PIN set under the previous release keeps working and is reported as older
   (`lock_pin_legacy` on `/api/v1/auth/me`) so the interface can ask for a new one.

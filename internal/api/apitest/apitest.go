@@ -331,6 +331,18 @@ func WithAuthRateLimit(n int) Option {
 	return func(s *Server) { s.Deps.AuthRateLimit = n }
 }
 
+// WithMFAOptional turns PULSIX_MFA_OPTIONAL on, wired as app.Build wires
+// it: the login service, the first-run wizard and Deps.MFAOptional all
+// follow it.
+func WithMFAOptional() Option {
+	return func(s *Server) {
+		s.Deps.MFAOptional = true
+		s.Deps.Auth = auth.NewService(auth.NewSQLStore(gen.New(s.DB)), s.Sessions,
+			auth.AnyEnabled(s.Deps.TOTP, s.Deps.Passkeys), time.Now, auth.WithOptionalSecondFactor(true))
+		s.Deps.Setup.SetSecondFactorOptional(true)
+	}
+}
+
 // WithRunRequestClock rebuilds the run request service on the test's
 // clock, so a test can let a request expire.
 func WithRunRequestClock(now func() time.Time) Option {

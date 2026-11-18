@@ -66,6 +66,9 @@ var auditAllowlist = map[string]string{
 	// Backlog 3.94: the passkey counterpart of POST /auth/totp/verify — it
 	// re-proves the factor of the current session and changes nothing else.
 	"POST /api/v1/auth/passkeys/reauth/finish": "routine session step-up with a passkey, the counterpart of POST /auth/totp/verify: re-proves the current session's factor, changes no credential and opens no session",
+	// PULSIX_MFA_OPTIONAL: the step-up of an account whose password is its
+	// factor; the sign-in it refreshes was recorded (signInWithoutSecondFactor).
+	"POST /api/v1/auth/password/reauth": "routine session step-up with the password, for an account without a factor while the second factor is optional; the counterpart of POST /auth/totp/verify: changes no credential and opens no session",
 
 	// Ceremony *begin* steps commit no credential: BeginTOTP/BeginRegistration
 	// only hand the browser a challenge and stash server-side ceremony

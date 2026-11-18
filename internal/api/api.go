@@ -228,6 +228,12 @@ type Deps struct {
 	// (for tests); production leaves the default or higher. See
 	// withAuthRateLimit (auth_rate_limit.go).
 	AuthRateLimit int
+	// MFAOptional is PULSIX_MFA_OPTIONAL (demo and test instances only): an
+	// account without a second factor signs in with its password alone,
+	// and a fresh password is its step-up (mfa_optional.go). An account
+	// with a factor is unaffected. app.Build builds Auth and Setup with the
+	// same switch.
+	MFAOptional bool
 	// WorkerEndpoint is what remote workers dial; empty Addr disables enrollment.
 	WorkerEndpoint WorkerEndpoint
 	// PublicURL is this manager's own externally reachable base URL
@@ -613,6 +619,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerMFARoutes(hapi, deps)
 	registerPasskeyRoutes(hapi, deps)
 	registerSessionRenewRoutes(hapi, deps)
+	registerPasswordStepUpRoute(hapi, deps)
 	registerScreenLockRoutes(hapi, deps)  // /auth/lock… — the session lock and its PIN, cookie sessions only
 	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
 	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all

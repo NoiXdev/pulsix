@@ -256,6 +256,29 @@ The manager logs a warning at startup whenever it is on. Further limits:
   lingers as a defunct process. Add `--init` if you start the manager
   image with a plain `docker run` and turn the embedded worker on.
 
+## Optional second factor (demo and test instances only)
+
+`PULSIX_MFA_OPTIONAL=1` (or `true`; off by default) makes the second factor
+optional. **Never turn it on for a production instance.** While it is on:
+
+- An account **without** a second factor signs in with its password alone:
+  no enrolment step. The first-run wizard's administrator and an invited
+  new account start the same way. Each such sign-in is recorded on the
+  account's own activity ("signed in without a second factor").
+- An account **with** a second factor (an authenticator app or a passkey)
+  still has to prove it at sign-in, for its step-up and for a session
+  renewal, exactly as before. Adding a factor stays possible on the
+  Security page; removing the last one is still refused.
+- For an account without a factor, the password takes the factor's place:
+  the account-security actions ask for it again after five minutes, and a
+  session renewal asks for the password only.
+- The manager logs a warning at every start, and every page, the sign-in
+  page included, shows a notice that the second factor is optional.
+
+Turning it off again does not end the sessions already open: a session
+signed in without a factor stays usable until it expires (12 hours) or is
+revoked. Revoke them (Users page) if that matters.
+
 ## TLS with the bundled Traefik (optional)
 
 The `traefik` service is not started by a plain `docker compose up` — it

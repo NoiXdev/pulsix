@@ -716,3 +716,49 @@ func TestRetentionMaxDaysDefaultsAZeroConfig(t *testing.T) {
 		t.Fatalf("RetentionMaxDays = %d, want 30", got)
 	}
 }
+
+// TestMFAOptional: PULSIX_MFA_OPTIONAL makes the second factor optional for
+// demo and test instances. It is off by default, parsed like every other
+// boolean PULSIX_ variable, and an unreadable value fails start-up.
+func TestMFAOptional(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{raw: "", want: false},
+		{raw: "1", want: true},
+		{raw: "true", want: true},
+		{raw: "TRUE", want: true},
+		{raw: "0", want: false},
+		{raw: "false", want: false},
+		{raw: "yes", wantErr: true},
+		{raw: "on", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			m := map[string]string{
+				"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+				"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+				"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+				"PULSIX_MFA_OPTIONAL": tc.raw,
+			}
+			cfg, err := config.Load(env(m))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("PULSIX_MFA_OPTIONAL=%q must fail", tc.raw)
+				}
+				if !strings.Contains(err.Error(), "PULSIX_MFA_OPTIONAL") {
+					t.Errorf("error %q does not name the variable", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.MFAOptional != tc.want {
+				t.Errorf("MFAOptional = %v, want %v", cfg.MFAOptional, tc.want)
+			}
+		})
+	}
+}
