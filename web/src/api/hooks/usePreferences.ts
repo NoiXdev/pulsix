@@ -21,15 +21,26 @@ function strip(doc: Preferences & { $schema?: string }): Preferences {
   return { density: doc.density, page_size: doc.page_size, lists: doc.lists ?? {} };
 }
 
+/** How long the cached document counts as fresh for a mount; a window focus
+ * always refetches, so another tab's save shows up when this tab is used. */
+const STALE_MS = 30_000;
+
 /**
- * The signed-in user's preferences. Read once per session (they change only
- * through useSavePreferences, which keeps the cache current); until the GET
+ * The signed-in user's preferences. Refetched when the window gets focus and
+ * on a mount once stale, so a tab picks up another tab's saves (backlog
+ * 3.104); this tab's own saves keep the cache current. Until the GET
  * has answered — or when it failed — `prefs` holds the defaults and
  * `loaded` is false. `ready` turns true once the GET has answered either
  * way: from then on `prefs` is all there will be.
  */
 export function usePreferences(): { prefs: Preferences; loaded: boolean; ready: boolean } {
-  const q = useQuery({ queryKey: preferencesQueryKey, queryFn: fetchPreferences, staleTime: Infinity });
+  const q = useQuery({
+    queryKey: preferencesQueryKey,
+    queryFn: fetchPreferences,
+    staleTime: STALE_MS,
+    refetchOnWindowFocus: 'always',
+    refetchOnMount: true,
+  });
   return { prefs: q.data ?? DEFAULT_PREFERENCES, loaded: q.isSuccess, ready: q.status !== 'pending' };
 }
 
@@ -51,7 +62,7 @@ async function ready(qc: QueryClient): Promise<void> {
   if (qc.getQueryState(preferencesQueryKey)?.status === 'success') {
     await qc.cancelQueries({ queryKey: preferencesQueryKey });
   } else {
-    await qc.fetchQuery({ queryKey: preferencesQueryKey, queryFn: fetchPreferences, staleTime: Infinity });
+    await qc.fetchQuery({ queryKey: preferencesQueryKey, queryFn: fetchPreferences, staleTime: STALE_MS });
   }
 }
 

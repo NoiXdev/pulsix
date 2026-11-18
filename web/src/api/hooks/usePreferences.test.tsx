@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import type { Preferences } from '../types.ts';
 import { DEFAULT_PREFERENCES, preferencesQueryKey, usePreferences, useSavePreferences } from './usePreferences.ts';
@@ -264,5 +264,35 @@ describe('useSavePreferences', () => {
     });
     expect(outcome).toBeInstanceOf(Error);
     expect(puts).toBe(0);
+  });
+});
+
+describe('preferences across tabs (backlog 3.104)', () => {
+  it("refetches on window focus, so a save after another tab's change keeps both", async () => {
+    // What the server holds; the "other tab" changes it behind our back.
+    let server: Preferences = SAVED;
+    const bodies: Preferences[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': () => server,
+      'PUT /api/v1/auth/me/preferences': (req: MockRequest) => {
+        bodies.push(req.body as Preferences);
+        return req.body;
+      },
+    });
+    const { result } = setup();
+    await waitFor(() => expect(result.current.read.loaded).toBe(true));
+
+    server = { ...SAVED, density: 'comfortable' };
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(result.current.read.prefs.density).toBe('comfortable'));
+
+    await act(async () => {
+      await result.current.save((p) => ({ ...p, page_size: 100 }));
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({ ...SAVED, density: 'comfortable', page_size: 100 });
   });
 });
