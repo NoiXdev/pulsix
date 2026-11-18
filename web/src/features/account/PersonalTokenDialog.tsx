@@ -17,6 +17,7 @@ import {
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { AssistantConnectGuide } from '../tokens/AssistantConnectGuide.tsx';
+import { useSettingsOrgs } from '../tokens/useSettingsOrgs.ts';
 import { AreaGrid } from '../tokens/AreaGrid.tsx';
 import { allowedAreas, sameAreas, type Area } from '../tokens/areas.ts';
 import { endOfLocalDay, localDay } from '../tokens/expiry.ts';
@@ -90,6 +91,7 @@ export function PersonalTokenDialog({
   // What the guide under the secret needs: the organizations the new token works in.
   const [created, setCreated] = useState<{ kind: (typeof KINDS)[number]; slugs: string[] } | null>(null);
 
+  const settingsOrgs = useSettingsOrgs(created?.slugs ?? []);
   const body = grantsBody(rows, draft);
   const highest = highestRole(body.map((g) => g.role));
   const pending = create.isPending || update.isPending;
@@ -165,14 +167,25 @@ export function PersonalTokenDialog({
         <div className="flex flex-col gap-3">
           <p className="text-xs text-muted-foreground">{d.shownOnce}</p>
           <code className="break-all rounded-md border border-border bg-background p-3 font-mono text-xs">{secret}</code>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => void copy(secret)}>{d.copy}</Button>
-            <Button variant="primary" onClick={close}>
-              {d.done}
-            </Button>
-          </div>
-          {created?.kind === 'assistant' && (
-            <AssistantConnectGuide origin={window.location.origin} orgSlugs={created.slugs} personal showSecretStep />
+          {created?.kind === 'assistant' ? (
+            <>
+              <div className="flex justify-end">
+                <Button onClick={() => void copy(secret)}>{d.copy}</Button>
+              </div>
+              <AssistantConnectGuide origin={window.location.origin} orgSlugs={created.slugs} personal showSecretStep settingsOrgs={settingsOrgs} />
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={close}>
+                  {d.done}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => void copy(secret)}>{d.copy}</Button>
+              <Button variant="primary" onClick={close}>
+                {d.done}
+              </Button>
+            </div>
           )}
         </div>
       ) : (

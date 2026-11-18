@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { copyText } from '../../lib/clipboard.ts';
@@ -60,9 +61,9 @@ describe('AssistantConnectGuide', () => {
   it('copies a command with its own button', async () => {
     const user = userEvent.setup();
     show();
-    await user.click(screen.getAllByRole('button', { name: 'Copy command' })[0]!);
+    await user.click(screen.getByRole('button', { name: 'Copy command: download script' }));
     expect(copyText).toHaveBeenCalledWith(DOWNLOAD);
-    await user.click(screen.getAllByRole('button', { name: 'Copy command' })[1]!);
+    await user.click(screen.getByRole('button', { name: 'Copy command: register pulsix-acme' }));
     expect(copyText).toHaveBeenLastCalledWith('~/.local/bin/assistant-mcp.sh add pulsix-acme https://pulsix.example.com');
   });
 
@@ -73,5 +74,44 @@ describe('AssistantConnectGuide', () => {
     show({ showSecretStep: false });
     expect(screen.queryByText(/Copy button above/)).not.toBeInTheDocument();
     expect(screen.getByText(/saved when it was created/)).toBeInTheDocument();
+  });
+
+  it('shows a note instead of the commands when the address is HTTP', () => {
+    show({ origin: 'http://pulsix.example.com' });
+    expect(screen.getByText('The script needs Pulsix over HTTPS; this address uses HTTP.')).toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByText(/assistant-mcp/)).not.toBeInTheDocument();
+  });
+
+  it('says so when a personal token works in no organization', () => {
+    show({ personal: true, orgSlugs: [] });
+    expect(screen.getByText('This token works in no organization right now.')).toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+  });
+
+  it('names Settings → General as plain text without a link', () => {
+    show();
+    expect(screen.getByText(/Settings → General/)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('links Settings → General once per organization the viewer may change', async () => {
+    const root = createRootRoute();
+    const page = createRoute({
+      getParentRoute: () => root,
+      path: '/',
+      component: () => (
+        <ToastProvider>
+          <AssistantConnectGuide origin={ORIGIN} orgSlugs={['acme', 'beta', 'gamma']} personal showSecretStep settingsOrgs={['acme', 'gamma']} />
+        </ToastProvider>
+      ),
+    });
+    const general = createRoute({ getParentRoute: () => root, path: '/o/$org/settings/general', component: () => null });
+    const router = createRouter({ routeTree: root.addChildren([page, general]), history: createMemoryHistory({ initialEntries: ['/'] }) });
+    render(<RouterProvider router={router} />);
+    const acme = await screen.findByRole('link', { name: 'Settings → General (acme)' });
+    expect(acme).toHaveAttribute('href', '/o/acme/settings/general');
+    expect(screen.getByRole('link', { name: 'Settings → General (gamma)' })).toHaveAttribute('href', '/o/gamma/settings/general');
+    expect(screen.queryByRole('link', { name: /beta/ })).not.toBeInTheDocument();
   });
 });

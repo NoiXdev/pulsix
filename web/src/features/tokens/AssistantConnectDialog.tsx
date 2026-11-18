@@ -2,6 +2,7 @@ import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { AssistantConnectGuide } from './AssistantConnectGuide.tsx';
+import { useSettingsOrgs } from './useSettingsOrgs.ts';
 
 /**
  * AssistantConnectDialog shows the connect guide for an existing assistant
@@ -19,10 +20,11 @@ export function AssistantConnectDialog({
   onClose: () => void;
 }) {
   const t = useT();
+  const settingsOrgs = useSettingsOrgs(orgSlugs);
   return (
     <Dialog open onClose={onClose} title={t.tokens.connect.dialogTitle(name)} size="wide">
       <div className="flex flex-col gap-4">
-        <AssistantConnectGuide origin={window.location.origin} orgSlugs={orgSlugs} personal={personal} showSecretStep={false} />
+        <AssistantConnectGuide origin={window.location.origin} orgSlugs={orgSlugs} personal={personal} showSecretStep={false} settingsOrgs={settingsOrgs} />
         <div className="flex justify-end">
           <Button variant="primary" onClick={onClose}>
             {t.tokens.done}

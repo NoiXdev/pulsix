@@ -52,7 +52,7 @@ export function PersonalTokensPage() {
 
   function rowActions(tok: PersonalToken): RowAction[] {
     const connect: RowAction[] =
-      tok.kind === 'assistant' ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(tok) }] : [];
+      tok.kind === 'assistant' && !isExpired(tok.expires_at) ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(tok) }] : [];
     return [
       ...connect,
       { id: 'edit', label: p.editItem, onSelect: () => setEditing({ kind: 'edit', token: tok }), disabled: isExpired(tok.expires_at) },

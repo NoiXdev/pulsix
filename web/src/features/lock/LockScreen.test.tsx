@@ -60,7 +60,7 @@ describe('LockScreen', () => {
     const pin = await screen.findByLabelText('PIN');
     expect(pin).toHaveAttribute('maxlength', '8');
     expect(document.querySelectorAll('[data-pin-box]')).toHaveLength(0);
-    expect(screen.getByText(/older version and longer than 4 digits/)).toBeInTheDocument();
+    expect(screen.getByText(/older version and may be longer than 4 digits/)).toBeInTheDocument();
     await userEvent.type(pin, '12345678');
     expect(unlock).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }));
@@ -82,6 +82,18 @@ describe('LockScreen', () => {
     renderIt({ 'POST /api/v1/auth/lock/unlock': unlock }, me);
     await userEvent.type(await screen.findByLabelText('PIN'), '12{Enter}');
     expect(unlock).not.toHaveBeenCalled();
+  });
+
+  it('posts once with the pasted PIN when four digits are pasted into a partly filled box', async () => {
+    const unlock = vi.fn((req: { body: unknown }) => ({ ok: true, body: req.body }));
+    renderIt({ 'POST /api/v1/auth/lock/unlock': unlock }, me);
+    const pin = await screen.findByLabelText('PIN');
+    expect(pin).toHaveAttribute('data-1p-ignore');
+    await userEvent.type(pin, '12');
+    await userEvent.paste('4321');
+    expect(await screen.findByText('UNLOCKED PAGE')).toBeInTheDocument();
+    expect(unlock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(unlock.mock.calls[0]![0].body)).toContain('4321');
   });
 
   it('clears the boxes, shows the attempts left and refocuses after a wrong PIN', async () => {

@@ -50,6 +50,29 @@ describe('PinInput', () => {
     expect(onChange).toHaveBeenLastCalledWith('1245');
   });
 
+  it('replaces a partly filled value with a pasted full PIN, and appends a fragment', async () => {
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    const input = screen.getByLabelText('PIN');
+    await userEvent.type(input, '12');
+    await userEvent.paste('9876');
+    expect(onChange).toHaveBeenLastCalledWith('9876');
+    await userEvent.clear(input);
+    await userEvent.type(input, '1');
+    await userEvent.paste('23');
+    expect(onChange).toHaveBeenLastCalledWith('123');
+  });
+
+  it('keeps password managers away only when asked', () => {
+    const { container, rerender } = render(<PinInput id="p" value="" onChange={() => {}} />);
+    expect(container.querySelector('input')).not.toHaveAttribute('data-1p-ignore');
+    rerender(<PinInput id="p" value="" onChange={() => {}} noManagers />);
+    const el = container.querySelector('input')!;
+    expect(el).toHaveAttribute('data-1p-ignore');
+    expect(el).toHaveAttribute('data-lpignore', 'true');
+    expect(el).toHaveAttribute('data-bwignore');
+  });
+
   it('drops non-digit input', async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);

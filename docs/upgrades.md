@@ -483,7 +483,10 @@ repositories as before. An older worker never asks.
   Migration 00112 adds the nullable `users.lock_pin_digits`; a NULL there means the
   length was not recorded. An older manager ignores the column, and a PIN set by
   the new release still unlocks on it. Removing a PIN or an administrator's
-  second-factor reset clears the column with the hash.
+  second-factor reset clears the column with the hash. During a rolling upgrade,
+  change lock PINs only once every manager instance runs the new version: an older
+  one does not record the length, so a 5 to 8 digit PIN changed there would be
+  treated as 4 digits.
 - **3.93 to 3.95, session lock, expiry warning and version notice:** a person can
   lock their session behind a PIN (4 to 8 digits; the fifth wrong PIN ends the
   session), is warned five minutes before the session's 12-hour end and can renew it

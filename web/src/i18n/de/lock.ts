@@ -11,7 +11,7 @@ export const deLock: Messages['lock'] = {
   wrongPin: 'Falsche PIN.',
   attemptsLeft: (n: number) => (n === 1 ? 'Noch 1 Versuch' : `Noch ${n} Versuche`),
   legacyNote:
-    'Deine PIN stammt aus einer älteren Version und ist länger als 4 Ziffern. Lege nach dem Entsperren unter Sicherheit eine neue 4-stellige PIN fest.',
+    'Deine PIN stammt aus einer älteren Version und ist womöglich länger als 4 Ziffern. Lege nach dem Entsperren unter Sicherheit eine neue 4-stellige PIN fest.',
   failed: 'Die Sitzung konnte nicht entsperrt werden. Versuche es erneut.',
   endedAfterFailures: 'Zu viele falsche PINs: Die Sitzung wurde beendet. Melde dich neu an.',
   setPin: {

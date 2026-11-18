@@ -39,8 +39,15 @@ export const enTokens = {
     pasteHere: 'Paste the token when the script asks for it: use the Copy button above.',
     pasteSaved: 'Paste the token when the script asks for it: the one you saved when it was created, or create a new token.',
     check: 'Check the connection.',
-    copyCommand: 'Copy command',
-    note: 'Needs macOS or Linux and Claude Code. Assistant access must be on in the organization (Settings → General).',
+    copyCommand: (what: string) => `Copy command: ${what}`,
+    cmdDownload: 'download script',
+    cmdRegister: (name: string) => `register ${name}`,
+    cmdCheck: (name: string) => `check ${name}`,
+    noteStart: 'Needs macOS or Linux and Claude Code. Assistant access must be on in the organization (',
+    noteEnd: ').',
+    settingsGeneral: 'Settings → General',
+    httpOnly: 'The script needs Pulsix over HTTPS; this address uses HTTP.',
+    noOrg: 'This token works in no organization right now.',
   },
   /** The kind of token: an API token for the REST API, or an assistant
    * token limited to the assistant endpoint and the ticked areas. */

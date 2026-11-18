@@ -172,6 +172,7 @@ export function LockScreen() {
                 invalid={wrong}
                 shake={shake}
                 inputRef={pinRef}
+                noManagers
               />
             )}
           </div>

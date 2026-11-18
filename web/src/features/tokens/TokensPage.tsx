@@ -21,6 +21,7 @@ import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AssistantConnectGuide } from './AssistantConnectGuide.tsx';
+import { useSettingsOrgs } from './useSettingsOrgs.ts';
 import { AreaGrid } from './AreaGrid.tsx';
 import { tokenColumns, tokenRowKey, type TokenRow } from './tokenColumns.tsx';
 import { useTokenListActions } from './useTokenListActions.tsx';
@@ -71,6 +72,14 @@ export function TokensPage() {
   const columns = tokenColumns(t, fmt);
   const view = useListView('org-tokens', columns, { mode: 'client', rowKey: tokenRowKey });
   const actions = useTokenListActions(org);
+  const settingsOrgs = useSettingsOrgs([org]);
+
+  function closeCreate() {
+    setCreateOpen(false);
+    setJustCreated(null);
+    createToken.reset();
+    form.reset();
+  }
 
   const tokensGuard = useQueryGuard(tokens);
   if (tokensGuard) return tokensGuard;
@@ -125,12 +134,7 @@ export function TokensPage() {
 
       <Dialog
         open={createOpen}
-        onClose={() => {
-          setCreateOpen(false);
-          setJustCreated(null);
-          createToken.reset();
-          form.reset();
-        }}
+        onClose={closeCreate}
         title={t.tokens.create}
         size={justCreated && createdKind === 'assistant' ? 'wide' : 'default'}
       >
@@ -142,26 +146,25 @@ export function TokensPage() {
             <code className="break-all rounded-md border border-border bg-background p-3 font-mono text-xs">
               {justCreated}
             </code>
-            <div className="flex justify-end gap-2">
-              <Button
-                onClick={() => void copy(justCreated)}
-              >
-                {t.tokens.copy}
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  setCreateOpen(false);
-                  setJustCreated(null);
-                  createToken.reset();
-                  form.reset();
-                }}
-              >
-                {t.tokens.done}
-              </Button>
-            </div>
-            {createdKind === 'assistant' && (
-              <AssistantConnectGuide origin={window.location.origin} orgSlugs={[org]} personal={false} showSecretStep />
+            {createdKind === 'assistant' ? (
+              <>
+                <div className="flex justify-end">
+                  <Button onClick={() => void copy(justCreated)}>{t.tokens.copy}</Button>
+                </div>
+                <AssistantConnectGuide origin={window.location.origin} orgSlugs={[org]} personal={false} showSecretStep settingsOrgs={settingsOrgs} />
+                <div className="flex justify-end">
+                  <Button variant="primary" onClick={closeCreate}>
+                    {t.tokens.done}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-end gap-2">
+                <Button onClick={() => void copy(justCreated)}>{t.tokens.copy}</Button>
+                <Button variant="primary" onClick={closeCreate}>
+                  {t.tokens.done}
+                </Button>
+              </div>
             )}
           </div>
         ) : (

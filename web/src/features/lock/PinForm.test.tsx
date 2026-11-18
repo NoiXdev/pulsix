@@ -16,6 +16,16 @@ describe('PinForm', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('opts both rows out of password managers', () => {
+    const { first, again } = setup();
+    for (const el of [first, again]) {
+      expect(el).toHaveAttribute('autocomplete', 'off');
+      expect(el).toHaveAttribute('data-1p-ignore');
+      expect(el).toHaveAttribute('data-lpignore', 'true');
+      expect(el).toHaveAttribute('data-bwignore');
+    }
+  });
+
   it('moves focus to the second row once the first is full', async () => {
     const { first, again } = setup();
     expect(first).toHaveFocus();

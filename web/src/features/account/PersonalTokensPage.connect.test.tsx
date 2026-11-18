@@ -1,3 +1,4 @@
+// @vitest-environment-options {"url": "https://localhost:3000"}
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -62,6 +63,28 @@ describe('PersonalTokensPage connect guide', () => {
     expect(within(dialog).getByText(`${SH} add pulsix-acme ${O} --org acme`)).toBeInTheDocument();
     expect(within(dialog).getByText(`${SH} add pulsix-beta ${O} --org beta`)).toBeInTheDocument();
     expect(within(dialog).getByText(`${SH} check pulsix-beta`)).toBeInTheDocument();
+    // admin in beta only: one link, for beta
+    expect(within(dialog).getByRole('link', { name: 'Settings → General' })).toHaveAttribute('href', '/o/beta/settings/general');
+  });
+
+  it('hides the guide on an expired token and explains a token without an active grant', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/me/tokens': {
+        tokens: [{ ...token('stale', 'assistant'), expires_at: '2020-01-01T00:00:00Z' }, token('idle', 'assistant', [grant('gone', 'blocked')])],
+      },
+    });
+    renderListPage({ path: '/tokens', component: PersonalTokensPage, initial: '/o/acme/tokens' });
+    await screen.findByText('stale');
+    await openRowMenu(user, 'stale');
+    expect(screen.queryByRole('menuitem', { name: 'Connect an assistant…' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await chooseRowAction(user, 'idle', 'Connect an assistant…');
+    const dialog = await screen.findByRole('dialog', { name: 'Connect an assistant: idle' });
+    expect(within(dialog).getByText('This token works in no organization right now.')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('list')).not.toBeInTheDocument();
   });
 
   it('shows no guide under a new API token', async () => {

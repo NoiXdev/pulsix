@@ -20,6 +20,8 @@ export interface PinInputProps {
   /** Plays a short horizontal shake (motion-safe only). */
   shake?: boolean;
   autoComplete?: string;
+  /** Opts the field out of password managers (1Password, LastPass, Bitwarden). */
+  noManagers?: boolean;
   'aria-describedby'?: string;
   inputRef?: Ref<HTMLInputElement>;
 }
@@ -38,6 +40,7 @@ export function PinInput({
   invalid,
   shake,
   autoComplete = 'off',
+  noManagers,
   'aria-describedby': describedBy,
   inputRef,
 }: PinInputProps) {
@@ -61,7 +64,9 @@ export function PinInput({
   // ('12a45' -> '12a4' -> '124'), so filter the clipboard text ourselves.
   function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
     e.preventDefault();
-    commit(value + e.clipboardData.getData('text'));
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '');
+    // A whole PIN replaces what is typed; a fragment continues it.
+    commit(pasted.length >= length ? pasted : value + pasted);
   }
 
   // Keep the caret at the end: no insertion in the middle of the PIN.
@@ -114,6 +119,7 @@ export function PinInput({
         autoFocus={autoFocus}
         disabled={disabled}
         autoComplete={autoComplete}
+        {...(noManagers ? { 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-bwignore': true } : {})}
         aria-invalid={invalid || undefined}
         aria-describedby={describedBy}
         onChange={handleChange}

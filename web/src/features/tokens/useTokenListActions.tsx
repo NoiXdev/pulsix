@@ -92,7 +92,7 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
       return row.owner_blocked ? [unblockItem, revokeItem] : [revokeItem];
     }
     const connect: RowAction[] =
-      row.kind === 'assistant' ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(row) }] : [];
+      row.kind === 'assistant' && !isExpired(row.expires_at) ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(row) }] : [];
     return [
       ...connect,
       { id: 'edit', label: t.tokens.editItem, onSelect: () => setEditing(row), disabled: isExpired(row.expires_at) },

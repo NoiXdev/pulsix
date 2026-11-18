@@ -14,7 +14,7 @@ export const enLock = {
   wrongPin: 'Wrong PIN.',
   attemptsLeft: (n: number) => (n === 1 ? '1 attempt left' : `${n} attempts left`),
   legacyNote:
-    'Your PIN is from an older version and longer than 4 digits. After unlocking, set a new 4-digit PIN under Security.',
+    'Your PIN is from an older version and may be longer than 4 digits. After unlocking, set a new 4-digit PIN under Security.',
   failed: 'The session could not be unlocked. Try again.',
   endedAfterFailures: 'Too many wrong PINs: the session was ended. Sign in again.',
   setPin: {

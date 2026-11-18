@@ -1,3 +1,4 @@
+// @vitest-environment-options {"url": "https://localhost:3000"}
 import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -23,12 +24,13 @@ const personal = {
 };
 const ADD = `~/.local/bin/assistant-mcp.sh add pulsix-acme ${window.location.origin}`;
 
-function setup() {
+function setup(role = 'admin') {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: { body: unknown }) => req.body,
-    'GET /api/v1/orgs/acme/tokens': { tokens: [tok('t1', 'ci', 'api'), tok('t2', 'helper', 'assistant')] },
+    'GET /api/v1/orgs/acme/tokens': { tokens: [tok('t1', 'ci', 'api'), tok('t2', 'helper', 'assistant'), { ...tok('t4', 'old', 'assistant'), expires_at: '2020-01-01T00:00:00Z' }] },
     'GET /api/v1/orgs/acme/personal-tokens': { entries: [personal] },
+    'GET /api/v1/orgs': { orgs: [{ id: 'o1', slug: 'acme', name: 'Acme', role, created_at: '2026-01-01T00:00:00Z' }] },
     'POST /api/v1/orgs/acme/tokens': (req: { body: unknown }) => ({
       ...tok('t3', (req.body as { name: string }).name, (req.body as { kind: string }).kind),
       token: 'pxt_new',
@@ -57,6 +59,42 @@ describe('TokensPage connect guide', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText(ADD)).toBeInTheDocument();
     expect(within(dialog).getByText(/Copy button above/)).toBeInTheDocument();
+  });
+
+  it('links Settings → General under the secret for an admin', async () => {
+    const user = userEvent.setup();
+    setup('admin');
+    await create(user, true);
+    expect(await within(screen.getByRole('dialog')).findByRole('link', { name: 'Settings → General' })).toHaveAttribute('href', '/o/acme/settings/general');
+  });
+
+  it('names Settings → General as plain text for an operator', async () => {
+    const user = userEvent.setup();
+    setup('operator');
+    await create(user, true);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Settings → General/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('puts Copy by the secret and Done after the guide', async () => {
+    const user = userEvent.setup();
+    setup();
+    await create(user, true);
+    const dialog = screen.getByRole('dialog');
+    const copy = within(dialog).getByRole('button', { name: 'Copy' });
+    const done = within(dialog).getByRole('button', { name: 'Done' });
+    const guide = within(dialog).getByRole('region', { name: 'Connect an assistant' });
+    expect(copy.compareDocumentPosition(guide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(guide.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('does not offer the guide on an expired assistant token', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('old');
+    await openRowMenu(user, 'old (viewer)');
+    expect(screen.queryByRole('menuitem', { name: 'Connect an assistant…' })).not.toBeInTheDocument();
   });
 
   it('shows no guide under a new API token', async () => {

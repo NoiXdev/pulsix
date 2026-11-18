@@ -98,7 +98,8 @@ export function PinForm({
         autoFocus
         disabled={disabled}
         shake={shake}
-        autoComplete="new-password"
+        autoComplete="off"
+        noManagers
         aria-describedby={`${idPrefix}-hint`}
         inputRef={firstRef}
       />
@@ -111,7 +112,8 @@ export function PinForm({
         disabled={disabled}
         invalid={mismatch}
         shake={shake}
-        autoComplete="new-password"
+        autoComplete="off"
+        noManagers
         inputRef={againRef}
       />
       <p id={`${idPrefix}-hint`} className="text-xs text-muted-foreground">
