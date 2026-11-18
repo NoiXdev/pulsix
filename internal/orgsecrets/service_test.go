@@ -41,7 +41,7 @@ type memRow struct {
 
 func newMemStore() *memStore { return &memStore{rows: map[uuid.UUID]map[string]memRow{}} }
 
-func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (orgsecrets.Stored, error) {
+func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (orgsecrets.Stored, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rows[orgID] == nil {
@@ -53,7 +53,7 @@ func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, seale
 	}
 	r.sealed, r.fieldNames, r.updatedAt = slices.Clone(sealed), slices.Clone(fieldNames), at
 	m.rows[orgID][name] = r
-	return orgsecrets.Stored{Name: name, FieldNames: slices.Clone(fieldNames), CreatedAt: r.createdAt, UpdatedAt: r.updatedAt}, nil
+	return orgsecrets.Stored{Name: name, FieldNames: slices.Clone(fieldNames), CreatedAt: r.createdAt, UpdatedAt: r.updatedAt}, !ok, nil
 }
 
 func (m *memStore) Insert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (orgsecrets.Stored, bool, error) {
@@ -107,7 +107,7 @@ func (m *memStore) Delete(_ context.Context, orgID uuid.UUID, name string) (bool
 
 // put writes a row as it is, for the AAD tests that move a ciphertext.
 func (m *memStore) put(orgID uuid.UUID, name string, sealed []byte) {
-	_, _ = m.Upsert(ctx, orgID, name, sealed, []string{"community"}, time.Now())
+	_, _, _ = m.Upsert(ctx, orgID, name, sealed, []string{"community"}, time.Now())
 }
 
 // fakeRefs is the CheckRefs port.
@@ -293,8 +293,12 @@ func TestSealedRowIsBoundToOrgAndName(t *testing.T) {
 func TestPutReplacesWhole(t *testing.T) {
 	w := newWorld()
 	created := w.clock.t
-	if _, err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": "old", "extra": "x"}); err != nil {
+	first, err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": "old", "extra": "x"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !first.Created {
+		t.Fatal("the first Put reports Created = false, want true (backlog 3.69)")
 	}
 	w.clock.t = created.Add(time.Hour)
 	w.refs.refs = []orgsecrets.CheckRef{{Key: "snmp-core", Plugin: "srv", Params: map[string]any{"secret": "sw"}}}
@@ -306,6 +310,9 @@ func TestPutReplacesWhole(t *testing.T) {
 	if put.Name != "sw" || !put.CreatedAt.Equal(created) || !put.UpdatedAt.Equal(created.Add(time.Hour)) ||
 		!slices.Equal(put.FieldNames, []string{"community"}) || !slices.Equal(put.UsedBy, []string{"snmp-core"}) {
 		t.Fatalf("Put returned %+v", put)
+	}
+	if put.Created {
+		t.Fatal("a Put over an existing secret reports Created = true, want false (backlog 3.69)")
 	}
 	assertNoLeak(t, "Put's result", fmt.Sprintf("%#v", put))
 	list, err := w.svc.List(ctx, w.org)
@@ -428,6 +435,9 @@ func TestCreateOnly(t *testing.T) {
 	}
 	if created.Name != "sw" || !slices.Equal(created.FieldNames, []string{"community"}) || !created.CreatedAt.Equal(w.clock.t) {
 		t.Fatalf("Create returned %+v", created)
+	}
+	if !created.Created {
+		t.Fatal("Create reports Created = false, want true")
 	}
 	assertNoLeak(t, "Create's result", fmt.Sprintf("%#v", created))
 	w.clock.t = w.clock.t.Add(time.Hour)

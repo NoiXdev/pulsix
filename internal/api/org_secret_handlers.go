@@ -136,7 +136,11 @@ func registerOrgSecretRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapOrgSecretsErr(ctx, err)
 		}
-		setAuditObject(ctx, stored.Name, "stored secret "+stored.Name+" (fields: "+strings.Join(stored.FieldNames, ", ")+")")
+		verb := "replaced"
+		if stored.Created {
+			verb = "created"
+		}
+		setAuditObject(ctx, stored.Name, verb+" secret "+stored.Name+" (fields: "+strings.Join(stored.FieldNames, ", ")+")")
 		out := &orgSecretOutput{}
 		out.Body.Secret = toOrgSecretDTO(stored)
 		return out, nil

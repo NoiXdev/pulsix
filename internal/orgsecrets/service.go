@@ -61,6 +61,10 @@ type Secret struct {
 	// sorted and de-duplicated (one key can be defined at several
 	// bindings).
 	UsedBy []string
+	// Created is set by Put and Create: true when the call created the
+	// secret, false when Put replaced an existing one (backlog 3.69). List
+	// leaves it false.
+	Created bool
 }
 
 // Stored is a secret's row without its sealed fields.
@@ -74,8 +78,9 @@ type Stored struct {
 type Store interface {
 	// Upsert creates or replaces a secret whole: created_at is at on
 	// create and kept on replace, updated_at is at. It returns the row as
-	// stored, without its sealed fields.
-	Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, error)
+	// stored, without its sealed fields, and whether it created the row
+	// (false: it replaced one).
+	Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, bool, error)
 	// Insert creates a secret only when the organization has none of that
 	// name; false (and no write) when it has.
 	Insert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, bool, error)
@@ -147,7 +152,7 @@ func AAD(orgID uuid.UUID, name string) []byte {
 // the write has committed Put does not fail: when the checks using it
 // cannot be listed, UsedBy is left empty.
 func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
-	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, error) {
+	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, bool, error) {
 		return s.d.Store.Upsert(ctx, orgID, name, sealed, names, at)
 	})
 }
@@ -157,12 +162,12 @@ func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields 
 // it was (a value can never be read back, so a replace by accident would
 // be unrecoverable).
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
-	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, error) {
+	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, bool, error) {
 		row, ok, err := s.d.Store.Insert(ctx, orgID, name, sealed, names, at)
 		if err == nil && !ok {
-			return Stored{}, ErrExists
+			return Stored{}, false, ErrExists
 		}
-		return row, err
+		return row, ok, err
 	})
 }
 
@@ -170,7 +175,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, name string, fiel
 // stored secret with the checks using it, or with UsedBy empty when they
 // cannot be listed.
 func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string,
-	store func(sealed []byte, names []string, at time.Time) (Stored, error)) (Secret, error) {
+	store func(sealed []byte, names []string, at time.Time) (Stored, bool, error)) (Secret, error) {
 	if err := validate(name, fields); err != nil {
 		return Secret{}, err
 	}
@@ -183,7 +188,7 @@ func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, field
 	if err != nil {
 		return Secret{}, fmt.Errorf("seal secret %s: %w", name, err)
 	}
-	row, err := store(sealed, slices.Sorted(maps.Keys(fields)), s.d.Now())
+	row, created, err := store(sealed, slices.Sorted(maps.Keys(fields)), s.d.Now())
 	if err != nil {
 		return Secret{}, fmt.Errorf("store secret %s: %w", name, err)
 	}
@@ -196,7 +201,9 @@ func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, field
 		slog.WarnContext(ctx, "stored a secret but could not list the checks using it", "secret", row.Name, "err", err)
 		used = nil
 	}
-	return secretOf(row, used), nil
+	out := secretOf(row, used)
+	out.Created = created
+	return out, nil
 }
 
 // secretOf is a stored row with the checks using it.

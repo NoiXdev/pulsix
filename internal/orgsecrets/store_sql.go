@@ -24,14 +24,14 @@ type SQLStore struct{ q *gen.Queries }
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // Upsert implements Store.
-func (s *SQLStore) Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, error) {
+func (s *SQLStore) Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, bool, error) {
 	r, err := s.q.UpsertOrgSecret(ctx, gen.UpsertOrgSecretParams{
 		OrgID: orgID, Name: name, FieldsSealed: sealed, FieldNames: fieldNames, At: at,
 	})
 	if err != nil {
-		return Stored{}, err
+		return Stored{}, false, err
 	}
-	return Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, nil
+	return Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, r.Inserted, nil
 }
 
 // Insert implements Store: no row back means the name was taken.

@@ -171,8 +171,8 @@ func TestOrgSecretsLifecycleAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"PUT putOrgSecret | core-switch | stored secret core-switch (fields: community, user)",
-		"PUT putOrgSecret | core-switch | stored secret core-switch (fields: community)",
+		"PUT putOrgSecret | core-switch | created secret core-switch (fields: community, user)",
+		"PUT putOrgSecret | core-switch | replaced secret core-switch (fields: community)",
 		"DELETE deleteOrgSecret | core-switch | deleted secret core-switch",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
