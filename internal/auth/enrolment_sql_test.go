@@ -181,9 +181,17 @@ func TestBeginEnrolKeepsTheConfirmedFactorUntilTheNewOneIsConfirmed(t *testing.T
 		t.Error("an unconfirmed secret must not verify")
 	}
 
-	// Finishing the re-enrolment swaps them over.
+	// Finishing the re-enrolment swaps them over. It runs from a complete
+	// session: a pending one of an account that has a factor is refused
+	// (requireEnrolmentSession at the API, and the enrolment itself since
+	// backlog 3.114).
 	clock.Advance(30 * time.Second)
-	session2 := createSessionAt(t, raw, uid, time.Now().Add(time.Hour), false)
+	session2 := uuid.Must(uuid.NewV7())
+	if err := raw.CreateSession(ctx, gen.CreateSessionParams{
+		ID: session2, UserID: uid, SecretHash: []byte("hash-2"), MfaComplete: true, ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err := e.ConfirmTOTP(ctx, uid, session2, codeAt(t, second, clock)); err != nil {
 		t.Fatalf("confirming the new secret: %v", err)
 	}

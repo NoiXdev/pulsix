@@ -97,7 +97,9 @@ func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete boo
 // fresh only while the account has no factor: once a TOTP secret is
 // confirmed or a passkey registered, Lookup reads it as pending and stale
 // (GetSession's password_superseded), so a factor that commits after the
-// caller checked for one cannot leave it complete.
+// caller checked for one cannot leave it complete. It marks the account
+// (users.password_only_signin_at) only when the account has no factor when
+// the session is inserted (CreateSession, backlog 3.114).
 func (s *Sessions) CreatePasswordOnly(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, error) {
 	r, err := s.create(ctx, userID, true, true)
 	return r.ID, r.Cookie, err

@@ -43,9 +43,18 @@ func (s *Sessions) RefreshPasswordProof(ctx context.Context, id uuid.UUID) (stri
 // factor the account has gained since (GetSession's password_superseded).
 var ErrSessionNotComplete = errors.New("session is not complete")
 
-// LockLiveForEnrolment is LockLive for finishing an enrolment (confirming
+// enrollingSession is what finishing an enrolment needs to know of the
+// enrolling session, as lockLiveForEnrolment read it under the account
+// lock: whether it is password-only (PULSIX_MFA_OPTIONAL) and whether it is
+// complete (mfa_complete; a password-only session is).
+type enrollingSession struct {
+	passwordOnly bool
+	complete     bool
+}
+
+// lockLiveForEnrolment is LockLive for finishing an enrolment (confirming
 // TOTP, finishing a passkey registration), and reports whether sessionID is
-// password-only (PULSIX_MFA_OPTIONAL). The enrolment of an account's first
+// password-only (PULSIX_MFA_OPTIONAL) and complete. The enrolment of an account's first
 // factor takes the account row exclusively (LockAccountForRemoval) instead
 // of in key-share mode: it re-checks that the account still has no factor,
 // may revoke its tokens, and must not interleave with a second first
@@ -57,34 +66,34 @@ var ErrSessionNotComplete = errors.New("session is not complete")
 // under the lock as LockLive does; a factor never disappears under a live
 // session (removing the last one is refused, and a reset ends the sessions),
 // so the peek can only err towards the stronger lock.
-func (s *Sessions) LockLiveForEnrolment(ctx context.Context, userID, sessionID uuid.UUID) (passwordOnly bool, err error) {
+func (s *Sessions) lockLiveForEnrolment(ctx context.Context, userID, sessionID uuid.UUID) (enrollingSession, error) {
 	if _, err := s.q.GetSession(ctx, sessionID); errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
+		return enrollingSession{}, ErrNotFound
 	} else if err != nil {
-		return false, fmt.Errorf("look up session: %w", err)
+		return enrollingSession{}, fmt.Errorf("look up session: %w", err)
 	}
 	enrolled, err := s.HasSecondFactor(ctx, userID)
 	if err != nil {
-		return false, err
+		return enrollingSession{}, err
 	}
 	lock := s.LockAccount
 	if !enrolled {
 		lock = s.LockAccountForRemoval
 	}
 	if err := lock(ctx, userID); err != nil {
-		return false, err
+		return enrollingSession{}, err
 	}
 	row, err := s.q.GetSession(ctx, sessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
+		return enrollingSession{}, ErrNotFound
 	}
 	if err != nil {
-		return false, fmt.Errorf("look up session: %w", err)
+		return enrollingSession{}, fmt.Errorf("look up session: %w", err)
 	}
 	if row.UserID != userID {
-		return false, ErrNotFound
+		return enrollingSession{}, ErrNotFound
 	}
-	return row.PasswordOnly, nil
+	return enrollingSession{passwordOnly: row.PasswordOnly, complete: row.MfaComplete}, nil
 }
 
 // HasSecondFactor reports whether userID has a confirmed TOTP secret or a

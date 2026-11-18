@@ -173,7 +173,22 @@ WHERE id = sqlc.arg(id);
 -- Removes every second factor of the account at once: the TOTP secret
 -- (and with it the factor-attempt lockout), the recovery codes and every
 -- passkey. One statement, so no state with only some of them gone exists.
-WITH totp AS (
+-- It also drops the account's password-only sign-in mark
+-- (users.password_only_signin_at) when the account has a factor: the first
+-- factor takes the mark (TakePasswordOnlySignin), so one beside a factor
+-- was left by a password-only session insert that raced that enrolment,
+-- and stands for nothing a password alone could mint. Kept, it would make
+-- the first factor after this reset revoke tokens created while the
+-- account had a factor (backlog 3.114). An account without a factor keeps
+-- its mark. Every part of the statement reads the factors as they were
+-- before the deletes.
+WITH mark AS (
+  UPDATE users SET password_only_signin_at = NULL
+  WHERE users.id = $1 AND users.password_only_signin_at IS NOT NULL AND (
+    EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = $1)
+  )
+), totp AS (
   DELETE FROM totp_secrets WHERE totp_secrets.user_id = $1
 ), codes AS (
   DELETE FROM recovery_codes WHERE recovery_codes.user_id = $1

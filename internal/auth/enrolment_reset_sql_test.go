@@ -568,9 +568,12 @@ func TestConcurrentTOTPConfirmsDoNotDeadlock(t *testing.T) {
 	}
 }
 
-// Two pending sessions of one account each finishing a passkey: both
-// complete, one after the other — two passkeys, two complete sessions, no
-// deadlock.
+// Two pending sessions of one account each finishing a passkey: they run
+// one after the other, never a deadlock. The first enrols the account's
+// first factor and completes its session; the second then finds the
+// account enrolled and is refused (ErrSessionNotComplete, backlog 3.114):
+// its session must prove that factor, not plant a second one. One passkey,
+// one complete session, one still pending.
 func TestConcurrentPasskeyFinishesDoNotDeadlock(t *testing.T) {
 	w := newResetWorld(t)
 	uid := w.seedAccount(t, "passkey-double@example.test")
@@ -612,20 +615,29 @@ func TestConcurrentPasskeyFinishesDoNotDeadlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var done, refused int
 	for range 2 {
-		if err := <-results; err != nil {
-			t.Errorf("FinishPasskey = %v, want both to succeed, never a deadlock", err)
+		switch err := <-results; {
+		case err == nil:
+			done++
+		case errors.Is(err, auth.ErrSessionNotComplete):
+			refused++
+		default:
+			t.Errorf("FinishPasskey = %v, want success or ErrSessionNotComplete, never a deadlock", err)
 		}
 	}
-	if n := w.passkeyCount(t, uid); n != 2 {
-		t.Fatalf("passkeys = %d, want 2", n)
+	if done != 1 || refused != 1 {
+		t.Fatalf("finished %d, refused %d; want one of each", done, refused)
+	}
+	if n := w.passkeyCount(t, uid); n != 1 {
+		t.Fatalf("passkeys = %d, want 1", n)
 	}
 	var pending int
 	if err := w.d.Pool().QueryRow(ctx, `SELECT count(*) FROM sessions WHERE user_id = $1 AND NOT mfa_complete`, uid).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
-	if pending != 0 {
-		t.Errorf("sessions still pending = %d, want 0", pending)
+	if pending != 1 {
+		t.Errorf("sessions still pending = %d, want the refused one", pending)
 	}
 }
 

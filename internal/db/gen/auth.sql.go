@@ -152,7 +152,13 @@ WITH new_session AS (
     RETURNING user_id, mfa_complete, password_only
 )
 UPDATE users SET last_sign_in_at = now(),
-    password_only_signin_at = CASE WHEN new_session.password_only THEN now() ELSE users.password_only_signin_at END
+    password_only_signin_at = CASE
+        WHEN new_session.password_only
+            AND NOT EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = new_session.user_id AND t.confirmed_at IS NOT NULL)
+            AND NOT EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = new_session.user_id)
+        THEN now()
+        ELSE users.password_only_signin_at
+    END
 FROM new_session
 WHERE users.id = new_session.user_id AND new_session.mfa_complete
 `
@@ -179,7 +185,14 @@ type CreateSessionParams struct {
 // pending once the account has a factor.
 // A password-only session also marks the account
 // (users.password_only_signin_at): its first second factor revokes the
-// account's tokens while the mark is set (TakePasswordOnlySignin).
+// account's tokens while the mark is set (TakePasswordOnlySignin). Only an
+// account that has no factor in this statement's snapshot is marked: a
+// factor that committed after the caller checked for one supersedes the
+// session from its first lookup (GetSession's password_superseded), so it
+// mints nothing, and a mark would only make a later first factor (after a
+// second-factor reset) revoke tokens created while the account had a
+// factor (backlog 3.114). A factor still in flight when this statement
+// starts leaves the mark set; the reset drops it (DeleteSecondFactors).
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.Exec(ctx, createSession,
 		arg.ID,

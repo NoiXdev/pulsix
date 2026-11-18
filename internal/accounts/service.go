@@ -122,7 +122,9 @@ type Store interface {
 	// untouched.
 	RevokeAllSessions(ctx context.Context, id uuid.UUID) error
 	// DeleteSecondFactors removes the account's TOTP secret, recovery
-	// codes and passkeys.
+	// codes and passkeys, and drops its password-only sign-in mark when it
+	// had a factor (a mark beside a factor stands for nothing; backlog
+	// 3.114).
 	DeleteSecondFactors(ctx context.Context, id uuid.UUID) error
 	// ClearLockPIN drops the account's session-lock PIN and its "already
 	// offered" mark (the second-factor reset starts the account's security

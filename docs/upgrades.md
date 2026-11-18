@@ -505,8 +505,10 @@ repositories as before. An older worker never asks.
   enrolled from a password-only session, or by any session of an account that
   has signed in on its password alone (migration 00114 adds
   `users.password_only_signin_at`, NULL for every existing account, set by
-  every password-only session and cleared by the first factor, so turning
-  the mode off in between changes nothing), also revokes every API token of
+  every password-only session of an account that has no factor yet and
+  cleared by the first factor, so turning the mode off in between changes
+  nothing; an administrator's second-factor reset drops a mark it finds
+  beside a factor), also revokes every API token of
   the account (organization and personal, the statements deactivation uses),
   in the enrolment's transaction, recorded as `revokeTokensOnFirstFactor`.
   Creating an organization or personal token re-reads the creating session
@@ -520,8 +522,10 @@ repositories as before. An older worker never asks.
   memberships and roles, agent and worker enrolment tokens, organization
   secrets, stored credentials (SSH keys, passwords) and webhook triggers.
   The enrolment of an account's first factor takes the account row
-  exclusively; from a password-only session it refuses (403) if the account
-  has gained a factor since the request began. Recovery codes now need a
+  exclusively; from a password-only or a pending session it refuses (403) if
+  the account has gained a factor since the request began. An organization
+  token is inserted in a transaction bound to its organization, so row-level
+  security checks it. Recovery codes now need a
   confirmed TOTP secret in every mode: `POST /api/v1/auth/recovery-codes` answers 409 without one, a
   recovery code is refused beside an unconfirmed secret, and a passkey that
   is an account's first factor deletes leftover codes. An administrator's
