@@ -190,8 +190,12 @@ func TestHeartbeatWithANULStores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !r.Known || len(r.Checks) != 1 || r.Checks[0].Key != "local-cpu" || !slices.Equal(r.Problems, []string{"line 4: a b"}) {
-		t.Fatalf("stored %+v, want local-cpu only and the problem without its NUL", r)
+	if !r.Known || len(r.Checks) != 1 || r.Checks[0].Key != "local-cpu" || !slices.Equal(r.Problems, []string{
+		"line 4: a b",
+		"local-d: not supported by this manager (the params contain a NUL character)",
+		"local-e: not supported by this manager (the params contain a NUL character)",
+	}) {
+		t.Fatalf("stored %+v, want local-cpu only and the problem without its NUL, then the dropped checks", r)
 	}
 }
 

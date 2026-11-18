@@ -302,6 +302,8 @@ type Service struct {
 	ca CAPinner
 	// log takes the heartbeat's notes on local checks it dropped.
 	log *slog.Logger
+	// drops dedupes those notes: one per change of an agent's dropped set.
+	drops dropLog
 }
 
 // Option configures a Service.
@@ -587,12 +589,15 @@ type HeartbeatReport struct {
 // (secretsReportOf, localChecksReportOf), so whatever the agent sent, only
 // well-formed names, one bounded line of state, checks the agent could run
 // and a short list of bounded problems are stored. Each local check
-// dropped is logged by key and reason, never its params. An agent that
+// dropped is logged by key and reason, never its params, once per change
+// of the agent's dropped set, and is listed among the local check problems. An agent that
 // sends no secrets state (older than agent.yaml) is stored as unknown in
 // both reports.
 func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatReport) error {
 	local, dropped := localChecksReportOf(r.SecretsState, r.LocalChecks, r.LocalCheckProblems)
-	logDroppedLocalChecks(ctx, s.log, serial, dropped)
+	if s.drops.changed(serial, dropped) {
+		logDroppedLocalChecks(ctx, s.log, serial, dropped)
+	}
 	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local)
 }
 

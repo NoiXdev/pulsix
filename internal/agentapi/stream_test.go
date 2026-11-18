@@ -220,7 +220,8 @@ func TestHeartbeatHandsTheLocalChecksThrough(t *testing.T) {
 		r.Checks[0].Interval != 5*time.Minute || len(r.Checks[0].Params) != 1 {
 		t.Fatalf("first report = %+v, want known with local-disk only", r)
 	}
-	if len(r.Problems) != 1 || r.Problems[0] != `line 4: check "x": unknown plugin "nope"` {
+	if len(r.Problems) != 2 || r.Problems[0] != `line 4: check "x": unknown plugin "nope"` ||
+		r.Problems[1] != "no-prefix: not supported by this manager (the key is not local- followed by a valid check key)" {
 		t.Fatalf("problems = %q", r.Problems)
 	}
 	if r := reports[1]; r.Known || r.Checks != nil {

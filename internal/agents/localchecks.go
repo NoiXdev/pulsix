@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -112,7 +113,8 @@ type localCheckDrops struct {
 // key, so nothing past the cap is parsed). Problems are kept as sent, the
 // first checkplugins.MaxLocalCheckProblems, each bounded by boundLine to
 // MaxLocalCheckProblemBytes (which also replaces a NUL, as PostgreSQL text
-// refuses one).
+// refuses one). Each dropped check then adds one problem after them,
+// notSupportedProblem, while the 32 are not full.
 func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []string) (LocalChecksReport, localCheckDrops) {
 	if secretsState == "" {
 		return LocalChecksReport{}, localCheckDrops{}
@@ -137,7 +139,81 @@ func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []s
 	for _, p := range problems[:min(len(problems), checkplugins.MaxLocalCheckProblems)] {
 		bounded = append(bounded, boundLine(p, MaxLocalCheckProblemBytes))
 	}
+	for _, line := range drops.problems() {
+		if len(bounded) >= checkplugins.MaxLocalCheckProblems {
+			break
+		}
+		bounded = append(bounded, boundLine(line, MaxLocalCheckProblemBytes))
+	}
 	return LocalChecksReport{Known: true, Checks: kept, Problems: bounded}, drops
+}
+
+// notSupportedProblem is the stored problem of a check the manager
+// refused: the key as it may be shown and the fixed reason, never params.
+func notSupportedProblem(subject, reason string) string {
+	return subject + ": not supported by this manager (" + reason + ")"
+}
+
+// problems is one line per dropped check in key order, and one more for the
+// entries never examined, to be stored after the agent's own problems.
+func (d localCheckDrops) problems() []string {
+	out := make([]string, 0, len(d.examined)+1)
+	for _, c := range d.examined {
+		out = append(out, notSupportedProblem(c.key, c.reason))
+	}
+	if d.unexamined > 0 {
+		out = append(out, notSupportedProblem(strconv.Itoa(d.unexamined)+" more local checks",
+			"more than "+strconv.Itoa(maxExaminedLocalChecks)+" local checks reported"))
+	}
+	return out
+}
+
+// fingerprint identifies a dropped set, so a heartbeat can tell whether it
+// changed since the last one: the keys with their reasons in key order, and
+// the unexamined count. The empty set has the empty fingerprint.
+func (d localCheckDrops) fingerprint() string {
+	if len(d.examined) == 0 && d.unexamined == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range d.examined {
+		b.WriteString(c.key)
+		b.WriteByte(0)
+		b.WriteString(c.reason)
+		b.WriteByte(0)
+	}
+	b.WriteString(strconv.Itoa(d.unexamined))
+	return b.String()
+}
+
+// dropLog remembers, per agent, the dropped set last logged, so the
+// warnings are written once per change instead of on every heartbeat. An
+// agent whose dropped set becomes empty is forgotten, so the map holds only
+// agents that currently report a dropped check. It lives per process: after
+// a restart each set is logged once more.
+type dropLog struct {
+	mu   sync.Mutex
+	last map[string]string
+}
+
+// changed records drops as the agent's current set and reports whether it
+// differs from the one recorded before.
+func (l *dropLog) changed(serial string, drops localCheckDrops) bool {
+	fp := drops.fingerprint()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if fp == "" {
+		delete(l.last, serial)
+		return false
+	}
+	if l.last[serial] == fp {
+		return false
+	}
+	if l.last == nil {
+		l.last = make(map[string]string)
+	}
+	l.last[serial] = fp
+	return true
 }
 
 // validLocalCheck is one check's verdict: the check, or a fixed reason it
