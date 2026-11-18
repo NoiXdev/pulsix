@@ -79,6 +79,16 @@ export const deUi: Messages['ui'] = {
     previousPage: 'Vorherige Seite',
     nextPage: 'Nächste Seite',
   },
+  listToolbar: {
+    search: 'Suche',
+    clearSearch: 'Suche leeren',
+    addFilter: '+ Filter',
+    moreFilters: 'Weitere Filter',
+    removeFilter: (label: string) => `Filter ${label} entfernen`,
+    reset: 'Zurücksetzen',
+    resetLabel: 'Alle Filter zurücksetzen',
+    countOf: (shown: number, all: string) => `${shown} von ${all}`,
+  },
   chart: {
     ranges: {
       '1h': 'in der letzten Stunde',

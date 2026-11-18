@@ -86,6 +86,16 @@ export const enUi = {
     previousPage: 'Previous page',
     nextPage: 'Next page',
   },
+  listToolbar: {
+    search: 'Search',
+    clearSearch: 'Clear the search',
+    addFilter: '+ Filter',
+    moreFilters: 'More filters',
+    removeFilter: (label: string) => `Remove filter ${label}`,
+    reset: 'Reset',
+    resetLabel: 'Reset every filter',
+    countOf: (shown: number, all: string) => `${shown} of ${all}`,
+  },
   chart: {
     ranges: {
       '1h': 'over the last hour',
