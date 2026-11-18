@@ -27,6 +27,7 @@ const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
   // ignored (v0.3b-3) defaults to false — none of the tests in this file
   // exercise item decisions either.
   ignored: false,
+  vanished: false,
   ...over,
 });
 

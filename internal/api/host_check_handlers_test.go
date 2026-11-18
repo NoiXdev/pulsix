@@ -46,6 +46,9 @@ type hostCheckValue struct {
 	// read what governs an item it already knows is ignored.
 	Ignored   bool             `json:"ignored"`
 	DecidedBy *itemDecisionDTO `json:"decided_by"`
+	// Vanished is backlog 3.88's: the item kept reporting, this metric did
+	// not — see host_check_vanished_test.go.
+	Vanished bool `json:"vanished"`
 }
 
 type hostCheck struct {

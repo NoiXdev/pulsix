@@ -47,6 +47,7 @@ func httpPlugin() Descriptor {
 		ItemParam:           "json_values",
 		HostItemAlwaysAsked: true,
 		ItemAsked:           httpItemAsked,
+		MetricAsked:         httpMetricAsked,
 		Check:               httpCheck,
 		Metrics: []MetricSpec{
 			{Name: "http.up", Kind: Numeric},
@@ -92,6 +93,17 @@ func httpPlugin() Descriptor {
 func httpItemAsked(params map[string]any, entries []string, item string) bool {
 	assertions, _ := stringList(params["assertions"])
 	return namedEntryAsked(entries, item) || namedEntryAsked(assertions, item)
+}
+
+// httpMetricAsked: http.body_match is reported only while body_contains
+// is a non-empty string — internal/probe/http's own reading of the
+// parameter (StrParam, then a test for ""); every other metric is asked.
+func httpMetricAsked(params map[string]any, metric string) bool {
+	if metric != "http.body_match" {
+		return true
+	}
+	contains, _ := params["body_contains"].(string)
+	return contains != ""
 }
 
 // httpCheck: no two json_values or assertions entries may report on the

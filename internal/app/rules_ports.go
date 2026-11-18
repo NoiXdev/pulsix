@@ -42,7 +42,8 @@ func newEvalStore(d *db.DB, hc rules.HostChecks, it rules.ItemStore) *rules.Eval
 func NewRulesHostChecks(svc *checks.Service) rules.HostChecks { return rulesHostChecks{checks: svc} }
 
 // ContextForHost implements rules.HostChecks: the resolved interval per
-// check key, whether that check still asks for an item, and the
+// check key, whether that check still asks for an item and for a metric
+// (checks.Resolved.AsksForMetric, the host page's own rule), and the
 // monitoring groups whose selector currently matches
 // the host.
 //
@@ -67,9 +68,11 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	all := set.All()
 	intervals := make(map[string]time.Duration, len(all))
 	asks := make(map[string]func(item string) bool, len(all))
+	asksMetric := make(map[string]func(metric string) bool, len(all))
 	for _, c := range all {
 		intervals[c.Key] = c.Interval
 		asks[c.Key] = asksFor(c)
+		asksMetric[c.Key] = c.AsksForMetric
 	}
 	groups, err := a.checks.GroupsForHost(ctx, orgID, hostID)
 	if err != nil {
@@ -79,7 +82,7 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	for i, g := range groups {
 		ranks[i] = rules.GroupRank{ID: g.ID, Priority: g.Priority, CreatedAt: g.CreatedAt}
 	}
-	return rules.CheckContext{Intervals: intervals, Asks: asks, Groups: ranks}, nil
+	return rules.CheckContext{Intervals: intervals, Asks: asks, AsksMetric: asksMetric, Groups: ranks}, nil
 }
 
 // asksFor is c's item predicate for the evaluation (backlog 3.55): the

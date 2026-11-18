@@ -97,3 +97,33 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		})
 	}
 }
+
+// TestAsksForMetric (backlog 3.88): http.body_match is asked only while
+// body_contains is set, for a definition and a resolved check alike; a
+// plugin without a metric rule asks for every metric.
+func TestAsksForMetric(t *testing.T) {
+	tests := []struct {
+		name   string
+		plugin string
+		params map[string]any
+		metric string
+		want   bool
+	}{
+		{"http body match with body_contains", PluginHTTP, map[string]any{"body_contains": "ok"}, "http.body_match", true},
+		{"http body match without body_contains", PluginHTTP, map[string]any{"url": "https://{address}/"}, "http.body_match", false},
+		{"http request metric without body_contains", PluginHTTP, nil, "http.dns_ms", true},
+		{"disk asks for every metric", PluginDisk, map[string]any{"mounts": []string{"/"}}, "disk.used_pct", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Definition{Plugin: tc.plugin, Params: tc.params}
+			if got := d.AsksForMetric(tc.metric); got != tc.want {
+				t.Fatalf("AsksForMetric(%q) = %v, want %v", tc.metric, got, tc.want)
+			}
+			r := Resolved{Plugin: tc.plugin, Params: tc.params}
+			if got := r.AsksForMetric(tc.metric); got != tc.want {
+				t.Fatalf("Resolved.AsksForMetric(%q) = %v, want %v", tc.metric, got, tc.want)
+			}
+		})
+	}
+}

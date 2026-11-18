@@ -160,3 +160,39 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 		}
 	}
 }
+
+// TestRulesHostChecksContextForHostAsksPerMetric (backlog 3.88): the
+// evaluation leaves out a metric the check's parameters no longer switch
+// on, with the very predicate the host page hides it by — an http check
+// asks for http.body_match only while body_contains is set; every other
+// metric, and every metric of a plugin without such a rule, is asked.
+func TestRulesHostChecksContextForHostAsksPerMetric(t *testing.T) {
+	r := &fakeCheckResolver{set: checks.ResolvedSet{
+		Checks: []checks.Resolved{{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute}},
+		Synthetic: []checks.Resolved{
+			{Key: "web", Plugin: checks.PluginHTTP, Params: map[string]any{"url": "https://{address}/"}, Interval: 30 * time.Second},
+			{Key: "shop", Plugin: checks.PluginHTTP, Params: map[string]any{"body_contains": "Add to cart"}, Interval: 30 * time.Second},
+		},
+	}}
+	got, err := rulesHostChecks{checks: r}.ContextForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		key, metric string
+		want        bool
+	}{
+		{"cpu", "cpu.used_pct", true},
+		{"web", "http.up", true},
+		{"web", "http.body_match", false},
+		{"shop", "http.body_match", true},
+	} {
+		asks, ok := got.AsksMetric[c.key]
+		if !ok {
+			t.Fatalf("no metric predicate for %q; AsksMetric = %v", c.key, got.AsksMetric)
+		}
+		if asks(c.metric) != c.want {
+			t.Errorf("AsksMetric[%q](%q) = %v, want %v", c.key, c.metric, !c.want, c.want)
+		}
+	}
+}

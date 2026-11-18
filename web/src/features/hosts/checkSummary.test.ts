@@ -12,6 +12,7 @@ const val = (over: Partial<HostCheckValue>): HostCheckValue => ({
   state_stale: false,
   flapping: false,
   ignored: false,
+  vanished: false,
   ...over,
 });
 

@@ -5275,6 +5275,8 @@ export interface components {
              * @description Set for a numeric metric
              */
             value?: number;
+            /** @description The check still reports on this value's item but no longer this metric: the item's newest reading is more than three of the check's intervals newer. Not judged any more; its state, if present, is a leftover */
+            vanished: boolean;
         };
         HostCheckVantageDTO: {
             /**

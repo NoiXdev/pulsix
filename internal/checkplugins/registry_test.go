@@ -248,7 +248,7 @@ func TestDescriptorsMarshalWithoutHooks(t *testing.T) {
 		t.Fatalf("cpu params = %#v, want []", cpu["params"])
 	}
 	for _, d := range got {
-		for _, hook := range []string{"ItemEntry", "ItemAsked", "Check", "item_entry", "item_asked", "check"} {
+		for _, hook := range []string{"ItemEntry", "ItemAsked", "MetricAsked", "Check", "item_entry", "item_asked", "metric_asked", "check"} {
 			if _, ok := d[hook]; ok {
 				t.Fatalf("%s marshals its %s hook", d["name"], hook)
 			}

@@ -132,6 +132,12 @@ type Descriptor struct {
 	// of the entries (after ItemEntry), or anything when the list is absent
 	// or empty; a descriptor sets at most one of the two.
 	ItemAsked func(params map[string]any, entries []string, item string) bool `json:"-"`
+	// MetricAsked reports whether a check with params still asks for metric
+	// (backlog 3.88), for a plugin whose parameters decide whether a metric
+	// is reported at all (http: http.body_match only with body_contains).
+	// It is consulted for every item, the whole-host item "" included. Nil
+	// means every metric is asked. See AsksForMetric.
+	MetricAsked func(params map[string]any, metric string) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes

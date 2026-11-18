@@ -40,3 +40,18 @@ func (d Definition) AsksForItem(item string) bool {
 func (r Resolved) AsksForItem(item string) bool {
 	return checkplugins.AsksForItem(r.Plugin, r.Params, item)
 }
+
+// AsksForMetric reports whether d still asks the host for metric (backlog
+// 3.88): http.body_match only while body_contains is set. It is the
+// metric-level companion of AsksForItem — whatever the item, a metric a
+// parameter switches on stops being a current value the moment that
+// parameter is removed — and the plugin's descriptor's business
+// (checkplugins.AsksForMetric).
+func (d Definition) AsksForMetric(metric string) bool {
+	return checkplugins.AsksForMetric(d.Plugin, d.Params, metric)
+}
+
+// AsksForMetric is Definition.AsksForMetric for a resolved check.
+func (r Resolved) AsksForMetric(metric string) bool {
+	return checkplugins.AsksForMetric(r.Plugin, r.Params, metric)
+}

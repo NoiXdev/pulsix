@@ -373,7 +373,11 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 // Items are filtered too (backlog 3.56): a mount taken off a disk check's
 // list is no longer judged since 3.55, so it is not listed here either. The
 // predicate is the evaluation's (internal/app asksFor): the whole-host item
-// "" is always asked, every other item by checks.Resolved.AsksForItem.
+// "" is always asked, every other item by checks.Resolved.AsksForItem. So
+// are metrics (backlog 3.88): one the check's parameters no longer switch
+// on (http.body_match without body_contains) is not judged, so not listed,
+// on any item, "" included — checks.Resolved.AsksForMetric, the
+// evaluation's own metric predicate.
 func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []rules.Tuple {
 	out := make([]rules.Tuple, 0, len(current))
 	for _, c := range current {
@@ -382,6 +386,9 @@ func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []r
 			continue
 		}
 		if c.Item != "" && !r.AsksForItem(c.Item) {
+			continue
+		}
+		if !r.AsksForMetric(c.Metric) {
 			continue
 		}
 		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})

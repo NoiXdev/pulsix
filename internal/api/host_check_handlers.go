@@ -133,6 +133,14 @@ type hostCheckValueDTO struct {
 	// ignored but not by what, and the button issued POSTs that could
 	// never win. Same read, same resolution, one answer.
 	DecidedBy *itemDecisionDTO `json:"decided_by,omitempty" doc:"The decision that produced ignored; absent when none matched"`
+	// Vanished is backlog 3.88's, additive like every field above: the
+	// check keeps reporting on this value's item, just not this metric
+	// any more (rules.Vanished, the very function rule loading takes the
+	// tuple out of the evaluation with). Stale says "nothing arrived";
+	// vanished says "the rest of the item arrived without it", which is
+	// why a vanished value no longer counts towards the host's state and
+	// its stored verdict, if any, is a leftover.
+	Vanished bool `json:"vanished" doc:"The check still reports on this value's item but no longer this metric: the item's newest reading is more than three of the check's intervals newer. Not judged any more; its state, if present, is a leftover"`
 }
 
 type hostCheckDTO struct {
@@ -320,7 +328,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			if local[d.Key] {
 				continue
 			}
-			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
+			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, d.AsksForMetric, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, known)
 			if d.Enabled {
 				hostCheckVantages(&dto, vantages)
@@ -330,7 +338,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		// The checks defined in the host's agent.yaml (backlog 3.5a), after
 		// the definitions and in key order (Local's own).
 		for _, r := range resolved.Local {
-			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, byKey[r.Key]), now, statesByTuple, ignored)
+			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, r.AsksForMetric, byKey[r.Key]), now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, known)
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
@@ -468,8 +476,10 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 
 // stillAsked drops the current values whose item d no longer asks the host
 // for — a mount taken off a disk check's list, a unit taken off a service
-// check's (backlog 3.28). Nothing deletes a check_current row, deliberately
-// (checks.Current's doc comment and migration 00044 both say why), so
+// check's (backlog 3.28) — and those whose metric it no longer asks for,
+// http.body_match once body_contains is removed (backlog 3.88). Nothing
+// deletes a check_current row, deliberately (checks.Current's doc comment
+// and migration 00044 both say why), so
 // without this the dropped item sits on the host page for ever and is
 // eventually badged stale — which reads as "the agent stopped reporting
 // this" when the truth is "you stopped asking for it".
@@ -479,10 +489,10 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // means every filesystem the host finds. Only the current view is
 // filtered; GET /hosts/{id}/metrics still serves the dropped item's
 // samples, because a graph of a mount dropped last week is a real graph.
-func stillAsked(asks func(item string) bool, values []checks.Current) []checks.Current {
+func stillAsked(asksItem func(item string) bool, asksMetric func(metric string) bool, values []checks.Current) []checks.Current {
 	kept := values[:0:0]
 	for _, v := range values {
-		if asks(v.Item) {
+		if asksItem(v.Item) && asksMetric(v.Metric) {
 			kept = append(kept, v)
 		}
 	}
@@ -534,9 +544,16 @@ func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Ti
 }
 
 // toHostCheckValues renders one check's current values: each with its
-// staleness against the check's own interval, the rule engine's verdict on
-// its tuple and what an item decision says about it.
+// staleness against the check's own interval, whether it vanished, the rule
+// engine's verdict on its tuple and what an item decision says about it.
+//
+// values are the ones the check still asks for (stillAsked), the same set
+// rule loading measures an item's newest reading over.
 func toHostCheckValues(key string, interval time.Duration, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
+	newest := rules.ItemNewest{}
+	for _, c := range values {
+		newest.Observe(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At)
+	}
 	out := make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
 		v := hostCheckValueDTO{Item: c.Item, Metric: c.Metric, Value: c.Value, Error: c.Err, At: c.At}
@@ -554,6 +571,7 @@ func toHostCheckValues(key string, interval time.Duration, values []checks.Curre
 		// five-minute disk check is not called stale a minute after its
 		// last reading while a ten-second CPU check is.
 		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*interval
+		v.Vanished = newest.Vanished(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, interval)
 		if st, ok := states[rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}]; ok {
 			state := string(st.State)
 			since, evaluatedAt := st.Since, st.EvaluatedAt

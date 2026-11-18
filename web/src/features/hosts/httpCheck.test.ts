@@ -18,6 +18,7 @@ const value = (metric: string, over: Partial<HostCheckValue> = {}): HostCheckVal
   flapping: false,
   state_stale: false,
   ignored: false,
+  vanished: false,
   ...over,
 });
 

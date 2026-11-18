@@ -71,17 +71,18 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 // adapts the two), so the store's tests supply the intervals and groups
 // directly.
 type fixedChecks struct {
-	intervals map[string]time.Duration
-	asks      map[string]func(item string) bool
-	groups    []rules.GroupRank
-	err       error
+	intervals  map[string]time.Duration
+	asks       map[string]func(item string) bool
+	asksMetric map[string]func(metric string) bool
+	groups     []rules.GroupRank
+	err        error
 }
 
 func (f fixedChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.CheckContext, error) {
 	if f.err != nil {
 		return rules.CheckContext{}, f.err
 	}
-	return rules.CheckContext{Intervals: f.intervals, Asks: f.asks, Groups: f.groups}, nil
+	return rules.CheckContext{Intervals: f.intervals, Asks: f.asks, AsksMetric: f.asksMetric, Groups: f.groups}, nil
 }
 
 // cpuMinute is the ordinary case: one check, "cpu", resolved at a

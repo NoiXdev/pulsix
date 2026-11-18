@@ -40,18 +40,26 @@ type CheckContext struct {
 	// is left out exactly like a check that no longer resolves. A key with
 	// no predicate asks for every item, and the whole-host item "" is
 	// always asked — Load never consults the predicate for it.
-	Asks   map[string]func(item string) bool
-	Groups []GroupRank
+	Asks map[string]func(item string) bool
+	// AsksMetric reports, per check key, whether the check still asks for a
+	// metric (backlog 3.88): http.body_match once body_contains is removed.
+	// It is consulted for every item, the whole-host item "" included. A
+	// key with no predicate asks for every metric.
+	AsksMetric map[string]func(metric string) bool
+	Groups     []GroupRank
 }
 
 // interval is the resolved interval tuple t is measured at, or zero —
 // which takes it out of the evaluation — when its check no longer
-// resolves or no longer asks for its item.
+// resolves or no longer asks for its item or its metric.
 func (c CheckContext) interval(t Tuple) time.Duration {
 	if t.Item != "" {
 		if asks, ok := c.Asks[t.CheckKey]; ok && !asks(t.Item) {
 			return 0
 		}
+	}
+	if asks, ok := c.AsksMetric[t.CheckKey]; ok && !asks(t.Metric) {
+		return 0
 	}
 	return c.Intervals[t.CheckKey]
 }
@@ -111,18 +119,35 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 	}
 	tuples := make([]TupleSnapshot, len(current))
 	reported := make([]Tuple, len(current))
+	newest := ItemNewest{}
 	for i, r := range current {
 		t := Tuple{CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric}
 		reported[i] = t
 		tuples[i] = TupleSnapshot{
 			Tuple: t, Value: r.Value, Label: r.Label, Err: textOf(r.Error), At: r.At,
 			// A check the manager no longer resolves for this host, or one
-			// that no longer asks for this item (backlog 3.55), leaves the
-			// interval at zero, which is what takes the tuple out of the
-			// evaluation entirely (Evaluate's own skip). The current row
-			// itself is never deleted — that is v0.3b-1's ruling, and this
-			// is the read side of it.
+			// that no longer asks for this item (backlog 3.55) or this
+			// metric (backlog 3.88), leaves the interval at zero, which is
+			// what takes the tuple out of the evaluation entirely
+			// (Evaluate's own skip). The current row itself is never
+			// deleted — that is v0.3b-1's ruling, and this is the read side
+			// of it.
 			Interval: checkCtx.interval(t),
+		}
+		// Only a reading still asked for is evidence the check still
+		// reports on its item — the same set the host page measures
+		// against (GET /hosts/{id}/checks, after stillAsked).
+		if tuples[i].Interval > 0 {
+			newest.Observe(t, r.At)
+		}
+	}
+	// A vanished tuple (backlog 3.88) — its item reported again since, but
+	// not this metric, for more than three intervals — takes the same path
+	// out: no state, no part in the roll-up, and Evaluate reports it as
+	// unmeasured, which closes its open alerts as stale.
+	for i := range tuples {
+		if newest.Vanished(tuples[i].Tuple, tuples[i].At, tuples[i].Interval) {
+			tuples[i].Interval = 0
 		}
 	}
 

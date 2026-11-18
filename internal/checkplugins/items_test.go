@@ -89,3 +89,29 @@ func TestAsksForItem(t *testing.T) {
 		})
 	}
 }
+
+// TestAsksForMetric (backlog 3.88): a plugin without a MetricAsked hook asks
+// for every metric it reports, and so does an unknown plugin; only a hook
+// narrows that.
+func TestAsksForMetric(t *testing.T) {
+	tests := []struct {
+		name   string
+		plugin string
+		params map[string]any
+		metric string
+		want   bool
+	}{
+		{"cpu without a hook asks for every metric", "cpu", nil, "cpu.used_pct", true},
+		{"disk without a hook asks for every metric", "disk", map[string]any{"mounts": []any{"/"}}, "disk.used_pct", true},
+		{"an unknown plugin asks for every metric", "no-such-plugin", nil, "x", true},
+		{"http asks for its request metrics", "http", map[string]any{"url": "https://{address}/"}, "http.dns_ms", true},
+		{"http without body_contains asks for no body match", "http", map[string]any{"url": "https://{address}/"}, "http.body_match", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := checkplugins.AsksForMetric(tc.plugin, tc.params, tc.metric); got != tc.want {
+				t.Fatalf("AsksForMetric(%s, %v, %q) = %v, want %v", tc.plugin, tc.params, tc.metric, got, tc.want)
+			}
+		})
+	}
+}

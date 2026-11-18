@@ -46,6 +46,21 @@ func AsksForItem(plugin string, params map[string]any, item string) bool {
 	return slices.Contains(asked, item)
 }
 
+// AsksForMetric reports whether a check of plugin with params still asks
+// for metric (backlog 3.88): a metric a parameter switches on (http's
+// http.body_match, reported only while body_contains is set) is no longer
+// asked once the parameter is removed, so its last current value reads as
+// "you stopped asking" at once rather than as a reading that went stale.
+// A plugin without a MetricAsked hook, and an unknown plugin, asks for
+// every metric it reports.
+func AsksForMetric(plugin string, params map[string]any, metric string) bool {
+	d, ok := Get(plugin)
+	if !ok || d.MetricAsked == nil {
+		return true
+	}
+	return d.MetricAsked(params, metric)
+}
+
 // smartItemPath is the device path of a smart item. A disk behind a RAID
 // controller is reported as "<path> [<type>]" (the agent's smart plugin,
 // devices.go) and no devices entry can name it — entries are bare paths,

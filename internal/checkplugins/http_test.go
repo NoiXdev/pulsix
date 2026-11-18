@@ -264,6 +264,36 @@ func TestHTTPAsksForItem(t *testing.T) {
 	}
 }
 
+// TestHTTPAsksForMetric (backlog 3.88): http.body_match is reported only
+// while body_contains is set (internal/probe/http reads it the same way:
+// a string, and not the empty one), so removing body_contains stops the
+// metric being asked at once instead of leaving a stale row behind. Every
+// other metric is always asked.
+func TestHTTPAsksForMetric(t *testing.T) {
+	cases := []struct {
+		name   string
+		params map[string]any
+		metric string
+		want   bool
+	}{
+		{"body match with body_contains", map[string]any{"body_contains": "ok"}, "http.body_match", true},
+		{"body match without body_contains", map[string]any{"url": "https://{address}/"}, "http.body_match", false},
+		{"body match with no params at all", nil, "http.body_match", false},
+		{"body match with an empty body_contains", map[string]any{"body_contains": ""}, "http.body_match", false},
+		{"body match with a body_contains that is not a string", map[string]any{"body_contains": 1.0}, "http.body_match", false},
+		{"a request metric without body_contains", map[string]any{"url": "https://{address}/"}, "http.up", true},
+		{"a timing metric without body_contains", nil, "http.dns_ms", true},
+		{"an assertion metric without body_contains", nil, "http.assertion", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := checkplugins.AsksForMetric("http", tc.params, tc.metric); got != tc.want {
+				t.Fatalf("AsksForMetric(http, %v, %q) = %v, want %v", tc.params, tc.metric, got, tc.want)
+			}
+		})
+	}
+}
+
 // assertionList is n distinct valid assertions.
 func assertionList(n int) []any {
 	out := make([]any, n)
