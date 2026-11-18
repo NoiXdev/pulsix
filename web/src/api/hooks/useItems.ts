@@ -150,7 +150,10 @@ export function useForgetItem(org: string, hostId: string) {
     mutationFn: ({ checkKey, item, metric }: ForgetItemInput) =>
       unwrap(
         api.DELETE('/api/v1/orgs/{org}/hosts/{id}/items', {
-          params: { path: { org, id: hostId }, query: { check_key: checkKey, item, ...(metric === undefined ? {} : { metric }) } },
+          params: {
+            path: { org, id: hostId },
+            query: { check_key: checkKey, item, ...(metric === undefined ? {} : { metric }) },
+          },
         }),
       ),
     onSettled: () =>

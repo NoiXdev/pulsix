@@ -111,6 +111,12 @@ export function isGraphable(check: HostCheck, v: HostCheckValue, kinds: MetricKi
  *  - this is the item's first value in render order — one button per item,
  *    not one per stale metric that would each forget the same item.
  *
+ * Vanished values (backlog 3.88) are left out of all of this: such a row
+ * carries the metric's own Forget instead (HostCheckValueRow), and it is
+ * stale anyway. So when the item's first value is vanished and the whole
+ * item later goes quiet, the item Forget sits on its first value that is
+ * not vanished rather than nowhere.
+ *
  * The spec also names rows "whose check no longer asks for" the item.
  * Those never reach this card: GET /hosts/{id}/checks drops them
  * (stillAsked, internal/api/host_check_handlers.go), so they are left to
@@ -118,7 +124,7 @@ export function isGraphable(check: HostCheck, v: HostCheckValue, kinds: MetricKi
  */
 export function offersForget(check: HostCheck, v: HostCheckValue, canWrite: boolean): boolean {
   if (!canWrite || v.item === '') return false;
-  const ofItem = (check.values ?? []).filter((x) => x.item === v.item);
+  const ofItem = (check.values ?? []).filter((x) => x.item === v.item && !x.vanished);
   return ofItem.length > 0 && ofItem[0].metric === v.metric && ofItem.every((x) => x.stale);
 }
 

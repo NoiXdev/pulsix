@@ -189,6 +189,29 @@ describe('offersForget', () => {
   ])('%s', (_name, v, canWrite, want) => {
     expect(offersForget(disk, v, canWrite)).toBe(want);
   });
+
+  // Backlog 3.88 (final review M4): a vanished row carries the metric's
+  // own Forget (HostCheckValueRow), so it is not the row that offers the
+  // item's. When the item's first value in render order is vanished and
+  // the whole item later goes quiet, the item Forget moves to its first
+  // value that is not vanished.
+  it('skips vanished rows when choosing the row that offers the item Forget', () => {
+    const gone = value({ item: '/x', metric: 'a_dns_ms', stale: true, vanished: true });
+    const b = value({ item: '/x', metric: 'b_up', stale: true });
+    const c = value({ item: '/x', metric: 'c_ms', stale: true });
+    const x = check({ key: 'disk', plugin: 'disk', values: [gone, b, c] });
+    expect(offersForget(x, gone, true)).toBe(false);
+    expect(offersForget(x, b, true)).toBe(true);
+    expect(offersForget(x, c, true)).toBe(false);
+  });
+
+  it('still needs every value that is not vanished to be stale', () => {
+    const gone = value({ item: '/y', metric: 'a_dns_ms', stale: true, vanished: true });
+    const b = value({ item: '/y', metric: 'b_up', stale: false });
+    const y = check({ key: 'disk', plugin: 'disk', values: [gone, b] });
+    expect(offersForget(y, gone, true)).toBe(false);
+    expect(offersForget(y, b, true)).toBe(false);
+  });
 });
 
 describe('clockSkewLabel', () => {
