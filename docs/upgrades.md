@@ -1091,21 +1091,56 @@ repositories as before. An older worker never asks.
   reset the check, so the badge is absent until the next comparison, normally
   within seconds.
 - **3.88, metrics a check stops reporting:** a metric whose last reading trails
-  its own item's newest reading by more than three of the check's intervals is
-  *vanished*: the evaluation no longer judges it (an alert open on it closes as
-  `stale`, with the usual notifications, on the first evaluation after the
-  upgrade), it no longer counts towards the host's state, and the host-check API
-  marks the value row `vanished: true`. An `http` check without `body_contains`
-  no longer asks for `http.body_match`. During an http outage longer than three
+  its own item's newest error-free reading (a value or a label) by more than
+  three of the check's intervals is *vanished*: the evaluation no longer judges
+  it (an alert open on it closes as `stale`, with the usual notifications, on the
+  first evaluation after the upgrade), it no longer counts towards the host's
+  state, and the host-check API marks the value row `vanished: true` (never on a
+  disabled check). This is not specific to `http`: it applies to every plugin
+  whose item keeps reporting some values while one metric stops — a metric a
+  changed configuration, a renamed or dropped metric or a changed host no longer
+  produces, or the timing metrics a down probe does not measure. An error proves
+  only that the collection ran, so a round that reports nothing but errors (a
+  SMART disk the agent can no longer open, a check whose secret cannot be
+  resolved) vanishes nothing: the item's other metrics turn stale and unknown as
+  before, and their alerts stay open. An `http` check without `body_contains` no
+  longer asks for `http.body_match`. During an http outage longer than three
   intervals the timing metrics a down probe does not report become vanished too
-  (the `http.up` and failure alerts carry the outage). The hourly expiry
-  (`PULSIX_ITEM_EXPIRY`, same period, same off switch) now also forgets a metric
-  whose reading trails its item's newest by more than that period — current
-  value, rule state and history, any open alert closed as `forgotten`; graphs and
-  the item itself stay. The first round after the upgrade, an hour after start,
-  can therefore forget many such metrics at once. The forget route
-  `DELETE /api/v1/orgs/{org}/hosts/{id}/items` takes an optional `metric` query
-  parameter that forgets just that metric (additive; an old SPA never sends it).
+  (the `http.up` and failure alerts carry the outage).
+  - **About one interval of unknown before a metric vanishes.** Staleness is
+    measured against the clock, vanishing against the item's newest reading, so
+    a metric that stopped first reads stale and unknown for up to about one
+    interval (plus the evaluation lag) and only then leaves the evaluation. The
+    host's state turns unknown for that time when its other values are ok. On a
+    server, or a client without an agent (only a client with an agent has a
+    grace before its unknown host alert opens), the `unknown` host alert opens
+    and closes again: two notifications. Where a warn or crit outranks unknown,
+    as during an http outage, nothing shows.
+  - **Frozen clients:** a client host that is frozen is not evaluated, so an
+    alert open on one of its vanished metrics closes only when the agent is back
+    (as `stale`), or as `forgotten` when the metric expiry forgets the metric.
+  - **Metric expiry:** the hourly expiry (`PULSIX_ITEM_EXPIRY`, same period,
+    same off switch) now also forgets a metric whose reading trails its item's
+    newest error-free reading by more than that period — current value, rule
+    state and history, any open alert closed as `forgotten`; graphs and the item
+    itself stay. The first round after the upgrade, an hour after start, can
+    therefore forget many such metrics at once. With `PULSIX_ITEM_EXPIRY` below
+    three times a check's interval (possible only for checks that run less
+    often than every 16 h, since the period is at least 48 h), a metric of that
+    check can be forgotten before it would vanish, while it is still judged: its
+    alert then closes as `forgotten` rather than `stale`. The default of 168 h is
+    unaffected.
+  - **Forget route:** `DELETE /api/v1/orgs/{org}/hosts/{id}/items` takes an
+    optional `metric` query parameter that forgets just that metric (additive;
+    an old SPA never sends it). Forgetting a metric that is its item's last
+    current value is refused with `409`: forget the item instead.
+  - **Stop every manager instance before the new version starts.** An older
+    manager that keeps evaluating alongside judges vanished metrics as unknown
+    again, so states and host alerts flap while both run. It also ignores the
+    `metric` query parameter it does not know, so a metric **Forget** from the
+    new host page that reaches an older instance forgets the **whole item**:
+    every metric's current value, state and history, its discovery row, and its
+    alerts closed as `forgotten`.
 
 ## Roll order
 
