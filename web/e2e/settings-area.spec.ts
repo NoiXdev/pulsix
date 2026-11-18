@@ -22,8 +22,10 @@ test('the account menu opens the settings area, whose sidebar leads back to the 
 
   const nav = page.getByRole('navigation', { name: 'Settings' });
   await expect(nav.getByRole('link', { name: `Back to ${ORG.name}` })).toBeVisible();
+  // The organization group has an "API tokens" entry too, so look in My account.
+  const account = nav.getByRole('group', { name: 'My account' });
   for (const entry of ['Security', 'Appearance', 'Profile', 'API tokens', 'My activity']) {
-    await expect(nav.getByRole('link', { name: entry, exact: true })).toBeVisible();
+    await expect(account.getByRole('link', { name: entry, exact: true })).toBeVisible();
   }
   // The organization's own navigation is not there.
   await expect(page.getByRole('link', { name: 'Hosts', exact: true })).toHaveCount(0);

@@ -14,8 +14,10 @@ test('lock with a PIN: survives reload and a second tab, counts wrong PINs, unlo
   await page.getByRole('button', { name: 'Lock session' }).click();
   const setPin = page.getByRole('dialog', { name: 'Set a lock PIN' });
   await setPin.getByLabel('PIN', { exact: true }).fill(LOCK_PIN);
+  // Two rows of four boxes; no submit button: the matching second row sets
+  // the PIN and locks.
+  await expect(setPin.getByRole('button', { name: 'Set PIN and lock' })).toHaveCount(0);
   await setPin.getByLabel('Repeat the PIN').fill(LOCK_PIN);
-  await setPin.getByRole('button', { name: 'Set PIN and lock' }).click();
   await expect(page.getByRole('heading', { name: 'Session locked' })).toBeVisible();
   // The page is replaced, not covered: its content is not in the DOM.
   await expect(page.getByRole('heading', { name: 'Hosts' })).toHaveCount(0);
@@ -31,15 +33,19 @@ test('lock with a PIN: survives reload and a second tab, counts wrong PINs, unlo
   await second.close();
 
   // A wrong PIN says how many attempts are left.
+  // The fourth digit posts it; there is no Unlock button.
+  await expect(page.getByRole('button', { name: 'Unlock' })).toHaveCount(0);
+  await expect(page.locator('[data-pin-box]')).toHaveCount(4);
   await page.getByLabel('PIN', { exact: true }).fill('0000');
-  await page.getByRole('button', { name: 'Unlock' }).click();
   await expect(page.getByRole('alert')).toContainText('Wrong PIN.');
   await expect(page.getByRole('alert')).toContainText('4 attempts left');
+  // The boxes are emptied for the next try.
+  await expect(page.getByLabel('PIN', { exact: true })).toHaveValue('');
+  await expect(page.locator('[data-pin-box][data-filled="true"]')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Session locked' })).toBeVisible();
 
   // The right one returns to the page.
   await page.getByLabel('PIN', { exact: true }).fill(LOCK_PIN);
-  await page.getByRole('button', { name: 'Unlock' }).click();
   await expect(page.getByRole('heading', { name: 'Hosts' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Session locked' })).toHaveCount(0);
 });
@@ -51,7 +57,6 @@ test('five wrong PINs end the session', async ({ page }) => {
 
   for (let i = 0; i < 5; i++) {
     await page.getByLabel('PIN', { exact: true }).fill('0000');
-    await page.getByRole('button', { name: 'Unlock' }).click();
     if (i < 4) await expect(page.getByRole('alert')).toContainText('Wrong PIN.');
   }
 
