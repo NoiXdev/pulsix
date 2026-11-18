@@ -43,7 +43,6 @@ export function SmtpSettingsPage() {
       badge={current.configured ? <Pill tone="ok">{smtp.configured}</Pill> : <Pill tone="warn">{smtp.notConfigured}</Pill>}
     >
       <SmtpServerCard
-        key={current.configured ? `${current.host}:${current.port}:${current.username}:${current.from}` : 'empty'}
         configured={current.configured}
         initial={{
           host: current.host ?? '',

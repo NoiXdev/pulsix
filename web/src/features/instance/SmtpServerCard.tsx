@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Input } from '../../ui/input.tsx';
@@ -15,6 +15,11 @@ import { useT } from '../../i18n/useT.ts';
  * back, so an empty password field means "leave it alone"; a typed value
  * replaces it and only the explicit switch clears it. `onSave` answers
  * whether the save went through.
+ *
+ * Like useCardForm: while the card is clean it follows `initial` (the
+ * server's values, refetched), a dirty draft is left alone, and Discard
+ * brings back the latest `initial`. A save keeps whatever was typed while
+ * its request was in flight (R6).
  */
 export function SmtpServerCard({
   initial,
@@ -38,6 +43,11 @@ export function SmtpServerCard({
   const dirty = form.formState.isDirty || removeStored;
   useUnsavedGuard(dirty);
 
+  const defaults = form.formState.defaultValues;
+  useEffect(() => {
+    if (!dirty && !same(defaults, initial)) form.reset(initial);
+  }, [dirty, defaults, initial, form]);
+
   const submit = form.handleSubmit(async (values) => {
     // An untouched password field means "leave the stored one alone": the
     // page cannot show the password back, so an empty box is the normal
@@ -45,7 +55,13 @@ export function SmtpServerCard({
     const { password, ...rest } = values;
     const ok = await onSave(removeStored ? { ...rest, password: '' } : password ? values : rest);
     if (!ok) return;
+    // The saved values become the baseline; a field changed while the save
+    // was in flight keeps its new value and stays dirty.
+    const now = form.getValues();
     form.reset({ ...values, password: '' });
+    for (const key of Object.keys(values) as (keyof SmtpFormValues)[]) {
+      if (!same(now[key], values[key])) form.setValue(key, now[key], { shouldDirty: true });
+    }
     setRemoveStored(false);
   });
 
@@ -123,4 +139,8 @@ function Field({ error, children }: { error?: string; children: ReactNode }) {
       {error && <span className="text-[12.5px] text-destructive">{error}</span>}
     </div>
   );
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

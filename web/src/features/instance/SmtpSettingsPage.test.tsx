@@ -27,6 +27,7 @@ function renderPage() {
       </ConfirmProvider>
     </QueryClientProvider>,
   );
+  return qc;
 }
 
 describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', () => {
@@ -138,6 +139,62 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
     await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
     await waitFor(() => expect(saves).toHaveLength(3));
     expect(saves[2]).toMatchObject({ password: '' });
+  });
+
+  it('follows changed server values while the card is clean, keeps a dirty draft, and Discard brings the latest back', async () => {
+    const user = userEvent.setup();
+    let host = 'smtp.acme.io';
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/settings/smtp': () => ({ configured: true, host, port: 587, username: 'mailer', from: 'pulsix@acme.io', start_tls: true }),
+    });
+    const qc = renderPage();
+    const field = await screen.findByLabelText('Host');
+    expect(field).toHaveValue('smtp.acme.io');
+
+    // Another administrator saved meanwhile; the clean card follows.
+    host = 'mail.acme.io';
+    await qc.invalidateQueries();
+    await waitFor(() => expect(screen.getByLabelText('Host')).toHaveValue('mail.acme.io'));
+    // The same element: the card was not remounted.
+    expect(screen.getByLabelText('Host')).toBe(field);
+
+    await user.type(field, 'x');
+    host = 'relay.acme.io';
+    await qc.invalidateQueries();
+    await waitFor(() => expect(qc.getQueryState(['admin', 'smtp'])?.fetchStatus ?? 'idle').toBe('idle'));
+    expect(screen.getByLabelText('Host')).toHaveValue('mail.acme.iox');
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByLabelText('Host')).toHaveValue('relay.acme.io');
+    expect(screen.getByRole('button', { name: /Save mail settings/ })).toBeDisabled();
+  });
+
+  it('keeps an edit typed while the save was in flight (R6)', async () => {
+    const user = userEvent.setup();
+    let host = 'smtp.acme.io';
+    let answer!: () => void;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/settings/smtp': () => ({ configured: true, host, port: 587, username: 'mailer', from: 'pulsix@acme.io', start_tls: true }),
+      'PUT /api/v1/admin/settings/smtp': async (req: MockRequest) => {
+        await new Promise<void>((resolve) => (answer = resolve));
+        host = (req.body as { host: string }).host;
+        return new Response(null, { status: 204 });
+      },
+    });
+    renderPage();
+    const field = await screen.findByLabelText('Host');
+    await user.clear(field);
+    await user.type(field, 'mail.acme.io');
+    await user.click(screen.getByRole('button', { name: /Save mail settings/ }));
+    await waitFor(() => expect(answer).toBeDefined());
+    await user.type(screen.getByLabelText('Username'), '2');
+    answer();
+    expect(await screen.findByText('Mail settings saved')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Host')).toHaveValue('mail.acme.io'));
+    expect(screen.getByLabelText('Username')).toHaveValue('mailer2');
+    expect(screen.getByRole('button', { name: /Save mail settings/ })).toBeEnabled();
   });
 
   it('sends a test e-mail and shows the mail server\'s answer when it fails', async () => {
