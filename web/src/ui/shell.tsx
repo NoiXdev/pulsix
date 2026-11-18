@@ -28,10 +28,12 @@ export interface ShellUser {
 export type ShellSettingsNav =
   | {
       kind: 'account';
-      /** The organization "Back to …" returns to. */
-      backOrg: Pick<ShellOrg, 'slug' | 'name'>;
+      /** The organization "Back to …" returns to; absent for a person
+       * without one (no back link then). */
+      backOrg?: Pick<ShellOrg, 'slug' | 'name'>;
       personName: string;
-      personRole: string;
+      /** Absent for a person without an organization. */
+      personRole?: string;
     }
   | {
       kind: 'settings';
@@ -43,7 +45,10 @@ export type ShellSettingsNav =
     };
 
 export interface AppShellProps {
-  org: ShellOrg;
+  /** Absent only in the personal account area of a person without an
+   * organization: the switcher, the organization navigation and the host
+   * search are then not drawn. */
+  org?: ShellOrg;
   /** Every organization the signed-in user belongs to, for the org
    * switcher — finding "Important 6": this used to be a button that did
    * nothing. */
@@ -136,6 +141,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
   }, []);
 
   function runSearch() {
+    if (!org) return;
     void navigate({ to: '/o/$org/hosts', params: { org: org.slug }, search: { q: search || undefined } });
   }
 
@@ -154,7 +160,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
           )}
         </div>
 
-        {!settingsNav && (
+        {!settingsNav && org && (
           <>
             {/* The switcher is handed the organizations the signed-in user
                 belongs to. A create row ends it only when the caller passes
@@ -189,9 +195,9 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
           <AccountNav nav={settingsNav} />
         ) : settingsNav ? (
           <SettingsNav nav={settingsNav} />
-        ) : (
+        ) : org ? (
           <OrgNav org={org} pendingRunRequests={pendingRunRequests} />
-        )}
+        ) : null}
 
         <div className="mt-auto flex items-center gap-2.5 border-t border-border px-4 py-3.5">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
@@ -242,7 +248,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border px-6">
           <div className="flex items-center gap-2 text-[13px] text-muted-foreground">{crumbs}</div>
-          <form
+          {org ? <form
             className="ml-auto flex h-[34px] w-[300px] items-center gap-2.5 rounded-md border border-border bg-card px-3 text-muted-foreground"
             onSubmit={(e) => {
               e.preventDefault();
@@ -259,7 +265,7 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, onLockSession, c
               className="flex-1 truncate bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
             />
             <span className="rounded border border-border px-1.5 py-px font-mono text-[11px]">⌘K</span>
-          </form>
+          </form> : <span className="ml-auto" />}
           {/* Backlog 1.12: the global zone control that used to sit here was
               a label and a chevron that opened nothing. Only two endpoints
               take a zone filter, the fleet page already has its own, and the

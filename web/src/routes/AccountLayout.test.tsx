@@ -148,20 +148,24 @@ describe('AccountLayout', () => {
     expect(orgsRequested).toBe(false);
   });
 
-  it('shows a friendly page instead of hanging when the account belongs to no organization', async () => {
+  it('opens the account pages for a person without any organization, with no back link', async () => {
     mockApi({
-      'GET /api/v1/auth/me': {
-        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
-        mfa_complete: true,
-        totp_confirmed: false,
-        instance_admin: true,
-      },
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false },
       'GET /api/v1/orgs': { orgs: [] },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
     });
 
-    renderAt();
+    const { router } = renderAt();
 
-    expect(await screen.findByText(/does not belong to any organization/)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Security' })).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'My account' });
+    expect(within(nav).queryByRole('link', { name: /Back to/ })).not.toBeInTheDocument();
+    expect(within(nav).getByText('Tim R.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Organization')).not.toBeInTheDocument();
+
+    await userEvent.setup().click(within(nav).getByRole('link', { name: 'Appearance' }));
+    expect(await screen.findByText('APPEARANCE PAGE')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/account/appearance');
   });
 
   it('logs out to /login and clears the whole query cache (I3)', async () => {

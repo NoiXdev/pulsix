@@ -79,6 +79,21 @@ async function openCreate(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('PersonalTokensPage', () => {
+  it('opens the create dialog for a person without any organization and says so instead of offering grants', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs': { orgs: [] },
+      'GET /api/v1/auth/me/tokens': { tokens: [] },
+    });
+    renderListPage({ path: '/tokens', component: PersonalTokensPage, initial: '/o/acme/tokens' });
+
+    const dialog = await openCreate(user);
+
+    expect(await within(dialog).findByText('You belong to no organization yet.')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
   it('creates a token for two organizations with their caps and shows the secret once', async () => {
     const user = userEvent.setup();
     const posts: unknown[] = [];

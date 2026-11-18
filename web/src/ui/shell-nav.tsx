@@ -188,7 +188,7 @@ type SettingsOrgPath =
 type AccountNavProps = Extract<ShellSettingsNav, { kind: 'account' }>;
 type SettingsNavProps = Extract<ShellSettingsNav, { kind: 'settings' }>;
 
-function BackLink({ backOrg }: { backOrg: AccountNavProps['backOrg'] }) {
+function BackLink({ backOrg }: { backOrg: NonNullable<AccountNavProps['backOrg']> }) {
   const t = useT();
   return (
     <Link
@@ -211,10 +211,10 @@ export function AccountNav({ nav }: { nav: AccountNavProps }) {
   const t = useT();
   return (
     <nav aria-label={t.account.nav.label} className="flex min-h-0 flex-col overflow-y-auto px-3 py-3">
-      <BackLink backOrg={nav.backOrg} />
-      <div className="mx-3 mt-3 mb-3 flex min-w-0 flex-col border-b border-border pb-3">
+      {nav.backOrg && <BackLink backOrg={nav.backOrg} />}
+      <div className={`${nav.backOrg ? 'mt-3 ' : ''}mx-3 mb-3 flex min-w-0 flex-col border-b border-border pb-3`}>
         <span className="truncate font-semibold">{nav.personName}</span>
-        <span className="truncate text-[11px] text-muted-foreground">{nav.personRole}</span>
+        {nav.personRole && <span className="truncate text-[11px] text-muted-foreground">{nav.personRole}</span>}
       </div>
       <div className="flex flex-col gap-0.5">
         <Link to="/account/security" {...NAV_LINK_PROPS}>

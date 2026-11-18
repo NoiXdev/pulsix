@@ -2,7 +2,7 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
 import { ExpiryNotice } from '../features/session/ExpiryNotice.tsx';
 import { AppShell } from '../ui/shell.tsx';
-import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
@@ -22,7 +22,8 @@ import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
  * (Security, Appearance, Profile, API tokens, My activity), which render in the
  * <Outlet/>. No route param names an organization here: Back goes to the
  * one the person came from (lib/lastOrg) while they are still a member,
- * else to their first. The pages that must come first for a session that
+ * else to their first; a person without any gets no Back link and the pages
+ * still open. The pages that must come first for a session that
  * is not complete (/account/enrol, /password, /lock-pin) are not part of
  * this layout and render without the shell.
  */
@@ -49,9 +50,6 @@ export function AccountLayout() {
   if (!me.data || !orgs.data) return <QueryLoading />;
   const remembered = lastOrg();
   const backOrg = list.find((o) => o.slug === remembered) ?? list[0];
-  if (!backOrg) {
-    return <QueryError error={new Error(t.routes.noOrganization)} />;
-  }
 
   // Same derivation as AccountSecurityPage's own header pill (Important
   // 4): mfa_complete alone cannot tell "no factor at all" apart from "a
@@ -76,14 +74,14 @@ export function AccountLayout() {
           <VersionWatcher />
         </>
       }
-      org={{ slug: backOrg.slug, name: backOrg.name, role: backOrg.role }}
+      org={backOrg && { slug: backOrg.slug, name: backOrg.name, role: backOrg.role }}
       orgs={[]}
       onSelectOrg={() => {}}
       settingsNav={{
         kind: 'account',
-        backOrg: { slug: backOrg.slug, name: backOrg.name },
+        backOrg: backOrg && { slug: backOrg.slug, name: backOrg.name },
         personName: me.data.user.display_name,
-        personRole: t.account.nav.roleIn(roleLabel(t, backOrg.role), backOrg.name),
+        personRole: backOrg && t.account.nav.roleIn(roleLabel(t, backOrg.role), backOrg.name),
       }}
       onLockSession={lockAction.lock}
       crumbs={
