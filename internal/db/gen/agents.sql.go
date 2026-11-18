@@ -444,7 +444,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 }
 
 const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, version FROM host_agents
 WHERE org_id = $1 AND agent_name = $2
 FOR UPDATE
 `
@@ -454,39 +454,35 @@ type LockHostAgentsByNameParams struct {
 	AgentName string    `json:"agent_name"`
 }
 
+type LockHostAgentsByNameRow struct {
+	HostID     uuid.UUID `json:"host_id"`
+	OrgID      uuid.UUID `json:"org_id"`
+	AgentName  string    `json:"agent_name"`
+	CertSerial string    `json:"cert_serial"`
+	Version    string    `json:"version"`
+}
+
 // Certificate adoption after a restore (backlog 7.47): an agent
 // certificate names only its organization and agent name, and agent names
 // are not unique, so every matching row is locked and the caller refuses
 // unless exactly one matched. The lock holds until the adopted certificate
 // is registered, so a revocation or a renewal cannot slip in between the
 // checks and the swap.
-func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsByNameParams) ([]HostAgent, error) {
+func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsByNameParams) ([]LockHostAgentsByNameRow, error) {
 	rows, err := q.db.Query(ctx, lockHostAgentsByName, arg.OrgID, arg.AgentName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []HostAgent
+	var items []LockHostAgentsByNameRow
 	for rows.Next() {
-		var i HostAgent
+		var i LockHostAgentsByNameRow
 		if err := rows.Scan(
 			&i.HostID,
 			&i.OrgID,
 			&i.AgentName,
 			&i.CertSerial,
-			&i.LastSeen,
 			&i.Version,
-			&i.CreatedAt,
-			&i.SecretNames,
-			&i.SecretsState,
-			&i.ConnectedSince,
-			&i.ConfigVersion,
-			&i.ConfigExpected,
-			&i.ConfigCheckedAt,
-			&i.OnlineSince,
-			&i.LocalChecks,
-			&i.LocalCheckProblems,
-			&i.ProbesSupported,
 		); err != nil {
 			return nil, err
 		}
@@ -523,14 +519,18 @@ func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgen
 }
 
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.org_id, h.host_id, h.agent_name, h.version, h.last_seen, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = $1
 `
 
 type LookupAgentSerialRow struct {
-	HostAgent           HostAgent          `json:"host_agent"`
+	OrgID               uuid.UUID          `json:"org_id"`
+	HostID              uuid.UUID          `json:"host_id"`
+	AgentName           string             `json:"agent_name"`
+	Version             string             `json:"version"`
+	LastSeen            pgtype.Timestamptz `json:"last_seen"`
 	CertSerialPresented string             `json:"cert_serial_presented"`
 	CertRevokedAt       pgtype.Timestamptz `json:"cert_revoked_at"`
 }
@@ -541,23 +541,11 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 	row := q.db.QueryRow(ctx, lookupAgentSerial, serial)
 	var i LookupAgentSerialRow
 	err := row.Scan(
-		&i.HostAgent.HostID,
-		&i.HostAgent.OrgID,
-		&i.HostAgent.AgentName,
-		&i.HostAgent.CertSerial,
-		&i.HostAgent.LastSeen,
-		&i.HostAgent.Version,
-		&i.HostAgent.CreatedAt,
-		&i.HostAgent.SecretNames,
-		&i.HostAgent.SecretsState,
-		&i.HostAgent.ConnectedSince,
-		&i.HostAgent.ConfigVersion,
-		&i.HostAgent.ConfigExpected,
-		&i.HostAgent.ConfigCheckedAt,
-		&i.HostAgent.OnlineSince,
-		&i.HostAgent.LocalChecks,
-		&i.HostAgent.LocalCheckProblems,
-		&i.HostAgent.ProbesSupported,
+		&i.OrgID,
+		&i.HostID,
+		&i.AgentName,
+		&i.Version,
+		&i.LastSeen,
 		&i.CertSerialPresented,
 		&i.CertRevokedAt,
 	)
@@ -632,7 +620,10 @@ func (q *Queries) RecordAgentConfigCheck(ctx context.Context, arg RecordAgentCon
 const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
   secret_names = $2::text[], secrets_state = $3,
-  local_checks = $4::jsonb, local_check_problems = $5::text[],
+  local_checks = CASE WHEN local_checks IS DISTINCT FROM $4::jsonb
+    THEN $4::jsonb ELSE local_checks END,
+  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM $5::text[]
+    THEN $5::text[] ELSE local_check_problems END,
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL

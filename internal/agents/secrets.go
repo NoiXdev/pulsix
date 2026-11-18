@@ -88,3 +88,26 @@ func boundLine(s string, maxBytes int) string {
 	}
 	return s[:cut]
 }
+
+// MaxVersionRunes bounds the build version an agent reports (backlog 3.66).
+// Real versions are a short tag or a commit hash.
+const MaxVersionRunes = 64
+
+// boundVersion is the rule for the reported build version: valid UTF-8,
+// control characters (NUL included) dropped, at most MaxVersionRunes runes.
+func boundVersion(s string) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			continue
+		}
+		if n == MaxVersionRunes {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}

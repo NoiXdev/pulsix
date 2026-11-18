@@ -568,7 +568,7 @@ func (s *Service) GetBySerial(ctx context.Context, serial string) (AgentIdentity
 // Touch records a heartbeat: last_seen becomes now, version the agent's
 // self-reported build.
 func (s *Service) Touch(ctx context.Context, serial, version string) error {
-	return s.store.Touch(ctx, serial, version)
+	return s.store.Touch(ctx, serial, boundVersion(version))
 }
 
 // HeartbeatReport is what one heartbeat message says about the agent: its
@@ -593,7 +593,7 @@ type HeartbeatReport struct {
 func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatReport) error {
 	local, dropped := localChecksReportOf(r.SecretsState, r.LocalChecks, r.LocalCheckProblems)
 	logDroppedLocalChecks(ctx, s.log, serial, dropped)
-	return s.store.Heartbeat(ctx, serial, r.Version, secretsReportOf(r.SecretNames, r.SecretsState), local)
+	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local)
 }
 
 // List returns orgID's agents ordered by agent name.

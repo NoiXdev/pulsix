@@ -138,7 +138,10 @@ WHERE cert_serial = sqlc.arg(serial);
 -- rules, word for word.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
-  local_checks = sqlc.narg(local_checks)::jsonb, local_check_problems = sqlc.narg(local_check_problems)::text[],
+  local_checks = CASE WHEN local_checks IS DISTINCT FROM sqlc.narg(local_checks)::jsonb
+    THEN sqlc.narg(local_checks)::jsonb ELSE local_checks END,
+  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM sqlc.narg(local_check_problems)::text[]
+    THEN sqlc.narg(local_check_problems)::text[] ELSE local_check_problems END,
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
@@ -203,7 +206,7 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND revoked_at I
 -- name: LookupAgentSerial :one
 -- The gRPC authentication path, org-unscoped: a presented serial resolves
 -- to its certificate and host; the caller decides revoked vs usable.
-SELECT sqlc.embed(h), c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.org_id, h.host_id, h.agent_name, h.version, h.last_seen, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = sqlc.arg(serial);
@@ -215,7 +218,7 @@ WHERE c.serial = sqlc.arg(serial);
 -- unless exactly one matched. The lock holds until the adopted certificate
 -- is registered, so a revocation or a renewal cannot slip in between the
 -- checks and the swap.
-SELECT * FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, version FROM host_agents
 WHERE org_id = sqlc.arg(org_id) AND agent_name = sqlc.arg(agent_name)
 FOR UPDATE;
 

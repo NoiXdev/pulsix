@@ -219,10 +219,9 @@ func (s *SQLStore) GetBySerial(ctx context.Context, serial string) (AgentIdentit
 
 // toIdentity maps a serial lookup's row onto the interceptor's identity.
 func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
-	h := row.HostAgent
 	return AgentIdentity{
-		OrgID: h.OrgID, HostID: h.HostID, Name: h.AgentName, Version: h.Version,
-		Revoked: row.CertRevokedAt.Valid, LastSeen: db.TimePtr(h.LastSeen),
+		OrgID: row.OrgID, HostID: row.HostID, Name: row.AgentName, Version: row.Version,
+		Revoked: row.CertRevokedAt.Valid, LastSeen: db.TimePtr(row.LastSeen),
 	}
 }
 
