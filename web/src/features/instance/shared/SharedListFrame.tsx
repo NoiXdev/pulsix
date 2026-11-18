@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Plus } from 'lucide-react';
 import { buttonClass } from '../../../ui/buttonStyles.ts';
+import { PageHeader } from '../../../ui/settings.tsx';
 
 /**
  * SharedListFrame is what the three shared-resource lists have in common:
@@ -25,13 +26,15 @@ export function SharedListFrame({
 }) {
   return (
     <>
-      <h1 className="text-xl font-semibold">{title}</h1>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[13px] text-muted-foreground">{hint}</span>
-        <Link to={addTo} params={{ org }} className={buttonClass('primary')}>
-          <Plus size={15} /> {addLabel}
-        </Link>
-      </div>
+      <PageHeader
+        title={title}
+        description={hint}
+        actions={
+          <Link to={addTo} params={{ org }} className={buttonClass('primary')}>
+            <Plus size={15} /> {addLabel}
+          </Link>
+        }
+      />
       {children}
     </>
   );

@@ -12,6 +12,7 @@ import { useListView } from '../lists/useListView.ts';
 import { isExpired } from '../tokens/expiry.ts';
 import { PersonalTokenDialog } from './PersonalTokenDialog.tsx';
 import { personalTokenColumns } from './personalTokenColumns.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /** The dialog open on the page: a new token, or the token being edited. */
 type Editing = { kind: 'create' } | { kind: 'edit'; token: PersonalToken };
@@ -56,15 +57,15 @@ export function PersonalTokensPage() {
 
   return (
     <>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-semibold">{p.title}</h1>
-          <span className="text-[13px] text-muted-foreground">{p.subtitle}</span>
-        </div>
-        <Button variant="primary" onClick={() => setEditing({ kind: 'create' })}>
-          <KeyRound size={15} /> {p.create}
-        </Button>
-      </div>
+      <PageHeader
+        title={p.title}
+        description={p.subtitle}
+        actions={
+          <Button variant="primary" onClick={() => setEditing({ kind: 'create' })}>
+            <KeyRound size={15} /> {p.create}
+          </Button>
+        }
+      />
       <DataList
         label={p.label}
         columns={columns}

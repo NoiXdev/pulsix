@@ -12,6 +12,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { secretColumns } from './secretColumns.tsx';
 import { useSecretListActions } from './useSecretListActions.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /**
  * SecretsPage is Settings → Secrets (backlog 3.13d): the organization's
@@ -41,15 +42,17 @@ export function SecretsPage() {
 
   return (
     <>
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{s.title}</h1>
-        {canWrite && (
-          <Button variant="primary" onClick={actions.openNew}>
-            <KeyRound size={15} /> {s.add}
-          </Button>
-        )}
-      </div>
-      <span className="text-[13px] text-muted-foreground">{s.subtitle}</span>
+      <PageHeader
+        title={s.title}
+        description={s.subtitle}
+        actions={
+          canWrite ? (
+            <Button variant="primary" onClick={actions.openNew}>
+              <KeyRound size={15} /> {s.add}
+            </Button>
+          ) : undefined
+        }
+      />
       {orgInfo.data && !canWrite && <p className="text-xs text-muted-foreground">{s.readOnly}</p>}
       <DataList
         label={s.label}

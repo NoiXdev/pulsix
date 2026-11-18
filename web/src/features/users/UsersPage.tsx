@@ -8,6 +8,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { userColumns } from './userColumns.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /** How long typing must pause before the search goes out. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -41,7 +42,7 @@ export function UsersPage() {
 
   return (
     <>
-      <h1 className="text-xl font-semibold">{t.settings.tabs.users}</h1>
+      <PageHeader title={t.settings.tabs.users} />
       <DataList
         label={t.users.label}
         columns={columns}

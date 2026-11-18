@@ -17,6 +17,7 @@ import { alertRouteColumns } from './alertRouteColumns.tsx';
 import { useAlertRouteListActions } from './useAlertRouteListActions.tsx';
 import { useListView } from '../lists/useListView.ts';
 import { useT } from '../../i18n/useT.ts';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /** AlertRoutesPage is Settings → Alert routes (v0.4b design, "GUI"): which
  * of the organization's notification channels hear about which alerts —
@@ -116,13 +117,10 @@ export function AlertRoutesPage() {
   if (guard) return guard;
   if (routesGuard) return routesGuard;
   if (!orgInfo.data) return <QueryLoading />;
-  const header = (
-    <h1 className="text-xl font-semibold">{m.title}</h1>
-  );
   if (!canRead) {
     return (
       <>
-        {header}
+        <PageHeader title={m.title} />
         <p className="text-sm text-muted-foreground">{a.noAccess}</p>
       </>
     );
@@ -133,15 +131,17 @@ export function AlertRoutesPage() {
 
   return (
     <>
-      {header}
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">{a.subtitle}</span>
-        {canWrite && (
-          <Button variant="primary" onClick={actions.openNew}>
-            <RouteIcon size={15} /> {a.newRoute}
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={m.title}
+        description={a.subtitle}
+        actions={
+          canWrite ? (
+            <Button variant="primary" onClick={actions.openNew}>
+              <RouteIcon size={15} /> {a.newRoute}
+            </Button>
+          ) : undefined
+        }
+      />
       <DataList
         label={a.label}
         columns={columns}

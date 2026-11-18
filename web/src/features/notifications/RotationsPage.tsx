@@ -32,6 +32,7 @@ import { RosterStrip } from './RosterStrip.tsx';
 import { ChannelDialog } from './ChannelDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { PageHeader } from '../../ui/settings.tsx';
 
 // The roster strip only needs a near-term window to answer "who is on
 // call now, and next" — two weeks is comfortably past any period this
@@ -97,13 +98,10 @@ export function RotationsPage() {
   if (guard) return guard;
   if (rotationsGuard) return rotationsGuard;
   if (!orgInfo.data) return <QueryLoading />;
-  const header = (
-    <h1 className="text-xl font-semibold">{m.title}</h1>
-  );
   if (!canRead) {
     return (
       <>
-        {header}
+        <PageHeader title={m.title} />
         <p className="text-sm text-muted-foreground">{r8.noAccess}</p>
       </>
     );
@@ -113,15 +111,17 @@ export function RotationsPage() {
   const { rows, total } = view.view(view.ready ? list : undefined);
   return (
     <>
-      {header}
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">{r8.subtitle}</span>
-        {canWrite && (
-          <Button variant="primary" onClick={actions.openNew}>
-            <CalendarClock size={15} /> {r8.newRotation}
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={m.title}
+        description={r8.subtitle}
+        actions={
+          canWrite ? (
+            <Button variant="primary" onClick={actions.openNew}>
+              <CalendarClock size={15} /> {r8.newRotation}
+            </Button>
+          ) : undefined
+        }
+      />
       <DataList
         label={r8.label}
         columns={columns}

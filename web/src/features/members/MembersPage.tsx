@@ -23,6 +23,7 @@ import { roleOptions } from './roles.ts';
 import { useListView } from '../lists/useListView.ts';
 import { memberColumns } from './memberColumns.tsx';
 import { useMemberListActions } from './useMemberListActions.ts';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /** An invitation cannot grant ownership. */
 const INVITE_ROLES = ['viewer', 'operator', 'admin'] as const;
@@ -70,12 +71,14 @@ export function MembersPage() {
 
   return (
     <>
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t.settings.tabs.members}</h1>
-        <Button variant="primary" onClick={() => setInviteOpen(true)}>
-          <UserPlus size={15} /> {t.members.invite}
-        </Button>
-      </div>
+      <PageHeader
+        title={t.settings.tabs.members}
+        actions={
+          <Button variant="primary" onClick={() => setInviteOpen(true)}>
+            <UserPlus size={15} /> {t.members.invite}
+          </Button>
+        }
+      />
       <DataList
         label={t.members.label}
         columns={columns}

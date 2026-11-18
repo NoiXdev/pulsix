@@ -10,6 +10,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { activityColumns } from './activityColumns.tsx';
 import { ObjectTypeChips } from './ObjectTypeChips.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's
@@ -49,8 +50,7 @@ export function ActivityPage() {
 
   return (
     <>
-      <h1 className="text-xl font-semibold">{t.activity.title}</h1>
-      <span className="text-[13px] text-muted-foreground">{t.activity.subtitle}</span>
+      <PageHeader title={t.activity.title} description={t.activity.subtitle} />
 
       <DataList
         label={t.activity.list.label}

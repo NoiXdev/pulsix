@@ -24,6 +24,7 @@ import { AreaGrid } from './AreaGrid.tsx';
 import { tokenColumns, tokenRowKey, type TokenRow } from './tokenColumns.tsx';
 import { useTokenListActions } from './useTokenListActions.tsx';
 import { allowedAreas, type Area } from './areas.ts';
+import { PageHeader } from '../../ui/settings.tsx';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 const KINDS = ['api', 'assistant'] as const;
@@ -83,19 +84,23 @@ export function TokensPage() {
 
   return (
     <>
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t.tokens.title}</h1>
-        <Button variant="primary" onClick={() => setCreateOpen(true)}>
-          <KeyRound size={15} /> {t.tokens.create}
-        </Button>
-      </div>
-      <p className="text-[13px] text-muted-foreground">
-        {t.tokens.explorerHint}{' '}
-        <a href="/api/explorer" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2">
-          {t.tokens.explorerLink}
-          <span className="sr-only"> {t.shell.opensInNewTab}</span>
-        </a>
-      </p>
+      <PageHeader
+        title={t.tokens.title}
+        description={
+          <>
+            {t.tokens.explorerHint}{' '}
+            <a href="/api/explorer" target="_blank" rel="noopener noreferrer" className="text-foreground underline underline-offset-2">
+              {t.tokens.explorerLink}
+              <span className="sr-only"> {t.shell.opensInNewTab}</span>
+            </a>
+          </>
+        }
+        actions={
+          <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            <KeyRound size={15} /> {t.tokens.create}
+          </Button>
+        }
+      />
 
       {personal.isError && (
         <p role="alert" className="text-xs text-destructive">

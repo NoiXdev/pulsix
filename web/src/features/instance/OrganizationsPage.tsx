@@ -9,6 +9,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useListView } from '../lists/useListView.ts';
 import { organizationColumns } from './organizationColumns.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /**
  * OrganizationsPage lists every organization on the instance for its
@@ -38,13 +39,15 @@ export function OrganizationsPage() {
 
   return (
     <>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{t.settings.tabs.organizations}</h1>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus size={14} /> {o.create.open}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">{o.hint}</p>
+      <PageHeader
+        title={t.settings.tabs.organizations}
+        description={o.hint}
+        actions={
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            <Plus size={14} /> {o.create.open}
+          </Button>
+        }
+      />
       <DataList
         label={o.label}
         columns={columns}

@@ -13,6 +13,7 @@ import { channelColumns } from './channelColumns.tsx';
 import { useChannelListActions } from './useChannelListActions.tsx';
 import { useListView } from '../lists/useListView.ts';
 import { DigestCard } from './DigestCard.tsx';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /** ChannelsPage is Settings → Notifications (spec 2026-09-18 §5): the
  * organization's e-mail and webhook channels with Send test and each
@@ -41,13 +42,10 @@ export function ChannelsPage() {
   if (guard) return guard;
   if (channelsGuard) return channelsGuard;
   if (!orgInfo.data) return <QueryLoading />;
-  const header = (
-    <h1 className="text-xl font-semibold">{m.title}</h1>
-  );
   if (!canRead) {
     return (
       <>
-        {header}
+        <PageHeader title={m.title} />
         <p className="text-sm text-muted-foreground">{c8.noAccess}</p>
       </>
     );
@@ -59,15 +57,17 @@ export function ChannelsPage() {
 
   return (
     <>
-      {header}
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">{c8.subtitle}</span>
-        {canWrite && (
-          <Button variant="primary" onClick={actions.openNew}>
-            <Bell size={15} /> {c8.add}
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={m.title}
+        description={c8.subtitle}
+        actions={
+          canWrite ? (
+            <Button variant="primary" onClick={actions.openNew}>
+              <Bell size={15} /> {c8.add}
+            </Button>
+          ) : undefined
+        }
+      />
       {!mailAvailable && (
         <DisabledHint title={c8.mailOffTitle} body={c8.mailNote} />
       )}

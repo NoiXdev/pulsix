@@ -9,6 +9,7 @@ import { useT } from '../../i18n/useT.ts';
 import { ObjectTypeChips } from '../activity/ObjectTypeChips.tsx';
 import { known } from '../activity/objectTypes.ts';
 import { useListView } from '../lists/useListView.ts';
+import { PageHeader } from '../../ui/settings.tsx';
 
 /**
  * MyActivityPage is Settings > My activity: what the signed-in person did,
@@ -63,10 +64,7 @@ export function MyActivityPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">{t.activity.my.title}</h1>
-        <span className="text-[13px] text-muted-foreground">{t.activity.my.subtitle}</span>
-      </div>
+      <PageHeader title={t.activity.my.title} description={t.activity.my.subtitle} />
       <DataList
         label={t.activity.my.label}
         columns={columns}
