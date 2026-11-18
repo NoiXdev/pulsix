@@ -114,9 +114,6 @@ export const enTokens = {
     setting: {
       title: 'Allow personal tokens',
       hint: 'Members can give their own personal tokens access to this organization, up to their own role. Turning this off stops every personal token here at once and refuses new ones; they work again when you turn it back on, except those an administrator revoked.',
-      on: 'On',
-      off: 'Off',
-      readOnlyHint: 'Only owners and admins can change this.',
       turnedOn: 'Personal tokens turned on',
       turnedOff: 'Personal tokens turned off',
       saveFailed: 'Failed to change personal tokens',

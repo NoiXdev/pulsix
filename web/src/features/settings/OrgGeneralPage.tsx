@@ -1,93 +1,43 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { useOrg, useUpdateOrg } from '../../api/hooks/useOrgs.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
-import { Button } from '../../ui/button.tsx';
-import { Input } from '../../ui/input.tsx';
-import { Label } from '../../ui/label.tsx';
-import { Card } from '../../ui/table.tsx';
+import { SettingsPage } from '../../ui/settings.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
 import { useT } from '../../i18n/useT.ts';
+import { OrgNameCard } from './OrgNameCard.tsx';
 import { OrgMonitoringCard } from './OrgMonitoringCard.tsx';
-import { AssistantCard } from './AssistantCard.tsx';
-import { PersonalTokensCard } from './PersonalTokensCard.tsx';
+import { OrgAccessCard } from './OrgAccessCard.tsx';
 
 /**
- * OrgGeneralPage is Settings → General: the organization's name, which an
- * owner or admin (org.manage) may change, and its slug, which is fixed
- * because every URL of the organization carries it. Beside them, the
- * organization's monitoring settings (OrgMonitoringCard, backlog 3.57), its
- * assistant access switch (AssistantCard) and its switch "Allow personal
- * tokens" (PersonalTokensCard, backlog 3.100).
+ * OrgGeneralPage is Settings → General, one column of cards: the
+ * organization's name and slug (OrgNameCard), its monitoring settings
+ * (OrgMonitoringCard, backlog 3.57) and the switches for assistant and
+ * personal-token access (OrgAccessCard, which apply at once). The two form
+ * cards report whether they are dirty, so leaving the page asks once.
  */
 export function OrgGeneralPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
   const orgInfo = useOrg(org);
-  const update = useUpdateOrg(org);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [nameDirty, setNameDirty] = useState(false);
+  const [monitoringDirty, setMonitoringDirty] = useState(false);
+  useUnsavedGuard(nameDirty || monitoringDirty);
 
   const guard = useQueryGuard(orgInfo);
   if (guard) return guard;
   if (!orgInfo.data) return <QueryLoading />;
 
   const current = orgInfo.data.org;
-  const canManage = may(current.role, 'org.manage');
-  const name = draft ?? current.name;
-  const changed = name.trim() !== current.name && name.trim() !== '';
+  const canWrite = may(current.role, 'org.settings.write');
 
   return (
-    <>
-      <h1 className="text-xl font-semibold">{t.settings.general.title}</h1>
-      <span className="text-[13px] text-muted-foreground">{t.settings.general.hint}</span>
-
-      <div className="grid grid-cols-1 items-start gap-4 min-[1100px]:grid-cols-2">
-        <Card>
-          <form
-            className="flex flex-col gap-3 p-4"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!canManage || !changed) return;
-              try {
-                await update.mutateAsync(name.trim());
-                setDraft(null);
-                toast.show(t.settings.general.saved);
-              } catch (err) {
-                toast.show(err instanceof Error ? err.message : t.settings.general.saveFailed, 'destructive');
-              }
-            }}
-          >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="org_name">{t.settings.general.name}</Label>
-              <Input
-                id="org_name"
-                value={name}
-                readOnly={!canManage}
-                onChange={(e) => setDraft(e.target.value)}
-              />
-              {!canManage && <span className="text-xs text-muted-foreground">{t.settings.general.readOnlyHint}</span>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="org_slug">{t.settings.general.slug}</Label>
-              <Input id="org_slug" value={current.slug} readOnly className="font-mono" />
-              <span className="text-xs text-muted-foreground">{t.settings.general.slugHint}</span>
-            </div>
-            {canManage && (
-              <div className="flex justify-end">
-                <Button type="submit" variant="primary" disabled={!changed || update.isPending}>
-                  {t.settings.general.save}
-                </Button>
-              </div>
-            )}
-          </form>
-        </Card>
-        <OrgMonitoringCard org={org} canWrite={may(current.role, 'org.settings.write')} />
-        <AssistantCard org={org} canWrite={may(current.role, 'org.settings.write')} />
-        <PersonalTokensCard org={org} canWrite={may(current.role, 'org.settings.write')} />
-      </div>
-    </>
+    <SettingsPage title={t.settings.general.title} description={t.settings.general.hint}>
+      <OrgNameCard org={org} name={current.name} slug={current.slug} canManage={may(current.role, 'org.manage')} onDirtyChange={setNameDirty} />
+      <OrgMonitoringCard org={org} canWrite={canWrite} onDirtyChange={setMonitoringDirty} />
+      <OrgAccessCard org={org} canWrite={canWrite} />
+    </SettingsPage>
   );
 }

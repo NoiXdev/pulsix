@@ -26,10 +26,11 @@ export const deSettings: Messages['settings'] = {
   },
   general: {
     title: 'Allgemein',
-    hint: 'Name und Adresse dieser Organisation.',
-    name: 'Name der Organisation',
+    hint: 'Name, Überwachung und Zugänge dieser Organisation.',
+    card: 'Organisation',
+    name: 'Name',
     slug: 'Slug',
-    slugHint: 'Der Slug ist Teil jeder URL dieser Organisation und lässt sich nicht ändern.',
+    slugHint: 'Teil jeder Adresse dieser Organisation; lässt sich nicht ändern.',
     readOnlyHint: 'Nur Inhaber und Admins können die Organisation umbenennen.',
     save: 'Speichern',
     saved: 'Organisation gespeichert',
@@ -37,7 +38,8 @@ export const deSettings: Messages['settings'] = {
   },
   monitoring: {
     title: 'Überwachung',
-    clientAbsentDays: 'Warnung nach N Tagen ohne Kontakt (0 = aus)',
+    clientAbsentDays: 'Warnung bei fehlendem Kontakt',
+    days: 'Tage',
     clientAbsentDaysHint:
       'Für Client-Hosts mit Agent: Hatte ein Client so viele Tage keinen Kontakt, öffnet sich eine Warnung. Sie schließt sich, wenn der Client zurück ist. 0 schaltet sie ab.',
     invalid: 'Gib eine ganze Zahl von Tagen zwischen 0 und 365 ein.',
@@ -55,10 +57,14 @@ export const deSettings: Messages['settings'] = {
     saveFailed: 'Die Überwachungseinstellungen konnten nicht gespeichert werden',
     loadFailed: 'Die Überwachungseinstellungen konnten nicht geladen werden',
   },
+  access: {
+    title: 'Zugänge für Assistenten und Tokens',
+    description: 'Schalter gelten sofort.',
+    readOnlyHint: 'Nur Inhaber und Admins können diese Schalter ändern.',
+  },
   assistant: {
     title: 'Assistenten-Zugang',
     hint: 'Assistenten-Tokens dieser Organisation können in ihren Bereichen arbeiten: Inventar, Repositories, Playbooks und Vorlagen lesen und einrichten, Läufe lesen und Läufe anfragen, die eine Person hier freigibt.',
-    readOnlyHint: 'Nur Inhaber und Admins können den Assistenten-Zugang ändern.',
     turnedOn: 'Assistenten-Zugang eingeschaltet',
     turnedOff: 'Assistenten-Zugang ausgeschaltet',
     saveFailed: 'Assistenten-Zugang konnte nicht geändert werden',

@@ -107,9 +107,6 @@ export const deTokens: Messages['tokens'] = {
     setting: {
       title: 'Persönliche Tokens erlauben',
       hint: 'Mitglieder können ihren eigenen persönlichen Tokens Zugang zu dieser Organisation geben, bis zu ihrer eigenen Rolle. Schaltest du das aus, funktioniert hier sofort kein persönliches Token mehr und neue werden abgewiesen; schaltest du es wieder ein, funktionieren sie wieder, außer denen, die ein Admin widerrufen hat.',
-      on: 'An',
-      off: 'Aus',
-      readOnlyHint: 'Nur Inhaber und Admins können das ändern.',
       turnedOn: 'Persönliche Tokens eingeschaltet',
       turnedOff: 'Persönliche Tokens ausgeschaltet',
       saveFailed: 'Persönliche Tokens konnten nicht umgeschaltet werden',

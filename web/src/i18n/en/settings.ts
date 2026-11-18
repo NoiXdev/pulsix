@@ -28,10 +28,11 @@ export const enSettings = {
   },
   general: {
     title: 'General',
-    hint: 'The name and address of this organization.',
-    name: 'Organization name',
+    hint: 'Name, monitoring and access of this organization.',
+    card: 'Organization',
+    name: 'Name',
     slug: 'Slug',
-    slugHint: 'The slug is part of every URL of this organization and cannot be changed.',
+    slugHint: 'Part of every address of this organization; cannot be changed.',
     readOnlyHint: 'Only owners and admins can rename the organization.',
     save: 'Save',
     saved: 'Organization saved',
@@ -40,11 +41,12 @@ export const enSettings = {
   // Backlog 3.57: the organization's monitoring settings, on the General page.
   monitoring: {
     title: 'Monitoring',
-    clientAbsentDays: 'Warn after N days without contact (0 = off)',
+    clientAbsentDays: 'Warning without contact',
+    days: 'days',
     clientAbsentDaysHint:
       'For client hosts with an agent: when a client has not been in contact for this many days, a warning opens. It closes when the client is back. 0 switches it off.',
     invalid: 'Enter a whole number of days from 0 to 365.',
-    retention: 'Keep measurements for',
+    retention: 'Keep metrics for',
     retentionDefault: (days: number) => `Instance default (${days} days)`,
     retentionDays: (days: number) => `${days} days`,
     retentionAboveMax: (days: number) => `The instance keeps at most ${days} days`,
@@ -58,10 +60,15 @@ export const enSettings = {
     saveFailed: 'Failed to save the monitoring settings',
     loadFailed: 'Failed to load the monitoring settings',
   },
+  // One card for the three switches of the organization that apply at once.
+  access: {
+    title: 'Assistant and token access',
+    description: 'Switches apply immediately.',
+    readOnlyHint: 'Only owners and admins can change these switches.',
+  },
   assistant: {
     title: 'Assistant access',
     hint: 'Assistant tokens of this organization can work within their areas: read and set up the inventory, repositories, playbooks and templates, read runs and request runs, which a person approves here.',
-    readOnlyHint: 'Only owners and admins can change assistant access.',
     turnedOn: 'Assistant access turned on',
     turnedOff: 'Assistant access turned off',
     saveFailed: 'Failed to change assistant access',

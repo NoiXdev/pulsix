@@ -49,13 +49,13 @@ describe('OrgGeneralPage', () => {
       },
     });
     renderPage();
-    const input = await screen.findByLabelText('Organization name');
+    const input = await screen.findByLabelText('Name');
     expect(input).toHaveValue('Acme Hosting');
     await user.clear(input);
     await user.type(input, 'Acme Cloud');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(patched).toEqual({ name: 'Acme Cloud' }));
-    await waitFor(() => expect(screen.getByLabelText('Organization name')).toHaveValue('Acme Cloud'));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Acme Cloud'));
   });
 
   // The save resolves only once the refetched organization is in the cache:
@@ -76,23 +76,86 @@ describe('OrgGeneralPage', () => {
       },
     });
     renderPage();
-    const input = await screen.findByLabelText('Organization name');
+    const input = await screen.findByLabelText('Name');
     await user.clear(input);
     await user.type(input, 'Acme Cloud');
 
     const seen: string[] = [];
     const observer = new MutationObserver(() => {
-      const field = screen.queryByLabelText<HTMLInputElement>('Organization name');
+      const field = screen.queryByLabelText<HTMLInputElement>('Name');
       if (field) seen.push(field.value);
     });
     observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     await user.click(screen.getByRole('button', { name: 'Save' }));
     // The toast is raised right after the save resolves.
     await screen.findByText('Organization saved');
-    expect((screen.getByLabelText('Organization name') as HTMLInputElement).value).toBe('Acme Cloud');
-    await waitFor(() => expect(screen.getByLabelText('Organization name')).toHaveValue('Acme Cloud'));
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Acme Cloud');
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Acme Cloud'));
     observer.disconnect();
     expect(seen).not.toContain('Acme Hosting');
+  });
+
+  it('lays General out as cards with a save bar that follows the name', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme': org('owner') });
+    renderPage();
+    expect(await screen.findByRole('heading', { level: 1, name: 'General' })).toBeInTheDocument();
+    expect(screen.getByText('Name, monitoring and access of this organization.')).toBeInTheDocument();
+    for (const name of ['Organization', 'Monitoring', 'Assistant and token access']) {
+      expect(screen.getByRole('heading', { level: 2, name })).toBeInTheDocument();
+    }
+    expect(screen.getByText('Switches apply immediately.')).toBeInTheDocument();
+    expect(screen.getByText('Part of every address of this organization; cannot be changed.')).toBeInTheDocument();
+
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    const input = screen.getByLabelText('Name');
+    await user.type(input, ' X');
+    expect(save).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('Acme Hosting');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('shows the monitoring unit and keeps its save bar disabled until a change, and Discard restores', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/settings/monitoring': { settings: { client_absent_days: 14 } },
+    });
+    renderPage();
+    const input = await screen.findByLabelText('Warning without contact');
+    await waitFor(() => expect(input).toHaveValue(14));
+    expect(screen.getByText('days')).toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save monitoring settings' });
+    expect(save).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, '3');
+    expect(save).toBeEnabled();
+    const discards = screen.getAllByRole('button', { name: 'Discard' });
+    await user.click(discards[discards.length - 1]);
+    expect(screen.getByLabelText('Warning without contact')).toHaveValue(14);
+  });
+
+  it('disables the follow-up switch while assistant access is off and lists the token switch', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/settings/assistant': { settings: { assistant_enabled: false, approved_runs_start_follow_ups: false } },
+      'GET /api/v1/orgs/acme/settings/personal-tokens': { allowed: true },
+    });
+    renderPage();
+    const access = await screen.findByRole('switch', { name: 'Assistant access' });
+    await waitFor(() => expect(access).toBeEnabled());
+    expect(screen.getByRole('switch', { name: 'Approved runs start follow-ups' })).toBeDisabled();
+    expect(await screen.findByRole('switch', { name: 'Allow personal tokens' })).toBeInTheDocument();
+  });
+
+  it('has no save bar anywhere for a role below admin', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme': org('operator') });
+    renderPage();
+    await screen.findByLabelText('Name');
+    expect(screen.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Save/ })).not.toBeInTheDocument();
   });
 
   it('shows the slug read-only', async () => {
@@ -106,7 +169,7 @@ describe('OrgGeneralPage', () => {
   it('shows the name read-only, with no Save button, to a role without org.manage', async () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('operator') });
     renderPage();
-    const input = await screen.findByLabelText('Organization name');
+    const input = await screen.findByLabelText('Name');
     expect(input).toHaveAttribute('readonly');
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   });
@@ -114,13 +177,14 @@ describe('OrgGeneralPage', () => {
   // The absent warning for client hosts fires after this many days without
   // contact; 0 switches it off; the server takes 0..365.
   describe('monitoring', () => {
-    const LABEL = 'Warn after N days without contact (0 = off)';
+    const LABEL = 'Warning without contact';
     function routes(role: string, days = 14, onPut?: (req: MockRequest) => void) {
       let current = days;
       return {
         'GET /api/v1/orgs/acme': org(role),
-        // The assistant card beside it loads too; its own tests are below.
+        // The access card beside it loads too; its own tests are below.
         'GET /api/v1/orgs/acme/settings/assistant': { settings: { assistant_enabled: false } },
+        'GET /api/v1/orgs/acme/settings/personal-tokens': { allowed: true },
         'GET /api/v1/orgs/acme/settings/monitoring': () => ({ settings: { client_absent_days: current } }),
         'PUT /api/v1/orgs/acme/settings/monitoring': (req: MockRequest) => {
           onPut?.(req);
@@ -197,7 +261,7 @@ describe('OrgGeneralPage', () => {
   // Backlog 3.15: how long this organization keeps measurements, capped by
   // the instance maximum the operator set.
   describe('measurement retention', () => {
-    const SELECT = 'Keep measurements for';
+    const SELECT = 'Keep metrics for';
     type Stored = { retention_days: number | null; retention_max_days: number; retention_effective_days: number };
     function routes(role: string, stored: Stored, puts: unknown[] = []) {
       let current = { client_absent_days: 14, ...stored };
@@ -246,7 +310,7 @@ describe('OrgGeneralPage', () => {
       mockApi(routes('admin', { retention_days: 30, retention_max_days: 365, retention_effective_days: 30 }, puts));
       renderPage();
 
-      const input = await screen.findByLabelText('Warn after N days without contact (0 = off)');
+      const input = await screen.findByLabelText('Warning without contact');
       await waitFor(() => expect(input).toHaveValue(14));
       await user.clear(input);
       await user.type(input, '7');
@@ -411,7 +475,7 @@ describe('OrgGeneralPage', () => {
       const toggle = await screen.findByRole('switch', { name: 'Assistant access' });
       await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
       expect(toggle).toBeDisabled();
-      expect(screen.getByText('Only owners and admins can change assistant access.')).toBeInTheDocument();
+      expect(screen.getByText('Only owners and admins can change these switches.')).toBeInTheDocument();
     });
   });
 });

@@ -76,7 +76,8 @@ test('an admin adds an e-mail channel, sends a test through it, and points the d
   // --- Point the weekly digest at it ------------------------------------
   const digest = page.getByRole('region', { name: 'Weekly digest' });
   await digest.getByLabel('Send the weekly digest').check();
-  await pickOption(digest, 'Day', 'Wednesday');
+  // The day listbox is portalled to the body, so the pick is page-scoped.
+  await pickOption(page, 'Day', 'Wednesday');
   // Exact: the card's other field is "Timezone", which a substring
   // match would pick up as well.
   await digest.getByLabel('Time', { exact: true }).fill('07:30');

@@ -1,11 +1,10 @@
-import { useState } from 'react';
-import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { TimeField } from '../../ui/TimeField.tsx';
-import { Label } from '../../ui/label.tsx';
+import { CardSaveBar, SettingsCard, SettingsRow } from '../../ui/settings.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useCardForm } from '../../ui/useCardForm.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type DigestInput, useDigest, useSetDigest } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel } from '../../api/types.ts';
@@ -28,7 +27,7 @@ export function DigestCard({ org, channels, canWrite }: { org: string; channels:
   if (guard) return guard;
   if (!digest.data) return null;
   const d = digest.data.digest;
-  return <DigestForm key={JSON.stringify(d)} org={org} channels={channels} canWrite={canWrite} initial={d} />;
+  return <DigestForm org={org} channels={channels} canWrite={canWrite} initial={d} />;
 }
 
 interface DigestFormProps {
@@ -44,15 +43,23 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
   const m = t.notifications.digest;
   const toast = useToast();
   const save = useSetDigest(org);
-  const [enabled, setEnabled] = useState(initial.enabled);
-  const [weekday, setWeekday] = useState(initial.weekday);
-  const [time, setTime] = useState(initial.time);
-  const [timezone, setTimezone] = useState(initial.timezone);
-  const [selected, setSelected] = useState<string[]>((initial.channels ?? []).map((c) => c.id));
+  // Channel ids stay sorted so that picking and unpicking one is not a change.
+  const form = useCardForm({
+    enabled: initial.enabled,
+    weekday: initial.weekday,
+    time: initial.time,
+    timezone: initial.timezone,
+    channels: (initial.channels ?? []).map((c) => c.id).sort(),
+  });
+  const { draft, dirty } = form;
+  const set = (patch: Partial<typeof draft>) => form.setDraft((d) => ({ ...d, ...patch }));
 
-  async function onSave() {
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canWrite) return;
     try {
-      await save.mutateAsync({ enabled, weekday, time, timezone, channels: selected });
+      await save.mutateAsync(draft);
+      form.markSaved();
       toast.show(m.saved);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : m.saveFailed, 'destructive');
@@ -60,57 +67,52 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
   }
 
   return (
-    <section aria-label={m.title} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold">{m.title}</h2>
-        {initial.next_run_at && <span className="text-xs text-muted-foreground">{m.next(nextRunLabel(initial.next_run_at, initial.timezone, fmt))}</span>}
-      </div>
-      <p className="text-xs text-muted-foreground">{m.description}</p>
-      <div className="flex items-center gap-2 text-xs">
-        <Switch id="digest-enabled" checked={enabled} onCheckedChange={setEnabled} disabled={!canWrite} />
-        <label htmlFor="digest-enabled">{m.send}</label>
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="digest-day">{m.day}</Label>
-          <Select
-            id="digest-day"
-            options={DAYS.map((d) => ({ value: d, label: t.notifications.weekdayLong[d] }))}
-            value={weekday}
-            onChange={(v) => setWeekday(v as DigestInput['weekday'])}
-            disabled={!canWrite}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="digest-time">{m.time}</Label>
-          <TimeField id="digest-time" value={time} onChange={setTime} disabled={!canWrite} />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="digest-tz">{t.notifications.timezone}</Label>
-          <Input id="digest-tz" className="font-mono" value={timezone} onChange={(e) => setTimezone(e.target.value)} disabled={!canWrite} />
-        </div>
-      </div>
-      <span className="text-[11px] font-medium text-muted-foreground">{m.sendTo}</span>
-      <div className="flex flex-wrap gap-3">
-        {channels.map((c) => (
-          <label key={c.id} className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={selected.includes(c.id)}
-              onChange={() => setSelected(selected.includes(c.id) ? selected.filter((x) => x !== c.id) : [...selected, c.id])}
+    <form id="digest-form" onSubmit={(e) => void onSubmit(e)}>
+      <SettingsCard
+        title={m.title}
+        description={m.description}
+        badge={initial.next_run_at && <span className="text-xs text-muted-foreground">{m.next(nextRunLabel(initial.next_run_at, initial.timezone, fmt))}</span>}
+        footer={canWrite ? <CardSaveBar formId="digest-form" dirty={dirty} saving={save.isPending} onDiscard={form.discard} saveLabel={m.save} /> : null}
+      >
+        <SettingsRow label={m.send} htmlFor="digest-enabled">
+          <Switch id="digest-enabled" checked={draft.enabled} onCheckedChange={(enabled) => set({ enabled })} disabled={!canWrite} />
+        </SettingsRow>
+        <SettingsRow label={m.day} htmlFor="digest-day">
+          <div className="w-44 max-w-full">
+            <Select
+              id="digest-day"
+              portal
+              options={DAYS.map((d) => ({ value: d, label: t.notifications.weekdayLong[d] }))}
+              value={draft.weekday}
+              onChange={(v) => set({ weekday: v as DigestInput['weekday'] })}
               disabled={!canWrite}
             />
-            {c.name}
-          </label>
-        ))}
-        {channels.length === 0 && <span className="text-xs text-muted-foreground">{m.addChannelFirst}</span>}
-      </div>
-      {canWrite && (
-        <Button type="button" className="self-end" onClick={() => void onSave()} disabled={save.isPending}>
-          {m.save}
-        </Button>
-      )}
-    </section>
+          </div>
+        </SettingsRow>
+        <SettingsRow label={m.time} htmlFor="digest-time">
+          <TimeField id="digest-time" value={draft.time} onChange={(time) => set({ time })} disabled={!canWrite} />
+        </SettingsRow>
+        <SettingsRow label={t.notifications.timezone} htmlFor="digest-tz">
+          <Input id="digest-tz" className="w-60 max-w-full font-mono" value={draft.timezone} onChange={(e) => set({ timezone: e.target.value })} disabled={!canWrite} />
+        </SettingsRow>
+        <SettingsRow label={m.sendTo} stack>
+          <div className="flex flex-wrap gap-3">
+            {channels.map((c) => (
+              <label key={c.id} className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={draft.channels.includes(c.id)}
+                  onChange={() => set({ channels: draft.channels.includes(c.id) ? draft.channels.filter((x) => x !== c.id) : [...draft.channels, c.id].sort() })}
+                  disabled={!canWrite}
+                />
+                {c.name}
+              </label>
+            ))}
+            {channels.length === 0 && <span className="text-xs text-muted-foreground">{m.addChannelFirst}</span>}
+          </div>
+        </SettingsRow>
+      </SettingsCard>
+    </form>
   );
 }
 

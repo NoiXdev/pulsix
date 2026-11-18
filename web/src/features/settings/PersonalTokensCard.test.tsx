@@ -5,13 +5,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { PersonalTokensCard } from './PersonalTokensCard.tsx';
+import { SettingsCard } from '../../ui/settings.tsx';
+import { PersonalTokensRow } from './PersonalTokensCard.tsx';
 
 function renderCard(canWrite: boolean, locale?: 'de') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const card = (
     <ToastProvider>
-      <PersonalTokensCard org="acme" canWrite={canWrite} />
+      <SettingsCard title="Access">
+        <PersonalTokensRow org="acme" canWrite={canWrite} />
+      </SettingsCard>
     </ToastProvider>
   );
   render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{card}</I18nProvider> : card}</QueryClientProvider>);
@@ -29,7 +32,7 @@ function routes(allowed: boolean, puts: unknown[] = []) {
   };
 }
 
-describe('PersonalTokensCard', () => {
+describe('PersonalTokensRow', () => {
   it('lets an admin turn personal tokens off', async () => {
     const user = userEvent.setup();
     const puts: unknown[] = [];
@@ -44,18 +47,18 @@ describe('PersonalTokensCard', () => {
     expect(await screen.findByText('Personal tokens turned off')).toBeInTheDocument();
   });
 
-  it('shows a viewer the state, without a switch', async () => {
+  it('shows a viewer the state in a disabled switch', async () => {
     mockApi(routes(false));
     renderCard(false);
-    expect(await screen.findByText('Off')).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-    expect(screen.getByText('Only owners and admins can change this.')).toBeInTheDocument();
+    const toggle = await screen.findByRole('switch', { name: 'Allow personal tokens' });
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+    expect(toggle).toBeDisabled();
   });
 
   it('speaks German', async () => {
     mockApi(routes(true));
     renderCard(false, 'de');
-    expect(await screen.findByText('An')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Persönliche Tokens erlauben' })).toBeInTheDocument();
+    expect(await screen.findByRole('switch', { name: 'Persönliche Tokens erlauben' })).toBeInTheDocument();
+    expect(screen.getByText('Persönliche Tokens erlauben')).toBeInTheDocument();
   });
 });

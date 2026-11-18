@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { DigestCard } from './DigestCard.tsx';
 
@@ -11,11 +13,11 @@ const digest = { digest: { enabled: false, weekday: 'mon', time: '08:00', timezo
 /** QueryError — the guard element a failed query renders — calls
  * useNavigate (for the 401 redirect), so the card renders inside a
  * minimal router like the ScheduleCalendar tests do. */
-function renderIt(qc: QueryClient) {
+function renderIt(qc: QueryClient, canWrite = false) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const page = createRoute({
-    getParentRoute: () => orgRoute, path: '/settings/notifications', component: () => <DigestCard org="acme" channels={[]} canWrite={false} />,
+    getParentRoute: () => orgRoute, path: '/settings/notifications', component: () => <DigestCard org="acme" channels={[{ id: 'c1', name: 'Ops mail' } as never]} canWrite={canWrite} />,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([page])]),
@@ -24,7 +26,9 @@ function renderIt(qc: QueryClient) {
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -114,5 +118,41 @@ describe('DigestCard next-run line', () => {
     expect(line).toHaveTextContent(fmt());
     expect(line).toHaveTextContent(Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(line.textContent).not.toContain('Mars/Olympus_Mons');
+  });
+});
+
+describe('DigestCard form', () => {
+  it('saves through the card save bar; the enable switch is a form field, not immediate', async () => {
+    const user = userEvent.setup();
+    const puts: unknown[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/notification-digest': digest,
+      'PUT /api/v1/orgs/acme/notification-digest': (req: { body?: unknown }) => {
+        puts.push(req.body);
+        return digest;
+      },
+    });
+    renderIt(new QueryClient({ defaultOptions: { queries: { retry: false } } }), true);
+    const save = await screen.findByRole('button', { name: 'Save digest' });
+    expect(save).toBeDisabled();
+    await user.click(screen.getByRole('switch', { name: 'Send the weekly digest' }));
+    expect(puts).toEqual([]);
+    expect(save).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByRole('switch', { name: 'Send the weekly digest' })).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByRole('switch', { name: 'Send the weekly digest' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Ops mail' }));
+    await user.click(screen.getByRole('button', { name: 'Save digest' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toMatchObject({ enabled: true, channels: ['c1'] });
+    expect(await screen.findByText('Weekly digest saved')).toBeInTheDocument();
+  });
+
+  it('has no save bar without the write right', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme/notification-digest': digest });
+    renderIt(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    await screen.findByRole('region', { name: 'Weekly digest' });
+    expect(screen.queryByRole('button', { name: 'Save digest' })).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Send the weekly digest' })).toBeDisabled();
   });
 });
