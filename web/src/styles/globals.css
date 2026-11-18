@@ -111,6 +111,32 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+@theme {
+  --animate-pin-shake: pin-shake 0.3s ease-in-out;
+  --animate-pin-caret: pin-caret 1s steps(1) infinite;
+
+  @keyframes pin-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20%,
+    60% {
+      transform: translateX(-6px);
+    }
+    40%,
+    80% {
+      transform: translateX(6px);
+    }
+  }
+
+  @keyframes pin-caret {
+    50% {
+      opacity: 0;
+    }
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
