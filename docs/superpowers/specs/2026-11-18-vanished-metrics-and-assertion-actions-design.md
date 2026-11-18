@@ -24,8 +24,13 @@ code; they are recorded here so the owner can check them.
 ### Design
 1. **Vanished rule.** A tuple `(host, check_key, item, metric)` is *vanished*
    when its `at` is older than the newest reading of its own
-   `(host, check_key, item)` by more than 3 × the check's interval. A fresh
-   error row is never vanished (it is a reading). One pure Go function, used by
+   `(host, check_key, item)` by more than 3 × the check's interval. Only a
+   reading without an error (a value or a label) counts as the item's newest:
+   an error proves the collection ran, not that the other metrics stopped (a
+   SMART disk smartctl cannot open reports only an error on `smart.passed`, and
+   its crit alerts must stay open as unknown). An error row itself is judged
+   against that newest like any other row (amended 2026-11-18 after the final
+   review). One pure Go function, used by
    the host-check API and by rule loading, with a test that pins both call
    sites to it.
 2. **Evaluation.** A vanished tuple leaves evaluation the way an item the check
@@ -42,7 +47,7 @@ code; they are recorded here so the owner can check them.
    of a verdict, and offers Forget on it; it is never graph-less because of it.
 5. **Metric expiry.** Next to the item expiry, the hourly expiry loop (already
    single-replica through its advisory lock) forgets a metric whose `at` is
-   older than its item's newest reading by more than the item expiry period
+   older than its item's newest error-free reading by more than the item expiry period
    (`PULSIX_ITEM_EXPIRY`, default 7 days). The item's own newer reading is the
    proof of life. `ForgetMetric` follows `forgetItem`'s lock order (host
    evaluation cursor, re-check, delete the current row with `FOR UPDATE SKIP
