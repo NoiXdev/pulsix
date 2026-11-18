@@ -57,14 +57,24 @@ func NewEnrolment(totp *TOTP, passkeys *Passkeys, sessions *Sessions, tx TxRunne
 // unknown or already-ended session returns ErrNotFound and changes
 // nothing — including one an administrator's second-factor reset ended
 // after the request resolved it (backlog 7.109).
-func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID, code string) (codes []string, cookie string, err error) {
+//
+// From a password-only session (PULSIX_MFA_OPTIONAL) it is also the
+// account's first factor (firstFactor): tokensRevoked reports that every
+// API token of the account was revoked with it, and an account that has
+// gained a factor since the request resolved its session is
+// ErrPasswordNotTheFactor and changes nothing.
+func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID, code string) (codes []string, cookie string, tokensRevoked bool, err error) {
 	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
 		// Account row first, in the order the reset takes it, so the two
 		// serialise instead of deadlocking on each other's rows.
-		if err := e.sessions.LockLive(ctx, userID, sessionID); err != nil {
+		passwordOnly, err := e.sessions.LockLiveForEnrolment(ctx, userID, sessionID)
+		if err != nil {
 			return fmt.Errorf("confirm TOTP: %w", err)
 		}
-		var err error
+		first, err := e.firstFactor(ctx, userID, passwordOnly)
+		if err != nil {
+			return fmt.Errorf("confirm TOTP: %w", err)
+		}
 		codes, err = e.totp.ConfirmEnrol(ctx, userID, code)
 		if err != nil {
 			return err
@@ -72,12 +82,46 @@ func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID
 		if cookie, err = e.sessions.MarkMFAComplete(ctx, sessionID); err != nil {
 			return fmt.Errorf("complete the session after confirming TOTP: %w", err)
 		}
-		return nil
+		tokensRevoked, err = e.revokeOnFirstFactor(ctx, userID, first, passwordOnly)
+		return err
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	return codes, cookie, nil
+	return codes, cookie, tokensRevoked, nil
+}
+
+// firstFactor runs under the account lock LockLiveForEnrolment took and
+// reports whether the account has no second factor yet, so that the one
+// being enrolled is its first. For a password-only session an account that
+// has one already is ErrPasswordNotTheFactor: the session was complete on
+// the password only because the account had none, and the factor that
+// appeared since is what it must prove now (the session lookup already
+// reads it as pending from its next request on).
+func (e *Enrolment) firstFactor(ctx context.Context, userID uuid.UUID, passwordOnly bool) (bool, error) {
+	enrolled, err := e.sessions.HasSecondFactor(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if enrolled && passwordOnly {
+		return false, ErrPasswordNotTheFactor
+	}
+	return !enrolled, nil
+}
+
+// revokeOnFirstFactor revokes every token of userID when a password-only
+// session (PULSIX_MFA_OPTIONAL) has just enrolled the account's first
+// factor, and reports whether it did. A password alone could mint those
+// tokens, whoever held it; the factor would protect nothing while they
+// still worked. Any other enrolment revokes nothing.
+func (e *Enrolment) revokeOnFirstFactor(ctx context.Context, userID uuid.UUID, first, passwordOnly bool) (bool, error) {
+	if !first || !passwordOnly {
+		return false, nil
+	}
+	if err := e.sessions.RevokeAccountTokens(ctx, userID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // FinishPasskey finishes a passkey registration on p's session: it verifies
@@ -98,31 +142,49 @@ func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID
 // a registration begun before the reset must not leave a passkey behind it.
 // A session that has ended is ErrUnauthenticated and stores nothing. The
 // ceremony is consumed either way.
-func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID uuid.UUID, name string, response json.RawMessage) (cookie string, err error) {
+//
+// When the passkey is the account's first factor, any recovery codes left
+// over are deleted with it: they belong to a confirmed TOTP secret, and the
+// account has none. From a password-only session it also revokes the
+// account's tokens (tokensRevoked) and refuses, as ConfirmTOTP does, an
+// account that has gained a factor since (ErrPasswordNotTheFactor).
+func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID uuid.UUID, name string, response json.RawMessage) (cookie string, tokensRevoked bool, err error) {
 	c, err := e.passkeys.verifyRegistration(ctx, p.UserID, ceremonyID, name, response)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
-		if err := e.sessions.LockLive(ctx, p.UserID, p.SessionID); err != nil {
+		passwordOnly, err := e.sessions.LockLiveForEnrolment(ctx, p.UserID, p.SessionID)
+		if err != nil {
 			return sessionEnded("finish passkey registration", err)
+		}
+		first, err := e.firstFactor(ctx, p.UserID, passwordOnly)
+		if err != nil {
+			return fmt.Errorf("finish passkey registration: %w", err)
 		}
 		if err := e.passkeys.store.AddCredential(ctx, p.UserID, name, c); err != nil {
 			return err
 		}
-		if p.MFAComplete && !p.PasswordOnly {
+		if first {
+			if err := e.totp.store.ReplaceRecoveryCodes(ctx, p.UserID); err != nil {
+				return fmt.Errorf("finish passkey registration: remove stray recovery codes: %w", err)
+			}
+		}
+		if tokensRevoked, err = e.revokeOnFirstFactor(ctx, p.UserID, first, passwordOnly); err != nil {
+			return err
+		}
+		if p.MFAComplete && !passwordOnly {
 			return nil
 		}
-		var err error
 		if cookie, err = e.sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
 			return sessionEnded("finish passkey registration", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return cookie, nil
+	return cookie, tokensRevoked, nil
 }
 
 // sessionEnded reports a session that matched nothing as ErrUnauthenticated:

@@ -100,8 +100,11 @@ describe('registerPasskey / loginWithPasskey — the go-webauthn publicKey envel
       ceremony_id: 'cer_1',
       options: { publicKey: flatOptions },
     } as never);
+    vi.mocked(finishPasskeyRegistration).mockResolvedValue({ tokens_revoked: true } as never);
 
-    await registerPasskey('My key');
+    // The finish answer says whether the account's first factor revoked its
+    // API tokens (PULSIX_MFA_OPTIONAL); the caller shows that.
+    await expect(registerPasskey('My key')).resolves.toEqual({ tokensRevoked: true });
 
     expect(decodeCreationOptions).toHaveBeenCalledTimes(1);
     expect(decodeCreationOptions).toHaveBeenCalledWith(flatOptions);

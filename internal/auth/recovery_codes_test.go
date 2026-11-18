@@ -10,13 +10,19 @@ import (
 	"github.com/noixdev/pulsix/internal/auth"
 )
 
+// confirmedTOTPStore is a fake store whose account has a confirmed TOTP
+// secret: recovery codes are issued only for one (ErrTOTPNotEnabled).
+func confirmedTOTPStore() *fakeTOTPStore {
+	return &fakeTOTPStore{hasSecret: true, secret: auth.TOTPSecretRow{Confirmed: true}}
+}
+
 // The invariant that matters: the codes handed to the user must be the
 // codes that were stored. They are shown once and never again, so a
 // mismatch between what is displayed and what is hashed into the table
 // would not surface until someone tried to use one — by which time the
 // authenticator is already gone and this was the way back.
 func TestRegenerateRecoveryCodesStoresTheCodesItReturns(t *testing.T) {
-	store := &fakeTOTPStore{}
+	store := confirmedTOTPStore()
 	totp := auth.NewTOTP(store, testTOTPBox(), "Pulsix Test", testTOTPNow)
 
 	codes, err := totp.RegenerateRecoveryCodes(ctx, uuid.New())
@@ -41,7 +47,7 @@ func TestRegenerateRecoveryCodesStoresTheCodesItReturns(t *testing.T) {
 // A set must be a set: every code distinct, and shaped the way the
 // enrolment path's codes are, since both doors hand out the same thing.
 func TestRegenerateRecoveryCodesMintsADistinctWellFormedSet(t *testing.T) {
-	store := &fakeTOTPStore{}
+	store := confirmedTOTPStore()
 	totp := auth.NewTOTP(store, testTOTPBox(), "Pulsix Test", testTOTPNow)
 
 	codes, err := totp.RegenerateRecoveryCodes(ctx, uuid.New())

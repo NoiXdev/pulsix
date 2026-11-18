@@ -23,6 +23,10 @@ export const enAccount = {
   secondFactorRequired: 'Second factor required',
   /** No factor, on an instance where it is optional (PULSIX_MFA_OPTIONAL). */
   secondFactorOptional: 'Second factor optional',
+  /** The first factor of an account signed in on its password alone
+   * revoked the account's API tokens (tokens_revoked). */
+  tokensRevokedOnFirstFactor:
+    'Second factor set up. API tokens created before it were revoked: create new ones if you still need them.',
   signIn: { title: 'Sign-in', description: 'How you sign in: password plus a second factor; passkeys replace both.' },
   session: {
     title: 'Session',

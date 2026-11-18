@@ -493,13 +493,27 @@ repositories as before. An older worker never asks.
   Migration 00113 adds `sessions.password_only` (boolean, default false; every
   existing session keeps false). A session completed on the password alone in
   this mode is marked, and keeps the mark through the password step-up and a
-  renewal by password; only a real factor proof (TOTP verify, the passkey
-  step-up, a first enrolment in that session) clears it. The session lookup
+  renewal by password; only a real factor proof clears it: TOTP verify (a code
+  or a recovery code), or a first enrolment in that session. The passkey
+  step-up cannot, since it needs a complete session: a superseded session of a
+  passkey-only account must sign in again. The session lookup
   reads a marked session as pending and its step-up as stale once the account
   has a confirmed TOTP secret or a passkey, so the owner's first enrolment
   sends every other password-only session to the factor prompt on its next
   request; the password step-up refreshes a session only while the account has
-  no factor, checked in the same statement that writes. An administrator's
+  no factor, checked in the same statement that writes. A first factor
+  enrolled from a password-only session also revokes every API token of the
+  account (organization and personal, the statements deactivation uses), in
+  the enrolment's transaction, recorded as `revokeTokensOnFirstFactor`; the
+  answers of `POST /api/v1/auth/totp/confirm` and
+  `POST /api/v1/auth/passkeys/register/finish` gain `tokens_revoked`, and the
+  Security page shows a notice. Invitations and memberships created in that
+  time stay and should be reviewed. Such an enrolment takes the account row
+  exclusively and refuses (403) if the account has gained a factor since the
+  request began. Recovery codes now need a confirmed TOTP secret in every
+  mode: `POST /api/v1/auth/recovery-codes` answers 409 without one, a
+  recovery code is refused beside an unconfirmed secret, and a passkey that
+  is an account's first factor deletes leftover codes. An administrator's
   second-factor reset leaves the account factor-less, so with the mode on it
   signs in with its password alone afterwards and is not made to enrol again.
   Nothing is dropped or rewritten, workers and agents are not affected, and a

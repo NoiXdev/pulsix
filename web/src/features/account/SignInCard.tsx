@@ -90,6 +90,7 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
     try {
       const res = await confirmTotp.mutateAsync(code);
       setRecoveryCodes(res.recovery_codes);
+      if (res.tokens_revoked) toast.show(t.account.tokensRevokedOnFirstFactor, 'warn');
       setEnrolling(null);
       // The secret is consumed the moment confirmation succeeds.
       enrolTotp.reset();
@@ -114,8 +115,8 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
     let ok = false;
     await stepUp.run(
       async () => {
-        await registerPasskey(name, t);
-        toast.show(t.account.passkeys.addedToast);
+        const { tokensRevoked } = await registerPasskey(name, t);
+        toast.show(tokensRevoked ? t.account.tokensRevokedOnFirstFactor : t.account.passkeys.addedToast, tokensRevoked ? 'warn' : 'default');
         ok = true;
         await passkeys.refetch();
         await onEnrolled?.();

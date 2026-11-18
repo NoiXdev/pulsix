@@ -34,6 +34,20 @@ type passkeyRegisterFinishInput struct {
 	}
 }
 
+// passkeyRegisterFinishOutput answers a finished registration: the session's
+// new cookie when it completed the session (nil otherwise, as in
+// sessionUpgradeOutput), and whether the account's tokens were revoked.
+type passkeyRegisterFinishOutput struct {
+	SetCookie *http.Cookie `header:"Set-Cookie"`
+	Body      struct {
+		// TokensRevoked: this was the account's first second factor,
+		// enrolled from a session signed in on the password alone while
+		// the second factor is optional (PULSIX_MFA_OPTIONAL), and every
+		// API token of the account was revoked with it.
+		TokensRevoked bool `json:"tokens_revoked"`
+	}
+}
+
 type passkeyDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
@@ -106,7 +120,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*sessionUpgradeOutput, error) {
+	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*passkeyRegisterFinishOutput, error) {
 		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
@@ -125,7 +139,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		// that is still live: p was resolved before the body was read, and
 		// an administrator's second-factor reset may have ended the session
 		// since (backlog 7.109).
-		value, err := deps.Enrolment.FinishPasskey(ctx, p, cid, in.Body.Name, in.Body.Response)
+		value, revoked, err := deps.Enrolment.FinishPasskey(ctx, p, cid, in.Body.Name, in.Body.Response)
 		if err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
@@ -146,7 +160,10 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		// credential detail instead.
 		setAuditScope(ctx, nil, p.UserID)
 		setAuditObject(ctx, p.UserID.String(), fmt.Sprintf("registered passkey %q", in.Body.Name))
-		return &sessionUpgradeOutput{SetCookie: cookie}, nil
+		recordTokensRevokedOnFirstFactor(ctx, deps, p.UserID, revoked)
+		out := &passkeyRegisterFinishOutput{SetCookie: cookie}
+		out.Body.TokensRevoked = revoked
+		return out, nil
 	}, withAudit("finishPasskeyRegistration", "passkey"))
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {

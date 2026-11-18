@@ -6908,6 +6908,15 @@ export interface components {
             name: string;
             response: unknown;
         };
+        PasskeyRegisterFinishOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PasskeyRegisterFinishOutputBody.json
+             */
+            readonly $schema?: string;
+            tokens_revoked: boolean;
+        };
         PasswordReauthInputBody: {
             /**
              * Format: uri
@@ -8306,6 +8315,16 @@ export interface components {
             last_used_at?: string;
             name: string;
             role: string;
+        };
+        TotpConfirmOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TotpConfirmOutputBody.json
+             */
+            readonly $schema?: string;
+            recovery_codes: string[] | null;
+            tokens_revoked: boolean;
         };
         TotpEnrolOutputBody: {
             /**
@@ -10370,7 +10389,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionUpgradeOutputBody"];
+                    "application/json": components["schemas"]["PasskeyRegisterFinishOutputBody"];
                 };
             };
             /** @description Error */
@@ -10724,7 +10743,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RecoveryOutputBody"];
+                    "application/json": components["schemas"]["TotpConfirmOutputBody"];
                 };
             };
             /** @description Error */

@@ -337,6 +337,24 @@ func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecr
 	return i, err
 }
 
+const hasSecondFactor = `-- name: HasSecondFactor :one
+SELECT (
+    EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = $1)
+)::boolean AS enrolled
+`
+
+// Whether the account has a second factor: a confirmed TOTP secret or a
+// passkey, the same test GetSession's password_superseded applies. An
+// unconfirmed TOTP secret is not a factor. Enrolment runs it under the
+// account's lock to tell an account's first factor from a further one.
+func (q *Queries) HasSecondFactor(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasSecondFactor, userID)
+	var enrolled bool
+	err := row.Scan(&enrolled)
+	return enrolled, err
+}
+
 const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
 INSERT INTO recovery_codes (user_id, code_hash) VALUES ($1, $2)
 `

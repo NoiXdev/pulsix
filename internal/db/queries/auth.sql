@@ -283,3 +283,13 @@ UPDATE users SET lock_pin_hash = NULL, lock_pin_digits = NULL, lock_pin_prompted
 
 -- name: MarkLockPINPrompted :exec
 UPDATE users SET lock_pin_prompted_at = now() WHERE id = @user_id;
+
+-- name: HasSecondFactor :one
+-- Whether the account has a second factor: a confirmed TOTP secret or a
+-- passkey, the same test GetSession's password_superseded applies. An
+-- unconfirmed TOTP secret is not a factor. Enrolment runs it under the
+-- account's lock to tell an account's first factor from a further one.
+SELECT (
+    EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = $1)
+)::boolean AS enrolled;

@@ -211,6 +211,7 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     let passkeyRequests = 0;
     vi.mocked(registerPasskey).mockImplementation(async () => {
       complete = true;
+      return { tokensRevoked: false };
     });
     mockApi({
       'GET /api/v1/setup/status': { completed: true },

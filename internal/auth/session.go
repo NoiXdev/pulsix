@@ -266,29 +266,6 @@ func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, e
 	return cookieValue(id, secret), nil
 }
 
-// RefreshPasswordProof is MarkMFAComplete for the password step-up of
-// PULSIX_MFA_OPTIONAL: it refreshes the complete session id's proof and
-// replaces its secret, keeping it password-only, and returns the new cookie
-// value. Whether the account still has no second factor is decided in the
-// same statement (RefreshPasswordProof), so a factor that is there when it
-// runs refuses it with ErrPasswordNotTheFactor and nothing changes. The
-// caller has checked that the session is live (LockLive); a session that
-// matches nothing here has a factor or is not complete.
-func (s *Sessions) RefreshPasswordProof(ctx context.Context, id uuid.UUID) (string, error) {
-	secret, sum, err := newSessionSecret()
-	if err != nil {
-		return "", err
-	}
-	n, err := s.q.RefreshPasswordProof(ctx, gen.RefreshPasswordProofParams{ID: id, SecretHash: sum})
-	if err != nil {
-		return "", err
-	}
-	if n == 0 {
-		return "", ErrPasswordNotTheFactor
-	}
-	return cookieValue(id, secret), nil
-}
-
 // LockLive is the first step of finishing a second-factor enrolment, or of
 // completing a verified session (CompleteVerifiedSession, backlog 7.118),
 // inside an instance transaction (backlog 7.109). It takes userID's account row in

@@ -26,9 +26,13 @@ import (
 // step-up below keep the mark). It holds only while the account has no
 // factor: once the owner enrols one, in any session, every password-only
 // session of the account reads as pending and stale on its next request and
-// must verify the new factor (TOTP verify or the passkey step-up), which
-// clears the mark. So a session someone opened with a known password before
-// the owner secured the account does not outlive that enrolment.
+// must verify the new factor through /auth/totp/verify (a code or a
+// recovery code), which clears the mark. The passkey step-up needs a
+// complete session, so a superseded session of a passkey-only account must
+// sign in again. So a session someone opened with a known password before
+// the owner secured the account does not outlive that enrolment, and
+// neither do its API tokens: the first factor enrolled from a password-only
+// session revokes them (auth.Enrolment, recordTokensRevokedOnFirstFactor).
 
 // passwordNotTheFactor is the refusal of the password step-up for an
 // account that has a second factor.
@@ -65,6 +69,30 @@ func recordSignInWithoutSecondFactor(ctx context.Context, deps Deps, userID, ses
 		Summary: "signed in without a second factor (optional mode)",
 	}); err != nil {
 		slog.ErrorContext(ctx, "audit: failed to record event", "err", err, "action", signInWithoutSecondFactor)
+	}
+}
+
+// tokensRevokedOnFirstFactor is the audit action of the token revocation that
+// comes with an account's first second factor enrolled from a password-only
+// session (auth.Enrolment.ConfirmTOTP, FinishPasskey).
+const tokensRevokedOnFirstFactor = "revokeTokensOnFirstFactor"
+
+// recordTokensRevokedOnFirstFactor records, on the account's own activity,
+// that its tokens were revoked because it enrolled its first second factor
+// from a session signed in on the password alone. The enrolment itself has
+// its own event; this one says what else it did. revoked false records
+// nothing. A recording failure is logged, never returned: the revocation
+// has committed.
+func recordTokensRevokedOnFirstFactor(ctx context.Context, deps Deps, userID uuid.UUID, revoked bool) {
+	if !revoked {
+		return
+	}
+	if err := deps.Audit.Record(ctx, audit.Event{
+		ActorID: &userID, ActorKind: audit.ActorKindUser,
+		Action: tokensRevokedOnFirstFactor, ObjectType: "user", ObjectID: userID.String(),
+		Summary: "revoked the account's tokens on its first second factor",
+	}); err != nil {
+		slog.ErrorContext(ctx, "audit: failed to record event", "err", err, "action", tokensRevokedOnFirstFactor)
 	}
 }
 

@@ -276,8 +276,16 @@ optional. **Never turn it on for a production instance.** While it is on:
   at once, not only on new sign-ins: a session that was signed in with the
   password alone, anywhere, is asked for the new factor on its next request
   and can do nothing else until it proves it (the session that enrolled the
-  factor carries on). Someone who knew the password and signed in before the
-  owner added a factor keeps nothing from that sign-in.
+  factor carries on). A session of an account whose only factor is a passkey
+  cannot prove it in place: it has to sign in again. The same enrolment
+  revokes every API token of the account (personal and organization tokens;
+  the Security page says so, and the account's activity records it).
+  Someone who knew the password and signed in before the owner added a
+  factor keeps no session and no token from that sign-in. Invitations,
+  memberships and other changes made in that time stay: review them.
+- Recovery codes exist only beside a confirmed authenticator app: they cannot
+  be generated or redeemed without one, and a passkey that is the account's
+  first factor removes any that are left over.
 - An administrator's **Reset second factor** (Users page) removes the
   account's factors and ends its sessions as usual, but with the mode on the
   account then signs in with its password alone: it is **not** asked to

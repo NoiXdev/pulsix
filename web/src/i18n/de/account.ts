@@ -16,6 +16,8 @@ export const deAccount: Messages['account'] = {
   secondFactorActive: 'Zweiter Faktor aktiv',
   secondFactorRequired: 'Zweiter Faktor erforderlich',
   secondFactorOptional: 'Zweiter Faktor optional',
+  tokensRevokedOnFirstFactor:
+    'Zweiter Faktor eingerichtet. Zuvor erstellte API-Tokens wurden widerrufen: Erstelle neue, falls du sie noch brauchst.',
   signIn: { title: 'Anmeldung', description: 'So meldest du dich an: Passwort plus zweiter Faktor; Passkeys ersetzen beides.' },
   session: {
     title: 'Sitzung',

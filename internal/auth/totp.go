@@ -42,6 +42,13 @@ var ErrInvalidTOTPCode = errors.New("invalid totp code")
 // checking one where it meant the other.
 var ErrNoTOTPSecret = errors.New("no totp secret")
 
+// ErrTOTPNotEnabled refuses to issue recovery codes for an account without a
+// confirmed TOTP secret (RegenerateRecoveryCodes): the codes stand in for
+// that secret and for nothing else. An unconfirmed secret does not count: it
+// was never proven, and codes issued beside it would be a second factor
+// nobody enrolled.
+var ErrTOTPNotEnabled = errors.New("no confirmed totp secret")
+
 // ErrTooManyFactorAttempts is returned instead of checking a code while
 // the account's second factor is locked after repeated failures (backlog
 // 7.26). The code was not looked at, so it says nothing about the code.
@@ -246,8 +253,19 @@ func newRecoveryCodes() (codes []string, hashes [][]byte, err error) {
 //
 // The caller is responsible for having proven the factor first; this is
 // deliberately not a second verification point, so that the rule about
-// what counts as proof lives in one place.
+// what counts as proof lives in one place. What it does check is that there
+// is a confirmed TOTP secret for the codes to stand in for: without one it
+// is ErrTOTPNotEnabled and nothing is written. A password-only session
+// (PULSIX_MFA_OPTIONAL) is fresh without any factor, so without this check
+// it could mint codes beside a secret it never confirmed.
 func (t *TOTP) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	on, err := t.Enabled(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !on {
+		return nil, ErrTOTPNotEnabled
+	}
 	codes, hashes, err := newRecoveryCodes()
 	if err != nil {
 		return nil, err
@@ -403,10 +421,16 @@ func (t *TOTP) RecoveryCodesRemaining(ctx context.Context, userID uuid.UUID) (in
 
 // VerifyRecovery consumes one recovery code. It spends the same budget as
 // Verify: a recovery code stands in for the factor, so guessing one is
-// guessing the factor.
+// guessing the factor. Like Verify it needs a confirmed TOTP secret: a code
+// beside a secret that was never confirmed proves nothing and is refused
+// without being consumed.
 func (t *TOTP) VerifyRecovery(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(code))))
 	return t.attempt(ctx, userID, func() (bool, error) {
+		on, err := t.Enabled(ctx, userID)
+		if err != nil || !on {
+			return false, err
+		}
 		return t.store.UseRecoveryCode(ctx, userID, sum[:])
 	})
 }

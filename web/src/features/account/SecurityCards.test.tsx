@@ -211,6 +211,41 @@ describe('Security page cards', () => {
     await waitFor(() => expect(onEnrolled).toHaveBeenCalledTimes(1));
   });
 
+  // PULSIX_MFA_OPTIONAL: the first factor of an account signed in on its
+  // password alone revokes the account's API tokens; the page says so.
+  it('says the API tokens were revoked when the first factor revoked them', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, lock_pin_set: false, password_step_up: true },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' },
+      'POST /api/v1/auth/totp/confirm': { recovery_codes: ['aaaa-bbbb'], tokens_revoked: true },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up…' }));
+    await user.type(await screen.findByPlaceholderText('482913'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText(/API tokens created before it were revoked/)).toBeInTheDocument();
+  });
+
+  it('says nothing about tokens when none were revoked', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, lock_pin_set: false },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' },
+      'POST /api/v1/auth/totp/confirm': { recovery_codes: ['aaaa-bbbb'], tokens_revoked: false },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Set up…' }));
+    await user.type(await screen.findByPlaceholderText('482913'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
+    expect(screen.queryByText(/API tokens created before it were revoked/)).not.toBeInTheDocument();
+  });
+
   it('leaves the authenticator enrolment with Cancel and forgets the secret', async () => {
     const user = userEvent.setup();
     mockApi({

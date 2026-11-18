@@ -85,7 +85,7 @@ func TestPasswordOnlySessionIsPendingOnceTheAccountHasAFactor(t *testing.T) {
 				return
 			}
 
-			// A real factor proof (TOTP verify, passkey step-up) clears the
+			// A real factor proof (TOTP verify, MarkMFAComplete) clears the
 			// mark: the session is complete and fresh again.
 			newCookie, err := w.sessions.MarkMFAComplete(ctx, id)
 			if err != nil {

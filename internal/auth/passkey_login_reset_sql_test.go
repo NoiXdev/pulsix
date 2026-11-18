@@ -335,7 +335,7 @@ func TestBeginTOTPOnALiveSessionWritesThePendingSecret(t *testing.T) {
 		t.Fatal("BeginTOTP returned no secret")
 	}
 	code := codeAt(t, secret, w.clock)
-	if _, _, err := w.enrol.ConfirmTOTP(ctx, uid, p.SessionID, code); err != nil {
+	if _, _, _, err := w.enrol.ConfirmTOTP(ctx, uid, p.SessionID, code); err != nil {
 		t.Fatalf("confirming the secret BeginTOTP wrote: %v", err)
 	}
 }
@@ -347,7 +347,7 @@ func TestBeginTOTPWithAWrongCodeStillSpendsAnAttempt(t *testing.T) {
 	w := newResetWorld(t)
 	uid := w.seedAccount(t, "begin-wrong@example.test")
 	p := w.session(t, uid, false)
-	if _, _, err := w.enrol.ConfirmTOTP(ctx, uid, p.SessionID, enrol(t, w.totp, w.clock, uid)); err != nil {
+	if _, _, _, err := w.enrol.ConfirmTOTP(ctx, uid, p.SessionID, enrol(t, w.totp, w.clock, uid)); err != nil {
 		t.Fatal(err)
 	}
 	live := w.session(t, uid, true)

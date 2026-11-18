@@ -245,6 +245,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict("cannot remove the last second factor; add another one first")
 	case errors.Is(err, auth.ErrPasswordNotTheFactor):
 		return huma.Error403Forbidden(passwordNotTheFactor)
+	case errors.Is(err, auth.ErrTOTPNotEnabled):
+		return huma.Error409Conflict("recovery codes belong to a confirmed authenticator app; set one up first")
 	default:
 		slog.ErrorContext(ctx, "unmapped auth error", "err", err)
 		return huma.Error500InternalServerError("internal error")

@@ -20,6 +20,22 @@ type codeInput struct {
 		RecoveryCode string `json:"recovery_code,omitempty"`
 	}
 }
+
+// totpConfirmOutput answers the TOTP confirmation: recoveryOutput's codes
+// and cookie, and whether the account's tokens were revoked with it
+// (auth.Enrolment.ConfirmTOTP).
+type totpConfirmOutput struct {
+	SetCookie *http.Cookie `header:"Set-Cookie"`
+	Body      struct {
+		RecoveryCodes []string `json:"recovery_codes"`
+		// TokensRevoked: this was the account's first second factor,
+		// enrolled from a session signed in on the password alone while
+		// the second factor is optional (PULSIX_MFA_OPTIONAL), and every
+		// API token of the account was revoked with it.
+		TokensRevoked bool `json:"tokens_revoked"`
+	}
+}
+
 type recoveryOutput struct {
 	// SetCookie is the session's new cookie when the call completed the
 	// session (confirming the first factor replaces its secret, backlog
@@ -133,7 +149,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Post(hapi, "/api/v1/auth/totp/confirm", func(ctx context.Context, in *codeInput) (*recoveryOutput, error) {
+	huma.Post(hapi, "/api/v1/auth/totp/confirm", func(ctx context.Context, in *codeInput) (*totpConfirmOutput, error) {
 		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
@@ -142,7 +158,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		// (backlog 1.26): the recovery codes below exist in readable form
 		// exactly once, in this response, so they must not be committed
 		// unless the session upgrade commits with them.
-		codes, cookie, err := deps.Enrolment.ConfirmTOTP(ctx, p.UserID, p.SessionID, in.Body.Code)
+		codes, cookie, revoked, err := deps.Enrolment.ConfirmTOTP(ctx, p.UserID, p.SessionID, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
@@ -154,10 +170,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		// allowlisted (Task 11 fix round 2).
 		setAuditScope(ctx, nil, p.UserID)
 		setAuditObject(ctx, p.UserID.String(), "enabled two-factor authentication (TOTP)")
-		out := &recoveryOutput{}
+		recordTokensRevokedOnFirstFactor(ctx, deps, p.UserID, revoked)
+		out := &totpConfirmOutput{}
 		c := sessionCookie(cookie, deps.Secure)
 		out.SetCookie = &c
-		out.Body.RecoveryCodes = codes
+		out.Body.RecoveryCodes, out.Body.TokensRevoked = codes, revoked
 		return out, nil
 	}, withAudit("confirmTOTP", "totp"))
 

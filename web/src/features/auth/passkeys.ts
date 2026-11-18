@@ -50,7 +50,7 @@ interface PasskeyCeremonyBegin<T> {
  * passkey.spec.ts in the second half of this task, using a CDP virtual
  * authenticator.
  */
-export async function registerPasskey(name: string, t: Messages = en): Promise<void> {
+export async function registerPasskey(name: string, t: Messages = en): Promise<{ tokensRevoked: boolean }> {
   const begin = await beginPasskeyRegistration();
   const wrapped = begin.options as unknown as PasskeyCeremonyBegin<CreationOptionsJSON>;
   const options = decodeCreationOptions(wrapped.publicKey);
@@ -58,11 +58,14 @@ export async function registerPasskey(name: string, t: Messages = en): Promise<v
   const credential = await navigator.credentials.create({ publicKey: options });
   if (!credential) throw new Error(t.auth.passkey.registrationCancelled);
 
-  await finishPasskeyRegistration({
+  const res = await finishPasskeyRegistration({
     ceremony_id: begin.ceremony_id,
     name,
     response: encodeAttestationCredential(credential as PublicKeyCredential),
   });
+  // The account's first factor, enrolled from a session signed in on the
+  // password alone (PULSIX_MFA_OPTIONAL), revokes its API tokens.
+  return { tokensRevoked: res.tokens_revoked };
 }
 
 /**

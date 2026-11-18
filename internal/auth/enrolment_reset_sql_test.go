@@ -147,7 +147,7 @@ func TestPasskeyFinishAfterSecondFactorResetStoresNothing(t *testing.T) {
 			w.reset(t, uid)
 
 			response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, randomCredentialID(t))
-			cookie, err := w.enrol.FinishPasskey(ctx, stale, cid, "Planted key", response)
+			cookie, _, err := w.enrol.FinishPasskey(ctx, stale, cid, "Planted key", response)
 			if err == nil {
 				t.Fatal("finishing a registration on a session the reset ended returned no error")
 			}
@@ -186,7 +186,7 @@ func TestPasskeyFinishOnALiveSessionStoresAndUpgrades(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, randomCredentialID(t))
-			cookie, err := w.enrol.FinishPasskey(ctx, p, cid, "Key", response)
+			cookie, _, err := w.enrol.FinishPasskey(ctx, p, cid, "Key", response)
 			if err != nil {
 				t.Fatalf("FinishPasskey: %v", err)
 			}
@@ -224,7 +224,7 @@ func TestPasskeyFinishOnASignedOutSessionStoresNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, randomCredentialID(t))
-	if _, err := w.enrol.FinishPasskey(ctx, p, cid, "Key", response); err == nil {
+	if _, _, err := w.enrol.FinishPasskey(ctx, p, cid, "Key", response); err == nil {
 		t.Fatal("finishing on a signed-out session returned no error")
 	}
 	if n := w.passkeyCount(t, uid); n != 0 {
@@ -271,7 +271,7 @@ func TestConfirmTOTPAfterResetStoresNothing(t *testing.T) {
 	w.reset(t, uid)
 
 	code := enrol(t, w.totp, w.clock, uid)
-	if _, _, err := w.enrol.ConfirmTOTP(ctx, uid, stale.SessionID, code); !errors.Is(err, auth.ErrNotFound) {
+	if _, _, _, err := w.enrol.ConfirmTOTP(ctx, uid, stale.SessionID, code); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("ConfirmTOTP on a session the reset ended = %v, want ErrNotFound", err)
 	}
 	confirmed, codes := confirmedAndCodes(t, w.q, w.d, uid)
@@ -368,7 +368,7 @@ func TestEnrolmentAndSecondFactorResetSerialise(t *testing.T) {
 		response := buildNoneAttestationResponse(t, opts, testRPID, testOrigin, randomCredentialID(t))
 		finished := make(chan error, 1)
 		go func() {
-			_, err := w.enrol.FinishPasskey(context.Background(), p, cid, "Key", response)
+			_, _, err := w.enrol.FinishPasskey(context.Background(), p, cid, "Key", response)
 			finished <- err
 		}()
 		waitForLockWait(lockWaitCtx(t), t, backendPID(ctx, t, tx))
@@ -469,7 +469,7 @@ func TestConfirmTOTPRollsBackWhenTheSessionEndsMidway(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := w.enrol.ConfirmTOTP(context.Background(), uid, p.SessionID, code)
+		_, _, _, err := w.enrol.ConfirmTOTP(context.Background(), uid, p.SessionID, code)
 		done <- err
 	}()
 	// ConfirmTOTP passed its session check (the sign-out is not committed)
@@ -540,7 +540,7 @@ func TestConcurrentTOTPConfirmsDoNotDeadlock(t *testing.T) {
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, _, err := w.enrol.ConfirmTOTP(context.Background(), uid, p.SessionID, code)
+			_, _, _, err := w.enrol.ConfirmTOTP(context.Background(), uid, p.SessionID, code)
 			results <- err
 		}()
 	}
@@ -603,7 +603,7 @@ func TestConcurrentPasskeyFinishesDoNotDeadlock(t *testing.T) {
 	results := make(chan error, 2)
 	for _, f := range finishes {
 		go func() {
-			_, err := w.enrol.FinishPasskey(context.Background(), f.p, f.cid, "Key", f.response)
+			_, _, err := w.enrol.FinishPasskey(context.Background(), f.p, f.cid, "Key", f.response)
 			results <- err
 		}()
 	}

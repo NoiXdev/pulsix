@@ -354,7 +354,7 @@ func TestTOTPVerifyPropagatesOpenError(t *testing.T) {
 // not swallow a store failure into "recovery code rejected".
 func TestTOTPVerifyRecoveryPropagatesStoreError(t *testing.T) {
 	sentinel := errors.New("use recovery code failed")
-	tp := auth.NewTOTP(&fakeTOTPStore{useRecoveryErr: sentinel}, testTOTPBox(), "Pulsix Test", testTOTPNow)
+	tp := auth.NewTOTP(&fakeTOTPStore{useRecoveryErr: sentinel, hasSecret: true, secret: auth.TOTPSecretRow{Confirmed: true}}, testTOTPBox(), "Pulsix Test", testTOTPNow)
 	ok, err := tp.VerifyRecovery(context.Background(), uuid.Must(uuid.NewV7()), "somecode")
 	if ok || !errors.Is(err, sentinel) {
 		t.Fatalf("VerifyRecovery = (%v, %v), want (false, %v)", ok, err, sentinel)
