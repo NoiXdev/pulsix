@@ -51,7 +51,8 @@ func mapPreferencesErr(ctx context.Context, err error) error {
 // registerPreferencesRoutes wires the signed-in user's own appearance
 // settings (backlog 3.97–3.100). Like the language it is an account setting
 // of the person at the browser: an interactive session, never a token, and
-// the change is audited on the user's own trail without any value.
+// the change is not audited: it is cosmetic and per person, and a save per
+// column toggle would bury the useful entries of My activity (backlog 3.105).
 func registerPreferencesRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/auth/me/preferences", func(ctx context.Context, _ *struct{}) (*preferencesOutput, error) {
 		p, err := requireInteractiveSession(ctx)
@@ -80,8 +81,6 @@ func registerPreferencesRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapPreferencesErr(ctx, err)
 		}
-		setAuditScope(ctx, nil, p.UserID)
-		setAuditObject(ctx, p.UserID.String(), "changed their appearance settings")
 		return toPreferencesOutput(stored), nil
-	}, withAudit("setPreferences", "user"))
+	})
 }

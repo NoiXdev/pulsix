@@ -132,37 +132,19 @@ func TestPreferencesRefuseLockedSession(t *testing.T) {
 	}
 }
 
-func TestPutPreferencesIsAudited(t *testing.T) {
+// TestPutPreferencesIsNotAudited: a save is cosmetic and per person, and one
+// per column toggle would bury the useful entries of My activity (3.105).
+func TestPutPreferencesIsNotAudited(t *testing.T) {
 	s := apitest.New(t)
-	uid := s.SeedUser("prefs-audit@example.test", "correct horse battery")
-	c := s.LoginAs(uid)
+	c := s.LoginAs(s.SeedUser("prefs-audit@example.test", "correct horse battery"))
 	in := map[string]any{"density": "compact", "page_size": 100,
-		"lists": map[string]any{"hosts": map[string]any{"columns": []string{"name", "secret_col"}}}}
+		"lists": map[string]any{"hosts": map[string]any{"columns": []string{"name", "zone"}}}}
 	if resp := requestJSON(t, c, http.MethodPut, s.HTTP.URL+preferencesPath, in); resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
-	n := 0
 	for _, ev := range myActivity(t, s, c) {
-		if ev.Action != "PUT setPreferences" {
-			continue
+		if ev.Action == "PUT setPreferences" {
+			t.Fatalf("a preference save was audited: %+v", ev)
 		}
-		n++
-		if ev.OrgID != nil {
-			t.Errorf("OrgID = %v, want nil", *ev.OrgID)
-		}
-		if ev.ObjectID != uid.String() || ev.ObjectType != "user" {
-			t.Errorf("object = %s %s, want user %s", ev.ObjectType, ev.ObjectID, uid)
-		}
-		for _, leak := range []string{"secret_col", "name", "compact", "100", "hosts"} {
-			if strings.Contains(ev.Summary, leak) {
-				t.Errorf("summary %q contains %q", ev.Summary, leak)
-			}
-		}
-		if ev.Summary != "changed their appearance settings" {
-			t.Errorf("summary = %q", ev.Summary)
-		}
-	}
-	if n != 1 {
-		t.Fatalf("%d setPreferences events, want 1", n)
 	}
 }
