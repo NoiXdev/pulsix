@@ -59,12 +59,12 @@ func TestFirstPINNeedsNoStepUpButReplacingDoes(t *testing.T) {
 	}
 }
 
-func TestPINMustBeFourToEightDigits(t *testing.T) {
+func TestPINMustBeFourDigits(t *testing.T) {
 	s := apitest.New(t)
 	uid := s.SeedUser("pin-shape@example.test", "correct horse battery")
 	s.SeedPasskey(uid, "key")
 	c := s.LoginAs(uid)
-	for _, pin := range []string{"123", "123456789", "12a4", ""} {
+	for _, pin := range []string{"123", "12345", "12345678", "12a4", ""} {
 		if resp := putPIN(t, s, c, pin); resp.StatusCode != http.StatusUnprocessableEntity {
 			t.Errorf("PIN %q: %d, want 422", pin, resp.StatusCode)
 		}

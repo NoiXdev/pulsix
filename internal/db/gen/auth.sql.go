@@ -99,7 +99,7 @@ func (q *Queries) ClearFactorAttempts(ctx context.Context, userID uuid.UUID) err
 }
 
 const clearLockPIN = `-- name: ClearLockPIN :exec
-UPDATE users SET lock_pin_hash = NULL, lock_pin_prompted_at = NULL WHERE id = $1
+UPDATE users SET lock_pin_hash = NULL, lock_pin_digits = NULL, lock_pin_prompted_at = NULL WHERE id = $1
 `
 
 // The administrator's reset: the PIN and the "already offered" mark both go.
@@ -232,18 +232,19 @@ func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 }
 
 const getLockPIN = `-- name: GetLockPIN :one
-SELECT lock_pin_hash, lock_pin_prompted_at FROM users WHERE id = $1
+SELECT lock_pin_hash, lock_pin_digits, lock_pin_prompted_at FROM users WHERE id = $1
 `
 
 type GetLockPINRow struct {
 	LockPinHash       *string            `json:"lock_pin_hash"`
+	LockPinDigits     *int16             `json:"lock_pin_digits"`
 	LockPinPromptedAt pgtype.Timestamptz `json:"lock_pin_prompted_at"`
 }
 
 func (q *Queries) GetLockPIN(ctx context.Context, userID uuid.UUID) (GetLockPINRow, error) {
 	row := q.db.QueryRow(ctx, getLockPIN, userID)
 	var i GetLockPINRow
-	err := row.Scan(&i.LockPinHash, &i.LockPinPromptedAt)
+	err := row.Scan(&i.LockPinHash, &i.LockPinDigits, &i.LockPinPromptedAt)
 	return i, err
 }
 
@@ -453,7 +454,7 @@ func (q *Queries) MarkSessionMFAComplete(ctx context.Context, arg MarkSessionMFA
 }
 
 const removeLockPIN = `-- name: RemoveLockPIN :exec
-UPDATE users SET lock_pin_hash = NULL WHERE id = $1
+UPDATE users SET lock_pin_hash = NULL, lock_pin_digits = NULL WHERE id = $1
 `
 
 // The owner removes the PIN; prompted_at stays, so the offer does not return.
@@ -505,16 +506,17 @@ func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 }
 
 const setLockPIN = `-- name: SetLockPIN :exec
-UPDATE users SET lock_pin_hash = $1, lock_pin_prompted_at = now() WHERE id = $2
+UPDATE users SET lock_pin_hash = $1, lock_pin_digits = $2, lock_pin_prompted_at = now() WHERE id = $3
 `
 
 type SetLockPINParams struct {
-	LockPinHash *string   `json:"lock_pin_hash"`
-	UserID      uuid.UUID `json:"user_id"`
+	LockPinHash   *string   `json:"lock_pin_hash"`
+	LockPinDigits *int16    `json:"lock_pin_digits"`
+	UserID        uuid.UUID `json:"user_id"`
 }
 
 func (q *Queries) SetLockPIN(ctx context.Context, arg SetLockPINParams) error {
-	_, err := q.db.Exec(ctx, setLockPIN, arg.LockPinHash, arg.UserID)
+	_, err := q.db.Exec(ctx, setLockPIN, arg.LockPinHash, arg.LockPinDigits, arg.UserID)
 	return err
 }
 

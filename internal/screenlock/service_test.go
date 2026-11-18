@@ -13,6 +13,7 @@ import (
 
 type fakeStore struct {
 	hash       string
+	digits     *int // nil: length not recorded (a PIN set before 4-digit PINs)
 	prompted   bool
 	live       bool
 	locked     bool
@@ -35,14 +36,17 @@ func (f *fakeStore) fail(m string) error {
 	return nil
 }
 
-func (f *fakeStore) PINState(context.Context, uuid.UUID) (string, bool, error) {
-	return f.hash, f.prompted, errors.Join(f.err, f.fail("PINState"))
+func (f *fakeStore) PINState(context.Context, uuid.UUID) (string, *int, bool, error) {
+	return f.hash, f.digits, f.prompted, errors.Join(f.err, f.fail("PINState"))
 }
-func (f *fakeStore) SetPIN(_ context.Context, _ uuid.UUID, h string) error {
-	f.hash, f.prompted = h, true
+func (f *fakeStore) SetPIN(_ context.Context, _ uuid.UUID, h string, digits int) error {
+	f.hash, f.digits, f.prompted = h, &digits, true
 	return errors.Join(f.err, f.fail("SetPIN"))
 }
-func (f *fakeStore) RemovePIN(context.Context, uuid.UUID) error { f.hash = ""; return f.err }
+func (f *fakeStore) RemovePIN(context.Context, uuid.UUID) error {
+	f.hash, f.digits = "", nil
+	return f.err
+}
 func (f *fakeStore) MarkPrompted(context.Context, uuid.UUID) error {
 	f.prompted = true
 	return f.err
@@ -97,8 +101,8 @@ func TestSetPINRejectsNonDigitsAndLength(t *testing.T) {
 		pin string
 		ok  bool
 	}{
-		{"123", false}, {"123456789", false}, {"12a4", false}, {" 1234", false}, {"", false},
-		{"1234", true}, {"12345678", true},
+		{"042", false}, {"04271", false}, {"12345678", false}, {"12a4", false}, {" 1234", false}, {"", false},
+		{"1234", true}, {"0427", true},
 	} {
 		f := newFake()
 		err := screenlock.NewService(f).SetPIN(ctx, uuid.Nil, tc.pin)
@@ -374,5 +378,54 @@ func TestUnlockGivesUpAfterOneRetryWithoutRevoking(t *testing.T) {
 	f.denyClaims = 2
 	if _, err := s.Unlock(ctx, uuid.Nil, uuid.Nil, "9999"); !errors.Is(err, screenlock.ErrNotLocked) || f.revoked || !f.locked {
 		t.Fatalf("err %v revoked %v locked %v", err, f.revoked, f.locked)
+	}
+}
+
+func TestSetPINRecordsFourDigitsAndRemoveClearsThem(t *testing.T) {
+	f := newFake()
+	s := screenlock.NewService(f)
+	if err := s.SetPIN(ctx, uuid.Nil, "0427"); err != nil {
+		t.Fatal(err)
+	}
+	if f.digits == nil || *f.digits != 4 {
+		t.Fatalf("digits = %v, want 4", f.digits)
+	}
+	if err := s.RemovePIN(ctx, uuid.Nil); err != nil || f.digits != nil {
+		t.Fatalf("after remove: digits %v, err %v", f.digits, err)
+	}
+}
+
+func TestSetPINErrorMessage(t *testing.T) {
+	if got := screenlock.ErrInvalidPIN.Error(); got != "screenlock: PIN must be 4 digits" {
+		t.Fatalf("message %q", got)
+	}
+}
+
+func TestStatusFlagsLegacyPIN(t *testing.T) {
+	f := newFake()
+	h, err := auth.HashPassword("123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.hash, f.prompted = h, true // a row from the previous release: no digits
+	got, err := screenlock.NewService(f).Status(ctx, uuid.Nil)
+	if err != nil || got != (screenlock.Status{PINSet: true, Legacy: true}) {
+		t.Fatalf("Status = %+v, %v", got, err)
+	}
+}
+
+func TestLegacySixDigitPINStillUnlocks(t *testing.T) {
+	f := newFake()
+	s := screenlock.NewService(f)
+	h, err := auth.HashPassword("123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.hash, f.prompted = h, true
+	if err := s.Lock(ctx, uuid.Nil, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Unlock(ctx, uuid.Nil, uuid.Nil, "123456"); err != nil || f.locked {
+		t.Fatalf("Unlock = %v, locked %v", err, f.locked)
 	}
 }

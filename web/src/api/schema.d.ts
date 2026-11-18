@@ -6096,6 +6096,7 @@ export interface components {
             instance_admin: boolean;
             /** @enum {string|null} */
             locale: "en" | "de" | null;
+            lock_pin_legacy: boolean;
             lock_pin_prompt: boolean;
             lock_pin_set: boolean;
             locked: boolean;

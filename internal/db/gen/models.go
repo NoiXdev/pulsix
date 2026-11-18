@@ -1114,6 +1114,7 @@ type User struct {
 	LastSignInAt          pgtype.Timestamptz `json:"last_sign_in_at"`
 	LockPinHash           *string            `json:"lock_pin_hash"`
 	LockPinPromptedAt     pgtype.Timestamptz `json:"lock_pin_prompted_at"`
+	LockPinDigits         *int16             `json:"lock_pin_digits"`
 }
 
 type UserPreference struct {

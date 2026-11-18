@@ -235,18 +235,18 @@ UPDATE sessions SET locked_at = NULL, unlock_failures = 0
 WHERE id = $1 AND locked_at IS NOT NULL;
 
 -- name: GetLockPIN :one
-SELECT lock_pin_hash, lock_pin_prompted_at FROM users WHERE id = @user_id;
+SELECT lock_pin_hash, lock_pin_digits, lock_pin_prompted_at FROM users WHERE id = @user_id;
 
 -- name: SetLockPIN :exec
-UPDATE users SET lock_pin_hash = @lock_pin_hash, lock_pin_prompted_at = now() WHERE id = @user_id;
+UPDATE users SET lock_pin_hash = @lock_pin_hash, lock_pin_digits = @lock_pin_digits, lock_pin_prompted_at = now() WHERE id = @user_id;
 
 -- name: RemoveLockPIN :exec
 -- The owner removes the PIN; prompted_at stays, so the offer does not return.
-UPDATE users SET lock_pin_hash = NULL WHERE id = @user_id;
+UPDATE users SET lock_pin_hash = NULL, lock_pin_digits = NULL WHERE id = @user_id;
 
 -- name: ClearLockPIN :exec
 -- The administrator's reset: the PIN and the "already offered" mark both go.
-UPDATE users SET lock_pin_hash = NULL, lock_pin_prompted_at = NULL WHERE id = @user_id;
+UPDATE users SET lock_pin_hash = NULL, lock_pin_digits = NULL, lock_pin_prompted_at = NULL WHERE id = @user_id;
 
 -- name: MarkLockPINPrompted :exec
 UPDATE users SET lock_pin_prompted_at = now() WHERE id = @user_id;

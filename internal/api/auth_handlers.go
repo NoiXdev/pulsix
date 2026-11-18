@@ -107,8 +107,11 @@ type meOutput struct {
 		Locked bool `json:"locked"`
 		// LockPINSet says the account has a lock PIN; LockPINPrompt that
 		// the sign-in flow should offer to set one.
+		// LockPINLegacy: the PIN was set before four-digit PINs (its
+		// length is unknown); it still unlocks, the SPA asks for a new one.
 		LockPINSet    bool `json:"lock_pin_set"`
 		LockPINPrompt bool `json:"lock_pin_prompt"`
+		LockPINLegacy bool `json:"lock_pin_legacy"`
 		// SessionExpiresAt is when this session's cookie stops
 		// authenticating (the SPA warns before it). Only a cookie session
 		// reaches this route: bearer tokens are accepted on the
@@ -179,7 +182,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
-		out.Body.LockPINSet, out.Body.LockPINPrompt = lock.PINSet, lock.Prompt
+		out.Body.LockPINSet, out.Body.LockPINPrompt, out.Body.LockPINLegacy = lock.PINSet, lock.Prompt, lock.Legacy
 		def, err := deps.Setup.DefaultLocale(ctx)
 		if err != nil {
 			return nil, mapSetupErr(ctx, err)

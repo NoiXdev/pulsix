@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -22,6 +23,7 @@ type sqlFixture struct {
 	uid    uuid.UUID
 	sid    uuid.UUID
 	cookie string
+	pool   *pgxpool.Pool
 }
 
 func newSQLFixture(t *testing.T) sqlFixture {
@@ -37,7 +39,7 @@ func newSQLFixture(t *testing.T) sqlFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sqlFixture{q, screenlock.NewService(screenlock.NewSQLStore(q)), sess, uid, sid, cookie}
+	return sqlFixture{q, screenlock.NewService(screenlock.NewSQLStore(q)), sess, uid, sid, cookie, d.Pool()}
 }
 
 func TestSQLStoreEndToEnd(t *testing.T) {
@@ -209,7 +211,7 @@ func TestSQLStoreSurfacesDatabaseErrors(t *testing.T) {
 	dead, cancel := context.WithCancel(ctx)
 	cancel()
 	st := screenlock.NewSQLStore(f.q)
-	if _, _, err := st.PINState(dead, f.uid); err == nil {
+	if _, _, _, err := st.PINState(dead, f.uid); err == nil {
 		t.Error("PINState")
 	}
 	if _, _, err := st.ClaimAttempt(dead, f.sid); err == nil {
@@ -227,7 +229,41 @@ func TestSQLStoreSurfacesDatabaseErrors(t *testing.T) {
 	if err := st.RevokeSession(dead, f.sid); err == nil {
 		t.Error("RevokeSession")
 	}
-	if err := st.SetPIN(dead, f.uid, "x"); err == nil {
+	if err := st.SetPIN(dead, f.uid, "x", 4); err == nil {
 		t.Error("SetPIN")
+	}
+}
+
+func TestSQLStoreRecordsDigitsAndFlagsLegacy(t *testing.T) {
+	f := newSQLFixture(t)
+	if err := f.svc.SetPIN(ctx, f.uid, "0427"); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := f.svc.Status(ctx, f.uid); st != (screenlock.Status{PINSet: true}) {
+		t.Fatalf("Status after SetPIN = %+v", st)
+	}
+	// Simulate the previous release: a 6-digit hash with no recorded length.
+	hash, err := auth.HashPassword("123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, `UPDATE users SET lock_pin_hash = $2, lock_pin_digits = NULL WHERE id = $1`, f.uid, hash); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := f.svc.Status(ctx, f.uid); st != (screenlock.Status{PINSet: true, Legacy: true}) {
+		t.Fatalf("Status of older PIN = %+v", st)
+	}
+	if err := f.svc.Lock(ctx, f.uid, f.sid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Unlock(ctx, f.uid, f.sid, "123456"); err != nil {
+		t.Fatalf("older 6-digit PIN does not unlock: %v", err)
+	}
+	if err := f.svc.RemovePIN(ctx, f.uid); err != nil {
+		t.Fatal(err)
+	}
+	var digits *int16
+	if err := f.pool.QueryRow(ctx, `SELECT lock_pin_digits FROM users WHERE id = $1`, f.uid).Scan(&digits); err != nil || digits != nil {
+		t.Fatalf("digits after remove = %v, %v", digits, err)
 	}
 }

@@ -147,6 +147,7 @@ func TestMeReportsExpiryAndPINState(t *testing.T) {
 		ExpiresAt string `json:"session_expires_at"`
 		PINSet    bool   `json:"lock_pin_set"`
 		Prompt    bool   `json:"lock_pin_prompt"`
+		Legacy    bool   `json:"lock_pin_legacy"`
 	}
 	read := func() meBody {
 		resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil)
@@ -173,6 +174,16 @@ func TestMeReportsExpiryAndPINState(t *testing.T) {
 	}
 	if m = read(); !m.PINSet || m.Prompt {
 		t.Fatalf("with PIN: set=%v prompt=%v, want true/false", m.PINSet, m.Prompt)
+	}
+	if m.Legacy {
+		t.Fatal("a four-digit PIN set now is flagged lock_pin_legacy")
+	}
+	// A PIN from the previous release has no recorded length.
+	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE users SET lock_pin_digits = NULL WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if m = read(); !m.PINSet || !m.Legacy {
+		t.Fatalf("older PIN: set=%v legacy=%v, want true/true", m.PINSet, m.Legacy)
 	}
 }
 

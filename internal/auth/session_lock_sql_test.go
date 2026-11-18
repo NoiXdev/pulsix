@@ -210,11 +210,12 @@ func TestLockPINQueries(t *testing.T) {
 		t.Fatalf("after prompt: %+v", row)
 	}
 
-	if err := q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: uid, LockPinHash: ptr("hash")}); err != nil {
+	if err := q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: uid, LockPinHash: ptr("hash"), LockPinDigits: ptr(int16(4))}); err != nil {
 		t.Fatal(err)
 	}
 	row, _ = q.GetLockPIN(ctx, uid)
-	if row.LockPinHash == nil || *row.LockPinHash != "hash" || !row.LockPinPromptedAt.Valid {
+	if row.LockPinHash == nil || *row.LockPinHash != "hash" || !row.LockPinPromptedAt.Valid ||
+		row.LockPinDigits == nil || *row.LockPinDigits != 4 {
 		t.Fatalf("after set: %+v", row)
 	}
 
@@ -222,16 +223,16 @@ func TestLockPINQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, _ = q.GetLockPIN(ctx, uid)
-	if row.LockPinHash != nil || !row.LockPinPromptedAt.Valid {
+	if row.LockPinHash != nil || row.LockPinDigits != nil || !row.LockPinPromptedAt.Valid {
 		t.Fatalf("after remove (prompted kept): %+v", row)
 	}
 
-	_ = q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: uid, LockPinHash: ptr("hash")})
+	_ = q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: uid, LockPinHash: ptr("hash"), LockPinDigits: ptr(int16(4))})
 	if err := q.ClearLockPIN(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
 	row, _ = q.GetLockPIN(ctx, uid)
-	if row.LockPinHash != nil || row.LockPinPromptedAt.Valid {
+	if row.LockPinHash != nil || row.LockPinDigits != nil || row.LockPinPromptedAt.Valid {
 		t.Fatalf("after clear: %+v", row)
 	}
 }

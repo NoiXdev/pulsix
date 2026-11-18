@@ -19,7 +19,7 @@ import (
 const MaxUnlockFailures = 5
 
 var (
-	ErrInvalidPIN = errors.New("screenlock: PIN must be 4 to 8 digits")
+	ErrInvalidPIN = errors.New("screenlock: PIN must be 4 digits")
 	ErrNoPIN      = errors.New("screenlock: no PIN set")
 	ErrWrongPIN   = errors.New("screenlock: wrong PIN")
 	ErrExhausted  = errors.New("screenlock: unlock attempts used up")
@@ -27,13 +27,24 @@ var (
 	ErrNotFound   = errors.New("screenlock: session not found")
 )
 
-var pinPattern = regexp.MustCompile(`^[0-9]{4,8}$`)
+// pinDigits is the length of a new PIN. pinPattern validates one being set.
+// unlockPattern also admits the 4 to 8 digits an older release allowed, so a
+// PIN set back then still unlocks.
+const pinDigits = 4
+
+var (
+	pinPattern    = regexp.MustCompile(`^[0-9]{4}$`)
+	unlockPattern = regexp.MustCompile(`^[0-9]{4,8}$`)
+)
 
 // Status is what the SPA needs to know about a user's PIN.
 type Status struct {
 	PINSet bool
 	// Prompt: the user has no PIN and was never offered one.
 	Prompt bool
+	// Legacy: a PIN is set but its length was not recorded, so it dates from
+	// before four-digit PINs and the person should replace it.
+	Legacy bool
 }
 
 // SessionState is the lock-relevant slice of a session row.
@@ -45,12 +56,13 @@ type SessionState struct {
 // Store is the persistence the service needs. Session methods only see live
 // (unrevoked, unexpired) sessions.
 type Store interface {
-	// PINState returns the stored PIN hash ("" when none) and whether the
-	// user was ever offered a PIN.
-	PINState(ctx context.Context, userID uuid.UUID) (hash string, prompted bool, err error)
-	// SetPIN stores the hash and marks the user as prompted.
-	SetPIN(ctx context.Context, userID uuid.UUID, hash string) error
-	// RemovePIN drops the hash and keeps the prompted mark.
+	// PINState returns the stored PIN hash ("" when none), its recorded
+	// length (nil when not recorded) and whether the user was ever offered
+	// a PIN.
+	PINState(ctx context.Context, userID uuid.UUID) (hash string, digits *int, prompted bool, err error)
+	// SetPIN stores the hash and its length and marks the user as prompted.
+	SetPIN(ctx context.Context, userID uuid.UUID, hash string, digits int) error
+	// RemovePIN drops the hash and its length and keeps the prompted mark.
 	RemovePIN(ctx context.Context, userID uuid.UUID) error
 	MarkPrompted(ctx context.Context, userID uuid.UUID) error
 	// LockSession reports whether a live, unlocked session was locked.
@@ -70,11 +82,12 @@ type Service struct{ store Store }
 func NewService(store Store) *Service { return &Service{store: store} }
 
 func (s *Service) Status(ctx context.Context, userID uuid.UUID) (Status, error) {
-	hash, prompted, err := s.store.PINState(ctx, userID)
+	hash, digits, prompted, err := s.store.PINState(ctx, userID)
 	if err != nil {
 		return Status{}, fmt.Errorf("read lock PIN: %w", err)
 	}
-	return Status{PINSet: hash != "", Prompt: hash == "" && !prompted}, nil
+	set := hash != ""
+	return Status{PINSet: set, Prompt: !set && !prompted, Legacy: set && digits == nil}, nil
 }
 
 func (s *Service) SetPIN(ctx context.Context, userID uuid.UUID, pin string) error {
@@ -85,7 +98,7 @@ func (s *Service) SetPIN(ctx context.Context, userID uuid.UUID, pin string) erro
 	if err != nil {
 		return fmt.Errorf("hash lock PIN: %w", err)
 	}
-	if err := s.store.SetPIN(ctx, userID, hash); err != nil {
+	if err := s.store.SetPIN(ctx, userID, hash, pinDigits); err != nil {
 		return fmt.Errorf("store lock PIN: %w", err)
 	}
 	return nil
@@ -109,7 +122,7 @@ func (s *Service) SkipPrompt(ctx context.Context, userID uuid.UUID) error {
 
 // Lock locks the session. Locking an already locked session is a no-op.
 func (s *Service) Lock(ctx context.Context, userID, sessionID uuid.UUID) error {
-	hash, _, err := s.store.PINState(ctx, userID)
+	hash, _, _, err := s.store.PINState(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("read lock PIN: %w", err)
 	}
@@ -158,11 +171,11 @@ func (s *Service) Unlock(ctx context.Context, userID, sessionID uuid.UUID, pin s
 		}
 	}
 
-	hash, _, err := s.store.PINState(ctx, userID)
+	hash, _, _, err := s.store.PINState(ctx, userID)
 	if err != nil {
 		return 0, fmt.Errorf("read lock PIN: %w", err)
 	}
-	if hash != "" && pinPattern.MatchString(pin) {
+	if hash != "" && unlockPattern.MatchString(pin) {
 		match, verr := auth.VerifyPassword(hash, pin)
 		if verr == nil && match {
 			if err := s.store.UnlockSession(ctx, sessionID); err != nil {

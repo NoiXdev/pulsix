@@ -15,20 +15,26 @@ type SQLStore struct{ q *gen.Queries }
 
 func NewSQLStore(q *gen.Queries) *SQLStore { return &SQLStore{q: q} }
 
-func (s *SQLStore) PINState(ctx context.Context, userID uuid.UUID) (string, bool, error) {
+func (s *SQLStore) PINState(ctx context.Context, userID uuid.UUID) (string, *int, bool, error) {
 	row, err := s.q.GetLockPIN(ctx, userID)
 	if err != nil {
-		return "", false, err
+		return "", nil, false, err
 	}
 	hash := ""
 	if row.LockPinHash != nil {
 		hash = *row.LockPinHash
 	}
-	return hash, row.LockPinPromptedAt.Valid, nil
+	var digits *int
+	if row.LockPinDigits != nil {
+		n := int(*row.LockPinDigits)
+		digits = &n
+	}
+	return hash, digits, row.LockPinPromptedAt.Valid, nil
 }
 
-func (s *SQLStore) SetPIN(ctx context.Context, userID uuid.UUID, hash string) error {
-	return s.q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: userID, LockPinHash: &hash})
+func (s *SQLStore) SetPIN(ctx context.Context, userID uuid.UUID, hash string, digits int) error {
+	d := int16(digits)
+	return s.q.SetLockPIN(ctx, gen.SetLockPINParams{UserID: userID, LockPinHash: &hash, LockPinDigits: &d})
 }
 
 func (s *SQLStore) RemovePIN(ctx context.Context, userID uuid.UUID) error {
