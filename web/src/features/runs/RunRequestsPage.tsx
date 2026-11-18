@@ -3,7 +3,7 @@ import { DataList } from '../../ui/data-list/index.ts';
 import { ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useRunRequests } from '../../api/hooks/useRunRequests.ts';
+import { usePendingRunRequestCount, useRunRequests } from '../../api/hooks/useRunRequests.ts';
 import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -30,7 +30,6 @@ export function RunRequestsPage() {
   const fmt = useFormat();
   const now = useNow();
   const { org } = useParams({ strict: false }) as { org: string };
-  const requests = useRunRequests(org);
   const templates = useTemplates(org);
 
   const templateNames = new Map((templates.data?.templates ?? []).map((tpl) => [tpl.id, tpl.name]));
@@ -41,6 +40,10 @@ export function RunRequestsPage() {
     relative: (iso) => fmt.relative(iso, now),
   });
   const { filters, active, setFilter, reset } = useListFilters(RUN_REQUESTS_FILTERS);
+  // The status is the server's to filter; kind and template narrow what comes back.
+  const requests = useRunRequests(org, filters.status);
+  // With a status chosen the list no longer holds every pending request, so the header asks for them.
+  const pendingOfAll = usePendingRunRequestCount(org, { enabled: !!filters.status });
   const view = useListView('run-requests', columns, { mode: 'client', rowKey: (q) => q.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(requests);
@@ -48,7 +51,7 @@ export function RunRequestsPage() {
   if (!requests.data) return <QueryLoading />;
 
   const all = sortRequests(requests.data.requests ?? []);
-  const pending = all.filter((q) => q.status === 'pending').length;
+  const pending = filters.status ? (pendingOfAll ?? 0) : all.filter((q) => q.status === 'pending').length;
   const shown = filterRunRequests(all, filters);
   const { rows, total } = view.view(view.ready ? shown : undefined);
   const f = r.filters;
@@ -72,7 +75,7 @@ export function RunRequestsPage() {
         loading={!view.ready}
         empty={active ? r.noMatch : r.empty}
         toolbar={
-          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={r.count} />}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={filters.status ? undefined : all.length} noun={r.count} />}>
             <FilterSelect
               label={f.status}
               allLabel={f.allStatuses}

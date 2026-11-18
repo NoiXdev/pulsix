@@ -73,7 +73,29 @@ describe('RunRequestsPage list', () => {
       setup('/o/acme/runs/requests?status=approved', rows);
       expect(await screen.findByText('1–1 of 1 request')).toBeInTheDocument();
       expect(firstCells()).toEqual(['beta']);
-      expect(screen.getByText('1 of 3 requests')).toBeInTheDocument();
+      // The server filtered by status, so the unfiltered total is not known here.
+      expect(screen.getByText('1 request')).toBeInTheDocument();
+    });
+
+    it('asks the server for the chosen status instead of filtering every request in the browser', async () => {
+      const queries: string[] = [];
+      mockApi({
+        'GET /api/v1/auth/me/preferences': PREFS,
+        'GET /api/v1/orgs/acme/job-templates': { templates: [] },
+        'GET /api/v1/orgs/acme/run-requests': (req: MockRequest) => {
+          queries.push(req.search.get('status') ?? '');
+          return { requests: rows.filter((q) => !req.search.get('status') || q.status === req.search.get('status')) };
+        },
+      });
+      renderListPage({
+        path: '/runs/requests',
+        component: RunRequestsPage,
+        initial: '/o/acme/runs/requests?status=approved',
+        extraSearch: (q) => ({ ...validateRunRequestsSearch(q) }),
+      });
+      expect(await screen.findByText('1–1 of 1 request')).toBeInTheDocument();
+      expect(queries).toContain('approved');
+      expect(queries).not.toContain('');
     });
 
     it('writes the template and the kind to the URL', async () => {

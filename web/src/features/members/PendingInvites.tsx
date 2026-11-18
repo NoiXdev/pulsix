@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { DataList, type RowAction } from '../../ui/data-list/index.ts';
-import { FilterChip, ListToolbar, ResetFilters } from '../../ui/list-toolbar.tsx';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount } from '../../ui/list-toolbar.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { usePendingInvites, useRevokeInvite } from '../../api/hooks/useMembers.ts';
 import type { PendingInvite } from '../../api/types.ts';
@@ -8,6 +8,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
 import { useListView } from '../lists/useListView.ts';
+import { isExpired } from '../tokens/expiry.ts';
 import { inviteColumns } from './inviteColumns.tsx';
 
 /**
@@ -39,8 +40,7 @@ export function PendingInvites({ org }: { org: string }) {
   });
 
   const all = invites.data?.invites ?? [];
-  const now = new Date().toISOString();
-  const shown = expired ? all.filter((i) => i.expires_at < now) : all;
+  const shown = expired ? all.filter((i) => isExpired(i.expires_at)) : all;
   const { rows, total } = view.view(view.ready ? shown : undefined);
   if (all.length === 0) return null;
 
@@ -61,7 +61,7 @@ export function PendingInvites({ org }: { org: string }) {
         loading={!view.ready}
         empty={expired ? t.members.pending.noMatch : null}
         toolbar={
-          <ListToolbar>
+          <ListToolbar count={<ResultCount active={expired} shown={shown.length} total={all.length} noun={t.members.pending.count} />}>
             <FilterChip pressed={expired} tone="crit" onToggle={() => setExpired((v) => !v)}>
               {t.members.pending.expiredFilter}
             </FilterChip>

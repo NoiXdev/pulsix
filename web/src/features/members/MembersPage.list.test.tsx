@@ -184,6 +184,7 @@ describe('PendingInvites list', () => {
     await within(section).findByText('1–2 of 2 invitations');
     await user.click(within(section).getByRole('button', { name: 'Expired' }));
     await waitFor(() => expect(names(section)).toEqual(['old@acme.io']));
+    expect(within(section).getByText('1 of 2 invitations')).toBeInTheDocument();
     expect(router.state.location.search).toEqual({});
     await user.click(within(section).getByRole('button', { name: 'Reset every filter' }));
     await waitFor(() => expect(names(section)).toHaveLength(2));
