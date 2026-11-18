@@ -150,11 +150,11 @@ export function useUnassignHost(org: string, groupId: string) {
   });
 }
 
-export function useInventoryPreview(org: string, groupId?: string) {
+export function useInventoryPreview(org: string, groupId?: string, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['inventory', org, 'preview', groupId ?? ''],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/inventory/preview', { params: { path: { org }, query: { group: groupId ?? '' } } })),
-    enabled: !!org,
+    enabled: enabled && !!org,
   });
 }
 

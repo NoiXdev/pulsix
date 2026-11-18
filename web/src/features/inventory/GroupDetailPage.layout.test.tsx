@@ -287,7 +287,7 @@ describe('GroupDetailPage tabs', () => {
     expect(router.history.length).toBe(entries);
     await user.click(tab('Inheritance'));
     expect(router.history.length).toBe(entries + 1);
-    expect(panel().getByText(/Coming soon/)).toBeInTheDocument();
+    expect(await panel().findByText(/nothing to compare/)).toBeInTheDocument();
   });
 
   it('opens the tab the URL names, and Variables for one it does not know', async () => {
