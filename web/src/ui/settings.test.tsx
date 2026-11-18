@@ -70,6 +70,30 @@ describe('SettingsRow', () => {
     expect(screen.getByText('Shown to others')).toBeInTheDocument();
   });
 
+  it('hands the help text\'s id to a children function for aria-describedby', () => {
+    render(
+      <SettingsRow label="Allow" help="Off stops every token">
+        {(helpId) => <button type="button" role="switch" aria-checked="false" aria-label="Allow" aria-describedby={helpId} />}
+      </SettingsRow>,
+    );
+    expect(screen.getByRole('switch', { name: 'Allow' })).toHaveAccessibleDescription('Off stops every token');
+  });
+
+  it('uses a given helpId and gives no id without help', () => {
+    const { rerender } = render(
+      <SettingsRow label="Name" htmlFor="n" help="Shown to others" helpId="n-help">
+        <input id="n" aria-describedby="n-help" />
+      </SettingsRow>,
+    );
+    expect(screen.getByLabelText('Name')).toHaveAccessibleDescription('Shown to others');
+    rerender(
+      <SettingsRow label="Name" htmlFor="n">
+        {(helpId) => <input id="n" data-help={String(helpId)} />}
+      </SettingsRow>,
+    );
+    expect(screen.getByLabelText('Name')).toHaveAttribute('data-help', 'undefined');
+  });
+
   it('exposes a labelId for aria-labelledby when there is no htmlFor', () => {
     render(
       <SettingsRow label="Mode" labelId="mode-l">

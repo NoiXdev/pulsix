@@ -78,8 +78,8 @@ export function OrgNameCard({
         <SettingsRow label={g.name} htmlFor="org_name">
           <Input id="org_name" className="w-72 max-w-full" value={form.draft} readOnly={!canManage} onChange={(e) => form.setDraft(e.target.value)} />
         </SettingsRow>
-        <SettingsRow label={g.slug} htmlFor="org_slug" help={g.slugHint}>
-          <Input id="org_slug" className="w-72 max-w-full font-mono" value={slug} readOnly />
+        <SettingsRow label={g.slug} htmlFor="org_slug" help={g.slugHint} helpId="org_slug_help">
+          <Input id="org_slug" className="w-72 max-w-full font-mono" value={slug} readOnly aria-describedby="org_slug_help" />
         </SettingsRow>
       </SettingsCard>
     </form>

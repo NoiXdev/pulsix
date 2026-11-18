@@ -150,6 +150,19 @@ describe('OrgGeneralPage', () => {
     expect(await screen.findByRole('switch', { name: 'Allow personal tokens' })).toBeInTheDocument();
   });
 
+  it('describes each switch and field by its row\'s help text', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/settings/assistant': { settings: { assistant_enabled: true, approved_runs_start_follow_ups: false } },
+      'GET /api/v1/orgs/acme/settings/personal-tokens': { allowed: true },
+    });
+    renderPage();
+    expect(await screen.findByRole('switch', { name: 'Assistant access' })).toHaveAccessibleDescription(/^Assistant tokens of this organization can work/);
+    expect(screen.getByRole('switch', { name: 'Approved runs start follow-ups' })).toHaveAccessibleDescription(/^When on, the approval page/);
+    expect(await screen.findByRole('switch', { name: 'Allow personal tokens' })).toHaveAccessibleDescription(/^Members can give their own personal tokens/);
+    expect(screen.getByLabelText('Slug')).toHaveAccessibleDescription('Part of every address of this organization; cannot be changed.');
+  });
+
   it('has no save bar anywhere for a role below admin', async () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('operator') });
     renderPage();

@@ -38,9 +38,17 @@ export function PersonalTokensRow({ org, canWrite }: { org: string; canWrite: bo
   }
   return (
     <SettingsRow label={s.title} help={s.hint}>
-      {setting.isSuccess ? (
-        <Switch aria-label={s.title} checked={allowed} disabled={!canWrite || update.isPending} onCheckedChange={(next) => void onToggle(next)} />
-      ) : null}
+      {(helpId) =>
+        setting.isSuccess ? (
+          <Switch
+            aria-label={s.title}
+            aria-describedby={helpId}
+            checked={allowed}
+            disabled={!canWrite || update.isPending}
+            onCheckedChange={(next) => void onToggle(next)}
+          />
+        ) : null
+      }
     </SettingsRow>
   );
 }

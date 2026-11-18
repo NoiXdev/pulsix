@@ -103,6 +103,7 @@ export function BackupDestinationCard({
             <TextRow id="backup_endpoint" label={d.endpoint} help={d.endpointHint}>
               <Input
                 id="backup_endpoint"
+                aria-describedby="backup_endpoint_help"
                 className="w-72 max-w-full"
                 placeholder="https://s3.eu-central-1.example.com"
                 value={draft.endpoint}
@@ -147,6 +148,7 @@ export function BackupDestinationCard({
             <TextRow id="backup_secret_key" label={d.secretKey} help={settings.s3.secret_key_set ? d.secretStored : d.secretNone}>
               <Input
                 id="backup_secret_key"
+                aria-describedby="backup_secret_key_help"
                 type="password"
                 className="w-72 max-w-full"
                 autoComplete="new-password"
@@ -164,9 +166,9 @@ export function BackupDestinationCard({
             </SettingsRow>
           </>
         )}
-        <SettingsRow label={d.testLabel} help={d.testHint}>
+        <SettingsRow label={d.testLabel} help={d.testHint} helpId="backup_test_help">
           <div className="flex flex-col items-start gap-2 sm:items-end">
-            <Button type="button" disabled={test.isPending} onClick={() => void onTest()}>
+            <Button type="button" aria-describedby="backup_test_help" disabled={test.isPending} onClick={() => void onTest()}>
               <PlugZap size={14} /> {d.test}
             </Button>
             {testResult && (
@@ -184,9 +186,11 @@ export function BackupDestinationCard({
   );
 }
 
+/** A text field's row; a field with help points `aria-describedby` at
+ * `${id}_help`. */
 function TextRow({ id, label, help, children }: { id: string; label: string; help?: string; children: ReactNode }) {
   return (
-    <SettingsRow label={label} htmlFor={id} help={help}>
+    <SettingsRow label={label} htmlFor={id} help={help} helpId={`${id}_help`}>
       {children}
     </SettingsRow>
   );

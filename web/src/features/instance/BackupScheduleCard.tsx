@@ -62,9 +62,10 @@ export function BackupScheduleCard({
   }
 
   const count = (id: string, label: string, key: 'daily' | 'weekly', help?: string) => (
-    <SettingsRow label={label} htmlFor={id} help={help}>
+    <SettingsRow label={label} htmlFor={id} help={help} helpId={`${id}_help`}>
       <Input
         id={id}
+        aria-describedby={help ? `${id}_help` : undefined}
         type="number"
         min={0}
         className="w-28"
@@ -118,10 +119,11 @@ export function BackupScheduleCard({
         </SettingsRow>
         {count('backup_daily', sc.daily, 'daily', sc.keep)}
         {count('backup_weekly', sc.weekly, 'weekly')}
-        <SettingsRow label={sc.monthly} htmlFor="backup_monthly" help={sc.keepHint}>
+        <SettingsRow label={sc.monthly} htmlFor="backup_monthly" help={sc.keepHint} helpId="backup_monthly_help">
           <div className="flex flex-col gap-1.5">
             <Input
               id="backup_monthly"
+              aria-describedby="backup_monthly_help"
               type="number"
               min={0}
               className="w-28"

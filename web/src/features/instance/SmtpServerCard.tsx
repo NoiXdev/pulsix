@@ -96,9 +96,10 @@ export function SmtpServerCard({
         <SettingsRow label={smtp.username} htmlFor="smtp_username">
           <Input id="smtp_username" autoComplete="off" className="w-72 max-w-full" {...form.register('username')} />
         </SettingsRow>
-        <SettingsRow label={t.auth.password} htmlFor="smtp_password" help={smtp.passwordHint}>
+        <SettingsRow label={t.auth.password} htmlFor="smtp_password" help={smtp.passwordHint} helpId="smtp_password_help">
           <Input
             id="smtp_password"
+            aria-describedby="smtp_password_help"
             type="password"
             autoComplete="new-password"
             className="w-72 max-w-full"

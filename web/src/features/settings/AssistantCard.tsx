@@ -50,15 +50,26 @@ export function AssistantRows({ org, canWrite }: { org: string; canWrite: boolea
   return (
     <>
       <SettingsRow label={a.title} help={a.hint}>
-        <Switch aria-label={a.title} checked={enabled} disabled={busy} onCheckedChange={(next) => void onToggle(next)} />
+        {(helpId) => (
+          <Switch
+            aria-label={a.title}
+            aria-describedby={helpId}
+            checked={enabled}
+            disabled={busy}
+            onCheckedChange={(next) => void onToggle(next)}
+          />
+        )}
       </SettingsRow>
       <SettingsRow label={a.followUpsTitle} help={a.followUpsHint} indent>
-        <Switch
-          aria-label={a.followUpsTitle}
-          checked={startsFollowUps}
-          disabled={busy || !enabled}
-          onCheckedChange={(next) => void onToggleFollowUps(next)}
-        />
+        {(helpId) => (
+          <Switch
+            aria-label={a.followUpsTitle}
+            aria-describedby={helpId}
+            checked={startsFollowUps}
+            disabled={busy || !enabled}
+            onCheckedChange={(next) => void onToggleFollowUps(next)}
+          />
+        )}
       </SettingsRow>
     </>
   );

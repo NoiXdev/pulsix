@@ -96,12 +96,16 @@ export function SettingsCard({
 
 /** SettingsRow — label and help on the left, the control on the right; one
  * column below `sm`. `indent` marks a sub-setting; `stack` puts the control
- * under the label at every width (wide controls). */
+ * under the label at every width (wide controls). The help text carries an
+ * id (`helpId`, generated when not given); children may be a function of it,
+ * so the control can point `aria-describedby` at the help. Without help the
+ * function gets undefined. */
 export function SettingsRow({
   label,
   htmlFor,
   labelId,
   help,
+  helpId,
   children,
   indent,
   stack,
@@ -110,10 +114,14 @@ export function SettingsRow({
   htmlFor?: string;
   labelId?: string;
   help?: ReactNode;
-  children?: ReactNode;
+  helpId?: string;
+  children?: ReactNode | ((helpId: string | undefined) => ReactNode);
   indent?: boolean;
   stack?: boolean;
 }) {
+  const generated = useId();
+  const describedBy = help ? (helpId ?? generated) : undefined;
+  const control = typeof children === 'function' ? children(describedBy) : children;
   const labelClass = 'text-[13.5px] font-medium';
   return (
     <div
@@ -133,9 +141,13 @@ export function SettingsRow({
             {label}
           </div>
         )}
-        {help ? <p className="mt-0.5 text-[12.5px] text-muted-foreground">{help}</p> : null}
+        {help ? (
+          <p id={describedBy} className="mt-0.5 text-[12.5px] text-muted-foreground">
+            {help}
+          </p>
+        ) : null}
       </div>
-      {children ? <div className="min-w-0">{children}</div> : null}
+      {control ? <div className="min-w-0">{control}</div> : null}
     </div>
   );
 }

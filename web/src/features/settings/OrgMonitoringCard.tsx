@@ -135,7 +135,7 @@ export function OrgMonitoringCard({
             {m.loadFailed}
           </p>
         ) : (
-          <SettingsRow label={m.clientAbsentDays} htmlFor="client_absent_days" help={m.clientAbsentDaysHint}>
+          <SettingsRow label={m.clientAbsentDays} htmlFor="client_absent_days" help={m.clientAbsentDaysHint} helpId="client_absent_days_help">
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 id="client_absent_days"
@@ -149,7 +149,7 @@ export function OrgMonitoringCard({
                 readOnly={!canWrite}
                 disabled={settings.isPending}
                 aria-invalid={invalid || undefined}
-                aria-describedby={invalid ? 'client_absent_days_error' : undefined}
+                aria-describedby={invalid ? 'client_absent_days_help client_absent_days_error' : 'client_absent_days_help'}
                 onChange={(e) => {
                   form.setDraft((d) => ({ ...d, days: e.target.value }));
                   setInvalid(false);
@@ -165,10 +165,11 @@ export function OrgMonitoringCard({
           </SettingsRow>
         )}
         {!settings.isError && maxDays !== undefined && (
-          <SettingsRow label={m.retention} htmlFor="retention_days" help={m.retentionHint}>
+          <SettingsRow label={m.retention} htmlFor="retention_days" help={m.retentionHint} helpId="retention_days_help">
             <div className="w-60 max-w-full">
               <Select
                 id="retention_days"
+                aria-describedby="retention_days_help"
                 portal
                 options={retentionOptions}
                 value={draft.retention}
