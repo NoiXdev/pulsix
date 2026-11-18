@@ -1,108 +1,86 @@
 import { useT } from '../../i18n/useT.ts';
+import { ActiveFilter, FilterMenu, ListToolbar, ResetFilters, type FilterMenuItem } from '../../ui/list-toolbar.tsx';
 import { Select } from '../../ui/Select.tsx';
-import type { AlertFilter } from '../../api/hooks/useAlerts.ts';
+import type { ListFilters } from '../lists/filterSearch.ts';
+import { HostFilterChip } from '../runs/HostFilterChip.tsx';
+import type { ALERTS_FILTERS } from './alertsSearch.ts';
 
 export interface AlertFiltersProps {
-  value: AlertFilter;
-  onChange: (value: AlertFilter) => void;
-}
-
-/** toTriBool/fromTriBool round-trip a three-way filter (any/true/false)
- * through a Select, which has no native concept of "unset" beyond its own
- * empty-string placeholder row — the same shape FleetFilters' own
- * zone/group pickers already use for "All". */
-function toTriBool(v: boolean | undefined): string {
-  return v === undefined ? '' : String(v);
-}
-function fromTriBool(v: string): boolean | undefined {
-  return v === '' ? undefined : v === 'true';
+  org: string;
+  /** The page's useListFilters(ALERTS_FILTERS): the filters live in the URL. */
+  list: ListFilters<typeof ALERTS_FILTERS>;
 }
 
 /**
- * AlertFilters is the Alerts page's own filter row: every query parameter
- * GET /orgs/{org}/alerts accepts except `host` — that one serves the host
- * page's own embedded view (v0.4a design doc, "the host view is a filter
- * on this list, not its own endpoint"), not an operator-facing control on
- * the organization-wide page.
+ * AlertFilters is the Alerts page's filter bar: State and Severity as
+ * pickers, the rarer Scope, Acknowledged and Muted in the "+ Filter" menu
+ * and, once set, as removable pills, beside the host pill of
+ * HostAlertsCard's `?host=` link. Every filter is in the URL (alertsSearch.ts).
  */
-export function AlertFilters({ value, onChange }: AlertFiltersProps) {
+export function AlertFilters({ org, list }: AlertFiltersProps) {
   const t = useT();
+  const f = t.alerts.filters;
+  const { filters, setFilter } = list;
+
+  const scopeLabel = (v: 'tuple' | 'host') => `${f.scope}: ${v === 'tuple' ? f.tuple : f.host}`;
+  const ackLabel = (v: boolean) => (v ? f.acknowledged : f.unacknowledged);
+  const mutedLabel = (v: boolean) => (v ? f.muted : f.notMuted);
+
+  const menu: FilterMenuItem[] = [];
+  if (filters.scope === undefined) {
+    for (const v of ['tuple', 'host'] as const) menu.push({ id: `scope-${v}`, label: scopeLabel(v), onSelect: () => setFilter('scope', v) });
+  }
+  if (filters.acknowledged === undefined) {
+    for (const v of [true, false]) menu.push({ id: `ack-${v}`, label: ackLabel(v), onSelect: () => setFilter('acknowledged', v) });
+  }
+  if (filters.muted === undefined) {
+    for (const v of [true, false]) menu.push({ id: `muted-${v}`, label: mutedLabel(v), onSelect: () => setFilter('muted', v) });
+  }
+
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <ListToolbar>
       {/* Each label is a sibling of its Select, not a wrapper around it, with
           htmlFor carrying the association instead: an <li role="option"> in
           Select's own dropdown is not interactive content, so wrapping it
           inside the label would make clicking a row trigger the label's own
           activation behaviour — a synthetic click at the input that reopens
           the list downshift just closed (its InputClick reducer toggles
-          isOpen unconditionally). A native <select> was interactive content,
-          so this never showed up there. */}
+          isOpen unconditionally). */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-state">{t.alerts.filters.state}</label>
+        <label htmlFor="alert-filter-state">{f.state}</label>
         <Select
           id="alert-filter-state"
           options={[
-            { value: 'open', label: t.alerts.filters.open },
-            { value: 'closed', label: t.alerts.filters.closed },
+            { value: 'open', label: f.open },
+            { value: 'closed', label: f.closed },
           ]}
-          value={value.state ?? ''}
-          onChange={(v) => onChange({ ...value, state: (v || undefined) as AlertFilter['state'] })}
-          placeholder={t.alerts.filters.all}
+          value={filters.state ?? ''}
+          onChange={(v) => setFilter('state', (v || undefined) as typeof filters.state)}
+          placeholder={f.all}
         />
       </div>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-severity">{t.alerts.filters.severity}</label>
+        <label htmlFor="alert-filter-severity">{f.severity}</label>
         <Select
           id="alert-filter-severity"
           options={[
-            { value: 'warn', label: t.alerts.filters.warn },
-            { value: 'crit', label: t.alerts.filters.crit },
-            { value: 'unknown', label: t.alerts.filters.unknown },
+            { value: 'warn', label: f.warn },
+            { value: 'crit', label: f.crit },
+            { value: 'unknown', label: f.unknown },
           ]}
-          value={value.severity ?? ''}
-          onChange={(v) => onChange({ ...value, severity: (v || undefined) as AlertFilter['severity'] })}
-          placeholder={t.alerts.filters.all}
+          value={filters.severity ?? ''}
+          onChange={(v) => setFilter('severity', (v || undefined) as typeof filters.severity)}
+          placeholder={f.all}
         />
       </div>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-scope">{t.alerts.filters.scope}</label>
-        <Select
-          id="alert-filter-scope"
-          options={[
-            { value: 'tuple', label: t.alerts.filters.tuple },
-            { value: 'host', label: t.alerts.filters.host },
-          ]}
-          value={value.scope ?? ''}
-          onChange={(v) => onChange({ ...value, scope: (v || undefined) as AlertFilter['scope'] })}
-          placeholder={t.alerts.filters.all}
-        />
-      </div>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-acknowledged">{t.alerts.filters.acknowledged}</label>
-        <Select
-          id="alert-filter-acknowledged"
-          options={[
-            { value: 'true', label: t.alerts.filters.acknowledged },
-            { value: 'false', label: t.alerts.filters.unacknowledged },
-          ]}
-          value={toTriBool(value.acknowledged)}
-          onChange={(v) => onChange({ ...value, acknowledged: fromTriBool(v) })}
-          placeholder={t.alerts.filters.any}
-        />
-      </div>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="alert-filter-muted">{t.alerts.filters.muted}</label>
-        <Select
-          id="alert-filter-muted"
-          options={[
-            { value: 'true', label: t.alerts.filters.muted },
-            { value: 'false', label: t.alerts.filters.notMuted },
-          ]}
-          value={toTriBool(value.muted)}
-          onChange={(v) => onChange({ ...value, muted: fromTriBool(v) })}
-          placeholder={t.alerts.filters.any}
-        />
-      </div>
-    </div>
+      <FilterMenu items={menu} />
+      {filters.host && <HostFilterChip org={org} hostId={filters.host} onRemove={() => setFilter('host', undefined)} />}
+      {filters.scope && <ActiveFilter label={scopeLabel(filters.scope)} onRemove={() => setFilter('scope', undefined)} />}
+      {filters.acknowledged !== undefined && (
+        <ActiveFilter label={ackLabel(filters.acknowledged)} onRemove={() => setFilter('acknowledged', undefined)} />
+      )}
+      {filters.muted !== undefined && <ActiveFilter label={mutedLabel(filters.muted)} onRemove={() => setFilter('muted', undefined)} />}
+      {list.active && <ResetFilters onReset={list.reset} />}
+    </ListToolbar>
   );
 }

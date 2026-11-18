@@ -50,6 +50,7 @@ export const deHosts: Messages['hosts'] = {
     count: (n: number) => (n === 1 ? '1 Host' : `${n} Hosts`),
     addZone: 'Zone hinzufügen',
     addHost: 'Host hinzufügen',
+    search: 'Hosts durchsuchen',
     filterPlaceholder: 'Hosts filtern…',
     filterByZone: 'Nach Zone filtern',
     allZones: 'Alle Zonen',

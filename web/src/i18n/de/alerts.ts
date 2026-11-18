@@ -3,8 +3,6 @@ import type { Messages } from '../types.ts';
 export const deAlerts: Messages['alerts'] = {
   title: 'Alarme',
   noAccess: 'Alarme sind für Mitglieder dieser Organisation sichtbar.',
-  hostOnly: 'Es werden nur die Alarme eines Hosts angezeigt.',
-  showEvery: 'Alle Alarme anzeigen',
   empty: 'Keine Alarme in dieser Ansicht.',
   showTimeline: 'Verlauf anzeigen',
   hideTimeline: 'Verlauf ausblenden',

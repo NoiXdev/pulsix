@@ -19,6 +19,8 @@ import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
 import { validateHostsSearch } from './features/hosts/hostsSearch.ts';
+import { validateAlertsSearch } from './features/alerts/alertsSearch.ts';
+import { validateRunsSearch } from './features/runs/runsSearch.ts';
 import { validateHostSearch } from './features/hosts/hostTabs.ts';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
 import { FleetPage } from './features/fleet/FleetPage.tsx';
@@ -215,13 +217,11 @@ const fleetRoute = createRoute({
 // empty state ("this host is healthy") is unreachable otherwise — so the
 // only way back to a host's closed-alert history is a link here, and that
 // link has to land pre-scoped rather than on the unscoped full list.
+// Every other filter of the list sits beside it (alertsSearch.ts).
 const alertsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/alerts',
-  validateSearch: (search: Record<string, unknown>) => ({
-    ...validateListSearch(search),
-    host: typeof search.host === 'string' ? search.host : undefined,
-  }),
+  validateSearch: validateAlertsSearch,
   component: AlertsPage,
 });
 
@@ -284,14 +284,7 @@ const schedulesRoute = createRoute({
 const runsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/runs',
-  validateSearch: (search: Record<string, unknown>) => ({
-    ...validateListSearch(search),
-    status: typeof search.status === 'string' ? search.status : undefined,
-    kind: typeof search.kind === 'string' ? search.kind : undefined,
-    trigger: typeof search.trigger === 'string' ? search.trigger : undefined,
-    schedule: typeof search.schedule === 'string' ? search.schedule : undefined,
-    host: typeof search.host === 'string' ? search.host : undefined,
-  }),
+  validateSearch: validateRunsSearch,
   component: RunsPage,
 });
 const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: RunDetailPage });

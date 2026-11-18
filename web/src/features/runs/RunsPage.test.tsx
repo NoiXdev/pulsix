@@ -7,7 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RunsPage } from './RunsPage.tsx';
-import { validateListSearch } from '../lists/listSearch.ts';
+import { validateRunsSearch } from './runsSearch.ts';
 
 const job = (over: Record<string, unknown> = {}) => ({
   id: '0197c0a2-0000-7000-8000-000000000001', zone_id: '0197c0b1-0000-7000-8000-000000000002',
@@ -21,14 +21,7 @@ function renderPage(initial = '/o/acme/runs') {
   const listRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/runs',
-    validateSearch: (s: Record<string, unknown>) => ({
-      ...validateListSearch(s),
-      status: typeof s.status === 'string' ? s.status : undefined,
-      kind: typeof s.kind === 'string' ? s.kind : undefined,
-      trigger: typeof s.trigger === 'string' ? s.trigger : undefined,
-      schedule: typeof s.schedule === 'string' ? s.schedule : undefined,
-      host: typeof s.host === 'string' ? s.host : undefined,
-    }),
+    validateSearch: validateRunsSearch,
     component: RunsPage,
   });
   const detailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: () => <div>RUN DETAIL</div> });
@@ -333,6 +326,75 @@ describe('RunsPage', () => {
     await screen.findByLabelText('Filter by status');
     await pickOption(screen, 'Filter by status', { value: 'failed' });
     await waitFor(() => expect(seen.some((q) => q.includes('status=failed') && q.includes('host_id=h1'))).toBe(true));
+  });
+
+  it('drops the schedule from the URL when the trigger changes away from schedule', async () => {
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
+      'GET /api/v1/orgs/acme/schedules': { schedules: [{ id: 's1', name: 'Nightly' }] },
+    });
+    const router = renderPage('/o/acme/runs?trigger=schedule&schedule=s1&page=2');
+    await screen.findByLabelText('Filter by schedule');
+    await pickOption(screen, 'Filter by trigger', { value: 'webhook' });
+    await waitFor(() => expect(router.state.location.search).toEqual({ trigger: 'webhook' }));
+  });
+
+  it('ignores a status the list does not offer', async () => {
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [], next_cursor: '', total: 0 };
+      },
+    });
+    renderPage('/o/acme/runs?status=exploded');
+    await screen.findByText('No runs match.');
+    expect(seen[0].has('status')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Reset every filter' })).not.toBeInTheDocument();
+  });
+
+  it('brings the previous filter back on Back', async () => {
+    const seen: URLSearchParams[] = [];
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search);
+        return { jobs: [], next_cursor: '', total: 0 };
+      },
+    });
+    const router = renderPage('/o/acme/runs?kind=bootstrap');
+    await screen.findByLabelText('Filter by status');
+    await pickOption(screen, 'Filter by status', { value: 'failed' });
+    await waitFor(() => expect(router.state.location.search).toEqual({ kind: 'bootstrap', status: 'failed' }));
+
+    router.history.back();
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ kind: 'bootstrap' }));
+    await waitFor(() => expect(seen.at(-1)?.has('status')).toBe(false));
+    expect(seen.at(-1)?.get('kind')).toBe('bootstrap');
+  });
+
+  it('resets every filter, the host included, and keeps the sort', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
+      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+    });
+    const router = renderPage('/o/acme/runs?sort=kind&host=h1&status=failed&kind=run');
+    await screen.findByText('Host: web-04.fra');
+
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ sort: 'kind' }));
+    expect(screen.queryByText('Host: web-04.fra')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reset every filter' })).not.toBeInTheDocument();
   });
 
   it('each run row is a link to its run', async () => {

@@ -6,7 +6,9 @@ import { pickDateTime } from '../../../test/pickDateTime.ts';
 import { pickOption } from '../../../test/pickOption.ts';
 import { renderListPage } from '../../../test/renderListPage.tsx';
 import type { Locale } from '../../../i18n/types.ts';
+import { validateFilters } from '../../lists/filterSearch.ts';
 import { AlertsPage } from '../AlertsPage.tsx';
+import { ALERTS_FILTERS } from '../alertsSearch.ts';
 
 // Only Date is faked: the calendar opens on the current month.
 afterEach(() => vi.useRealTimers());
@@ -51,7 +53,7 @@ function renderPage(initialPath = '/o/acme/alerts', locale?: Locale) {
     path: '/alerts',
     component: AlertsPage,
     initial: initialPath,
-    extraSearch: (search) => ({ host: typeof search.host === 'string' ? search.host : undefined }),
+    extraSearch: (search) => validateFilters(ALERTS_FILTERS, search),
     locale,
   });
   // Returned so a test can read the actual browser-visible location back
@@ -66,6 +68,13 @@ async function openMenu(user: ReturnType<typeof userEvent.setup>, name = 'Action
 }
 
 const menuItem = (name: string) => screen.findByRole('menuitem', { name });
+
+/** Picks one of the rarer filters from the "+ Filter" menu. */
+async function pickFilter(name: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: '+ Filter' }));
+  await user.click(await screen.findByRole('menuitem', { name }));
+}
 
 /** n open alerts on distinct hosts, and the answer for one page of them. */
 const manyAlerts = (n: number) => Array.from({ length: n }, (_, i) => alert({ id: `a${i + 1}`, host_id: `h${i + 1}`, host_name: `host-${String(i + 1).padStart(2, '0')}` }));
@@ -231,12 +240,70 @@ describe('AlertsPage', () => {
     await screen.findByText(/No alerts match this view/);
     await pickOption(screen, 'Severity', { value: 'crit' });
     await waitFor(() => expect(asked.at(-1)?.severity).toBe('crit'));
-    await pickOption(screen, 'Scope', { value: 'host' });
+    await pickFilter('Scope: Host');
     await waitFor(() => expect(asked.at(-1)?.scope).toBe('host'));
-    await pickOption(screen, 'Acknowledged', { value: 'true' });
+    await pickFilter('Acknowledged');
     await waitFor(() => expect(asked.at(-1)?.acknowledged).toBe('true'));
-    await pickOption(screen, 'Muted', { value: 'false' });
+    await pickFilter('Not muted');
     await waitFor(() => expect(asked.at(-1)?.muted).toBe('false'));
+    // Each one set is a pill now, and no longer in the menu.
+    expect(screen.getByText('Scope: Host')).toBeInTheDocument();
+    expect(screen.getByText('Not muted')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '+ Filter' })).not.toBeInTheDocument();
+  });
+
+  it('keeps every filter in the URL, so Back and a reload bring the view back', async () => {
+    const asked: Array<Record<string, string>> = [];
+    mockApi({
+      ...base('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        asked.push(Object.fromEntries(req.search.entries()));
+        return { alerts: [] };
+      },
+    });
+    const { router } = renderPage('/o/acme/alerts?state=open');
+
+    await screen.findByText(/No alerts match this view/);
+    expect(asked.at(-1)?.state).toBe('open');
+    await pickOption(screen, 'Severity', { value: 'crit' });
+    await waitFor(() => expect(router.state.location.search).toEqual({ state: 'open', severity: 'crit' }));
+    await pickFilter('Unacknowledged');
+    await waitFor(() => expect(router.state.location.search).toEqual({ state: 'open', severity: 'crit', acknowledged: false }));
+    expect(asked.at(-1)).toMatchObject({ state: 'open', severity: 'crit', acknowledged: 'false' });
+
+    router.history.back();
+    await waitFor(() => expect(router.state.location.search).toEqual({ state: 'open', severity: 'crit' }));
+    await waitFor(() => expect(asked.at(-1)?.acknowledged).toBeUndefined());
+    expect(screen.queryByText('Unacknowledged')).not.toBeInTheDocument();
+
+    const href = router.history.location.href;
+    cleanup();
+    renderPage(href);
+    await screen.findByText(/No alerts match this view/);
+    expect(asked.at(-1)).toMatchObject({ state: 'open', severity: 'crit' });
+  });
+
+  it('removes a filter with its pill and resets them all', async () => {
+    const user = userEvent.setup();
+    const asked: Array<Record<string, string>> = [];
+    mockApi({
+      ...base('operator'),
+      'GET /api/v1/orgs/acme/alerts': (req: MockRequest) => {
+        asked.push(Object.fromEntries(req.search.entries()));
+        return { alerts: [] };
+      },
+    });
+    const { router } = renderPage('/o/acme/alerts?sort=opened&state=closed&muted=true&scope=tuple');
+
+    await screen.findByText(/No alerts match this view/);
+    await user.click(screen.getByRole('button', { name: 'Remove filter Muted' }));
+    await waitFor(() => expect(asked.at(-1)?.muted).toBeUndefined());
+    expect(router.state.location.search).toEqual({ sort: 'opened', state: 'closed', scope: 'tuple' });
+
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ sort: 'opened' }));
+    expect(asked.at(-1)).not.toHaveProperty('state');
+    expect(screen.queryByRole('button', { name: 'Reset every filter' })).not.toBeInTheDocument();
   });
 
   it('acknowledges an alert and sends the note the operator typed', async () => {
@@ -436,6 +503,7 @@ describe('AlertsPage', () => {
         askedSearch = Object.fromEntries(req.search.entries());
         return { alerts: [] };
       },
+      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-1', zone_id: 'z1', address: '10.0.0.1' } },
     });
     renderPage('/o/acme/alerts?host=h1');
 
@@ -443,12 +511,13 @@ describe('AlertsPage', () => {
     expect(askedSearch?.host).toBe('h1');
     // The operator must be able to SEE the list is narrowed, not just have
     // it silently be shorter than expected (fix round 2's own review
-    // finding) — and must have a way back to the unscoped view.
-    expect(screen.getByText(/one host's alerts only/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /show every alert/i })).toBeInTheDocument();
+    // finding) — and must have a way back to the unscoped view: the host
+    // pill, named by the host once it is read.
+    expect(await screen.findByText('Host: web-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove host filter' })).toBeInTheDocument();
   });
 
-  it('clears the host scope and re-requests every alert when "Show every alert" is clicked', async () => {
+  it('clears the host scope and re-requests every alert when the host pill is removed', async () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];
     mockApi({
@@ -460,25 +529,25 @@ describe('AlertsPage', () => {
     });
     const { router } = renderPage('/o/acme/alerts?host=h1');
 
-    await screen.findByText(/one host's alerts only/i);
+    await screen.findByText(/^Host: /);
     expect(asked.at(-1)?.host).toBe('h1');
 
-    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+    await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
 
     await waitFor(() => expect(asked.at(-1)?.host).toBeUndefined());
-    expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Host: /)).not.toBeInTheDocument();
     // Fix round 3: clearing the in-memory filter is not enough on its own
     // — a version that called only setFilter, never navigate, would still
     // pass every assertion above (the request and the notice both read
     // off `filter`, not off the URL) while leaving `router.state.location`
     // at `?host=h1`. This is the assertion that tells the two apart: the
     // browser's own address bar must agree that the host scope is gone.
-    await waitFor(() => expect(router.state.location.search).toEqual({ host: undefined }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
   it('does not re-impose a cleared host scope on reload, because the URL itself was cleared, not just local state', async () => {
     // The exact bug the previous test's new assertion alone cannot fully
-    // dramatize: if "Show every alert" left `?host=h1` in the address bar,
+    // dramatize: if removing the host pill left `?host=h1` in the address bar,
     // a reload — simulated here by unmounting and mounting a fresh
     // AlertsPage at wherever the URL actually pointed afterwards — runs
     // the render-time sync that seeds `filter` from the URL from scratch,
@@ -496,8 +565,8 @@ describe('AlertsPage', () => {
     });
     const { router } = renderPage('/o/acme/alerts?host=h1');
 
-    await screen.findByText(/one host's alerts only/i);
-    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+    await screen.findByText(/^Host: /);
+    await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
     await waitFor(() => expect(asked.at(-1)?.host).toBeUndefined());
 
     const hrefAfterClear = router.history.location.href;
@@ -505,7 +574,7 @@ describe('AlertsPage', () => {
     renderPage(hrefAfterClear);
 
     await screen.findByText(/No alerts match this view/);
-    expect(screen.queryByText(/one host's alerts only/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Host: /)).not.toBeInTheDocument();
     expect(asked.at(-1)?.host).toBeUndefined();
   });
   it('discloses a closed alert\u2019s timeline, which is otherwise unreachable in the GUI', async () => {
@@ -627,15 +696,15 @@ describe('AlertsPage paging and sorting', () => {
     const { router } = setup(manyAlerts(30), '/o/acme/alerts?sort=host&order=desc&page=2');
     await screen.findByText('26–30 of 30 alerts');
 
-    const filters: Array<[string, string, string]> = [
-      ['State', 'open', 'state'],
-      ['Severity', 'crit', 'severity'],
-      ['Scope', 'host', 'scope'],
-      ['Acknowledged', 'true', 'acknowledged'],
-      ['Muted', 'false', 'muted'],
+    const filters: Array<[() => Promise<void>, string, string]> = [
+      [() => pickOption(screen, 'State', { value: 'open' }), 'open', 'state'],
+      [() => pickOption(screen, 'Severity', { value: 'crit' }), 'crit', 'severity'],
+      [() => pickFilter('Scope: Host'), 'host', 'scope'],
+      [() => pickFilter('Acknowledged'), 'true', 'acknowledged'],
+      [() => pickFilter('Not muted'), 'false', 'muted'],
     ];
-    for (const [label, value, param] of filters) {
-      await pickOption(screen, label, { value });
+    for (const [pick, value, param] of filters) {
+      await pick();
       await waitFor(() => expect(requests.at(-1)?.get(param)).toBe(value));
       // No request carried the new filter on the old page, and the sort stayed.
       expect(requests.filter((r) => r.get(param) === value).every((r) => r.get('page') === '1')).toBe(true);
@@ -647,18 +716,18 @@ describe('AlertsPage paging and sorting', () => {
   it('starts again at page 1 when the host scope is cleared, keeping the sort', async () => {
     const user = userEvent.setup();
     const { router } = setup(manyAlerts(30), '/o/acme/alerts?host=h1&sort=host&order=asc&page=2');
-    await screen.findByText(/one host's alerts only/i);
-    await user.click(screen.getByRole('button', { name: /show every alert/i }));
+    await screen.findByText(/^Host: /);
+    await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
     await waitFor(() => expect(requests.at(-1)?.get('host')).toBeNull());
     expect(requests.at(-1)?.get('page')).toBe('1');
     expect(requests.at(-1)?.get('sort')).toBe('host');
-    expect(router.state.location.search).toEqual({ sort: 'host', order: 'asc', host: undefined });
+    expect(router.state.location.search).toEqual({ sort: 'host', order: 'asc' });
   });
 
   it('keeps the muted filter in the request', async () => {
     setup(manyAlerts(3), '/o/acme/alerts');
     await screen.findByText('host-01');
-    await pickOption(screen, 'Muted', { value: 'true' });
+    await pickFilter('Muted');
     await waitFor(() => expect(requests.at(-1)?.get('muted')).toBe('true'));
   });
 

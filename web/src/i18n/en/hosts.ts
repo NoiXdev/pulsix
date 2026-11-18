@@ -57,6 +57,7 @@ export const enHosts = {
     count: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
     addZone: 'Add zone',
     addHost: 'Add host',
+    search: 'Search hosts',
     filterPlaceholder: 'Filter hosts…',
     filterByZone: 'Filter by zone',
     allZones: 'All zones',

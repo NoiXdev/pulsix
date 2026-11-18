@@ -856,23 +856,58 @@ describe('the search box and the q URL param', () => {
     const user = userEvent.setup();
     const { router } = mount();
     const box = await screen.findByPlaceholderText('Filter hosts…');
-    // Delay each navigation so the URL still holds an older value when the
-    // box has already moved on.
-    // Hold every URL write back, then let them through one by one while the
-    // box already holds more than the URL being delivered.
+    // Hold every URL write back, then let it through while the box already
+    // holds more than the URL being delivered.
     const held: Array<() => void> = [];
     const real = router.history.replace.bind(router.history);
     router.history.replace = ((href: string, state?: never) => {
       held.push(() => real(href, state));
     }) as typeof router.history.replace;
 
-    await user.type(box, 'abc');
-    expect(held.length).toBeGreaterThan(1);
-    act(() => held.shift()?.()); // the URL now says "a"; the box holds "abc"
+    await user.type(box, 'ab');
+    await waitFor(() => expect(held.length).toBe(1)); // the debounced write of "ab"
+    await user.type(box, 'c');
+    act(() => held.shift()?.()); // the URL now says "ab"; the box holds "abc"
     await settled();
     expect(box).toHaveValue('abc');
     await user.type(box, 'd');
     expect(box).toHaveValue('abcd');
+  });
+
+  it('writes the search once typing pauses, replacing the history entry', async () => {
+    const user = userEvent.setup();
+    const { router } = mount();
+    const box = await screen.findByRole('searchbox', { name: 'Search hosts' });
+    const before = router.history.length;
+
+    await user.type(box, 'web');
+
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ q: 'web' }));
+    expect(router.history.length).toBe(before);
+  });
+
+  it('clears the search with the clear button', async () => {
+    const user = userEvent.setup();
+    const { router } = mount('/o/acme/hosts?q=web');
+    await screen.findByRole('link', { name: 'web-04.fra' });
+
+    await user.click(screen.getByRole('button', { name: 'Clear the search' }));
+
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty('q'));
+    expect(screen.getByPlaceholderText('Filter hosts…')).toHaveValue('');
+  });
+
+  it('offers Reset only while a filter is set, and Reset clears every filter but keeps the sort', async () => {
+    const user = userEvent.setup();
+    const { router } = mount(`/o/acme/hosts?sort=name&q=web&zone=${Z1}&managed=true`);
+    await screen.findByRole('link', { name: 'web-04.fra' });
+
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+
+    await waitFor(() => expect(router.state.location.search).toEqual({ sort: 'name' }));
+    expect(screen.getByPlaceholderText('Filter hosts…')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Managed' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Reset every filter' })).not.toBeInTheDocument();
   });
 
   it('follows an outside navigation to ?q=other', async () => {

@@ -11,3 +11,16 @@ describe('validateHostsSearch zone', () => {
     expect(validateHostsSearch({ zone }).zone).toBeUndefined();
   });
 });
+
+describe('validateHostsSearch', () => {
+  it('keeps the search, the chips that are on and the list keys', () => {
+    expect(validateHostsSearch({ q: 'web', managed: true, monitored: 'true', activeRuns: false, page: '2' })).toEqual({
+      page: 2,
+      q: 'web',
+      zone: undefined,
+      managed: true,
+      monitored: true,
+      activeRuns: undefined,
+    });
+  });
+});

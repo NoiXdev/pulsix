@@ -10,7 +10,8 @@ import type { ServerPageQuery } from './paging.ts';
  * "undefined means not set" convention useFleet.ts's FleetFilter uses for
  * its own query. `host` exists on the route for the host page's own
  * filtered view (v0.4a design, "the host view is a filter on this list,
- * not its own endpoint") — this page's own AlertFilters does not offer it.
+ * not its own endpoint"); the Alerts page shows it as a removable pill
+ * when HostAlertsCard's link sets it, but offers no picker for it.
  */
 export interface AlertFilter {
   state?: 'open' | 'closed';

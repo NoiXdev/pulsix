@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { Globe, Search, Server } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
+import { useParams } from '@tanstack/react-router';
+import { Globe, Server } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters, SearchInput } from '../../ui/list-toolbar.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useHostsPage, useZones, type HostPageFilter } from '../../api/hooks/useHosts.ts';
@@ -12,10 +13,11 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import type { HostListItem } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { hostColumns } from './hostColumns.tsx';
 import { HostDialog } from './HostDialog.tsx';
-import type { HostsSearch } from './hostsSearch.ts';
+import { HOSTS_FILTERS } from './hostsSearch.ts';
 import { hostPresence, type AgentPresence } from './presence.ts';
 import { useHostListActions } from './useHostListActions.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
@@ -30,45 +32,18 @@ import { ZoneDialog } from './ZoneDialog.tsx';
 export function HostsListPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const navigate = useNavigate();
   // The filters live in the URL beside sort and page (hostsSearch.ts), so
-  // Back and a reload bring the same list back. ?q= also comes from the
-  // shell's ⌘K search box navigating here.
-  const routeSearch = useSearch({ strict: false }) as HostsSearch;
+  // Back and a reload bring the same list back; a changed filter starts
+  // again at page 1. ?q= also comes from the shell's ⌘K search box
+  // navigating here.
+  const { filters, setFilter, reset } = useListFilters(HOSTS_FILTERS);
   const filter: HostPageFilter = {
-    q: routeSearch.q ?? '',
-    zone: routeSearch.zone,
-    managed: routeSearch.managed,
-    monitored: routeSearch.monitored,
-    activeRuns: routeSearch.activeRuns,
+    q: filters.q ?? '',
+    zone: filters.zone,
+    managed: filters.managed,
+    monitored: filters.monitored,
+    activeRuns: filters.activeRuns,
   };
-  // A changed filter starts again at page 1. Typing replaces the history
-  // entry instead of adding one per keystroke.
-  function setFilter(patch: Partial<HostsSearch>, replace = false) {
-    void navigate({
-      to: '.',
-      search: (prev: Record<string, unknown>) => ({ ...prev, ...patch, page: undefined }),
-      replace,
-      resetScroll: false,
-    });
-  }
-  // The search box keeps its own text so typing is not at the mercy of the
-  // router round trip. It follows the URL only for changes this box did not
-  // write itself (Back, ⌘K): `written` holds the values sent and not yet seen
-  // come back, so a stale echo ("a" after the box already holds "ab") is
-  // skipped instead of resetting the box.
-  const [qText, setQText] = useState(routeSearch.q ?? '');
-  const written = useRef<string[]>([]);
-  const urlQ = routeSearch.q ?? '';
-  useEffect(() => {
-    const at = written.current.indexOf(urlQ);
-    if (at >= 0) {
-      written.current = written.current.slice(at + 1);
-      return;
-    }
-    written.current = [];
-    setQText(urlQ);
-  }, [urlQ]);
   const [addOpen, setAddOpen] = useState(false);
   // The page's own "Add zone" button. The host dialog's Zone picker has its
   // own ZoneDialog, since it is what selects the zone it creates.
@@ -126,7 +101,11 @@ export function HostsListPage() {
     loading = hosts.isPending || hosts.isPlaceholderData;
   }
   const filtered = selectorMode || !!filter.q || !!filter.zone || !!filter.managed || !!filter.monitored || !!filter.activeRuns;
-  const toggle = (key: 'managed' | 'monitored' | 'activeRuns') => setFilter({ [key]: filter[key] === true ? undefined : true });
+  const toggle = (key: 'managed' | 'monitored' | 'activeRuns') => setFilter(key, filter[key] === true ? undefined : true);
+  const clearSelector = () => {
+    setSelector(null);
+    setSelectorText('');
+  };
 
   return (
     <>
@@ -156,20 +135,13 @@ export function HostsListPage() {
         loading={loading}
         empty={filtered ? t.hosts.list.noMatch : t.hosts.list.empty}
         toolbar={
-          <>
-            <div className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
-              <Search size={13} />
-              <input
-                placeholder={t.hosts.list.filterPlaceholder}
-                value={qText}
-                onChange={(e) => {
-                  setQText(e.target.value);
-                  written.current.push(e.target.value);
-                  setFilter({ q: e.target.value || undefined }, true);
-                }}
-                className="w-40 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
-              />
-            </div>
+          <ListToolbar>
+            <SearchInput
+              label={t.hosts.list.search}
+              placeholder={t.hosts.list.filterPlaceholder}
+              value={filter.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
             {/* Backlog 1.12: the zone filter lives here, on the page whose
                 endpoint supports it, rather than in the shell as a global
                 control that would do nothing on most pages and fight the
@@ -179,12 +151,18 @@ export function HostsListPage() {
               aria-label={t.hosts.list.filterByZone}
               options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
               value={filter.zone ?? ''}
-              onChange={(value) => setFilter({ zone: value || undefined })}
+              onChange={(value) => setFilter('zone', value || undefined)}
               placeholder={t.hosts.list.allZones}
             />
-            <FilterChip label={t.hosts.capability.managed} on={filter.managed === true} onClick={() => toggle('managed')} />
-            <FilterChip label={t.hosts.capability.monitored} on={filter.monitored === true} onClick={() => toggle('monitored')} />
-            <FilterChip label={t.hosts.list.withActiveRuns} on={filter.activeRuns === true} onClick={() => toggle('activeRuns')} />
+            <FilterChip pressed={filter.managed === true} onToggle={() => toggle('managed')}>
+              {t.hosts.capability.managed}
+            </FilterChip>
+            <FilterChip pressed={filter.monitored === true} onToggle={() => toggle('monitored')}>
+              {t.hosts.capability.monitored}
+            </FilterChip>
+            <FilterChip pressed={filter.activeRuns === true} onToggle={() => toggle('activeRuns')}>
+              {t.hosts.list.withActiveRuns}
+            </FilterChip>
             <form onSubmit={runSelector} className="flex items-center gap-2">
               <input
                 placeholder={t.hosts.list.selectorPlaceholder}
@@ -194,20 +172,21 @@ export function HostsListPage() {
               />
               <Button type="submit">{t.hosts.list.run}</Button>
               {selectorMode && (
-                <button
-                  type="button"
-                  className="text-[11px] text-brand-dim"
-                  onClick={() => {
-                    setSelector(null);
-                    setSelectorText('');
-                  }}
-                >
+                <button type="button" className="text-[11px] text-brand-dim" onClick={clearSelector}>
                   {t.hosts.list.clear}
                 </button>
               )}
             </form>
             {hostQuery.error && <span className="text-[11px] text-destructive">{hostQuery.error.message}</span>}
-          </>
+            {filtered && (
+              <ResetFilters
+                onReset={() => {
+                  clearSelector();
+                  reset();
+                }}
+              />
+            )}
+          </ListToolbar>
         }
         {...view.listProps(total, t.hosts.list.count)}
       />
@@ -227,21 +206,4 @@ function hostLinkLabel(host: HostListItem, agent: AgentPresence | undefined, t: 
   if (presence.kind === 'off') return t.hosts.list.linkLabel(host.name, t.hosts.presence.off);
   if (presence.kind === 'client') return t.hosts.list.linkLabel(host.name, t.hosts.presence.client);
   return host.name;
-}
-
-function FilterChip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={
-        on
-          ? 'flex h-[30px] items-center rounded-md border border-brand/40 bg-brand/10 px-3 text-xs font-medium text-brand'
-          : 'flex h-[30px] items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-muted-foreground'
-      }
-    >
-      {label}
-    </button>
-  );
 }

@@ -7,8 +7,6 @@
 export const enAlerts = {
   title: 'Alerts',
   noAccess: 'Alerts are visible to members of this organization.',
-  hostOnly: "Showing one host's alerts only.",
-  showEvery: 'Show every alert',
   empty: 'No alerts match this view.',
   showTimeline: 'Show timeline',
   hideTimeline: 'Hide timeline',
