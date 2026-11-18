@@ -32,6 +32,12 @@ describe('checkStatus', () => {
     expect(checkStatus(c)).toBe(want);
   });
 
+  it('ignores a vanished row: a check whose only non-ok row vanished is not unknown', () => {
+    const c = chk('http', [val({ metric: 'http.up', state: 'ok' }), val({ metric: 'http.body_match', state: null, stale: true, vanished: true })]);
+    expect(checkStatus(c)).toBe('ok');
+    expect(checkStatus(chk('http', [val({ state: null, vanished: true })]))).toBe('unknown');
+  });
+
   it('counts a disabled check and a stale verdict as unknown, like the Overview', () => {
     expect(checkStatus({ ...chk('cpu', [val({ state: 'crit' })]), enabled: false })).toBe('unknown');
     expect(checkStatus(chk('cpu', [val({ state: 'crit', state_stale: true })]))).toBe('unknown');
@@ -65,6 +71,10 @@ describe('keyValue', () => {
   it('http: status code and response time', () => {
     const c = chk('http', [val({ metric: 'http.status_code', value: 200 }), val({ metric: 'http.response_ms', value: 123.456 })]);
     expect(kv(c)).toBe('200 · 123.46 ms');
+  });
+  it('never picks a vanished row', () => {
+    const c = chk('http', [val({ metric: 'http.status_code', value: 200, vanished: true }), val({ metric: 'http.response_ms', value: 12 })]);
+    expect(kv(c)).not.toContain('200');
   });
   it('http: the status code alone without a response time', () => {
     expect(kv(chk('http', [val({ metric: 'http.status_code', value: 503 })]))).toBe('503');

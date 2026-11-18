@@ -89,7 +89,10 @@ export function HostCheckValueRow({
   // from its first row only (offersForget). Whole-host rows (item '') never
   // carry it — the automatic expiry handles a removed check's values — and
   // items the check no longer asks for never reach this card.
-  const forgettable = !frozen && offersForget(check, value, canWrite);
+  // Backlog 3.88: a vanished metric — the check stopped reporting it while
+  // its item keeps reporting — is forgotten on its own, never the item.
+  const vanished = value.vanished;
+  const forgettable = !frozen && (vanished ? canWrite : offersForget(check, value, canWrite));
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every
@@ -103,7 +106,7 @@ export function HostCheckValueRow({
     openRules !== null && openRules.check === check.key && openRules.item === value.item && openRules.metric === value.metric;
 
   return (
-    <li className="flex flex-col gap-1.5">
+    <li className={`flex flex-col gap-1.5${vanished ? ' opacity-60' : ''}`}>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="min-w-40 text-muted-foreground">{name}</span>
         {/* v0.3b-2: the rule engine's own verdict for this tuple, distinct
@@ -118,7 +121,7 @@ export function HostCheckValueRow({
             has held. */}
         <span
           title={
-            value.state !== null && !value.ignored
+            value.state !== null && !value.ignored && !vanished
               ? [
                   value.since ? t.hosts.value.sinceTitle(seenLabel(value.since, new Date(), t)) : null,
                   value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : null,
@@ -128,7 +131,7 @@ export function HostCheckValueRow({
               : undefined
           }
         >
-          <Pill tone={st.tone}>{st.label}</Pill>
+          {vanished ? <Pill tone="unknown">{t.hosts.value.vanished}</Pill> : <Pill tone={st.tone}>{st.label}</Pill>}
         </span>
         {/* backlog 3.36: samples can keep arriving on schedule (`stale`
             below stays false) while the rule engine itself stopped
@@ -150,12 +153,12 @@ export function HostCheckValueRow({
             is lost by hiding them: an ignored item is not being judged,
             so how old its last verdict is, and how often it used to
             change, are both answers to a question nobody is asking. */}
-        {!value.ignored && !frozen && value.state !== null && value.state_stale && (
+        {!value.ignored && !vanished && !frozen && value.state !== null && value.state_stale && (
           <span title={value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : undefined}>
             <Pill tone="warn">{t.hosts.value.staleVerdict}</Pill>
           </span>
         )}
-        {!value.ignored && value.flapping && (
+        {!value.ignored && !vanished && value.flapping && (
           <span title={t.hosts.value.flappingTitle}>
             <Pill tone="warn">{t.hosts.value.flapping}</Pill>
           </span>
@@ -179,14 +182,14 @@ export function HostCheckValueRow({
                 {failure}
               </span>
             )}
-            {value.stale && (
+            {value.stale && !vanished && (
               <span title={t.hosts.value.lastReading(seenLabel(value.at, new Date(), t))}>
                 <Pill tone="warn">{t.hosts.value.stale}</Pill>
               </span>
             )}
           </>
         )}
-        {(rulesForTuple.length > 0 || graphable || (value.item !== '' && canWrite)) && (
+        {(rulesForTuple.length > 0 || graphable || forgettable || (value.item !== '' && canWrite && !vanished)) && (
           <span className="ml-auto flex items-center gap-1">
             {/* The row's own fast path (v0.3b-3 spec): an operator looking
                 at this value does not compose a pattern on the Items tab,
@@ -194,7 +197,7 @@ export function HostCheckValueRow({
                 Absent for a whole-host metric — items with no name are not
                 a thing to ignore — and for a viewer, who has no
                 checks.write to spend on it. */}
-            {value.item !== '' && canWrite && (
+            {value.item !== '' && canWrite && !vanished && (
               <ItemDecisionButton
                 org={org}
                 hostId={hostId}
@@ -204,7 +207,7 @@ export function HostCheckValueRow({
                 decidedBy={decidedBy}
               />
             )}
-            {forgettable && <ForgetItemButton org={org} hostId={hostId} checkKey={check.key} item={value.item} />}
+            {forgettable && <ForgetItemButton org={org} hostId={hostId} checkKey={check.key} item={value.item} metric={vanished ? value.metric : undefined} />}
             {rulesForTuple.length > 0 && (
               <Button
                 type="button"
@@ -278,7 +281,7 @@ export function HostCheckValueRow({
           there is no item under it to look up — with a bare "ignored"
           and nothing to ask. The row ACTION below stays item-only: a
           glob is not something this row can flip. */}
-      {(decidedBy || value.ignored) && (
+      {!vanished && (decidedBy || value.ignored) && (
         <details className="text-[11px] text-muted-foreground">
           <summary className="cursor-pointer">
             {decidedBy ? (decidedBy.decision === 'ignore' ? t.hosts.value.whyIgnored : t.hosts.value.whyWatched) : t.hosts.value.whyIgnored}

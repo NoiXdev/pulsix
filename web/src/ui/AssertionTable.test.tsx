@@ -24,4 +24,28 @@ describe('AssertionTable', () => {
       ['ct', 'header("X") exists', 'warn', 'warn', 'absent', '1 minute ago'],
     ]);
   });
+
+  const base = { expression: 'e', severity: 'crit', status: { label: 'pass', tone: 'ok' as const }, actual: '1', age: 'now' };
+
+  it('adds an actions column and a detail row only when a row has them', () => {
+    render(
+      <AssertionTable
+        label="A"
+        columns={{ ...COLUMNS, actions: 'Actions' }}
+        rows={[
+          { ...base, key: 'a', name: 'a', actions: <button type="button">Ignore a</button>, detail: <p>why a</p> },
+          { ...base, key: 'b', name: 'b' },
+        ]}
+      />,
+    );
+    const table = screen.getByRole('table', { name: 'A' });
+    expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual([...Object.values(COLUMNS), 'Actions']);
+    expect(within(table).getByRole('button', { name: 'Ignore a' })).toBeInTheDocument();
+    expect(within(table).getByText('why a')).toBeInTheDocument();
+  });
+
+  it('has no actions column when no row has actions', () => {
+    render(<AssertionTable label="A" columns={{ ...COLUMNS, actions: 'Actions' }} rows={[{ ...base, key: 'a', name: 'a' }]} />);
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument();
+  });
 });

@@ -29,6 +29,17 @@ describe('systemLabel', () => {
   });
 });
 
+describe('vanished rows', () => {
+  it('stay out of the check status, as ignored ones do', () => {
+    const c = check('web', 'http', [reading('http.up', 1), reading('http.body_match', 1, { state: null, stale: true, vanished: true })]);
+    expect(checkCounts(checks(c))).toMatchObject({ ok: 1, unknown: 0 });
+  });
+  it('give no State tile', () => {
+    const c = check('processor', 'cpu', [reading('cpu.used_pct', 23, { vanished: true })]);
+    expect(stateTiles(checks(c))).toEqual([]);
+  });
+});
+
 describe('stateTiles', () => {
   it('finds CPU, RAM and load by plugin and metric, in that order', () => {
     const tiles = stateTiles(

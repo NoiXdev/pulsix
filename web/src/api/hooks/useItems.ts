@@ -121,6 +121,9 @@ export function useHostItems(org: string, hostId: string, enabled = true) {
 export interface ForgetItemInput {
   checkKey: string;
   item: string;
+  /** Forget just this metric of the item (backlog 3.88); left out, the
+   * whole item goes. */
+  metric?: string;
 }
 
 /**
@@ -144,10 +147,10 @@ export interface ForgetItemInput {
 export function useForgetItem(org: string, hostId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ checkKey, item }: ForgetItemInput) =>
+    mutationFn: ({ checkKey, item, metric }: ForgetItemInput) =>
       unwrap(
         api.DELETE('/api/v1/orgs/{org}/hosts/{id}/items', {
-          params: { path: { org, id: hostId }, query: { check_key: checkKey, item } },
+          params: { path: { org, id: hostId }, query: { check_key: checkKey, item, ...(metric === undefined ? {} : { metric }) } },
         }),
       ),
     onSettled: () =>

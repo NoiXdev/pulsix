@@ -407,6 +407,7 @@ export const deHosts: Messages['hosts'] = {
     judged: (age: string) => `bewertet ${age}`,
     lastReading: (age: string) => `letzter Messwert ${age}`,
     staleVerdict: 'veraltete Bewertung',
+    vanished: 'Wird nicht mehr gemeldet',
     flapping: 'instabil',
     flappingTitle: 'hat in den letzten 30 Minuten fünfmal oder öfter den Zustand gewechselt',
     collectionFailed: 'Erfassung fehlgeschlagen',
@@ -447,6 +448,8 @@ export const deHosts: Messages['hosts'] = {
     confirmTitle: (item: string) => `${item} vergessen?`,
     confirmBody:
       'Seine aktuellen Werte und offenen Alarme werden entfernt; seine Diagramme bleiben. Meldet es sich wieder, erscheint es erneut.',
+    confirmBodyMetric:
+      'Nur diese Metrik wird entfernt, samt ihren offenen Alarmen; die übrigen Metriken des Elements und alle Diagramme bleiben. Wird sie wieder gemeldet, erscheint sie erneut.',
     done: (item: string) => `${item} vergessen`,
     failed: 'Dieses Element konnte nicht vergessen werden',
   },
@@ -454,7 +457,7 @@ export const deHosts: Messages['hosts'] = {
     timingTitle: (check: string) => `Zeitaufteilung von ${check}`,
     phases: { dns: 'DNS', connect: 'Verbindung', tls: 'TLS', ttfb: 'erstes Byte', transfer: 'Übertragung' },
     assertionsTitle: (check: string) => `Zusicherungen von ${check}`,
-    columns: { name: 'Name', expression: 'Zusicherung', severity: 'Schweregrad', status: 'Status', actual: 'Gesehen', age: 'Letztes Ergebnis' },
+    columns: { name: 'Name', expression: 'Zusicherung', severity: 'Schweregrad', status: 'Status', actual: 'Gesehen', age: 'Letztes Ergebnis', actions: 'Aktionen' },
     noResult: 'kein Ergebnis',
     notEvaluated: 'nicht ausgewertet',
     staleAge: (age: string) => `${age} (veraltet)`,

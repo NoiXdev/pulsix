@@ -60,7 +60,8 @@ export function timingParts(check: HostCheck, t: Messages): StackedBarPart[] {
   return parts;
 }
 
-function valueOf(check: HostCheck, metric: string, item: string): HostCheckValue | undefined {
+/** assertionValue is one assertion item's reading of `metric`, if any. */
+export function assertionValue(check: HostCheck, metric: string, item: string): HostCheckValue | undefined {
   return (check.values ?? []).find((v) => v.item === item && v.metric === metric);
 }
 
@@ -74,8 +75,8 @@ export function assertionRows(check: HostCheck, t: Messages, format: Format, now
     const eq = entry.indexOf('=');
     const name = entry.slice(0, eq);
     const row = rowFromEntry(entry);
-    const result = valueOf(check, 'http.assertion', name);
-    const actual = valueOf(check, 'http.assertion_actual', name);
+    const result = assertionValue(check, 'http.assertion', name);
+    const actual = assertionValue(check, 'http.assertion_actual', name);
     let status: AssertionTableRow['status'] = { label: t.hosts.http.noResult, tone: 'unknown' };
     if (result?.error !== undefined) status = { label: t.hosts.http.notEvaluated, tone: 'unknown' };
     else if (result?.label) status = assertionResult(t, result.label);
@@ -94,4 +95,15 @@ export function assertionRows(check: HostCheck, t: Messages, format: Format, now
       age: result?.stale ? t.hosts.http.staleAge(age) : age,
     };
   });
+}
+
+const ASSERTION_METRICS = ['http.assertion', 'http.assertion_actual'];
+
+/** withoutAssertionRows is the check's values for the generic list: an
+ * http check's assertion items are listed, with their actions, in the
+ * assertion table instead (backlog 3.89). */
+export function withoutAssertionRows(check: HostCheck): HostCheckValue[] {
+  const values = check.values ?? [];
+  if (check.plugin !== 'http') return values;
+  return values.filter((v) => !(v.item !== '' && ASSERTION_METRICS.includes(v.metric)));
 }

@@ -3,7 +3,7 @@ import { en } from '../../i18n/en/index.ts';
 import { de } from '../../i18n/de/index.ts';
 import { formatter } from '../../i18n/format.ts';
 import type { HostCheck, HostCheckValue } from '../../api/types.ts';
-import { assertionRows, failureBeside, timingParts } from './httpCheck.ts';
+import { assertionRows, failureBeside, timingParts, withoutAssertionRows } from './httpCheck.ts';
 import { discreteText } from '../checks/syntheticLabels.ts';
 
 const NOW = new Date('2026-11-16T12:00:00Z');
@@ -156,5 +156,21 @@ describe('assertionRows', () => {
 
   it('has no rows without assertions', () => {
     expect(assertionRows(check([]), en, formatter('en'), NOW)).toEqual([]);
+  });
+});
+
+describe('withoutAssertionRows', () => {
+  it('drops the assertion items rows of an http check and keeps every other value', () => {
+    const c = check([
+      value('http.up', { value: 1 }),
+      value('http.assertion', { item: 'ok', label: 'pass' }),
+      value('http.assertion_actual', { item: 'ok', label: '200' }),
+      value('http.dns_ms', { value: 4 }),
+    ]);
+    expect(withoutAssertionRows(c).map((v) => v.metric)).toEqual(['http.up', 'http.dns_ms']);
+  });
+  it('leaves another plugin alone', () => {
+    const c = check([value('tcp.up', { value: 1 }), value('http.assertion', { item: 'x' })], {}, 'tcp');
+    expect(withoutAssertionRows(c)).toHaveLength(2);
   });
 });

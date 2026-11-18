@@ -33,7 +33,7 @@ export function orderChecks(checks: readonly HostCheck[], frozen: boolean): Host
 }
 
 function reading(check: HostCheck, metric: string): HostCheckValue | undefined {
-  return (check.values ?? []).find((v) => v.metric === metric && v.error === undefined && v.value !== undefined);
+  return (check.values ?? []).find((v) => v.metric === metric && v.error === undefined && v.value !== undefined && !v.vanished);
 }
 
 /** The metric a plugin's one-number summary comes from, with how it reads. */
@@ -79,7 +79,7 @@ export function keyValue(check: HostCheck, t: Messages): string | null {
       break;
     }
   }
-  const first = (check.values ?? []).find((v) => v.error === undefined && (v.value !== undefined || v.label !== undefined));
+  const first = (check.values ?? []).find((v) => v.error === undefined && !v.vanished && (v.value !== undefined || v.label !== undefined));
   if (!first) return null;
   return w.metric(first.metric, first.label ?? formatNumber(first.value ?? 0));
 }

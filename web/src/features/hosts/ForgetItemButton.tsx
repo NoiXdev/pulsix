@@ -13,6 +13,9 @@ export interface ForgetItemButtonProps {
   checkKey: string;
   /** The item to forget, every metric of it. */
   item: string;
+  /** Forget only this metric of the item — a vanished row (backlog 3.88);
+   * left out, the whole item. */
+  metric?: string;
 }
 
 /**
@@ -26,23 +29,24 @@ export interface ForgetItemButtonProps {
  * their own unless the item reports again. Which rows offer it is
  * HostCheckValueRow's call (`offersForget`), not this button's.
  */
-export function ForgetItemButton({ org, hostId, checkKey, item }: ForgetItemButtonProps) {
+export function ForgetItemButton({ org, hostId, checkKey, item, metric }: ForgetItemButtonProps) {
   const t = useT();
+  const what = metric === undefined ? item : item ? `${item} ${metric}` : metric;
   const confirm = useConfirm();
   const toast = useToast();
   const forget = useForgetItem(org, hostId);
 
   async function onClick() {
     const ok = await confirm({
-      title: t.hosts.forget.confirmTitle(item),
-      message: t.hosts.forget.confirmBody,
+      title: t.hosts.forget.confirmTitle(what),
+      message: metric === undefined ? t.hosts.forget.confirmBody : t.hosts.forget.confirmBodyMetric,
       confirmLabel: t.hosts.forget.forget,
       destructive: true,
     });
     if (!ok) return;
     try {
-      await forget.mutateAsync({ checkKey, item });
-      toast.show(t.hosts.forget.done(item));
+      await forget.mutateAsync({ checkKey, item, metric });
+      toast.show(t.hosts.forget.done(what));
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.hosts.forget.failed, 'destructive');
     }
@@ -52,7 +56,7 @@ export function ForgetItemButton({ org, hostId, checkKey, item }: ForgetItemButt
     <Button
       type="button"
       variant="ghost"
-      aria-label={t.hosts.forget.label(checkKey, item)}
+      aria-label={t.hosts.forget.label(checkKey, what)}
       disabled={forget.isPending}
       onClick={() => void onClick()}
     >

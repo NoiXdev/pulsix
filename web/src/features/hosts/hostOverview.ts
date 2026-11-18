@@ -75,7 +75,7 @@ function readings(checks: readonly HostCheck[], plugin: HostCheck['plugin'], met
   for (const c of checks) {
     if (!c.enabled || c.plugin !== plugin) continue;
     for (const v of c.values ?? []) {
-      if (v.metric === metric && typeof v.value === 'number' && !v.error) out.push({ check: c, value: v as Candidate['value'] });
+      if (v.metric === metric && typeof v.value === 'number' && !v.error && !v.vanished) out.push({ check: c, value: v as Candidate['value'] });
     }
   }
   return out;
@@ -130,7 +130,7 @@ const WORST: readonly TileTone[] = ['crit', 'warn', 'unknown', 'ok'];
  * Overview's summary and the Checks table. */
 export function checkStatus(c: HostCheck): TileTone {
   if (!c.enabled) return 'unknown';
-  const tones = (c.values ?? []).filter((v) => !v.ignored).map(toneOf);
+  const tones = (c.values ?? []).filter((v) => !v.ignored && !v.vanished).map(toneOf);
   if (tones.length === 0) return 'unknown';
   return WORST.find((tone) => tones.includes(tone)) ?? 'unknown';
 }
