@@ -1,14 +1,14 @@
-import { Link } from "@tanstack/react-router";
-import { Copy } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
-import { useT } from "../../i18n/useT.ts";
-import { useCopy } from "../../ui/useCopy.ts";
+import { Link } from '@tanstack/react-router';
+import { Copy } from 'lucide-react';
+import { Fragment, type ReactNode } from 'react';
+import { useT } from '../../i18n/useT.ts';
+import { useCopy } from '../../ui/useCopy.ts';
 import {
   addCommand,
   checkCommand,
   downloadCommand,
   suggestedName,
-} from "./assistantConnect.ts";
+} from './assistantConnect.ts';
 
 function CommandBlock({ command, what }: { command: string; what: string }) {
   const t = useT();
@@ -70,7 +70,7 @@ export function AssistantConnectGuide({
   const links = orgSlugs.filter((slug) => settingsOrgs.includes(slug));
   let httpsOrigin = true;
   try {
-    httpsOrigin = new URL(origin).protocol === "https:";
+    httpsOrigin = new URL(origin).protocol === 'https:';
   } catch {
     // An unparsable origin cannot be checked; show the commands.
   }
@@ -121,7 +121,7 @@ export function AssistantConnectGuide({
           ? g.settingsGeneral
           : links.map((slug, i) => (
               <Fragment key={slug}>
-                {i > 0 && ", "}
+                {i > 0 && ', '}
                 <Link
                   to="/o/$org/settings/general"
                   params={{ org: slug }}
