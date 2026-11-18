@@ -2,8 +2,6 @@ import type { Messages } from '../types.ts';
 
 export const deSettings: Messages['settings'] = {
   nav: {
-    label: 'Einstellungen',
-    organization: 'Organisation',
     organizationIn: (org: string) => `Organisation · ${org}`,
     alerting: 'Alarmierung',
     instance: 'Instanz',

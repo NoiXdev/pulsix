@@ -4,8 +4,6 @@
  * `language.instance.tab` and `backups.tab`. */
 export const enSettings = {
   nav: {
-    label: 'Settings',
-    organization: 'Organization',
     organizationIn: (org: string) => `Organization · ${org}`,
     alerting: 'Alerting',
     instance: 'Instance',
