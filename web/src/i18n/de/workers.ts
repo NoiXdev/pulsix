@@ -21,9 +21,9 @@ export const deWorkers: Messages['workers'] = {
   enrollmentsCount: (n: number) => (n === 1 ? '1 Registrierung' : `${n} Registrierungen`),
   noMatch: 'Keine Worker passen zu den Filtern.',
   filters: {
-    zone: 'Zone',
+    zone: 'Nach Zone filtern',
     allZones: 'Alle Zonen',
-    status: 'Status',
+    status: 'Nach Status filtern',
     anyStatus: 'Beliebiger Status',
     expired: 'Abgelaufen',
   },

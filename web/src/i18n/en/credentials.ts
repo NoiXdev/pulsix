@@ -39,7 +39,7 @@ export const enCredentials = {
     filterPlaceholder: 'Filter credentials…',
     noMatch: 'No credentials match the filters.',
     filters: {
-      kind: 'Kind',
+      kind: 'Filter by kind',
       allKinds: 'All kinds',
       expiring: 'Expiring soon',
       expired: 'Expired',
@@ -122,9 +122,9 @@ export const enCredentials = {
     filterPlaceholder: 'Filter jump hosts…',
     noMatch: 'No jump hosts match the filters.',
     filters: {
-      keyState: 'Host key',
+      keyState: 'Filter by host key',
       anyKeyState: 'Any host key',
-      credential: 'Credential',
+      credential: 'Filter by credential',
       allCredentials: 'All credentials',
     },
     confirmDelete: (name: string) => `Delete jump host ${name}?`,

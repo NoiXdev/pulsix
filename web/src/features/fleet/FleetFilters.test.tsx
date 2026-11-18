@@ -25,29 +25,29 @@ function setup(initial = '/o/acme/fleet', tagError?: string) {
 describe('FleetFilters', () => {
   it('writes a zone selection to the URL', async () => {
     const router = setup();
-    await screen.findByLabelText('Zone');
-    await pickOption(screen, 'Zone', { value: 'z2' });
+    await screen.findByLabelText('Filter by zone');
+    await pickOption(screen, 'Filter by zone', { value: 'z2' });
     await waitFor(() => expect(router.state.location.search).toEqual({ zone: 'z2' }));
   });
 
   it('clears the zone filter when "All zones" is chosen again', async () => {
     const router = setup('/o/acme/fleet?zone=z1&page=2');
-    await screen.findByLabelText('Zone');
-    await pickOption(screen, 'Zone', { value: '' });
+    await screen.findByLabelText('Filter by zone');
+    await pickOption(screen, 'Filter by zone', { value: '' });
     await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
   it('writes a monitoring group selection by name', async () => {
     const router = setup();
-    await screen.findByLabelText('Zone');
-    await pickOption(screen, 'Monitoring group', 'Web tier');
+    await screen.findByLabelText('Filter by zone');
+    await pickOption(screen, 'Filter by monitoring group', 'Web tier');
     await waitFor(() => expect(router.state.location.search).toEqual({ group: 'g1' }));
   });
 
   it('writes the state to the URL', async () => {
     const router = setup();
-    await screen.findByLabelText('Zone');
-    await pickOption(screen, 'State', 'crit');
+    await screen.findByLabelText('Filter by zone');
+    await pickOption(screen, 'Filter by state', 'crit');
     await waitFor(() => expect(router.state.location.search).toEqual({ state: 'crit' }));
   });
 
@@ -57,7 +57,7 @@ describe('FleetFilters', () => {
     // A plain text field, not a selector builder: there is nowhere here
     // that offers "!=" or "in(...)" — the API refuses those with a 422
     // (v0.3b-2 controller decision).
-    await user.type(await screen.findByLabelText('Tag'), 'role=db');
+    await user.type(await screen.findByLabelText('Filter by tag'), 'role=db');
     await waitFor(() => expect(router.state.location.search).toEqual({ tag: 'role=db' }));
   });
 
@@ -74,7 +74,7 @@ describe('FleetFilters', () => {
   it('closes the list after picking a zone, rather than reopening it', async () => {
     const user = userEvent.setup();
     setup();
-    await user.click(await screen.findByLabelText('Zone'));
+    await user.click(await screen.findByLabelText('Filter by zone'));
     expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
     await user.click(screen.getByRole('option', { name: 'Frankfurt' }));
     expect(screen.queryAllByRole('option')).toHaveLength(0);

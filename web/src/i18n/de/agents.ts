@@ -13,7 +13,7 @@ export const deAgents: Messages['agents'] = {
   filterPlaceholder: 'Agents filtern …',
   noMatch: 'Keine Agents passen zu den Filtern.',
   filters: {
-    status: 'Status',
+    status: 'Nach Status filtern',
     anyStatus: 'Beliebiger Status',
     outdated: 'Veraltet',
     expired: 'Abgelaufen',

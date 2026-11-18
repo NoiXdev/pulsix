@@ -29,13 +29,13 @@ export const enFleet = {
   filters: {
     search: 'Search hosts',
     searchPlaceholder: 'Filter hosts…',
-    state: 'State',
+    state: 'Filter by state',
     anyState: 'Any state',
-    zone: 'Zone',
+    zone: 'Filter by zone',
     allZones: 'All zones',
-    group: 'Monitoring group',
+    group: 'Filter by monitoring group',
     allGroups: 'All groups',
-    tag: 'Tag',
+    tag: 'Filter by tag',
     tagPlaceholder: 'key or key=value',
   },
 };

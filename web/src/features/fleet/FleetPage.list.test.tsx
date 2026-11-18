@@ -89,7 +89,7 @@ describe('FleetPage list', () => {
       await screen.findByText('1–3 of 3 hosts');
       expect(seen[0].get('zone')).toBe('z1');
       expect(seen[0].get('group')).toBe('g1');
-      await user.type(screen.getByLabelText('Tag'), 'role');
+      await user.type(screen.getByLabelText('Filter by tag'), 'role');
       await waitFor(() => expect(router.state.location.search).toEqual({ zone: 'z1', group: 'g1', tag: 'role' }));
       await waitFor(() => expect(seen.at(-1)?.get('tag')).toBe('role'));
       await user.click(screen.getByRole('button', { name: 'Reset every filter' }));

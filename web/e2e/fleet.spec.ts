@@ -278,7 +278,7 @@ test('the fleet page shows a host in each state, narrowed by one filter', async 
       const deadline = Date.now() + timeout;
       for (;;) {
         await page.goto(`${base}/fleet`);
-        await page.getByLabel('Tag').fill(TAG);
+        await page.getByLabel('Filter by tag').fill(TAG);
         // A fleet row is a list row: the `data-list-row` container that holds
         // the row's link, named by the host.
         const row = page.locator('[data-list-row]', { has: page.getByRole('link', { name: hostName, exact: true }) });

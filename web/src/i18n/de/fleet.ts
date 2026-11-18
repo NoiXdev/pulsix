@@ -29,13 +29,13 @@ export const deFleet: Messages['fleet'] = {
   filters: {
     search: 'Hosts durchsuchen',
     searchPlaceholder: 'Hosts filtern …',
-    state: 'Zustand',
+    state: 'Nach Zustand filtern',
     anyState: 'Beliebiger Zustand',
-    zone: 'Zone',
+    zone: 'Nach Zone filtern',
     allZones: 'Alle Zonen',
-    group: 'Überwachungsgruppe',
+    group: 'Nach Überwachungsgruppe filtern',
     allGroups: 'Alle Gruppen',
-    tag: 'Tag',
+    tag: 'Nach Tag filtern',
     tagPlaceholder: 'Schlüssel oder Schlüssel=Wert',
   },
 };

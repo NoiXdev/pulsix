@@ -23,9 +23,9 @@ export const enWorkers = {
   enrollmentsCount: (n: number) => (n === 1 ? '1 enrollment' : `${n} enrollments`),
   noMatch: 'No workers match the filters.',
   filters: {
-    zone: 'Zone',
+    zone: 'Filter by zone',
     allZones: 'All zones',
-    status: 'Status',
+    status: 'Filter by status',
     anyStatus: 'Any status',
     expired: 'Expired',
   },

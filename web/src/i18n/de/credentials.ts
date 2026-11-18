@@ -39,7 +39,7 @@ export const deCredentials: Messages['credentials'] = {
     filterPlaceholder: 'Zugangsdaten filtern …',
     noMatch: 'Keine Zugangsdaten passen zu den Filtern.',
     filters: {
-      kind: 'Art',
+      kind: 'Nach Art filtern',
       allKinds: 'Alle Arten',
       expiring: 'Läuft bald ab',
       expired: 'Abgelaufen',
@@ -125,9 +125,9 @@ export const deCredentials: Messages['credentials'] = {
     filterPlaceholder: 'Sprunghosts filtern …',
     noMatch: 'Keine Sprunghosts passen zu den Filtern.',
     filters: {
-      keyState: 'Hostschlüssel',
+      keyState: 'Nach Hostschlüssel filtern',
       anyKeyState: 'Beliebiger Hostschlüssel',
-      credential: 'Zugangsdaten',
+      credential: 'Nach Zugangsdaten filtern',
       allCredentials: 'Alle Zugangsdaten',
     },
     confirmDelete: (name: string) => `Sprunghost ${name} löschen?`,

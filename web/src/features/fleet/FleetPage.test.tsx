@@ -153,7 +153,7 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByRole('link', { name: 'web-1' });
-    await pickOption(screen, 'Zone', { value: 'z2' });
+    await pickOption(screen, 'Filter by zone', { value: 'z2' });
 
     await waitFor(() => expect(asked.at(-1)?.zone).toBe('z2'));
   });
@@ -172,7 +172,7 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByRole('link', { name: 'web-1' });
-    await pickOption(screen, 'Monitoring group', { value: 'g1' });
+    await pickOption(screen, 'Filter by monitoring group', { value: 'g1' });
 
     await waitFor(() => expect(asked.at(-1)?.group).toBe('g1'));
   });
@@ -197,7 +197,7 @@ describe('FleetPage', () => {
     renderPage();
 
     await screen.findByRole('link', { name: 'web-1' });
-    const input = screen.getByLabelText('Tag');
+    const input = screen.getByLabelText('Filter by tag');
     // fireEvent-equivalent single change through user-event's paste, so a
     // component with no internal state of its own (FleetFilters) still
     // reports the full value in one onChange, exactly as typing a pasted

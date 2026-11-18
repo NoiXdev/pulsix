@@ -119,7 +119,7 @@ describe('WorkersPage lists', () => {
       const user = userEvent.setup();
       const router = setup({ workers, enrollments: [], initial: '/o/acme/workers?page=2' });
       await screen.findByText('1–3 of 3 workers');
-      await pickOption(screen, 'Status', 'revoked');
+      await pickOption(screen, 'Filter by status', 'revoked');
       await waitFor(() => expect(router.state.location.search).toEqual({ status: 'revoked' }));
       expect(firstCells()).toEqual(['c']);
       await user.click(screen.getByRole('button', { name: 'Reset every filter' }));

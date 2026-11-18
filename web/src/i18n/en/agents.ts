@@ -13,7 +13,7 @@ export const enAgents = {
   filterPlaceholder: 'Filter agents…',
   noMatch: 'No agents match the filters.',
   filters: {
-    status: 'Status',
+    status: 'Filter by status',
     anyStatus: 'Any status',
     outdated: 'Outdated',
     expired: 'Expired',
