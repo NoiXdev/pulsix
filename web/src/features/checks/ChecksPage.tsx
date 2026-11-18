@@ -118,7 +118,7 @@ export function ChecksPage() {
         loading={!view.ready}
         empty={active ? t.checks.list.noMatch : t.checks.list.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.list.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.checks.list.count} />}>
             <SearchInput
               label={t.checks.list.search}
               placeholder={t.checks.list.filterPlaceholder}

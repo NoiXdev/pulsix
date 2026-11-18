@@ -206,21 +206,31 @@ describe('ResultCount', () => {
   const agents = (n: number) => (n === 1 ? '1 agent' : `${n} agents`);
 
   it('says how many of all are shown', () => {
-    render(<ResultCount shown={3} total={6} noun={agents} />);
+    render(<ResultCount active shown={3} total={6} noun={agents} />);
     expect(screen.getByText('3 of 6 agents')).toBeInTheDocument();
   });
 
   it('says the total alone when nothing is filtered out or the total is not known', () => {
-    const { rerender } = render(<ResultCount shown={6} total={6} noun={agents} />);
+    const { rerender } = render(<ResultCount active shown={6} total={6} noun={agents} />);
     expect(screen.getByText('6 agents')).toBeInTheDocument();
-    rerender(<ResultCount shown={1} noun={agents} />);
+    rerender(<ResultCount active shown={1} noun={agents} />);
     expect(screen.getByText('1 agent')).toBeInTheDocument();
+  });
+
+  it('keeps its live region while no filter is active, empty, so the first filter is announced', () => {
+    const { container, rerender } = render(<ResultCount active={false} shown={6} total={6} noun={agents} />);
+    const region = container.querySelector('[aria-live="polite"]');
+    expect(region).toBeInTheDocument();
+    expect(region).toBeEmptyDOMElement();
+    rerender(<ResultCount active shown={2} total={6} noun={agents} />);
+    expect(container.querySelector('[aria-live="polite"]')).toBe(region);
+    expect(region).toHaveTextContent('2 of 6 agents');
   });
 
   it('speaks German', () => {
     render(
       <I18nProvider locale="de">
-        <ResultCount shown={3} total={6} noun={(n) => `${n} Agenten`} />
+        <ResultCount active shown={3} total={6} noun={(n) => `${n} Agenten`} />
         <ResetFilters onReset={vi.fn()} />
       </I18nProvider>,
     );

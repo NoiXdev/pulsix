@@ -87,7 +87,7 @@ export function ChannelsPage() {
         loading={!view.ready}
         empty={active ? c8.noMatch : c8.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={c8.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={c8.count} />}>
             <FilterSelect
               label={c8.filters.kind}
               allLabel={c8.filters.allKinds}

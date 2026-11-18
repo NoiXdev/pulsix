@@ -30,7 +30,7 @@ export function UsersPage() {
 
   const columns = userColumns(t, fmt);
   const view = useListView('users', columns, { mode: 'server', resetKey: JSON.stringify(filters) });
-  const users = useAdminUsersPage(q, view.serverQuery, { enabled: view.ready });
+  const users = useAdminUsersPage(q.trim(), view.serverQuery, { enabled: view.ready });
 
   const guard = useQueryGuard(users);
   if (guard) return guard;
@@ -52,7 +52,7 @@ export function UsersPage() {
               label={t.users.searchLabel}
               placeholder={t.users.searchPlaceholder}
               value={q}
-              onChange={(v) => setFilter('q', v.trim() || undefined, { replace: true })}
+              onChange={(v) => setFilter('q', v || undefined, { replace: true })}
             />
             {active && <ResetFilters onReset={reset} />}
           </ListToolbar>

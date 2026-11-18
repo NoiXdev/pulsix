@@ -257,12 +257,13 @@ export function ResetFilters({ onReset }: { onReset: () => void }) {
 /**
  * How many rows the filters leave: "3 of 6 agents", or "6 agents" when
  * nothing is filtered out or the unfiltered total is not known. `noun` is
- * the list's own count label (`n => '6 agents'`). Announced politely, so a
- * screen reader hears what a filter did.
+ * the list's own count label (`n => '6 agents'`). The live region is always
+ * rendered and only its text varies (empty while no filter is `active`), so
+ * a screen reader announces the first filter too, not just the later ones.
  */
-export function ResultCount({ shown, total, noun }: { shown: number; total?: number; noun: (n: number) => string }) {
+export function ResultCount({ active, shown, total, noun }: { active: boolean; shown: number; total?: number; noun: (n: number) => string }) {
   const t = useT();
-  const text = total === undefined || total === shown ? noun(shown) : t.ui.listToolbar.countOf(shown, noun(total));
+  const text = !active ? '' : total === undefined || total === shown ? noun(shown) : t.ui.listToolbar.countOf(shown, noun(total));
   return (
     <span aria-live="polite" className="text-xs whitespace-nowrap text-muted-foreground">
       {text}

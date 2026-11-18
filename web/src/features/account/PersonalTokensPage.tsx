@@ -92,7 +92,7 @@ export function PersonalTokensPage() {
         loading={!view.ready}
         empty={active ? p.noMatch : p.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={p.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={p.count} />}>
             <SearchInput label={p.search} placeholder={p.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
             <FilterSelect
               label={f.kind}

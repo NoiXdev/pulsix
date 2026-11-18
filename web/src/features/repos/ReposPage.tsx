@@ -79,7 +79,7 @@ export function ReposPage() {
         loading={!view.ready}
         empty={active ? t.repos.list.noMatch : t.repos.list.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.repos.list.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.repos.list.count} />}>
             <SearchInput
               label={t.repos.list.search}
               placeholder={t.repos.list.filterPlaceholder}

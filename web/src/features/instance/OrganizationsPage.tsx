@@ -64,7 +64,7 @@ export function OrganizationsPage() {
         loading={!orgs.data || !view.ready}
         empty={active ? o.noMatch : o.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={orgs.data?.length} noun={o.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={orgs.data?.length} noun={o.count} />}>
             <SearchInput label={o.search} placeholder={o.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
             {active && <ResetFilters onReset={reset} />}
           </ListToolbar>

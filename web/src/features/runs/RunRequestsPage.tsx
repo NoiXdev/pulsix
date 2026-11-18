@@ -72,7 +72,7 @@ export function RunRequestsPage() {
         loading={!view.ready}
         empty={active ? r.noMatch : r.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={r.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={r.count} />}>
             <FilterSelect
               label={f.status}
               allLabel={f.allStatuses}

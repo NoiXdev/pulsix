@@ -65,7 +65,7 @@ export function CredentialsPage() {
         loading={!view.ready}
         empty={active ? t.credentials.list.noMatch : t.credentials.list.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.credentials.list.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.credentials.list.count} />}>
             <SearchInput
               label={t.credentials.list.search}
               placeholder={t.credentials.list.filterPlaceholder}

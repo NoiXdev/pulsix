@@ -131,7 +131,7 @@ export function RulesPage() {
         loading={!view.ready}
         empty={active ? t.checks.rules.noMatch : t.checks.rules.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.rules.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.checks.rules.count} />}>
             <SearchInput
               label={t.checks.rules.search}
               placeholder={t.checks.rules.filterPlaceholder}

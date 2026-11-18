@@ -121,7 +121,7 @@ export function MonitoringGroupsPage() {
         loading={!view.ready}
         empty={active ? t.checks.groups.noFilterMatch : t.checks.groups.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.groups.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.checks.groups.count} />}>
             <SearchInput
               label={t.checks.groups.search}
               placeholder={t.checks.groups.filterPlaceholder}

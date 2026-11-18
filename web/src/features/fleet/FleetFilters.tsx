@@ -41,7 +41,7 @@ export function FleetFilters({ zones, groups, list, tagError, shown, total }: Fl
   const f = t.fleet.filters;
   const { filters, setFilter } = list;
   return (
-    <ListToolbar count={list.active && shown !== undefined ? <ResultCount shown={shown} total={total} noun={t.fleet.count} /> : undefined}>
+    <ListToolbar count={<ResultCount active={list.active && shown !== undefined} shown={shown ?? 0} total={total} noun={t.fleet.count} />}>
       <SearchInput label={f.search} placeholder={f.searchPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
       <FilterSelect
         label={f.state}

@@ -49,7 +49,7 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
         loading={!view.ready}
         empty={active ? l.noMatch : l.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={items.length} noun={l.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={items.length} noun={l.count} />}>
             <FilterSelect
               label={l.filters.kind}
               allLabel={l.filters.allKinds}

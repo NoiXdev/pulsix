@@ -91,7 +91,7 @@ export function WorkersPage() {
         loading={!view.ready}
         empty={active ? t.workers.noMatch : t.workers.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shownWorkers.length} total={workers.length} noun={t.workers.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shownWorkers.length} total={workers.length} noun={t.workers.count} />}>
             <FilterSelect
               label={f.zone}
               allLabel={f.allZones}
@@ -123,7 +123,7 @@ export function WorkersPage() {
           empty={null}
           toolbar={
             <ListToolbar
-              count={expiredEnrollments ? <ResultCount shown={shownEnrollments.length} total={enrollments.length} noun={t.workers.enrollmentsCount} /> : undefined}
+              count={<ResultCount active={expiredEnrollments} shown={shownEnrollments.length} total={enrollments.length} noun={t.workers.enrollmentsCount} />}
             >
               <FilterChip pressed={expiredEnrollments} tone="crit" onToggle={() => setExpiredEnrollments(!expiredEnrollments)}>
                 {f.expired}

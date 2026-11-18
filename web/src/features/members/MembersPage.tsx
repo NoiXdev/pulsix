@@ -98,7 +98,7 @@ export function MembersPage() {
         loading={!view.ready}
         empty={active ? t.members.noMatch : null}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={t.members.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={t.members.count} />}>
             <SearchInput
               label={t.members.search}
               placeholder={t.members.filterPlaceholder}

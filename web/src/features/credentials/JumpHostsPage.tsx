@@ -96,7 +96,7 @@ export function JumpHostsPage() {
         empty={active ? t.credentials.jumpHosts.noMatch : t.credentials.jumpHosts.empty}
         toolbar={
           <ListToolbar
-            count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.credentials.jumpHosts.count} /> : undefined}
+            count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.credentials.jumpHosts.count} />}
           >
             <SearchInput
               label={t.credentials.jumpHosts.search}

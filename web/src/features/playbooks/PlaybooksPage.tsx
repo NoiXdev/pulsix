@@ -79,7 +79,7 @@ export function PlaybooksPage() {
         loading={!view.ready}
         empty={active ? t.playbooks.list.noMatch : t.playbooks.list.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.playbooks.list.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.playbooks.list.count} />}>
             <SearchInput
               label={t.playbooks.list.search}
               placeholder={t.playbooks.list.filterPlaceholder}

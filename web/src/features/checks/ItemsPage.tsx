@@ -147,7 +147,7 @@ export function ItemsPage() {
         loading={!view.ready}
         empty={active ? t.checks.items.noMatch : t.checks.items.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.checks.items.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.checks.items.count} />}>
             <FilterSelect
               label={f.verdict}
               allLabel={f.anyVerdict}

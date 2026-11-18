@@ -91,7 +91,7 @@ export function AgentsPage() {
         loading={!view.ready}
         empty={active ? t.agents.noMatch : t.agents.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shownAgents.length} total={agents.length} noun={t.agents.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shownAgents.length} total={agents.length} noun={t.agents.count} />}>
             <SearchInput
               label={t.agents.search}
               placeholder={t.agents.filterPlaceholder}
@@ -127,7 +127,7 @@ export function AgentsPage() {
           loading={!tokenView.ready}
           empty={null}
           toolbar={
-            <ListToolbar count={expiredTokens ? <ResultCount shown={shownTokens.length} total={tokens.length} noun={t.agents.tokensCount} /> : undefined}>
+            <ListToolbar count={<ResultCount active={expiredTokens} shown={shownTokens.length} total={tokens.length} noun={t.agents.tokensCount} />}>
               <FilterChip pressed={expiredTokens} tone="crit" onToggle={() => setExpiredTokens(!expiredTokens)}>
                 {f.expired}
               </FilterChip>

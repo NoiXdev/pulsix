@@ -106,7 +106,7 @@ export function SchedulesPage() {
           loading={!view.ready}
           empty={active ? m.noMatch : m.empty}
           toolbar={
-            <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={m.count} /> : undefined}>
+            <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={m.count} />}>
               <FilterSelect
                 label={f.status}
                 allLabel={f.anyStatus}

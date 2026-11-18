@@ -74,7 +74,7 @@ export function SharedReposPage() {
         loading={!view.ready}
         empty={active ? s.noMatch : s.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={s.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={s.count} />}>
             <SearchInput label={s.search} placeholder={s.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
             {active && <ResetFilters onReset={reset} />}
           </ListToolbar>

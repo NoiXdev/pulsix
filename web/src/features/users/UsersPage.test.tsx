@@ -142,6 +142,15 @@ describe('UsersPage', () => {
     expect(router.state.location.search).not.toHaveProperty('page');
   });
 
+  it('keeps a typed trailing space in the box and sends the trimmed term', async () => {
+    const u = userEvent.setup();
+    setup(many(30));
+    const box = await screen.findByRole('searchbox', { name: 'Search users' });
+    await u.type(box, 'john ');
+    await waitFor(() => expect(requests.at(-1)?.get('q')).toBe('john'));
+    expect(box).toHaveValue('john ');
+  });
+
   it('reads the search from the URL, shows it in the box and asks the server for it', async () => {
     const u = userEvent.setup();
     const router = setup((req) => pageOf(many(30).filter((x) => x.email.includes(req.search.get('q') ?? '')), req), '/o/acme/settings/users?q=person07');

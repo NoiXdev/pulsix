@@ -158,7 +158,7 @@ export function AlertRoutesPage() {
         loading={!view.ready}
         empty={active ? a.noMatch : a.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={a.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={a.count} />}>
             <FilterSelect
               label={a.filters.status}
               allLabel={a.filters.anyStatus}

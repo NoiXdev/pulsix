@@ -97,7 +97,7 @@ export function TemplatesPage() {
         loading={!view.ready}
         empty={active ? t.templates.list.noMatch : t.templates.list.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.templates.list.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.templates.list.count} />}>
             <SearchInput
               label={t.templates.list.search}
               placeholder={t.templates.list.filterPlaceholder}

@@ -145,7 +145,7 @@ export function TokensPage() {
         loading={!settled}
         empty={active ? t.tokens.noMatch : t.tokens.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={t.tokens.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={t.tokens.count} />}>
             <SearchInput
               label={t.tokens.search}
               placeholder={t.tokens.filterPlaceholder}

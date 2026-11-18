@@ -73,7 +73,7 @@ export function MaintenancePage() {
         loading={!view.ready}
         empty={active ? t.maintenance.noMatch : t.maintenance.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={list.length} noun={t.maintenance.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={t.maintenance.count} />}>
             <SearchInput
               label={t.maintenance.search}
               placeholder={t.maintenance.filterPlaceholder}

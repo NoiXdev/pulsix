@@ -77,7 +77,7 @@ export function GroupsPage() {
         loading={!view.ready}
         empty={active ? g.noMatch : g.empty}
         toolbar={
-          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={g.count} /> : undefined}>
+          <ListToolbar count={<ResultCount active={active} shown={shown.length} total={all.length} noun={g.count} />}>
             <SearchInput label={g.search} placeholder={g.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
             <FilterSelect
               label={f.parent}
