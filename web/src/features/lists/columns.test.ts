@@ -61,8 +61,8 @@ describe('mergeColumns', () => {
       expect(mergeColumns(saved, [...COLUMNS, col('extra', { defaultVisible: false })])).toEqual(['name', 'zone', 'tags']);
     });
 
-    it('treats a missing known as equal to columns', () => {
-      expect(mergeColumns({ columns: ['zone'] }, COLUMNS)).toEqual(['name', 'state', 'zone', 'tags']);
+    it('keeps a saved choice without known as it is: every offered column counts as known', () => {
+      expect(mergeColumns({ columns: ['zone'] }, COLUMNS)).toEqual(['name', 'zone']);
       expect(mergeColumns({ columns: ['zone'] }, [col('zone'), col('extra', { defaultVisible: false })])).toEqual(['zone']);
     });
   });

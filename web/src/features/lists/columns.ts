@@ -15,7 +15,8 @@ export interface SavedColumns {
  * word, and a required column the saved list leaves out is added. A column
  * that was not offered when the choice was saved (not in `known`) and is
  * `defaultVisible` is shown at its default position (backlog 3.101); a known
- * column the saved list leaves out stays hidden.
+ * column the saved list leaves out stays hidden. A choice saved without
+ * `known` is kept as it is.
  */
 export function mergeColumns<Row>(saved: SavedColumns | null | undefined, columns: DataListColumn<Row>[]): string[] {
   const offered = new Map(columns.map((c) => [c.id, c]));
@@ -26,7 +27,9 @@ export function mergeColumns<Row>(saved: SavedColumns | null | undefined, column
     if (offered.has(id) && !out.includes(id)) out.push(id);
   }
   if (saved?.columns) {
-    const known = new Set(saved.known?.length ? saved.known : saved.columns);
+    // A choice saved before `known` existed is kept as it was: every column
+    // offered now counts as known, so nothing the person hid comes back.
+    const known = new Set(saved.known?.length ? saved.known : offered.keys());
     for (const [i, id] of defaults.entries()) {
       if (known.has(id) || out.includes(id)) continue;
       // After the nearest default column before it that is shown, else first.
