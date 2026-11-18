@@ -17,10 +17,13 @@ import (
 // by rules.Vanished itself: every row is checked against both the expected
 // answer and the function, which pins this caller to it (rule loading's
 // own test, TestLoadUsesTheVanishedRule in internal/rules, pins the
-// other). The boundary is strict: three intervals behind is still current.
-// A fresh error is a reading and never vanished. And http.body_match, which
-// the check stopped asking for with body_contains unset, is not listed at
-// all (checkplugins' MetricAsked hook).
+// other). The boundary is strict: three intervals behind is still current,
+// measured against the item's newest error-free reading. A fresher error
+// (http.status_code here) is never vanished itself and is not that newest:
+// an error proves the collection ran, not that the other metrics stopped.
+// Nor is http.body_match, which the check stopped asking for with
+// body_contains unset: it is not listed at all (checkplugins' MetricAsked
+// hook), and its fresher reading has no say either.
 func TestHostChecksReportsVanishedValues(t *testing.T) {
 	f := newChecksFixture(t, "host-checks-vanished")
 	created := f.createCheck(t, f.operatorC, map[string]any{
@@ -29,27 +32,31 @@ func TestHostChecksReportsVanishedValues(t *testing.T) {
 	})
 	defer requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
 
-	newest := time.Now().UTC().Truncate(time.Microsecond)
+	newest := time.Now().UTC().Truncate(time.Microsecond).Add(-10 * time.Minute)
 	obs := func(metric string, at time.Time, value *float64, errText string) checks.Observation {
 		return checks.Observation{HostID: f.web, CheckKey: "web-http", Metric: metric, At: at, Value: value, Err: errText}
 	}
+	failure := obs("http.failure", newest, nil, "")
+	failure.Label = strPtr("connection refused")
 	f.record(t,
 		obs("http.up", newest.Add(-time.Minute), floatPtr(0), ""),
-		obs("http.failure", newest, nil, "connection refused"),
+		failure,
 		obs("http.connect_ms", newest.Add(-3*time.Minute+time.Second), floatPtr(4), ""),
 		obs("http.ttfb_ms", newest.Add(-3*time.Minute), floatPtr(9), ""),
 		obs("http.dns_ms", newest.Add(-3*time.Minute-time.Second), floatPtr(2), ""),
 		obs("http.tls_ms", newest.Add(-30*time.Minute), floatPtr(7), ""),
-		obs("http.body_match", newest, floatPtr(1), ""),
+		obs("http.status_code", newest.Add(5*time.Minute), nil, "connection refused"),
+		obs("http.body_match", newest.Add(4*time.Minute), floatPtr(1), ""),
 	)
 
 	want := map[string]bool{
-		"http.up":         false,
-		"http.failure":    false,
-		"http.connect_ms": false,
-		"http.ttfb_ms":    false,
-		"http.dns_ms":     true,
-		"http.tls_ms":     true,
+		"http.up":          false,
+		"http.failure":     false,
+		"http.connect_ms":  false,
+		"http.ttfb_ms":     false,
+		"http.dns_ms":      true,
+		"http.tls_ms":      true,
+		"http.status_code": false,
 	}
 	web := f.hostChecks(t, f.viewerC, f.web).byKey(t, "web-http")
 	if len(web.Values) != len(want) {
@@ -65,6 +72,39 @@ func TestHostChecksReportsVanishedValues(t *testing.T) {
 		}
 		if fn := rules.Vanished(v.At, newest, time.Minute); fn != v.Vanished {
 			t.Errorf("%s: rules.Vanished = %v but the route says %v", v.Metric, fn, v.Vanished)
+		}
+	}
+}
+
+// TestHostChecksReportsNothingVanishedForADisabledCheck (backlog 3.88): a
+// disabled check is not evaluated — rule loading gives every tuple of it
+// interval 0 and measures nothing against its item — so the host page
+// does not call any of its frozen rows vanished either, even the timing
+// metric a probe stopped reporting before the check was switched off.
+func TestHostChecksReportsNothingVanishedForADisabledCheck(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-vanished-disabled")
+	created := f.createCheck(t, f.operatorC, map[string]any{
+		"key": "web-http", "plugin": "http", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
+		"params": map[string]any{"url": "https://{address}/"}, "enabled": false,
+	})
+	defer requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+
+	newest := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
+	f.record(t,
+		checks.Observation{HostID: f.web, CheckKey: "web-http", Metric: "http.up", At: newest, Value: floatPtr(0)},
+		checks.Observation{HostID: f.web, CheckKey: "web-http", Metric: "http.dns_ms", At: newest.Add(-30 * time.Minute), Value: floatPtr(2)},
+	)
+
+	web := f.hostChecks(t, f.viewerC, f.web).byKey(t, "web-http")
+	if web.Enabled {
+		t.Fatal("the fixture's check is enabled")
+	}
+	if len(web.Values) != 2 {
+		t.Fatalf("values = %+v, want both rows listed", web.Values)
+	}
+	for _, v := range web.Values {
+		if v.Vanished {
+			t.Errorf("%s of a disabled check is vanished; the evaluator judges nothing there", v.Metric)
 		}
 	}
 }

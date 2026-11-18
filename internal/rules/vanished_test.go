@@ -39,17 +39,18 @@ func TestVanished(t *testing.T) {
 }
 
 // TestItemNewestVanished: the newest reading is taken per (check key,
-// item), over every reading of it — an error row included, since a failed
-// collection is still the check running — so a fresh error is never
-// vanished and keeps its item's other metrics from vanishing too, while a
-// sibling item or another check key has no say.
+// item), over its error-free readings only — a value or a label proves the
+// check still reports the item's metrics, an error proves only that the
+// collection ran (a SMART disk smartctl cannot open reports one error on
+// smart.passed and nothing else) — while an error row is itself judged
+// against that newest like any other row. A sibling item or another check
+// key has no say.
 func TestItemNewestVanished(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	// An error row is a reading like any other here: the rule reads only
-	// when a row was written, never what it carries.
 	type reading struct {
 		tuple rules.Tuple
 		at    time.Time
+		err   string
 	}
 	tu := func(key, item, metric string) rules.Tuple {
 		return rules.Tuple{CheckKey: key, Item: item, Metric: metric}
@@ -80,25 +81,50 @@ func TestItemNewestVanished(t *testing.T) {
 			name: "a fresh error is never vanished",
 			readings: []reading{
 				{tuple: tu("web", "", "http.up"), at: now.Add(-10 * time.Minute)},
-				{tuple: tu("web", "", "http.failure"), at: now},
+				{tuple: tu("web", "", "http.failure"), at: now, err: "connection refused"},
 			},
 			judge: tu("web", "", "http.failure"), want: false,
 		},
 		{
-			name: "a fresh error counts as the item's newest reading",
+			name: "a fresh error does not count as the item's newest reading",
 			readings: []reading{
 				{tuple: tu("web", "", "http.up"), at: now.Add(-10 * time.Minute)},
-				{tuple: tu("web", "", "http.failure"), at: now},
+				{tuple: tu("web", "", "http.failure"), at: now, err: "connection refused"},
 			},
-			judge: tu("web", "", "http.up"), want: true,
+			judge: tu("web", "", "http.up"), want: false,
+		},
+		{
+			name: "a disk smartctl cannot open keeps its other metrics",
+			readings: []reading{
+				{tuple: tu("smart", "/dev/sda", "smart.passed"), at: now, err: "smartctl: cannot open device"},
+				{tuple: tu("smart", "/dev/sda", "smart.reallocated_sectors"), at: now.Add(-time.Hour)},
+				{tuple: tu("smart", "/dev/sda", "smart.temperature_celsius"), at: now.Add(-time.Hour)},
+			},
+			judge: tu("smart", "/dev/sda", "smart.reallocated_sectors"), want: false,
+		},
+		{
+			name: "an error-free sibling still vanishes an old error row",
+			readings: []reading{
+				{tuple: tu("web", "", "http.up"), at: now},
+				{tuple: tu("web", "", "http.dns_ms"), at: now.Add(-10 * time.Minute), err: "no such host"},
+			},
+			judge: tu("web", "", "http.dns_ms"), want: true,
 		},
 		{
 			name: "an error just inside three intervals of the newest",
 			readings: []reading{
 				{tuple: tu("web", "", "http.up"), at: now},
-				{tuple: tu("web", "", "http.failure"), at: now.Add(-2 * time.Minute)},
+				{tuple: tu("web", "", "http.failure"), at: now.Add(-2 * time.Minute), err: "connection refused"},
 			},
 			judge: tu("web", "", "http.failure"), want: false,
+		},
+		{
+			name: "an item with only errors has no newest: nothing vanishes",
+			readings: []reading{
+				{tuple: tu("web", "", "http.up"), at: now, err: "secret unavailable"},
+				{tuple: tu("web", "", "http.dns_ms"), at: now.Add(-time.Hour), err: "secret unavailable"},
+			},
+			judge: tu("web", "", "http.dns_ms"), want: false,
 		},
 		{
 			name: "a whole item gone quiet together stays stale, not vanished",
@@ -129,7 +155,7 @@ func TestItemNewestVanished(t *testing.T) {
 			newest := rules.ItemNewest{}
 			var at time.Time
 			for _, r := range tc.readings {
-				newest.Observe(r.tuple, r.at)
+				newest.Observe(r.tuple, r.at, r.err)
 				if r.tuple == tc.judge {
 					at = r.at
 				}

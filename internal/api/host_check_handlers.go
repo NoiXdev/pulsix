@@ -139,8 +139,11 @@ type hostCheckValueDTO struct {
 	// tuple out of the evaluation with). Stale says "nothing arrived";
 	// vanished says "the rest of the item arrived without it", which is
 	// why a vanished value no longer counts towards the host's state and
-	// its stored verdict, if any, is a leftover.
-	Vanished bool `json:"vanished" doc:"The check still reports on this value's item but no longer this metric: the item's newest reading is more than three of the check's intervals newer. Not judged any more; its state, if present, is a leftover"`
+	// its stored verdict, if any, is a leftover. Only an error-free
+	// reading of the item counts as its newest: an error proves the
+	// collection ran, not that the item's other metrics stopped. Never set
+	// on a disabled check, which nothing evaluates.
+	Vanished bool `json:"vanished" doc:"The check still reports on this value's item but no longer this metric: the item's newest reading without an error (a value or a label) is more than three of the check's intervals newer. Not judged any more; its state, if present, is a leftover. Always false on a disabled check"`
 }
 
 type hostCheckDTO struct {
@@ -479,10 +482,10 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // check's (backlog 3.28) — and those whose metric it no longer asks for,
 // http.body_match once body_contains is removed (backlog 3.88). Nothing
 // deletes a check_current row, deliberately (checks.Current's doc comment
-// and migration 00044 both say why), so
-// without this the dropped item sits on the host page for ever and is
-// eventually badged stale — which reads as "the agent stopped reporting
-// this" when the truth is "you stopped asking for it".
+// and migration 00044 both say why), so without this the dropped item sits
+// on the host page for ever and is eventually badged stale — which reads
+// as "the agent stopped reporting this" when the truth is "you stopped
+// asking for it".
 //
 // A definition that bounds no items keeps every value: checks.AsksForItem
 // carries that rule, including the disk check with no mounts list, which
@@ -523,7 +526,14 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 	case checks.BindingOrg:
 		// Bound to the organization itself: no single group or host to name.
 	}
-	dto.Values = toHostCheckValues(d.Key, d.Interval, values, now, states, ignored)
+	// A disabled check is not evaluated: rule loading gives each of its
+	// tuples interval 0 and measures nothing against its items, so the
+	// page calls none of its frozen rows vanished either.
+	vanishedInterval := d.Interval
+	if !d.Enabled {
+		vanishedInterval = 0
+	}
+	dto.Values = toHostCheckValues(d.Key, d.Interval, vanishedInterval, values, now, states, ignored)
 	return dto
 }
 
@@ -539,7 +549,7 @@ func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Ti
 		Key: r.Key, Plugin: checkPluginName(r.Plugin), Params: params,
 		IntervalSeconds: int(r.Interval / time.Second), Enabled: true,
 		Origin: string(checks.BindingLocal), Source: string(checks.BindingLocal),
-		Values: toHostCheckValues(r.Key, r.Interval, values, now, states, ignored),
+		Values: toHostCheckValues(r.Key, r.Interval, r.Interval, values, now, states, ignored),
 	}
 }
 
@@ -548,11 +558,14 @@ func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Ti
 // engine's verdict on its tuple and what an item decision says about it.
 //
 // values are the ones the check still asks for (stillAsked), the same set
-// rule loading measures an item's newest reading over.
-func toHostCheckValues(key string, interval time.Duration, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
+// rule loading measures an item's newest reading over; like rule loading,
+// ItemNewest counts only their error-free readings. vanishedInterval is
+// the interval rule loading would measure a vanished row with: the check's
+// own, or 0 for a disabled check, which nothing evaluates.
+func toHostCheckValues(key string, interval, vanishedInterval time.Duration, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
 	newest := rules.ItemNewest{}
 	for _, c := range values {
-		newest.Observe(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At)
+		newest.Observe(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, c.Err)
 	}
 	out := make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
@@ -571,7 +584,7 @@ func toHostCheckValues(key string, interval time.Duration, values []checks.Curre
 		// five-minute disk check is not called stale a minute after its
 		// last reading while a ten-second CPU check is.
 		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*interval
-		v.Vanished = newest.Vanished(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, interval)
+		v.Vanished = newest.Vanished(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, vanishedInterval)
 		if st, ok := states[rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}]; ok {
 			state := string(st.State)
 			since, evaluatedAt := st.Since, st.EvaluatedAt

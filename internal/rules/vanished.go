@@ -20,10 +20,16 @@ import "time"
 // the host stays unknown for that whole period, with a fresh sibling
 // keeping the item itself from expiring.
 //
-// The rule reads only when rows were written, never what they carry: an
-// error row is a reading like a value, so a fresh error is never vanished
-// and counts as its item's newest. A whole item that went quiet together
-// has no newer reading to trail and is never vanished — it is stale, and
+// Only an error-free reading (a value or a label) counts as its item's
+// newest. An error proves the collection ran, not that the item's other
+// metrics stopped: a SMART disk smartctl cannot open reports one error on
+// smart.passed and nothing else, and its crit reallocated-sector count
+// must stay judged — stale, so unknown, its alert open — not vanish and
+// close as stale. An error row is itself judged against that newest like
+// any other row: a fresh one is never vanished, an old one behind a fresh
+// error-free sibling is. An item with nothing but errors has no newest and
+// nothing in it vanishes. A whole item that went quiet together has no
+// newer reading to trail and is never vanished either — it is stale, and
 // unknown, which is the honest answer for a check that stopped running.
 // A reading that is its item's newest is never vanished; neither is one
 // without a positive interval to measure against.
@@ -41,12 +47,17 @@ func Vanished(at, itemNewest time.Time, interval time.Duration) bool {
 // for the same reason — one late or partial flush is normal.
 const vanishedFactor = stalenessFactor
 
-// ItemNewest is the newest reading per (check key, item) of one host's
-// current values, the input Vanished measures a reading against.
+// ItemNewest is the newest error-free reading per (check key, item) of one
+// host's current values, the input Vanished measures a reading against.
 type ItemNewest map[ItemKey]time.Time
 
-// Observe records a reading of t taken at `at`.
-func (n ItemNewest) Observe(t Tuple, at time.Time) {
+// Observe records a reading of t taken at `at` that carried the error
+// errText. An error reading is not recorded: only a value or a label
+// proves the check still reports the item (Vanished's doc comment).
+func (n ItemNewest) Observe(t Tuple, at time.Time, errText string) {
+	if errText != "" {
+		return
+	}
 	k := itemKeyOf(t)
 	if newest, ok := n[k]; !ok || at.After(newest) {
 		n[k] = at
@@ -54,8 +65,9 @@ func (n ItemNewest) Observe(t Tuple, at time.Time) {
 }
 
 // Vanished reports whether t's reading taken at `at` has vanished, against
-// the newest reading observed for t's item. An item never observed has
-// nothing newer, so its reading is not vanished.
+// the newest error-free reading observed for t's item. An item never
+// observed without an error has nothing newer, so its reading is not
+// vanished.
 func (n ItemNewest) Vanished(t Tuple, at time.Time, interval time.Duration) bool {
 	newest, ok := n[itemKeyOf(t)]
 	return ok && Vanished(at, newest, interval)

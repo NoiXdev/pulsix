@@ -136,9 +136,10 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 		}
 		// Only a reading still asked for is evidence the check still
 		// reports on its item — the same set the host page measures
-		// against (GET /hosts/{id}/checks, after stillAsked).
+		// against (GET /hosts/{id}/checks, after stillAsked) — and of
+		// those only an error-free one (Observe skips errors).
 		if tuples[i].Interval > 0 {
-			newest.Observe(t, r.At)
+			newest.Observe(t, r.At, tuples[i].Err)
 		}
 	}
 	// A vanished tuple (backlog 3.88) — its item reported again since, but

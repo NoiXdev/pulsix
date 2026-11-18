@@ -36,10 +36,21 @@ func TestLoadUsesTheVanishedRule(t *testing.T) {
 		{tuple: web("http.ttfb_ms"), at: newest.Add(-3 * time.Minute), want: time.Minute},
 		{tuple: web("http.dns_ms"), at: newest.Add(-3*time.Minute - time.Second), want: 0},
 		{tuple: web("http.tls_ms"), at: newest.Add(-30 * time.Minute), want: 0},
-		// A fresh error is a reading: never vanished itself, and the
-		// newest reading of its item.
+		// A fresh error is never vanished itself, but it is not its
+		// item's newest either: only an error-free reading proves the
+		// check still reports the item's other metrics.
 		{tuple: rules.Tuple{CheckKey: "web", Item: "status", Metric: "http.json.value"}, at: now, errText: "no such path", want: time.Minute},
-		{tuple: rules.Tuple{CheckKey: "web", Item: "status", Metric: "http.json.text"}, at: now.Add(-10 * time.Minute), want: 0},
+		{tuple: rules.Tuple{CheckKey: "web", Item: "status", Metric: "http.json.text"}, at: now.Add(-10 * time.Minute), want: time.Minute},
+		// An old error behind a fresh error-free sibling vanishes like
+		// any other row.
+		{tuple: rules.Tuple{CheckKey: "web", Item: "api", Metric: "http.json.value"}, at: now, want: time.Minute},
+		{tuple: rules.Tuple{CheckKey: "web", Item: "api", Metric: "http.json.text"}, at: now.Add(-10 * time.Minute), errText: "no such path", want: 0},
+		// The SMART shape: a disk smartctl cannot open reports one error
+		// on smart.passed and nothing else. Its other metrics stay
+		// measured — stale, so unknown, and their alerts stay open.
+		{tuple: rules.Tuple{CheckKey: "smart", Item: "/dev/sda", Metric: "smart.passed"}, at: now, errText: "cannot open device", want: 5 * time.Minute},
+		{tuple: rules.Tuple{CheckKey: "smart", Item: "/dev/sda", Metric: "smart.reallocated_sectors"}, at: now.Add(-time.Hour), want: 5 * time.Minute},
+		{tuple: rules.Tuple{CheckKey: "smart", Item: "/dev/sda", Metric: "smart.temperature_celsius"}, at: now.Add(-time.Hour), want: 5 * time.Minute},
 		// A whole item gone quiet together has nothing newer to trail: it
 		// stays measured, so it turns stale and unknown as before.
 		{tuple: rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}, at: now.Add(-time.Hour), want: 5 * time.Minute},
@@ -53,10 +64,10 @@ func TestLoadUsesTheVanishedRule(t *testing.T) {
 			value = nil
 		}
 		insertCurrent(t, d, org, host, r.tuple, value, nil, r.at, r.errText)
-		newestOf.Observe(r.tuple, r.at)
+		newestOf.Observe(r.tuple, r.at, r.errText)
 	}
 
-	checks := fixedChecks{intervals: map[string]time.Duration{"web": time.Minute, "disk": 5 * time.Minute}}
+	checks := fixedChecks{intervals: map[string]time.Duration{"web": time.Minute, "disk": 5 * time.Minute, "smart": 5 * time.Minute}}
 	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
@@ -83,7 +94,11 @@ func TestLoadUsesTheVanishedRule(t *testing.T) {
 // TestLoadLeavesMetricsNobodyAsksForUnmeasured (backlog 3.88): a metric the
 // check's parameters no longer switch on (http.body_match once
 // body_contains is removed) leaves the evaluation at once, on the
-// whole-host item "" too — the item guard does not apply to metrics.
+// whole-host item "" too — the item guard does not apply to metrics. Nor
+// does its reading count as the item's newest: http.body_match is the
+// freshest row here, more than three intervals ahead of http.up, and
+// http.up still keeps its interval — the same set the host page measures
+// against (TestHostChecksReportsVanishedValues).
 func TestLoadLeavesMetricsNobodyAsksForUnmeasured(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "asks-metric")
@@ -92,9 +107,8 @@ func TestLoadLeavesMetricsNobodyAsksForUnmeasured(t *testing.T) {
 
 	up := rules.Tuple{CheckKey: "web", Metric: "http.up"}
 	match := rules.Tuple{CheckKey: "web", Metric: "http.body_match"}
-	for _, tu := range []rules.Tuple{up, match} {
-		insertCurrent(t, d, org, host, tu, ptr(1.0), nil, now.Add(-10*time.Second), "")
-	}
+	insertCurrent(t, d, org, host, up, ptr(1.0), nil, now.Add(-5*time.Minute), "")
+	insertCurrent(t, d, org, host, match, ptr(1.0), nil, now, "")
 	checks := fixedChecks{
 		intervals:  map[string]time.Duration{"web": time.Minute},
 		asksMetric: map[string]func(string) bool{"web": func(metric string) bool { return metric != "http.body_match" }},
@@ -158,5 +172,54 @@ func TestAVanishedTupleIsUnmeasuredAndLeavesTheRollUp(t *testing.T) {
 	}
 	if got.Host.State != rules.StateOK || got.Host.Unknown != 0 {
 		t.Fatalf("roll-up = %+v, want ok with nothing unknown", got.Host)
+	}
+}
+
+// TestAnErrorOnlyRoundKeepsTheItemsOtherMetricsJudged (backlog 3.88, spec
+// amended after the final review): a SMART disk that smartctl can no
+// longer open reports one error on smart.passed and nothing else. That
+// error is no proof the disk stopped having its other metrics, so its crit
+// smart.reallocated_sectors is not vanished: it stays judged, turns stale,
+// and reads unknown — the verdict that keeps its crit alert from closing —
+// instead of being reported unmeasured, which would close it as stale.
+func TestAnErrorOnlyRoundKeepsTheItemsOtherMetricsJudged(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "vanished-error-only")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	passed := rules.Tuple{CheckKey: "smart", Item: "/dev/sda", Metric: "smart.passed"}
+	realloc := rules.Tuple{CheckKey: "smart", Item: "/dev/sda", Metric: "smart.reallocated_sectors"}
+	insertCurrent(t, d, org, host, passed, nil, nil, now.Add(-10*time.Second), "cannot open device")
+	insertCurrent(t, d, org, host, realloc, ptr(812.0), nil, now.Add(-time.Hour), "")
+	insertCheckState(t, d, org, host, stateRow{tuple: realloc, state: rules.StateCrit, since: now.Add(-2 * time.Hour), evaluatedAt: now.Add(-time.Hour)})
+	markDirty(t, d, org, host)
+
+	checks := fixedChecks{intervals: map[string]time.Duration{"smart": 5 * time.Minute}}
+	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
+	sink := &fakeSink{}
+	tk := rules.NewTicker(store, sink,
+		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
+	if n, err := tk.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; want one host evaluated", n, err)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink called %d times, want once", len(sink.calls))
+	}
+	got := sink.calls[0]
+	if len(got.Unmeasured) != 0 {
+		t.Fatalf("unmeasured = %+v, want none: an error-only round vanishes nothing", got.Unmeasured)
+	}
+	var judged *rules.TupleState
+	for i := range got.States {
+		if got.States[i].Tuple == realloc {
+			judged = &got.States[i]
+		}
+	}
+	if judged == nil {
+		t.Fatalf("states = %+v, want smart.reallocated_sectors judged", got.States)
+	}
+	if judged.State != rules.StateUnknown {
+		t.Fatalf("smart.reallocated_sectors = %v, want unknown (stale, not vanished)", judged.State)
 	}
 }
