@@ -54,6 +54,11 @@ export const enUi = {
     cancel: 'Cancel',
     confirm: 'Confirm',
   },
+  settings: {
+    unsaved: 'Unsaved changes',
+    discard: 'Discard',
+    save: 'Save',
+  },
   formPage: {
     actions: 'Form actions',
     unsaved: 'Leave this page? Your unsaved changes will be lost.',

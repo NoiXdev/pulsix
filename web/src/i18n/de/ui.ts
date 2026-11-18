@@ -47,6 +47,11 @@ export const deUi: Messages['ui'] = {
     cancel: 'Abbrechen',
     confirm: 'Bestätigen',
   },
+  settings: {
+    unsaved: 'Ungespeicherte Änderungen',
+    discard: 'Verwerfen',
+    save: 'Speichern',
+  },
   formPage: {
     actions: 'Formularaktionen',
     unsaved: 'Diese Seite verlassen? Ungespeicherte Änderungen gehen verloren.',
