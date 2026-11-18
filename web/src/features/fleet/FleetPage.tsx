@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { DataList } from '../../ui/data-list/index.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -16,7 +15,9 @@ import { FleetFilters } from './FleetFilters.tsx';
 import { fleetColumns } from './fleetColumns.tsx';
 import { fleetLinkLabel } from './fleetHost.ts';
 import { hostPresence } from '../hosts/presence.ts';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { FLEET_FILTERS, filterFleetHosts } from './fleetSearch.ts';
 
 /**
  * FleetPage is the fleet overview (v0.3b-2 spec, "Fleet page"): every host
@@ -31,8 +32,10 @@ import { useListView } from '../lists/useListView.ts';
  * until a column is sorted: this page does not re-rank. Recomputing "worst
  * first" here would be a second implementation of fleetStateRank that could
  * silently disagree with the server's own, the same reasoning
- * HostChecksCard already applies to the server's `stale` flag. The filters
- * go to the server; sorting and paging happen in the browser.
+ * HostChecksCard already applies to the server's `stale` flag. (The State
+ * column sorts by the same severity order on request.) Zone, group and tag
+ * go to the server; the host search, the state, sorting and paging happen in
+ * the browser. All filters are in the URL.
  */
 export function FleetPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -40,7 +43,10 @@ export function FleetPage() {
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
-  const [filter, setFilter] = useState<FleetFilter>({});
+  // The filters live in the URL (fleetSearch.ts): zone, group and tag go to
+  // the server, the host search and the state narrow its answer here.
+  const list = useListFilters(FLEET_FILTERS);
+  const filter: FleetFilter = { zone: list.filters.zone, group: list.filters.group, tag: list.filters.tag };
 
   const zones = useZones(org);
   const groups = useMonitoringGroups(org, !!orgInfo.data && canRead);
@@ -53,7 +59,7 @@ export function FleetPage() {
   const agentByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a]));
   const presenceOf = (h: FleetHost) => hostPresence(h.kind, agentByHost.get(h.host_id));
   const columns = fleetColumns({ t, zoneName: (id) => zoneNameById.get(id) ?? id.slice(0, 8), presenceOf });
-  const view = useListView('fleet', columns, { mode: 'client', rowKey: (h) => h.host_id, resetKey: JSON.stringify(filter) });
+  const view = useListView('fleet', columns, { mode: 'client', rowKey: (h) => h.host_id, resetKey: JSON.stringify(list.filters) });
 
   const header = <h1 className="text-xl font-semibold">{t.fleet.title}</h1>;
 
@@ -89,18 +95,21 @@ export function FleetPage() {
     );
   }
 
+  const allHosts = fleet.data?.hosts ?? [];
+  const shownHosts = filterFleetHosts(allHosts, list.filters);
   const tagError = errorStatus(fleet.error) === 422 ? (fleet.error instanceof Error ? fleet.error.message : null) : null;
   const filters = (
     <FleetFilters
       zones={zones.data?.zones ?? []}
       groups={groups.data?.groups ?? []}
-      value={filter}
-      onChange={setFilter}
+      list={list}
       tagError={tagError}
+      shown={shownHosts.length}
+      total={allHosts.length}
     />
   );
 
-  const { rows, total } = view.view(view.ready ? fleet.data?.hosts ?? [] : undefined);
+  const { rows, total } = view.view(view.ready ? shownHosts : undefined);
   // Still loading, as opposed to having failed: a 422 from an unsupported
   // tag expression leaves `fleet.data` unset too, but that is the field's
   // own error above, not an ongoing fetch.

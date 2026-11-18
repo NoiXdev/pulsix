@@ -6,6 +6,7 @@ import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { FleetPage } from './FleetPage.tsx';
+import { validateFleetSearch } from './fleetSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const TOTALS = { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 };
@@ -13,17 +14,20 @@ const host = (name: string, extra: Record<string, unknown> = {}) => ({
   host_id: `id-${name}`, name, kind: 'server', zone_id: 'z1', state: 'ok', crit: 0, warn: 0, unknown: 0, all_ignored: false, ...extra,
 });
 
-function setup(locale?: 'de', hosts: unknown[] = numbered('web', 30).map((n) => host(n))) {
+function setup(locale?: 'de', hosts: unknown[] = numbered('web', 30).map((n) => host(n)), initial = '/o/acme/fleet', seen: URLSearchParams[] = []) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
     'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', name: 'Frankfurt', slug: 'fra' }] },
     'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-    'GET /api/v1/orgs/acme/fleet': { hosts, totals: TOTALS },
+    'GET /api/v1/orgs/acme/fleet': (req: MockRequest) => {
+      seen.push(req.search);
+      return { hosts, totals: TOTALS };
+    },
   });
   return renderListPage({
-    path: '/fleet', component: FleetPage, initial: '/o/acme/fleet', locale,
+    path: '/fleet', component: FleetPage, initial, locale, extraSearch: (q) => ({ ...validateFleetSearch(q) }),
     others: [{ path: '/hosts/$id', component: () => <div>HOST VIEW</div> }],
   });
 }
@@ -52,10 +56,45 @@ describe('FleetPage list', () => {
     await waitFor(() => expect(firstCells()).toEqual(['b', 'c', 'a']));
   });
 
-  it('offers no sort on the state column, whose order is the server own', async () => {
-    setup();
-    await screen.findByText('1–25 of 30 hosts');
-    expect(screen.queryByRole('button', { name: 'State' })).not.toBeInTheDocument();
+  it('sorts the state column by severity, critical first', async () => {
+    const user = userEvent.setup();
+    setup(undefined, [
+      host('ok-host'),
+      host('nodata', { state: null }),
+      host('crit-host', { state: 'crit', crit: 1 }),
+      host('unknown-host', { state: 'unknown', unknown: 1 }),
+      host('warn-host', { state: 'warn', warn: 1 }),
+    ]);
+    await screen.findByText('1–5 of 5 hosts');
+    await sortBy(user, 'State');
+    await waitFor(() => expect(firstCells()).toEqual(['crit-host', 'warn-host', 'unknown-host', 'ok-host', 'nodata']));
+    await sortBy(user, 'State');
+    await waitFor(() => expect(firstCells()).toEqual(['nodata', 'ok-host', 'unknown-host', 'warn-host', 'crit-host']));
+  });
+
+  describe('filters', () => {
+    const hosts = [host('web-1', { state: 'crit', crit: 1 }), host('web-2'), host('db-1', { state: 'crit', crit: 2 })];
+
+    it('reads the host search and state from the URL and narrows the rows', async () => {
+      setup(undefined, hosts, '/o/acme/fleet?q=web&state=crit');
+      await screen.findByText('1–1 of 1 host');
+      expect(firstCells()).toEqual(['web-1']);
+      expect(screen.getByText('1 of 3 hosts')).toBeInTheDocument();
+    });
+
+    it('sends zone, group and tag to the server and keeps them in the URL', async () => {
+      const seen: URLSearchParams[] = [];
+      const user = userEvent.setup();
+      const router = setup(undefined, hosts, '/o/acme/fleet?zone=z1&group=g1', seen);
+      await screen.findByText('1–3 of 3 hosts');
+      expect(seen[0].get('zone')).toBe('z1');
+      expect(seen[0].get('group')).toBe('g1');
+      await user.type(screen.getByLabelText('Tag'), 'role');
+      await waitFor(() => expect(router.state.location.search).toEqual({ zone: 'z1', group: 'g1', tag: 'role' }));
+      await waitFor(() => expect(seen.at(-1)?.get('tag')).toBe('role'));
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+    });
   });
 
   it('names a client host and its presence in the row link', async () => {

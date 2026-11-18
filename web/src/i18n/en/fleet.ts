@@ -27,6 +27,10 @@ export const enFleet = {
   sinceTitle: (age: string) => `in this state since ${age}`,
   empty: 'No hosts match this view.',
   filters: {
+    search: 'Search hosts',
+    searchPlaceholder: 'Filter hosts…',
+    state: 'State',
+    anyState: 'Any state',
     zone: 'Zone',
     allZones: 'All zones',
     group: 'Monitoring group',

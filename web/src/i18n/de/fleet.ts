@@ -27,6 +27,10 @@ export const deFleet: Messages['fleet'] = {
   sinceTitle: (age: string) => `Zustand eingetreten ${age}`,
   empty: 'Keine Hosts in dieser Ansicht.',
   filters: {
+    search: 'Hosts durchsuchen',
+    searchPlaceholder: 'Hosts filtern …',
+    state: 'Zustand',
+    anyState: 'Beliebiger Zustand',
     zone: 'Zone',
     allZones: 'Alle Zonen',
     group: 'Überwachungsgruppe',

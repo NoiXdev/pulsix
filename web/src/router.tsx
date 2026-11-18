@@ -50,6 +50,7 @@ import { validateCredentialsSearch } from './features/credentials/credentialsSea
 import { validateJumpHostsSearch } from './features/credentials/jumpHostsSearch.ts';
 import { validateAgentsSearch } from './features/agents/agentsSearch.ts';
 import { validateWorkersSearch } from './features/workers/workersSearch.ts';
+import { validateFleetSearch } from './features/fleet/fleetSearch.ts';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -207,7 +208,7 @@ const hostDetailRoute = createRoute({
 const fleetRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/fleet',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateFleetSearch,
   component: FleetPage,
 });
 

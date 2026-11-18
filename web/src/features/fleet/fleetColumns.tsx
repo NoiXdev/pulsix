@@ -6,6 +6,7 @@ import { seenLabel } from '../workers/expiry.ts';
 import { HostPresenceBadge } from '../hosts/HostPresenceBadge.tsx';
 import type { HostPresence } from '../hosts/presence.ts';
 import { fleetStateLabel } from './fleetHost.ts';
+import { fleetStateRank } from './fleetSearch.ts';
 
 export interface FleetColumnsContext {
   t: Messages;
@@ -17,9 +18,9 @@ export interface FleetColumnsContext {
 
 /**
  * fleetColumns is every column the fleet overview offers (list id `fleet`),
- * sorted in the browser. There is no sort on the state: the unsorted order
- * IS the server's worst-first order (fleet_handlers.go's fleetStateRank),
- * and a second ranking here could silently disagree with it.
+ * sorted in the browser. The unsorted order is the server's worst-first
+ * order (fleet_handlers.go's fleetStateRank); the State column sorts by the
+ * same severity order (fleetSearch.ts), critical first when ascending.
  *
  * A client whose agent is offline is frozen: the state column says "Off" in
  * the neutral tone with its last state beneath, the counts are muted, and
@@ -51,6 +52,8 @@ export function fleetColumns({ t, zoneName, presenceOf }: FleetColumnsContext): 
       id: 'state',
       label: c.state,
       width: '110px',
+      sortKey: 'state',
+      sortValue: fleetStateRank,
       defaultVisible: true,
       render: (r) => {
         const st = fleetStateLabel(r.state, r.all_ignored, t);
