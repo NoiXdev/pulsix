@@ -127,12 +127,16 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await toast(page, `Host ${HOST_NAME} created`);
 
   await page.getByRole('link', { name: HOST_NAME, exact: true }).click();
-  // The SSH settings and the connection test are on the Connection tab.
+  // The SSH settings are edited in the SSH access dialog the Connection
+  // tab's summary opens; the connection test card is on that tab.
   await page.getByRole('tab', { name: 'Connection' }).click();
-  await page.getByLabel('User').fill('ansible');
-  await pickOption(page, 'Credential', 'ansible-e2e-login');
-  await page.getByRole('button', { name: 'Save SSH settings' }).click();
+  await page.getByRole('button', { name: 'Edit…' }).click();
+  dialog = page.getByRole('dialog', { name: `SSH access · ${HOST_NAME}` });
+  await dialog.getByLabel('User').fill('ansible');
+  await pickOption(dialog, 'Credential', 'ansible-e2e-login');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'SSH settings saved');
+  await expect(dialog).toBeHidden();
 
   // The connection test goes THROUGH the zone default bastion, and the
   // observed host key is pinned (trust on first use).

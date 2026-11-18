@@ -177,7 +177,7 @@ describe('HostDetailPage', () => {
     expect(panel().getByRole('link', { name: 'All runs for this host' })).toBeInTheDocument();
     await user.click(tab('Overview'));
     await user.click(await within(screen.getByRole('region', { name: 'Connection' })).findByRole('button', { name: 'Change…' }));
-    expect(selectedTab()).toBe('Connection');
+    expect(await screen.findByRole('dialog', { name: 'SSH access · web-04.fra' })).toBeInTheDocument();
   });
 
   it('reads the organization once for the whole page', async () => {
@@ -373,14 +373,73 @@ describe('HostDetailPage', () => {
     expect(within(dialog).getByLabelText('Address')).toHaveValue('203.0.113.4');
   });
 
-  it('SSH access in the menu opens the Connection tab', async () => {
+  it('SSH access in the menu opens the SSH access dialog over the open tab', async () => {
     const user = userEvent.setup();
     mockApi(hostRoutes({ host: { managed: true } }));
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'SSH access…' }));
-    expect(selectedTab()).toBe('Connection');
+    const dialog = within(await screen.findByRole('dialog', { name: 'SSH access · web-04.fra' }));
+    expect(await dialog.findByLabelText('Address')).toHaveValue('203.0.113.4');
+    expect(selectedTab()).toBe('Overview');
+  });
+
+  it('connection: the SSH summary with its route, and Edit opens the dialog', async () => {
+    const user = userEvent.setup();
+    mockApi(
+      hostRoutes(
+        { host: { managed: true } },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: 'ops', port: 2222, credential_id: 'c1', bastion_mode: 'inherit', pin_state: 'full' } },
+          'GET /api/v1/orgs/acme/credentials': {
+            credentials: [{ id: 'c1', name: 'deploy-key', kind: 'ssh_key', username: 'ansible', expired: false, expires_soon: false, used_by: { hosts: 1, bastions: 0 }, created_at: '', updated_at: '' }],
+          },
+          'GET /api/v1/orgs/acme/bastions': { bastions: [{ id: 'b1', name: 'edge', address: 'edge.example', port: 22, username: 'ops' }] },
+          'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'zone', bastions: ['b1'] }, warnings: [] },
+        },
+      ),
+    );
+    renderTab('connection');
+    await screen.findByRole('tabpanel');
+
+    const card = within((await panel().findByRole('heading', { level: 3, name: 'SSH access' })).closest('div.p-4') as HTMLElement);
+    expect(await card.findByText('deploy-key')).toBeInTheDocument();
+    expect(card.getByText('203.0.113.4')).toBeInTheDocument();
+    expect(card.getByText('2222')).toBeInTheDocument();
+    expect(card.getByText('ops')).toBeInTheDocument();
+    expect(card.getByText('pin complete')).toBeInTheDocument();
+    expect(await card.findByLabelText('Effective route')).toHaveTextContent('worker (fra-1)→edge→ops@203.0.113.4:2222zone default');
+    // The test, the agent and the pointer to the key snippets follow.
+    expect(panel().getByRole('heading', { level: 3, name: 'Connection test' })).toBeInTheDocument();
+    expect(panel().getByRole('heading', { level: 3, name: 'Agent' })).toBeInTheDocument();
+    expect(panel().getByRole('heading', { level: 3, name: 'Key snippets' })).toBeInTheDocument();
+
+    await user.click(card.getByRole('button', { name: 'Edit…' }));
+    expect(await screen.findByRole('dialog', { name: 'SSH access · web-04.fra' })).toBeInTheDocument();
+  });
+
+  it('connection: the key snippets card opens the dialog with the snippets unfolded', async () => {
+    const user = userEvent.setup();
+    mockApi(hostRoutes({ host: { managed: true } }));
+    renderTab('connection');
+    await screen.findByRole('tabpanel');
+
+    await user.click(await panel().findByRole('button', { name: 'Show key snippets…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'SSH access · web-04.fra' }));
+    expect((await dialog.findByText('Install this key on the host')).closest('details')).toHaveAttribute('open');
+  });
+
+  it('connection: a viewer reads the SSH summary without Edit or the snippets card', async () => {
+    mockApi(hostRoutes({ host: { managed: true }, role: 'viewer' }));
+    renderTab('connection');
+    await screen.findByRole('tabpanel');
+
+    expect(await panel().findByRole('heading', { level: 3, name: 'SSH access' })).toBeInTheDocument();
+    expect(await panel().findByText('203.0.113.4')).toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Edit…' })).not.toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Show key snippets…' })).not.toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Run connection test' })).not.toBeInTheDocument();
   });
 
   it('deletes the host from the menu after confirmation and returns to the list', async () => {

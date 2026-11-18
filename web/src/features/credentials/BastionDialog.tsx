@@ -124,7 +124,7 @@ export function BastionDialog({
           </Button>
         </div>
       </form>
-      {/* Sibling of the <form> above, not inside it (see HostSshCard.tsx's
+      {/* Sibling of the <form> above, not inside it (see HostSshForm.tsx's
           own comment on why): a nested <dialog> here would have its own
           submit bubble up into this one's onSubmit too. */}
       {newCredentialName !== null && (

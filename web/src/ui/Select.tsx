@@ -315,7 +315,7 @@ export function Select({
             // so a Select holding a value swallows every Escape keystroke
             // with the list already closed, including ones meant for a
             // surrounding Dialog. That is every edit dialog with a value
-            // already chosen (RepoDialog, HostSshCard, WindowDialog): Escape
+            // already chosen (RepoDialog, HostSshForm, WindowDialog): Escape
             // would do nothing, and nothing would explain why. Opt just
             // this closed-list case out of downshift's own handling so the
             // key reaches the dialog instead — a dialog that closes a touch

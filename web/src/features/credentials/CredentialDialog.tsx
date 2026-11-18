@@ -17,7 +17,7 @@ import { useConfirm } from '../../ui/confirmContext.ts';
  * metadata for editing, a way to replace its secret, and delete.
  *
  * The loading/error guard lives here, and the actual form is a separate
- * component (CredentialForm, mirroring HostSshCard/HostSshForm) that takes
+ * component (CredentialForm, mirroring HostSshDialog/HostSshForm) that takes
  * `credential: Credential` as a required prop — TypeScript's control-flow
  * narrowing of `detail.data?.credential` does not reach into closures
  * defined later in the same function body (save/rotateKey/onDelete would

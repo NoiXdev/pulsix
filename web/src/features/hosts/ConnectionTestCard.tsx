@@ -33,7 +33,7 @@ export function ConnectionTestCard({ org, hostId, canWrite }: { org: string; hos
         </div>
         {test.isPending && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
         {test.isError && <p className="text-xs text-muted-foreground">{t.hosts.connection.none}</p>}
-        {test.data && <TestResult org={org} hostId={hostId} test={test.data.test} canWrite={canWrite} />}
+        {test.data && <ConnectionTestResult org={org} hostId={hostId} test={test.data.test} canWrite={canWrite} />}
       </div>
     </Card>
   );
@@ -49,7 +49,10 @@ function RunTestButton({ org, hostId }: { org: string; hostId: string }) {
   );
 }
 
-function TestResult({
+/** ConnectionTestResult is one connection test outcome: the verdict, the
+ * probe's checks row by row and the observed host key with its pin. The
+ * SSH access dialog shows the test it started the same way. */
+export function ConnectionTestResult({
   org, hostId, test, canWrite,
 }: {
   org: string;

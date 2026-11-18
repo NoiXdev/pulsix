@@ -151,10 +151,15 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   // The host page shows its groups, the resolved route, and the key to install.
   await page.goto(`${base}/hosts`);
   await page.getByRole('link', { name: 'inv-web-01', exact: true }).click();
+  await page.getByRole('tab', { name: 'Inventory & facts' }).click();
   await expect(page.getByRole('link', { name: 'inv_web' })).toBeVisible();
-  await pickOption(page, 'Credential', 'inv-deploy');
-  await page.getByRole('button', { name: 'Save SSH settings' }).click();
+  await page.getByRole('tab', { name: 'Connection' }).click();
+  await page.getByRole('button', { name: 'Edit…' }).click();
+  const ssh = page.getByRole('dialog', { name: 'SSH access · inv-web-01' });
+  await pickOption(ssh, 'Credential', 'inv-deploy');
+  await ssh.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'SSH settings saved');
   await expect(page.getByLabel('Effective route')).toContainText('inherited from group inv_production');
-  await expect(page.getByText('Install this key on the host')).toBeVisible();
+  await page.getByRole('button', { name: 'Show key snippets…' }).click();
+  await expect(ssh.getByLabel('Public key')).toBeVisible();
 });

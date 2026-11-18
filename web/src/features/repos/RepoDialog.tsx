@@ -248,7 +248,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
           </div>
         </div>
       </form>
-      {/* Sibling of the <form> above, not inside it — see HostSshCard.tsx's
+      {/* Sibling of the <form> above, not inside it — see HostSshForm.tsx's
           own comment on why a nested <dialog> here would double-submit. */}
       {addingCredential && (
         <AddCredentialDialog

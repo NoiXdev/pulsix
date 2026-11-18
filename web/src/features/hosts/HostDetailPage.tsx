@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -16,6 +16,7 @@ import { HostHeader } from './HostHeader.tsx';
 import { HostInventoryTab } from './HostInventoryTab.tsx';
 import { HostOverviewTab } from './HostOverviewTab.tsx';
 import { HostRunsSection } from './HostRunsSection.tsx';
+import { HostSshDialog } from './HostSshDialog.tsx';
 import { HostTabs, type HostTabItem } from './HostTabs.tsx';
 import { HOST_PANEL_ID, hostTabId, parseHostTab, type HostTab } from './hostTabs.ts';
 import { useHostActions } from './useHostActions.tsx';
@@ -76,8 +77,11 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
 
   const select = (next: HostTab) =>
     void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id }, search: { tab: next === 'overview' ? undefined : next } });
-  // SSH access opens the Connection tab, where the SSH settings are.
-  const openSsh = () => select('connection');
+  // SSH access is a dialog over whichever tab is open; the Connection
+  // tab's key snippets card opens it with the snippets unfolded.
+  const [sshDialog, setSshDialog] = useState<{ snippets: boolean } | null>(null);
+  const openSsh = () => setSshDialog({ snippets: false });
+  const openKeySnippets = () => setSshDialog({ snippets: true });
 
   // Counts only while the host is monitored: with nothing measured, a
   // number beside a tab that only holds the hint would have nothing to mean.
@@ -107,7 +111,7 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
     alerts: () => <HostAlertsTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} />,
     runs: () => <HostRunsSection org={org} hostId={host.id} />,
     inventory: () => <HostInventoryTab org={org} host={host} actions={actions} />,
-    connection: () => <HostConnectionTab org={org} host={host} role={role} actions={actions} />,
+    connection: () => <HostConnectionTab org={org} host={host} role={role} actions={actions} onSshAccess={openSsh} onKeySnippets={openKeySnippets} />,
   };
 
   return (
@@ -118,6 +122,14 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
         {panels[tab]()}
       </div>
       {actions.dialogs}
+      <HostSshDialog
+        org={org}
+        host={host}
+        role={role}
+        open={sshDialog !== null}
+        showSnippets={sshDialog?.snippets}
+        onClose={() => setSshDialog(null)}
+      />
     </div>
   );
 }
