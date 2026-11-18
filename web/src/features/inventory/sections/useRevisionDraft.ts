@@ -28,7 +28,9 @@ export interface RevisionDraft<D> {
   touched: boolean;
   edit(next: D): void;
   startSave(): SaveTicket;
-  saved(ticket: SaveTicket, stored: unknown, revision: number): void;
+  /** Returns true when the draft was rebuilt from what the save stored:
+   * no edit was typed while it was in flight. */
+  saved(ticket: SaveTicket, stored: unknown, revision: number): boolean;
   reloaded(stored: unknown, revision: number): void;
   discard(): void;
 }
@@ -136,6 +138,7 @@ export function useRevisionDraft<D>(
           ? { ...st, draft: build(savedContent), base: savedKey, touched: false, pinned: savedRevision, generation: st.generation + 1 }
           : { ...st, base: savedKey, pinned: savedRevision },
       );
+      return untouched;
     },
     reloaded(fresh, freshRevision) {
       const freshKey = contentKey(fresh);

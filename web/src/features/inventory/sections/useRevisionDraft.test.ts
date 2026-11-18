@@ -37,6 +37,26 @@ function setup(initial: Props) {
 }
 
 describe('useRevisionDraft', () => {
+  it('tells a save whether it rebuilt the draft or kept an edit typed meanwhile', () => {
+    const { result } = setup({ stored: A, revision: 3 });
+    act(() => result.current.edit({ built: 'x' }));
+    const first = result.current.startSave();
+    let rebuilt: boolean | undefined;
+    act(() => {
+      rebuilt = result.current.saved(first, B, 4);
+    });
+    expect(rebuilt).toBe(true);
+
+    act(() => result.current.edit({ built: 'y' }));
+    const second = result.current.startSave();
+    act(() => result.current.edit({ built: 'z' }));
+    act(() => {
+      rebuilt = result.current.saved(second, C, 5);
+    });
+    expect(rebuilt).toBe(false);
+    expect(result.current.draft).toEqual({ built: 'z' });
+  });
+
   it('is touched from the first edit until a save, a reload with other content or a discard', () => {
     const { result } = setup({ stored: A, revision: 3 });
     expect(result.current.touched).toBe(false);

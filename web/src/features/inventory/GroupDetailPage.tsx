@@ -1,7 +1,5 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useRouterState, useSearch } from '@tanstack/react-router';
-import { Button } from '../../ui/button.tsx';
-import { Dialog } from '../../ui/dialog.tsx';
 import { PageTabs, type PageTabItem } from '../../ui/page-tabs.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -15,10 +13,10 @@ import { GroupInheritanceTab } from './GroupInheritanceTab.tsx';
 import { GROUP_PANEL_ID, groupTabId, parseGroupTab, type GroupTab } from './groupTabs.ts';
 import { MembersSection } from './sections/MembersSection.tsx';
 import { VariablesTab } from './sections/VariablesTab.tsx';
-import { SchemaSection } from './sections/SchemaSection.tsx';
 import { ChildrenSection } from './sections/ChildrenSection.tsx';
 import { PreviewSection } from './sections/PreviewSection.tsx';
 import { OwnStepsContext, useOwnStepsRecord } from './ownSteps.ts';
+import { FieldsDialog } from './fields/FieldsDialog.tsx';
 
 /**
  * GroupDetailPage is one inventory group on one page, laid out like the host
@@ -110,30 +108,8 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
         <div role="tabpanel" id={GROUP_PANEL_ID} aria-labelledby={groupTabId(tab)} className="flex min-w-0 flex-col gap-8">
           {panels[tab]()}
         </div>
-        <FieldsDialog open={fieldsOpen} onClose={closeFields}>
-          <SchemaSection org={org} group={group} canWrite={canWrite} />
-        </FieldsDialog>
+        <FieldsDialog org={org} group={group} canWrite={canWrite} open={fieldsOpen} onClose={closeFields} />
       </div>
     </OwnStepsContext.Provider>
-  );
-}
-
-/** FieldsDialog holds the schema editor (Manage fields …). It stays mounted
- * while closed, so a schema draft outlives closing it, as it outlived
- * scrolling away from the section it was before. */
-function FieldsDialog({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
-  const t = useT();
-  const p = t.inventory.groupPage;
-  return (
-    <Dialog open={open} onClose={onClose} title={p.fieldsTitle} size="wide">
-      <div className="flex flex-col gap-4">
-        {children}
-        <div className="flex justify-end">
-          <Button type="button" onClick={onClose}>
-            {p.close}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
   );
 }

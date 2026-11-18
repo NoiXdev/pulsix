@@ -94,9 +94,9 @@ describe('GroupDetailPage', () => {
     renderAt('/o/acme/groups/g1');
     expect(await screen.findByLabelText('env')).toBeInTheDocument();
     expect(screen.getByText(/Values of removed fields are still stored/)).toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: 'Fields' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Fields' })).not.toBeInTheDocument();
     const dialog = await openFields(user);
-    expect(within(dialog).getByRole('table', { name: 'Fields' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('list', { name: 'Fields' })).toBeInTheDocument();
   });
 
   it('saves group values with If-Match, a keep marker for the stored secret, and without orphans', async () => {
@@ -143,7 +143,8 @@ describe('GroupDetailPage', () => {
     });
     renderAt('/o/acme/groups/g1');
     const dialog = await openFields(user);
-    await user.click(within(dialog).getByRole('button', { name: 'Save schema' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Add field' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     expect(await within(dialog).findByText(/changed since you loaded it/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
   });

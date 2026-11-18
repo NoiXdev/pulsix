@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { closeFields, group, openEdit, openFields, refetch, routes, renderAt, schemaSaved, stale, typeEnv, withSecret } from './groupPageTestKit.tsx';
+import { addField, closeFields, group, openEdit, openFields, refetch, routes, renderAt, saveFields, schemaSaved, stale, typeEnv, withSecret } from './groupPageTestKit.tsx';
 
 /** A group whose stored values miss the required `env`: the server flags it. */
 const flagged = () => group({ revision: 3, vars: {}, problems: [{ path: 'env', message: 'is required' }] });
@@ -172,8 +172,8 @@ describe('GroupDetailPage values draft', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await screen.findByRole('heading', { level: 1, name: 'web_fe' });
     await openFields(user);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save schema' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    await addField(user);
+    await saveFields(user);
     await screen.findByText('Schema saved');
     await closeFields(user);
     expect(schemaPuts[0].headers.get('If-Match')).toBe('"4"');
@@ -188,8 +188,8 @@ describe('GroupDetailPage values draft', () => {
     current = group({ ...current.group, revision: 7 });
     await refetch(qc);
     await openFields(user);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save schema' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    await addField(user);
+    await saveFields(user);
     await waitFor(() => expect(schemaPuts).toHaveLength(2));
     await closeFields(user);
     expect(schemaPuts[1].headers.get('If-Match')).toBe('"7"');

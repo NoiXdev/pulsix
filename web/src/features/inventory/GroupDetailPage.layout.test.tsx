@@ -116,18 +116,20 @@ describe('GroupDetailPage header', () => {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
 
-    // The schema editor is read-only: no field can be added, switched or
-    // moved, but a field still opens, in a dialog that saves nothing.
+    // The fields are read-only, under the title "Fields": no field can be
+    // added, saved or moved, no badge toggles, but a field still shows its
+    // settings, disabled.
     const fields = await openFields(user);
+    expect(fields).toHaveAccessibleName('Fields');
     expect(within(fields).queryByRole('button', { name: 'Add field' })).not.toBeInTheDocument();
-    expect(within(fields).queryByRole('button', { name: 'Save schema' })).not.toBeInTheDocument();
-    expect(within(fields).getByRole('switch', { name: 'env active' })).toBeDisabled();
-    await user.click(within(fields).getByRole('button', { name: /^env\b/ }));
-    const field = await screen.findByRole('dialog', { name: 'Field env' });
-    expect(within(field).getByLabelText('Name')).toBeDisabled();
-    expect(within(field).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Field env' })).not.toBeInTheDocument());
+    expect(within(fields).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(within(fields).queryByRole('button', { name: /^(Type|Scope|Requirement) of env/ })).not.toBeInTheDocument();
+    expect(within(fields).getByRole('img', { name: 'Scope of env: Group' })).toBeInTheDocument();
+    await user.click(within(fields).getByRole('button', { name: /^domain\b/ }));
+    const panel = within(fields).getByRole('tabpanel');
+    expect(within(panel).getByLabelText('Name')).toHaveValue('domain');
+    expect(within(panel).getByLabelText('Name')).toBeDisabled();
+    expect(within(panel).getByRole('switch', { name: 'Active' })).toBeDisabled();
     await closeFields(user);
 
     // The members' menu only opens the host.

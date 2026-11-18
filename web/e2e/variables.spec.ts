@@ -126,12 +126,15 @@ test('a template takes its variables from the playbook, and a group keeps manual
   dialog = page.getByRole('dialog', { name: 'Add group' });
   await dialog.getByLabel('Name').fill(GROUP);
   await dialog.getByRole('button', { name: 'Create group' }).click();
-  // A new group's page opens on its fields (the Manage fields dialog).
-  await page.getByRole('button', { name: 'Add field' }).click();
-  field = page.getByRole('dialog', { name: 'Field field_1' });
-  await field.getByLabel('Name').fill('region');
-  await page.getByRole('dialog', { name: 'Field region' }).getByRole('button', { name: 'Done' }).click();
-  await page.getByRole('button', { name: 'Save schema' }).click();
+  // A new group's page opens on its fields (the Manage fields dialog): an
+  // added field is selected, and its panel edits it.
+  const fields = page.getByRole('dialog', { name: 'Manage fields' });
+  await fields.getByRole('button', { name: 'Add field' }).click();
+  await fields.getByRole('tabpanel').getByLabel('Name', { exact: true }).fill('region');
+  await expect(fields.getByRole('button', { name: 'Scope of region: Group' })).toBeVisible();
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Schema saved');
-  await expect(page.getByRole('switch', { name: 'region active' })).toBeChecked();
+  // The save closed the dialog; the group's values now ask for the field.
+  await expect(fields).toBeHidden();
+  await expect(page.getByRole('textbox', { name: 'region', exact: true })).toBeVisible();
 });

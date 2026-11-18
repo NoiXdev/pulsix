@@ -132,19 +132,35 @@ export async function typeEnv(user: User, text: string) {
 /** valuesCard is the Variables tab's card of group values. */
 export const valuesCard = () => screen.getByRole('region', { name: 'Group values' });
 
+const FIELDS_TITLE = /^(Manage fields|Fields)$/;
+
+/** fieldsDialog is the open Manage fields dialog (titled Fields for a
+ * reader). */
+export const fieldsDialog = () => screen.getByRole('dialog', { name: FIELDS_TITLE });
+
 /** openFields opens the Manage fields dialog, which holds the schema
  * editor, and returns it. */
 export async function openFields(user: User) {
   await user.click(await screen.findByRole('button', { name: /^(Manage fields|Fields) …$/ }));
-  return screen.findByRole('dialog', { name: 'Manage fields' });
+  return screen.findByRole('dialog', { name: FIELDS_TITLE });
 }
 
-/** closeFields closes the Manage fields dialog; its draft stays. */
+/** closeFields closes the Manage fields dialog when it is open (a save
+ * closes it by itself); an edited draft is discarded on the way. */
 export async function closeFields(user: User) {
-  const dialog = screen.getByRole('dialog', { name: 'Manage fields' });
-  const buttons = within(dialog).getAllByRole('button', { name: 'Close' });
-  await user.click(buttons[buttons.length - 1]);
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage fields' })).not.toBeInTheDocument());
+  const dialog = screen.queryByRole('dialog', { name: FIELDS_TITLE });
+  if (!dialog) return;
+  await user.click(within(dialog).getByRole('button', { name: /^(Cancel|Close)$/ }));
+  const confirm = screen.queryByRole('dialog', { name: 'Discard changes?' });
+  if (confirm) await user.click(within(confirm).getByRole('button', { name: 'Discard' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: FIELDS_TITLE })).not.toBeInTheDocument());
+}
+
+/** saveFields saves the schema draft from the dialog's footer. */
+export async function saveFields(user: User) {
+  const save = () => within(fieldsDialog()).getByRole('button', { name: 'Save' });
+  await waitFor(() => expect(save()).toBeEnabled());
+  await user.click(save());
 }
 
 /** openEdit opens the Edit dialog from the header's ⋯ menu. */
@@ -159,16 +175,14 @@ export async function openTab(user: User, name: RegExp | string) {
   await user.click(await screen.findByRole('tab', { name }));
 }
 
-/** The number of fields in the schema editor (its rows past the header;
- * no field is expanded in these tests, so one row is one field). */
-export const fieldCount = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').length - 1;
+/** The number of fields in the schema editor (one row per field). */
+export const fieldCount = () => within(within(fieldsDialog()).getByRole('list', { name: 'Fields' })).getAllByRole('listitem').length;
 
-/** addField adds a new field to the schema draft through its dialog. */
+/** addField adds a new field to the schema draft. */
 export async function addField(user: User) {
-  await user.click(screen.getByRole('button', { name: 'Add field' }));
-  const dialog = await screen.findByRole('dialog', { name: /^Field / });
-  await user.click(within(dialog).getByRole('button', { name: 'Done' }));
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: /^Field / })).not.toBeInTheDocument());
+  const before = fieldCount();
+  await user.click(within(fieldsDialog()).getByRole('button', { name: 'Add field' }));
+  await waitFor(() => expect(fieldCount()).toBe(before + 1));
 }
 
 /** refetch refetches every query and lets the page render the result

@@ -2,44 +2,55 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { addField, closeFields, fieldCount, group, openEdit, openFields, openTab, routes, renderAt, stale, typeEnv } from './groupPageTestKit.tsx';
+import { addField, closeFields, fieldCount, fieldsDialog, group, openEdit, openFields, openTab, routes, renderAt, saveFields, stale, typeEnv } from './groupPageTestKit.tsx';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 /** A save, a reload or a rename in one place must not throw away an unsaved
- * draft in another (the schema's lives on in the closed fields dialog), and
- * a draft must never follow the user to another group. */
+ * draft in another, closing the fields dialog asks before it discards the
+ * schema draft, and a draft must never follow the user to another group. */
 describe('GroupDetailPage drafts', () => {
-  it('keeps an unsaved schema draft when the group values are saved', async () => {
+  it('asks before closing the fields with an edited draft, and Discard throws it away', async () => {
     const user = userEvent.setup();
-    let current = group();
-    mockApi(
-      routes('admin', {
-        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
-        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
-          current = group({ revision: 4, description: 'Refetched', vars: (req.body as { vars: Record<string, unknown> }).vars });
-          return current;
-        },
-      }),
-    );
+    mockApi(routes('admin'));
     renderAt('/o/acme/groups/g1');
     await openFields(user);
     const before = fieldCount();
     await addField(user);
-    expect(fieldCount()).toBe(before + 1);
-    await closeFields(user);
+    expect(within(fieldsDialog()).getByText('Unsaved changes')).toBeInTheDocument();
 
-    await typeEnv(user, 'staging');
-    await user.click(screen.getByRole('button', { name: 'Save values' }));
-    await screen.findByText('Group values saved');
-    // The refetched group (revision 4) is on the page ...
-    expect(await screen.findByText('Refetched')).toBeInTheDocument();
-    // ... and has left the unsaved schema draft alone.
-    await openFields(user);
+    // Declined, the dialog and its draft stay.
+    await user.click(within(fieldsDialog()).getByRole('button', { name: 'Cancel' }));
+    const ask = await screen.findByRole('dialog', { name: 'Discard changes?' });
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument());
     expect(fieldCount()).toBe(before + 1);
-    expect(screen.getByLabelText('env')).toHaveValue('staging');
+
+    // Escape asks as well; Discard closes and drops the draft.
+    within(fieldsDialog()).getByRole('button', { name: 'Add field' }).focus();
+    await user.keyboard('{Escape}');
+    const again = await screen.findByRole('dialog', { name: 'Discard changes?' });
+    await user.click(within(again).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage fields' })).not.toBeInTheDocument());
+    await openFields(user);
+    expect(fieldCount()).toBe(before);
+    expect(within(fieldsDialog()).queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('closes unedited fields at once, on Cancel and on Escape', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin'));
+    renderAt('/o/acme/groups/g1');
+    await openFields(user);
+    expect(within(fieldsDialog()).getByRole('button', { name: 'Save' })).toBeDisabled();
+    await user.click(within(fieldsDialog()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage fields' })).not.toBeInTheDocument());
+    expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument();
+    await openFields(user);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Manage fields' })).not.toBeInTheDocument());
   });
 
   it('keeps unsaved values when the group is renamed', async () => {
@@ -65,36 +76,6 @@ describe('GroupDetailPage drafts', () => {
     expect(screen.getByLabelText('env')).toHaveValue('typed but not saved');
   });
 
-  it('keeps the schema draft through a refused values save and its reload', async () => {
-    const user = userEvent.setup();
-    let current = group();
-    mockApi(
-      routes('admin', {
-        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
-        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': () => {
-          // Someone else changed the group first, not its values.
-          current = group({ revision: 4, description: 'Changed elsewhere' });
-          return stale();
-        },
-      }),
-    );
-    renderAt('/o/acme/groups/g1');
-    await openFields(user);
-    const before = fieldCount();
-    await addField(user);
-    await closeFields(user);
-    await typeEnv(user, 'mine');
-    await user.click(screen.getByRole('button', { name: 'Save values' }));
-
-    const values = screen.getByRole('region', { name: 'Group values' });
-    await user.click(await within(values).findByRole('button', { name: 'Reload' }));
-    expect(await screen.findByText('Changed elsewhere')).toBeInTheDocument();
-    await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
-    expect(screen.getByLabelText('env')).toHaveValue('mine');
-    await openFields(user);
-    expect(fieldCount()).toBe(before + 1);
-  });
-
   it('keeps the values draft through a refused schema save and its reload', async () => {
     const user = userEvent.setup();
     let current = group();
@@ -110,9 +91,10 @@ describe('GroupDetailPage drafts', () => {
     renderAt('/o/acme/groups/g1');
     await typeEnv(user, 'mine');
     await openFields(user);
-    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    await addField(user);
+    await saveFields(user);
 
-    const schema = screen.getByRole('region', { name: 'Variable schema' });
+    const schema = fieldsDialog();
     await user.click(await within(schema).findByRole('button', { name: 'Reload' }));
     expect(await screen.findByText('Changed elsewhere')).toBeInTheDocument();
     await waitFor(() => expect(within(schema).queryByRole('alert')).not.toBeInTheDocument());
@@ -135,8 +117,9 @@ describe('GroupDetailPage drafts', () => {
     );
     renderAt('/o/acme/groups/g1');
     await openFields(user);
-    await user.click(screen.getByRole('button', { name: 'Save schema' }));
-    const schema = screen.getByRole('region', { name: 'Variable schema' });
+    await addField(user);
+    await saveFields(user);
+    const schema = fieldsDialog();
     await user.click(await within(schema).findByRole('button', { name: 'Reload' }));
     expect(await within(schema).findByText('Reloading failed. Try again.')).toBeInTheDocument();
     expect(within(schema).getByRole('button', { name: 'Reload' })).toBeEnabled();
@@ -192,17 +175,11 @@ describe('GroupDetailPage drafts', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     await user.click(await screen.findByRole('link', { name: 'web' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web' })).toBeInTheDocument();
-    await openFields(user);
-    const before = fieldCount();
-    await addField(user);
-    await closeFields(user);
     await typeEnv(user, 'only for web');
 
     await openTab(user, /^Subgroups/);
     await user.click(await screen.findByRole('link', { name: 'web_eu' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     expect(await screen.findByLabelText('env')).toHaveValue('prod');
-    await openFields(user);
-    expect(fieldCount()).toBe(before);
   });
 });

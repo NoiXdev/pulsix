@@ -7,8 +7,9 @@ export interface DialogProps {
   children: ReactNode;
   /** 'wide' is for a form with a lot to show at once (e.g. a generated
    * assignment form next to the group's read-only values); default fits
-   * every other dialog in the app. */
-  size?: 'default' | 'wide';
+   * every other dialog in the app. 'xl' holds two panes side by side (a
+   * list and the selected entry's settings). */
+  size?: 'default' | 'wide' | 'xl';
   /** false asks the browser not to close the dialog on Escape (it prevents
    * the native `cancel`), for while a request it started is in flight. It is
    * a request, not a guarantee: under the close-watcher rules a `cancel` is
@@ -26,6 +27,7 @@ export interface DialogProps {
 const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
   default: 'w-[480px]',
   wide: 'w-[680px]',
+  xl: 'w-[1100px]',
 };
 
 /**

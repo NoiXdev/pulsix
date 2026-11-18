@@ -69,18 +69,19 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   dialog = page.getByRole('dialog', { name: 'Add group' });
   await dialog.getByLabel('Name').fill('inv_production');
   await dialog.getByRole('button', { name: 'Create group' }).click();
-  // A new group's page opens on its fields (Manage fields); a field is
-  // edited in its own dialog (backlog 7.75), titled by its name.
+  // A new group's page opens on its fields (Manage fields): "Add field"
+  // adds and selects a field, the panel beside the list edits it, and the
+  // row's badges toggle scope and required in one click.
   const fields = page.getByRole('dialog', { name: 'Manage fields' });
-  await page.getByRole('button', { name: 'Add field' }).click();
-  let editor = page.getByRole('dialog', { name: 'Field field_1' });
-  await editor.getByLabel('Name').fill('env');
-  editor = page.getByRole('dialog', { name: 'Field env' });
-  await editor.getByLabel('Required').first().check();
-  await editor.getByRole('button', { name: 'Done' }).click();
-  await page.getByRole('button', { name: 'Save schema' }).click();
+  const panel = fields.getByRole('tabpanel');
+  await fields.getByRole('button', { name: 'Add field' }).click();
+  await panel.getByLabel('Name', { exact: true }).fill('env');
+  await fields.getByRole('button', { name: 'Requirement of env: Optional' }).click();
+  await expect(fields.getByRole('button', { name: 'Requirement of env: Required' })).toBeVisible();
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Schema saved');
-  await fields.getByRole('button', { name: 'Close' }).click();
+  // A save that stored the draft closes the dialog.
+  await expect(fields).toBeHidden();
   // The group page has a header and tabs, Members among them exactly once;
   // Variables, the default, holds the group's values.
   await expect(page.getByRole('tablist', { name: 'Group sections' }).getByRole('tab', { name: /^Members/ })).toHaveCount(1);
@@ -99,30 +100,25 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   dialog = page.getByRole('dialog', { name: 'Add child group' });
   await dialog.getByLabel('Name').fill('inv_web');
   await dialog.getByRole('button', { name: 'Create group' }).click();
-  await page.getByRole('button', { name: 'Add field' }).click();
-  editor = page.getByRole('dialog', { name: 'Field field_1' });
-  await editor.getByLabel('Name').fill('vhosts');
-  editor = page.getByRole('dialog', { name: 'Field vhosts' });
-  // Not .first() any more: pickOption's exact label match (unlike
-  // selectOption's bare getByLabel, a case-insensitive substring match)
-  // cannot also land on "Item type", so the ambiguity .first() guarded
-  // against cannot arise here.
-  await pickOption(editor, 'Type', { value: 'repeater' });
-  await editor.getByLabel(/Host \(asked/).check();
-  await editor.getByLabel('Required').first().check();
-  await editor.getByRole('button', { name: 'Done' }).click();
-  // A repeater's sub-fields are edited inline in its expanded row.
-  await page.getByRole('button', { name: 'Sub-fields of vhosts' }).click();
-  const sub = page.getByRole('group', { name: 'Sub-field value' });
+  await fields.getByRole('button', { name: 'Add field' }).click();
+  await panel.getByLabel('Name', { exact: true }).fill('vhosts');
+  // Required and scope before the type: a repeater's sub-fields bring
+  // Required switches of their own.
+  await panel.getByRole('switch', { name: 'Required', exact: true }).click();
+  await panel.getByRole('group', { name: 'Scope' }).getByText('Per host', { exact: true }).click();
+  await panel.getByRole('group', { name: 'Type' }).getByText('Repeater', { exact: true }).click();
+  await expect(fields.getByRole('button', { name: 'Type of vhosts: Repeater' })).toBeVisible();
+  // A repeater's sub-fields are edited in its panel.
+  const sub = panel.getByRole('group', { name: 'Sub-field value' });
   await sub.getByLabel('Name').fill('domain');
-  await page.getByRole('group', { name: 'Sub-field domain' }).getByLabel('Required').check();
-  await page.getByRole('button', { name: 'Add sub-field' }).click();
-  const pw = page.getByRole('group', { name: 'Sub-field field_2' });
+  await panel.getByRole('group', { name: 'Sub-field domain' }).getByLabel('Required').check();
+  await panel.getByRole('button', { name: 'Add sub-field' }).click();
+  const pw = panel.getByRole('group', { name: 'Sub-field field_2' });
   await pw.getByLabel('Name').fill('password');
-  await pickOption(page.getByRole('group', { name: 'Sub-field password' }), 'Type', { value: 'secret' });
-  await page.getByRole('button', { name: 'Save schema' }).click();
+  await pickOption(panel.getByRole('group', { name: 'Sub-field password' }), 'Type', { value: 'secret' });
+  await fields.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Schema saved');
-  await fields.getByRole('button', { name: 'Close' }).click();
+  await expect(fields).toBeHidden();
 
   // Assign the host: a missing required value is rejected at its field.
   await page.getByRole('button', { name: 'Assign host' }).click();
