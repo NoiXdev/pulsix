@@ -112,6 +112,18 @@ function renderForm<T>(initial: T) {
 }
 
 describe('useCardForm', () => {
+  it('takes a fresh object literal for the same saved value on every render without looping', () => {
+    const router = createRouter({ routeTree: createRootRoute(), history: createMemoryHistory({ initialEntries: ['/'] }) });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ConfirmProvider>
+        <RouterContextProvider router={router}>{children}</RouterContextProvider>
+      </ConfirmProvider>
+    );
+    const { result } = renderHook(() => useCardForm({ a: 1 }), { wrapper });
+    act(() => result.current.setDraft({ a: 2 }));
+    expect(result.current.dirty).toBe(true);
+  });
+
   it('flips dirty on change and back on discard', () => {
     const { result } = renderForm({ a: 1 });
     expect(result.current.dirty).toBe(false);

@@ -18,18 +18,20 @@ export interface CardForm<T> {
  * useCardForm holds the draft of one settings card against the saved value
  * it was loaded from. `dirty` is structural (JSON-safe values). When `saved`
  * changes content — a refetch after a save — a clean draft follows it, a
- * dirty one is left alone. It also registers the unsaved-changes guard.
+ * dirty one is left alone. It also registers the unsaved-changes guard,
+ * unless `guard` is false.
  */
-export function useCardForm<T>(saved: T): CardForm<T> {
+export function useCardForm<T>(saved: T, { guard = true }: { guard?: boolean } = {}): CardForm<T> {
   const [base, setBase] = useState<T>(saved);
   const [draft, setDraftState] = useState<T>(saved);
   const [seen, setSeen] = useState<T>(saved);
 
   // Adjust state during render (React's "derived state" pattern) so the
   // draft never lags a frame behind a refetched value.
-  if (seen !== saved) {
+  // By content, not identity: callers pass a fresh object every render.
+  if (!same(seen, saved)) {
     setSeen(saved);
-    if (!same(seen, saved) && same(draft, base)) {
+    if (same(draft, base)) {
       setBase(saved);
       setDraftState(saved);
     }
@@ -49,6 +51,8 @@ export function useCardForm<T>(saved: T): CardForm<T> {
   );
 
   const dirty = !same(draft, base);
-  useUnsavedGuard(dirty);
+  // A page with several card forms passes guard: false to each and calls
+  // useUnsavedGuard once with any of them dirty, so leaving asks once.
+  useUnsavedGuard(guard && dirty);
   return { draft, setDraft, dirty, discard, markSaved };
 }
