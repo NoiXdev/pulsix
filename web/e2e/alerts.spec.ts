@@ -35,6 +35,7 @@ import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts'
 import { pickOption } from './pickOption.ts';
 import { acceptConfirm } from './confirm.ts';
 import { enCommon } from '../src/i18n/en/common.ts';
+import { expandChecks } from './hostChecks.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -169,6 +170,8 @@ async function waitForCpuState(page: Page, hostName: string, want: string, timeo
   await openHost(page, hostName);
   // The value rows live on the host page's Checks tab.
   await page.getByRole('tab', { name: /^Checks/ }).click();
+  // Rows are collapsed by default; the value rows are inside them.
+  await expandChecks(page, timeout);
   await expect(cpuRow(page).getByText(want, { exact: true })).toBeVisible({ timeout });
 }
 

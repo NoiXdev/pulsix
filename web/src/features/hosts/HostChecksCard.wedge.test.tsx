@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { HostChecksCard } from './HostChecksCard.tsx';
 
@@ -39,7 +40,7 @@ const CHECKS = {
   ],
 };
 
-function renderCard() {
+async function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -53,13 +54,15 @@ function renderCard() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute, hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
 describe('HostChecksCard when a mounted chart throws', () => {
@@ -80,7 +83,7 @@ describe('HostChecksCard when a mounted chart throws', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
-    renderCard();
+    await renderCard();
 
     // 1 h throws.
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
@@ -110,7 +113,7 @@ describe('HostChecksCard when a mounted chart throws', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
     expect(await screen.findByText(/The chart could not be loaded/)).toBeInTheDocument();

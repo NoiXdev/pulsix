@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { HostChecksCard } from './HostChecksCard.tsx';
@@ -48,7 +49,7 @@ const CHECKS = {
   ],
 };
 
-function renderCard() {
+async function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -61,7 +62,7 @@ function renderCard() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <ConfirmProvider>
@@ -70,9 +71,11 @@ function renderCard() {
       </ToastProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
-const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('li') as HTMLElement);
+const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('tbody') as HTMLElement);
 
 function routes(extra: Record<string, unknown> = {}) {
   return {
@@ -86,7 +89,7 @@ function routes(extra: Record<string, unknown> = {}) {
 describe('HostChecksCard — probing points', () => {
   it('lists the probing points of a check under it, and none under a check without', async () => {
     mockApi(routes());
-    renderCard();
+    await renderCard();
     const table = await screen.findByRole('table', { name: 'Probing points of site' });
     const rows = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell').map((c) => c.textContent));
     expect(rows).toEqual([
@@ -99,9 +102,9 @@ describe('HostChecksCard — probing points', () => {
 
   it('says so when a check has no probing point yet', async () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/hosts/h1/checks': { ...CHECKS, checks: [{ ...CHECKS.checks[0], vantages: [] }] } }));
-    renderCard();
+    await renderCard();
     expect(await screen.findByText('No probing point is assigned yet.')).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /Probing points of/ })).not.toBeInTheDocument();
   });
 
   it("switches a check's graph between the combined series and one probing point", async () => {
@@ -116,7 +119,7 @@ describe('HostChecksCard — probing points', () => {
         },
       }),
     );
-    renderCard();
+    await renderCard();
     await user.click(await screen.findByRole('button', { name: 'Graph site tcp.connect_ms' }));
     await waitFor(() => expect(asked).toHaveLength(1));
     expect(asked[0]).toEqual({ check: 'site', metric: 'tcp.connect_ms', range: '1h' });
@@ -141,7 +144,7 @@ describe('HostChecksCard — probing points', () => {
         'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: AT, to: AT, points: [] },
       }),
     );
-    renderCard();
+    await renderCard();
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
     expect(await screen.findByRole('button', { name: '1 h' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Probing point' })).not.toBeInTheDocument();

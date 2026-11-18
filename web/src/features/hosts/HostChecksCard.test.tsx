@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { HostChecksCard, ManageChecksLink } from './HostChecksCard.tsx';
 
@@ -61,7 +62,7 @@ const THREE_SOURCES = {
  * missing `retry: false` on useHostMetric would be invisible, because the
  * client would already be doing it. One test raises it on purpose.
  */
-function renderCard(canRead = true, canWrite = true, retry: number | boolean = false) {
+async function renderCard(canRead = true, canWrite = true, retry: number | boolean = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -82,7 +83,7 @@ function renderCard(canRead = true, canWrite = true, retry: number | boolean = f
     routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute, hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <ConfirmProvider>
@@ -91,11 +92,13 @@ function renderCard(canRead = true, canWrite = true, retry: number | boolean = f
       </ToastProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
 /** The list item for one check, anchored on its own heading so a metric
  * name that repeats across checks cannot be matched in the wrong block. */
-const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('li') as HTMLElement);
+const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('tbody') as HTMLElement);
 
 /** The list item for one metric inside a check's block. */
 const row = (key: string, metric: string) => within(block(key).getByText(metric).closest('li') as HTMLElement);
@@ -108,7 +111,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
 
@@ -137,7 +140,7 @@ describe('HostChecksCard', () => {
         checks: [check({ key: 'mysql', plugin: 'mysql', missing_secret: 'db-prod' }), check({ definition_id: 'd2', key: 'disk' })],
       },
     });
-    renderCard();
+    await renderCard();
     expect(await screen.findByRole('heading', { name: 'mysql' })).toBeInTheDocument();
     expect(await block('mysql').findByText('Secret db-prod is not defined in agent.yaml on this host.')).toBeInTheDocument();
     expect(block('disk').queryByText(/is not defined/)).not.toBeInTheDocument();
@@ -154,7 +157,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
     expect(await screen.findByRole('heading', { name: 'sw' })).toBeInTheDocument();
     expect(
       await block('sw').findByText('Secret sw-core is not defined in this organization’s secrets (Settings → Secrets).'),
@@ -170,7 +173,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Graph disk /var used_percent' })).toBeInTheDocument();
@@ -204,7 +207,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText('collection failed')).toBeInTheDocument();
     expect(row('cpu', 'usage_percent').getByText('read /proc/stat: permission denied')).toBeInTheDocument();
@@ -234,7 +237,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     // An error row looks the same whatever produced it, so the plugin is
     // what decides: a service check has labels behind it, never a series,
@@ -274,7 +277,7 @@ describe('HostChecksCard', () => {
       },
     };
     mockApi(STALE_AND_FRESH);
-    const first = renderCard();
+    const first = await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'disk' })).toBeInTheDocument();
     // One button for the whole item, on its first row, though both of its
@@ -287,7 +290,7 @@ describe('HostChecksCard', () => {
     expect(row('cpu', 'usage_percent').queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
     first.unmount();
 
-    renderCard(true, false);
+    await renderCard(true, false);
     expect(await screen.findByRole('heading', { name: 'disk' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
   });
@@ -320,7 +323,7 @@ describe('HostChecksCard', () => {
         return new Response(null, { status: 204 });
       },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Forget disk /old' }));
     const dialog = await screen.findByRole('dialog', { name: 'Forget /old?' });
@@ -358,7 +361,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(row('cpu', 'usage_percent').getByText('stale')).toBeInTheDocument();
@@ -392,7 +395,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(row('cpu', 'a_metric').getByText('ok')).toBeInTheDocument();
@@ -420,7 +423,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText('flapping')).toBeInTheDocument();
     // The flag is additional information, not a replacement for the state
@@ -443,7 +446,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(screen.queryByText('flapping')).not.toBeInTheDocument();
@@ -496,7 +499,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     // The reading itself is fresh — no "stale" pill — while the verdict is
@@ -546,7 +549,7 @@ describe('HostChecksCard', () => {
       },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
     });
-    renderCard();
+    await renderCard();
 
     const toggle = await screen.findByRole('button', { name: 'Rules for cpu usage_percent' });
     expect(screen.queryByText('Host override')).not.toBeInTheDocument();
@@ -586,7 +589,7 @@ describe('HostChecksCard', () => {
       },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
     });
-    renderCard();
+    await renderCard();
 
     const toggle = await screen.findByRole('button', { name: 'Rules for cpu usage_percent' });
     await userEvent.click(toggle);
@@ -615,7 +618,7 @@ describe('HostChecksCard', () => {
         checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true, state: null, flapping: false }] })],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText(/clock is about 4 min behind/)).toBeInTheDocument();
     // The stale badge stays: the server's verdict is not overridden, only
@@ -640,7 +643,7 @@ describe('HostChecksCard', () => {
         checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: true, state: null, flapping: false }] })],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText(/not being monitored/)).toBeInTheDocument();
     expect(screen.queryByText(/clock is about/)).not.toBeInTheDocument();
@@ -653,7 +656,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
     });
-    const { unmount } = renderCard();
+    const { unmount } = await renderCard();
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     // No measurement in the envelope at all — a manager that has ingested
     // nothing from this host. Absence is not "this clock is fine".
@@ -666,7 +669,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { ...THREE_SOURCES, clock_offset_seconds: 0.8 },
     });
-    renderCard();
+    await renderCard();
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(screen.queryByText(/clock is about/)).not.toBeInTheDocument();
   });
@@ -680,7 +683,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [] },
     });
-    const { unmount } = renderCard();
+    const { unmount } = await renderCard();
 
     expect(await screen.findByText('No checks resolve for this host yet.')).toBeInTheDocument();
     expect(screen.queryByText(/not being monitored/)).not.toBeInTheDocument();
@@ -694,7 +697,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: false, checks: null },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText(/This host is not being monitored/)).toBeInTheDocument();
     expect(screen.getByText('No checks resolve for this host yet.')).toBeInTheDocument();
@@ -714,7 +717,7 @@ describe('HostChecksCard', () => {
         checks: [check({ enabled: false, source: 'group', source_name: 'Web tier', values: [] })],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(block('cpu').getByText('disabled')).toBeInTheDocument();
@@ -764,7 +767,7 @@ describe('HostChecksCard', () => {
         ],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('heading', { name: 'data-disk' })).toBeInTheDocument();
     // Two local checks, neither with an id: both render, each once.
@@ -797,7 +800,7 @@ describe('HostChecksCard', () => {
         checks: [check({ values: [{ item: '', metric: 'load1', value: 1 / 3, at: NOW, stale: false, state: null, flapping: false }] })],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText('0.33')).toBeInTheDocument();
     expect(screen.queryByText('0.3333333333333333')).not.toBeInTheDocument();
@@ -816,7 +819,7 @@ describe('HostChecksCard', () => {
         checks: [check({ values: [{ item: '', metric: 'usage_percent', value: 12.5, at: NOW, stale: false, state: null, flapping: false }] })],
       },
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByText(/This host is not being monitored/)).toBeInTheDocument();
     // The set is still shown, as the set that would apply — but with no
@@ -852,7 +855,7 @@ describe('HostChecksCard', () => {
         };
       },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Graph disk /var used_percent' }));
 
@@ -890,7 +893,7 @@ describe('HostChecksCard', () => {
         return { check: 'disk', item: '/var', metric: 'used_percent', range: req.search.get('range'), from: NOW, to: NOW, points: [] };
       },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Graph disk /var used_percent' }));
     await waitFor(() => expect(screen.getByRole('button', { name: '1 h' })).toBeInTheDocument());
@@ -921,7 +924,7 @@ describe('HostChecksCard', () => {
         return { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] };
       },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
 
@@ -948,7 +951,7 @@ describe('HostChecksCard', () => {
     // A client that WOULD retry three times, so the hook's own retry: false
     // is what decides the count. With the suite's usual retry: false client
     // this assertion would hold no matter what the hook asked for.
-    renderCard(true, true, 3);
+    await renderCard(true, true, 3);
 
     await user.click(await screen.findByRole('button', { name: 'Graph disk /var used_percent' }));
 
@@ -968,7 +971,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       'GET /api/v1/orgs/acme/hosts/h1/metrics': { check: 'cpu', item: '', metric: 'usage_percent', range: '1h', from: NOW, to: NOW, points: [] },
     });
-    renderCard();
+    await renderCard();
 
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
 
@@ -991,12 +994,12 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    const { unmount } = renderCard(true, false);
+    const { unmount } = await renderCard(true, false);
     expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Manage checks' })).not.toBeInTheDocument();
     unmount();
 
-    renderCard(true, true);
+    await renderCard(true, true);
     expect(await screen.findByRole('link', { name: 'Manage checks' })).toBeInTheDocument();
   });
 
@@ -1007,7 +1010,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    renderCard(false);
+    await renderCard(false);
 
     expect(await screen.findByText(/Monitoring is visible to members/)).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
@@ -1020,7 +1023,7 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/orgs/acme/hosts/h1/checks': () => new Response(JSON.stringify({ detail: 'checks unavailable' }), { status: 500 }),
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('checks unavailable');
   });
@@ -1075,7 +1078,7 @@ describe('HostChecksCard', () => {
           checks: [diskCheck([ignoredValue({ state: 'crit' })])],
         },
       });
-      renderCard();
+      await renderCard();
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       expect(row('disk', '/var used_percent').queryByText('crit')).not.toBeInTheDocument();
@@ -1110,7 +1113,7 @@ describe('HostChecksCard', () => {
           ],
         },
       });
-      renderCard();
+      await renderCard();
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       expect(screen.queryByText('stale verdict')).not.toBeInTheDocument();
@@ -1135,7 +1138,7 @@ describe('HostChecksCard', () => {
         // ignored: true with no decided_by — the shape this fallback is for.
         'GET /api/v1/orgs/acme/hosts/h1/checks': { host_id: 'h1', monitored: true, checks: [diskCheck([ignoredValue()])] },
       });
-      renderCard();
+      await renderCard();
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       const summary = screen.getByText('Why ignored');
@@ -1188,7 +1191,7 @@ describe('HostChecksCard', () => {
           ],
         },
       });
-      renderCard();
+      await renderCard();
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       await user.click(screen.getByText('Why ignored'));
@@ -1228,7 +1231,7 @@ describe('HostChecksCard', () => {
           ],
         },
       });
-      renderCard();
+      await renderCard();
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       // Closed, not absent: a native <details>, so the content is already
@@ -1271,7 +1274,7 @@ describe('HostChecksCard', () => {
           ],
         },
       });
-      renderCard();
+      await renderCard();
 
       await user.click(await screen.findByText('Why ignored'));
 
@@ -1322,9 +1325,9 @@ describe('HostChecksCard', () => {
           ],
         },
       });
-      renderCard();
+      await renderCard();
 
-      expect(await screen.findByText('ok')).toBeInTheDocument();
+      expect((await screen.findAllByText('ok')).length).toBeGreaterThan(0);
       expect(screen.queryByText('ignored')).not.toBeInTheDocument();
 
       await user.click(screen.getByText('Why watched'));
@@ -1347,7 +1350,7 @@ describe('HostChecksCard', () => {
           return { decision: { id: 'new', ...(req.body as object), created_at: NOW, updated_at: NOW } };
         },
       });
-      renderCard();
+      await renderCard();
 
       await user.click(await screen.findByRole('button', { name: 'Ignore disk /var' }));
 
@@ -1395,7 +1398,7 @@ describe('HostChecksCard', () => {
           return new Response(JSON.stringify({ detail: 'a second decision would lose the tie-break' }), { status: 500 });
         },
       });
-      renderCard();
+      await renderCard();
 
       await user.click(await screen.findByRole('button', { name: 'Watch disk /var' }));
 
@@ -1417,7 +1420,7 @@ describe('HostChecksCard', () => {
         'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
         'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
       });
-      renderCard();
+      await renderCard();
 
       await screen.findByRole('heading', { name: 'cpu' });
       expect(screen.queryByRole('button', { name: /Ignore cpu/ })).not.toBeInTheDocument();
@@ -1435,7 +1438,7 @@ describe('HostChecksCard', () => {
           checks: [diskCheck([ignoredValue({ decided_by: hostExactIgnore })])],
         },
       });
-      renderCard(true, false);
+      await renderCard(true, false);
 
       expect(await screen.findByText('ignored')).toBeInTheDocument();
       expect(screen.getByText('Why ignored')).toBeInTheDocument();
@@ -1454,7 +1457,7 @@ describe('HostChecksCard — plugin descriptors', () => {
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
       'GET /api/v1/check-plugins': () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
     });
-    renderCard();
+    await renderCard();
 
     expect(await screen.findByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Graph nginx/ })).not.toBeInTheDocument();

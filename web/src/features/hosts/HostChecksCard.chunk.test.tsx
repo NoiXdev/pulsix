@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { HostChecksCard } from './HostChecksCard.tsx';
 
@@ -42,7 +43,7 @@ const CHECKS = {
   ],
 };
 
-function renderPage() {
+async function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -61,13 +62,15 @@ function renderPage() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute, hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
 describe('HostChecksCard when the chart chunk does not arrive', () => {
@@ -93,7 +96,7 @@ describe('HostChecksCard when the chart chunk does not arrive', () => {
         points: [{ at: NOW, value: 12.5 }],
       },
     });
-    renderPage();
+    await renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
 

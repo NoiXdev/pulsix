@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { HostChecksCard } from './HostChecksCard.tsx';
 
@@ -39,7 +40,7 @@ const CHECKS = {
   ],
 };
 
-function renderCard() {
+async function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -53,13 +54,15 @@ function renderCard() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute, hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
 describe('HostChecksCard chart chunk', () => {
@@ -70,7 +73,7 @@ describe('HostChecksCard chart chunk', () => {
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
       'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
     });
-    renderCard();
+    await renderCard();
 
     // The whole point of the lazy import: a host page nobody graphs on
     // never pays for uPlot.
@@ -93,7 +96,7 @@ describe('HostChecksCard chart chunk', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
     });
-    renderCard();
+    await renderCard();
 
     await userEvent.click(await screen.findByRole('button', { name: 'Graph cpu usage_percent' }));
 
@@ -113,7 +116,7 @@ describe('HostChecksCard chart chunk', () => {
         points: [{ at: NOW, value: 12.5 }],
       },
     });
-    renderCard();
+    await renderCard();
 
     const graph = await screen.findByRole('button', { name: 'Graph cpu usage_percent' });
     await userEvent.click(graph);

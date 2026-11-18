@@ -1,14 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Card } from '../../ui/table.tsx';
-import { Pill, Tag } from '../../ui/badge.tsx';
-import { useHostChecks, useHostEffectiveRules, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
+import { useHostChecks, useHostEffectiveRules, useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useCheckPlugins } from '../../api/hooks/useCheckPlugins.ts';
-import { intervalLabel } from '../checks/interval.ts';
-import { clockSkewLabel, metricKinds, missingSecretText, sourceLabel, type TupleKey } from './hostChecks.ts';
-import { HostCheckValueRow } from './HostCheckValueRow.tsx';
-import { HostCheckVantages } from './HostCheckVantages.tsx';
-import { HostCheckHttp } from './HostCheckHttp.tsx';
+import { clockSkewLabel, metricKinds } from './hostChecks.ts';
+import { HostChecksTable } from './HostChecksTable.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 export interface HostChecksCardProps {
@@ -66,16 +62,6 @@ export interface HostChecksCardProps {
 export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false }: HostChecksCardProps) {
   const t = useT();
   const query = useHostChecks(org, hostId, canRead);
-  // One graph open at a time: these are the only reads on this page that
-  // touch the sample hypertable.
-  const [open, setOpen] = useState<MetricSelection | null>(null);
-  // One rule disclosure open at a time, independent of the graph above —
-  // an operator may want both open on different values, but the panel
-  // itself grows tall enough per tuple that more than one at once per
-  // value would read as a second scrolling problem this feature exists to
-  // avoid.
-  const [openRules, setOpenRules] = useState<TupleKey | null>(null);
-
   // Read alongside the checks themselves, gated on the same checks.read:
   // this is what makes each value's own "Rules" disclosure possible
   // without a second permission check per row. Not polled — see
@@ -128,62 +114,20 @@ export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false 
             </p>
           )}
           {checks.length === 0 && <p className="text-xs text-muted-foreground">{t.hosts.checks.none}</p>}
-          <ul className="flex flex-col gap-3">
-            {/* Keyed by the check key, unique on a host: a check defined
-                in the host's agent.yaml (backlog 3.5a) has no definition
-                id, and the server lists it in place of a definition with
-                the same key rather than beside it. */}
-            {checks.map((c) => (
-              <li key={c.key} className="rounded-md border border-border p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-mono text-[13px] text-foreground">{c.key}</h3>
-                  <Tag>{c.plugin}</Tag>
-                  <Tag>{sourceLabel(c, t)}</Tag>
-                  <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds, t))}</span>
-                  {/* A local check is always on — only removing it from
-                      agent.yaml stops it — and nothing here edits,
-                      disables or overrides it: no definition is behind it. */}
-                  {!c.enabled && c.source !== 'local' && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
-                </div>
-                {c.missing_secret && (
-                  <p role="alert" className="mt-2 text-xs text-[var(--px-warn)]">
-                    {missingSecretText(t, c.missing_secret, c.plugin, plugins.data)}
-                  </p>
-                )}
-                {monitored && (
-                  <ul className="mt-2 flex flex-col gap-1.5">
-                    {(c.values ?? []).map((v) => (
-                      <HostCheckValueRow
-                        key={`${v.item}:${v.metric}`}
-                        org={org}
-                        hostId={hostId}
-                        canWrite={canWrite}
-                        frozen={frozen}
-                        check={c}
-                        value={v}
-                        kinds={kinds}
-                        open={open}
-                        onOpen={setOpen}
-                        effective={effective}
-                        groups={groupList}
-                        openRules={openRules}
-                        onOpenRules={setOpenRules}
-                      />
-                    ))}
-                    {(c.values ?? []).length === 0 && (
-                      <li className="text-[11px] text-muted-foreground">{t.hosts.checks.noReading}</li>
-                    )}
-                  </ul>
-                )}
-                {/* Backlog 3.13b: an http check's timing breakdown and
-                    assertions, below its values. */}
-                {monitored && c.plugin === 'http' && <HostCheckHttp check={c} />}
-                {/* Backlog 3.13a: where a check probed from several
-                    places was probed from, below its combined values. */}
-                {monitored && c.vantages && <HostCheckVantages check={c} plugins={plugins.data} />}
-              </li>
-            ))}
-          </ul>
+          {checks.length > 0 && (
+            <HostChecksTable
+              org={org}
+              hostId={hostId}
+              canWrite={canWrite}
+              frozen={frozen}
+              monitored={monitored}
+              checks={checks}
+              plugins={plugins.data}
+              kinds={kinds}
+              effective={effective}
+              groups={groupList}
+            />
+          )}
         </>
       )}
     </Card>

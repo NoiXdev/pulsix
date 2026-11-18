@@ -396,6 +396,21 @@ export const enHosts = {
     confirmTitle: (item: string) => `Forget ${item}?`,
     confirmBody: 'Its current values and open alerts are removed; its graphs stay. If it reports again it comes back.',
     done: (item: string) => `${item} forgotten`,
+  checksTab: {
+    tableLabel: 'Checks of this host',
+    columns: { check: 'Check', source: 'Source', interval: 'Interval', status: 'Status', value: 'Key value' },
+    expand: (key: string) => `Show readings of ${key}`,
+    collapse: (key: string) => `Hide readings of ${key}`,
+    status: { noValue: 'no value', notJudged: 'not judged' },
+    value: {
+      http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
+      daysLeft: (n: string) => `${n} days left`,
+      percent: (n: string) => `${n} %`,
+      percentOn: (n: string, item: string) => `${n} % on ${item}`,
+      ms: (n: string) => `${n} ms`,
+      metric: (name: string, v: string) => `${name} ${v}`,
+    },
+  },
     failed: 'Forgetting this item failed',
   },
   /** An http check's latest timing breakdown and its assertions (backlog

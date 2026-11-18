@@ -48,6 +48,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
 import { pickOption } from './pickOption.ts';
+import { expandChecks } from './hostChecks.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -139,6 +140,8 @@ function mountRow(page: Page): Locator {
 async function waitForMountReading(page: Page, timeout: number): Promise<void> {
   // The value rows live on the host page's Checks tab.
   await page.getByRole('tab', { name: /^Checks/ }).click();
+  // Rows are collapsed by default; the value rows are inside them.
+  await expandChecks(page, timeout);
   await expect(mountRow(page)).toBeVisible({ timeout });
 }
 

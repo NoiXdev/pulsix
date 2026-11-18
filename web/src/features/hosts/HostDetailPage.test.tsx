@@ -7,6 +7,7 @@ import { agentBody, alertBody, check, HOST, hostRoutes, NOW, orgBody, reading, r
 import { clippedElements } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { expandChecks } from '../../test/expandChecks.ts';
 
 const renderPage = (qc?: QueryClient, path?: string) => renderAt(HostDetailPage, qc, path);
 const renderTab = (tab: string) => renderAt(HostDetailPage, undefined, `/o/acme/hosts/h1?tab=${tab}`);
@@ -432,7 +433,8 @@ describe('HostDetailPage', () => {
     // all, which is what this pins.
     const checks = within(await screen.findByRole('region', { name: 'Checks' }));
     expect(await checks.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
-    expect(checks.getByText('7.5')).toBeInTheDocument();
+    // Collapsed: the row's key value, then the readings once it opens.
+    expect(checks.getByText('usage_percent 7.5')).toBeInTheDocument();
     expect(checks.queryByRole('link', { name: 'Manage checks' })).not.toBeInTheDocument();
   });
 
@@ -568,6 +570,7 @@ describe('HostDetailPage', () => {
       expect(await screen.findByText('2 warnings')).toBeInTheDocument();
       expect(screen.queryByText('Off')).not.toBeInTheDocument();
       expect(screen.queryByText('Client')).not.toBeInTheDocument();
+      await expandChecks();
       expect((await screen.findAllByText('stale verdict')).length).toBeGreaterThan(0);
       expect(screen.getByRole('button', { name: 'Forget disk /data' })).toBeInTheDocument();
     });

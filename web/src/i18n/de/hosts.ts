@@ -390,6 +390,21 @@ export const deHosts: Messages['hosts'] = {
     confirmTitle: (item: string) => `${item} vergessen?`,
     confirmBody:
       'Seine aktuellen Werte und offenen Alarme werden entfernt; seine Diagramme bleiben. Meldet es sich wieder, erscheint es erneut.',
+  checksTab: {
+    tableLabel: 'Checks dieses Hosts',
+    columns: { check: 'Check', source: 'Quelle', interval: 'Intervall', status: 'Status', value: 'Kennwert' },
+    expand: (key: string) => `Messwerte von ${key} anzeigen`,
+    collapse: (key: string) => `Messwerte von ${key} ausblenden`,
+    status: { noValue: 'kein Wert', notJudged: 'nicht bewertet' },
+    value: {
+      http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
+      daysLeft: (n: string) => `noch ${n} Tage`,
+      percent: (n: string) => `${n} %`,
+      percentOn: (n: string, item: string) => `${n} % auf ${item}`,
+      ms: (n: string) => `${n} ms`,
+      metric: (name: string, v: string) => `${name} ${v}`,
+    },
+  },
     done: (item: string) => `${item} vergessen`,
     failed: 'Dieses Element konnte nicht vergessen werden',
   },

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { expandChecks } from '../../test/expandChecks.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { HostChecksCard } from './HostChecksCard.tsx';
@@ -56,7 +57,7 @@ const CHECKS = {
   ],
 };
 
-function renderCard(locale: 'en' | 'de' = 'en') {
+async function renderCard(locale: 'en' | 'de' = 'en') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -69,7 +70,7 @@ function renderCard(locale: 'en' | 'de' = 'en') {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([hostRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }),
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale={locale}>
         <ToastProvider>
@@ -80,9 +81,11 @@ function renderCard(locale: 'en' | 'de' = 'en') {
       </I18nProvider>
     </QueryClientProvider>,
   );
+  await expandChecks();
+  return view;
 }
 
-const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('li') as HTMLElement);
+const block = (key: string) => within(screen.getByRole('heading', { name: key }).closest('tbody') as HTMLElement);
 
 const ROUTES = {
   'GET /api/v1/orgs/acme/hosts/h1/checks': CHECKS,
@@ -96,7 +99,7 @@ const cells = (table: HTMLElement) =>
 describe('HostChecksCard — web checks', () => {
   it("shows an http check's timing breakdown and its assertions under it", async () => {
     mockApi(ROUTES);
-    renderCard();
+    await renderCard();
     const bar = await screen.findByRole('figure', { name: 'Timing of web' });
     expect(within(bar).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['DNS4 ms', 'connect11 ms', 'first byte85 ms', 'transfer2 ms']);
     const table = screen.getByRole('table', { name: 'Assertions of web' });
@@ -109,7 +112,7 @@ describe('HostChecksCard — web checks', () => {
 
   it('words the failure reason next to <plugin>.up and the result labels in the values', async () => {
     mockApi(ROUTES);
-    renderCard();
+    await renderCard();
     await screen.findByRole('figure', { name: 'Timing of web' });
     expect(block('port').getByTestId('failure-reason')).toHaveTextContent('connection refused');
     expect(block('port').getByTestId('failure-reason').closest('li')).toHaveTextContent(/^tcp\.up/);
@@ -121,7 +124,7 @@ describe('HostChecksCard — web checks', () => {
 
   it('speaks German', async () => {
     mockApi(ROUTES);
-    renderCard('de');
+    await renderCard('de');
     const table = await screen.findByRole('table', { name: 'Zusicherungen von web' });
     expect(cells(table)[0].slice(2, 4)).toEqual(['kritisch', 'bestanden']);
     expect(screen.getByRole('figure', { name: 'Zeitaufteilung von web' })).toHaveTextContent('Verbindung11 ms');
