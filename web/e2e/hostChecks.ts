@@ -9,8 +9,8 @@ import { expect, type Page } from '@playwright/test';
 export async function expandChecks(page: Page, timeout = 10_000): Promise<void> {
   const table = page.getByRole('table', { name: 'Checks of this host' });
   await expect(table).toBeVisible({ timeout });
-  // The row toggles, by their accessible name (other buttons inside an open
+  // The row toggles sit in each row's heading (other buttons inside an open
   // row, like Graph, carry aria-expanded too).
-  const collapsed = table.getByRole('button', { name: /^Show readings of / });
+  const collapsed = table.locator('h3 button[aria-expanded="false"]');
   while ((await collapsed.count()) > 0) await collapsed.first().click();
 }
