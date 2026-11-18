@@ -218,6 +218,8 @@ describe('ChannelsPage', () => {
     });
     renderPage();
     const card = await screen.findByRole('region', { name: 'Weekly digest' });
+    // A settings card: as wide as the settings column, not the channel table.
+    expect(card.closest('.max-w-\\[880px\\]')).not.toBeNull();
     await user.click(within(card).getByLabelText('Send the weekly digest'));
     await pickOption(within(card), 'Day', { value: 'fri' });
     await user.click(within(card).getByLabelText('ops hook'));

@@ -82,7 +82,10 @@ export function ChannelsPage() {
         empty={c8.empty}
         {...view.listProps(total, c8.count)}
       />
-      <DigestCard org={org} channels={list} canWrite={canWrite} />
+      {/* A settings card: the settings column's width, not the table's. */}
+      <div className="max-w-[880px]">
+        <DigestCard org={org} channels={list} canWrite={canWrite} />
+      </div>
       {actions.dialogs}
     </>
   );
