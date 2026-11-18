@@ -161,5 +161,5 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await toast(page, 'SSH settings saved');
   await expect(page.getByLabel('Effective route')).toContainText('inherited from group inv_production');
   await page.getByRole('button', { name: 'Show key snippets…' }).click();
-  await expect(ssh.getByLabel('Public key')).toBeVisible();
+  await expect(ssh.getByLabel('Public key', { exact: true })).toBeVisible();
 });
