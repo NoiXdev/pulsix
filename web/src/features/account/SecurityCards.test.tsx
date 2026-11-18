@@ -46,6 +46,7 @@ describe('Security page cards', () => {
     mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': PASSKEYS });
     renderPage();
 
+    expect(screen.getByText('How you sign in and how you protect your session.')).toBeInTheDocument();
     const signIn = await screen.findByRole('region', { name: 'Sign-in' });
     expect(await within(signIn).findByText('Second factor active')).toBeInTheDocument();
     for (const label of ['Password', 'Authenticator app', 'Recovery codes', 'Passkeys']) {
@@ -242,6 +243,7 @@ describe('Security page cards', () => {
     mockApi({ 'GET /api/v1/auth/me': { ...ME, lock_pin_legacy: true }, 'GET /api/v1/auth/passkeys': PASSKEYS });
     renderPage({}, 'de');
 
+    expect(screen.getByText('Wie du dich anmeldest und deine Sitzung schützt.')).toBeInTheDocument();
     const signIn = await screen.findByRole('region', { name: 'Anmeldung' });
     expect(await within(signIn).findByText('Zweiter Faktor aktiv')).toBeInTheDocument();
     expect(within(signIn).getByRole('button', { name: 'Passwort ändern…' })).toBeInTheDocument();

@@ -6,6 +6,7 @@ export const enProfile = {
   name: 'Name',
   email: 'Email',
   organizations: 'Organizations',
+  organizationsDescription: 'The organizations you belong to and your role in each.',
   noOrganizations: 'You do not belong to any organization yet.',
   adminNote: 'Your name and email are changed by an administrator.',
 };

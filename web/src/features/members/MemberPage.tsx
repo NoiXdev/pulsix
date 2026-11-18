@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { CardSaveBar, SettingsCard, SettingsPage, SettingsRow } from '../../ui/settings.tsx';
 import { useCardForm } from '../../ui/useCardForm.ts';
+import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
 import { ReadOnlyNote } from '../settings/ReadOnlyNote.tsx';
 import { DangerZone } from '../users/DangerZone.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
@@ -46,6 +48,10 @@ export function MemberPage() {
   const instanceAdmin = me.data?.instance_admin === true;
   const account = useAdminUser(userId, { enabled: instanceAdmin });
   const orgInfo = useOrg(org);
+  // The role card's draft is guarded here, so a removal (which leaves the
+  // page on purpose) can switch the question off before it navigates.
+  const [roleDirty, setRoleDirty] = useState(false);
+  const releaseGuard = useUnsavedGuard(roleDirty);
 
   const guard = useQueryGuard(members);
   if (guard) return guard;
@@ -54,20 +60,24 @@ export function MemberPage() {
   if (!member) return <QueryError error={new ApiError(404, null)} />;
 
   const canManage = may(orgInfo.data?.org.role, 'members.manage');
-  const removeRow = canManage ? <RemoveMemberRow org={org} member={member} /> : null;
+  const removeRow = canManage ? <RemoveMemberRow org={org} member={member} beforeLeave={releaseGuard} /> : null;
   const accountReady = account.data && me.data;
 
   return (
     <SettingsPage title={member.display_name}>
       <MemberFacts member={member} />
-      <MemberRole org={org} member={member} canManage={canManage} loaded={!!orgInfo.data} />
+      <MemberRole org={org} member={member} canManage={canManage} loaded={!!orgInfo.data} onDirtyChange={setRoleDirty} />
       {instanceAdmin && (
         <>
-          {account.data ? <AccountSignIn user={account.data} /> : <AccountPending error={account.error} title={t.users.signIn.title} />}
+          {account.data ? (
+            <AccountSignIn user={account.data} />
+          ) : (
+            <AccountPending error={account.error} title={t.users.signIn.title} description={t.users.signIn.description} />
+          )}
           {accountReady ? (
             <AccountActions key={account.data.id} user={account.data} selfId={me.data.user.id} dangerExtra={removeRow} />
           ) : (
-            <AccountPending error={account.error} title={t.users.actions.title} />
+            <AccountPending error={account.error} title={t.users.actions.title} description={t.users.actions.description} />
           )}
         </>
       )}
@@ -77,9 +87,9 @@ export function MemberPage() {
 }
 
 /** A card standing in for an account section while the account loads. */
-function AccountPending({ error, title }: { error: unknown; title: string }) {
+function AccountPending({ error, title, description }: { error: unknown; title: string; description: string }) {
   return (
-    <SettingsCard title={title}>
+    <SettingsCard title={title} description={description}>
       <div className="px-5 pb-4">
         {error instanceof Error ? <p className="text-xs text-destructive">{error.message}</p> : <QueryLoading />}
       </div>
@@ -103,12 +113,28 @@ function MemberFacts({ member }: { member: Member }) {
 }
 
 /** The member's role: a role that may manage members changes it here, with
- * the card's own save bar; anyone else sees it read-only. */
-function MemberRole({ org, member, canManage, loaded }: { org: string; member: Member; canManage: boolean; loaded: boolean }) {
+ * the card's own save bar; anyone else sees it read-only. Whether the draft
+ * is dirty goes up to the page, which guards leaving it. */
+function MemberRole({
+  org,
+  member,
+  canManage,
+  loaded,
+  onDirtyChange,
+}: {
+  org: string;
+  member: Member;
+  canManage: boolean;
+  loaded: boolean;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   const t = useT();
   const toast = useToast();
   const changeRole = useChangeMemberRole(org);
-  const form = useCardForm<string>(member.role);
+  const form = useCardForm<string>(member.role, { guard: false });
+  const dirty = form.dirty;
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const p = t.members.page;
 
   if (!loaded) {
@@ -168,8 +194,10 @@ function MemberRole({ org, member, canManage, loaded }: { org: string; member: M
   );
 }
 
-/** The Danger zone row that removes the member after a confirmation. */
-function RemoveMemberRow({ org, member }: { org: string; member: Member }) {
+/** The Danger zone row that removes the member after a confirmation, then
+ * leaves for the list; `beforeLeave` switches the unsaved-changes question
+ * off first, since an unsaved role draft of a removed member is moot. */
+function RemoveMemberRow({ org, member, beforeLeave }: { org: string; member: Member; beforeLeave: () => Promise<void> }) {
   const t = useT();
   const toast = useToast();
   const ask = useConfirm();
@@ -182,6 +210,7 @@ function RemoveMemberRow({ org, member }: { org: string; member: Member }) {
     try {
       await removeMember.mutateAsync(member.user_id);
       toast.show(t.members.removed(member.display_name));
+      await beforeLeave();
       void navigate({ to: '/o/$org/settings/members', params: { org } });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.members.removeFailed, 'destructive');

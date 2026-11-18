@@ -17,7 +17,8 @@ import { SessionCard } from './SessionCard.tsx';
 export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | Promise<void> } = {}) {
   const t = useT();
   return (
-    <SettingsPage title={t.account.title}>
+    // Enrolment has one job and no Session card: no description there.
+    <SettingsPage title={t.account.title} description={onEnrolled ? undefined : t.account.description}>
       <SignInCard onEnrolled={onEnrolled} />
       {!onEnrolled && <SessionCard />}
     </SettingsPage>

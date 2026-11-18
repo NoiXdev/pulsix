@@ -30,7 +30,7 @@ export function ProfilePage() {
           <span className="font-mono">{me.data.user.email}</span>
         </SettingsRow>
       </SettingsCard>
-      <SettingsCard title={t.profile.organizations}>
+      <SettingsCard title={t.profile.organizations} description={t.profile.organizationsDescription}>
         {list.length === 0 ? (
           <p className="border-t border-border px-5 py-3.5 text-[12.5px] text-muted-foreground">{t.profile.noOrganizations}</p>
         ) : (

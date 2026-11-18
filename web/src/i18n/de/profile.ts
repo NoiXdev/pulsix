@@ -7,6 +7,7 @@ export const deProfile: Messages['profile'] = {
   name: 'Name',
   email: 'E-Mail',
   organizations: 'Organisationen',
+  organizationsDescription: 'Die Organisationen, denen du angehörst, und deine Rolle darin.',
   noOrganizations: 'Du gehörst noch keiner Organisation an.',
   adminNote: 'Name und E-Mail-Adresse ändert eine Administratorin oder ein Administrator.',
 };

@@ -8,7 +8,7 @@ import { useMe } from '../../api/hooks/useMe.ts';
 import { accountDetail } from '../users/testFixtures.ts';
 import type { Locale } from '../../i18n/types.ts';
 import { MemberPage } from './MemberPage.tsx';
-import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 
 const MEMBERS = {
   members: [
@@ -215,6 +215,39 @@ describe('MemberPage', () => {
     expect(await screen.findByText('members list')).toBeInTheDocument();
     expect(removed).toBe(true);
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/members'));
+  });
+
+  it('describes the account cards while the account loads', async () => {
+    render({ role: 'owner', instanceAdmin: true }, { 'GET /api/v1/admin/users/u2': () => new Promise(() => {}) });
+    const signIn = await screen.findByRole('region', { name: 'Sign-in' });
+    expect(within(signIn).getByText('How this account signs in and where it is signed in right now.')).toBeInTheDocument();
+    const actions = screen.getByRole('region', { name: 'Actions' });
+    expect(within(actions).getByText('Help this person get back into their account.')).toBeInTheDocument();
+  });
+
+  it('removes a member with an unsaved role draft without asking to leave', async () => {
+    const user = userEvent.setup();
+    const { router } = render({ role: 'admin', instanceAdmin: false }, { 'DELETE /api/v1/orgs/acme/members/u2': () => ({}) });
+
+    await screen.findByLabelText('Role in this organization');
+    await pickOption(screen, 'Role in this organization', 'Operator');
+    expect(screen.getByRole('button', { name: 'Change role' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Remove from organization' }));
+    await acceptConfirm(user);
+
+    expect(await screen.findByText('members list')).toBeInTheDocument();
+    expect(screen.queryByText('Leave this page? Your unsaved changes will be lost.')).not.toBeInTheDocument();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/members'));
+  });
+
+  it('still asks before leaving with an unsaved role draft', async () => {
+    const user = userEvent.setup();
+    const { router } = render({ role: 'admin', instanceAdmin: false });
+    await screen.findByLabelText('Role in this organization');
+    await pickOption(screen, 'Role in this organization', 'Operator');
+    void router.navigate({ to: '/o/$org/settings/members', params: { org: 'acme' } });
+    expect(await declineConfirm(user)).toBe('Leave this page? Your unsaved changes will be lost.');
+    expect(screen.getByRole('heading', { level: 1, name: 'Sara K.' })).toBeInTheDocument();
   });
 
   it('says the member does not exist when the id is not in this organization', async () => {

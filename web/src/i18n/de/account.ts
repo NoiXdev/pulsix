@@ -13,6 +13,7 @@ export const deAccount: Messages['account'] = {
     activity: 'Meine Aktivität',
   },
   title: 'Sicherheit',
+  description: 'Wie du dich anmeldest und deine Sitzung schützt.',
   secondFactorActive: 'Zweiter Faktor aktiv',
   secondFactorRequired: 'Zweiter Faktor erforderlich',
   signIn: { title: 'Anmeldung', description: 'So meldest du dich an: Passwort plus zweiter Faktor; Passkeys ersetzen beides.' },

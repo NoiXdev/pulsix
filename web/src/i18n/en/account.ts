@@ -19,6 +19,7 @@ export const enAccount = {
     activity: 'My activity',
   },
   title: 'Security',
+  description: 'How you sign in and how you protect your session.',
   secondFactorActive: 'Second factor active',
   secondFactorRequired: 'Second factor required',
   signIn: { title: 'Sign-in', description: 'How you sign in: password plus a second factor; passkeys replace both.' },

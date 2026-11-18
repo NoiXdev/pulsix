@@ -46,7 +46,9 @@ describe('ProfilePage', () => {
     const account = screen.getByRole('region', { name: 'My account' });
     expect(within(account).getByText('Name')).toBeInTheDocument();
     expect(within(account).getByText('Email')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Organizations' })).getByText('Acme')).toBeInTheDocument();
+    const orgs = screen.getByRole('region', { name: 'Organizations' });
+    expect(within(orgs).getByText('Acme')).toBeInTheDocument();
+    expect(within(orgs).getByText('The organizations you belong to and your role in each.')).toBeInTheDocument();
   });
 
   it('says so when the person belongs to no organization', async () => {
