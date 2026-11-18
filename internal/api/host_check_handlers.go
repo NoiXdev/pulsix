@@ -677,8 +677,8 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID,
 	return byTuple, nil
 }
 
-// resolvedCheckKeys is the set of check keys the manager still resolves an
-// interval for on hostID — the one question "does this tuple still exist?"
+// resolvedKeysOf is the set of check keys the manager still resolves an
+// interval for — the one question "does this tuple still exist?"
 // reduces to on the read side, and the exact input rules.ContextForHost
 // feeds the evaluator (internal/app/rules_ports.go's own adapter). A
 // disabled definition, or a key nothing binds any more, is absent from
@@ -689,18 +689,8 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID,
 // host and must agree about which of its tuples exist: this one
 // (currentTupleStates, for the states on the host page) and the effective-
 // rules view (rule_handlers.go). A tuple missing from one and listed by
-// the other is two reads of one host contradicting each other.
-func resolvedCheckKeys(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[string]bool, error) {
-	resolved, err := deps.Checks.ResolveHostWithLocal(ctx, orgID, hostID)
-	if err != nil {
-		return nil, mapChecksErr(ctx, err)
-	}
-	return resolvedKeysOf(resolved), nil
-}
-
-// resolvedKeysOf is resolvedCheckKeys over a set the caller already
-// resolved — the host checks route resolves once for its states and for
-// the checks defined on the host.
+// the other is two reads of one host contradicting each other. The route
+// resolves once for its states and for the checks defined on the host.
 func resolvedKeysOf(resolved checks.ResolvedSet) map[string]bool {
 	// Synthetic and local checks included: their results are tuples like
 	// any other (backlogs 3.13, 3.5a), and ContextForHost resolves them an

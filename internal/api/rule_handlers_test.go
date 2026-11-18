@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -883,5 +884,77 @@ func TestEffectiveRulesHidesTuplesWhoseCheckNoLongerResolves(t *testing.T) {
 	if hasLoad1(t) {
 		t.Fatal("the effective view still lists cpu.load1 although its check no longer resolves an interval; " +
 			"the host page drops that tuple, and the two reads must not disagree about which tuples exist")
+	}
+}
+
+// TestEffectiveRulesHidesItemsTheCheckStoppedAsking pins the effective-rules
+// view to the evaluation's item predicate (backlog 3.56): a mount taken off
+// a disk check's list is no longer judged (3.55), so the view must not list
+// a winner for it either, while the mount still asked for stays.
+func TestEffectiveRulesHidesItemsTheCheckStoppedAsking(t *testing.T) {
+	f := newRulesFixture(t, "rules-dropped-item")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	now := time.Now()
+	if _, err := f.s.Checks.RecordObservations(scoped, f.orgID, []checks.Observation{
+		{HostID: f.host, CheckKey: "disk", Item: "/", Metric: "disk.used_pct", At: now, Value: floatPtr(41)},
+		{HostID: f.host, CheckKey: "disk", Item: "/var", Metric: "disk.used_pct", At: now, Value: floatPtr(88)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.createRule(t, f.operatorC, map[string]any{
+		"name": "disk rule", "scope": "org", "metric": "disk.used_pct", "severity": "warn", "mode": "form",
+		"form": map[string]any{"metric": "disk.used_pct", "op": ">", "value": 90},
+	})
+
+	items := func(t *testing.T) []string {
+		t.Helper()
+		resp := requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.host)+"/effective-rules", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("effective-rules = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var out struct {
+			Effective []effectiveRuleBody `json:"effective"`
+		}
+		decodeInto(t, resp, &out)
+		var got []string
+		seen := map[string]bool{}
+		for _, e := range out.Effective {
+			if e.CheckKey == "disk" && e.Metric == "disk.used_pct" {
+				if !seen[e.Item] {
+					seen[e.Item] = true
+					got = append(got, e.Item)
+				}
+			}
+		}
+		sort.Strings(got)
+		return got
+	}
+	if got := items(t); !equalStrings(got, []string{"/", "/var"}) {
+		t.Fatalf("items before the edit = %v, want both mounts", got)
+	}
+
+	resp := requestJSON(t, f.ownerC, http.MethodGet, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/checks", nil)
+	var checkList struct {
+		Checks []checkDTO `json:"checks"`
+	}
+	decodeInto(t, resp, &checkList)
+	var seeded checkDTO
+	for _, d := range checkList.Checks {
+		if d.Key == "disk" {
+			seeded = d
+		}
+	}
+	if seeded.ID == "" {
+		t.Fatalf("no seeded \"disk\" check in %+v", checkList.Checks)
+	}
+	put := requestJSON(t, f.operatorC, http.MethodPut, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/checks/"+seeded.ID, map[string]any{
+		"plugin": "disk", "key": "disk", "interval_seconds": seeded.IntervalSeconds, "binding_kind": "org",
+		"params": map[string]any{"mounts": []string{"/"}},
+	})
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("narrowing the mounts = %d %s", put.StatusCode, mustReadBody(t, put))
+	}
+	if got := items(t); !equalStrings(got, []string{"/"}) {
+		t.Fatalf("items after the edit = %v, want only the mount still asked for", got)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -369,10 +370,19 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 // its shadowed rules for such a tuple here while the host page does not
 // show the tuple at all would be two reads of one host disagreeing about
 // which of its tuples exist.
-func toTuples(current []checks.Current, resolved map[string]bool) []rules.Tuple {
+//
+// Items are filtered too (backlog 3.56): a mount taken off a disk check's
+// list is no longer judged since 3.55, so it is not listed here either. The
+// predicate is the evaluation's (internal/app asksFor): the whole-host item
+// "" is always asked, every other item by checkplugins.AsksForItem.
+func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []rules.Tuple {
 	out := make([]rules.Tuple, 0, len(current))
 	for _, c := range current {
-		if !resolved[c.CheckKey] {
+		r, ok := resolved[c.CheckKey]
+		if !ok {
+			continue
+		}
+		if c.Item != "" && !checkplugins.AsksForItem(r.Plugin, r.Params, c.Item) {
 			continue
 		}
 		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})
@@ -637,9 +647,13 @@ func registerRuleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
-		resolved, err := resolvedCheckKeys(ctx, deps, scope.OrgID, hostID)
+		set, err := deps.Checks.ResolveHostWithLocal(ctx, scope.OrgID, hostID)
 		if err != nil {
-			return nil, err
+			return nil, mapChecksErr(ctx, err)
+		}
+		resolved := map[string]checks.Resolved{}
+		for _, c := range set.All() {
+			resolved[c.Key] = c
 		}
 		host := rules.HostContext{HostID: hostID, Groups: toGroupRanks(groups), Tuples: toTuples(current, resolved)}
 		effective := rules.Resolve(all, host)
