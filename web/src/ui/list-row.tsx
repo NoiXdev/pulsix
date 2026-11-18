@@ -90,9 +90,10 @@ export function ListRowName({ className, style, children }: { className?: string
  * over a row never also activates the row. The menu itself is MenuPopover:
  * it closes on Escape or Tab (focus returns to the trigger), on a click
  * outside it and after an item is selected; the arrow keys, Home and End
- * move between the items.
+ * move between the items. `triggerClassName` replaces the trigger's size and
+ * look where the menu sits beside full-size buttons rather than in a row.
  */
-export function RowMenu({ label, children }: { label: string; children: ReactNode }) {
+export function RowMenu({ label, triggerClassName, children }: { label: string; triggerClassName?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
@@ -118,7 +119,10 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
           if (open) close(false);
           else setOpen(true);
         }}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className={cn(
+          'flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+          triggerClassName ?? 'h-7 w-7 rounded-md text-muted-foreground hover:bg-background hover:text-foreground',
+        )}
       >
         <MoreHorizontal size={16} />
       </button>

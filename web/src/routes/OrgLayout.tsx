@@ -7,11 +7,12 @@ import { AppShell } from '../ui/shell.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
+import { useHost } from '../api/hooks/useHosts.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
-import { crumbLabels } from '../lib/breadcrumbs.ts';
+import { crumbLabels, hostIdInPath } from '../lib/breadcrumbs.ts';
 import { rememberOrg } from '../lib/lastOrg.ts';
 import { may } from '../lib/roles.ts';
 import { useT } from '../i18n/useT.ts';
@@ -59,6 +60,10 @@ export function OrgLayout() {
   // The pending run requests beside Runs, polled; a failed read just shows
   // no badge rather than standing in the way of the page.
   const pendingRunRequests = usePendingRunRequestCount(orgSlug, { enabled: complete });
+  // A host page's crumb is the host's name: the same query the page reads,
+  // so it costs no extra request. Until it answers the crumb is the id.
+  const hostId = hostIdInPath(pathname, orgSlug);
+  const crumbHost = useHost(orgSlug, complete && hostId ? hostId : '');
 
   // The personal settings area is outside any organization; its "Back"
   // link returns to the one this person was in.
@@ -76,7 +81,8 @@ export function OrgLayout() {
   if (orgsGuard) return orgsGuard;
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
-  const crumbs = crumbLabels(pathname, orgSlug, t);
+  const crumbNames: Record<string, string> = hostId && crumbHost.data ? { [`hosts/${hostId}`]: crumbHost.data.host.name } : {};
+  const crumbs = crumbLabels(pathname, orgSlug, t, crumbNames);
   const inSettings = pathname === `/o/${orgSlug}/settings` || pathname.startsWith(`/o/${orgSlug}/settings/`);
   const settingsNav = inSettings
     ? {

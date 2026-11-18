@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { DataList } from '../../ui/data-list/index.ts';
@@ -8,7 +9,7 @@ import { useListView } from '../lists/useListView.ts';
 import { runColumns } from '../runs/runColumns.tsx';
 import { shortId } from '../runs/status.ts';
 
-/** How many of the host's runs the section shows; the rest are one link away. */
+/** How many of the host's runs the section shows by default; the rest are one link away. */
 const RECENT = 5;
 
 const HOST_RUN_DEFAULTS: ReadonlySet<string> = new Set(['run', 'status', 'created']);
@@ -20,13 +21,15 @@ const HOST_RUN_DEFAULTS: ReadonlySet<string> = new Set(['run', 'status', 'create
  * the title, a link to the runs page filtered to it. It is the runs list's
  * columns (runColumns) on a list of its own (id `host-runs`): the person
  * picks them here too, but there is no paging, sorting or URL state: the
- * full, sortable list is one link away.
+ * full, sortable list is one link away. The Overview tab shows fewer
+ * (`limit`) and puts its own way to the Runs tab in place of that link
+ * (`actions`).
  */
-export function HostRunsSection({ org, hostId }: { org: string; hostId: string }) {
+export function HostRunsSection({ org, hostId, limit = RECENT, actions }: { org: string; hostId: string; limit?: number; actions?: ReactNode }) {
   const t = useT();
   const fmt = useFormat();
-  const jobs = useJobs(org, { host: hostId, limit: RECENT });
-  const rows = (jobs.data?.pages[0]?.jobs ?? []).slice(0, RECENT);
+  const jobs = useJobs(org, { host: hostId, limit });
+  const rows = (jobs.data?.pages[0]?.jobs ?? []).slice(0, limit);
   // The section is narrow (a third of the host page): by default only run, status and
   // created, which is what the old teaser showed; the others can be switched on.
   const columns = runColumns(t, fmt).map((c) => ({ ...c, defaultVisible: HOST_RUN_DEFAULTS.has(c.id) }));
@@ -38,14 +41,16 @@ export function HostRunsSection({ org, hostId }: { org: string; hostId: string }
       id="runs"
       title={t.hosts.detail.section.runs}
       actions={
-        <Link
-          to="/o/$org/runs"
-          params={{ org }}
-          search={{ host: hostId, status: undefined, kind: undefined, trigger: undefined, schedule: undefined }}
-          className="text-xs text-muted-foreground hover:text-primary"
-        >
-          {t.hosts.detail.runs.all}
-        </Link>
+        actions ?? (
+          <Link
+            to="/o/$org/runs"
+            params={{ org }}
+            search={{ host: hostId, status: undefined, kind: undefined, trigger: undefined, schedule: undefined }}
+            className="text-xs text-muted-foreground hover:text-primary"
+          >
+            {t.hosts.detail.runs.all}
+          </Link>
+        )
       }
     >
       {jobs.isError && (

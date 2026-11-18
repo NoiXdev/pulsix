@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -46,7 +46,13 @@ function renderAt(initialPath: string, locale?: 'de') {
     component: () => <div>GENERAL PAGE</div>,
   });
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
-  const routeTree = rootRoute.addChildren([loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute, membersRoute, generalRoute])]);
+  const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
+  const routeTree = rootRoute.addChildren([
+    loginRoute,
+    enrolRoute,
+    passwordRoute,
+    orgRoute.addChildren([hostsRoute, hostRoute, membersRoute, generalRoute]),
+  ]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -85,6 +91,21 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(await screen.findByText('MEMBERS PAGE')).toBeInTheDocument();
     const header = document.querySelector('header');
     expect(header).toHaveTextContent('SettingsMembers');
+  });
+
+  it('names the host in the breadcrumbs instead of its id', async () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      [`GET /api/v1/orgs/acme/hosts/${id}`]: { host: { id, name: 'web-04.fra', zone_id: 'z1', address: '', managed: false, monitored: false, revision: 1 } },
+    });
+    renderAt(`/o/acme/hosts/${id}`);
+
+    expect(await screen.findByText('HOST PAGE')).toBeInTheDocument();
+    const header = document.querySelector('header');
+    await waitFor(() => expect(header).toHaveTextContent('Hostsweb-04.fra'));
   });
 
   it('swaps the organization navigation for the settings navigation under /settings', async () => {

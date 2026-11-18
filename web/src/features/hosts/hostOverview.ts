@@ -1,9 +1,9 @@
 import type { Alert, HostCheck, HostCheckValue } from '../../api/types.ts';
 
 /**
- * The host page's summaries: what its sidebar pill, its section nav and its
- * State tiles say about the host, derived from data other cards already
- * read. Plain functions, so the rules are tested without a page.
+ * The host page's summaries: what its header pill, its tab counts, its
+ * State tiles and its checks summary say about the host, derived from data
+ * other cards already read. Plain functions, so the rules are tested without a page.
  */
 
 export interface AlertSummary {
@@ -110,4 +110,33 @@ export function stateTiles(checks: readonly HostCheck[]): StateTile[] {
     ...tile('disk', fullestDisk),
     ...tile('load', wholeHost('cpu', 'cpu.load1')),
   ];
+}
+
+/** How many of a host's checks stand at each verdict, for the Overview's
+ * checks summary. */
+export interface CheckCounts {
+  total: number;
+  ok: number;
+  warn: number;
+  crit: number;
+  unknown: number;
+}
+
+const WORST: readonly TileTone[] = ['crit', 'warn', 'unknown', 'ok'];
+
+/** A check's verdict: the worst current one among its readings (an ignored
+ * reading is not judged, so it does not count). A disabled check, or one
+ * with no current verdict at all, is unknown. */
+function checkTone(c: HostCheck): TileTone {
+  if (!c.enabled) return 'unknown';
+  const tones = (c.values ?? []).filter((v) => !v.ignored).map(toneOf);
+  if (tones.length === 0) return 'unknown';
+  return WORST.find((tone) => tones.includes(tone)) ?? 'unknown';
+}
+
+/** checkCounts counts each check once, by its worst current verdict. */
+export function checkCounts(checks: readonly HostCheck[]): CheckCounts {
+  const counts: CheckCounts = { total: checks.length, ok: 0, warn: 0, crit: 0, unknown: 0 };
+  for (const c of checks) counts[checkTone(c)] += 1;
+  return counts;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crumbLabels as crumbLabelsFor } from './breadcrumbs.ts';
+import { crumbLabels as crumbLabelsFor, hostIdInPath } from './breadcrumbs.ts';
 import { en } from '../i18n/en/index.ts';
 import { de } from '../i18n/de/index.ts';
 
@@ -51,6 +51,23 @@ describe('crumbLabels', () => {
     expect(crumbLabels(`/o/acme/settings/members/${id}`, 'acme')).toEqual(['Settings', 'Members', 'Member']);
     expect(crumbLabels(`/o/acme/settings/users/${id}`, 'acme')).toEqual(['Settings', 'Users', 'Account']);
     expect(crumbLabelsFor(`/o/acme/settings/users/${id}`, 'acme', de)).toEqual(['Einstellungen', 'Benutzer', 'Konto']);
+  });
+
+  it('names a host by its name once the caller knows it', () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    const names = { [`hosts/${id}`]: 'web-04.fra' };
+    expect(crumbLabelsFor(`/o/acme/hosts/${id}`, 'acme', en, names)).toEqual(['Hosts', 'web-04.fra']);
+    // Only under the segment it was given for: a run with the same id is not the host.
+    expect(crumbLabelsFor(`/o/acme/runs/${id}`, 'acme', en, names)).toEqual(['Runs', '550e8400']);
+  });
+
+  it('finds the host id in a host page path', () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    expect(hostIdInPath(`/o/acme/hosts/${id}`, 'acme')).toBe(id);
+    expect(hostIdInPath(`/o/acme/hosts/${id}/`, 'acme')).toBe(id);
+    expect(hostIdInPath('/o/acme/hosts', 'acme')).toBeUndefined();
+    expect(hostIdInPath(`/o/acme/runs/${id}`, 'acme')).toBeUndefined();
+    expect(hostIdInPath(`/o/other/hosts/${id}`, 'acme')).toBeUndefined();
   });
 
   it('shows a non-UUID unknown segment verbatim', () => {

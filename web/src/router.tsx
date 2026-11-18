@@ -19,6 +19,7 @@ import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
 import { validateHostsSearch } from './features/hosts/hostsSearch.ts';
+import { validateHostSearch } from './features/hosts/hostTabs.ts';
 import { HostDetailPage } from './features/hosts/HostDetailPage.tsx';
 import { FleetPage } from './features/fleet/FleetPage.tsx';
 import { AlertsPage } from './features/alerts/AlertsPage.tsx';
@@ -188,6 +189,8 @@ const hostsRoute = createRoute({
 const hostDetailRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/hosts/$id',
+  // The open tab (?tab=checks); Overview, the default, is left out.
+  validateSearch: validateHostSearch,
   component: HostDetailPage,
 });
 

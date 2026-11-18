@@ -9,7 +9,7 @@ export type CapabilityKind = 'managed' | 'monitored';
  * read-only pill: "Managed" / "Monitored" in the ok style when on, a muted
  * "not managed" / "not monitored" when off. It is deliberately not
  * operable: the whole row is a link, and switching a capability is a row
- * menu action (or the switch on the host page).
+ * menu action (or the host's Edit dialog).
  */
 export function CapabilityCell({ kind, on }: { kind: CapabilityKind; on: boolean }) {
   const t = useT();

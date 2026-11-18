@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HostCheck } from '../../api/types.ts';
 import { check, reading } from '../../test/hostDetail.tsx';
-import { stateTiles, summarizeAlerts, systemLabel } from './hostOverview.ts';
+import { checkCounts, stateTiles, summarizeAlerts, systemLabel } from './hostOverview.ts';
 
 const checks = (...list: unknown[]) => list as HostCheck[];
 
@@ -92,5 +92,34 @@ describe('stateTiles', () => {
       ),
     );
     expect(tiles.map((tile) => tile.tone)).toEqual(['unknown', 'unknown', 'unknown']);
+  });
+});
+
+describe('checkCounts', () => {
+  it('counts each check once, by its worst current verdict', () => {
+    const counts = checkCounts(
+      checks(
+        check('cpu', 'cpu', [reading('cpu.used_pct', 5), reading('cpu.load1', 9, { state: 'warn' })]),
+        check('disk', 'disk', [reading('disk.used_pct', 97, { item: '/', state: 'crit' }), reading('disk.used_pct', 80, { item: '/var', state: 'warn' })]),
+        check('mem', 'memory', [reading('mem.used_pct', 40)]),
+        check('http', 'http', []),
+      ),
+    );
+    expect(counts).toEqual({ total: 4, ok: 1, warn: 1, crit: 1, unknown: 1 });
+  });
+
+  it.each([
+    { name: 'a stale reading', values: [reading('m', 1, { state: 'crit', stale: true })], want: 'unknown' },
+    { name: 'a stale verdict', values: [reading('m', 1, { state: 'warn', state_stale: true })], want: 'unknown' },
+    { name: 'no verdict yet', values: [reading('m', 1, { state: null })], want: 'unknown' },
+    { name: 'an ignored crit beside an ok', values: [reading('m', 1, { state: 'crit', ignored: true }), reading('n', 1)], want: 'ok' },
+  ] as const)('$name reads as $want', ({ values, want }) => {
+    const counts = checkCounts(checks(check('c', 'cpu', [...values])));
+    expect(counts[want]).toBe(1);
+    expect(counts.total).toBe(1);
+  });
+
+  it('counts a disabled check as unknown, whatever it last said', () => {
+    expect(checkCounts(checks(check('c', 'cpu', [reading('m', 1, { state: 'crit' })], { enabled: false })))).toMatchObject({ crit: 0, unknown: 1 });
   });
 });

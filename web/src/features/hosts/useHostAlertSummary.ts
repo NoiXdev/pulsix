@@ -3,7 +3,7 @@ import { summarizeAlerts, type AlertSummary } from './hostOverview.ts';
 
 /**
  * useHostAlertSummary counts the host's open alerts for the page's pill,
- * its section nav and the "still open" line. It reads exactly what
+ * its Alerts tab count and the "still open" line. It reads exactly what
  * HostAlertsCard reads (`host=<id>&state=open`, the same filter object and
  * so the same query), so the page asks once for both. Undefined until the
  * answer is there, or when the caller may not read checks.

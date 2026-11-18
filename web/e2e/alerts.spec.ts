@@ -167,6 +167,8 @@ function cpuRow(page: Page): Locator {
  * a 30s refetchInterval) — fleet.spec.ts's own helper, verbatim. */
 async function waitForCpuState(page: Page, hostName: string, want: string, timeout: number): Promise<void> {
   await openHost(page, hostName);
+  // The value rows live on the host page's Checks tab.
+  await page.getByRole('tab', { name: /^Checks/ }).click();
   await expect(cpuRow(page).getByText(want, { exact: true })).toBeVisible({ timeout });
 }
 

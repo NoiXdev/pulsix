@@ -95,6 +95,8 @@ function cpuRow(page: Page) {
  * this" reality FleetPage's own totals line documents, except this one
  * page does poll on its own. */
 async function waitForCpuState(page: Page, want: string, timeout: number): Promise<void> {
+  // The value rows live on the host page's Checks tab.
+  await page.getByRole('tab', { name: /^Checks/ }).click();
   await expect(cpuRow(page).getByText(want, { exact: true })).toBeVisible({ timeout });
 }
 

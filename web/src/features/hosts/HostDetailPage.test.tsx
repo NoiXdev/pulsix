@@ -2,24 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
-import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { agentBody, alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
+import { mockApi, type MockRequest, type MockRoute } from '../../test/mockApi.ts';
+import { agentBody, alertBody, check, HOST, hostRoutes, NOW, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
 import { clippedElements } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 
-const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
+const renderPage = (qc?: QueryClient, path?: string) => renderAt(HostDetailPage, qc, path);
+const renderTab = (tab: string) => renderAt(HostDetailPage, undefined, `/o/acme/hosts/h1?tab=${tab}`);
 
-/** The section nav, as label → count ('' for an item without one). */
-function navItems(): Array<[string, string]> {
-  const nav = screen.getByRole('navigation', { name: 'Sections' });
-  return within(nav)
-    .getAllByRole('link')
-    .map((a) => {
-      const spans = a.querySelectorAll('span');
+/** The tab strip, as label → count ('' for a tab without one). */
+function tabItems(): Array<[string, string]> {
+  const list = screen.getByRole('tablist', { name: 'Host sections' });
+  return within(list)
+    .getAllByRole('tab')
+    .map((tab) => {
+      const spans = tab.querySelectorAll('span');
       return [spans[0]?.textContent ?? '', spans[1]?.textContent ?? ''];
     });
 }
+
+const tab = (name: string) => screen.getByRole('tab', { name: new RegExp(`^${name}`) });
+const selectedTab = () =>
+  screen
+    .getAllByRole('tab')
+    .find((t) => t.getAttribute('aria-selected') === 'true')
+    ?.querySelector('span')?.textContent;
+const panel = () => within(screen.getByRole('tabpanel'));
 
 const MONITORED_CHECKS = {
   host_id: 'h1',
@@ -27,70 +36,147 @@ const MONITORED_CHECKS = {
   checks: [check('cpu', 'cpu', [reading('cpu.used_pct', 23)]), check('memory', 'memory', [reading('mem.used_pct', 61)])],
 };
 
+const monitoredRoutes = (extra: Record<string, MockRoute> = {}, role = 'admin') =>
+  hostRoutes(
+    { host: { managed: true, monitored: true }, role },
+    {
+      'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+      ...extra,
+    },
+  );
+
 describe('HostDetailPage', () => {
-  it('renders sidebar facts and section nav', async () => {
-    mockApi(
-      hostRoutes(
-        { host: { managed: true, monitored: true } },
-        {
-          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
-          'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn'), alertBody('a2', 'warn')], next_cursor: '' },
-          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
-        },
-      ),
-    );
-    renderPage();
+  it('shows the header and the tabs with their counts, on Overview by default', async () => {
+    mockApi(monitoredRoutes({ 'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn'), alertBody('a2', 'warn')], next_cursor: '' } }));
+    const { router } = renderPage();
 
     expect(await screen.findByRole('heading', { level: 1, name: 'web-04.fra' })).toBeInTheDocument();
     const facts = within(screen.getByTestId('host-facts'));
-    expect(facts.getByText('Address')).toBeInTheDocument();
     expect(facts.getByText('203.0.113.4')).toBeInTheDocument();
     expect(await facts.findByText('fra-1')).toBeInTheDocument();
     expect(facts.getByText('debian 13')).toBeInTheDocument();
     expect(await screen.findByText('2 warnings')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run command' })).toBeInTheDocument();
 
     await waitFor(() =>
-      expect(navItems()).toEqual([
-        ['State', ''],
-        ['Alerts', '2'],
+      expect(tabItems()).toEqual([
+        ['Overview', ''],
         ['Checks', '2'],
+        ['Alerts', '2'],
         ['Runs', ''],
-        ['Connection & SSH', ''],
-        ['Inventory', ''],
-        ['Facts', ''],
+        ['Inventory & facts', ''],
+        ['Connection', ''],
       ]),
     );
-    const alertsLink = within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('link', { name: /Alerts/ });
-    expect(alertsLink).toHaveAttribute('href', '#alerts');
-    for (const id of ['state', 'alerts', 'checks', 'runs', 'connection', 'inventory', 'facts']) {
-      expect(document.getElementById(id)).not.toBeNull();
-    }
-    // The section titles name the cards; the cards no longer repeat them.
-    expect(screen.queryByRole('heading', { name: 'Monitoring' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Manage checks' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Full history/ })).toHaveAttribute('href', '/o/acme/alerts?host=h1');
+    expect(selectedTab()).toBe('Overview');
+    // Open alerts are highlighted; the checks count is not.
+    expect(tab('Alerts').querySelector('[data-tone]')).toHaveAttribute('data-tone', 'warn');
+    expect(tab('Checks').querySelector('[data-tone]')).toBeNull();
+    expect(router.state.location.search).toEqual({});
   });
 
-  it('titles the sections at level 2 and the cards inside them at level 3', async () => {
+  it('switches tabs and keeps the open one in the URL', async () => {
+    const user = userEvent.setup();
+    mockApi(monitoredRoutes());
+    const { router } = renderPage();
+
+    await user.click(await screen.findByRole('tab', { name: /^Checks/ }));
+    expect(selectedTab()).toBe('Checks');
+    expect(router.state.location.search).toEqual({ tab: 'checks' });
+    expect(panel().getByRole('link', { name: 'Manage checks' })).toBeInTheDocument();
+
+    await user.click(tab('Inventory & facts'));
+    expect(router.state.location.search).toEqual({ tab: 'inventory' });
+    expect(panel().getByRole('region', { name: 'Facts' })).toBeInTheDocument();
+
+    await user.click(tab('Overview'));
+    expect(router.state.location.search).toEqual({});
+    expect(selectedTab()).toBe('Overview');
+  });
+
+  it('moves between the tabs with the arrow keys', async () => {
+    const user = userEvent.setup();
+    mockApi(monitoredRoutes());
+    const { router } = renderPage();
+
+    const overview = await screen.findByRole('tab', { name: /^Overview/ });
+    expect(overview).toHaveAttribute('tabindex', '0');
+    expect(tab('Checks')).toHaveAttribute('tabindex', '-1');
+    overview.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(tab('Checks')).toHaveFocus();
+    expect(router.state.location.search).toEqual({ tab: 'checks' });
+    await user.keyboard('{End}');
+    expect(tab('Connection')).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(tab('Overview')).toHaveFocus();
+  });
+
+  it('opens the tab the URL names', async () => {
+    mockApi(monitoredRoutes());
+    renderTab('connection');
+
+    await screen.findByRole('tablist', { name: 'Host sections' });
+    expect(selectedTab()).toBe('Connection');
+    expect(await panel().findByRole('heading', { level: 3, name: 'SSH access' })).toBeInTheDocument();
+    expect(panel().getByRole('heading', { level: 3, name: 'Agent' })).toBeInTheDocument();
+    expect(panel().getByRole('heading', { level: 2, name: 'Connection & SSH' })).toBeInTheDocument();
+  });
+
+  it('falls back to Overview for a tab it does not know', async () => {
+    mockApi(monitoredRoutes());
+    renderTab('nope');
+
+    await screen.findByRole('tablist', { name: 'Host sections' });
+    expect(selectedTab()).toBe('Overview');
+  });
+
+  it('overview: key metrics, open alerts, the last runs, connection and checks at a glance', async () => {
+    const user = userEvent.setup();
+    let jobsAsked: Record<string, string> = {};
     mockApi(
-      hostRoutes(
-        { host: { managed: true, monitored: true } },
-        {
-          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
-          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+      monitoredRoutes({
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          ...MONITORED_CHECKS,
+          checks: [...MONITORED_CHECKS.checks, check('disk', 'disk', [reading('disk.used_pct', 91, { item: '/', state: 'warn' })])],
         },
-      ),
+        'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn')], next_cursor: '' },
+        'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+          jobsAsked = Object.fromEntries(req.search.entries());
+          return { jobs: [], next_cursor: '' };
+        },
+        'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: 'ops', port: 2222, bastion_mode: 'inherit' } },
+        'GET /api/v1/orgs/acme/hosts/h1/connection-test': {
+          test: { at: NOW, ok: true, host_key: 'SHA256:x', host_key_state: 'pinned', checks: [] },
+        },
+      }),
     );
     renderPage();
 
-    const connection = within(await screen.findByRole('region', { name: 'Connection & SSH' }));
-    expect(await connection.findByRole('heading', { level: 3, name: 'SSH access' })).toBeInTheDocument();
-    expect(connection.getByRole('heading', { level: 3, name: 'Agent' })).toBeInTheDocument();
-    expect(connection.queryByRole('heading', { level: 2, name: 'SSH access' })).not.toBeInTheDocument();
-    await screen.findByText('23 %');
+    expect(await screen.findByText('23 %')).toBeInTheDocument();
+    expect(await screen.findByTestId('alert-open')).toBeInTheDocument();
+    await waitFor(() => expect(jobsAsked).toMatchObject({ host_id: 'h1', limit: '3' }));
 
-    const sections = ['State', 'Alerts', 'Checks', 'Runs', 'Connection & SSH', 'Inventory', 'Facts'];
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(sections);
+    const connection = within(screen.getByRole('region', { name: 'Connection' }));
+    expect(await connection.findByText('ops@203.0.113.4:2222')).toBeInTheDocument();
+    expect(await connection.findByText('direct connection')).toBeInTheDocument();
+    expect(await connection.findByText('ok')).toBeInTheDocument();
+
+    const checks = within(screen.getByRole('region', { name: 'Checks' }));
+    expect(checks.getByText('2 ok')).toBeInTheDocument();
+    expect(checks.getByText('1 warning')).toBeInTheDocument();
+    expect(checks.queryByText(/critical/)).not.toBeInTheDocument();
+
+    await user.click(checks.getByRole('button', { name: 'All 3' }));
+    expect(selectedTab()).toBe('Checks');
+    await user.click(tab('Overview'));
+    await user.click(await screen.findByRole('button', { name: 'All runs' }));
+    expect(selectedTab()).toBe('Runs');
+    expect(panel().getByRole('link', { name: 'All runs for this host' })).toBeInTheDocument();
+    await user.click(tab('Overview'));
+    await user.click(await within(screen.getByRole('region', { name: 'Connection' })).findByRole('button', { name: 'Change…' }));
+    expect(selectedTab()).toBe('Connection');
   });
 
   it('reads the organization once for the whole page', async () => {
@@ -108,7 +194,7 @@ describe('HostDetailPage', () => {
     );
     renderPage();
 
-    // The page's own role query is the only one: the sidebar and the host
+    // The page's own role query is the only one: the header and the host
     // actions take the role from it rather than asking again.
     await screen.findByRole('button', { name: 'Run command' });
     await screen.findByRole('heading', { level: 1, name: 'web-04.fra' });
@@ -116,40 +202,48 @@ describe('HostDetailPage', () => {
     expect(orgGets).toBe(1);
   });
 
-  it('offers snooze on the Alerts section to checks.write and nothing to a viewer', async () => {
-    const routes = (role: string) =>
-      hostRoutes(
-        { host: { managed: true, monitored: true }, role },
+  it('alerts tab: open alerts with snooze for an operator, the history link, and who is notified folded away', async () => {
+    const user = userEvent.setup();
+    const alerts = { 'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn')], next_cursor: '' } };
+    let routesAsked = 0;
+    mockApi(
+      monitoredRoutes(
         {
-          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
-          'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn')], next_cursor: '' },
-          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+          ...alerts,
+          'GET /api/v1/orgs/acme/hosts/h1/alert-routes': () => {
+            routesAsked += 1;
+            return { routes: [] };
+          },
         },
-      );
-    mockApi(routes('operator'));
-    const { unmount } = renderPage();
-    const alerts = await screen.findByTestId('alert-open');
-    const section = alerts.closest('section') ?? document.getElementById('alerts')!;
-    expect(await within(section).findByRole('button', { name: /^snooze$/i })).toBeInTheDocument();
-    expect(within(section).getByRole('button', { name: /^acknowledge$/i })).toBeInTheDocument();
+        'operator',
+      ),
+    );
+    const { unmount } = renderTab('alerts');
+    await screen.findByTestId('alert-open');
+    expect(await panel().findByRole('button', { name: /^snooze$/i })).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: /^acknowledge$/i })).toBeInTheDocument();
+    expect(panel().getByRole('link', { name: /Full history/ })).toHaveAttribute('href', '/o/acme/alerts?host=h1');
+
+    const who = panel().getByRole('button', { name: 'Who is notified?' });
+    expect(who).toHaveAttribute('aria-expanded', 'false');
+    expect(panel().queryByRole('heading', { name: 'Alert routes' })).not.toBeInTheDocument();
+    expect(routesAsked).toBe(0);
+    await user.click(who);
+    expect(who).toHaveAttribute('aria-expanded', 'true');
+    expect(await panel().findByRole('heading', { name: 'Alert routes' })).toBeInTheDocument();
     unmount();
 
-    mockApi(routes('viewer'));
-    renderPage();
+    mockApi(monitoredRoutes(alerts, 'viewer'));
+    renderTab('alerts');
     await screen.findByTestId('alert-open');
     expect(screen.queryByRole('button', { name: /^snooze$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
   });
 
   it('no clipped cards', async () => {
-    mockApi(
-      hostRoutes(
-        { host: { managed: true, monitored: true } },
-        { 'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS, 'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] } },
-      ),
-    );
+    mockApi(monitoredRoutes());
     const { container } = renderPage();
-    await screen.findByRole('navigation');
+    await screen.findByRole('tablist');
     await screen.findByText('23 %');
 
     // A card that hides its overflow at a fixed height cuts its content off;
@@ -157,7 +251,8 @@ describe('HostDetailPage', () => {
     expect(clippedElements(container)).toEqual([]);
   });
 
-  it('monitored off hides state, alerts and checks and shows the hint', async () => {
+  it('monitored off: the hint stands in on Overview, Checks and Alerts, and nothing is measured', async () => {
+    const user = userEvent.setup();
     const asked: string[] = [];
     mockApi(
       hostRoutes(
@@ -173,12 +268,23 @@ describe('HostDetailPage', () => {
     );
     renderPage();
 
-    expect(await screen.findByText('Monitoring is off')).toBeInTheDocument();
-    expect(screen.getByText('No checks are measured and no alerts raised.')).toBeInTheDocument();
-    expect(screen.queryByText(/cpu/i)).not.toBeInTheDocument();
+    await screen.findByRole('tabpanel');
+    expect(await panel().findByText('Monitoring is off')).toBeInTheDocument();
+    expect(panel().getByText('No checks are measured and no alerts raised.')).toBeInTheDocument();
+    // Runs and the connection keep their place on Overview.
+    expect(panel().getByRole('region', { name: 'Runs' })).toBeInTheDocument();
+    expect(panel().getByRole('region', { name: 'Connection' })).toBeInTheDocument();
+    expect(panel().queryByRole('region', { name: 'State' })).not.toBeInTheDocument();
     expect(screen.queryByText(/still open/)).not.toBeInTheDocument();
-    await waitFor(() => expect(navItems().map(([label]) => label)).toEqual(['Runs', 'Connection & SSH', 'Inventory', 'Facts']));
-    for (const id of ['state', 'alerts', 'checks']) expect(document.getElementById(id)).toBeNull();
+
+    await user.click(tab('Checks'));
+    expect(panel().getByText('Monitoring is off')).toBeInTheDocument();
+    expect(panel().queryByRole('link', { name: 'Manage checks' })).not.toBeInTheDocument();
+    await user.click(tab('Alerts'));
+    expect(panel().getByText('Monitoring is off')).toBeInTheDocument();
+    // The tabs stay, without counts.
+    expect(tabItems().every(([, count]) => count === '')).toBe(true);
+    expect(screen.queryByText(/cpu/i)).not.toBeInTheDocument();
     expect(asked).toEqual([]);
   });
 
@@ -212,11 +318,9 @@ describe('HostDetailPage', () => {
     const link = await screen.findByRole('link', { name: '2 alerts are still open from before' });
     expect(link).toHaveAttribute('href', '/o/acme/alerts?host=h1');
     expect(screen.getByText('Monitoring off')).toBeInTheDocument();
-    // The nav carries no counts while monitoring is off.
-    expect(navItems().every(([, count]) => count === '')).toBe(true);
   });
 
-  it('managed off keeps the agent in Connection and replaces SSH and Inventory with the hint', async () => {
+  it('managed off keeps the agent on Connection and puts the hint in Connection and Inventory', async () => {
     const user = userEvent.setup();
     let patched: unknown;
     mockApi(
@@ -230,40 +334,52 @@ describe('HostDetailPage', () => {
         },
       ),
     );
-    renderPage();
+    renderTab('connection');
 
-    const connection = within(await screen.findByRole('region', { name: 'Connection & SSH' }));
-    expect(await connection.findByRole('heading', { name: 'Agent' })).toBeInTheDocument();
-    expect(connection.getByText('Management is off')).toBeInTheDocument();
-    expect(connection.queryByText('SSH access')).not.toBeInTheDocument();
-    expect(connection.queryByRole('button', { name: 'Run connection test' })).not.toBeInTheDocument();
+    await screen.findByRole('tabpanel');
+    expect(await panel().findByRole('heading', { name: 'Agent' })).toBeInTheDocument();
+    expect(panel().getByText('Management is off')).toBeInTheDocument();
+    expect(panel().queryByText('SSH access')).not.toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Run connection test' })).not.toBeInTheDocument();
 
-    const inventory = within(screen.getByRole('region', { name: 'Inventory' }));
-    expect(inventory.getByText('Management is off')).toBeInTheDocument();
-    expect(inventory.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+    await user.click(tab('Inventory & facts'));
+    expect(panel().getByText('Management is off')).toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
 
-    await user.click(connection.getByRole('button', { name: 'Enable' }));
+    await user.click(tab('Connection'));
+    await user.click(panel().getByRole('button', { name: 'Enable' }));
     await waitFor(() => expect(patched).toEqual({ managed: true }));
   });
 
-  it('renders the facts the host reported', async () => {
+  it('renders the facts the host reported on Inventory & facts', async () => {
     mockApi(hostRoutes({ host: { facts: { os: 'linux', cpu_count: 4 } } }));
-    renderPage();
+    renderTab('inventory');
 
     const facts = within(await screen.findByRole('region', { name: 'Facts' }));
     expect(facts.getByText('cpu_count')).toBeInTheDocument();
     expect(facts.getByText('4')).toBeInTheDocument();
   });
 
-  it('Edit opens the dialog prefilled', async () => {
+  it('Edit in the menu opens the dialog prefilled', async () => {
     const user = userEvent.setup();
     mockApi(hostRoutes());
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit host web-04.fra' });
     expect(await within(dialog).findByLabelText('Name')).toHaveValue('web-04.fra');
     expect(within(dialog).getByLabelText('Address')).toHaveValue('203.0.113.4');
+  });
+
+  it('SSH access in the menu opens the Connection tab', async () => {
+    const user = userEvent.setup();
+    mockApi(hostRoutes({ host: { managed: true } }));
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'SSH access…' }));
+    expect(selectedTab()).toBe('Connection');
   });
 
   it('deletes the host from the menu after confirmation and returns to the list', async () => {
@@ -296,7 +412,7 @@ describe('HostDetailPage', () => {
     expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
   });
 
-  it('mounts the monitoring sections for a viewer who may read checks', async () => {
+  it('mounts the checks for a viewer who may read them', async () => {
     mockApi(
       hostRoutes(
         { role: 'viewer', host: { monitored: true } },
@@ -309,9 +425,9 @@ describe('HostDetailPage', () => {
         },
       ),
     );
-    renderPage();
+    renderTab('checks');
 
-    // The checks section is wired to the host's own id and to the caller's
+    // The checks tab is wired to the host's own id and to the caller's
     // checks.read — dropping either leaves the page with no monitoring at
     // all, which is what this pins.
     const checks = within(await screen.findByRole('region', { name: 'Checks' }));
@@ -348,7 +464,7 @@ describe('HostDetailPage', () => {
       return base(input, init);
     });
 
-    renderPage(qc);
+    renderPage(qc, '/o/acme/hosts/h1?tab=checks');
 
     // The whole page waits for the role rather than deciding without one:
     // exactly one "Loading…" (the page's), no host header rendered from
@@ -357,7 +473,7 @@ describe('HostDetailPage', () => {
     expect(screen.queryByText('web-04.fra')).not.toBeInTheDocument();
     expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
 
-    // And once the role lands the section is rendered for real.
+    // And once the role lands the tab is rendered for real.
     release();
     expect(await screen.findByRole('region', { name: 'Checks' })).toBeInTheDocument();
     expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
@@ -384,9 +500,10 @@ describe('HostDetailPage', () => {
 
     expect(await screen.findByText('Not found')).toBeInTheDocument();
   });
+
   // Backlog 3.57: a client whose agent is offline is frozen by the manager.
   // The page says it is off and when its agent was last seen, keeps its last
-  // state readable but muted, and the checks card does not call every
+  // state readable but muted, and the checks tab does not call every
   // verdict stale or offer to forget items that are only quiet because the
   // client is off.
   describe('client hosts', () => {
@@ -420,38 +537,38 @@ describe('HostDetailPage', () => {
       expect(await screen.findByText('last state: 2 warnings')).toBeInTheDocument();
       expect(screen.queryByText('2 warnings')).not.toBeInTheDocument();
       expect(screen.getByText(/This client is off/)).toBeInTheDocument();
-    });
-
-    it('does not call a frozen client\'s verdicts stale, mutes its tiles and offers no Forget', async () => {
-      mockApi(routes('client', 'offline'));
-      renderPage();
-
-      expect(await screen.findByText(/Not judged while the client is off/)).toBeInTheDocument();
-      expect(screen.queryByText('stale verdict')).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
       await waitFor(() => expect(document.querySelector('[data-tile]')).not.toBeNull());
       for (const tile of document.querySelectorAll('[data-tile]')) expect(tile).toHaveAttribute('data-tone', 'unknown');
     });
 
+    it("does not call a frozen client's verdicts stale and offers no Forget", async () => {
+      mockApi(routes('client', 'offline'));
+      renderTab('checks');
+
+      expect(await screen.findByText(/Not judged while the client is off/)).toBeInTheDocument();
+      expect(screen.queryByText('stale verdict')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
+    });
+
     it('tags an online client and judges it like a server', async () => {
       mockApi(routes('client', 'online'));
-      renderPage();
+      renderTab('checks');
 
       expect(await screen.findByText('Client')).toBeInTheDocument();
       expect(screen.queryByText('Off')).not.toBeInTheDocument();
       expect(await screen.findByText('2 warnings')).toBeInTheDocument();
-      expect(screen.getAllByText('stale verdict').length).toBeGreaterThan(0);
+      expect((await screen.findAllByText('stale verdict')).length).toBeGreaterThan(0);
       expect(screen.queryByText(/Not judged while the client is off/)).not.toBeInTheDocument();
     });
 
     it('leaves a server with an offline agent as it was', async () => {
       mockApi(routes('server', 'offline'));
-      renderPage();
+      renderTab('checks');
 
       expect(await screen.findByText('2 warnings')).toBeInTheDocument();
       expect(screen.queryByText('Off')).not.toBeInTheDocument();
       expect(screen.queryByText('Client')).not.toBeInTheDocument();
-      expect(screen.getAllByText('stale verdict').length).toBeGreaterThan(0);
+      expect((await screen.findAllByText('stale verdict')).length).toBeGreaterThan(0);
       expect(screen.getByRole('button', { name: 'Forget disk /data' })).toBeInTheDocument();
     });
   });

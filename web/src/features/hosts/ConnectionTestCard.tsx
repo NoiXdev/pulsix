@@ -1,11 +1,11 @@
-import { useNavigate } from '@tanstack/react-router';
 import { Activity, Lock } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { useClearHostKey, useHostTest, useSetHostKey, useStartConnectionTest } from '../../api/hooks/useHostOps.ts';
+import { useClearHostKey, useHostTest, useSetHostKey } from '../../api/hooks/useHostOps.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
+import { useRunConnectionTest } from './useRunConnectionTest.ts';
 import { useT } from '../../i18n/useT.ts';
 
 const KEY_STATE_TONE: Record<string, Tone> = { pinned: 'ok', changed: 'crit', unpinned: 'warn' };
@@ -41,23 +41,9 @@ export function ConnectionTestCard({ org, hostId, canWrite }: { org: string; hos
 
 function RunTestButton({ org, hostId }: { org: string; hostId: string }) {
   const t = useT();
-  const toast = useToast();
-  const start = useStartConnectionTest(org, hostId);
-  const navigate = useNavigate();
+  const test = useRunConnectionTest(org, hostId);
   return (
-    <Button
-      type="button"
-      disabled={start.isPending}
-      onClick={async () => {
-        try {
-          const { job_id } = await start.mutateAsync();
-          toast.show(t.hosts.connection.started);
-          await navigate({ to: '/o/$org/runs/$id', params: { org, id: job_id } });
-        } catch (err) {
-          toast.show(err instanceof Error ? err.message : t.hosts.connection.startFailed, 'destructive');
-        }
-      }}
-    >
+    <Button type="button" disabled={test.pending} onClick={() => void test.start()}>
       <Activity size={13} /> {t.hosts.connection.run}
     </Button>
   );

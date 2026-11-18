@@ -15,8 +15,12 @@ function shortenId(segment: string): string {
  * shown verbatim, shortened if it looks like a UUID; the id after members/
  * or users/ reads "Member" or "Account" instead. The labels come from
  * the catalogue (`t.shell.crumbs`), so the trail follows the language.
+ *
+ * `names` gives an id segment a name the caller already knows, keyed by
+ * the segment before it and the id (`hosts/<id>` → the host's name), so a
+ * host page reads "Hosts > web-04.fra" rather than a piece of its id.
  */
-export function crumbLabels(pathname: string, orgSlug: string, t: Messages): string[] {
+export function crumbLabels(pathname: string, orgSlug: string, t: Messages, names: Readonly<Record<string, string>> = {}): string[] {
   const prefix = `/o/${orgSlug}/`;
   if (!pathname.startsWith(prefix)) return [];
   const segments = pathname.slice(prefix.length).split('/').filter(Boolean);
@@ -25,10 +29,21 @@ export function crumbLabels(pathname: string, orgSlug: string, t: Messages): str
   // Own keys only: a host id that happens to read "constructor" is not a label.
   return segments.map((segment, i) => {
     if (Object.hasOwn(labels, segment)) return labels[segment];
+    const parent = segments[i - 1];
+    const named = parent === undefined ? undefined : `${parent}/${segment}`;
+    if (named !== undefined && Object.hasOwn(names, named)) return names[named];
     // A person's id under members/ or users/ is named by what it is: a
     // shortened id says nothing about a person.
-    const parent = segments[i - 1];
     if (parent !== undefined && Object.hasOwn(idLabels, parent)) return idLabels[parent];
     return shortenId(segment);
   });
+}
+
+/** hostIdInPath is the host id of a host page (`/o/<org>/hosts/<id>`),
+ * undefined for any other path. */
+export function hostIdInPath(pathname: string, orgSlug: string): string | undefined {
+  const prefix = `/o/${orgSlug}/hosts/`;
+  if (!pathname.startsWith(prefix)) return undefined;
+  const rest = pathname.slice(prefix.length).split('/').filter(Boolean);
+  return rest.length === 1 ? rest[0] : undefined;
 }

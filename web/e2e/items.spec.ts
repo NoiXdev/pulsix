@@ -137,6 +137,8 @@ function mountRow(page: Page): Locator {
  * for "no reading yet" (that case renders no row at all, "No reading yet."
  * instead) — so the row's own appearance already is the reading. */
 async function waitForMountReading(page: Page, timeout: number): Promise<void> {
+  // The value rows live on the host page's Checks tab.
+  await page.getByRole('tab', { name: /^Checks/ }).click();
   await expect(mountRow(page)).toBeVisible({ timeout });
 }
 

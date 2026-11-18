@@ -68,16 +68,16 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     // --- The host it created carries what the agent reported -----------
     await row.click();
     await expect(page.getByRole('heading', { name: AGENT_HOST })).toBeVisible();
-    // The Agent card, with the state the list showed.
-    const agentCard = page.getByRole('main').locator('section, div').filter({ hasText: 'Agent' }).first();
-    await expect(agentCard).toBeVisible();
-    // Facts the agent collected from the machine it runs on, and the
-    // automatic tag derived from them.
-    // The Facts section's heading: the section nav carries the same word.
+    // Enrolment is what makes a host monitored: the header says so.
+    await expect(page.getByTestId('host-capabilities').getByText('Monitored', { exact: true })).toBeVisible();
+    // The Agent card, on the Connection tab, with the state the list showed.
+    await page.getByRole('tab', { name: 'Connection' }).click();
+    await expect(page.getByRole('tabpanel').getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
+    // Facts the agent collected from the machine it runs on, on the
+    // Inventory & facts tab.
+    await page.getByRole('tab', { name: 'Inventory & facts' }).click();
     await expect(page.getByRole('heading', { name: 'Facts', exact: true })).toBeVisible();
-    await expect(page.getByText(/^os$/).first()).toBeVisible({ timeout: 60_000 });
-    // Enrolment is what makes a host monitored.
-    await expect(page.getByRole('switch', { name: /Monitored/i })).toBeChecked();
+    await expect(page.getByRole('tabpanel').getByText(/^os$/).first()).toBeVisible({ timeout: 60_000 });
 
     // --- Revoking ends it ----------------------------------------------
     await page.goto(`${base}/agents`);

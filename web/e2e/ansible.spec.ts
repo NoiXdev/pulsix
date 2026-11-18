@@ -127,6 +127,8 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await toast(page, `Host ${HOST_NAME} created`);
 
   await page.getByRole('link', { name: HOST_NAME, exact: true }).click();
+  // The SSH settings and the connection test are on the Connection tab.
+  await page.getByRole('tab', { name: 'Connection' }).click();
   await page.getByLabel('User').fill('ansible');
   await pickOption(page, 'Credential', 'ansible-e2e-login');
   await page.getByRole('button', { name: 'Save SSH settings' }).click();

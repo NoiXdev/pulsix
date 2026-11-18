@@ -12,6 +12,7 @@ import { ToastProvider } from '../ui/toast.tsx';
 import { ConfirmProvider } from '../ui/confirm.tsx';
 import type { MockRoute } from './mockApi.ts';
 import { SearchEcho } from './SearchEcho.tsx';
+import { validateHostSearch } from '../features/hosts/hostTabs.ts';
 
 /**
  * Shared fixtures for the host page's tests (HostDetailPage and the
@@ -120,14 +121,18 @@ export function hostRoutes(
   };
 }
 
-/** renderAt mounts `page` at /o/acme/hosts/h1 inside a router that also has
+/** renderAt mounts `page` at /o/acme/hosts/h1 (or `path`, to start on a tab) inside a router that also has
  * the host list, the alerts page and the runs page (each echoing its
  * `?host=`), so links and navigation off the page can be followed. */
-export function renderAt(page: () => ReactNode, qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+export function renderAt(
+  page: () => ReactNode,
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  path = '/o/acme/hosts/h1',
+) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
-  const detailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: page });
+  const detailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', validateSearch: validateHostSearch, component: page });
   const search = (s: Record<string, unknown>) => ({ host: typeof s.host === 'string' ? s.host : undefined });
   const alertsRoute = createRoute({
     getParentRoute: () => orgRoute,
@@ -146,7 +151,7 @@ export function renderAt(page: () => ReactNode, qc = new QueryClient({ defaultOp
   const routeTree = rootRoute.addChildren([
     orgRoute.addChildren([hostsRoute, detailRoute, alertsRoute, runsRoute, runRoute, checksRoute]),
   ]);
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }) });
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [path] }) });
 
   const result = render(
     <QueryClientProvider client={qc}>

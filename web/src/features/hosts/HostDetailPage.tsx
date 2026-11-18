@@ -1,7 +1,5 @@
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { Button } from '../../ui/button.tsx';
-import { Card } from '../../ui/table.tsx';
-import { DetailLayout, DisabledHint, Section, type SectionNavItem } from '../../ui/detail-layout.tsx';
+import type { ReactNode } from 'react';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useHost } from '../../api/hooks/useHosts.ts';
@@ -11,31 +9,30 @@ import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
-import { HostAlertsCard, HostAlertsHistoryLink } from '../alerts/HostAlertsCard.tsx';
-import { HostAgentCard } from './HostAgentCard.tsx';
-import { HostAlertRoutesCard } from './HostAlertRoutesCard.tsx';
-import { HostChecksCard, ManageChecksLink } from './HostChecksCard.tsx';
-import { EffectiveRulesPanel } from './EffectiveRulesPanel.tsx';
-import { HostInventoryCard } from './HostInventoryCard.tsx';
-import { HostSshCard } from './HostSshCard.tsx';
-import { ConnectionTestCard } from './ConnectionTestCard.tsx';
-import { HostSidebar } from './HostSidebar.tsx';
-import { HostStateSection } from './HostStateSection.tsx';
+import { HostAlertsTab } from './HostAlertsTab.tsx';
+import { HostChecksTab } from './HostChecksTab.tsx';
+import { HostConnectionTab } from './HostConnectionTab.tsx';
+import { HostHeader } from './HostHeader.tsx';
+import { HostInventoryTab } from './HostInventoryTab.tsx';
+import { HostOverviewTab } from './HostOverviewTab.tsx';
 import { HostRunsSection } from './HostRunsSection.tsx';
-import { useHostActions, type HostActions } from './useHostActions.tsx';
+import { HostTabs, type HostTabItem } from './HostTabs.tsx';
+import { HOST_PANEL_ID, hostTabId, parseHostTab, type HostTab } from './hostTabs.ts';
+import { useHostActions } from './useHostActions.tsx';
 import { useHostAlertSummary } from './useHostAlertSummary.ts';
 import { hostPresence } from './presence.ts';
 
 /**
- * HostDetailPage is one host on one page (layout B of the host-view
- * design): a sticky sidebar with who the host is, its capabilities, tags
- * and actions, and a column of sections — State, Alerts, Checks, Runs,
- * Connection & SSH, Inventory, Facts — reachable from the sidebar's nav.
+ * HostDetailPage is one host on one page (the host-view tabs design,
+ * docs/superpowers/specs/2026-11-18-host-view-tabs-design.md): a full-width
+ * header with who the host is, its tags and actions, and below it tabs —
+ * Overview, Checks, Alerts, Runs, Inventory & facts, Connection — the open
+ * one in the URL (`?tab=`, Overview when absent).
  *
- * A capability that is off removes what depends on it rather than showing
- * it greyed out: an unmonitored host has no State, Alerts or Checks (one
- * "Monitoring is off" card stands in for all three), an unmanaged one no
- * SSH, connection test or inventory.
+ * A capability that is off keeps its tabs and says so inside them: an
+ * unmonitored host's Overview, Checks and Alerts show the "Monitoring is
+ * off" hint, an unmanaged host's Connection and Inventory the "Management
+ * is off" one.
  */
 export function HostDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
@@ -61,149 +58,66 @@ export function HostDetailPage() {
 function HostDetail({ org, host, role }: { org: string; host: Host; role: string }) {
   const t = useT();
   const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { tab?: unknown };
+  const tab = parseHostTab(search.tab);
   const actions = useHostActions(org, host, role, {
     onDeleted: () => void navigate({ to: '/o/$org/hosts', params: { org }, search: { q: undefined } }),
   });
   const canReadChecks = may(role, 'checks.read');
-  const canWrite = may(role, 'inventory.write');
   const alerts = useHostAlertSummary(org, host.id, canReadChecks);
   const checks = useHostChecks(org, host.id, canReadChecks && host.monitored);
   // Backlog 3.57: a client whose agent is offline is frozen — the manager
-  // keeps its last verdicts without judging them — so the sections below
-  // show them muted and say why. The same read HostAgentCard makes.
+  // keeps its last verdicts without judging them — so the tabs show them
+  // muted and say why. The same read the header and HostAgentCard make.
   const agent = useHostAgent(org, host.id);
   const frozen = hostPresence(host.kind, agent.data?.agent).kind === 'off';
-  const s = t.hosts.detail.section;
+  const openAlerts = alerts?.open ?? 0;
+  const tabs = t.hosts.detail.tabs;
+
+  const select = (next: HostTab) =>
+    void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id }, search: { tab: next === 'overview' ? undefined : next } });
+  // SSH access opens the Connection tab, where the SSH settings are.
+  const openSsh = () => select('connection');
 
   // Counts only while the host is monitored: with nothing measured, a
-  // number beside a section that is not there would have nothing to mean.
-  const nav: SectionNavItem[] = [
-    ...(host.monitored
-      ? [
-          { id: 'state', label: s.state },
-          { id: 'alerts', label: s.alerts, count: alerts?.open, tone: alerts && alerts.tone !== 'ok' ? alerts.tone : undefined },
-          { id: 'checks', label: s.checks, count: checks.data ? (checks.data.checks ?? []).length : undefined },
-        ]
-      : []),
-    { id: 'runs', label: s.runs },
-    { id: 'connection', label: s.connection },
-    { id: 'inventory', label: s.inventory },
-    { id: 'facts', label: s.facts },
+  // number beside a tab that only holds the hint would have nothing to mean.
+  const items: HostTabItem[] = [
+    { id: 'overview', label: tabs.overview },
+    {
+      id: 'checks',
+      label: tabs.checks,
+      count: host.monitored && checks.data ? (checks.data.checks ?? []).length : undefined,
+    },
+    {
+      id: 'alerts',
+      label: tabs.alerts,
+      count: host.monitored ? alerts?.open : undefined,
+      tone: host.monitored && alerts && alerts.tone !== 'ok' ? alerts.tone : undefined,
+    },
+    { id: 'runs', label: tabs.runs },
+    { id: 'inventory', label: tabs.inventory },
+    { id: 'connection', label: tabs.connection },
   ];
 
+  const panels: Record<HostTab, () => ReactNode> = {
+    overview: () => (
+      <HostOverviewTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} frozen={frozen} onTab={select} onSshAccess={openSsh} />
+    ),
+    checks: () => <HostChecksTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} frozen={frozen} />,
+    alerts: () => <HostAlertsTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} />,
+    runs: () => <HostRunsSection org={org} hostId={host.id} />,
+    inventory: () => <HostInventoryTab org={org} host={host} actions={actions} />,
+    connection: () => <HostConnectionTab org={org} host={host} role={role} actions={actions} />,
+  };
+
   return (
-    <>
-      <DetailLayout sidebar={<HostSidebar org={org} host={host} role={role} actions={actions} />} nav={nav} navLabel={t.common.sections}>
-        {host.monitored ? (
-          <>
-            <HostStateSection org={org} hostId={host.id} canRead={canReadChecks} frozen={frozen} />
-            <Section id="alerts" title={s.alerts} actions={<HostAlertsHistoryLink org={org} hostId={host.id} canRead={canReadChecks} />}>
-              <HostAlertsCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'alerts.handle')} />
-              <HostAlertRoutesCard org={org} hostId={host.id} canRead={may(role, 'channels.read')} />
-            </Section>
-            <Section id="checks" title={s.checks} actions={<ManageChecksLink org={org} canWrite={may(role, 'checks.write')} />}>
-              <HostChecksCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'checks.write')} frozen={frozen} />
-              <EffectiveRulesPanel org={org} hostId={host.id} canRead={canReadChecks} />
-            </Section>
-          </>
-        ) : (
-          <MonitoringOffHint org={org} hostId={host.id} openAlerts={alerts?.open ?? 0} actions={actions} />
-        )}
-        <HostRunsSection org={org} hostId={host.id} />
-        <Section id="connection" title={s.connection}>
-          <HostAgentCard org={org} hostId={host.id} hostName={host.name} zoneId={host.zone_id} canWrite={may(role, 'agents.write')} />
-          {host.managed ? (
-            <>
-              <HostSshCard org={org} hostId={host.id} revision={host.revision} managed canWrite={canWrite} canCreateCredential={may(role, 'credentials.write')} />
-              <ConnectionTestCard org={org} hostId={host.id} canWrite={canWrite} />
-            </>
-          ) : (
-            <ManagementOffHint actions={actions} withAction />
-          )}
-        </Section>
-        <Section id="inventory" title={s.inventory}>
-          {host.managed ? <HostInventoryCard org={org} hostId={host.id} managed /> : <ManagementOffHint actions={actions} />}
-        </Section>
-        <Section id="facts" title={s.facts}>
-          <FactsCard facts={host.facts} />
-        </Section>
-      </DetailLayout>
+    <div className="flex flex-col gap-5">
+      <HostHeader org={org} host={host} role={role} actions={actions} onSshAccess={openSsh} />
+      <HostTabs label={tabs.label} tabs={items} active={tab} onSelect={select} />
+      <div role="tabpanel" id={HOST_PANEL_ID} aria-labelledby={hostTabId(tab)} className="flex min-w-0 flex-col gap-8">
+        {panels[tab]()}
+      </div>
       {actions.dialogs}
-    </>
-  );
-}
-
-/** Stands in for State, Alerts and Checks while the host is not monitored.
- * Alerts opened before monitoring was switched off may still be open; they
- * are not hidden silently but counted, with the way to them. */
-function MonitoringOffHint({ org, hostId, openAlerts, actions }: { org: string; hostId: string; openAlerts: number; actions: HostActions }) {
-  const t = useT();
-  const m = t.hosts.detail.monitoringOff;
-  return (
-    <DisabledHint
-      title={m.title}
-      body={
-        <>
-          {m.body}
-          {openAlerts > 0 && (
-            <>
-              {' '}
-              <Link to="/o/$org/alerts" params={{ org }} search={{ host: hostId }} className="text-[var(--px-warn)] hover:underline">
-                {m.stillOpen(openAlerts)}
-              </Link>
-            </>
-          )}
-        </>
-      }
-      action={
-        actions.canSwitch ? (
-          <Button variant="primary" onClick={actions.toggleMonitoring}>
-            {t.hosts.detail.enable}
-          </Button>
-        ) : undefined
-      }
-    />
-  );
-}
-
-/** Stands in for what needs SSH while the host is not managed. Only one
- * of the two places it appears carries the Enable button. */
-function ManagementOffHint({ actions, withAction = false }: { actions: HostActions; withAction?: boolean }) {
-  const t = useT();
-  const m = t.hosts.detail.managementOff;
-  return (
-    <DisabledHint
-      title={m.title}
-      body={m.body}
-      action={
-        withAction && actions.canSwitch ? (
-          <Button variant="primary" onClick={actions.toggleManagement}>
-            {t.hosts.detail.enable}
-          </Button>
-        ) : undefined
-      }
-    />
-  );
-}
-
-/** Every fact the host reported, as reported. */
-function FactsCard({ facts }: { facts: Host['facts'] }) {
-  const t = useT();
-  const entries = Object.entries(facts ?? {});
-  return (
-    <Card className="px-4 py-2">
-      {entries.length === 0 ? (
-        <span className="py-1.5 text-xs text-muted-foreground">{t.hosts.detail.noFacts}</span>
-      ) : (
-        <dl className="flex flex-col">
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex justify-between gap-4 border-b border-border py-1.5 text-xs last:border-b-0">
-              <dt className="text-muted-foreground">{k}</dt>
-              <dd className="min-w-0 font-mono break-all text-foreground">{String(v)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-    </Card>
+    </div>
   );
 }
