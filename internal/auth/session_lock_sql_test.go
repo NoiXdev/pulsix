@@ -69,7 +69,9 @@ func TestLookupCarriesLockAndExpiry(t *testing.T) {
 // /auth/me disagree about when the same session ends.
 func TestReplaceReportsTheStoredExpiry(t *testing.T) {
 	ctx, q, _, uid, id, _ := newLockFixture(t)
-	nanos := time.Date(2026, 11, 17, 10, 0, 0, 123456789, time.UTC)
+	// Now, so the renewed session is still live when it is looked up, with
+	// nanoseconds Postgres cannot store.
+	nanos := time.Now().UTC().Truncate(time.Second).Add(123456789)
 	s := auth.NewSessions(q, func() time.Time { return nanos })
 
 	renewed, err := s.Replace(ctx, uid, id)
