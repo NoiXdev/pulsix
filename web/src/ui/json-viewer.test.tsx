@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToastProvider } from './toast.tsx';
@@ -125,5 +125,57 @@ describe('JsonViewer', () => {
       </ToastProvider>,
     );
     expect(screen.getByText('[]')).toBeInTheDocument();
+  });
+
+  // The dotted path of the props is ambiguous ("" is the document and an
+  // empty key; "a.b" a dotted key and a nested one): lines and folds are
+  // told apart by their key segments instead.
+  it('keeps an empty key and a dotted key apart from the paths they spell', async () => {
+    const user = userEvent.setup();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const doc = { '': { x: 1 }, 'a.b': { c: 1 }, a: { b: { c: 2 } } };
+    render(
+      <ToastProvider>
+        <JsonViewer value={doc} label="Doc" />
+      </ToastProvider>,
+    );
+    const shown = within(screen.getByRole('region', { name: 'Doc' }));
+    expect(shown.getAllByText('"c"', { selector: '[data-token]' })).toHaveLength(2);
+    // Folding the empty key leaves the document open; a key a dotted path
+    // cannot spell is named in brackets.
+    const empty = shown.getByRole('button', { name: 'Expand or collapse [""]' });
+    await user.click(empty);
+    expect(empty).toHaveAttribute('aria-expanded', 'false');
+    expect(shown.getByRole('button', { name: 'Expand or collapse document' })).toHaveAttribute('aria-expanded', 'true');
+    // Folding the dotted key leaves the nested a.b open.
+    const dotted = shown.getByRole('button', { name: 'Expand or collapse ["a.b"]' });
+    const nested = shown.getByRole('button', { name: 'Expand or collapse a.b' });
+    await user.click(dotted);
+    expect(dotted).toHaveAttribute('aria-expanded', 'false');
+    expect(nested).toHaveAttribute('aria-expanded', 'true');
+    expect(shown.getByText('2', { selector: '[data-token]' })).toBeInTheDocument();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('renders {"": 1} as one key', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(
+      <ToastProvider>
+        <JsonViewer value={{ '': 1, 'a.b': 1, a: { b: 2 } }} label="Doc" />
+      </ToastProvider>,
+    );
+    const shown = within(screen.getByRole('region', { name: 'Doc' }));
+    expect(shown.getByText('""', { selector: '[data-token]' })).toHaveAttribute('data-token', 'key');
+    expect(shown.getByText('"a.b"', { selector: '[data-token]' })).toBeInTheDocument();
+    expect(shown.getByText('2', { selector: '[data-token]' })).toBeInTheDocument();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('has no toolbar role: its buttons are plain tab stops', () => {
+    renderViewer();
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toBeInTheDocument();
   });
 });

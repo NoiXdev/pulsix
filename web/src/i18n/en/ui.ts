@@ -107,7 +107,6 @@ export const enUi = {
     empty: 'No samples in this range.',
   },
   jsonViewer: {
-    toolbar: 'JSON tools',
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
     copy: 'Copy',

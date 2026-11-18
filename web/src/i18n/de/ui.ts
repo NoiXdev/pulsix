@@ -100,7 +100,6 @@ export const deUi: Messages['ui'] = {
     empty: 'Keine Messwerte in diesem Zeitraum.',
   },
   jsonViewer: {
-    toolbar: 'JSON-Werkzeuge',
     expandAll: 'Alle aufklappen',
     collapseAll: 'Alle zuklappen',
     copy: 'Kopieren',
