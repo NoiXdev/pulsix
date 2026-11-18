@@ -76,7 +76,7 @@ export const enNotifications = {
     label: 'Notification channels',
     count: (n: number) => (n === 1 ? '1 channel' : `${n} channels`),
     noMatch: 'No channels match the filters.',
-    filters: { kind: 'Filter by kind', allKinds: 'All kinds', status: 'Filter by status', anyStatus: 'Any status' },
+    filters: { kind: 'Filter by kind', allKinds: 'All kinds', state: 'Filter by state', anyState: 'Any state' },
     columns: {
       channel: 'Channel',
       kind: 'Kind',
@@ -151,7 +151,7 @@ export const enNotifications = {
     subtitle: 'Which severities and alert events reach which notification channels',
     newRoute: 'New route',
     noMatch: 'No routes match the filters.',
-    filters: { status: 'Filter by status', anyStatus: 'Any status' },
+    filters: { state: 'Filter by state', anyState: 'Any state' },
     columns: {
       route: 'Route',
       appliesTo: 'Applies to',

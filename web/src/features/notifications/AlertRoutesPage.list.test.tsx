@@ -144,19 +144,25 @@ describe('AlertRoutesPage list', () => {
 describe('AlertRoutesPage filters', () => {
   const routes = [route('on-a'), route('off-b', { enabled: false }), route('on-c')];
 
-  it('reads the status from the URL and narrows the rows', async () => {
-    setup({ routes, initial: '/o/acme/settings/alert-routes?status=disabled' });
+  it('reads the state from the URL and narrows the rows', async () => {
+    setup({ routes, initial: '/o/acme/settings/alert-routes?state=disabled' });
     expect(await screen.findByText('1–1 of 1 route')).toBeInTheDocument();
     expect(firstCells()).toEqual(['off-b']);
     expect(screen.getByText('1 of 3 routes')).toBeInTheDocument();
+  });
+
+  it('still reads the earlier ?status= link', async () => {
+    setup({ routes, initial: '/o/acme/settings/alert-routes?status=disabled' });
+    expect(await screen.findByText('1 of 3 routes')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['off-b']);
   });
 
   it('writes the status to the URL and Reset clears it', async () => {
     const user = userEvent.setup();
     const router = setup({ routes });
     await screen.findByText('1–3 of 3 routes');
-    await pickOption(screen, 'Filter by status', 'enabled');
-    await waitFor(() => expect(router.state.location.search).toEqual({ status: 'enabled' }));
+    await pickOption(screen, 'Filter by state', 'enabled');
+    await waitFor(() => expect(router.state.location.search).toEqual({ state: 'enabled' }));
     expect(firstCells().sort()).toEqual(['on-a', 'on-c']);
     await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
     await waitFor(() => expect(router.state.location.search).toEqual({}));

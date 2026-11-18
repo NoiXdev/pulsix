@@ -70,7 +70,7 @@ export const deNotifications: Messages['notifications'] = {
     label: 'Benachrichtigungskanäle',
     count: (n: number) => (n === 1 ? '1 Kanal' : `${n} Kanäle`),
     noMatch: 'Keine Kanäle passen zu den Filtern.',
-    filters: { kind: 'Nach Art filtern', allKinds: 'Alle Arten', status: 'Nach Status filtern', anyStatus: 'Jeder Status' },
+    filters: { kind: 'Nach Art filtern', allKinds: 'Alle Arten', state: 'Nach Zustand filtern', anyState: 'Beliebiger Zustand' },
     columns: {
       channel: 'Kanal',
       kind: 'Art',
@@ -145,7 +145,7 @@ export const deNotifications: Messages['notifications'] = {
     subtitle: 'Welche Schweregrade und Alarmereignisse welche Benachrichtigungskanäle erreichen',
     newRoute: 'Neue Route',
     noMatch: 'Keine Routen passen zu den Filtern.',
-    filters: { status: 'Nach Status filtern', anyStatus: 'Jeder Status' },
+    filters: { state: 'Nach Zustand filtern', anyState: 'Beliebiger Zustand' },
     columns: {
       route: 'Route',
       appliesTo: 'Gilt für',

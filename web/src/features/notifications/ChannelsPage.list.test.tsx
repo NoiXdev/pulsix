@@ -120,8 +120,8 @@ describe('ChannelsPage filters', () => {
     const user = userEvent.setup();
     const router = setup({ channels });
     await screen.findByText('1–3 of 3 channels');
-    await pickOption(screen, 'Filter by status', 'disabled');
-    await waitFor(() => expect(router.state.location.search).toEqual({ status: 'disabled' }));
+    await pickOption(screen, 'Filter by state', 'disabled');
+    await waitFor(() => expect(router.state.location.search).toEqual({ state: 'disabled' }));
     expect(firstCells()).toEqual(['mail-off']);
     await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
     await waitFor(() => expect(router.state.location.search).toEqual({}));

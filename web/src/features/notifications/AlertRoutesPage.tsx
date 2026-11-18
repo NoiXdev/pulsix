@@ -160,11 +160,11 @@ export function AlertRoutesPage() {
         toolbar={
           <ListToolbar count={<ResultCount active={active} shown={shown.length} total={list.length} noun={a.count} />}>
             <FilterSelect
-              label={a.filters.status}
-              allLabel={a.filters.anyStatus}
+              label={a.filters.state}
+              allLabel={a.filters.anyState}
               options={ENABLED_STATES.map((v) => ({ value: v, label: v === 'enabled' ? m.enabled : m.disabled }))}
-              value={filters.status}
-              onChange={(v) => setFilter('status', v as typeof filters.status)}
+              value={filters.state}
+              onChange={(v) => setFilter('state', v as typeof filters.state)}
             />
             {active && <ResetFilters onReset={reset} />}
           </ListToolbar>
