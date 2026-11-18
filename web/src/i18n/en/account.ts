@@ -21,6 +21,8 @@ export const enAccount = {
   description: 'How you sign in and how you protect your session.',
   secondFactorActive: 'Second factor active',
   secondFactorRequired: 'Second factor required',
+  /** No factor, on an instance where it is optional (PULSIX_MFA_OPTIONAL). */
+  secondFactorOptional: 'Second factor optional',
   signIn: { title: 'Sign-in', description: 'How you sign in: password plus a second factor; passkeys replace both.' },
   session: {
     title: 'Session',
@@ -97,6 +99,11 @@ export const enAccount = {
     intro:
       'Changing how you sign in needs your second factor again. This keeps an unattended screen from being enough to take the account over.',
     codeLabel: 'Authenticator or recovery code',
+    /** For an account without a second factor while it is optional: the
+     * password is its step-up. */
+    introPassword:
+      'Changing how you sign in needs your password again. This keeps an unattended screen from being enough to take the account over.',
+    passwordLabel: 'Password',
     failed: 'could not confirm your second factor',
     refusedAgain: 'Confirming your identity did not work. Try again.',
   },

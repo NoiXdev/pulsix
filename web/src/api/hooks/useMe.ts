@@ -22,6 +22,16 @@ export function useMe(opts: { enabled?: boolean } = {}) {
 }
 
 /**
+ * useCachedMe reads the /auth/me answer already in the cache and never
+ * fetches it: for a dialog opened inside a signed-in page (the step-up, the
+ * session renewal), whose layout has read /auth/me already. It still
+ * follows later answers. `data` is undefined while nothing is cached.
+ */
+export function useCachedMe() {
+  return useQuery({ queryKey: meQueryKey, queryFn: meQueryFn, enabled: false });
+}
+
+/**
  * useSettledMe is useMe for a screen that redirects on what /auth/me says
  * (RootRedirect, EnrolmentLayout, ChangePasswordPage). It fetches on every
  * mount, and `settled` turns true once an answer has landed since this

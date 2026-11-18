@@ -6,7 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { ApiError } from '../../api/client.ts';
 import { renewSession } from '../../api/hooks/useAuth.ts';
-import { refetchMe } from '../../api/hooks/useMe.ts';
+import { refetchMe, useCachedMe } from '../../api/hooks/useMe.ts';
 import { useT } from '../../i18n/useT.ts';
 import { passkeysSupported, reauthWithPasskey } from '../auth/passkeys.ts';
 import { postSessionMessage } from '../lock/lockChannel.ts';
@@ -22,6 +22,10 @@ import { markRenewed } from '../../lib/sessionEnd.ts';
  * over to RenewBanner: a modal that made the page inert would stop the
  * person from saving what they are working on, which is the point of the
  * warning.
+ *
+ * An account whose password is its step-up (`password_step_up`: the second
+ * factor is optional on the instance and the account has none) renews with
+ * the password alone, so the code field is left out.
  */
 export function RenewDialog({
   expiresAtMs,
@@ -35,6 +39,7 @@ export function RenewDialog({
   const t = useT();
   const qc = useQueryClient();
   const left = useCountdown(expiresAtMs);
+  const passwordOnly = useCachedMe().data?.password_step_up === true;
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -63,6 +68,10 @@ export function RenewDialog({
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (passwordOnly) {
+      if (password && !busy) void renew(() => renewSession({ password }), t.session.failed);
+      return;
+    }
     const entered = code.trim();
     if (!password || !entered || busy) return;
     // A recovery code carries dashes an authenticator's digits never do.
@@ -91,22 +100,26 @@ export function RenewDialog({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <Label htmlFor="renew-code">{t.session.codeLabel}</Label>
-        <Input
-          id="renew-code"
-          autoComplete="one-time-code"
-          className="font-mono"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="123456"
-        />
+        {!passwordOnly && (
+          <>
+            <Label htmlFor="renew-code">{t.session.codeLabel}</Label>
+            <Input
+              id="renew-code"
+              autoComplete="one-time-code"
+              className="font-mono"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+            />
+          </>
+        )}
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {error}
           </p>
         )}
         <div className="flex justify-between gap-2">
-          {passkeysSupported() ? (
+          {passkeysSupported() && !passwordOnly ? (
             <Button
               type="button"
               disabled={busy}
@@ -121,7 +134,7 @@ export function RenewDialog({
             <Button type="button" onClick={onLater}>
               {t.session.later}
             </Button>
-            <Button type="submit" variant="primary" disabled={busy || !password || !code.trim()}>
+            <Button type="submit" variant="primary" disabled={busy || !password || (!passwordOnly && !code.trim())}>
               {busy ? t.session.renewing : t.session.renew}
             </Button>
           </div>

@@ -68,6 +68,19 @@ function renderAt(initialPath: string, locale?: 'de') {
 }
 
 describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
+  it('shows the demo-mode strip in the notice slot while the second factor is optional', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': { ...ME_OK, totp_confirmed: false, mfa_enrolment_required: false },
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en', mfa_optional: true },
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(await screen.findByText('Demo mode: the second factor is optional on this instance.')).toBeInTheDocument();
+  });
+
   it('remembers the organization, so the settings area can lead back to it', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OK,

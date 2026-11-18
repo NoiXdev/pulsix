@@ -246,6 +246,26 @@ describe('RootRedirect', () => {
     expect(screen.queryByText(/LOGIN/)).not.toBeInTheDocument();
   });
 
+  it('sends a complete session of an account without a factor (second factor optional) to its organization, not to enrolment', async () => {
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true, mfa_optional: true },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        mfa_enrolment_required: false,
+        totp_confirmed: false,
+        password_step_up: true,
+        instance_admin: false,
+      },
+      'GET /api/v1/orgs': {
+        orgs: [{ id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' }],
+      },
+    });
+    renderRoot();
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(screen.queryByText('ENROLMENT')).not.toBeInTheDocument();
+  });
+
   it('redirects to the first organization for a ready session', async () => {
     mockApi({
       'GET /api/v1/setup/status': { completed: true },

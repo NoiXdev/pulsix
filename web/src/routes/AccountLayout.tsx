@@ -1,4 +1,5 @@
 import { Outlet, useRouterState } from '@tanstack/react-router';
+import { MfaOptionalNotice } from '../features/auth/MfaOptionalNotice.tsx';
 import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
 import { ExpiryNotice } from '../features/session/ExpiryNotice.tsx';
 import { AppShell } from '../ui/shell.tsx';
@@ -70,6 +71,7 @@ export function AccountLayout() {
     <AppShell
       notice={
         <>
+          <MfaOptionalNotice />
           <ExpiryNotice />
           <VersionWatcher />
         </>
@@ -97,7 +99,11 @@ export function AccountLayout() {
       }
       user={{
         displayName: me.data.user.display_name,
-        subtitle: hasSecondFactor ? t.routes.accountSecurity.secondFactorActive : t.routes.accountSecurity.secondFactorRequired,
+        subtitle: hasSecondFactor
+          ? t.routes.accountSecurity.secondFactorActive
+          : me.data.password_step_up
+            ? t.routes.accountSecurity.secondFactorOptional
+            : t.routes.accountSecurity.secondFactorRequired,
       }}
       onLogout={signOut}
     >

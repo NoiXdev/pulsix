@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
+import { MfaOptionalNotice } from '../features/auth/MfaOptionalNotice.tsx';
 import { VersionWatcher } from '../features/version/VersionWatcher.tsx';
 import { ExpiryNotice } from '../features/session/ExpiryNotice.tsx';
 import { AppShell } from '../ui/shell.tsx';
@@ -97,6 +98,7 @@ export function OrgLayout() {
     <AppShell
       notice={
         <>
+          <MfaOptionalNotice />
           <ExpiryNotice />
           <VersionWatcher />
         </>

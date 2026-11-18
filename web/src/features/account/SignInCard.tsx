@@ -131,7 +131,11 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
       description={t.account.signIn.description}
       badge={
         <Pill tone={hasSecondFactor ? 'ok' : 'warn'}>
-          {hasSecondFactor ? t.account.secondFactorActive : t.account.secondFactorRequired}
+          {hasSecondFactor
+            ? t.account.secondFactorActive
+            : me.data?.password_step_up
+              ? t.account.secondFactorOptional
+              : t.account.secondFactorRequired}
         </Pill>
       }
     >

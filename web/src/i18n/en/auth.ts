@@ -18,6 +18,8 @@ export const enAuth = {
   useRecoveryCode: 'Use a recovery code',
   useSixDigitCode: 'Use a 6-digit code instead',
   forgotPassword: 'Forgot password?',
+  /** The persistent strip while PULSIX_MFA_OPTIONAL is on. */
+  mfaOptionalNotice: 'Demo mode: the second factor is optional on this instance.',
   newPassword: 'New password',
   repeatNewPassword: 'Repeat the new password',
   minLengthHint: (min: number) => `At least ${min} characters.`,

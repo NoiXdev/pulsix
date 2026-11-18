@@ -62,6 +62,31 @@ const ME = {
 afterEach(() => sessionStorage.clear());
 
 describe('AccountLayout', () => {
+  it('shows the demo-mode strip in the notice slot while the second factor is optional', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, mfa_enrolment_required: false },
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en', mfa_optional: true },
+    });
+    renderAt();
+
+    expect(await screen.findByText('Demo mode: the second factor is optional on this instance.')).toBeInTheDocument();
+  });
+
+  it('calls a missing factor optional, not required, when the password is the step-up', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, mfa_enrolment_required: false, password_step_up: true },
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+    renderAt();
+
+    const signIn = await screen.findByRole('region', { name: 'Sign-in' });
+    expect(within(signIn).getByText('Second factor optional')).toBeInTheDocument();
+    expect(screen.queryByText('Second factor required')).not.toBeInTheDocument();
+  });
+
   it('renders inside the shell with My account / Security breadcrumbs and the real security page', async () => {
     mockApi({
       'GET /api/v1/auth/me': {

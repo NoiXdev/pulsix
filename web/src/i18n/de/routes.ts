@@ -6,6 +6,7 @@ export const deRoutes: Messages['routes'] = {
   accountSecurity: {
     secondFactorActive: 'Zweiter Faktor aktiv',
     secondFactorRequired: 'Zweiter Faktor erforderlich',
+    secondFactorOptional: 'Zweiter Faktor optional',
   },
   enrolment: {
     signOut: 'Abmelden',

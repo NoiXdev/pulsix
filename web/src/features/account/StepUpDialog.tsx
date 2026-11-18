@@ -3,7 +3,8 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
-import { verifyTotp } from '../../api/hooks/useAuth.ts';
+import { reauthWithPassword, verifyTotp } from '../../api/hooks/useAuth.ts';
+import { useCachedMe } from '../../api/hooks/useMe.ts';
 import { passkeysSupported, reauthWithPasskey } from '../auth/passkeys.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -17,10 +18,16 @@ import { useT } from '../../i18n/useT.ts';
  * Both factors work: a code from the authenticator (or a recovery code),
  * and the passkey ceremony, which matters because a passkey-only account
  * has no code to type.
+ *
+ * An account without a second factor on an instance where it is optional
+ * (`password_step_up` on /auth/me) has neither: its password is its
+ * step-up, so the dialog asks for that alone.
  */
 export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onProved: () => void }) {
   const t = useT();
+  const passwordOnly = useCachedMe().data?.password_step_up === true;
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,11 +46,43 @@ export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onPro
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    if (passwordOnly) {
+      if (password) void prove(() => reauthWithPassword(password));
+      return;
+    }
     const entered = code.trim();
     if (!entered) return;
     // A recovery code carries the dashes the authenticator's six digits
     // never do, which is how the field takes both without a second input.
     void prove(() => (entered.includes('-') ? verifyTotp({ recoveryCode: entered }) : verifyTotp({ code: entered })));
+  }
+
+  if (passwordOnly) {
+    return (
+      <Dialog open onClose={onClose} title={t.account.stepUp.title}>
+        <form className="flex flex-col gap-3" onSubmit={submit}>
+          <p className="text-xs text-muted-foreground">{t.account.stepUp.introPassword}</p>
+          <Label htmlFor="step-up-password">{t.account.stepUp.passwordLabel}</Label>
+          <Input
+            id="step-up-password"
+            type="password"
+            autoFocus
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" onClick={onClose}>
+              {t.common.cancel}
+            </Button>
+            <Button type="submit" variant="primary" disabled={busy || !password}>
+              {t.account.confirm}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+    );
   }
 
   return (

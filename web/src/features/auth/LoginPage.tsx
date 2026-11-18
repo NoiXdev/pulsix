@@ -12,6 +12,7 @@ import { useResetSession } from '../../lib/session.ts';
 import { useT } from '../../i18n/useT.ts';
 import { beginLogin, submitPassword, submitTotp, type LoginState } from './loginMachine.ts';
 import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
+import { MfaOptionalNotice } from './MfaOptionalNotice.tsx';
 
 /**
  * LoginPage — no dedicated mockup exists for this screen among the 21 in
@@ -111,6 +112,9 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
+      <div className="fixed inset-x-0 top-0">
+        <MfaOptionalNotice />
+      </div>
       <div className="flex w-full max-w-[380px] flex-col gap-7">
         <div className="flex items-center gap-3">
           <PulsixMark size={32} />

@@ -14,6 +14,7 @@ export const deAuth: Messages['auth'] = {
   useRecoveryCode: 'Wiederherstellungscode verwenden',
   useSixDigitCode: 'Stattdessen 6-stelligen Code verwenden',
   forgotPassword: 'Passwort vergessen?',
+  mfaOptionalNotice: 'Demo-Modus: Der zweite Faktor ist auf dieser Instanz optional.',
   newPassword: 'Neues Passwort',
   repeatNewPassword: 'Neues Passwort wiederholen',
   minLengthHint: (min: number) => `Mindestens ${min} Zeichen.`,

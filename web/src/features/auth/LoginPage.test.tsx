@@ -120,6 +120,23 @@ describe('LoginPage notice (backlog 3.93)', () => {
   });
 });
 
+describe('LoginPage with the second factor optional', () => {
+  it('shows the demo-mode strip before anyone signs in', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en', mfa_optional: true } });
+    renderLoginAt();
+
+    expect(await screen.findByText('Demo mode: the second factor is optional on this instance.')).toBeInTheDocument();
+  });
+
+  it('shows no strip when the second factor is mandatory', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en', mfa_optional: false } });
+    renderLoginAt();
+
+    await screen.findByLabelText('Email address');
+    expect(screen.queryByText(/Demo mode/)).not.toBeInTheDocument();
+  });
+});
+
 describe('LoginPage forgotten password (backlog 7.74)', () => {
   it('links to /forgot-password from the password step', async () => {
     renderLoginAt();

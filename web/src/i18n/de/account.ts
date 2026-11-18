@@ -15,6 +15,7 @@ export const deAccount: Messages['account'] = {
   description: 'Wie du dich anmeldest und deine Sitzung schützt.',
   secondFactorActive: 'Zweiter Faktor aktiv',
   secondFactorRequired: 'Zweiter Faktor erforderlich',
+  secondFactorOptional: 'Zweiter Faktor optional',
   signIn: { title: 'Anmeldung', description: 'So meldest du dich an: Passwort plus zweiter Faktor; Passkeys ersetzen beides.' },
   session: {
     title: 'Sitzung',
@@ -92,6 +93,9 @@ export const deAccount: Messages['account'] = {
     intro:
       'Zum Ändern der Anmeldung wird der zweite Faktor erneut benötigt. So reicht ein unbeaufsichtigter Bildschirm nicht aus, um das Konto zu übernehmen.',
     codeLabel: 'Code der Authenticator-App oder Wiederherstellungscode',
+    introPassword:
+      'Zum Ändern der Anmeldung wird dein Passwort erneut benötigt. So reicht ein unbeaufsichtigter Bildschirm nicht aus, um das Konto zu übernehmen.',
+    passwordLabel: 'Passwort',
     failed: 'Zweiter Faktor konnte nicht bestätigt werden',
     refusedAgain: 'Die Bestätigung der Identität hat nicht geklappt. Bitte erneut versuchen.',
   },

@@ -4,6 +4,7 @@ export const enRoutes = {
   accountSecurity: {
     secondFactorActive: 'Second factor active',
     secondFactorRequired: 'Second factor required',
+    secondFactorOptional: 'Second factor optional',
   },
   enrolment: {
     signOut: 'Sign out',
