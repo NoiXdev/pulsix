@@ -112,7 +112,7 @@ describe('RootLayout', () => {
   });
 
   describe('session lock', () => {
-    const meBody = (locked: boolean) => ({ locked, lock_pin_set: true, lock_pin_prompt: false, user: { display_name: 'Tim' } });
+    const meBody = (locked: boolean) => ({ locked, lock_pin_set: true, lock_pin_legacy: false, lock_pin_prompt: false, user: { display_name: 'Tim' } });
 
     it('replaces the page with the lock screen after a session_locked refusal, and drops the cached page data', async () => {
       renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(false) });
