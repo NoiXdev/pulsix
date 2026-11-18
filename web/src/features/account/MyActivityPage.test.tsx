@@ -23,7 +23,7 @@ function events(n: number, from = 1) {
 
 let requests: URLSearchParams[] = [];
 
-function setup(opts: { prefs?: object; items?: unknown[]; total?: number } = {}) {
+function setup(opts: { prefs?: object; items?: unknown[]; total?: number } = {}, initial = '/o/acme/activity') {
   requests = [];
   mockApi({
     'GET /api/v1/orgs': ORGS,
@@ -33,7 +33,7 @@ function setup(opts: { prefs?: object; items?: unknown[]; total?: number } = {})
       return { items: opts.items ?? events(25), next_cursor: '', total: opts.total ?? 40 };
     },
   });
-  return renderRoutes([{ path: '/activity', component: MyActivityPage }], '/o/acme/activity');
+  return renderRoutes([{ path: '/activity', component: MyActivityPage }], initial);
 }
 
 describe('MyActivityPage', () => {
@@ -88,5 +88,16 @@ describe('MyActivityPage', () => {
   it('says so when there is no activity', async () => {
     setup({ items: [], total: 0 });
     expect(await screen.findByText('You have not done anything yet.')).toBeInTheDocument();
+  });
+
+  it('keeps the object type and the range in the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({}, '/o/acme/activity?type=token&since=30d');
+    await screen.findByText('Created host 1');
+    expect(requests.at(-1)?.get('object_type')).toBe('token');
+    expect(requests.at(-1)?.get('since')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'token', pressed: true })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 });

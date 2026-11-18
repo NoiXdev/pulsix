@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, hideColumn, numbered, openRowMenu } from '../../test/wholeList.ts';
 import { MembersPage } from './MembersPage.tsx';
+import { validateMembersSearch } from './membersSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -25,7 +26,7 @@ const invite = (email: string, over: Record<string, unknown> = {}) => ({
   id: `i-${email.split('@')[0]}`, email, role: 'viewer', invited_by: 'u1', invited_by_name: 'Tim', expires_at: '2026-01-08T00:00:00Z', created_at: '2026-01-01T00:00:00Z', ...over,
 });
 
-function setup(opts: { locale?: 'de'; role?: string; members?: unknown[]; invites?: unknown[]; onRemove?: () => void; onRevoke?: () => void } = {}) {
+function setup(opts: { locale?: 'de'; initial?: string; role?: string; members?: unknown[]; invites?: unknown[]; onRemove?: () => void; onRevoke?: () => void } = {}) {
   mockApi({
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
@@ -42,7 +43,7 @@ function setup(opts: { locale?: 'de'; role?: string; members?: unknown[]; invite
     },
   });
   return renderListPage({
-    path: '/settings/members', component: MembersPage, initial: '/o/acme/settings/members', locale: opts.locale,
+    path: '/settings/members', component: MembersPage, initial: opts.initial ?? '/o/acme/settings/members', locale: opts.locale, extraSearch: (s) => ({ ...validateMembersSearch(s) }),
     others: [{ path: '/settings/members/$userId', component: () => <div>MEMBER PAGE</div> }],
   });
 }
@@ -116,6 +117,35 @@ describe('MembersPage list', () => {
   });
 });
 
+describe('MembersPage filters', () => {
+  const members = [member('ada', { role: 'admin' }), member('bob'), member('cy', { disabled_at: '2026-02-01T00:00:00Z' })];
+
+  it('reads the filters from the URL and narrows the rows', async () => {
+    setup({ members, initial: '/o/acme/settings/members?role=admin' });
+    expect(await screen.findByText('1–1 of 1 member')).toBeInTheDocument();
+    expect(names()).toEqual(['ada']);
+    expect(screen.getByText('1 of 3 members')).toBeInTheDocument();
+  });
+
+  it('writes the status and the search to the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({ members });
+    await screen.findByText('1–3 of 3 members');
+    await pickOption(screen, 'Filter by status', 'disabled');
+    await waitFor(() => expect(router.state.location.search).toEqual({ status: 'disabled' }));
+    expect(names()).toEqual(['cy']);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search members' }), 'bo');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'bo' }));
+    expect(names()).toEqual(['bob']);
+  });
+
+  it('says when no member matches', async () => {
+    setup({ members, initial: '/o/acme/settings/members?q=zzz' });
+    expect(await screen.findByText('No members match the filters.')).toBeInTheDocument();
+  });
+});
+
 describe('PendingInvites list', () => {
   const invites = () => [invite('b2@acme.io', { role: 'admin' }), invite('b1@acme.io', { role: 'operator' }), invite('b3@acme.io')];
 
@@ -146,5 +176,16 @@ describe('PendingInvites list', () => {
     setup({ members: [member('a')] });
     await screen.findByText('1–1 of 1 member');
     expect(screen.queryByRole('region', { name: 'Open invitations' })).not.toBeInTheDocument();
+  });
+  it('narrows to the expired invitations with a local chip', async () => {
+    const user = userEvent.setup();
+    const router = setup({ members: [member('a')], invites: [invite('old@acme.io'), invite('new@acme.io', { expires_at: '2099-01-01T00:00:00Z' })] });
+    const section = await screen.findByRole('region', { name: 'Open invitations' });
+    await within(section).findByText('1–2 of 2 invitations');
+    await user.click(within(section).getByRole('button', { name: 'Expired' }));
+    await waitFor(() => expect(names(section)).toEqual(['old@acme.io']));
+    expect(router.state.location.search).toEqual({});
+    await user.click(within(section).getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(names(section)).toHaveLength(2));
   });
 });

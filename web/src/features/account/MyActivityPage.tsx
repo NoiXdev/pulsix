@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { CELL_MINOR, DataList, type DataListColumn } from '../../ui/data-list/index.ts';
+import { ListToolbar, ResetFilters } from '../../ui/list-toolbar.tsx';
 import { QueryError } from '../../ui/QueryState.tsx';
 import { useMyActivityPage } from '../../api/hooks/useActivity.ts';
 import { useOrgs } from '../../api/hooks/useOrgs.ts';
@@ -8,20 +9,26 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { ObjectTypeChips } from '../activity/ObjectTypeChips.tsx';
 import { known } from '../activity/objectTypes.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { MY_ACTIVITY_FILTERS, SINCE_RANGES, sinceOf } from '../activity/activitySearch.ts';
 import { PageHeader } from '../../ui/settings.tsx';
 
 /**
  * MyActivityPage is Settings > My activity: what the signed-in person did,
  * in every organization they belong to (GET /me/activity). The server
- * pages and sorts it by time; the object-type chips filter it like the
- * organization feed's.
+ * pages and sorts it by time; the object-type chips and the start of the
+ * range filter it like the organization feed's, in the URL. The API has no
+ * organization filter here, so the list offers none.
  */
 export function MyActivityPage() {
   const t = useT();
   const fmt = useFormat();
   const orgs = useOrgs();
-  const [objectType, setObjectType] = useState('');
+  const { filters, active, setFilter, reset } = useListFilters(MY_ACTIVITY_FILTERS);
+  const objectType = filters.type ?? '';
+  const since = useMemo(() => sinceOf(filters.since), [filters.since]);
   const orgNames = new Map((orgs.data?.orgs ?? []).map((o) => [o.id, o.name]));
 
   const columns: DataListColumn<Event>[] = [
@@ -57,8 +64,8 @@ export function MyActivityPage() {
     },
   ];
 
-  const view = useListView('my-activity', columns, { mode: 'server', resetKey: JSON.stringify({ objectType }) });
-  const q = useMyActivityPage({ objectType }, view.serverQuery, { enabled: view.ready });
+  const view = useListView('my-activity', columns, { mode: 'server', resetKey: JSON.stringify(filters) });
+  const q = useMyActivityPage({ objectType, since }, view.serverQuery, { enabled: view.ready });
 
   if (q.isError && !q.data) return <QueryError error={q.error} />;
 
@@ -71,11 +78,19 @@ export function MyActivityPage() {
         rows={q.data?.items ?? []}
         rowKey={(e) => e.id}
         loading={q.isPending || q.isPlaceholderData}
-        empty={t.activity.my.empty}
+        empty={active ? t.activity.noMatch : t.activity.my.empty}
         toolbar={
-          <div className="flex flex-wrap items-center gap-2">
-            <ObjectTypeChips value={objectType} onChange={setObjectType} />
-          </div>
+          <ListToolbar>
+            <FilterSelect
+              label={t.activity.filterBySince}
+              allLabel={t.activity.anyTime}
+              options={SINCE_RANGES.map((r) => ({ value: r, label: t.activity.since[r] }))}
+              value={filters.since}
+              onChange={(v) => setFilter('since', v as typeof filters.since)}
+            />
+            <ObjectTypeChips value={objectType} onChange={(v) => setFilter('type', (v || undefined) as typeof filters.type)} />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
         }
         {...view.listProps(q.isPlaceholderData ? undefined : q.data?.total, t.activity.my.count)}
       />

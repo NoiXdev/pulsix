@@ -47,7 +47,7 @@ export function useOrgActivityPage(org: string, filter: ActivityFilter, page: Se
  * one loads. `enabled` waits for the list's preferences (useListView's
  * `ready`), so the first request already has the person's page size.
  */
-export function useMyActivityPage(filter: Pick<ActivityFilter, 'objectType'>, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
+export function useMyActivityPage(filter: Pick<ActivityFilter, 'objectType' | 'since'>, page: ServerPageQuery, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['my-activity', filter, page],
     queryFn: () =>
@@ -56,6 +56,7 @@ export function useMyActivityPage(filter: Pick<ActivityFilter, 'objectType'>, pa
           params: {
             query: {
               object_type: filter.objectType || undefined,
+              since: filter.since || undefined,
               page: page.page,
               per_page: page.per_page,
               sort: page.sort as 'at' | undefined,

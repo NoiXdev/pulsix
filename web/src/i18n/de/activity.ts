@@ -5,6 +5,10 @@ export const deActivity: Messages['activity'] = {
   subtitle: 'Jede Änderung in dieser Organisation – durch Personen, Tokens und Pulsix selbst',
   filterByActor: 'Nach Urheber filtern',
   anyActor: 'Urheber: alle',
+  filterBySince: 'Nach Zeitraum filtern',
+  anyTime: 'Jederzeit',
+  since: { '1d': 'Letzte 24 Stunden', '7d': 'Letzte 7 Tage', '30d': 'Letzte 30 Tage' },
+  noMatch: 'Keine Aktivität passt zu den Filtern.',
   allTypes: 'alle',
   empty: 'Noch keine Aktivität aufgezeichnet.',
   list: {

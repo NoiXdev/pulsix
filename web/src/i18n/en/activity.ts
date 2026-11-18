@@ -4,6 +4,10 @@ export const enActivity = {
   subtitle: 'Every change in this organization, by people, tokens and Pulsix itself',
   filterByActor: 'Filter by actor',
   anyActor: 'Actor: anyone',
+  filterBySince: 'Filter by time',
+  anyTime: 'Any time',
+  since: { '1d': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' },
+  noMatch: 'No activity matches the filters.',
   allTypes: 'all',
   empty: 'No activity recorded yet.',
   /** The organization's feed as a list. */

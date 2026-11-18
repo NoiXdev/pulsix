@@ -6,6 +6,7 @@ import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import type { Locale } from '../../i18n/types.ts';
 import { ActivityPage } from './ActivityPage.tsx';
+import { validateActivitySearch } from './activitySearch.ts';
 
 const MEMBERS = { members: [{ user_id: 'u1', display_name: 'Tim R.', email: 'tim@acme.io', role: 'owner', created_at: '2026-01-01T00:00:00Z', disabled_at: null }] };
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -44,7 +45,7 @@ function setup(items: unknown[] | ((req: MockRequest) => unknown), initial = '/o
       return typeof items === 'function' ? items(req) : { items, next_cursor: '', total: items.length };
     },
   });
-  return renderListPage({ path: '/activity', component: ActivityPage, initial, locale });
+  return renderListPage({ path: '/activity', component: ActivityPage, initial, locale, extraSearch: (q) => ({ ...validateActivitySearch(q) }) });
 }
 
 describe('ActivityPage actor names', () => {
@@ -161,5 +162,31 @@ describe('ActivityPage automation object types', () => {
     }
     await user.click(screen.getByRole('button', { name: 'maintenance' }));
     await waitFor(() => expect(requests.map((r) => r.get('object_type'))).toContain('maintenance'));
+  });
+});
+
+describe('ActivityPage filters in the URL', () => {
+  it('reads the actor, the type and the range from the URL and asks the server for them', async () => {
+    setup([], '/o/acme/activity?actor=u1&type=host&since=7d');
+    await screen.findByText('No activity matches the filters.');
+    const last = requests.at(-1)!;
+    expect(last.get('actor')).toBe('u1');
+    expect(last.get('object_type')).toBe('host');
+    expect(Date.now() - new Date(last.get('since')!).getTime()).toBeGreaterThan(6.9 * 86_400_000);
+    expect(screen.getByRole('button', { name: 'host', pressed: true })).toBeInTheDocument();
+  });
+
+  it('writes the filters to the URL and Reset clears them', async () => {
+    const user = userEvent.setup();
+    const router = setup((req) => pageOf(many(30), req), '/o/acme/activity?page=2');
+    await screen.findByText('26–30 of 30 events');
+    await user.click(screen.getByRole('button', { name: 'zone' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ type: 'zone' }));
+    await pickOption(screen, 'Filter by actor', 'Tim R.');
+    await pickOption(screen, 'Filter by time', 'Last 24 hours');
+    await waitFor(() => expect(router.state.location.search).toEqual({ type: 'zone', actor: 'u1', since: '1d' }));
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    expect(screen.getByRole('button', { name: 'all', pressed: true })).toBeInTheDocument();
   });
 });

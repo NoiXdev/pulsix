@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { DataList, type RowAction } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters } from '../../ui/list-toolbar.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { usePendingInvites, useRevokeInvite } from '../../api/hooks/useMembers.ts';
 import type { PendingInvite } from '../../api/types.ts';
@@ -23,7 +25,9 @@ export function PendingInvites({ org }: { org: string }) {
   const invites = usePendingInvites(org);
   const revoke = useRevokeInvite(org);
   const columns = inviteColumns(t, fmt);
-  const view = useListView('invites', columns, { mode: 'client', urlState: false, rowKey: (i) => i.id });
+  // The one filter lives in the component, like the list's sort and page.
+  const [expired, setExpired] = useState(false);
+  const view = useListView('invites', columns, { mode: 'client', urlState: false, rowKey: (i) => i.id, resetKey: String(expired) });
   const del = useConfirmedDelete<PendingInvite>({
     message: (i) => t.members.pending.confirmRevoke(i.email),
     failed: t.members.pending.revokeFailed,
@@ -35,7 +39,9 @@ export function PendingInvites({ org }: { org: string }) {
   });
 
   const all = invites.data?.invites ?? [];
-  const { rows, total } = view.view(view.ready ? all : undefined);
+  const now = new Date().toISOString();
+  const shown = expired ? all.filter((i) => i.expires_at < now) : all;
+  const { rows, total } = view.view(view.ready ? shown : undefined);
   if (all.length === 0) return null;
 
   const rowActions = (i: PendingInvite): RowAction[] => [
@@ -53,7 +59,15 @@ export function PendingInvites({ org }: { org: string }) {
         rowActions={rowActions}
         rowLabel={(i) => `${i.email} (${i.role})`}
         loading={!view.ready}
-        empty={null}
+        empty={expired ? t.members.pending.noMatch : null}
+        toolbar={
+          <ListToolbar>
+            <FilterChip pressed={expired} tone="crit" onToggle={() => setExpired((v) => !v)}>
+              {t.members.pending.expiredFilter}
+            </FilterChip>
+            {expired && <ResetFilters onReset={() => setExpired(false)} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.members.pending.count)}
       />
     </section>

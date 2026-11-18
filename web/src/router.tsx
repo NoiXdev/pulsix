@@ -61,6 +61,7 @@ import { validatePlaybooksSearch } from './features/playbooks/playbooksSearch.ts
 import { validateTemplatesSearch } from './features/templates/templatesSearch.ts';
 import { validateSchedulesSearch } from './features/schedules/schedulesSearch.ts';
 import { validateRunRequestsSearch } from './features/runs/runRequestsSearch.ts';
+import { validateMyActivitySearch } from './features/activity/activitySearch.ts';
 import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
 
 /**
@@ -153,7 +154,7 @@ const accountTokensRoute = createRoute({
 const accountActivityRoute = createRoute({
   getParentRoute: () => accountRoute,
   path: '/activity',
-  validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+  validateSearch: validateMyActivitySearch,
   component: MyActivityPage,
 });
 

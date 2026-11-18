@@ -5,6 +5,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { Copy, UserPlus } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
+import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
@@ -20,7 +21,10 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 import { roleOptions } from './roles.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
+import { MEMBER_ROLES, MEMBER_STATUSES, MEMBERS_FILTERS, filterMembers } from './membersSearch.ts';
 import { memberColumns } from './memberColumns.tsx';
 import { useMemberListActions } from './useMemberListActions.ts';
 import { PageHeader } from '../../ui/settings.tsx';
@@ -62,12 +66,16 @@ export function MembersPage() {
   });
 
   const columns = memberColumns(t, fmt);
-  const view = useListView('members', columns, { mode: 'client', rowKey: (m) => m.user_id });
+  const { filters, active, setFilter, reset } = useListFilters(MEMBERS_FILTERS);
+  const view = useListView('members', columns, { mode: 'client', rowKey: (m) => m.user_id, resetKey: JSON.stringify(filters) });
   const rowActions = useMemberListActions(org, canManage);
 
   const membersGuard = useQueryGuard(members);
   if (membersGuard) return membersGuard;
-  const { rows, total } = view.view(view.ready ? (members.data?.members ?? []) : undefined);
+  const all = members.data?.members ?? [];
+  const shown = filterMembers(all, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const f = t.members.filters;
 
   return (
     <>
@@ -88,7 +96,32 @@ export function MembersPage() {
         rowLabel={(m) => `${m.display_name} (${m.email})`}
         rowActions={rowActions}
         loading={!view.ready}
-        empty={null}
+        empty={active ? t.members.noMatch : null}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={t.members.count} /> : undefined}>
+            <SearchInput
+              label={t.members.search}
+              placeholder={t.members.filterPlaceholder}
+              value={filters.q ?? ''}
+              onChange={(q) => setFilter('q', q || undefined, { replace: true })}
+            />
+            <FilterSelect
+              label={f.role}
+              allLabel={f.allRoles}
+              options={roleOptions(t, MEMBER_ROLES)}
+              value={filters.role}
+              onChange={(v) => setFilter('role', v as typeof filters.role)}
+            />
+            <FilterSelect
+              label={f.status}
+              allLabel={f.anyStatus}
+              options={MEMBER_STATUSES.map((v) => ({ value: v, label: v === 'active' ? t.members.active : t.members.disabled }))}
+              value={filters.status}
+              onChange={(v) => setFilter('status', v as typeof filters.status)}
+            />
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
         {...view.listProps(total, t.members.count)}
       />
 

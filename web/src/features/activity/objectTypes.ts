@@ -3,7 +3,7 @@ export const OBJECT_TYPES = [
   // Automation (spec 2026-09-18 §8): a scheduled run is recorded against
   // its job template.
   'job_template', 'job', 'schedule', 'trigger', 'worker', 'channel', 'maintenance',
-];
+] as const;
 
 /** known is the catalogue's label for a value the API sends, or the value
  * itself when it is one the page has no label for (a newer server). */

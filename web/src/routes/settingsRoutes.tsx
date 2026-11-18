@@ -17,6 +17,8 @@ import { SharedTemplatesPage } from '../features/instance/shared/SharedTemplates
 import { SharedTemplateFormPage } from '../features/instance/shared/SharedTemplateFormPage.tsx';
 import { SharedChecksPage } from '../features/instance/shared/SharedChecksPage.tsx';
 import { SharedCheckFormPage } from '../features/instance/shared/SharedCheckFormPage.tsx';
+import { validateMembersSearch } from '../features/members/membersSearch.ts';
+import { validateActivitySearch } from '../features/activity/activitySearch.ts';
 import { SettingsLayout } from '../features/settings/SettingsLayout.tsx';
 import { OrgGeneralPage } from '../features/settings/OrgGeneralPage.tsx';
 import { ChannelsPage } from '../features/notifications/ChannelsPage.tsx';
@@ -59,7 +61,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const membersRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/members',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateMembersSearch,
     component: MembersPage,
   });
   // A member's page in this organization: the role, and for an instance
@@ -68,7 +70,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
   const activityRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/activity',
-    validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+    validateSearch: validateActivitySearch,
     component: ActivityPage,
   });
   const tokensRoute = createRoute({
