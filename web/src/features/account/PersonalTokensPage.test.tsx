@@ -7,6 +7,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { chooseRowAction, firstCells, numbered, sortBy } from '../../test/wholeList.ts';
 import { PersonalTokensPage } from './PersonalTokensPage.tsx';
+import { validatePersonalTokensSearch } from './personalTokensSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const ORGS = {
@@ -43,6 +44,7 @@ interface Setup {
   onPatch?: (req: MockRequest) => unknown;
   onDelete?: (req: MockRequest) => void;
   locale?: 'de';
+  initial?: string;
 }
 
 function setup(opts: Setup = {}) {
@@ -65,7 +67,7 @@ function setup(opts: Setup = {}) {
     };
   }
   mockApi(routes);
-  return renderListPage({ path: '/tokens', component: PersonalTokensPage, initial: '/o/acme/tokens', locale: opts.locale });
+  return renderListPage({ path: '/tokens', component: PersonalTokensPage, initial: opts.initial ?? '/o/acme/tokens', locale: opts.locale, extraSearch: (q) => ({ ...validatePersonalTokensSearch(q) }) });
 }
 
 /** The grants editor's row for one organization. */
@@ -293,5 +295,42 @@ describe('PersonalTokensPage', () => {
     setup({ locale: 'de', tokens: [token('laptop', { grants: [grant('gamma', 'viewer', 'blocked')] })] });
     expect(await screen.findByText('1–1 von 1 Token')).toBeInTheDocument();
     expect(screen.getByText(/Von einem Admin gesperrt/)).toBeInTheDocument();
+  });
+});
+
+describe('PersonalTokensPage filters', () => {
+  const tokens = [
+    token('ci'),
+    token('bot', { kind: 'assistant', grants: [grant('beta', 'admin')] }),
+    token('stale', { expires_at: '2020-01-01T00:00:00Z' }),
+  ];
+
+  it('reads the filters from the URL and narrows the rows', async () => {
+    setup({ tokens, initial: '/o/acme/tokens?kind=assistant' });
+    expect(await screen.findByText('1–1 of 1 token')).toBeInTheDocument();
+    expect(firstCells()).toEqual(['bot']);
+    expect(screen.getByText('1 of 3 tokens')).toBeInTheDocument();
+  });
+
+  it('writes the organization, the expired chip and the search to the URL', async () => {
+    const user = userEvent.setup();
+    const router = setup({ tokens });
+    await screen.findByText('1–3 of 3 tokens');
+    await pickOption(screen, 'Filter by organization', 'Beta');
+    await waitFor(() => expect(router.state.location.search).toEqual({ org: 'o2' }));
+    expect(firstCells()).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.click(screen.getByRole('button', { name: 'Expired' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ expired: true }));
+    expect(firstCells()).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Search tokens' }), 'ci');
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'ci' }));
+    expect(firstCells()).toHaveLength(1);
+  });
+
+  it('says when no token matches', async () => {
+    setup({ tokens, initial: '/o/acme/tokens?q=zzz' });
+    expect(await screen.findByText('No tokens match the filters.')).toBeInTheDocument();
   });
 });

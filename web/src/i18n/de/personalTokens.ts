@@ -8,6 +8,10 @@ export const dePersonalTokens: Messages['personalTokens'] = {
   label: 'Deine API-Tokens',
   count: (n: number) => (n === 1 ? '1 Token' : `${n} Tokens`),
   empty: 'Noch keine persönlichen Tokens.',
+  search: 'Tokens durchsuchen',
+  filterPlaceholder: 'Tokens filtern…',
+  noMatch: 'Keine Tokens passen zu den Filtern.',
+  filters: { kind: 'Nach Art filtern', allKinds: 'Alle Arten', org: 'Nach Organisation filtern', allOrgs: 'Alle Organisationen', expired: 'Abgelaufen' },
   columns: {
     name: 'Name',
     kind: 'Art',

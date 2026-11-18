@@ -49,6 +49,8 @@ export function personalTokenColumns(t: Messages, fmt: Format): DataListColumn<P
       id: 'orgs',
       label: c.orgs,
       width: 'minmax(0, 1.4fr)',
+      sortKey: 'orgs',
+      sortValue: (r) => (r.grants ?? []).length,
       defaultVisible: true,
       render: (r) => (
         <span className="flex min-w-0 flex-col gap-0.5">

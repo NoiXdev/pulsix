@@ -9,6 +9,10 @@ export const enPersonalTokens = {
   label: 'Your API tokens',
   count: (n: number) => (n === 1 ? '1 token' : `${n} tokens`),
   empty: 'No personal tokens yet.',
+  search: 'Search tokens',
+  filterPlaceholder: 'Filter tokens…',
+  noMatch: 'No tokens match the filters.',
+  filters: { kind: 'Filter by kind', allKinds: 'All kinds', org: 'Filter by organization', allOrgs: 'All organizations', expired: 'Expired' },
   columns: {
     name: 'Name',
     kind: 'Kind',

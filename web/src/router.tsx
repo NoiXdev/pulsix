@@ -62,6 +62,7 @@ import { validateTemplatesSearch } from './features/templates/templatesSearch.ts
 import { validateSchedulesSearch } from './features/schedules/schedulesSearch.ts';
 import { validateRunRequestsSearch } from './features/runs/runRequestsSearch.ts';
 import { validateMyActivitySearch } from './features/activity/activitySearch.ts';
+import { validatePersonalTokensSearch } from './features/account/personalTokensSearch.ts';
 import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
 import { validateGroupsSearch } from './features/inventory/groupsSearch.ts';
 
@@ -149,7 +150,7 @@ const accountProfileRoute = createRoute({ getParentRoute: () => accountRoute, pa
 const accountTokensRoute = createRoute({
   getParentRoute: () => accountRoute,
   path: '/tokens',
-  validateSearch: (s: Record<string, unknown>) => validateListSearch(s),
+  validateSearch: validatePersonalTokensSearch,
   component: PersonalTokensPage,
 });
 const accountActivityRoute = createRoute({
