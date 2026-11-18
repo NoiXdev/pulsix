@@ -34,6 +34,8 @@ export const enUsers = {
     lastSignIn: 'Last sign-in',
     yes: 'Yes',
     no: 'No',
+    card: 'Account',
+    cardDescription: 'Who this account is and when it last signed in.',
     organizations: 'Organizations',
     noOrgs: 'This account is not a member of any organization.',
     orgsHint: 'Roles are changed on the member page of each organization.',
@@ -41,6 +43,7 @@ export const enUsers = {
   },
   signIn: {
     title: 'Sign-in',
+    description: 'How this account signs in and where it is signed in right now.',
     authenticator: 'Authenticator app',
     authenticatorOn: 'Set up',
     authenticatorOff: 'Not set up',
@@ -50,6 +53,9 @@ export const enUsers = {
   },
   actions: {
     title: 'Actions',
+    description: 'Help this person get back into their account.',
+    dangerTitle: 'Danger zone',
+    dangerDescription: 'These actions are hard to undo, so each one asks you to confirm first.',
     working: 'Working…',
     running: (action: string) => `Running: ${action}…`,
     leaveWhileRunning: 'Leave this page? An account action is still running, and its answer, such as a temporary password, would be lost.',

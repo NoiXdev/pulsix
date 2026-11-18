@@ -30,9 +30,11 @@ describe('AccountPage', () => {
     render();
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Sara K.' })).toBeInTheDocument();
-    expect(screen.getByText('sara@acme.io')).toBeInTheDocument();
-    expect(screen.getByText('No second factor')).toBeInTheDocument();
-    expect(screen.getByText('never')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Sections' })).not.toBeInTheDocument();
+    const facts = screen.getByRole('region', { name: 'Account' });
+    expect(within(facts).getByText('sara@acme.io')).toBeInTheDocument();
+    expect(within(facts).getByText('No second factor')).toBeInTheDocument();
+    expect(within(facts).getByText('never')).toBeInTheDocument();
 
     const orgs = screen.getByRole('region', { name: 'Organizations' });
     expect(within(orgs).getByRole('link', { name: 'Open the member page in Acme' })).toHaveAttribute(
@@ -49,6 +51,11 @@ describe('AccountPage', () => {
 
     const actions = screen.getByRole('region', { name: 'Actions' });
     expect(await within(actions).findByRole('button', { name: 'Set temporary password' })).toBeInTheDocument();
+    expect(within(actions).queryByRole('button', { name: 'Deactivate account' })).not.toBeInTheDocument();
+
+    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    expect(within(danger).getByRole('button', { name: 'Deactivate account' })).toBeInTheDocument();
+    expect(within(danger).getByRole('button', { name: 'Reset second factor' })).toBeInTheDocument();
   });
 
   it('shows the access-denied page to someone who is not an instance administrator', async () => {

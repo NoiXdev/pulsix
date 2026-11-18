@@ -1,8 +1,9 @@
-import { useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
-import { DetailLayout, Section, SidebarFacts, type SectionNavItem } from '../../ui/detail-layout.tsx';
-import { Label } from '../../ui/label.tsx';
+import { CardSaveBar, SettingsCard, SettingsPage, SettingsRow } from '../../ui/settings.tsx';
+import { useCardForm } from '../../ui/useCardForm.ts';
+import { ReadOnlyNote } from '../settings/ReadOnlyNote.tsx';
+import { DangerZone } from '../users/DangerZone.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryError, QueryLoading } from '../../ui/QueryState.tsx';
@@ -32,8 +33,9 @@ const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
  * rules (the last owner stays, only an owner touches an owner), whose
  * refusals are shown as they come.
  *
- * For an instance administrator it also shows the account's Sign-in and
- * Actions sections, the same components as the account page. Nobody else
+ * For an instance administrator it also shows the account's Sign-in,
+ * Actions and Danger zone cards, the same components as the account page
+ * (the removal joins the account's destructive actions in one Danger zone). Nobody else
  * sees them, and for nobody else is the account loaded at all.
  */
 export function MemberPage() {
@@ -43,6 +45,7 @@ export function MemberPage() {
   const me = useMe({ enabled: true });
   const instanceAdmin = me.data?.instance_admin === true;
   const account = useAdminUser(userId, { enabled: instanceAdmin });
+  const orgInfo = useOrg(org);
 
   const guard = useQueryGuard(members);
   if (guard) return guard;
@@ -50,96 +53,129 @@ export function MemberPage() {
   const member = (members.data.members ?? []).find((m) => m.user_id === userId);
   if (!member) return <QueryError error={new ApiError(404, null)} />;
 
-  const nav: SectionNavItem[] = [{ id: 'role', label: t.members.page.roleTitle }];
-  if (instanceAdmin) {
-    nav.push({ id: 'sign-in', label: t.users.signIn.title }, { id: 'actions', label: t.users.actions.title });
-  }
+  const canManage = may(orgInfo.data?.org.role, 'members.manage');
+  const removeRow = canManage ? <RemoveMemberRow org={org} member={member} /> : null;
+  const accountReady = account.data && me.data;
 
   return (
-    <DetailLayout sidebar={<MemberSidebar member={member} />} nav={nav} navLabel={t.common.sections}>
-      <Section id="role" title={t.members.page.roleTitle}>
-        <MemberRole org={org} member={member} />
-      </Section>
+    <SettingsPage title={member.display_name}>
+      <MemberFacts member={member} />
+      <MemberRole org={org} member={member} canManage={canManage} loaded={!!orgInfo.data} />
       {instanceAdmin && (
         <>
-          <Section id="sign-in" title={t.users.signIn.title}>
-            {account.data ? <AccountSignIn user={account.data} /> : <AccountPending error={account.error} />}
-          </Section>
-          <Section id="actions" title={t.users.actions.title}>
-            {account.data && me.data ? (
-              <AccountActions key={account.data.id} user={account.data} selfId={me.data.user.id} />
-            ) : (
-              <AccountPending error={account.error} />
-            )}
-          </Section>
+          {account.data ? <AccountSignIn user={account.data} /> : <AccountPending error={account.error} title={t.users.signIn.title} />}
+          {accountReady ? (
+            <AccountActions key={account.data.id} user={account.data} selfId={me.data.user.id} dangerExtra={removeRow} />
+          ) : (
+            <AccountPending error={account.error} title={t.users.actions.title} />
+          )}
         </>
       )}
-    </DetailLayout>
+      {removeRow && !(instanceAdmin && accountReady) && <DangerZone>{removeRow}</DangerZone>}
+    </SettingsPage>
   );
 }
 
-function AccountPending({ error }: { error: unknown }) {
-  if (error instanceof Error) return <p className="text-xs text-destructive">{error.message}</p>;
-  return <QueryLoading />;
+/** A card standing in for an account section while the account loads. */
+function AccountPending({ error, title }: { error: unknown; title: string }) {
+  return (
+    <SettingsCard title={title}>
+      <div className="px-5 pb-4">
+        {error instanceof Error ? <p className="text-xs text-destructive">{error.message}</p> : <QueryLoading />}
+      </div>
+    </SettingsCard>
+  );
 }
 
-function MemberSidebar({ member }: { member: Member }) {
+function MemberFacts({ member }: { member: Member }) {
   const t = useT();
   const fmt = useFormat();
   const p = t.members.page;
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold break-words">{member.display_name}</h1>
-      <SidebarFacts
-        items={[
-          { label: p.email, value: member.email },
-          { label: p.joined, value: fmt.date(member.created_at) },
-          {
-            label: p.status,
-            value: member.disabled_at ? (
-              <Pill tone="unknown">{t.members.disabled}</Pill>
-            ) : (
-              <Pill tone="ok">{t.members.active}</Pill>
-            ),
-          },
-        ]}
-      />
-    </div>
+    <SettingsCard title={p.accountTitle} description={p.accountDescription}>
+      <SettingsRow label={p.email}>{member.email}</SettingsRow>
+      <SettingsRow label={p.joined}>{fmt.date(member.created_at)}</SettingsRow>
+      <SettingsRow label={p.status}>
+        {member.disabled_at ? <Pill tone="unknown">{t.members.disabled}</Pill> : <Pill tone="ok">{t.members.active}</Pill>}
+      </SettingsRow>
+    </SettingsCard>
   );
 }
 
-/** The member's role, and for a role that may manage members the controls
- * to change it or remove the member. */
-function MemberRole({ org, member }: { org: string; member: Member }) {
+/** The member's role: a role that may manage members changes it here, with
+ * the card's own save bar; anyone else sees it read-only. */
+function MemberRole({ org, member, canManage, loaded }: { org: string; member: Member; canManage: boolean; loaded: boolean }) {
   const t = useT();
   const toast = useToast();
-  const ask = useConfirm();
-  const navigate = useNavigate();
-  const orgInfo = useOrg(org);
-  const actorRole = orgInfo.data?.org.role;
   const changeRole = useChangeMemberRole(org);
-  const removeMember = useRemoveMember(org);
-  const [role, setRole] = useState(member.role);
+  const form = useCardForm<string>(member.role);
   const p = t.members.page;
 
-  if (!orgInfo.data) return <QueryLoading />;
-  if (!may(actorRole, 'members.manage')) {
+  if (!loaded) {
     return (
-      <div className="flex flex-col items-start gap-2">
-        <RoleBadge role={member.role} />
-        <p className="text-xs text-muted-foreground">{p.readOnly}</p>
-      </div>
+      <SettingsCard title={p.roleTitle} description={p.roleDescription}>
+        <div className="px-5 pb-4">
+          <QueryLoading />
+        </div>
+      </SettingsCard>
+    );
+  }
+  if (!canManage) {
+    return (
+      <SettingsCard title={p.roleTitle} description={p.roleDescription} footer={<ReadOnlyNote>{p.readOnly}</ReadOnlyNote>}>
+        <SettingsRow label={p.roleLabel}>
+          <RoleBadge role={member.role} />
+        </SettingsRow>
+      </SettingsCard>
     );
   }
 
-  async function saveRole() {
+  async function saveRole(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.dirty) return;
+    const role = form.draft;
     try {
       await changeRole.mutateAsync({ userId: member.user_id, role });
+      form.markSaved(role);
       toast.show(p.updated(roleLabel(t, role)));
     } catch (err) {
       toast.show(err instanceof Error ? err.message : p.failed, 'destructive');
     }
   }
+
+  return (
+    <form id="member-role-form" onSubmit={(e) => void saveRole(e)}>
+      <SettingsCard
+        title={p.roleTitle}
+        description={p.roleDescription}
+        footer={
+          <CardSaveBar
+            formId="member-role-form"
+            dirty={form.dirty}
+            saving={changeRole.isPending}
+            onDiscard={form.discard}
+            saveLabel={p.changeRole}
+          />
+        }
+      >
+        <SettingsRow label={p.roleLabel} htmlFor="member-role">
+          <div className="w-48">
+            <Select id="member-role" portal options={roleOptions(t, ROLES)} value={form.draft} onChange={form.setDraft} />
+          </div>
+        </SettingsRow>
+      </SettingsCard>
+    </form>
+  );
+}
+
+/** The Danger zone row that removes the member after a confirmation. */
+function RemoveMemberRow({ org, member }: { org: string; member: Member }) {
+  const t = useT();
+  const toast = useToast();
+  const ask = useConfirm();
+  const navigate = useNavigate();
+  const removeMember = useRemoveMember(org);
+  const p = t.members.page;
 
   async function remove() {
     if (!(await ask({ message: t.members.confirmRemove(member.display_name), confirmLabel: t.common.remove, destructive: true }))) return;
@@ -153,29 +189,10 @@ function MemberRole({ org, member }: { org: string; member: Member }) {
   }
 
   return (
-    <div className="flex flex-col gap-5 rounded-[10px] border border-border bg-card px-4 py-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="member-role">{p.roleLabel}</Label>
-        <div className="flex items-center gap-2">
-          <div className="w-48">
-            <Select id="member-role" options={roleOptions(t, ROLES)} value={role} onChange={setRole} />
-          </div>
-          <Button
-            type="button"
-            variant="primary"
-            disabled={role === member.role || changeRole.isPending}
-            onClick={() => void saveRole()}
-          >
-            {p.changeRole}
-          </Button>
-        </div>
-      </div>
-      <div className="flex flex-col items-start gap-2 border-t border-border pt-4">
-        <p className="text-xs text-muted-foreground">{p.removeHint}</p>
-        <Button type="button" variant="destructive" disabled={removeMember.isPending} onClick={() => void remove()}>
-          {p.removeButton}
-        </Button>
-      </div>
-    </div>
+    <SettingsRow label={p.removeButton} help={p.removeHint}>
+      <Button type="button" variant="destructive" disabled={removeMember.isPending} onClick={() => void remove()}>
+        {p.removeButton}
+      </Button>
+    </SettingsRow>
   );
 }

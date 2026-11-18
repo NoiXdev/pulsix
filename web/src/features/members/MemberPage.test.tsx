@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest, type MockRoute } from '../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../test/renderRoutes.tsx';
@@ -72,6 +72,42 @@ describe('MemberPage', () => {
     expect(screen.queryByRole('region', { name: 'Sign-in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Actions' })).not.toBeInTheDocument();
     expect(adminCalls).toEqual([]);
+  });
+
+  it('lays the page out as cards, not a sidebar: account facts, role with its own save bar, danger zone', async () => {
+    const user = userEvent.setup();
+    render({ role: 'admin', instanceAdmin: false });
+
+    const account = await screen.findByRole('region', { name: 'Account' });
+    expect(within(account).getByText('sara@acme.io')).toBeInTheDocument();
+    expect(within(account).getByText('active')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Sections' })).not.toBeInTheDocument();
+
+    const role = screen.getByRole('region', { name: 'Role' });
+    expect(within(role).getByLabelText('Role in this organization')).toBeInTheDocument();
+    expect(within(role).getByRole('button', { name: 'Change role' })).toBeDisabled();
+    await pickOption(screen, 'Role in this organization', 'Operator');
+    expect(within(role).getByRole('button', { name: 'Change role' })).toBeEnabled();
+    await user.click(within(role).getByRole('button', { name: 'Discard' }));
+    expect(within(role).getByRole('button', { name: 'Change role' })).toBeDisabled();
+
+    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    expect(within(danger).getByRole('button', { name: 'Remove from organization' })).toBeInTheDocument();
+    expect(within(role).queryByRole('button', { name: 'Remove from organization' })).not.toBeInTheDocument();
+  });
+
+  it('puts the account\'s destructive actions and the removal together in one danger zone for an instance admin', async () => {
+    render({ role: 'owner', instanceAdmin: true });
+
+    await screen.findByRole('button', { name: 'Deactivate account' });
+    const danger = screen.getByRole('region', { name: 'Danger zone' });
+    expect(within(danger).getByRole('button', { name: 'Deactivate account' })).toBeInTheDocument();
+    expect(within(danger).getByRole('button', { name: 'Reset second factor' })).toBeInTheDocument();
+    expect(within(danger).getByRole('button', { name: 'Remove from organization' })).toBeInTheDocument();
+    const actions = screen.getByRole('region', { name: 'Actions' });
+    expect(within(actions).getByRole('button', { name: 'Set temporary password' })).toBeInTheDocument();
+    expect(within(actions).queryByRole('button', { name: 'Deactivate account' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('region', { name: 'Danger zone' })).toHaveLength(1);
   });
 
   it('shows an instance admin the role controls and the account sections', async () => {

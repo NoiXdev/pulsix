@@ -30,6 +30,8 @@ export const deUsers: Messages['users'] = {
     lastSignIn: 'Letzte Anmeldung',
     yes: 'Ja',
     no: 'Nein',
+    card: 'Konto',
+    cardDescription: 'Wer dieses Konto ist und wann es sich zuletzt angemeldet hat.',
     organizations: 'Organisationen',
     noOrgs: 'Dieses Konto ist in keiner Organisation Mitglied.',
     orgsHint: 'Rollen werden auf der Mitgliederseite der jeweiligen Organisation geändert.',
@@ -37,6 +39,7 @@ export const deUsers: Messages['users'] = {
   },
   signIn: {
     title: 'Anmeldung',
+    description: 'Wie sich dieses Konto anmeldet und wo es gerade angemeldet ist.',
     authenticator: 'Authenticator-App',
     authenticatorOn: 'Eingerichtet',
     authenticatorOff: 'Nicht eingerichtet',
@@ -46,6 +49,9 @@ export const deUsers: Messages['users'] = {
   },
   actions: {
     title: 'Aktionen',
+    description: 'Hilf dieser Person, wieder in ihr Konto zu kommen.',
+    dangerTitle: 'Gefahrenbereich',
+    dangerDescription: 'Diese Aktionen lassen sich nur schwer rückgängig machen, deshalb fragt jede vorher nach.',
     working: 'Wird ausgeführt…',
     running: (action: string) => `Läuft: ${action}…`,
     leaveWhileRunning: 'Diese Seite verlassen? Eine Kontoaktion läuft noch, und ihre Antwort, etwa ein temporäres Passwort, ginge verloren.',

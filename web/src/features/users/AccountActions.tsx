@@ -1,10 +1,13 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Copy } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { buttonClass } from '../../ui/buttonStyles.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { DisabledHint } from '../../ui/detail-layout.tsx';
+import { SettingsCard, SettingsRow } from '../../ui/settings.tsx';
+import { DangerZone } from './DangerZone.tsx';
 import { useResetAvailable } from '../../api/hooks/usePassword.ts';
 import type { AdminUserDetail } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
@@ -18,7 +21,8 @@ import { copyText } from '../../lib/clipboard.ts';
 const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate']);
 
 /**
- * AccountActions is an account's Actions section body, for instance admins:
+ * AccountActions is an account's Actions card and Danger zone card, for
+ * instance admins:
  * each action is confirmed in a dialog first, asks for a fresh second
  * factor when the server wants one (and then carries on), and reports how
  * the notice mail to the person went. On the admin's own account it offers
@@ -34,50 +38,71 @@ const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate
  * mounted when only the account in its address changes, and a temporary
  * password revealed for one account must not stay open beside another.
  */
-export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId: string }) {
+export function AccountActions({
+  user,
+  selfId,
+  dangerExtra,
+}: {
+  user: AdminUserDetail;
+  selfId: string;
+  /** Rows the host page adds to the Danger zone card (the member page's removal). */
+  dangerExtra?: ReactNode;
+}) {
   const t = useT();
   const resetAvailable = useResetAvailable();
   const runner = useAccountActionRunner(user);
   const a = t.users.actions;
   const openKind = runner.open;
 
-  if (user.id === selfId) {
+  const kinds = availableActions(user.state, user.invite_pending);
+  const row = (kind: ActionKind) => {
+    const blocked = kind === 'resetLink' ? resetLinkBlocked(t, resetAvailable) : null;
     return (
-      <DisabledHint
-        title={a.ownTitle}
-        body={a.ownBody}
-        action={
-          <Link to="/account/security" className={buttonClass()}>
-            {a.ownLink}
-          </Link>
-        }
-      />
+      <SettingsRow key={kind} label={a[kind].label} help={blocked ?? describeAction(a, kind, user.invite_pending)}>
+        <Button
+          type="button"
+          variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'default'}
+          disabled={blocked !== null || runner.running !== null}
+          aria-busy={runner.running === kind}
+          onClick={() => runner.setOpen(kind)}
+        >
+          {a[kind].label}
+        </Button>
+      </SettingsRow>
     );
-  }
+  };
+  const own = user.id === selfId;
+  const plain = own ? [] : kinds.filter((k) => !DESTRUCTIVE.has(k));
+  const danger = own ? [] : kinds.filter((k) => DESTRUCTIVE.has(k));
 
   return (
     <>
-      <div className="flex flex-col rounded-[10px] border border-border bg-card">
-        {availableActions(user.state, user.invite_pending).map((kind) => {
-          const blocked = kind === 'resetLink' ? resetLinkBlocked(t, resetAvailable) : null;
-          return (
-            <div key={kind} className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
-              <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-                {blocked ?? describeAction(a, kind, user.invite_pending)}
-              </span>
-              <Button
-                type="button"
-                variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'default'}
-                disabled={blocked !== null || runner.running !== null}
-                aria-busy={runner.running === kind}
-                onClick={() => runner.setOpen(kind)}
-              >
-                {a[kind].label}
-              </Button>
-            </div>
-          );
-        })}
-      </div>
+      {own && (
+        <SettingsCard title={a.title} description={a.description}>
+          <div className="px-5 pb-4">
+            <DisabledHint
+              title={a.ownTitle}
+              body={a.ownBody}
+              action={
+                <Link to="/account/security" className={buttonClass()}>
+                  {a.ownLink}
+                </Link>
+              }
+            />
+          </div>
+        </SettingsCard>
+      )}
+      {plain.length > 0 && (
+        <SettingsCard title={a.title} description={a.description}>
+          {plain.map(row)}
+        </SettingsCard>
+      )}
+      {(danger.length > 0 || dangerExtra) && (
+        <DangerZone>
+          {dangerExtra}
+          {danger.map(row)}
+        </DangerZone>
+      )}
       {runner.running && !openKind && (
         <p role="status" className="text-xs text-muted-foreground">
           {a.running(a[runner.running].label)}
