@@ -102,6 +102,11 @@ export function SmtpServerCard({
             aria-describedby="smtp_password_help"
             type="password"
             autoComplete="new-password"
+            // A stored credential of a third-party service, never the person's
+            // own login: keep password managers from filling or saving it.
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore=""
             className="w-72 max-w-full"
             {...form.register('password')}
           />

@@ -152,6 +152,11 @@ export function BackupDestinationCard({
                 type="password"
                 className="w-72 max-w-full"
                 autoComplete="new-password"
+                // A stored credential of a third-party service, never the person's
+                // own login: keep password managers from filling or saving it.
+                data-1p-ignore=""
+                data-lpignore="true"
+                data-bwignore=""
                 value={draft.secretKey}
                 onChange={(e) => set('secretKey', e.target.value)}
               />

@@ -172,6 +172,84 @@ describe('BackupsPage', () => {
     expect(puts[1].s3).toMatchObject({ secret_key: 'hunter2' });
   });
 
+  it('clears the secret field after a save, so the next save does not send it again', async () => {
+    const user = userEvent.setup();
+    const puts: Array<{ s3?: Record<string, unknown> }> = [];
+    // The server answers what was last saved, like the real one after the
+    // save's refetch: the secret is then stored, never shown back.
+    let stored = { ...FOLDER_SETTINGS, enabled: false };
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups/settings': () => new Response(JSON.stringify(stored), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        'PUT /api/v1/admin/backups/settings': (req: MockRequest) => {
+          const body = req.body as { destination: string; s3: Record<string, unknown> };
+          puts.push(body);
+          stored = {
+            ...stored,
+            destination: body.destination as typeof stored.destination,
+            s3: {
+              endpoint: String(body.s3.endpoint ?? ''),
+              region: String(body.s3.region ?? ''),
+              bucket: String(body.s3.bucket ?? ''),
+              prefix: String(body.s3.prefix ?? ''),
+              access_key: String(body.s3.access_key ?? ''),
+              path_style: Boolean(body.s3.path_style),
+              secret_key_set: stored.s3.secret_key_set || typeof body.s3.secret_key === 'string',
+            },
+          };
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderPage();
+    await user.click(await screen.findByLabelText('S3-compatible storage'));
+    await user.type(screen.getByLabelText('Endpoint'), 'https://s3.example.com');
+    await user.type(screen.getByLabelText('Bucket'), 'b1');
+    await user.type(screen.getByLabelText('Access key'), 'AK');
+    await user.type(screen.getByLabelText('Secret key'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0].s3).toMatchObject({ secret_key: 'hunter2' });
+
+    await waitFor(() => expect(screen.getByLabelText('Secret key')).toHaveValue(''));
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText('Bucket'));
+    await user.type(screen.getByLabelText('Bucket'), 'b2');
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1].s3).not.toHaveProperty('secret_key');
+  });
+
+  it('turns the destination card clean right after the save, without waiting for the backup list', async () => {
+    const user = userEvent.setup();
+    let saved = false;
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups/settings': () =>
+          new Response(JSON.stringify(saved ? S3_SETTINGS : { ...S3_SETTINGS, s3: { ...S3_SETTINGS.s3, secret_key_set: false } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        // Listing a remote storage can take long; once the save went
+        // through, the list must not hold the card.
+        'GET /api/v1/admin/backups': () => (saved ? new Promise<Response>(() => {}) : new Response(JSON.stringify({ backups: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+        'PUT /api/v1/admin/backups/settings': () => {
+          saved = true;
+          return new Response(null, { status: 204 });
+        },
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
+    expect(screen.getByLabelText('Secret key')).toHaveAttribute('data-1p-ignore');
+    expect(screen.getByLabelText('Secret key')).toHaveAttribute('data-lpignore', 'true');
+    await user.type(screen.getByLabelText('Secret key'), 'hunter2');
+    await user.click(screen.getByRole('button', { name: 'Save destination' }));
+    await waitFor(() => expect(screen.getByLabelText('Secret key')).toHaveValue(''));
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+  });
+
   it('removes the stored secret key only when asked to', async () => {
     const user = userEvent.setup();
     const puts: Array<{ s3?: Record<string, unknown> }> = [];

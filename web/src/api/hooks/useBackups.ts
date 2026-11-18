@@ -32,9 +32,14 @@ export function useSaveBackupSettings() {
     // gcTime: 0 — the variables may carry the S3 secret key; drop them from
     // the mutation cache as soon as nothing observes this mutation.
     gcTime: 0,
-    // The destination and schedule feed the list's status strip too.
-    onSuccess: () =>
-      Promise.all([qc.invalidateQueries({ queryKey: settingsKey }), qc.invalidateQueries({ queryKey: listKey })]),
+    // The destination and schedule feed the list's status strip too. Only
+    // the settings are waited for: listing a remote storage can take
+    // seconds, and until the save resolves the form still holds what was
+    // typed (the secret key included) and counts as unsaved.
+    onSuccess: async () => {
+      void qc.invalidateQueries({ queryKey: listKey });
+      await qc.invalidateQueries({ queryKey: settingsKey });
+    },
   });
 }
 
