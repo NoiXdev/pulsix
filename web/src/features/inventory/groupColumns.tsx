@@ -9,10 +9,12 @@ export interface GroupColumnsContext {
   bastionName: (id: string | null | undefined) => string;
   /** How deep a group sits in the tree (0 for a top-level group). */
   depthOf: (id: string) => number;
-  /** The name of a group's parent ('' for a top-level group). */
-  parentName: (id: string) => string;
-  /** A sort is chosen: the rows are flat, so the indent would name a false parent. */
-  sorted: boolean;
+  /** The groups above a group as the list names them ("all_servers › web";
+   * '' for a top-level group). */
+  pathOf: (id: string) => string;
+  /** A sort or a filter is chosen: the rows are flat, so the indent would
+   * name a false parent and the path is spelled out instead. */
+  flat: boolean;
 }
 
 /**
@@ -20,9 +22,9 @@ export interface GroupColumnsContext {
  * `groups`), sorted in the browser. The rows come in tree order (a group
  * under its parent), which is the unsorted order; the name keeps its indent
  * so a group's depth stays visible. Choosing a sort lists the groups flat
- * in that order.
+ * in that order, and a filter flat in tree order, each naming its path.
  */
-export function groupColumns({ t, bastionName, depthOf, parentName, sorted }: GroupColumnsContext): DataListColumn<InventoryGroupSummary>[] {
+export function groupColumns({ t, bastionName, depthOf, pathOf, flat }: GroupColumnsContext): DataListColumn<InventoryGroupSummary>[] {
   const g = t.inventory.groups;
   return [
     {
@@ -34,11 +36,11 @@ export function groupColumns({ t, bastionName, depthOf, parentName, sorted }: Gr
       required: true,
       defaultVisible: true,
       render: (r) => {
-        const parent = parentName(r.id);
+        const path = pathOf(r.id);
         return (
-          <span className="block truncate font-mono" style={{ paddingLeft: sorted ? 0 : depthOf(r.id) * 16 }}>
+          <span className="block truncate font-mono" style={{ paddingLeft: flat ? 0 : depthOf(r.id) * 16 }}>
             {r.name}
-            {sorted && parent && <span className={`font-sans text-muted-foreground ${CELL_MINOR}`}> {g.inParent(parent)}</span>}
+            {flat && path && <span className={`font-sans text-muted-foreground ${CELL_MINOR}`}> {g.inParent(path)}</span>}
           </span>
         );
       },

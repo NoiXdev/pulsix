@@ -18,6 +18,16 @@ export const enInventory = {
     complete: 'complete',
     incomplete: 'incomplete',
     empty: 'No inventory groups yet.',
+    search: 'Search groups',
+    filterPlaceholder: 'Filter groups…',
+    noMatch: 'No groups match the filters.',
+    filters: {
+      parent: 'Filter by parent group',
+      anyParent: 'Any parent group',
+      values: 'Filter by values',
+      anyValues: 'Any values',
+      jump: 'Has a jump host',
+    },
   },
   create: {
     titleChild: 'Add child group',

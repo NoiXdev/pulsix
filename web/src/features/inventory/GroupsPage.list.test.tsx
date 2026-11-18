@@ -6,6 +6,8 @@ import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { GroupsPage } from './GroupsPage.tsx';
+import { validateFilters } from '../lists/filterSearch.ts';
+import { GROUPS_FILTERS } from './groupsSearch.ts';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
 const group = (name: string, extra: Record<string, unknown> = {}) => ({
@@ -21,6 +23,7 @@ function setup(locale?: 'de', groups: unknown[] = numbered('grp', 30).map((n) =>
   });
   return renderListPage({
     path: '/groups', component: GroupsPage, initial: `/o/acme/groups${query}`, locale,
+    extraSearch: (s) => validateFilters(GROUPS_FILTERS, s),
     others: [{ path: '/groups/$id', component: () => <div>GROUP DETAIL</div> }],
   });
 }
@@ -98,5 +101,70 @@ describe('GroupsPage list', () => {
   it('writes the footer in German', async () => {
     setup('de');
     expect(await screen.findByText('1–25 von 30 Gruppen')).toBeInTheDocument();
+  });
+
+  describe('filters', () => {
+    // all_servers › web › web_eu, and db on its own.
+    const rows = [
+      group('db', { complete: false }),
+      group('web_eu', { parent_id: 'id-web', complete: false }),
+      group('all_servers'),
+      group('web', { parent_id: 'id-all_servers', bastion_id: 'b1', description: 'Front tier' }),
+    ];
+
+    it('reads the filters from the URL, narrows the rows and names each one\'s path instead of indenting', async () => {
+      setup(undefined, rows, '?values=incomplete');
+      expect(await screen.findByText('1–2 of 2 groups')).toBeInTheDocument();
+      expect(screen.getByText('2 of 4 groups')).toBeInTheDocument();
+      // Tree order, flat.
+      expect(firstCells()).toEqual(['web_eu in all_servers › web', 'db']);
+      expect(screen.getByText(/^web_eu/, { selector: 'span.truncate' })).toHaveStyle({ paddingLeft: '0px' });
+      expect(screen.getByRole('link', { name: 'web_eu, in all_servers › web' })).toBeInTheDocument();
+    });
+
+    it('keeps every group below the chosen parent', async () => {
+      setup(undefined, rows, '?parent=id-all_servers');
+      expect(await screen.findByText('1–2 of 2 groups')).toBeInTheDocument();
+      expect(firstCells()).toEqual(['web in all_servers', 'web_eu in all_servers › web']);
+    });
+
+    it('writes the search, the parent and the chip to the URL', async () => {
+      const user = userEvent.setup();
+      const router = setup(undefined, rows, '?page=2');
+      await screen.findByText('1–4 of 4 groups');
+      // Unfiltered: the tree, indented.
+      expect(firstCells()).toEqual(['all_servers', 'web', 'web_eu', 'db']);
+
+      await user.click(screen.getByRole('button', { name: 'Has a jump host' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({ jump: true }));
+      expect(firstCells()).toEqual(['web in all_servers']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+      await waitFor(() => expect(router.state.location.search).toEqual({}));
+
+      await pickOption(screen, 'Filter by parent group', 'web');
+      await waitFor(() => expect(router.state.location.search).toEqual({ parent: 'id-web' }));
+      expect(firstCells()).toEqual(['web_eu in all_servers › web']);
+      await user.click(screen.getByRole('button', { name: 'Reset every filter' }));
+
+      await user.type(screen.getByRole('searchbox', { name: 'Search groups' }), 'front');
+      await waitFor(() => expect(router.state.location.search).toEqual({ q: 'front' }));
+      expect(firstCells()).toEqual(['web in all_servers']);
+    });
+
+    it('offers only groups with subgroups as parents', async () => {
+      const user = userEvent.setup();
+      setup(undefined, rows);
+      await screen.findByText('1–4 of 4 groups');
+      await user.click(screen.getByRole('combobox', { name: 'Filter by parent group' }));
+      const options = screen.getAllByRole('option').map((o) => o.textContent);
+      expect(options.some((o) => o?.startsWith('all_servers'))).toBe(true);
+      expect(options.some((o) => o?.startsWith('web') && !o.startsWith('web_eu'))).toBe(true);
+      expect(options.some((o) => o?.startsWith('db') || o?.startsWith('web_eu'))).toBe(false);
+    });
+
+    it('says when no group matches', async () => {
+      setup(undefined, rows, '?q=zzz');
+      expect(await screen.findByText('No groups match the filters.')).toBeInTheDocument();
+    });
   });
 });

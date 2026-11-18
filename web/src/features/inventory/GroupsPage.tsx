@@ -3,20 +3,26 @@ import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
+import { FilterChip, ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { useBastions } from '../../api/hooks/useSsh.ts';
+import { FilterSelect } from '../lists/FilterSelect.tsx';
+import { useListFilters } from '../lists/filterSearch.ts';
 import { validateListSearch } from '../lists/listSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { CreateGroupDialog } from './CreateGroupDialog.tsx';
 import { groupColumns } from './groupColumns.tsx';
+import { filterGroups, GROUP_VALUES, GROUPS_FILTERS, groupPath } from './groupsSearch.ts';
 import { orderTree } from './tree.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /** GroupsPage lists the organization's Ansible inventory groups (list id
- * `groups`): the whole tree is one request, shown in tree order and sorted
- * and paged in the browser. A row opens the group; there is no row menu. */
+ * `groups`): the whole tree is one request, shown in tree order and
+ * filtered, sorted and paged in the browser, the filters in the URL
+ * (groupsSearch.ts). A sort or a filter lists the groups flat, each naming
+ * its path. A row opens the group; there is no row menu. */
 export function GroupsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
@@ -30,19 +36,27 @@ export function GroupsPage() {
   const depths = new Map(tree.map(({ group, depth }) => [group.id, depth]));
   const bastionName = (id?: string | null) => bastions.data?.bastions?.find((b) => b.id === id)?.name ?? '—';
   const byId = new Map((all ?? []).map((g) => [g.id, g]));
-  const parentName = (id: string) => byId.get(byId.get(id)?.parent_id ?? '')?.name ?? '';
+  const pathOf = (id: string) => (byId.has(id) ? groupPath(all ?? [], id).join(' › ') : '');
+  const { filters, active, setFilter, reset } = useListFilters(GROUPS_FILTERS);
   // The list sorts only by a key one of its columns offers (useListView ignores
-  // any other `?sort=`), so only such a key flattens the tree.
+  // any other `?sort=`), so only such a key, or a filter, flattens the tree.
   const urlSort = validateListSearch(useSearch({ strict: false }) as Record<string, unknown>).sort;
-  const groupCtx = { t, bastionName, depthOf: (id: string) => depths.get(id) ?? 0, parentName };
-  const sorted = !!urlSort && groupColumns({ ...groupCtx, sorted: false }).some((c) => c.sortKey === urlSort);
-  const columns = groupColumns({ ...groupCtx, sorted });
-  const view = useListView('groups', columns, { mode: 'client', rowKey: (g) => g.id });
+  const groupCtx = { t, bastionName, depthOf: (id: string) => depths.get(id) ?? 0, pathOf };
+  const sorted = !!urlSort && groupColumns({ ...groupCtx, flat: false }).some((c) => c.sortKey === urlSort);
+  const flat = sorted || active;
+  const columns = groupColumns({ ...groupCtx, flat });
+  const view = useListView('groups', columns, { mode: 'client', rowKey: (g) => g.id, resetKey: JSON.stringify(filters) });
 
   const guard = useQueryGuard(groups);
   if (guard) return guard;
   if (!all) return <QueryLoading />;
-  const { rows, total } = view.view(view.ready ? tree.map((r) => r.group) : undefined);
+  const ordered = tree.map((r) => r.group);
+  const shown = filterGroups(ordered, all, filters);
+  const { rows, total } = view.view(view.ready ? shown : undefined);
+  const g = t.inventory.groups;
+  const f = g.filters;
+  // A parent is worth offering when something sits below it.
+  const parents = tree.filter((r) => all.some((c) => c.parent_id === r.group.id));
 
   return (
     <>
@@ -58,11 +72,34 @@ export function GroupsPage() {
         columns={columns}
         rows={rows}
         rowKey={(g) => g.id}
-        rowLink={(g) => ({ to: '/o/$org/groups/$id', params: { org, id: g.id }, search: { tab: undefined }, label: parentName(g.id) && sorted ? `${g.name}, ${t.inventory.groups.inParent(parentName(g.id))}` : g.name })}
-        rowLabel={(g) => g.name}
+        rowLink={(r) => ({ to: '/o/$org/groups/$id', params: { org, id: r.id }, search: { tab: undefined }, label: pathOf(r.id) && flat ? `${r.name}, ${g.inParent(pathOf(r.id))}` : r.name })}
+        rowLabel={(r) => r.name}
         loading={!view.ready}
-        empty={t.inventory.groups.empty}
-        {...view.listProps(total, t.inventory.groups.count)}
+        empty={active ? g.noMatch : g.empty}
+        toolbar={
+          <ListToolbar count={active ? <ResultCount shown={shown.length} total={all.length} noun={g.count} /> : undefined}>
+            <SearchInput label={g.search} placeholder={g.filterPlaceholder} value={filters.q ?? ''} onChange={(q) => setFilter('q', q || undefined, { replace: true })} />
+            <FilterSelect
+              label={f.parent}
+              allLabel={f.anyParent}
+              options={parents.map(({ group: p }) => ({ value: p.id, label: p.name, hint: pathOf(p.id) || undefined }))}
+              value={filters.parent}
+              onChange={(v) => setFilter('parent', v)}
+            />
+            <FilterSelect
+              label={f.values}
+              allLabel={f.anyValues}
+              options={GROUP_VALUES.map((v) => ({ value: v, label: t.inventory.detail[v] }))}
+              value={filters.values}
+              onChange={(v) => setFilter('values', v as typeof filters.values)}
+            />
+            <FilterChip pressed={!!filters.jump} onToggle={() => setFilter('jump', filters.jump ? undefined : true)}>
+              {f.jump}
+            </FilterChip>
+            {active && <ResetFilters onReset={reset} />}
+          </ListToolbar>
+        }
+        {...view.listProps(total, g.count)}
       />
       <CreateGroupDialog
         org={org}

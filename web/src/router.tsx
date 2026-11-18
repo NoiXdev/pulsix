@@ -63,6 +63,7 @@ import { validateSchedulesSearch } from './features/schedules/schedulesSearch.ts
 import { validateRunRequestsSearch } from './features/runs/runRequestsSearch.ts';
 import { validateMyActivitySearch } from './features/activity/activitySearch.ts';
 import { validateMaintenanceSearch } from './features/maintenance/maintenanceSearch.ts';
+import { validateGroupsSearch } from './features/inventory/groupsSearch.ts';
 
 /**
  * Code-based routing (createRootRoute/createRoute/createRouter), not
@@ -245,7 +246,7 @@ const alertsRoute = createRoute({
 const groupsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/groups',
-  validateSearch: (search: Record<string, unknown>) => validateListSearch(search),
+  validateSearch: validateGroupsSearch,
   component: GroupsPage,
 });
 const groupDetailRoute = createRoute({

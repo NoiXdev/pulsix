@@ -23,6 +23,16 @@ export const deInventory: Messages['inventory'] = {
     complete: 'vollständig',
     incomplete: 'unvollständig',
     empty: 'Noch keine Inventargruppen.',
+    search: 'Gruppen durchsuchen',
+    filterPlaceholder: 'Gruppen filtern …',
+    noMatch: 'Keine Gruppen passen zu den Filtern.',
+    filters: {
+      parent: 'Nach übergeordneter Gruppe filtern',
+      anyParent: 'Jede übergeordnete Gruppe',
+      values: 'Nach Werten filtern',
+      anyValues: 'Alle Werte',
+      jump: 'Mit Sprunghost',
+    },
   },
   create: {
     titleChild: 'Untergruppe hinzufügen',
