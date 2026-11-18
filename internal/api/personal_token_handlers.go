@@ -138,9 +138,12 @@ func registerPersonalTokenRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// SessionID: the create re-checks this session under the owner
+		// lock, so a first second factor enrolled while it waited (which
+		// revokes the account's tokens) is not outlived by this one.
 		plain, tok, err := deps.PersonalTokens.Create(ctx, p.UserID, personaltokens.NewToken{
 			Name: in.Body.Name, Kind: auth.TokenKind(in.Body.Kind), Areas: in.Body.Areas,
-			ExpiresAt: in.Body.ExpiresAt, Grants: grants,
+			ExpiresAt: in.Body.ExpiresAt, Grants: grants, SessionID: p.SessionID,
 		})
 		if err != nil {
 			return nil, mapPersonalTokenErr(ctx, err, slugs)
@@ -380,6 +383,10 @@ func mapPersonalTokenErr(ctx context.Context, err error, slugs map[uuid.UUID]str
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, auth.ErrTokenExpired):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, auth.ErrSessionNotComplete), errors.Is(err, auth.ErrSessionLocked), errors.Is(err, auth.ErrUnauthenticated):
+		// The creating session's re-check under the owner lock
+		// (personaltokens.SessionCheck).
+		return mapAuthErr(ctx, err)
 	}
 	slog.ErrorContext(ctx, "personal tokens", "err", err)
 	return huma.Error500InternalServerError("internal error")

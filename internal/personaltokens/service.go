@@ -145,14 +145,38 @@ type Members interface {
 // Service manages personal tokens and answers what one may do in one
 // organization.
 type Service struct {
-	store   Store
-	members Members
-	now     func() time.Time
+	store    Store
+	members  Members
+	now      func() time.Time
+	sessions SessionCheck
+}
+
+// SessionCheck re-checks, inside a create's transaction, the session that
+// asked for the token (auth.Sessions.RequireComplete): it must still be a
+// live, complete session of userID. The request checked it when it began;
+// the account's first second factor may have committed since, revoking its
+// tokens and superseding a session signed in on the password alone
+// (PULSIX_MFA_OPTIONAL).
+type SessionCheck interface {
+	RequireComplete(ctx context.Context, userID, sessionID uuid.UUID) error
+}
+
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithSessionCheck installs the check a create from a session runs
+// (NewToken.SessionID).
+func WithSessionCheck(c SessionCheck) Option {
+	return func(s *Service) { s.sessions = c }
 }
 
 // NewService wires the store, the membership lookup and the clock.
-func NewService(store Store, members Members, now func() time.Time) *Service {
-	return &Service{store: store, members: members, now: now}
+func NewService(store Store, members Members, now func() time.Time, opts ...Option) *Service {
+	s := &Service{store: store, members: members, now: now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Cap is the role cap of tokenID's grant for orgID: no grant or a blocked

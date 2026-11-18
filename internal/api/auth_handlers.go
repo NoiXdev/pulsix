@@ -245,6 +245,13 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict("cannot remove the last second factor; add another one first")
 	case errors.Is(err, auth.ErrPasswordNotTheFactor):
 		return huma.Error403Forbidden(passwordNotTheFactor)
+	case errors.Is(err, auth.ErrSessionNotComplete):
+		// The session was superseded or ended its completeness while the
+		// request ran (a first factor enrolled meanwhile): the same answer
+		// requireMFAComplete gives a pending session.
+		return huma.Error403Forbidden("second factor required")
+	case errors.Is(err, auth.ErrSessionLocked):
+		return huma.Error403Forbidden(sessionLocked)
 	case errors.Is(err, auth.ErrTOTPNotEnabled):
 		return huma.Error409Conflict("recovery codes belong to a confirmed authenticator app; set one up first")
 	default:

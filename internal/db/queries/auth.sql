@@ -13,9 +13,13 @@
 WITH new_session AS (
     INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at, password_only)
     VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END, $6)
-    RETURNING user_id, mfa_complete
+    RETURNING user_id, mfa_complete, password_only
 )
-UPDATE users SET last_sign_in_at = now()
+-- A password-only session also marks the account
+-- (users.password_only_signin_at): its first second factor revokes the
+-- account's tokens while the mark is set (TakePasswordOnlySignin).
+UPDATE users SET last_sign_in_at = now(),
+    password_only_signin_at = CASE WHEN new_session.password_only THEN now() ELSE users.password_only_signin_at END
 FROM new_session
 WHERE users.id = new_session.user_id AND new_session.mfa_complete;
 
@@ -293,3 +297,15 @@ SELECT (
     EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)
     OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = $1)
 )::boolean AS enrolled;
+
+-- name: TakePasswordOnlySignin :one
+-- Clears the account's password-only sign-in mark (CreateSession) and
+-- reports whether it was set. The first second factor runs it under the
+-- account's exclusive lock and revokes the account's tokens when it was.
+WITH previous AS (
+    SELECT u.id, u.password_only_signin_at FROM users u WHERE u.id = $1
+)
+UPDATE users SET password_only_signin_at = NULL
+FROM previous
+WHERE users.id = previous.id
+RETURNING (previous.password_only_signin_at IS NOT NULL)::boolean AS was_marked;

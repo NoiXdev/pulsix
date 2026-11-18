@@ -149,9 +149,10 @@ const createSession = `-- name: CreateSession :exec
 WITH new_session AS (
     INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at, password_only)
     VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END, $6)
-    RETURNING user_id, mfa_complete
+    RETURNING user_id, mfa_complete, password_only
 )
-UPDATE users SET last_sign_in_at = now()
+UPDATE users SET last_sign_in_at = now(),
+    password_only_signin_at = CASE WHEN new_session.password_only THEN now() ELSE users.password_only_signin_at END
 FROM new_session
 WHERE users.id = new_session.user_id AND new_session.mfa_complete
 `
@@ -176,6 +177,9 @@ type CreateSessionParams struct {
 // password_only marks a session complete on the password alone because the
 // second factor is optional (PULSIX_MFA_OPTIONAL): GetSession reads it as
 // pending once the account has a factor.
+// A password-only session also marks the account
+// (users.password_only_signin_at): its first second factor revokes the
+// account's tokens while the mark is set (TakePasswordOnlySignin).
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.Exec(ctx, createSession,
 		arg.ID,
@@ -606,6 +610,26 @@ func (q *Queries) SetTOTPLastStep(ctx context.Context, arg SetTOTPLastStepParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const takePasswordOnlySignin = `-- name: TakePasswordOnlySignin :one
+WITH previous AS (
+    SELECT u.id, u.password_only_signin_at FROM users u WHERE u.id = $1
+)
+UPDATE users SET password_only_signin_at = NULL
+FROM previous
+WHERE users.id = previous.id
+RETURNING (previous.password_only_signin_at IS NOT NULL)::boolean AS was_marked
+`
+
+// Clears the account's password-only sign-in mark (CreateSession) and
+// reports whether it was set. The first second factor runs it under the
+// account's exclusive lock and revokes the account's tokens when it was.
+func (q *Queries) TakePasswordOnlySignin(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, takePasswordOnlySignin, id)
+	var was_marked bool
+	err := row.Scan(&was_marked)
+	return was_marked, err
 }
 
 const unlockSession = `-- name: UnlockSession :execrows

@@ -38,25 +38,37 @@ func (s *Sessions) RefreshPasswordProof(ctx context.Context, id uuid.UUID) (stri
 	return cookieValue(id, secret), nil
 }
 
+// ErrSessionNotComplete is RequireComplete's answer for a session that is
+// live but not complete: pending, or password-only and superseded by a
+// factor the account has gained since (GetSession's password_superseded).
+var ErrSessionNotComplete = errors.New("session is not complete")
+
 // LockLiveForEnrolment is LockLive for finishing an enrolment (confirming
 // TOTP, finishing a passkey registration), and reports whether sessionID is
-// password-only (PULSIX_MFA_OPTIONAL). A password-only session's enrolment
-// takes the account row exclusively (LockAccountForRemoval) instead of in
-// key-share mode: it re-checks that the account still has no factor and may
-// revoke its tokens, and two such first enrolments, or one and a passkey
-// login, must not interleave. Any other session keeps the key-share lock,
-// so nothing changes with the mode off. The session is peeked at without a
-// lock to choose, and checked again under the lock as LockLive does.
+// password-only (PULSIX_MFA_OPTIONAL). The enrolment of an account's first
+// factor takes the account row exclusively (LockAccountForRemoval) instead
+// of in key-share mode: it re-checks that the account still has no factor,
+// may revoke its tokens, and must not interleave with a second first
+// enrolment, a passkey login, or a credential mint (WithCompleteSession,
+// which takes the row in key-share mode and so waits for it, then finds
+// its session superseded). An account that has a factor keeps the key-share
+// lock, as every enrolment did before. The session and the account are
+// peeked at without a lock to choose, and the session is checked again
+// under the lock as LockLive does; a factor never disappears under a live
+// session (removing the last one is refused, and a reset ends the sessions),
+// so the peek can only err towards the stronger lock.
 func (s *Sessions) LockLiveForEnrolment(ctx context.Context, userID, sessionID uuid.UUID) (passwordOnly bool, err error) {
-	peek, err := s.q.GetSession(ctx, sessionID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if _, err := s.q.GetSession(ctx, sessionID); errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
-	}
-	if err != nil {
+	} else if err != nil {
 		return false, fmt.Errorf("look up session: %w", err)
 	}
+	enrolled, err := s.HasSecondFactor(ctx, userID)
+	if err != nil {
+		return false, err
+	}
 	lock := s.LockAccount
-	if peek.PasswordOnly {
+	if !enrolled {
 		lock = s.LockAccountForRemoval
 	}
 	if err := lock(ctx, userID); err != nil {
@@ -84,6 +96,48 @@ func (s *Sessions) HasSecondFactor(ctx context.Context, userID uuid.UUID) (bool,
 		return false, fmt.Errorf("check second factor: %w", err)
 	}
 	return on, nil
+}
+
+// TakePasswordOnlySignin clears userID's password-only sign-in mark
+// (users.password_only_signin_at, set whenever a password-only session is
+// opened) and reports whether it was set. The first second factor takes it
+// under the account's exclusive lock and revokes the account's tokens when
+// it was, whichever session enrols and whether the mode is still on.
+func (s *Sessions) TakePasswordOnlySignin(ctx context.Context, userID uuid.UUID) (bool, error) {
+	marked, err := s.q.TakePasswordOnlySignin(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("take the password-only sign-in mark: %w", err)
+	}
+	return marked, nil
+}
+
+// RequireComplete re-reads sessionID in a statement of its own and refuses
+// it unless it is a live, unlocked, complete session of userID: a session
+// that ended, or belongs to another account, is ErrUnauthenticated; a
+// locked one ErrSessionLocked; a pending one, or a password-only one that a
+// factor has superseded, ErrSessionNotComplete. A write that mints a
+// credential runs it inside its transaction after taking the account row
+// (WithCompleteSession, personal tokens' owner lock), so a first factor
+// enrolled meanwhile, which holds that row exclusively until it commits, is
+// seen.
+func (s *Sessions) RequireComplete(ctx context.Context, userID, sessionID uuid.UUID) error {
+	row, err := s.q.GetSession(ctx, sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUnauthenticated
+	}
+	if err != nil {
+		return fmt.Errorf("look up session: %w", err)
+	}
+	if row.UserID != userID {
+		return ErrUnauthenticated
+	}
+	if row.LockedAt.Valid {
+		return ErrSessionLocked
+	}
+	if !row.MfaComplete || row.PasswordSuperseded {
+		return ErrSessionNotComplete
+	}
+	return nil
 }
 
 // RevokeAccountTokens revokes every organization token and personal token

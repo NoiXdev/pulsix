@@ -109,19 +109,50 @@ func (e *Enrolment) firstFactor(ctx context.Context, userID uuid.UUID, passwordO
 	return !enrolled, nil
 }
 
-// revokeOnFirstFactor revokes every token of userID when a password-only
-// session (PULSIX_MFA_OPTIONAL) has just enrolled the account's first
-// factor, and reports whether it did. A password alone could mint those
-// tokens, whoever held it; the factor would protect nothing while they
-// still worked. Any other enrolment revokes nothing.
+// revokeOnFirstFactor revokes every token of userID when the account has
+// just enrolled its first factor and either the enrolling session is
+// password-only or the account ever signed in on its password alone
+// (PULSIX_MFA_OPTIONAL; the account's mark, which it clears), and reports
+// whether it did. A password alone could mint those tokens, whoever held
+// it, and the mode may have been turned off since; the factor would protect
+// nothing while they still worked. Any other enrolment revokes nothing.
 func (e *Enrolment) revokeOnFirstFactor(ctx context.Context, userID uuid.UUID, first, passwordOnly bool) (bool, error) {
-	if !first || !passwordOnly {
+	if !first {
+		return false, nil
+	}
+	marked, err := e.sessions.TakePasswordOnlySignin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if !marked && !passwordOnly {
 		return false, nil
 	}
 	if err := e.sessions.RevokeAccountTokens(ctx, userID); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// WithCompleteSession runs fn in one instance transaction once it has taken
+// userID's account row in key-share mode (Sessions.LockAccount) and
+// re-checked, in a statement of its own, that sessionID is still a live,
+// complete session of the account (Sessions.RequireComplete). A write that
+// mints a credential from a session, such as an organization API token,
+// runs inside it: the request checked its session when it began, but the
+// account's first factor may commit in between, revoking the account's
+// tokens and superseding a password-only session. That enrolment holds the
+// row exclusively, so fn either commits before it starts (and its token is
+// revoked with the rest) or finds the session refused afterwards.
+func (e *Enrolment) WithCompleteSession(ctx context.Context, userID, sessionID uuid.UUID, fn func(ctx context.Context) error) error {
+	return e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockAccount(ctx, userID); err != nil {
+			return err
+		}
+		if err := e.sessions.RequireComplete(ctx, userID, sessionID); err != nil {
+			return err
+		}
+		return fn(ctx)
+	})
 }
 
 // FinishPasskey finishes a passkey registration on p's session: it verifies

@@ -281,8 +281,14 @@ optional. **Never turn it on for a production instance.** While it is on:
   revokes every API token of the account (personal and organization tokens;
   the Security page says so, and the account's activity records it).
   Someone who knew the password and signed in before the owner added a
-  factor keeps no session and no token from that sign-in. Invitations,
-  memberships and other changes made in that time stay: review them.
+  factor keeps no session and no token from that sign-in, even if the mode
+  was turned off in between: the account remembers that it signed in on the
+  password alone, and its first factor revokes the tokens whichever session
+  enrols it. A token requested while the factor is being enrolled is refused
+  or revoked with the rest. What such a session created inside organizations
+  stays, as far as its role allowed it: review invitations and memberships
+  (and roles), agent and worker enrolment tokens, organization secrets,
+  stored credentials (SSH keys and passwords) and webhook triggers.
 - Recovery codes exist only beside a confirmed authenticator app: they cannot
   be generated or redeemed without one, and a passkey that is the account's
   first factor removes any that are left over.

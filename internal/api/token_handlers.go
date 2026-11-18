@@ -136,7 +136,8 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 		// successor without one, and revoking the leaked token would leave
 		// what it minted untouched. Listing and revoking stay available to
 		// tokens with PermTokensManage.
-		if _, err := requireInteractiveSession(ctx); err != nil {
+		p, err := requireInteractiveSession(ctx)
+		if err != nil {
 			return nil, err
 		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTokensManage)
@@ -152,8 +153,21 @@ func registerTokenRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		in.Body.Areas = canonicalAreas(in.Body.Areas)
-		plain, tok, err := deps.Tokens.CreateWith(ctx, scope.UserID, scope.OrgID, auth.NewToken{
-			Name: in.Body.Name, Role: string(role), Kind: kind, Areas: in.Body.Areas, ExpiresAt: in.Body.ExpiresAt,
+		// The insert runs under the account row and a fresh look at the
+		// session (Enrolment.WithCompleteSession): the account's first
+		// second factor may commit while this request waits, revoking its
+		// tokens and superseding a session signed in on the password alone,
+		// and the token must not be inserted after that.
+		var (
+			plain string
+			tok   auth.Token
+		)
+		err = deps.Enrolment.WithCompleteSession(ctx, p.UserID, p.SessionID, func(ctx context.Context) error {
+			var err error
+			plain, tok, err = deps.Tokens.CreateWith(ctx, scope.UserID, scope.OrgID, auth.NewToken{
+				Name: in.Body.Name, Role: string(role), Kind: kind, Areas: in.Body.Areas, ExpiresAt: in.Body.ExpiresAt,
+			})
+			return err
 		})
 		if err != nil {
 			return nil, mapTokenErr(ctx, err)

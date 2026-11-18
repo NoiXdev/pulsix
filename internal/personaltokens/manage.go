@@ -52,6 +52,10 @@ type NewToken struct {
 	Areas     []string
 	ExpiresAt *time.Time
 	Grants    []GrantInput
+	// SessionID is the session that asks for the token. When set, Create
+	// re-checks it under the owner's lock (SessionCheck) and refuses with
+	// its error; a service without a check refuses every such create.
+	SessionID uuid.UUID
 }
 
 // Change is a partial update: a nil field and auth.ExpiryKeep leave that
@@ -113,6 +117,12 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in NewToken) (st
 		if n >= MaxTokensPerUser {
 			return ErrLimit
 		}
+		// After the owner lock CountTokens took, which an enrolment of the
+		// account's first factor conflicts with: the session is read as it
+		// is once that enrolment has committed.
+		if err := s.checkSession(ctx, userID, in.SessionID); err != nil {
+			return err
+		}
 		caps := make([]tenancy.Role, 0, len(in.Grants))
 		for _, g := range in.Grants {
 			if err := s.checkGrant(ctx, userID, g, nil); err != nil {
@@ -154,6 +164,18 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in NewToken) (st
 		return "", Token{}, err
 	}
 	return plain, tok, nil
+}
+
+// checkSession runs the SessionCheck for a create from sessionID; uuid.Nil
+// names no session and checks nothing.
+func (s *Service) checkSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	if sessionID == uuid.Nil {
+		return nil
+	}
+	if s.sessions == nil {
+		return errors.New("personal token create: no session check configured")
+	}
+	return s.sessions.RequireComplete(ctx, userID, sessionID)
 }
 
 // List returns userID's personal tokens that are not revoked, expired ones

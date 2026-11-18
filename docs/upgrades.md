@@ -478,7 +478,7 @@ repositories as before. An older worker never asks.
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
-  migration 00113):** off by default, so nothing changes unless it is set (`1`
+  migrations 00113 and 00114):** off by default, so nothing changes unless it is set (`1`
   or `true`; any value `strconv.ParseBool` refuses stops the start). When on,
   an account without a second factor gets a complete session from its
   password (login, the first-run wizard and an invitation's new account, the
@@ -502,22 +502,33 @@ repositories as before. An older worker never asks.
   sends every other password-only session to the factor prompt on its next
   request; the password step-up refreshes a session only while the account has
   no factor, checked in the same statement that writes. A first factor
-  enrolled from a password-only session also revokes every API token of the
-  account (organization and personal, the statements deactivation uses), in
-  the enrolment's transaction, recorded as `revokeTokensOnFirstFactor`; the
+  enrolled from a password-only session, or by any session of an account that
+  has signed in on its password alone (migration 00114 adds
+  `users.password_only_signin_at`, NULL for every existing account, set by
+  every password-only session and cleared by the first factor, so turning
+  the mode off in between changes nothing), also revokes every API token of
+  the account (organization and personal, the statements deactivation uses),
+  in the enrolment's transaction, recorded as `revokeTokensOnFirstFactor`.
+  Creating an organization or personal token re-reads the creating session
+  under the account row's lock, after any first enrolment that holds it
+  exclusively has committed, and refuses (403) a session it superseded; a
+  token is therefore either revoked with the rest or never created. The
   answers of `POST /api/v1/auth/totp/confirm` and
   `POST /api/v1/auth/passkeys/register/finish` gain `tokens_revoked`, and the
-  Security page shows a notice. Invitations and memberships created in that
-  time stay and should be reviewed. Such an enrolment takes the account row
-  exclusively and refuses (403) if the account has gained a factor since the
-  request began. Recovery codes now need a confirmed TOTP secret in every
-  mode: `POST /api/v1/auth/recovery-codes` answers 409 without one, a
+  Security page shows a notice. What a password-only session created in an
+  organization stays, within its role, and should be reviewed: invitations,
+  memberships and roles, agent and worker enrolment tokens, organization
+  secrets, stored credentials (SSH keys, passwords) and webhook triggers.
+  The enrolment of an account's first factor takes the account row
+  exclusively; from a password-only session it refuses (403) if the account
+  has gained a factor since the request began. Recovery codes now need a
+  confirmed TOTP secret in every mode: `POST /api/v1/auth/recovery-codes` answers 409 without one, a
   recovery code is refused beside an unconfirmed secret, and a passkey that
   is an account's first factor deletes leftover codes. An administrator's
   second-factor reset leaves the account factor-less, so with the mode on it
   signs in with its password alone afterwards and is not made to enrol again.
   Nothing is dropped or rewritten, workers and agents are not affected, and a
-  backup carries the column with `sessions` (a restore ends the sessions as
+  backup carries the columns with `sessions` and `users` (a restore ends the sessions as
   before). **Rolling upgrade or mixed settings:** every manager instance must
   run this version with the same value, or a sign-in lands complete on one and
   pending on another. Turning it off leaves the sessions it opened usable until

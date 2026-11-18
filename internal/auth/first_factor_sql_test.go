@@ -242,3 +242,114 @@ func TestPasswordOnlyEnrolmentRefusedOnceAFactorExists(t *testing.T) {
 		}
 	})
 }
+
+// passwordOnlyMarked reports whether uid carries the account-level marker
+// of a password-only sign-in (users.password_only_signin_at).
+func (w *resetWorld) passwordOnlyMarked(t *testing.T, uid uuid.UUID) bool {
+	t.Helper()
+	var marked bool
+	if err := w.d.Pool().QueryRow(ctx, `SELECT password_only_signin_at IS NOT NULL FROM users WHERE id = $1`, uid).Scan(&marked); err != nil {
+		t.Fatal(err)
+	}
+	return marked
+}
+
+// A password-only sign-in marks the account, whatever session it opens
+// later: the marker is what the first factor's token revocation goes by.
+func TestPasswordOnlySignInMarksTheAccount(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "marked@example.test")
+	if w.passwordOnlyMarked(t, uid) {
+		t.Fatal("a new account is marked")
+	}
+	w.session(t, uid, true)
+	if w.passwordOnlyMarked(t, uid) {
+		t.Fatal("a session completed by a factor marked the account")
+	}
+	w.passwordOnlySession(t, uid)
+	if !w.passwordOnlyMarked(t, uid) {
+		t.Fatal("a password-only session did not mark the account")
+	}
+}
+
+// The first factor revokes the tokens of an account that ever signed in on
+// its password alone, whichever session enrols it and whether the mode is
+// still on (the enrolling session here is a pending one, as with the mode
+// off); it clears the marker. Without the marker nothing is revoked.
+func TestFirstFactorRevokesTokensOfAMarkedAccount(t *testing.T) {
+	for _, kind := range []string{"passkey", "totp"} {
+		t.Run(kind, func(t *testing.T) {
+			w := newResetWorld(t)
+			uid := w.seedAccount(t, "marked-"+kind+"@example.test")
+			w.passwordOnlySession(t, uid)
+			live := w.seedTokens(t, uid)
+			p := w.session(t, uid, false)
+			var (
+				revoked bool
+				err     error
+			)
+			if kind == "passkey" {
+				_, revoked, err = w.finishPasskey(t, p)
+			} else {
+				_, _, revoked, err = w.enrol.ConfirmTOTP(ctx, uid, p.SessionID, enrol(t, w.totp, w.clock, uid))
+			}
+			if err != nil || !revoked {
+				t.Fatalf("first factor = revoked %v, %v; want revoked", revoked, err)
+			}
+			if n := live(); n != 0 {
+				t.Fatalf("live tokens = %d, want none", n)
+			}
+			if w.passwordOnlyMarked(t, uid) {
+				t.Fatal("the marker survived the first factor")
+			}
+		})
+	}
+	t.Run("unmarked", func(t *testing.T) {
+		w := newResetWorld(t)
+		uid := w.seedAccount(t, "unmarked@example.test")
+		live := w.seedTokens(t, uid)
+		_, revoked, err := w.finishPasskey(t, w.session(t, uid, false))
+		if err != nil || revoked {
+			t.Fatalf("FinishPasskey = revoked %v, %v; want nothing revoked", revoked, err)
+		}
+		if n := live(); n != 2 {
+			t.Fatalf("live tokens = %d, want 2", n)
+		}
+	})
+}
+
+// RequireComplete is the re-check a credential mint runs under the account
+// lock: the session must still be live and complete, a superseded
+// password-only session included.
+func TestRequireCompleteSession(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "require-complete@example.test")
+	complete := w.session(t, uid, true)
+	pending := w.session(t, uid, false)
+	pw := w.passwordOnlySession(t, uid)
+	other := w.seedAccount(t, "require-other@example.test")
+	ended := w.session(t, uid, true)
+	if err := w.sessions.Revoke(ctx, ended.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		user    uuid.UUID
+		session uuid.UUID
+		want    error
+	}{
+		{"complete", uid, complete.SessionID, nil},
+		{"password-only", uid, pw.SessionID, nil},
+		{"pending", uid, pending.SessionID, auth.ErrSessionNotComplete},
+		{"ended", uid, ended.SessionID, auth.ErrUnauthenticated},
+		{"another account's", other, complete.SessionID, auth.ErrUnauthenticated},
+	} {
+		if err := w.sessions.RequireComplete(ctx, tc.user, tc.session); !errors.Is(err, tc.want) {
+			t.Fatalf("%s: RequireComplete = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	w.addFactor(t, uid, "passkey")
+	if err := w.sessions.RequireComplete(ctx, uid, pw.SessionID); !errors.Is(err, auth.ErrSessionNotComplete) {
+		t.Fatalf("superseded: RequireComplete = %v, want ErrSessionNotComplete", err)
+	}
+}
