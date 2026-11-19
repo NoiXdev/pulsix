@@ -14,7 +14,7 @@ export function useMonitoringGroupListActions(
   org: string,
   canWrite: boolean,
   renderDialog: (group: MonitoringGroup | undefined, onClose: () => void) => ReactNode,
-): { rowActions: (group: MonitoringGroup) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (group: MonitoringGroup) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: MonitoringGroup) => void } {
   const t = useT();
   const remove = useDeleteMonitoringGroup(org);
   const [editing, setEditing] = useState<MonitoringGroup | 'new' | null>(null);
@@ -34,6 +34,7 @@ export function useMonitoringGroupListActions(
 
   return {
     rowActions,
+    edit: canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: editing && renderDialog(editing === 'new' ? undefined : editing, () => setEditing(null)),
   };

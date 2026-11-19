@@ -96,6 +96,7 @@ export function JumpHostsPage() {
         rows={rows}
         rowKey={(b) => b.id}
         rowActions={rowActions}
+        onRowActivate={canWrite ? (bastion) => setDialog({ bastion }) : undefined}
         rowLabel={(b) => b.name}
         loading={!view.ready}
         empty={active ? t.credentials.jumpHosts.noMatch : t.credentials.jumpHosts.empty}

@@ -169,8 +169,8 @@ describe('ChannelsPage rows', () => {
     for (const row of rows) {
       expect(row.querySelector(':scope > a')).toBeNull();
       expect(within(row).queryAllByRole('link')).toEqual([]);
-      // The ⋯ trigger is the row's only button.
-      expect(within(row).getAllByRole('button')).toHaveLength(1);
+      // The row's own button (it opens the edit dialog) and the ⋯ trigger.
+      expect(within(row).getAllByRole('button')).toHaveLength(2);
     }
     // Using the ⋯ menu never navigates.
     const before = router.state.location.href;

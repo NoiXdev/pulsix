@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ChecksPage } from './ChecksPage.tsx';
 import { validateChecksSearch } from './checksSearch.ts';
 import { check, GROUPS, org } from './checksPageTestKit.tsx';
@@ -91,6 +91,21 @@ describe('ChecksPage list', () => {
     expect(await items('seeded')).toEqual(['Edit', 'Copy', 'Delete…']);
     expect(await items('shared')).toEqual(['Edit', 'Copy']);
     expect(await items('custom1')).toEqual(['Edit', 'Delete…']);
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 checks');
+    await openRow(user, 'chk30 (Organization)');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a viewer a row that opens nothing', async () => {
+    setup({ role: 'viewer' });
+    await screen.findByText('1–25 of 30 checks');
+    expect(screen.getAllByText('chk30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'chk30 (Organization)' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

@@ -22,7 +22,7 @@ export function useSecretListActions(
   org: string,
   canWrite: boolean,
   taken: string[],
-): { rowActions: (secret: OrgSecret) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (secret: OrgSecret) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: OrgSecret) => void } {
   const t = useT();
   const s = t.secrets;
   const toast = useToast();
@@ -62,6 +62,7 @@ export function useSecretListActions(
   const usedBy = blocked?.used_by ?? [];
   return {
     rowActions,
+    edit: canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: (
       <>

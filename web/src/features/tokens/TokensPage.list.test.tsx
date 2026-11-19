@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { TokensPage } from './TokensPage.tsx';
 import { validateTokensSearch } from './tokensSearch.ts';
 
@@ -73,6 +73,21 @@ describe('TokensPage list', () => {
     await user.keyboard('{Escape}');
     await openRowMenu(user, 'old (viewer)');
     expect(await screen.findByRole('menuitem', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 tokens');
+    await openRow(user, 'tok30 (viewer)');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('leaves an expired token\'s row unopened, as its Edit is disabled', async () => {
+    setup({ tokens: [token('old', { expires_at: '2020-01-01T00:00:00Z' }), token('fresh')] });
+    await screen.findByText('1–2 of 2 tokens');
+    expect(screen.getByRole('button', { name: 'fresh (viewer)' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'old (viewer)' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

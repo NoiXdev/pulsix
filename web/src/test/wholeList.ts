@@ -32,3 +32,9 @@ export async function chooseRowAction(user: UserEvent, name: string, action: str
   await openRowMenu(user, name);
   await user.click(await screen.findByRole('menuitem', { name: action }));
 }
+
+/** Opens the row named `name` through its name cell's button (a row whose
+ * item opens in a dialog). */
+export async function openRow(user: UserEvent, name: string): Promise<void> {
+  await user.click(await screen.findByRole('button', { name }));
+}

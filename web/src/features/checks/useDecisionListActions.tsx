@@ -14,7 +14,7 @@ export function useDecisionListActions(
   org: string,
   canWrite: boolean,
   renderDialog: (decision: ItemDecision | undefined, onClose: () => void) => ReactNode,
-): { rowActions: (decision: ItemDecision) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (decision: ItemDecision) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: ItemDecision) => void } {
   const t = useT();
   const remove = useDeleteItemDecision(org);
   const [editing, setEditing] = useState<{ decision?: ItemDecision } | null>(null);
@@ -34,6 +34,7 @@ export function useDecisionListActions(
 
   return {
     rowActions,
+    edit: canWrite ? (decision) => setEditing({ decision }) : undefined,
     openNew: () => setEditing({}),
     dialogs: editing && renderDialog(editing.decision, () => setEditing(null)),
   };

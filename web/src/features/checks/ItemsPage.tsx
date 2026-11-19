@@ -143,6 +143,7 @@ export function ItemsPage() {
         rows={rows}
         rowKey={(d) => d.id}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         rowLabel={(d) => `${d.pattern} (${d.scope === 'host' && d.host_id ? d.host_id.slice(0, 8) : t.checks.organization})`}
         loading={!view.ready}
         empty={active ? t.checks.items.noMatch : t.checks.items.empty}

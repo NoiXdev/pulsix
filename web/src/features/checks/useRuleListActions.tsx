@@ -14,7 +14,7 @@ export function useRuleListActions(
   org: string,
   canWrite: boolean,
   renderDialog: (rule: Rule | undefined, onClose: () => void) => ReactNode,
-): { rowActions: (rule: Rule) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (rule: Rule) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: Rule) => void } {
   const t = useT();
   const remove = useDeleteRule(org);
   const [editing, setEditing] = useState<{ rule?: Rule } | null>(null);
@@ -34,6 +34,7 @@ export function useRuleListActions(
 
   return {
     rowActions,
+    edit: canWrite ? (rule) => setEditing({ rule }) : undefined,
     openNew: () => setEditing({}),
     dialogs: editing && renderDialog(editing.rule, () => setEditing(null)),
   };

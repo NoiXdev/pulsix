@@ -69,6 +69,7 @@ export function MaintenancePage() {
         rows={rows}
         rowKey={(w) => w.id}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         rowLabel={(w) => w.name}
         loading={!view.ready}
         empty={active ? t.maintenance.noMatch : t.maintenance.empty}

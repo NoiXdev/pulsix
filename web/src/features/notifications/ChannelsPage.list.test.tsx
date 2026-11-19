@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ChannelsPage } from './ChannelsPage.tsx';
 import { validateChannelsSearch } from './notificationsSearch.ts';
 
@@ -76,6 +76,21 @@ describe('ChannelsPage list', () => {
     await screen.findByText('1–2 of 2 channels');
     await sortBy(user, 'Status');
     await waitFor(() => expect(firstCells()).toEqual(['b', 'a']));
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 channels');
+    await openRow(user, 'ch30');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a operator a row that opens nothing', async () => {
+    setup({ role: 'operator' });
+    await screen.findByText('1–25 of 30 channels');
+    expect(screen.getAllByText('ch30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'ch30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

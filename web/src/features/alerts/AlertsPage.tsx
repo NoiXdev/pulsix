@@ -103,6 +103,7 @@ export function AlertsPage() {
         rowKey={(a) => a.id}
         rowLabel={(a) => t.alerts.list.rowLabel(a.hostName, subjectLabel(a, t, fmt))}
         rowActions={actions.rowActions}
+        onRowActivate={actions.showTimeline}
         loading={alerts.isPending || alerts.isPlaceholderData}
         empty={t.alerts.empty}
         toolbar={<AlertFilters org={org} list={list} />}

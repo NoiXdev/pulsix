@@ -30,12 +30,12 @@ export interface DataListColumn<Row> {
   /** What a client-side sort compares (a whole list sorted in the browser). */
   sortValue?: (row: Row) => string | number | boolean | null | undefined;
   /** The name column: always shown, always first, and the cell that holds
-   * the row's link. */
+   * the row's link or activation button. */
   required?: boolean;
   defaultVisible: boolean;
   align?: 'start' | 'end';
   /** A cell's content. A link or button inside it must carry
-   * `relative z-10` to sit above the row's stretched link. */
+   * `relative z-10` to sit above the row's stretched link or button. */
   render: (row: Row, ctx: { density: Density }) => ReactNode;
 }
 
@@ -72,9 +72,16 @@ export interface DataListProps<Row> {
   rowKey: (row: Row) => string;
   /** Where a row leads; undefined for a row that opens nothing. */
   rowLink?: (row: Row) => RowLink | undefined;
-  /** A row's name for its "…" button ("Actions for web-01"); falls back to
-   * the row link's label. */
+  /** A row's name for its "…" button ("Actions for web-01") and its
+   * activation button; falls back to the row link's label. */
   rowLabel?: (row: Row) => string;
+  /** What opens a row that has no page of its own (an edit dialog): the
+   * name cell becomes a button stretched over the row, named by
+   * `rowLabel`. A row with a `rowLink` keeps its link instead. */
+  onRowActivate?: (row: Row) => void;
+  /** Whether `onRowActivate` applies to a row (a token that can no longer
+   * be edited); absent, every row is activatable. */
+  isRowActivatable?: (row: Row) => boolean;
   /** One source for the "…" menu and the context menu. A row whose list is
    * empty gets neither. */
   rowActions?: (row: Row) => RowAction[];

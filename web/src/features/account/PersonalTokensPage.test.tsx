@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, numbered, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, numbered, openRow, sortBy } from '../../test/wholeList.ts';
 import { PersonalTokensPage } from './PersonalTokensPage.tsx';
 import { validatePersonalTokensSearch } from './personalTokensSearch.ts';
 
@@ -262,6 +262,15 @@ describe('PersonalTokensPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Edit token laptop' });
     await user.click(within(dialog).getByLabelText('Role in Delta'));
     expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-value'))).toEqual(['viewer', 'operator']);
+  });
+
+  it('opens the edit dialog from the row itself, except for an expired token', async () => {
+    const user = userEvent.setup();
+    setup({ tokens: [token('laptop'), token('old', { expires_at: '2020-01-01T00:00:00Z' })] });
+    await screen.findByText('1–2 of 2 tokens');
+    expect(screen.queryByRole('button', { name: 'old' })).not.toBeInTheDocument();
+    await openRow(user, 'laptop');
+    expect(await screen.findByRole('dialog', { name: 'Edit token laptop' })).toBeInTheDocument();
   });
 
   it('revokes after a confirmation', async () => {

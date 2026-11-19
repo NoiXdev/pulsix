@@ -17,7 +17,7 @@ export function useAlertRouteListActions(
   org: string,
   canWrite: boolean,
   renderDialog: (route: AlertRoute | undefined, onClose: () => void) => ReactNode,
-): { rowActions: (route: AlertRoute) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (route: AlertRoute) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: AlertRoute) => void } {
   const t = useT();
   const a = t.notifications.alertRoutes;
   const toast = useToast();
@@ -66,6 +66,7 @@ export function useAlertRouteListActions(
 
   return {
     rowActions,
+    edit: canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: editing && renderDialog(editing === 'new' ? undefined : editing, () => setEditing(null)),
   };

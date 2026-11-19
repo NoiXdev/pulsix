@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
-import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { CredentialsPage } from './CredentialsPage.tsx';
 import { validateCredentialsSearch } from './credentialsSearch.ts';
 
@@ -42,6 +42,14 @@ describe('CredentialsPage list', () => {
     await openRowMenu(user, 'cred30');
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open']);
     await user.click(screen.getByRole('menuitem', { name: 'Open' }));
+    expect(await screen.findByRole('dialog', { name: 'cred30' })).toBeInTheDocument();
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 credentials');
+    await openRow(user, 'cred30');
     expect(await screen.findByRole('dialog', { name: 'cred30' })).toBeInTheDocument();
   });
 

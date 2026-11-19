@@ -76,6 +76,7 @@ export function ReposPage() {
         rowKey={(r) => r.id}
         rowLabel={(r) => r.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? t.repos.list.noMatch : t.repos.list.empty}
         toolbar={

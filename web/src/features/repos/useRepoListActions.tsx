@@ -23,7 +23,7 @@ export interface RepoListActionsOptions {
  * for a projected repository: the server refuses it). `dialogs` holds the
  * one dialog an entry opened; `openNew` is the page's "Add repository".
  */
-export function useRepoListActions(org: string, opts: RepoListActionsOptions): { rowActions: (repo: Repo) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+export function useRepoListActions(org: string, opts: RepoListActionsOptions): { rowActions: (repo: Repo) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: Repo) => void } {
   const t = useT();
   const navigate = useNavigate();
   const toast = useToast();
@@ -66,6 +66,7 @@ export function useRepoListActions(org: string, opts: RepoListActionsOptions): {
 
   return {
     rowActions,
+    edit: opts.canWrite ? (repo) => setDialog({ kind: 'edit', repo }) : undefined,
     openNew: () => setDialog({ kind: 'new' }),
     dialogs: dialog && (
       <>

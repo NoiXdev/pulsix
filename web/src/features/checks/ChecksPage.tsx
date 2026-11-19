@@ -112,6 +112,7 @@ export function ChecksPage() {
         rows={rows}
         rowKey={(c) => c.id}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         // One key may be bound several times (the organization's definition
         // and a host's override): the binding tells each row's menu apart.
         rowLabel={(c) => `${c.key} (${bindingText(c, groupList, t)})`}

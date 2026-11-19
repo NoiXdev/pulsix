@@ -129,6 +129,7 @@ export function RotationsPage() {
         rowKey={(r) => r.id}
         rowLabel={(r) => r.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={r8.empty}
         {...view.listProps(total, r8.count)}

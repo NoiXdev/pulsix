@@ -16,12 +16,12 @@ type OpenDialog = { kind: 'acknowledge' | 'snooze' | 'timeline'; alert: AlertRow
  * `rowActions(alert)` builds an alert's entries (DataList shows them in the
  * "…" menu and on a right-click), and `dialogs` holds the one dialog an
  * entry opened, for the alert it was picked on. Render `dialogs` next to the
- * list.
+ * list. `showTimeline` opens an alert's timeline, what its row opens.
  */
 export function useAlertListActions(
   org: string,
   can: AlertPermissions,
-): { rowActions: (alert: AlertRowAlert) => RowAction[]; dialogs: ReactNode } {
+): { rowActions: (alert: AlertRowAlert) => RowAction[]; dialogs: ReactNode; showTimeline: (alert: AlertRowAlert) => void } {
   const t = useT();
   const commands = useAlertCommands(org);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
@@ -37,6 +37,7 @@ export function useAlertListActions(
 
   return {
     rowActions: (alert) => alertRowActions(alert, can, on, t),
+    showTimeline: on.showTimeline,
     dialogs: dialog && (
       <>
         {dialog.kind === 'acknowledge' && <AcknowledgeDialog org={org} alertId={dialog.alert.id} onClose={close} />}

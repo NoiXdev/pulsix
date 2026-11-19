@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, sortBy } from '../../test/wholeList.ts';
 import { SecretsPage } from './SecretsPage.tsx';
 import { validateSecretsSearch } from './secretsSearch.ts';
 
@@ -69,6 +69,21 @@ describe('SecretsPage list', () => {
     setup({ role: 'viewer' });
     await screen.findByText('1–25 of 30 secrets');
     expect(screen.queryAllByRole('button', { name: /^Actions for/ })).toEqual([]);
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 secrets');
+    await openRow(user, 's30');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a viewer a row that opens nothing', async () => {
+    setup({ role: 'viewer' });
+    await screen.findByText('1–25 of 30 secrets');
+    expect(screen.getAllByText('s30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 's30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

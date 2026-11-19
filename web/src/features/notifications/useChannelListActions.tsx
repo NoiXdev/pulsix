@@ -20,7 +20,7 @@ import { DeliveryLog } from './DeliveryLog.tsx';
 export function useChannelListActions(
   org: string,
   opts: { canWrite: boolean; mailAvailable: boolean },
-): { rowActions: (channel: NotifyChannel) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (channel: NotifyChannel) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: NotifyChannel) => void } {
   const t = useT();
   const m = t.notifications;
   const c8 = m.channels;
@@ -68,6 +68,7 @@ export function useChannelListActions(
 
   return {
     rowActions,
+    edit: opts.canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: (
       <>

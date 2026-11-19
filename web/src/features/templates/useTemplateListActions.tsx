@@ -27,7 +27,7 @@ export interface TemplateListActionsOptions {
  * offers none either). `dialogs` holds the one dialog an entry opened;
  * `openNew` is the page's "Add template".
  */
-export function useTemplateListActions(org: string, opts: TemplateListActionsOptions): { rowActions: (tpl: Template) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+export function useTemplateListActions(org: string, opts: TemplateListActionsOptions): { rowActions: (tpl: Template) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: Template) => void } {
   const t = useT();
   const navigate = useNavigate();
   const toast = useToast();
@@ -72,6 +72,7 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
 
   return {
     rowActions,
+    edit: opts.canWrite ? (template) => setDialog({ kind: 'edit', template }) : undefined,
     openNew: () => setDialog({ kind: 'new' }),
     dialogs: dialog && (
       <>

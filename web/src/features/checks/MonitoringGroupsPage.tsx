@@ -117,6 +117,7 @@ export function MonitoringGroupsPage() {
         rows={rows}
         rowKey={(g) => g.id}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         rowLabel={(g) => g.name}
         loading={!view.ready}
         empty={active ? t.checks.groups.noFilterMatch : t.checks.groups.empty}

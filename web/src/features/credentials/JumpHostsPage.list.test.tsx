@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
-import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { JumpHostsPage } from './JumpHostsPage.tsx';
 import { validateJumpHostsSearch } from './jumpHostsSearch.ts';
 
@@ -92,6 +92,21 @@ describe('JumpHostsPage list', () => {
     setup({ role: 'viewer', bastions: [bastion('jump-a', { observed_key: FP, observed_state: 'unpinned' })] });
     expect(await screen.findByText(FP)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 jump hosts');
+    await openRow(user, 'jump30');
+    expect(await screen.findByRole('dialog', { name: /jump host/i })).toBeInTheDocument();
+  });
+
+  it('gives a viewer a row that opens nothing', async () => {
+    setup({ role: 'viewer' });
+    await screen.findByText('1–25 of 30 jump hosts');
+    expect(screen.getAllByText('jump30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'jump30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

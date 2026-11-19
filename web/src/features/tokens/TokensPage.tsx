@@ -141,6 +141,8 @@ export function TokensPage() {
         rows={rows}
         rowKey={tokenRowKey}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
+        isRowActivatable={actions.canEdit}
         rowLabel={(r) => (r.type === 'personal' ? t.tokens.personal.rowLabel(r.name, r.owner_name) : `${r.name} (${r.role})`)}
         loading={!settled}
         empty={active ? t.tokens.noMatch : t.tokens.empty}

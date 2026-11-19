@@ -18,7 +18,7 @@ import { CheckDialog } from './CheckDialog.tsx';
 export function useCheckListActions(
   org: string,
   opts: { canWrite: boolean; groups: MonitoringGroup[] },
-): { rowActions: (check: CheckDefinition) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (check: CheckDefinition) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: CheckDefinition) => void } {
   const t = useT();
   const remove = useDeleteCheck(org);
   // `copy` distinguishes "customise this seeded row" from "edit it": the
@@ -40,6 +40,7 @@ export function useCheckListActions(
 
   return {
     rowActions,
+    edit: opts.canWrite ? (check) => setEditing({ check }) : undefined,
     openNew: () => setEditing({}),
     dialogs: editing && <CheckDialog org={org} check={editing.check} copy={editing.copy} groups={opts.groups} onClose={() => setEditing(null)} />,
   };

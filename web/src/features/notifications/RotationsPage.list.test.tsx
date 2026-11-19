@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, sortBy } from '../../test/wholeList.ts';
 import { RotationsPage } from './RotationsPage.tsx';
 
 const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -69,6 +69,21 @@ describe('RotationsPage list', () => {
     setup({ role: 'operator' });
     await screen.findByText('1–25 of 30 rotations');
     expect(screen.queryAllByRole('button', { name: /^Actions for/ })).toEqual([]);
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 rotations');
+    await openRow(user, 'rot30');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a operator a row that opens nothing', async () => {
+    setup({ role: 'operator' });
+    await screen.findByText('1–25 of 30 rotations');
+    expect(screen.getAllByText('rot30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'rot30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

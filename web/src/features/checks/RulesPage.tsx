@@ -127,6 +127,7 @@ export function RulesPage() {
         rows={rows}
         rowKey={(r) => r.id}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         rowLabel={(r) => r.name}
         loading={!view.ready}
         empty={active ? t.checks.rules.noMatch : t.checks.rules.empty}

@@ -155,6 +155,7 @@ export function AlertRoutesPage() {
         rowKey={(r) => r.id}
         rowLabel={(r) => r.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? a.noMatch : a.empty}
         toolbar={

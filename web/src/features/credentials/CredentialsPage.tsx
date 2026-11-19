@@ -33,7 +33,7 @@ export function CredentialsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const canRotate = may(orgInfo.data?.org.role, 'credentials.write');
 
-  const columns = credentialColumns({ t, fmt, open: (c) => setOpenId(c.id) });
+  const columns = credentialColumns({ t, fmt });
   const { filters, active, setFilter, reset } = useListFilters(CREDENTIALS_FILTERS);
   const view = useListView('credentials', columns, { mode: 'client', rowKey: (c) => c.id, resetKey: JSON.stringify(filters) });
 
@@ -61,6 +61,7 @@ export function CredentialsPage() {
         rows={rows}
         rowKey={(c) => c.id}
         rowActions={(c) => [{ id: 'open', label: t.common.open, onSelect: () => setOpenId(c.id) }]}
+        onRowActivate={(c) => setOpenId(c.id)}
         rowLabel={(c) => c.name}
         loading={!view.ready}
         empty={active ? t.credentials.list.noMatch : t.credentials.list.empty}

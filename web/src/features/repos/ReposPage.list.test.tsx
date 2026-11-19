@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
-import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { ReposPage } from './ReposPage.tsx';
 import { validateReposSearch } from './reposSearch.ts';
 
@@ -47,6 +47,21 @@ describe('ReposPage list', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
     const dialog = await findConfirmDialog();
     expect(dialog).toHaveTextContent('Delete repository repo30?');
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 repositories');
+    await openRow(user, 'repo30');
+    expect(await screen.findByRole('dialog', { name: 'repo30' })).toBeInTheDocument();
+  });
+
+  it('gives a viewer a row that opens nothing', async () => {
+    setup('/o/acme/repos', undefined, 'viewer');
+    await screen.findByText('1–25 of 30 repositories');
+    expect(screen.getAllByText('repo30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'repo30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

@@ -89,6 +89,8 @@ export function PersonalTokensPage() {
         rowKey={(tok) => tok.id}
         rowLabel={(tok) => tok.name}
         rowActions={rowActions}
+        onRowActivate={(tok) => setEditing({ kind: 'edit', token: tok })}
+        isRowActivatable={(tok) => !isExpired(tok.expires_at)}
         loading={!view.ready}
         empty={active ? p.noMatch : p.empty}
         toolbar={

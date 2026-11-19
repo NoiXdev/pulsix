@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, sortBy } from '../../test/wholeList.ts';
 import { ItemsPage } from './ItemsPage.tsx';
 import { validateDecisionsSearch } from './decisionsSearch.ts';
 
@@ -78,6 +78,21 @@ describe('ItemsPage list', () => {
     setup({ role: 'viewer' });
     await screen.findByText('1–25 of 30 decisions');
     expect(screen.queryAllByRole('button', { name: /^Actions for/ })).toEqual([]);
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 decisions');
+    await openRow(user, 'p30 (Organization)');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a viewer a row that opens nothing', async () => {
+    setup({ role: 'viewer' });
+    await screen.findByText('1–25 of 30 decisions');
+    expect(screen.getAllByText('p30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'p30 (Organization)' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

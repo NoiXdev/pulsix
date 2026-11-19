@@ -66,6 +66,7 @@ export function SecretsPage() {
         rowKey={(x) => x.name}
         rowLabel={(x) => x.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? s.noMatch : s.empty}
         toolbar={

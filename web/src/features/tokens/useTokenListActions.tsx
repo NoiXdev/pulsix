@@ -52,9 +52,16 @@ function useUnblock(org: string) {
  * here; once the owner is blocked here, Unblock…, which lifts it (beside
  * Revoke on an entry that is blocked only through its owner).
  * An assistant token also gets "Connect an assistant…", the click guide.
- * `dialogs` holds the edit and connect dialogs.
+ * `dialogs` holds the edit and connect dialogs. `edit` opens an
+ * organization token's edit dialog from its row; `canEdit` says which rows
+ * that is (no personal entry, no expired token).
  */
-export function useTokenListActions(org: string): { rowActions: (row: TokenRow) => RowAction[]; dialogs: ReactNode } {
+export function useTokenListActions(org: string): {
+  rowActions: (row: TokenRow) => RowAction[];
+  dialogs: ReactNode;
+  edit: (row: TokenRow) => void;
+  canEdit: (row: TokenRow) => boolean;
+} {
   const t = useT();
   const p = t.tokens.personal;
   const toast = useToast();
@@ -102,6 +109,10 @@ export function useTokenListActions(org: string): { rowActions: (row: TokenRow) 
 
   return {
     rowActions,
+    edit: (row) => {
+      if (row.type !== 'personal') setEditing(row);
+    },
+    canEdit: (row) => row.type !== 'personal' && !isExpired(row.expires_at),
     dialogs: (
       <>
         {editing && <EditTokenDialog key={editing.id} org={org} token={editing} open onClose={() => setEditing(null)} />}

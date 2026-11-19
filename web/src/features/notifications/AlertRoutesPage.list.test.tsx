@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { AlertRoutesPage } from './AlertRoutesPage.tsx';
 import { validateAlertRoutesSearch } from './notificationsSearch.ts';
 
@@ -115,6 +115,21 @@ describe('AlertRoutesPage list', () => {
     await screen.findByText('1–25 of 30 routes');
     expect(screen.queryAllByRole('button', { name: /^Actions for/ })).toEqual([]);
     expect(screen.queryByRole('menuitem', { name: 'Disable' })).not.toBeInTheDocument();
+  });
+
+  it('opens the row\'s dialog from the row itself', async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText('1–25 of 30 routes');
+    await openRow(user, 'rt30');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('gives a operator a row that opens nothing', async () => {
+    setup({ role: 'operator' });
+    await screen.findByText('1–25 of 30 routes');
+    expect(screen.getAllByText('rt30').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'rt30' })).not.toBeInTheDocument();
   });
 
   it('hides a column from the Columns menu', async () => {

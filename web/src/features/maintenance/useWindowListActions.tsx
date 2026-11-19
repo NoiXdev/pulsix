@@ -11,7 +11,7 @@ import { WindowDialog } from './WindowDialog.tsx';
  * only: Edit and Delete. `dialogs` holds the window dialog an entry or
  * `openNew` opened.
  */
-export function useWindowListActions(org: string, canWrite: boolean): { rowActions: (w: MaintenanceWindow) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+export function useWindowListActions(org: string, canWrite: boolean): { rowActions: (w: MaintenanceWindow) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: MaintenanceWindow) => void } {
   const t = useT();
   const remove = useDeleteMaintenanceWindow(org);
   const [editing, setEditing] = useState<MaintenanceWindow | 'new' | null>(null);
@@ -31,6 +31,7 @@ export function useWindowListActions(org: string, canWrite: boolean): { rowActio
 
   return {
     rowActions,
+    edit: canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: editing && <WindowDialog org={org} window={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />,
   };

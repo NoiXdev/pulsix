@@ -94,6 +94,7 @@ export function TemplatesPage() {
         rowKey={(tpl) => tpl.id}
         rowLabel={(tpl) => tpl.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? t.templates.list.noMatch : t.templates.list.empty}
         toolbar={

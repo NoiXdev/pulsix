@@ -14,7 +14,7 @@ export function useRotationListActions(
   org: string,
   canWrite: boolean,
   renderDialog: (rotation: OncallRotation | undefined, onClose: () => void) => ReactNode,
-): { rowActions: (rotation: OncallRotation) => RowAction[]; dialogs: ReactNode; openNew: () => void } {
+): { rowActions: (rotation: OncallRotation) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: OncallRotation) => void } {
   const t = useT();
   const remove = useDeleteOncallRotation(org);
   const [editing, setEditing] = useState<OncallRotation | 'new' | null>(null);
@@ -36,6 +36,7 @@ export function useRotationListActions(
 
   return {
     rowActions,
+    edit: canWrite ? setEditing : undefined,
     openNew: () => setEditing('new'),
     dialogs: editing && renderDialog(editing === 'new' ? undefined : editing, () => setEditing(null)),
   };

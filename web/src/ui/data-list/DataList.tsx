@@ -32,7 +32,9 @@ interface ContextMenuState {
  * are buttons that step none → ascending → descending → none. A row with
  * actions has a "…" menu and the same menu on a right-click, the
  * ContextMenu key or Shift+F10, which for a linked row also offers "Open in
- * new tab" and "Copy link".
+ * new tab" and "Copy link". A row without a page can be activated instead
+ * (`onRowActivate`, an edit dialog): its name cell is then a button
+ * stretched over the row the same way.
  */
 export function DataList<Row>({
   label,
@@ -41,6 +43,8 @@ export function DataList<Row>({
   rowKey,
   rowLink,
   rowLabel,
+  onRowActivate,
+  isRowActivatable,
   rowActions,
   sort,
   onSortChange,
@@ -93,6 +97,8 @@ export function DataList<Row>({
   if (rows.length > 0) {
     body = rows.map((row) => {
       const key = rowKey(row);
+      const link = rowLink?.(row);
+      const activate = !link && onRowActivate && (isRowActivatable?.(row) ?? true) ? () => onRowActivate(row) : undefined;
       return (
         <DataRow
           key={key}
@@ -100,7 +106,9 @@ export function DataList<Row>({
           columns={shown}
           template={template}
           density={density}
-          link={rowLink?.(row)}
+          link={link}
+          activate={activate}
+          activateLabel={rowLabel?.(row)}
           linkColumn={linkColumn}
           menuColumn={menuColumn}
           actions={rowActions?.(row) ?? []}

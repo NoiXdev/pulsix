@@ -8,17 +8,16 @@ import { expiryState, kindLabel, usageLabel } from './labels.ts';
 export interface CredentialColumnsContext {
   t: Messages;
   fmt: ReturnType<typeof useFormat>;
-  /** Opens a credential's dialog (the name is the row's own opener). */
-  open: (c: Credential) => void;
 }
 
 /**
  * credentialColumns is every column the credentials list offers (list id
  * `credentials`), sorted in the browser. A credential has no page of its
- * own: its name opens the details dialog, as does the row menu's Open. The
- * name is the required column, so it is first and always shown.
+ * own: its row opens the details dialog (CredentialsPage's onRowActivate),
+ * as does the row menu's Open. The name is the required column, so it is
+ * first and always shown, and holds the row's button.
  */
-export function credentialColumns({ t, fmt, open }: CredentialColumnsContext): DataListColumn<Credential>[] {
+export function credentialColumns({ t, fmt }: CredentialColumnsContext): DataListColumn<Credential>[] {
   const c = t.credentials.list.columns;
   return [
     {
@@ -29,11 +28,7 @@ export function credentialColumns({ t, fmt, open }: CredentialColumnsContext): D
       sortValue: (r) => r.name,
       required: true,
       defaultVisible: true,
-      render: (r) => (
-        <button type="button" className="relative z-10 block max-w-full truncate text-left font-mono hover:text-primary" onClick={() => open(r)}>
-          {r.name}
-        </button>
-      ),
+      render: (r) => <span className="block truncate font-mono">{r.name}</span>,
     },
     {
       id: 'kind',

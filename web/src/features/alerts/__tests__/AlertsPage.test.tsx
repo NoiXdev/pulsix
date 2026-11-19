@@ -577,6 +577,18 @@ describe('AlertsPage', () => {
     expect(screen.queryByText(/^Host: /)).not.toBeInTheDocument();
     expect(asked.at(-1)?.host).toBeUndefined();
   });
+  it('opens the timeline from the row itself, for a viewer too', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base('viewer'),
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
+      'GET /api/v1/orgs/acme/alerts/a1': { alert: { ...alert(), timeline: [] } },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'web-1, disk · /var · use_pct' }));
+    expect(await screen.findByRole('dialog', { name: 'Timeline for web-1' })).toBeInTheDocument();
+  });
+
   it('discloses a closed alert\u2019s timeline, which is otherwise unreachable in the GUI', async () => {
     // The design doc opens with "nobody can yet say host X was critical
     // from 14:03 to 14:51 on Tuesday, Anna acknowledged it at 14:12".

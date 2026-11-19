@@ -84,6 +84,7 @@ export function ChannelsPage() {
         rowKey={(c) => c.id}
         rowLabel={(c) => c.name}
         rowActions={actions.rowActions}
+        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? c8.noMatch : c8.empty}
         toolbar={

@@ -9,6 +9,11 @@ import type { DataListColumn, Density, RowAction, RowLink } from './types.ts';
  * (`--px-row-py`, `--px-row-font`, styles/globals.css). */
 export const ROW_GRID = 'grid items-center gap-3 px-4 py-[var(--px-row-py)] text-[length:var(--px-row-font)]';
 
+/** The row's link or activation button: a block in the name cell whose
+ * `::after` covers the whole row and carries the focus ring. */
+const STRETCHED =
+  "block min-w-0 after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary focus-visible:after:ring-inset";
+
 export type MenuSource = 'pointer' | 'keyboard';
 
 /** What a row asks of its list to open its context menu. */
@@ -21,7 +26,10 @@ export type OpenRowMenu = (row: HTMLElement, point: MenuPoint, source: MenuSourc
  * `::after` is stretched over the whole row — so middle-click, copy-link
  * and screen readers see one link named by the row's label. The "…" cell
  * sits above it (`relative z-10`), as must any link or button a cell
- * renders.
+ * renders. An activatable row (`activate`, a row whose item opens in a
+ * dialog) holds a <button> there instead, stretched the same way and named
+ * by `activateLabel`: Enter and Space press it, and the context menu stays
+ * the row's (without the link entries).
  */
 export function DataRow<Row>({
   row,
@@ -29,6 +37,8 @@ export function DataRow<Row>({
   template,
   density,
   link,
+  activate,
+  activateLabel,
   linkColumn,
   menuColumn,
   actions,
@@ -41,6 +51,10 @@ export function DataRow<Row>({
   template: string;
   density: Density;
   link?: RowLink;
+  /** Opens the row's item; ignored when the row has a link. */
+  activate?: () => void;
+  /** The activation button's accessible name; absent, its content names it. */
+  activateLabel?: string;
   linkColumn?: string;
   /** Whether the list reserves the last track for "…" buttons. */
   menuColumn: boolean;
@@ -81,7 +95,7 @@ export function DataRow<Row>({
     // own contextmenu event is no right-click: it stays with ours.)
     if (e.shiftKey && e.button === 2) return;
     e.preventDefault();
-    const returnTo = e.currentTarget.querySelector<HTMLElement>('[data-row-link], [data-row-menu]');
+    const returnTo = e.currentTarget.querySelector<HTMLElement>('[data-row-link], [data-row-activate], [data-row-menu]');
     onOpenMenu(e.currentTarget, { x: e.clientX, y: e.clientY }, 'pointer', returnTo);
   }
 
@@ -96,7 +110,7 @@ export function DataRow<Row>({
       className={cn(
         'relative border-b border-border last:border-b-0',
         ROW_GRID,
-        link && 'hover:bg-background hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-background',
+        (link || activate) && 'hover:bg-background hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-background',
         menuOpen && 'bg-background shadow-[inset_2px_0_0_var(--px-accent)]',
       )}
     >
@@ -112,10 +126,14 @@ export function DataRow<Row>({
                 hash={link.hash}
                 aria-label={link.label}
                 data-row-link=""
-                className="block min-w-0 after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary focus-visible:after:ring-inset"
+                className={STRETCHED}
               >
                 {content}
               </Link>
+            ) : activate && c.id === linkColumn ? (
+              <button type="button" onClick={activate} aria-label={activateLabel} data-row-activate="" className={cn(STRETCHED, 'w-full cursor-pointer text-left')}>
+                {content}
+              </button>
             ) : (
               content
             )}
