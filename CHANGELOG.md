@@ -1,4 +1,51 @@
-## [0.1.0-rc.3](https://github.com/NoiXdev/pulsix/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-11-16)
+## [0.1.0-rc.4](https://github.com/NoiXdev/pulsix/compare/v0.1.0-rc.3...v0.1.0-rc.4) (2026-11-17)
+
+
+### Features
+
+* **api:** edit a token's name, areas and expiry ([311756c](https://github.com/NoiXdev/pulsix/commit/311756c441d582b641dd69913aecc736ab11d622))
+* **api:** lock and unlock a session, set the lock PIN ([6e23fce](https://github.com/NoiXdev/pulsix/commit/6e23fce14ec98f157a4e6518e45f0481a91872f4))
+* **api:** refuse every route but unlock to a locked session ([7dca960](https://github.com/NoiXdev/pulsix/commit/7dca960f3c2eb1272e79e3a9094f496f760e0ab1))
+* **assistant:** add a script that connects Claude Code to Pulsix instances ([0c3150b](https://github.com/NoiXdev/pulsix/commit/0c3150b6e6a2b039754eb3cbab7ccad3db122a1c))
+* **auth:** carry a session's lock state and expiry ([57dc258](https://github.com/NoiXdev/pulsix/commit/57dc2589d4bc18b9a65005c6d786a79559fb9a40))
+* **auth:** renew a session in place and re-prove a passkey for the own account ([6daa556](https://github.com/NoiXdev/pulsix/commit/6daa556ca6b25a68ccc147e7680ad78e3558532a))
+* **auth:** update a token's name, areas and expiry ([b055d67](https://github.com/NoiXdev/pulsix/commit/b055d67c44c12228bbcbd426e39917d20789a229))
+* **mcp:** add monitoring and alert-handling tools ([c8de964](https://github.com/NoiXdev/pulsix/commit/c8de96420e19a67126b78967df5e7e06bc811526))
+* **mcp:** add schedule, activity, host tag and connection test tools ([12a333b](https://github.com/NoiXdev/pulsix/commit/12a333b6950b07607535b72eb4774402a4f1fc0d))
+* **release:** add a script that attaches the agent binaries to a release ([e9b7355](https://github.com/NoiXdev/pulsix/commit/e9b735524922b5e51ce230cfe18c28dcfd366536))
+* **release:** attach the agent binaries to every GitHub release ([e52b7c8](https://github.com/NoiXdev/pulsix/commit/e52b7c8e7740ad28d1c4982e07232446aca1208b))
+* **screenlock:** lock a session with a PIN ([85c9c68](https://github.com/NoiXdev/pulsix/commit/85c9c684ad30cca4cd208cd70fb70f52ad79db67))
+* **tenancy:** add monitoring, alert-handling and activity areas ([caba1db](https://github.com/NoiXdev/pulsix/commit/caba1db84032b6dd0bdb01003c3c8fa1b96336f1))
+* **web:** edit a token's name, areas and expiry ([865c60e](https://github.com/NoiXdev/pulsix/commit/865c60e56bf3147bdad23979948d121f8ba8197e))
+* **web:** lock the session from the top bar ([6c9d11e](https://github.com/NoiXdev/pulsix/commit/6c9d11eb62aa3d2cfddeaebdd418c7fa9c225147))
+* **web:** set the lock PIN at sign-in and on the account page ([3152325](https://github.com/NoiXdev/pulsix/commit/3152325f0c48206a6f3a99901f8797de4af08120))
+* **web:** show the monitoring, alert-handling and activity areas ([a2fcad0](https://github.com/NoiXdev/pulsix/commit/a2fcad0ac556b78dbec46668fc40ba3e0eb15bbc))
+* **web:** tell an open tab when the server was upgraded ([e888b53](https://github.com/NoiXdev/pulsix/commit/e888b535048bc4fdf07f053e955c6f4fc50cb8db))
+* **web:** warn before the session ends and renew it in place ([97b0ec8](https://github.com/NoiXdev/pulsix/commit/97b0ec8d2f1f8b97ae308f07c24ef558010dd690))
+
+
+### Bug Fixes
+
+* **api:** refuse invite acceptance from a locked session ([2f98c57](https://github.com/NoiXdev/pulsix/commit/2f98c575a3f7feedfff2e2fc628abe17b26a59da))
+* **api:** store token areas in canonical order and audit them as a set ([49344b4](https://github.com/NoiXdev/pulsix/commit/49344b4f4c6d2bfd5cf6a0f4e763e1112d42341d))
+* **app:** hold advisory lock sessions on a pool of their own ([fcc6840](https://github.com/NoiXdev/pulsix/commit/fcc6840a18d4e7b13fcf281b4662f83bcfe1902b))
+* **assistant:** find the claude CLI in ~/.local/bin when it is not on PATH ([975ae9f](https://github.com/NoiXdev/pulsix/commit/975ae9fbd06b76f00aa8ec56e9138bd940767761))
+* **assistant:** refuse to store a token without a terminal or in the wrong shape ([8d7d444](https://github.com/NoiXdev/pulsix/commit/8d7d44400a5b4f7cdd4c8cb81256603916ee1e8b))
+* **auth:** answer a session's expiry at the precision it is stored ([aab5767](https://github.com/NoiXdev/pulsix/commit/aab5767668eede7b6b9c7eb21e060d0013966823))
+* **mcp:** always send a tag's value; sweep asserts success for every tool ([b32bc47](https://github.com/NoiXdev/pulsix/commit/b32bc47bce6a9ae3b300b660db5d26e435135991))
+* **mcp:** fail closed in withoutKey and describe monitoring filters ([d353e58](https://github.com/NoiXdev/pulsix/commit/d353e5892ed81dd2ec52887bc788c8f2f53a85bb))
+* **release:** accept any agent target in the uploader ([48a7d75](https://github.com/NoiXdev/pulsix/commit/48a7d75f06d78fa0784a43b235766d1db47d4ae2))
+* **release:** build release agents byte-identical to the manager's ([4722343](https://github.com/NoiXdev/pulsix/commit/47223438f416e57bcaf52c82c1446068fdf367c4))
+* **release:** run the agents rehearsal on dry runs and backfill with main's uploader ([53ed33e](https://github.com/NoiXdev/pulsix/commit/53ed33e66e2f824d186f5ad0c5d7eaec6805eedb))
+* **screenlock:** revoke on a missed claim only when the attempts are used up ([a160f54](https://github.com/NoiXdev/pulsix/commit/a160f54c19a4533e7effba6c5e150ab270758923))
+* **web:** draw the expiry banner in the shell's notice slot ([1eaddbc](https://github.com/NoiXdev/pulsix/commit/1eaddbcf5c1b48707cc05217a1eee225b5139ce6))
+* **web:** keep the page usable during the expiry warning and keep the notice ([9c9d41e](https://github.com/NoiXdev/pulsix/commit/9c9d41e9be0ccbc615f52e64b8927167ecc71e90))
+* **web:** keep the session lock from blanking, stranding or leaking ([5b08c61](https://github.com/NoiXdev/pulsix/commit/5b08c61079be60595c15e4023172026a1c968007))
+* **web:** never send never_expires for an untouched empty date ([3ce8ea7](https://github.com/NoiXdev/pulsix/commit/3ce8ea7a933f88d9d02055466367648f719409ce))
+* **web:** take the version baseline from the page load and keep the banner in flow ([4881cb2](https://github.com/NoiXdev/pulsix/commit/4881cb2b4b68e4f477a8a50a85a8507871d4e95e))
+* **web:** tell a used-up PIN from an ended session and keep no PIN cached ([92d6331](https://github.com/NoiXdev/pulsix/commit/92d63311164bf669ffc510ace8e0f6a770653285))
+
+## [0.1.0-rc.3](https://github.com/NoiXdev/pulsix/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-11-17)
 
 
 ### Features
