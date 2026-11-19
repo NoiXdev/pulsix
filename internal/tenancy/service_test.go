@@ -389,13 +389,13 @@ func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Tim
 	return inv, nil
 }
 
-func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, now time.Time) ([]tenancy.PendingInvite, error) {
+func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, now time.Time, includeExpired bool) ([]tenancy.PendingInvite, error) {
 	if err := f.take("ListPendingInvites"); err != nil {
 		return nil, err
 	}
 	var out []tenancy.PendingInvite
 	for _, inv := range f.invites {
-		if inv.OrgID == orgID && now.Before(inv.ExpiresAt) {
+		if inv.OrgID == orgID && (includeExpired || now.Before(inv.ExpiresAt)) {
 			out = append(out, tenancy.PendingInvite{ID: inv.ID, Email: inv.Email, Role: inv.Role, InvitedBy: inv.InvitedBy, ExpiresAt: inv.ExpiresAt})
 		}
 	}
@@ -1671,7 +1671,7 @@ func TestPendingInvitesAndRevokeGoThroughTheStore(t *testing.T) {
 	inv := tenancy.Invite{ID: uuid.Must(uuid.NewV7()), OrgID: org, Email: "x@example.test", Role: tenancy.RoleViewer, ExpiresAt: time.Unix(1_700_003_600, 0)}
 	store.invites["h"] = inv
 
-	list, err := svc.PendingInvites(ctx, org)
+	list, err := svc.PendingInvites(ctx, org, false)
 	if err != nil || len(list) != 1 || list[0].ID != inv.ID {
 		t.Fatalf("PendingInvites = %+v, %v", list, err)
 	}
@@ -1682,7 +1682,7 @@ func TestPendingInvitesAndRevokeGoThroughTheStore(t *testing.T) {
 		t.Fatalf("second RevokeInvite = %v, want ErrNotFound", err)
 	}
 	store.failNext["ListPendingInvites"] = errors.New("store down")
-	if _, err := svc.PendingInvites(ctx, org); err == nil {
+	if _, err := svc.PendingInvites(ctx, org, false); err == nil {
 		t.Fatal("a store failure was swallowed")
 	}
 }

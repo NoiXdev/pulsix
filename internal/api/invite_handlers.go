@@ -20,6 +20,12 @@ type pendingInviteDTO struct {
 	InvitedByName string    `json:"invited_by_name"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	CreatedAt     time.Time `json:"created_at"`
+	Expired       bool      `json:"expired" doc:"Past expires_at; only listed with include_expired=true"`
+}
+
+type inviteListInput struct {
+	Org            string `path:"org"`
+	IncludeExpired bool   `query:"include_expired" doc:"Also list the invitations that have expired, so they can be resent (default false); accepted ones are never listed"`
 }
 
 type inviteListOutput struct {
@@ -52,12 +58,12 @@ type inviteResendOutput struct {
 // Resending one (spec 2026-11-19 §4) mails a new link and so sits exactly
 // where sending one does, interactive session included.
 func registerInviteRoutes(hapi huma.API, deps Deps) {
-	huma.Get(hapi, "/api/v1/orgs/{org}/invites", func(ctx context.Context, in *memberListInput) (*inviteListOutput, error) {
+	huma.Get(hapi, "/api/v1/orgs/{org}/invites", func(ctx context.Context, in *inviteListInput) (*inviteListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
 		if err != nil {
 			return nil, err
 		}
-		invites, err := deps.Tenancy.PendingInvites(ctx, scope.OrgID)
+		invites, err := deps.Tenancy.PendingInvites(ctx, scope.OrgID, in.IncludeExpired)
 		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
@@ -67,7 +73,7 @@ func registerInviteRoutes(hapi huma.API, deps Deps) {
 			out.Body.Invites[i] = pendingInviteDTO{
 				ID: inv.ID.String(), Email: inv.Email, Role: string(inv.Role),
 				InvitedBy: inv.InvitedBy.String(), InvitedByName: inv.InvitedByName,
-				ExpiresAt: inv.ExpiresAt, CreatedAt: inv.CreatedAt,
+				ExpiresAt: inv.ExpiresAt, CreatedAt: inv.CreatedAt, Expired: inv.Expired,
 			}
 		}
 		return out, nil

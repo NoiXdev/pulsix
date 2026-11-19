@@ -9,7 +9,8 @@ import (
 )
 
 // PendingInvite is an invitation that can still be accepted: unaccepted,
-// unexpired, and sent by someone who may still add members.
+// unexpired, and sent by someone who may still add members. Listed with
+// expired ones included, Expired marks those past ExpiresAt.
 type PendingInvite struct {
 	ID            uuid.UUID
 	Email         string
@@ -18,16 +19,24 @@ type PendingInvite struct {
 	InvitedByName string
 	ExpiresAt     time.Time
 	CreatedAt     time.Time
+	Expired       bool
 }
 
 // PendingInvites lists orgID's open invitations (backlog 7.29). An
 // invitation is a standing offer of a membership, so the people who manage
 // members have to be able to see what is outstanding — before this, an
 // invitation sent to a wrong address could only be waited out.
-func (s *Service) PendingInvites(ctx context.Context, orgID uuid.UUID) ([]PendingInvite, error) {
-	invites, err := s.store.ListPendingInvites(ctx, orgID, s.now())
+// includeExpired adds the invitations that are open but for their expiry,
+// each marked Expired against the service's clock, so they can be resent
+// (spec 2026-11-19 §4).
+func (s *Service) PendingInvites(ctx context.Context, orgID uuid.UUID, includeExpired bool) ([]PendingInvite, error) {
+	now := s.now()
+	invites, err := s.store.ListPendingInvites(ctx, orgID, now, includeExpired)
 	if err != nil {
 		return nil, fmt.Errorf("list pending invites: %w", err)
+	}
+	for i := range invites {
+		invites[i].Expired = !invites[i].ExpiresAt.After(now)
 	}
 	return invites, nil
 }

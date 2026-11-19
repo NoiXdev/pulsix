@@ -196,19 +196,21 @@ func (q *Queries) ListMembers(ctx context.Context, orgID uuid.UUID) ([]ListMembe
 const listPendingInvites = `-- name: ListPendingInvites :many
 SELECT i.id, i.email, i.role, i.invited_by, u.display_name AS invited_by_name, i.expires_at, i.created_at
 FROM invites AS i JOIN users AS u ON u.id = i.invited_by
-WHERE i.org_id = $1 AND i.accepted_at IS NULL AND i.expires_at > $2::timestamptz
+WHERE i.org_id = $1 AND i.accepted_at IS NULL
+  AND ($2::boolean OR i.expires_at > $3::timestamptz)
   AND EXISTS (
       SELECT 1 FROM org_memberships AS m JOIN users AS iu ON iu.id = m.user_id
       WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
-        AND m.role::text = ANY($3::text[]) AND iu.disabled_at IS NULL
+        AND m.role::text = ANY($4::text[]) AND iu.disabled_at IS NULL
   )
 ORDER BY i.created_at DESC, i.id
 `
 
 type ListPendingInvitesParams struct {
-	OrgID       uuid.UUID `json:"org_id"`
-	Now         time.Time `json:"now"`
-	IssuerRoles []string  `json:"issuer_roles"`
+	OrgID          uuid.UUID `json:"org_id"`
+	IncludeExpired bool      `json:"include_expired"`
+	Now            time.Time `json:"now"`
+	IssuerRoles    []string  `json:"issuer_roles"`
 }
 
 type ListPendingInvitesRow struct {
@@ -222,9 +224,16 @@ type ListPendingInvitesRow struct {
 }
 
 // The open invitations of one organization: those TakeInvite would still
-// take, issuer condition included (backlog 7.29), newest first.
+// take, issuer condition included (backlog 7.29), newest first. With
+// include_expired the expired ones come too, so they can be resent (spec
+// 2026-11-19 §4); accepted ones never do.
 func (q *Queries) ListPendingInvites(ctx context.Context, arg ListPendingInvitesParams) ([]ListPendingInvitesRow, error) {
-	rows, err := q.db.Query(ctx, listPendingInvites, arg.OrgID, arg.Now, arg.IssuerRoles)
+	rows, err := q.db.Query(ctx, listPendingInvites,
+		arg.OrgID,
+		arg.IncludeExpired,
+		arg.Now,
+		arg.IssuerRoles,
+	)
 	if err != nil {
 		return nil, err
 	}

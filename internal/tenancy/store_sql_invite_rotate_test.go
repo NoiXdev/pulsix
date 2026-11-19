@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -55,7 +56,16 @@ func TestSQLStoreRotateAndRestoreInvite(t *testing.T) {
 	if _, _, err := store.RotateInvite(ctx, org.ID, uuid.Must(uuid.NewV7()), next); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("rotate an unknown invitation: %v, want ErrNotFound", err)
 	}
-	got, prev, err := store.RotateInvite(ctx, org.ID, expired.ID, next)
+	// Row-level security alone, with the right organization id but a
+	// request scoped to another one: the row is invisible, and stays as it
+	// was.
+	if _, _, err := store.RotateInvite(db.WithOrgScope(ctx, other.ID), org.ID, expired.ID, next); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("rotate under another organization's scope: %v, want ErrNotFound", err)
+	}
+	if _, err := store.PeekInvite(ctx, hashOf("old"), now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("a refused cross-organization rotate changed the invitation: %v", err)
+	}
+	got, prev, err := store.RotateInvite(db.WithOrgScope(ctx, org.ID), org.ID, expired.ID, next)
 	if err != nil {
 		t.Fatalf("RotateInvite: %v", err)
 	}

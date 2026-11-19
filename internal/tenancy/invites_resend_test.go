@@ -31,8 +31,12 @@ func (f *fakeStore) RotateInvite(_ context.Context, orgID, id uuid.UUID, next te
 	return tenancy.Invite{}, tenancy.InviteRotation{}, tenancy.ErrNotFound
 }
 
-func (f *fakeStore) RestoreInvite(_ context.Context, orgID, id uuid.UUID, current []byte, prev tenancy.InviteRotation) error {
+// RestoreInvite fails on a cancelled context, as a real query does.
+func (f *fakeStore) RestoreInvite(ctx context.Context, orgID, id uuid.UUID, current []byte, prev tenancy.InviteRotation) error {
 	if err := f.take("RestoreInvite"); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	inv, ok := f.invites[string(current)]
@@ -103,7 +107,7 @@ func TestResendInviteRotatesTheLink(t *testing.T) {
 	if len(f.mail.sent) != 2 || f.mail.sent[1].to != "new@x" || !strings.Contains(f.mail.sent[1].body, testPublicURL+"/invite#token="+got.Token) {
 		t.Fatalf("resend mail = %+v", f.mail.sent)
 	}
-	pending, err := f.svc.PendingInvites(ctx, f.org)
+	pending, err := f.svc.PendingInvites(ctx, f.org, false)
 	if err != nil || len(pending) != 1 || pending[0].InvitedBy != f.admin {
 		t.Fatalf("pending = %+v, %v; want one invitation issued by the resender", pending, err)
 	}
@@ -197,11 +201,37 @@ func TestResendInviteDeliveryFailureChangesNothing(t *testing.T) {
 	if _, err := f.svc.ResendInvite(ctx, f.org, f.admin, f.inv.ID); !errors.Is(err, tenancy.ErrInviteDelivery) {
 		t.Fatalf("resend with a failing mailer: %v, want ErrInviteDelivery", err)
 	}
-	pending, err := f.svc.PendingInvites(ctx, f.org)
+	pending, err := f.svc.PendingInvites(ctx, f.org, false)
 	if err != nil || len(pending) != 1 || pending[0].InvitedBy != f.owner || !pending[0].ExpiresAt.Equal(f.inv.ExpiresAt) {
 		t.Fatalf("pending after a failed resend = %+v, %v; want the invitation as it was", pending, err)
 	}
 	if _, _, _, err := f.svc.AcceptInvite(ctx, uuid.Nil, f.inv.Token, "Old Link", "correct horse battery"); err != nil {
 		t.Fatalf("old token after a failed resend: %v", err)
+	}
+}
+
+// cancellingMailer stands for a client that disconnects while a slow SMTP
+// failure is under way: the request is cancelled before the send fails.
+type cancellingMailer struct{ cancel context.CancelFunc }
+
+func (m cancellingMailer) Send(context.Context, string, string, string) error {
+	m.cancel()
+	return errors.New("451 try again later")
+}
+
+// TestResendInviteRestoresAfterTheRequestIsGone: the restore after a failed
+// delivery does not depend on the request still being there, or the old
+// link would be dead and the new one never delivered.
+func TestResendInviteRestoresAfterTheRequestIsGone(t *testing.T) {
+	f := newResendFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc := tenancy.NewService(f.st, cancellingMailer{cancel: cancel}, testPublicURL, func() time.Time { return *f.now })
+
+	if _, err := svc.ResendInvite(ctx, f.org, f.admin, f.inv.ID); !errors.Is(err, tenancy.ErrInviteDelivery) || strings.Contains(err.Error(), "restoring") {
+		t.Fatalf("resend with a disconnecting client: %v, want ErrInviteDelivery with the invitation restored", err)
+	}
+	if _, _, _, err := f.svc.AcceptInvite(context.Background(), uuid.Nil, f.inv.Token, "Old Link", "correct horse battery"); err != nil {
+		t.Fatalf("old token after a failed resend on a gone request: %v", err)
 	}
 }

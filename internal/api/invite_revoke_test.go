@@ -15,6 +15,7 @@ type pendingInviteDTO struct {
 	Role          string `json:"role"`
 	InvitedByName string `json:"invited_by_name"`
 	ExpiresAt     string `json:"expires_at"`
+	Expired       bool   `json:"expired"`
 }
 
 func listInvites(t *testing.T, c *http.Client, url string) []pendingInviteDTO {

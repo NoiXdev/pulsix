@@ -821,12 +821,25 @@ func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list, err := store.ListPendingInvites(ctx, org.ID, now)
+	list, err := store.ListPendingInvites(ctx, org.ID, now, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list) != 1 || list[0].ID != open.ID || list[0].InvitedByName != "pending-admin@example.test" || list[0].Role != tenancy.RoleViewer {
 		t.Fatalf("pending invites = %+v, want only the open one", list)
+	}
+	// includeExpired adds the expired one and nothing else: the lapsed
+	// issuer's, the accepted and the other organization's stay out.
+	withExpired, err := store.ListPendingInvites(ctx, org.ID, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emails := map[string]bool{}
+	for _, inv := range withExpired {
+		emails[inv.Email] = true
+	}
+	if len(withExpired) != 2 || !emails["open@example.test"] || !emails["expired@example.test"] {
+		t.Fatalf("pending invites with expired = %+v, want the open and the expired one", withExpired)
 	}
 
 	if err := store.RevokeInvite(ctx, other.ID, open.ID); !errors.Is(err, tenancy.ErrNotFound) {

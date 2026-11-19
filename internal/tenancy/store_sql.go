@@ -263,8 +263,10 @@ func (s *SQLStore) TakeInvite(ctx context.Context, tokenHash []byte, now time.Ti
 	}, nil
 }
 
-func (s *SQLStore) ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time) ([]PendingInvite, error) {
-	rows, err := s.q.ListPendingInvites(ctx, gen.ListPendingInvitesParams{OrgID: orgID, Now: now, IssuerRoles: inviteIssuerRoles()})
+func (s *SQLStore) ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time, includeExpired bool) ([]PendingInvite, error) {
+	rows, err := s.q.ListPendingInvites(ctx, gen.ListPendingInvitesParams{
+		OrgID: orgID, Now: now, IncludeExpired: includeExpired, IssuerRoles: inviteIssuerRoles(),
+	})
 	if err != nil {
 		return nil, err
 	}

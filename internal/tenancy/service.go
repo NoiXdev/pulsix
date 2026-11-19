@@ -180,8 +180,9 @@ type Store interface {
 	// succeed.
 	TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error)
 	// ListPendingInvites returns orgID's invitations TakeInvite would still
-	// take as of now.
-	ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time) ([]PendingInvite, error)
+	// take as of now, and with includeExpired also those it would take but
+	// for their expiry.
+	ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time, includeExpired bool) ([]PendingInvite, error)
 	// RevokeInvite deletes an unaccepted invitation of orgID, returning
 	// ErrNotFound when there is none with that id.
 	RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error

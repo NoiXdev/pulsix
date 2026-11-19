@@ -3,9 +3,14 @@ package tenancy
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+// inviteRestoreTimeout bounds the restore after a failed resend, which runs
+// detached from the request (see ResendInvite).
+const inviteRestoreTimeout = 10 * time.Second
 
 // ResendInvite sends orgID's invitation id again (spec 2026-11-19 §4): it
 // gets a fresh link, so the one sent before stops working, its expiry
@@ -20,7 +25,16 @@ import (
 // link comes back in AcceptURL. When configured delivery fails the
 // invitation is put back as it was, old link, expiry and issuer included,
 // and the call fails with ErrInviteDelivery: nobody was told about the new
-// link, so it must not have replaced the one they have.
+// link, so it must not have replaced the one they have. The restore runs
+// detached from the request, like the send, so a client that disconnects
+// during a slow SMTP failure does not leave the invitation without a link.
+//
+// Two windows are not covered. A crash between the rotation and the send
+// leaves only the new, undelivered link; resending again recovers. And an
+// SMTP failure that is ambiguous (the server may have taken the message
+// before the error) restores the old link, so a mail that did arrive
+// carries a dead one, just as Invite deletes the invitation on such a
+// failure.
 func (s *Service) ResendInvite(ctx context.Context, orgID, byUserID, id uuid.UUID) (Invite, error) {
 	org, err := s.store.GetOrgByID(ctx, orgID)
 	if err != nil {
@@ -38,7 +52,10 @@ func (s *Service) ResendInvite(ctx context.Context, orgID, byUserID, id uuid.UUI
 	}
 	inv.Token = token
 	if sendErr := s.mailInvite(ctx, org.Name, &inv); sendErr != nil {
-		if err := s.store.RestoreInvite(ctx, orgID, id, sum, prev); err != nil {
+		// WithoutCancel keeps the organization scope the store's RLS needs.
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteRestoreTimeout)
+		defer cancel()
+		if err := s.store.RestoreInvite(restoreCtx, orgID, id, sum, prev); err != nil {
 			return Invite{}, fmt.Errorf("%w: %w (and restoring the invitation failed: %w)", ErrInviteDelivery, sendErr, err)
 		}
 		return Invite{}, fmt.Errorf("%w: %w", ErrInviteDelivery, sendErr)

@@ -271,7 +271,7 @@ type jobListInput struct {
 	Status     string `query:"status" doc:"A run status, or active for the live runs (queued, claimed, running, cancelling)"`
 	Kind       string `query:"kind"`
 	TemplateID string `query:"template_id"`
-	PlaybookID string `query:"playbook_id" doc:"Only the runs of the templates that use this playbook; runs without a template never match"`
+	PlaybookID string `query:"playbook_id" doc:"Only runs of templates that currently use this playbook (a template switched to another playbook takes its run history with it); runs without a template never match"`
 	Group      string `query:"group"`
 	Trigger    string `query:"trigger" doc:"manual, schedule, webhook, system or chain"`
 	TriggerRef string `query:"trigger_ref" doc:"Only the runs this schedule or webhook trigger started"`

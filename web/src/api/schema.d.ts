@@ -6969,6 +6969,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             email: string;
+            /** @description Past expires_at; only listed with include_expired=true */
+            expired: boolean;
             /** Format: date-time */
             expires_at: string;
             id: string;
@@ -13768,7 +13770,10 @@ export interface operations {
     };
     "get-api-v1-orgs-by-org-invites": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Also list the invitations that have expired, so they can be resent (default false); accepted ones are never listed */
+                include_expired?: boolean;
+            };
             header?: never;
             path: {
                 org: string;
@@ -14569,7 +14574,7 @@ export interface operations {
                 status?: string;
                 kind?: string;
                 template_id?: string;
-                /** @description Only the runs of the templates that use this playbook; runs without a template never match */
+                /** @description Only runs of templates that currently use this playbook (a template switched to another playbook takes its run history with it); runs without a template never match */
                 playbook_id?: string;
                 group?: string;
                 /** @description manual, schedule, webhook, system or chain */
