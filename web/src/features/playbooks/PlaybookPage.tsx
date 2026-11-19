@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { PageTabs, type PageTabItem } from '../../ui/page-tabs.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -80,6 +80,26 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
     }
   }
 
+  // Ctrl/Cmd-S saves from anywhere on the Editor tab of an editable
+  // playbook (the header, the side column, the editor), and never opens
+  // the browser's "Save page" there; save() itself refuses a clean,
+  // invalid or pending draft.
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  });
+  const shortcut = tab === 'editor' && editable;
+  useEffect(() => {
+    if (!shortcut) return;
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
+      ev.preventDefault();
+      void saveRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [shortcut]);
+
   // Arrow/Home/End roving replaces the history entry.
   const select = (next: PlaybookTab, via: 'click' | 'key' = 'click') =>
     void navigate({ to: '/o/$org/playbooks/$id', params: { org, id: playbook.id }, search: { tab: next === 'editor' ? undefined : next }, replace: via === 'key' });
@@ -121,7 +141,6 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
           problem={problem}
           serverError={serverError}
           templates={using}
-          onSave={() => void save()}
           onShowRuns={() => select('runs')}
         />
       </div>
@@ -130,7 +149,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
           {tab === 'runs' ? (
             <PlaybookRunsTab org={org} playbookId={playbook.id} templates={using} canRun={may(role, 'jobs.run')} />
           ) : (
-            <PlaybookUsedByTab org={org} role={role} templates={templates.data ? using : undefined} />
+            <PlaybookUsedByTab org={org} role={role} playbookId={playbook.id} templates={templates.data ? using : undefined} />
           )}
         </div>
       )}

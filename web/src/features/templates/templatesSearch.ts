@@ -16,10 +16,16 @@ export const TEMPLATES_FILTERS = {
   scope: param.enum(TEMPLATE_SCOPES),
 };
 
-export type TemplatesSearch = ListSearch & FilterSearch<typeof TEMPLATES_FILTERS>;
+/** `create` opens the new template dialog with that playbook chosen (the
+ * playbook page's "Create template…"), the way `?id=` opens a schedule. */
+export type TemplatesSearch = ListSearch & FilterSearch<typeof TEMPLATES_FILTERS> & { create?: string };
 
 export function validateTemplatesSearch(search: Record<string, unknown>): TemplatesSearch {
-  return { ...validateListSearch(search), ...validateFilters(TEMPLATES_FILTERS, search) };
+  return {
+    ...validateListSearch(search),
+    ...validateFilters(TEMPLATES_FILTERS, search),
+    create: typeof search.create === 'string' && search.create !== '' ? search.create : undefined,
+  };
 }
 
 /** Whether a template's scope is the given kind (a group with hosts is both). */

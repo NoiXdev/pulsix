@@ -48,10 +48,18 @@ export function useUpdatePlaybook(org: string, id: string) {
   });
 }
 
+/** The deleted playbook's own read is not refetched: the page showing it
+ * would answer "not found" on its way out. The caller drops it from the
+ * cache once that page is gone (`forget`). */
 export function useDeletePlaybook(org: string) {
-  const invalidate = useInvalidate(org);
-  return useMutation({
+  const qc = useQueryClient();
+  const mutation = useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/playbooks/{id}', { params: { path: { org, id } } })),
-    onSuccess: invalidate,
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['playbooks', org], predicate: (q) => q.queryKey[2] !== id });
+      void qc.invalidateQueries({ queryKey: ['templates', org] });
+    },
   });
+  const forget = (id: string) => qc.removeQueries({ queryKey: ['playbooks', org, id], exact: true });
+  return { ...mutation, forget };
 }

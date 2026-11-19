@@ -38,6 +38,9 @@ export interface TemplateDialogProps {
    * credentials.write is admin, stricter than templates.write (v0.4g
    * Task 7 fix round). */
   canCreateCredential: boolean;
+  /** Create only: the playbook the new template starts with (the playbook
+   * page's "Create template…"). */
+  initialPlaybookId?: string;
   onClose: () => void;
 }
 
@@ -51,7 +54,7 @@ export interface TemplateDialogProps {
  * keep marker (templates/vars.ts) — under If-Match, and a stale revision
  * (someone saved, or a sync applied the playbook's variables) answers 412.
  */
-export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, onClose }: TemplateDialogProps) {
+export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, initialPlaybookId, onClose }: TemplateDialogProps) {
   const detail = useTemplate(org, template?.id ?? '');
   const playbooks = usePlaybooks(org);
   const credentials = useCredentials(org, { enabled: canReadCredentials });
@@ -98,13 +101,14 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
       credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
       vaultCredentials={allCredentials}
       canCreateCredential={canCreateCredential}
+      initialPlaybookId={initialPlaybookId}
       onClose={onClose}
     />
   );
 }
 
 function TemplateForm({
-  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, onClose,
+  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, initialPlaybookId, onClose,
 }: {
   org: string;
   existing?: Existing;
@@ -118,6 +122,7 @@ function TemplateForm({
    * Vault identities list below needs to offer. */
   vaultCredentials: readonly Credential[];
   canCreateCredential: boolean;
+  initialPlaybookId?: string;
   onClose: () => void;
 }) {
   const t = useT();
@@ -141,7 +146,7 @@ function TemplateForm({
   const [loaded, setLoaded] = useState(existing);
 
   const [name, setName] = useState(existing?.name ?? '');
-  const [playbook, setPlaybook] = useState<PlaybookChoice>({ from: '', playbookId: existing?.playbookId ?? '', path: '' });
+  const [playbook, setPlaybook] = useState<PlaybookChoice>({ from: '', playbookId: existing?.playbookId ?? initialPlaybookId ?? '', path: '' });
   const pick = usePickRepoPlaybook(org, playbook.from === 'inline' ? '' : playbook.from);
   const [scope, setScope] = useState<Scope>(existing?.scope ?? { group_id: '', host_ids: [] });
   const [limit, setLimit] = useState(existing?.limit ?? '');

@@ -16,15 +16,17 @@ import { useRunTemplate } from '../templates/useRunTemplate.tsx';
  * template using the playbook it starts that template's run at once (the
  * templates list's own flow: follow-ups ask first); with several the person
  * picks one in a dialog; with none the dialog says so and links to creating
- * a template.
+ * a template with this playbook chosen.
  */
 export function RunPlaybookButton({
   org,
+  playbookId,
   name,
   templates,
   canCreateTemplate,
 }: {
   org: string;
+  playbookId: string;
   name: string;
   /** Undefined while they are read: the button waits. */
   templates: readonly Template[] | undefined;
@@ -46,6 +48,7 @@ export function RunPlaybookButton({
       </Button>
       {picking && templates && (
         <RunDialog
+          playbookId={playbookId}
           name={name}
           templates={templates}
           canCreateTemplate={canCreateTemplate}
@@ -63,6 +66,7 @@ export function RunPlaybookButton({
 }
 
 function RunDialog({
+  playbookId,
   name,
   templates,
   canCreateTemplate,
@@ -70,6 +74,7 @@ function RunDialog({
   onRun,
   onClose,
 }: {
+  playbookId: string;
   name: string;
   templates: readonly Template[];
   canCreateTemplate: boolean;
@@ -96,7 +101,7 @@ function RunDialog({
           <div className="flex justify-end gap-2">
             <Button onClick={onClose}>{t.common.cancel}</Button>
             {canCreateTemplate && (
-              <Link to="/o/$org/templates" params={{ org }} className={buttonClass('primary')}>
+              <Link to="/o/$org/templates" params={{ org }} search={{ create: playbookId }} className={buttonClass('primary')}>
                 {d.create}
               </Link>
             )}

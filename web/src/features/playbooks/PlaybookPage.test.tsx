@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
@@ -80,6 +80,40 @@ describe('PlaybookPage', () => {
     replaceCode(editor, '- hosts: all\n');
     await user.keyboard('{Meta>}s{/Meta}');
     await waitFor(() => expect(sent).toEqual([{ inline: '- hosts: all\n' }]));
+  });
+
+  it('saves with Mod-S wherever the focus is on the Editor tab, and keeps the browser from saving the page', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    mockApi(
+      routes('operator', {
+        'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => {
+          sent.push(req.body);
+          return { playbook: editorPlaybook({ inline: (req.body as { inline: string }).inline }) };
+        },
+      }),
+    );
+    renderAt('/o/acme/playbooks/p1');
+    const editor = await findCodeEditor('Playbook YAML');
+    // Clean: nothing to save, but the browser's "Save page" stays shut.
+    expect(fireEvent.keyDown(screen.getByRole('heading', { level: 1 }), { key: 's', ctrlKey: true })).toBe(false);
+    expect(sent).toEqual([]);
+    replaceCode(editor, '- hosts: db\n');
+    await screen.findByText('Unsaved');
+    within(screen.getByRole('region', { name: 'Variables' })).getByRole('heading').focus();
+    await user.keyboard('{Control>}s{/Control}');
+    await waitFor(() => expect(sent).toEqual([{ inline: '- hosts: db\n' }]));
+  });
+
+  it('leaves Mod-S to the browser on another tab', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    mockApi(routes('operator', { 'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => (sent.push(req.body), { playbook: editorPlaybook() }) }));
+    renderAt('/o/acme/playbooks/p1');
+    replaceCode(await findCodeEditor('Playbook YAML'), '- hosts: db\n');
+    await user.click(screen.getByRole('tab', { name: 'Runs' }));
+    expect(fireEvent.keyDown(screen.getByRole('tab', { name: 'Runs' }), { key: 's', ctrlKey: true })).toBe(true);
+    expect(sent).toEqual([]);
   });
 
   it("shows the server's refusal in the Check panel", async () => {

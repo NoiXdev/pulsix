@@ -96,6 +96,24 @@ describe('NewPlaybookPage', () => {
     expect(router.state.location.pathname).toBe('/o/acme/playbooks/new');
   });
 
+  it('still asks before leaving with edited text after switching to a repository', async () => {
+    const user = userEvent.setup();
+    mockApi(routes());
+    const { router } = renderAt('/o/acme/playbooks/new');
+    replaceCode(await findCodeEditor('Playbook YAML'), '- hosts: all\n');
+    await user.click(screen.getByRole('radio', { name: /Choose from a repository/ }));
+    await user.click(screen.getByRole('link', { name: 'Cancel' }));
+    expect(await declineConfirm(user)).toBe('Leave this page? Your unsaved changes will be lost.');
+    expect(router.state.location.pathname).toBe('/o/acme/playbooks/new');
+  });
+
+  it('tells someone without write access that the page is not theirs', async () => {
+    mockApi(routes('viewer'));
+    renderAt('/o/acme/playbooks/new');
+    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument();
+  });
+
   it('adds a playbook from a repository and opens its page', async () => {
     const user = userEvent.setup();
     const picked: unknown[] = [];

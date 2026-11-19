@@ -15,12 +15,13 @@ import { useTemplateListActions } from '../templates/useTemplateListActions.tsx'
  * PlaybookUsedByTab is the playbook page's "Used by" tab: the job templates
  * that run the playbook, each with its limit, its schedules and its webhook
  * triggers (read per listed template, through the endpoints the templates'
- * own dialogs use). A row opens the template's dialog and has the templates
- * list's own menu (Run, Variables, Triggers, Schedules, Edit, Delete).
- * "Create template…" goes to the templates page; the template form has no
- * way to start with a playbook chosen.
+ * own dialogs use). A row opens the template's dialog (for a reader: its
+ * variables page) and has the templates list's own menu (Run, Variables,
+ * Triggers, Schedules, Edit, Delete).
+ * "Create template…" opens the new template dialog on the templates page
+ * with this playbook chosen (`?create=`).
  */
-export function PlaybookUsedByTab({ org, role, templates }: { org: string; role: string; templates: readonly Template[] | undefined }) {
+export function PlaybookUsedByTab({ org, role, playbookId, templates }: { org: string; role: string; playbookId: string; templates: readonly Template[] | undefined }) {
   const t = useT();
   const u = t.playbooks.page.used;
   const canWrite = may(role, 'templates.write');
@@ -39,7 +40,7 @@ export function PlaybookUsedByTab({ org, role, templates }: { org: string; role:
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">{u.title}</h2>
         {canWrite && (
-          <Link to="/o/$org/templates" params={{ org }} className={buttonClass('default')}>
+          <Link to="/o/$org/templates" params={{ org }} search={{ create: playbookId }} className={buttonClass('default')}>
             <ListPlus size={14} /> {u.create}
           </Link>
         )}
@@ -51,6 +52,9 @@ export function PlaybookUsedByTab({ org, role, templates }: { org: string; role:
         rowKey={(tpl) => tpl.id}
         rowLabel={(tpl) => tpl.name}
         rowActions={actions.rowActions}
+        // A writer opens the template's dialog, as on the templates list; a
+        // reader, who may not edit it, its variables page (read-only there).
+        rowLink={canWrite ? undefined : (tpl) => ({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id }, label: tpl.name })}
         onRowActivate={actions.edit}
         loading={!templates || !view.ready}
         empty={u.none}

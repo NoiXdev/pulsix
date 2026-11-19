@@ -6,9 +6,14 @@ import { CodeEditor } from '../../ui/code-editor.tsx';
 import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
+import { QueryError, QueryLoading } from '../../ui/QueryState.tsx';
+import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { ApiError } from '../../api/client.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useCreatePlaybook } from '../../api/hooks/usePlaybooks.ts';
 import { usePickRepoPlaybook } from '../../api/hooks/useRepos.ts';
 import { useT } from '../../i18n/useT.ts';
+import { may } from '../../lib/roles.ts';
 import { cn } from '../../lib/utils.ts';
 import { NewPlaybookRepoSource, type RepoChoice } from './NewPlaybookRepoSource.tsx';
 import { PlaybookCheckPanel, SidePanel } from './PlaybookSidePanels.tsx';
@@ -26,12 +31,24 @@ const EDITOR_HEIGHT = 'max(22rem, calc(100vh - 22rem))';
  * starters, named by its first play — or chosen from a repository's
  * discovered playbooks (the template form's repository picker, on a page).
  * Create opens the new playbook's page. Leaving with text in the editor
- * asks first, unless it is a starter left as it was.
+ * asks first, unless it is a starter left as it was — also while the
+ * repository source is shown, since the text is still there. Without
+ * `playbooks.write` the page is the "no access" notice (the instance pages'
+ * DefinitionLoader does the same).
  */
 export function NewPlaybookPage() {
+  const { org } = useParams({ strict: false }) as { org: string };
+  const orgInfo = useOrg(org);
+  const guard = useQueryGuard(orgInfo);
+  if (guard) return guard;
+  if (!orgInfo.data) return <QueryLoading />;
+  if (!may(orgInfo.data.org.role, 'playbooks.write')) return <QueryError error={new ApiError(403, null)} />;
+  return <NewPlaybookForm org={org} />;
+}
+
+function NewPlaybookForm({ org }: { org: string }) {
   const t = useT();
   const n = t.playbooks.newPage;
-  const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const toast = useToast();
   const ask = useConfirm();
@@ -45,7 +62,7 @@ export function NewPlaybookPage() {
   const pick = usePickRepoPlaybook(org, repoChoice.repoId);
 
   const edited = text !== '' && text !== starterText;
-  const release = useUnsavedGuard(source === 'editor' && edited);
+  const release = useUnsavedGuard(edited);
   const empty = text.trim() === '';
   const problem = empty ? null : validateYAMLProblem(text, t);
   const pending = create.isPending || pick.isPending;

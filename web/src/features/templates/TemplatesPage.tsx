@@ -1,4 +1,4 @@
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { ListPlus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { DataList } from '../../ui/data-list/index.ts';
@@ -18,15 +18,19 @@ import { useListView } from '../lists/useListView.ts';
 import { templateColumns } from './templateColumns.tsx';
 import { TEMPLATE_SCOPES, TEMPLATES_FILTERS, filterTemplates } from './templatesSearch.ts';
 import { useTemplateListActions } from './useTemplateListActions.tsx';
+import { TemplateDialog } from './TemplateDialog.tsx';
 
 /** TemplatesPage lists the job templates (spec §7, backlog 2.10): a
  * playbook plus scope, limit, extra vars and the default SSH credential —
  * the thing an operator runs, and the run view's own entry point. The list (id
  * `templates`) is one request, sorted and paged in the browser; Run, Variables,
- * Triggers, Schedules, Edit and Delete are the row menu's. */
+ * Triggers, Schedules, Edit and Delete are the row menu's. `?create=<playbook>`
+ * opens the new template dialog with that playbook chosen. */
 export function TemplatesPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { create?: string };
   const orgInfo = useOrg(org);
   const templates = useTemplates(org);
   const playbooks = usePlaybooks(org);
@@ -119,6 +123,15 @@ export function TemplatesPage() {
         {...view.listProps(total, t.templates.list.count)}
       />
       {actions.dialogs}
+      {canWrite && search.create && (
+        <TemplateDialog
+          org={org}
+          canReadCredentials={canReadCredentials}
+          canCreateCredential={canCreateCredential}
+          initialPlaybookId={search.create}
+          onClose={() => void navigate({ to: '/o/$org/templates', params: { org }, search: (prev) => ({ ...prev, create: undefined }), replace: true })}
+        />
+      )}
     </>
   );
 }

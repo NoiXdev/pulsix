@@ -65,7 +65,7 @@ export function PlaybookHeader({ org, playbook, role, templates, problem, dirty,
         {line && <p className="text-[13px] text-muted-foreground">{line}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {may(role, 'jobs.run') && <RunPlaybookButton org={org} name={name} templates={templates} canCreateTemplate={may(role, 'templates.write')} />}
+        {may(role, 'jobs.run') && <RunPlaybookButton org={org} playbookId={playbook.id} name={name} templates={templates} canCreateTemplate={may(role, 'templates.write')} />}
         {editorSource && may(role, 'playbooks.write') && (
           <Button variant="primary" disabled={!canSave} title={t.playbooks.editor.saveShortcut} aria-keyshortcuts="Control+S Meta+S" onClick={onSave}>
             <Save size={14} /> {p.save}
@@ -88,6 +88,7 @@ function DeleteMenu({ org, playbook, name, templates, onLeave }: { org: string; 
   const navigate = useNavigate();
   const remove = useDeletePlaybook(org);
   const inUse = templates?.length ?? 0;
+  // Until the templates are known, whether any uses the playbook is not.
 
   async function onDelete() {
     if (!(await ask({ message: e.confirmDelete(name), confirmLabel: t.common.delete, destructive: true }))) return;
@@ -96,6 +97,7 @@ function DeleteMenu({ org, playbook, name, templates, onLeave }: { org: string; 
       toast.show(e.deleted);
       await onLeave();
       await navigate({ to: '/o/$org/playbooks', params: { org } });
+      remove.forget(playbook.id);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : e.deleteFailed, 'destructive');
     }
@@ -103,7 +105,7 @@ function DeleteMenu({ org, playbook, name, templates, onLeave }: { org: string; 
 
   return (
     <RowMenu label={p.more(name)} triggerClassName="h-[34px] w-[34px] rounded-md border border-border bg-card text-foreground hover:bg-accent">
-      <RowMenuItem destructive disabled={inUse > 0 || remove.isPending} onSelect={() => void onDelete()}>
+      <RowMenuItem destructive disabled={!templates || inUse > 0 || remove.isPending} onSelect={() => void onDelete()}>
         <span className="block">{p.delete}</span>
         {inUse > 0 && <span className="block text-[11px] font-normal text-muted-foreground">{p.deleteInUse(inUse)}</span>}
       </RowMenuItem>

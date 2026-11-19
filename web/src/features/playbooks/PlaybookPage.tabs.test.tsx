@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
 import { pickOption } from '../../test/pickOption.ts';
-import { job, renderAt, routes, template } from './playbookPageTestKit.tsx';
+import { job, renderAt, repoPlaybook, routes, template } from './playbookPageTestKit.tsx';
 
 const problem = (status: number, detail: string) =>
   new Response(JSON.stringify({ status, detail }), { status, headers: { 'Content-Type': 'application/json' } });
@@ -67,7 +67,7 @@ describe('PlaybookPage tabs and actions', () => {
     expect(within(list).getByText('web')).toBeInTheDocument();
     // Only the listed template's schedules and triggers are read.
     expect(asked.sort()).toEqual(['schedules t1', 'triggers t1']);
-    expect(screen.getByRole('link', { name: 'Create template…' })).toHaveAttribute('href', '/o/acme/templates');
+    expect(screen.getByRole('link', { name: 'Create template…' })).toHaveAttribute('href', '/o/acme/templates?create=p1');
     expect(screen.getByRole('tab', { name: /Used by/ })).toHaveTextContent('1');
   });
 
@@ -83,6 +83,12 @@ describe('PlaybookPage tabs and actions', () => {
     renderAt('/o/acme/playbooks/p1?tab=used');
     await user.click(await screen.findByRole('button', { name: 'Deploy web' }));
     expect(await screen.findByRole('dialog', { name: 'Deploy web' })).toBeInTheDocument();
+  });
+
+  it("opens a template's variables page for a reader", async () => {
+    mockApi(routes('viewer'));
+    renderAt('/o/acme/playbooks/p1?tab=used');
+    expect(await screen.findByRole('link', { name: 'Deploy web' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
   });
 
   it('runs the one template that uses the playbook at once', async () => {
@@ -128,7 +134,7 @@ describe('PlaybookPage tabs and actions', () => {
     renderAt('/o/acme/playbooks/p2');
     await user.click(await screen.findByRole('button', { name: 'Run…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Run playbooks/site.yml' });
-    expect(within(dialog).getByRole('link', { name: 'Create a template' })).toHaveAttribute('href', '/o/acme/templates');
+    expect(within(dialog).getByRole('link', { name: 'Create a template' })).toHaveAttribute('href', '/o/acme/templates?create=p2');
   });
 
   it('refuses Delete while a template uses the playbook, and says why', async () => {
@@ -143,6 +149,34 @@ describe('PlaybookPage tabs and actions', () => {
     await user.click(item);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(deleted).toEqual([]);
+  });
+
+  it('keeps Delete disabled until the templates are known', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('operator', { 'GET /api/v1/orgs/acme/job-templates': () => new Promise(() => {}) }));
+    renderAt('/o/acme/playbooks/p2');
+    await user.click(await screen.findByRole('button', { name: 'More actions for playbooks/site.yml' }));
+    expect(screen.getByRole('menuitem', { name: 'Delete…' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('does not read the deleted playbook again on its way out', async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    mockApi(
+      routes('operator', {
+        'GET /api/v1/orgs/acme/playbooks/p2': () => (reads++, { playbook: repoPlaybook() }),
+        'DELETE /api/v1/orgs/acme/playbooks/p2': () => ({ ok: true }),
+      }),
+    );
+    const { qc } = renderAt('/o/acme/playbooks/p2');
+    await user.click(await screen.findByRole('button', { name: 'More actions for playbooks/site.yml' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    const before = reads;
+    await acceptConfirm(user);
+    expect(await screen.findByText('PLAYBOOKS')).toBeInTheDocument();
+    expect(screen.queryByText('Not found')).not.toBeInTheDocument();
+    expect(reads).toBe(before);
+    expect(qc.getQueryData(['playbooks', 'acme', 'p2'])).toBeUndefined();
   });
 
   it('deletes an unused playbook after confirmation and goes back to the list', async () => {
