@@ -266,6 +266,33 @@ describe('PlaybooksPage', () => {
     expect(screen.getByRole('dialog', { name: 'New editor playbook' })).toBeInTheDocument();
   });
 
+  it('asks again on every Escape while dirty, without spending a close request', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [] },
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New editor playbook' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New editor playbook' });
+    let closeRequests = 0;
+    dialog.addEventListener('cancel', () => closeRequests++);
+    replaceCode(await findCodeEditor('Playbook YAML', within(dialog)), '- hosts: all');
+    within(dialog).getByRole('button', { name: 'Cancel' }).focus();
+    for (let i = 0; i < 3; i++) {
+      await user.keyboard('{Escape}');
+      await screen.findByRole('dialog', { name: 'Discard changes?' });
+      // Escape on the question keeps editing.
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument());
+      within(dialog).getByRole('button', { name: 'Cancel' }).focus();
+    }
+    expect(closeRequests).toBe(0);
+    expect(screen.getByRole('dialog', { name: 'New editor playbook' })).toBeInTheDocument();
+    expect(await findCodeEditor('Playbook YAML', within(dialog))).toHaveTextContent('- hosts: all');
+  });
+
   it('opens with the focus in the YAML', async () => {
     const user = userEvent.setup();
     mockApi({

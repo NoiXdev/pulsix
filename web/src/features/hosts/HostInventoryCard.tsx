@@ -28,6 +28,12 @@ export function HostInventoryCard({ org, hostId, hostName, managed, canWrite }: 
   return (
     <Card className="flex flex-col gap-3 p-4">
       {!managed && <p className="text-xs text-muted-foreground">{t.hosts.inventory.needsManaged}</p>}
+      {managed && !groups.data && groups.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          {t.hosts.inventory.loadFailed}
+        </p>
+      )}
+      {managed && !groups.data && !groups.isError && <p className="text-xs text-muted-foreground">{t.hosts.inventory.loading}</p>}
       {managed && groups.data && direct.length === 0 && <p className="text-xs text-muted-foreground">{t.hosts.inventory.none}</p>}
       {managed && (
         <ul className="flex flex-col gap-2">

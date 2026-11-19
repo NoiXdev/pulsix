@@ -36,6 +36,22 @@ describe('HostInventoryCard', () => {
     expect(await screen.findByText('Inventory groups need the Managed capability.')).toBeInTheDocument();
   });
 
+  it('shows a loading line while the groups are read, then an error line when that fails', async () => {
+    let fail: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { fail = resolve; });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': async () => {
+        await gate;
+        return new Response('{"detail":"boom"}', { status: 500 });
+      },
+    });
+    renderCard(true);
+    expect(await screen.findByText('Loading inventory groups…')).toBeInTheDocument();
+    fail();
+    expect(await screen.findByText('The inventory groups could not be loaded.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading inventory groups…')).not.toBeInTheDocument();
+  });
+
   it('says when a managed host is in no group', async () => {
     mockApi({ 'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] } });
     renderCard(true);
@@ -92,20 +108,29 @@ describe('HostInventoryCard', () => {
     it('offers only groups the host is not in and assigns to the chosen one', async () => {
       const user = userEvent.setup();
       let put: MockRequest | undefined;
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => { release = resolve; });
       mockApi(routes({
+        'GET /api/v1/orgs/acme/inventory/groups/g2': async () => {
+          await gate;
+          return full('g2', 'database');
+        },
         'PUT /api/v1/orgs/acme/inventory/groups/g2/members/h1': (req: MockRequest) => {
           put = req;
           return { member: { ...MEMBERSHIP, group_id: 'g2', group_name: 'database' } };
         },
       }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Add to group …' }));
+      await user.click(await screen.findByRole('button', { name: 'Add to group…' }));
       const dialog = await screen.findByRole('dialog', { name: 'Add web-01 to a group' });
       await user.click(within(dialog).getByLabelText('Group'));
       expect(within(dialog).queryByRole('option', { name: 'webserver' })).not.toBeInTheDocument();
       expect(within(dialog).queryByRole('option', { name: 'all' })).not.toBeInTheDocument();
       expect(within(dialog).getByRole('option', { name: 'database' })).toBeInTheDocument();
       await user.click(within(dialog).getByRole('option', { name: 'database' }));
+      // While the chosen group is read, the dialog says so.
+      expect(within(dialog).getByRole('status')).toHaveTextContent('Loading');
+      release();
       await user.type(await within(dialog).findByLabelText('domain'), 'db.io');
       await user.click(within(dialog).getByRole('button', { name: 'Assign to database' }));
       await screen.findByText('Host assigned to database');
@@ -122,7 +147,7 @@ describe('HostInventoryCard', () => {
         },
       }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Edit values … webserver' }));
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
       const dialog = await screen.findByRole('dialog');
       const domain = await within(dialog).findByLabelText('domain');
       expect(domain).toHaveValue('a.io');
@@ -144,7 +169,7 @@ describe('HostInventoryCard', () => {
         },
       }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      await user.click(await screen.findByRole('button', { name: 'Remove from group webserver…' }));
       const message = await acceptConfirm(user);
       expect(message).toContain('web-01');
       expect(message).toContain('webserver');
@@ -167,7 +192,7 @@ describe('HostInventoryCard', () => {
         },
       }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      await user.click(await screen.findByRole('button', { name: 'Remove from group webserver…' }));
       await acceptConfirm(user);
       expect(await screen.findByText('Not in any inventory group yet.')).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'webserver' })).not.toBeInTheDocument();
@@ -180,7 +205,7 @@ describe('HostInventoryCard', () => {
       }));
       renderCard(true, true);
       expect(await screen.findByRole('link', { name: 'webserver' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Add to group …' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add to group…' })).toBeInTheDocument();
       expect(screen.queryByText('prod')).not.toBeInTheDocument();
     });
 
@@ -190,7 +215,7 @@ describe('HostInventoryCard', () => {
         'GET /api/v1/orgs/acme/inventory/groups/g1': () => new Response(JSON.stringify({ detail: 'group read failed' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
       }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Edit values … webserver' }));
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
       const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
       await waitFor(() => expect(within(dialog).getByText('Something went wrong')).toBeInTheDocument());
     });
@@ -200,7 +225,7 @@ describe('HostInventoryCard', () => {
       let deleted = false;
       mockApi(routes({ 'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () => ((deleted = true), new Response(null, { status: 204 })) }));
       renderCard(true, true);
-      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      await user.click(await screen.findByRole('button', { name: 'Remove from group webserver…' }));
       const dialog = await findConfirmDialog();
       await user.click(within(dialog).getAllByRole('button')[0]);
       expect(deleted).toBe(false);

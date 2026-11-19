@@ -24,7 +24,9 @@ interface CodeEditorBaseProps {
   describedBy?: string;
   placeholder?: string;
   /** Refuses an edit that would make the text longer (characters, a line
-   * break counting one), as a textarea's maxLength does. */
+   * break counting one). Unlike a textarea's maxLength it refuses the whole
+   * edit — an oversize paste is rejected, not truncated. (The stand-in
+   * textarea truncates.) */
   maxLength?: number;
   diagnostics?: readonly CodeDiagnostic[];
   /** A fixed height (any CSS length); the text scrolls inside it. */
@@ -58,7 +60,8 @@ const FRAME = 'overflow-hidden rounded-md border border-border bg-background foc
  * works and always has a textbox.
  *
  * Because Tab indents, a hint under an editable editor says how to leave
- * it with the keyboard (Escape, then Tab).
+ * it with the keyboard (Escape, then Tab). It shows only with CodeMirror
+ * itself: under the stand-in textarea Tab moves the focus as usual.
  */
 export function CodeEditor(props: CodeEditorProps) {
   const t = useT();
@@ -89,13 +92,13 @@ export function CodeEditor(props: CodeEditorProps) {
               autoFocus={props.autoFocus}
             />
           </div>
+          {editable && (
+            <p id={hintId} className="text-[11px] text-muted-foreground">
+              {t.ui.codeEditor.keyboardHint}
+            </p>
+          )}
         </Suspense>
       </ErrorBoundary>
-      {editable && (
-        <p id={hintId} className="text-[11px] text-muted-foreground">
-          {t.ui.codeEditor.keyboardHint}
-        </p>
-      )}
     </div>
   );
 }

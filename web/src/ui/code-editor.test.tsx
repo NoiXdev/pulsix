@@ -32,6 +32,8 @@ describe('CodeEditor', () => {
     expect(fallback.tagName).toBe('TEXTAREA');
     expect(fallback).toHaveFocus();
     expect(fallback).toHaveValue('- hosts: all');
+    // Tab moves the focus in the textarea, so the "Tab indents" hint is not shown.
+    expect(screen.queryByText(/Tab indents/)).not.toBeInTheDocument();
     fireEvent.change(fallback, { target: { value: '- hosts: web' } });
     expect(onValue).toHaveBeenLastCalledWith('- hosts: web');
   });

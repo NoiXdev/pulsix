@@ -48,6 +48,11 @@ export function AssignHostDialog({
             {chosen.error instanceof Error ? chosen.error.message : t.inventory.assign.saveFailed}
           </p>
         )}
+        {!group && groupId && !fixed && chosen.isPending && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t.common.loading}
+          </p>
+        )}
         {fixed ? (
           <AssignForm key={fixed.id} org={org} group={fixed} fixedHost={host} member={member} existing={group ? existing : []} onClose={onClose} />
         ) : (

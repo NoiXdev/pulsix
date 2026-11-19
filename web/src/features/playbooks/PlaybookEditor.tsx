@@ -136,14 +136,21 @@ function PlaybookForm({
     return false;
   }
 
-  // Escape leaves full screen before it may close anything: a prevented
-  // keydown makes no close request. One the editor already took (to
+  // Escape leaves full screen, or asks about unsaved changes, before it may
+  // close anything: a prevented keydown makes no close request. One the editor already took (to
   // release Tab) is left alone. Ctrl/Cmd-S never reaches the browser's
   // "Save page"; it submits only what the preview passes.
   function onKeyDown(ev: KeyboardEvent<HTMLFormElement>) {
     if (ev.key === 'Escape' && fullScreen && !ev.defaultPrevented) {
       ev.preventDefault();
       setFullScreen(false);
+      return;
+    }
+    // Ask on the keydown too: a prevented Escape makes no close request, so
+    // no activation is spent however often the question is dismissed.
+    if (ev.key === 'Escape' && dirty && !ev.defaultPrevented) {
+      ev.preventDefault();
+      void requestClose();
       return;
     }
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
