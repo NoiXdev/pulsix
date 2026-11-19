@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
-import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { firstCells, hideColumn, numbered, sortBy } from '../../test/wholeList.ts';
 import { PlaybooksPage } from './PlaybooksPage.tsx';
 import { validatePlaybooksSearch } from './playbooksSearch.ts';
 
@@ -33,14 +33,10 @@ describe('PlaybooksPage list', () => {
     expect(router.state.location.search).toMatchObject({ sort: 'name', order: 'asc' });
   });
 
-  it('has no inline buttons in rows; the row menu offers Edit for an editor playbook', async () => {
-    const user = userEvent.setup();
+  it('links every row to its playbook page', async () => {
     setup();
     await screen.findByText('1–25 of 30 playbooks');
-    expect(screen.queryByRole('button', { name: 'play30' })).not.toBeInTheDocument();
-    await openRowMenu(user, 'play30');
-    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'play30' })).toHaveAttribute('href', '/o/acme/playbooks/id-play30');
   });
 
   it('hides a column from the Columns menu', async () => {

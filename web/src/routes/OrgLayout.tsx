@@ -10,12 +10,14 @@ import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useHost } from '../api/hooks/useHosts.ts';
 import { useGroups } from '../api/hooks/useInventory.ts';
+import { usePlaybooks } from '../api/hooks/usePlaybooks.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
-import { crumbLabels, groupIdInPath, hostIdInPath } from '../lib/breadcrumbs.ts';
+import { crumbLabels, groupIdInPath, hostIdInPath, playbookIdInPath } from '../lib/breadcrumbs.ts';
 import { ancestorsOf } from '../features/inventory/tree.ts';
+import { playbookLabel } from '../features/playbooks/playbookColumns.tsx';
 import { rememberOrg } from '../lib/lastOrg.ts';
 import { may } from '../lib/roles.ts';
 import { useT } from '../i18n/useT.ts';
@@ -71,6 +73,10 @@ export function OrgLayout() {
   // list the page reads anyway.
   const groupId = groupIdInPath(pathname, orgSlug);
   const crumbGroups = useGroups(orgSlug, { enabled: complete && !!groupId });
+  // A playbook page's crumb is its name (its path, or its first play's),
+  // from the organization's playbook list, the list page's own query.
+  const playbookId = playbookIdInPath(pathname, orgSlug);
+  const crumbPlaybooks = usePlaybooks(complete && playbookId ? orgSlug : '');
 
   // The personal settings area is outside any organization; its "Back"
   // link returns to the one this person was in.
@@ -93,6 +99,9 @@ export function OrgLayout() {
   if (groupId && crumbGroup && crumbGroups.data) {
     crumbNames[`groups/${groupId}`] = [...ancestorsOf(crumbGroups.data.groups ?? [], groupId).map((g) => g.name), crumbGroup.name];
   }
+  const crumbPlaybook = playbookId ? crumbPlaybooks.data?.playbooks?.find((p) => p.id === playbookId) : undefined;
+  if (playbookId && crumbPlaybook) crumbNames[`playbooks/${playbookId}`] = playbookLabel(crumbPlaybook, t);
+  if (pathname === `/o/${orgSlug}/playbooks/new`) crumbNames['playbooks/new'] = t.playbooks.newPage.title;
   const crumbs = crumbLabels(pathname, orgSlug, t, crumbNames);
   const inSettings = pathname === `/o/${orgSlug}/settings` || pathname.startsWith(`/o/${orgSlug}/settings/`);
   const settingsNav = inSettings

@@ -1,7 +1,7 @@
-import { Pill } from '../../ui/badge.tsx';
 import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import type { Playbook } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
+import { PlaybookSourcePill } from './PlaybookSourcePill.tsx';
 
 export interface PlaybookColumnsContext {
   t: Messages;
@@ -17,7 +17,7 @@ export function playbookLabel(p: Playbook, t: Messages): string {
 /**
  * playbookColumns is every column the playbooks list offers (list id
  * `playbooks`), sorted in the browser. The name column (summary or path) is
- * the required one; Edit, for an editor playbook, is the row menu's.
+ * the required one; it links the row to the playbook's page.
  */
 export function playbookColumns({ t, repoName }: PlaybookColumnsContext): DataListColumn<Playbook>[] {
   const c = t.playbooks.list.columns;
@@ -41,7 +41,9 @@ export function playbookColumns({ t, repoName }: PlaybookColumnsContext): DataLi
       sortValue: (p) => p.source,
       defaultVisible: true,
       render: (p) => (
-        <span>{p.source === 'repo' ? <Pill tone="accent">{t.playbooks.list.sourceRepo}</Pill> : <Pill tone="unknown">{t.playbooks.list.sourceEditor}</Pill>}</span>
+        <span>
+          <PlaybookSourcePill source={p.source} label={p.source === 'repo' ? t.playbooks.list.sourceRepo : t.playbooks.list.sourceEditor} />
+        </span>
       ),
     },
     {

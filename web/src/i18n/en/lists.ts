@@ -30,6 +30,8 @@ export const enLists = {
     'group-members': 'Group members',
     groups: 'Inventory groups',
     'host-runs': 'Runs of a host',
+    'playbook-runs': 'Runs of a playbook',
+    'playbook-templates': 'Templates of a playbook',
     'item-decisions': 'Item decisions',
     maintenance: 'Maintenance windows',
     'monitoring-groups': 'Monitoring groups',

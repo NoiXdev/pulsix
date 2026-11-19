@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crumbLabels as crumbLabelsFor, groupIdInPath, hostIdInPath } from './breadcrumbs.ts';
+import { crumbLabels as crumbLabelsFor, groupIdInPath, hostIdInPath, playbookIdInPath } from './breadcrumbs.ts';
 import { en } from '../i18n/en/index.ts';
 import { de } from '../i18n/de/index.ts';
 
@@ -73,6 +73,12 @@ describe('crumbLabels', () => {
     expect(groupIdInPath(`/o/acme/groups/${id}`, 'acme')).toBe(id);
     expect(groupIdInPath('/o/acme/groups', 'acme')).toBeUndefined();
     expect(groupIdInPath(`/o/acme/hosts/${id}`, 'acme')).toBeUndefined();
+  });
+
+  it('finds the playbook id in a playbook page path, and not the new page', () => {
+    expect(playbookIdInPath('/o/acme/playbooks/p1', 'acme')).toBe('p1');
+    expect(playbookIdInPath('/o/acme/playbooks/new', 'acme')).toBeUndefined();
+    expect(playbookIdInPath('/o/acme/playbooks', 'acme')).toBeUndefined();
   });
 
   it('finds the host id in a host page path', () => {

@@ -48,11 +48,13 @@ function renderAt(initialPath: string, locale?: 'de') {
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
   const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
   const groupRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups/$id', component: () => <div>GROUP PAGE</div> });
+  const newPlaybookRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks/new', component: () => <div>NEW PLAYBOOK PAGE</div> });
+  const playbookRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks/$id', component: () => <div>PLAYBOOK PAGE</div> });
   const routeTree = rootRoute.addChildren([
     loginRoute,
     enrolRoute,
     passwordRoute,
-    orgRoute.addChildren([hostsRoute, hostRoute, groupRoute, membersRoute, generalRoute]),
+    orgRoute.addChildren([hostsRoute, hostRoute, groupRoute, newPlaybookRoute, playbookRoute, membersRoute, generalRoute]),
   ]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -140,6 +142,31 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     const header = document.querySelector('header');
     await waitFor(() => expect(header).toHaveTextContent('Groupsprodwebweb_eu'));
     expect(within(header as HTMLElement).getByText('web_eu')).toHaveClass('font-semibold');
+  });
+
+  it('names a playbook in the breadcrumbs', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/orgs/acme/playbooks': {
+        playbooks: [
+          { id: 'p1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' },
+          { id: 'p2', source: 'repo', summary: '', path: 'site.yml', repo_id: 'r1', created_at: '', updated_at: '' },
+        ],
+      },
+    });
+    renderAt('/o/acme/playbooks/p2');
+    expect(await screen.findByText('PLAYBOOK PAGE')).toBeInTheDocument();
+    const header = document.querySelector('header');
+    await waitFor(() => expect(header).toHaveTextContent('Playbookssite.yml'));
+  });
+
+  it('names the new playbook page in the breadcrumbs', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme': ORG_OK, 'GET /api/v1/auth/me': ME_OK, 'GET /api/v1/orgs': ORGS_OK });
+    renderAt('/o/acme/playbooks/new');
+    expect(await screen.findByText('NEW PLAYBOOK PAGE')).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('header')).toHaveTextContent('PlaybooksNew playbook'));
   });
 
   it('swaps the organization navigation for the settings navigation under /settings', async () => {

@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams } from '@tanstack/react-router';
 import { FilePlus2 } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
-import { DataList, type RowAction } from '../../ui/data-list/index.ts';
+import { DataList } from '../../ui/data-list/index.ts';
 import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -14,24 +13,21 @@ import { useT } from '../../i18n/useT.ts';
 import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
-import { PlaybookEditor } from './PlaybookEditor.tsx';
 import { playbookColumns, playbookLabel } from './playbookColumns.tsx';
 import { PLAYBOOK_SOURCES, PLAYBOOKS_FILTERS, filterPlaybooks } from './playbooksSearch.ts';
-import type { Playbook } from '../../api/types.ts';
 
 /** PlaybooksPage lists the playbooks jobs run against (spec §7, backlog
  * 2.9): repo-sourced ones (a path inside a registered repository, arriving
- * with a sync) and editor ones (an inline YAML document). Repo playbooks
- * have no editor — they are edited in their repository. */
+ * with a sync) and editor ones (an inline YAML document). Each row opens
+ * the playbook's page; "New playbook" opens the new page (backlog 3.123). */
 export function PlaybooksPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
+  const navigate = useNavigate();
   const orgInfo = useOrg(org);
   const playbooks = usePlaybooks(org);
   const repos = useRepos(org);
   const canWrite = may(orgInfo.data?.org.role, 'playbooks.write');
-
-  const [dialog, setDialog] = useState<'new' | Playbook | null>(null);
 
   const columns = playbookColumns({ t, repoName: (id) => (repos.data?.repos ?? []).find((r) => r.id === id)?.name });
   const { filters, active, setFilter, reset } = useListFilters(PLAYBOOKS_FILTERS);
@@ -50,10 +46,6 @@ export function PlaybooksPage() {
     .map((id) => ({ value: id, label: (repos.data?.repos ?? []).find((r) => r.id === id)?.name ?? id.slice(0, 8) }))
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  // Repo playbooks have no editor: they are edited in their repository.
-  const rowActions = (p: Playbook): RowAction[] =>
-    canWrite && p.source === 'editor' ? [{ id: 'edit', label: t.common.edit, onSelect: () => setDialog(p) }] : [];
-
   return (
     <>
       <div className="flex items-center justify-between">
@@ -64,7 +56,7 @@ export function PlaybooksPage() {
           </span>
         </div>
         {canWrite && (
-          <Button variant="primary" onClick={() => setDialog('new')}>
+          <Button variant="primary" onClick={() => void navigate({ to: '/o/$org/playbooks/new', params: { org } })}>
             <FilePlus2 size={15} /> {t.playbooks.list.add}
           </Button>
         )}
@@ -74,8 +66,7 @@ export function PlaybooksPage() {
         columns={columns}
         rows={rows}
         rowKey={(p) => p.id}
-        rowLabel={(p) => playbookLabel(p, t)}
-        rowActions={rowActions}
+        rowLink={(p) => ({ to: '/o/$org/playbooks/$id', params: { org, id: p.id }, search: { tab: undefined }, label: playbookLabel(p, t) })}
         loading={!view.ready}
         empty={active ? t.playbooks.list.noMatch : t.playbooks.list.empty}
         toolbar={
@@ -99,15 +90,6 @@ export function PlaybooksPage() {
         }
         {...view.listProps(total, t.playbooks.list.count)}
       />
-      {dialog === 'new' ? (
-        <PlaybookEditor org={org} onClose={() => setDialog(null)} />
-      ) : dialog && dialog.source === 'editor' ? (
-        <PlaybookEditor
-          org={org}
-          playbook={{ id: dialog.id, summary: dialog.summary }}
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
     </>
   );
 }

@@ -1,16 +1,14 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import type { Template } from '../../api/types.ts';
-import { useRunTemplateById } from '../../api/hooks/useTemplates.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { RowAction } from '../../ui/data-list/index.ts';
-import { useToast } from '../../ui/toastContext.ts';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
-import { RunWithFollowUpsDialog } from './RunWithFollowUpsDialog.tsx';
 import { TemplateDialog } from './TemplateDialog.tsx';
 import { useDeleteTemplateCommand } from './useDeleteTemplateCommand.ts';
+import { useRunTemplate } from './useRunTemplate.tsx';
 
-type OpenDialog = { kind: 'new' } | { kind: 'edit' | 'triggers' | 'followUps'; template: Template };
+type OpenDialog = { kind: 'new' } | { kind: 'edit' | 'triggers'; template: Template };
 
 export interface TemplateListActionsOptions {
   canWrite: boolean;
@@ -30,30 +28,14 @@ export interface TemplateListActionsOptions {
 export function useTemplateListActions(org: string, opts: TemplateListActionsOptions): { rowActions: (tpl: Template) => RowAction[]; dialogs: ReactNode; openNew: () => void; edit?: (row: Template) => void } {
   const t = useT();
   const navigate = useNavigate();
-  const toast = useToast();
-  const runTemplate = useRunTemplateById(org);
+  const runner = useRunTemplate(org);
   const remove = useDeleteTemplateCommand(org);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const close = () => setDialog(null);
 
-  async function opened(tpl: Template, jobs: { id: string }[]) {
-    toast.show(t.templates.list.started(tpl.name));
-    if (jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
-  }
-
-  async function run(tpl: Template) {
-    if ((tpl.follow_ups ?? []).length > 0) return setDialog({ kind: 'followUps', template: tpl });
-    try {
-      const { jobs } = await runTemplate.mutateAsync({ id: tpl.id });
-      await opened(tpl, jobs ?? []);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.templates.list.startFailed, 'destructive');
-    }
-  }
-
   function rowActions(tpl: Template): RowAction[] {
     const items: RowAction[] = [];
-    if (opts.canRun) items.push({ id: 'run', label: t.templates.list.run, onSelect: () => void run(tpl), disabled: runTemplate.isPending });
+    if (opts.canRun) items.push({ id: 'run', label: t.templates.list.run, onSelect: () => void runner.run(tpl), disabled: runner.isPending });
     items.push(
       { id: 'variables', label: t.templates.list.variables, onSelect: () => void navigate({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id } }) },
       { id: 'triggers', label: t.templates.list.triggers, onSelect: () => setDialog({ kind: 'triggers', template: tpl }) },
@@ -74,12 +56,10 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
     rowActions,
     edit: opts.canWrite ? (template) => setDialog({ kind: 'edit', template }) : undefined,
     openNew: () => setDialog({ kind: 'new' }),
-    dialogs: dialog && (
+    dialogs: (
       <>
-        {dialog.kind === 'followUps' && (
-          <RunWithFollowUpsDialog org={org} template={dialog.template} onStarted={(jobs) => opened(dialog.template, jobs)} onClose={close} />
-        )}
-        {dialog.kind === 'triggers' && (
+        {runner.dialog}
+        {dialog?.kind === 'triggers' && (
           <TriggersDialog
             org={org}
             target={{ kind: 'template_run', id: dialog.template.id, name: dialog.template.name }}
@@ -88,10 +68,10 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
             onClose={close}
           />
         )}
-        {dialog.kind === 'new' && (
+        {dialog?.kind === 'new' && (
           <TemplateDialog org={org} canReadCredentials={opts.canReadCredentials} canCreateCredential={opts.canCreateCredential} onClose={close} />
         )}
-        {dialog.kind === 'edit' && (
+        {dialog?.kind === 'edit' && (
           <TemplateDialog
             org={org}
             template={{ id: dialog.template.id, name: dialog.template.name }}

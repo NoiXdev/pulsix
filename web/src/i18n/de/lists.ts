@@ -26,6 +26,8 @@ export const deLists: Messages['lists'] = {
     'group-members': 'Gruppenmitglieder',
     groups: 'Inventargruppen',
     'host-runs': 'Läufe eines Hosts',
+    'playbook-runs': 'Läufe eines Playbooks',
+    'playbook-templates': 'Vorlagen eines Playbooks',
     'item-decisions': 'Element-Entscheidungen',
     maintenance: 'Wartungsfenster',
     'monitoring-groups': 'Überwachungsgruppen',

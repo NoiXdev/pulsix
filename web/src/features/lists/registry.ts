@@ -25,6 +25,8 @@ const LISTS = {
   schedules: ['schedule', 'status', 'template', 'cron', 'next', 'notify', 'last'],
   'run-requests': ['reason', 'status', 'template', 'kind', 'requested'],
   'host-runs': ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
+  'playbook-runs': ['run', 'kind', 'status', 'trigger', 'template', 'zone', 'created'],
+  'playbook-templates': ['name', 'limit', 'schedules', 'triggers'],
   groups: ['name', 'members', 'fields', 'values', 'jump_host'],
   'group-members': ['host', 'values'],
   'group-children': ['name', 'members'],

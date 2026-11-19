@@ -31,6 +31,9 @@ import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
 import { PlaybooksPage } from './features/playbooks/PlaybooksPage.tsx';
+import { PlaybookPage } from './features/playbooks/PlaybookPage.tsx';
+import { NewPlaybookPage } from './features/playbooks/NewPlaybookPage.tsx';
+import { validatePlaybookSearch } from './features/playbooks/playbookTabs.ts';
 import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
 import { TemplateVariablesPage } from './features/templates/variables/TemplateVariablesPage.tsx';
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
@@ -274,6 +277,15 @@ const playbooksRoute = createRoute({
   validateSearch: validatePlaybooksSearch,
   component: PlaybooksPage,
 });
+// A playbook's own pages (backlog 3.123). The static `new` wins over $id.
+const newPlaybookRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks/new', component: NewPlaybookPage });
+const playbookRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/playbooks/$id',
+  // The open tab (?tab=runs); Editor, the default, is left out.
+  validateSearch: validatePlaybookSearch,
+  component: PlaybookPage,
+});
 const templatesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/templates',
@@ -407,6 +419,8 @@ const routeTree = rootRoute.addChildren([
     groupDetailRoute,
     reposRoute,
     playbooksRoute,
+    newPlaybookRoute,
+    playbookRoute,
     templatesRoute,
     templateVariablesRoute,
     schedulesRoute,

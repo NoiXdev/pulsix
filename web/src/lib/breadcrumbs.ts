@@ -65,3 +65,11 @@ export function hostIdInPath(pathname: string, orgSlug: string): string | undefi
 export function groupIdInPath(pathname: string, orgSlug: string): string | undefined {
   return idInPath(pathname, orgSlug, 'groups');
 }
+
+/** playbookIdInPath is the playbook id of a playbook page
+ * (`/o/<org>/playbooks/<id>`), undefined for any other path and for the new
+ * playbook page (`/playbooks/new`). */
+export function playbookIdInPath(pathname: string, orgSlug: string): string | undefined {
+  const id = idInPath(pathname, orgSlug, 'playbooks');
+  return id === 'new' ? undefined : id;
+}
