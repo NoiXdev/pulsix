@@ -31,7 +31,7 @@ export function decisionColumns({ org, t, fmt }: DecisionColumnsContext): DataLi
       required: true,
       defaultVisible: true,
       render: (r) => (
-        <span className="block truncate font-mono" title={r.pattern}>
+        <span className="relative z-10 block truncate font-mono" title={r.pattern}>
           {r.pattern} <span className="font-sans text-muted-foreground">({t.checks.items.matchKind[r.match_kind]})</span>
         </span>
       ),
@@ -73,7 +73,7 @@ export function decisionColumns({ org, t, fmt }: DecisionColumnsContext): DataLi
       sortValue: (r) => r.note,
       defaultVisible: true,
       render: (r) => (
-        <span className={`block truncate text-muted-foreground ${CELL_MINOR}`} title={r.note}>
+        <span className={`relative z-10 block truncate text-muted-foreground ${CELL_MINOR}`} title={r.note}>
           {r.note || '—'}
         </span>
       ),

@@ -8,7 +8,7 @@ export function SyncState({ repo: r }: { repo: Repo }) {
   const t = useT();
   if (r.last_sync_error) {
     return (
-      <span title={r.last_sync_error}>
+      <span className="relative z-10" title={r.last_sync_error}>
         <Pill tone="crit">{t.repos.list.syncFailed}</Pill>
       </span>
     );

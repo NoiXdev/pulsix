@@ -1,4 +1,4 @@
-import type { KeyboardEvent, MouseEvent } from 'react';
+import { useId, type KeyboardEvent, type MouseEvent } from 'react';
 import { Link } from '@tanstack/react-router';
 import { cn } from '../../lib/utils.ts';
 import type { MenuPoint } from '../menuPlacement.ts';
@@ -13,6 +13,10 @@ export const ROW_GRID = 'grid items-center gap-3 px-4 py-[var(--px-row-py)] text
  * `::after` covers the whole row and carries the focus ring. */
 const STRETCHED =
   "block min-w-0 after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary focus-visible:after:ring-inset";
+
+/** What a click passed on to the row must not land in: a cell's own
+ * controls, and the row's link or button (a click there is theirs). */
+const INTERACTIVE = 'a[href], button, input, select, textarea, label, summary, [role="button"], [role="link"], [role="menuitem"], [contenteditable="true"]';
 
 export type MenuSource = 'pointer' | 'keyboard';
 
@@ -29,7 +33,14 @@ export type OpenRowMenu = (row: HTMLElement, point: MenuPoint, source: MenuSourc
  * renders. An activatable row (`activate`, a row whose item opens in a
  * dialog) holds a <button> there instead, stretched the same way and named
  * by `activateLabel`: Enter and Space press it, and the context menu stays
- * the row's (without the link entries).
+ * the row's (without the link entries). A named link or button is described
+ * by the name cell's full text (`aria-describedby`), so a screen reader
+ * still hears what the cell adds to the name (a detail line, a badge).
+ *
+ * An element a cell raises above the stretched link or button (`relative
+ * z-10`) to keep its native `title` tooltip takes the click away from it:
+ * a plain click on such text that is no link or button of its own is
+ * passed on to the row's link or button, so it still opens the row.
  */
 export function DataRow<Row>({
   row,
@@ -65,6 +76,7 @@ export function DataRow<Row>({
   onOpenMenu: OpenRowMenu;
 }) {
   const hasActions = actions.length > 0;
+  const descId = useId();
 
   // The open "…" menu is portalled out of the row but is still its child in
   // React, so its key and pointer events bubble here: only events from the
@@ -99,6 +111,17 @@ export function DataRow<Row>({
     onOpenMenu(e.currentTarget, { x: e.clientX, y: e.clientY }, 'pointer', returnTo);
   }
 
+  // A click that landed above the stretched overlay, on text a cell raised,
+  // opens the row like a click on the overlay would. Modified clicks and a
+  // finished text selection stay the browser's.
+  function onClick(e: MouseEvent<HTMLDivElement>) {
+    if ((!link && !activate) || e.defaultPrevented || !own(e) || !(e.target instanceof Element)) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    if (e.target.closest(INTERACTIVE)) return;
+    if (!(window.getSelection()?.isCollapsed ?? true)) return;
+    e.currentTarget.querySelector<HTMLElement>('[data-row-link], [data-row-activate]')?.click();
+  }
+
   return (
     <div
       role="row"
@@ -106,6 +129,7 @@ export function DataRow<Row>({
       data-menu-open={menuOpen ? '' : undefined}
       onKeyDown={onKeyDown}
       onContextMenu={onContextMenu}
+      onClick={onClick}
       style={{ gridTemplateColumns: template }}
       className={cn(
         'relative border-b border-border last:border-b-0',
@@ -116,6 +140,14 @@ export function DataRow<Row>({
     >
       {columns.map((c) => {
         const content = c.render(row, { density });
+        const owner = (link || activate) && c.id === linkColumn;
+        const described = owner ? (
+          <span id={descId} className="block min-w-0">
+            {content}
+          </span>
+        ) : (
+          content
+        );
         return (
           <div key={c.id} role="cell" className={cn('min-w-0', c.align === 'end' && 'text-right')}>
             {link && c.id === linkColumn ? (
@@ -125,14 +157,22 @@ export function DataRow<Row>({
                 search={link.search}
                 hash={link.hash}
                 aria-label={link.label}
+                aria-describedby={descId}
                 data-row-link=""
                 className={STRETCHED}
               >
-                {content}
+                {described}
               </Link>
             ) : activate && c.id === linkColumn ? (
-              <button type="button" onClick={activate} aria-label={activateLabel} data-row-activate="" className={cn(STRETCHED, 'w-full cursor-pointer text-left')}>
-                {content}
+              <button
+                type="button"
+                onClick={activate}
+                aria-label={activateLabel}
+                aria-describedby={activateLabel ? descId : undefined}
+                data-row-activate=""
+                className={cn(STRETCHED, 'w-full cursor-pointer text-left')}
+              >
+                {described}
               </button>
             ) : (
               content

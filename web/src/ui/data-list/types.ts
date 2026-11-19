@@ -30,12 +30,20 @@ export interface DataListColumn<Row> {
   /** What a client-side sort compares (a whole list sorted in the browser). */
   sortValue?: (row: Row) => string | number | boolean | null | undefined;
   /** The name column: always shown, always first, and the cell that holds
-   * the row's link or activation button. */
+   * the row's link or activation button.
+   *
+   * When the row is linked (`rowLink`) or activatable (`onRowActivate`),
+   * the name cell renders inside that <a> or <button>, so its `render` must
+   * return phrasing content only: spans and text, no <div>, no <p>, and no
+   * links or buttons of its own (interactive content cannot nest there).
+   * Its full text becomes the link's or button's accessible description. */
   required?: boolean;
   defaultVisible: boolean;
   align?: 'start' | 'end';
   /** A cell's content. A link or button inside it must carry
-   * `relative z-10` to sit above the row's stretched link or button. */
+   * `relative z-10` to sit above the row's stretched link or button; so
+   * must text whose native `title` tooltip should show on hover (a plain
+   * click on such text still opens the row, DataRow passes it on). */
   render: (row: Row, ctx: { density: Density }) => ReactNode;
 }
 

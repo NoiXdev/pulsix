@@ -28,7 +28,7 @@ export function AlertHostCell({ alert }: CellProps) {
       <span className={`truncate text-muted-foreground ${CELL_MINOR}`}>{subjectLabel(alert, t, fmt)}</span>
       {/* Backlog 3.13b: why it fired, under what it is about. */}
       {detail && (
-        <span data-testid="alert-detail" className={`truncate text-foreground ${CELL_MINOR}`} title={detail}>
+        <span data-testid="alert-detail" className={`relative z-10 truncate text-foreground ${CELL_MINOR}`} title={detail}>
           {detail}
         </span>
       )}
@@ -65,7 +65,7 @@ export function AlertTrackedCell({ alert }: CellProps) {
         <span
           data-testid="alert-flapping"
           title={open ? t.alerts.row.flappingTitle : t.alerts.row.flappedTitle}
-          className="text-[10px] font-semibold text-[var(--px-warn)]"
+          className="relative z-10 text-[10px] font-semibold text-[var(--px-warn)]"
         >
           {open ? t.alerts.row.flapping : t.alerts.row.flapped}
         </span>

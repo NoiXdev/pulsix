@@ -57,6 +57,17 @@ describe('ReposPage list', () => {
     expect(await screen.findByRole('dialog', { name: 'repo30' })).toBeInTheDocument();
   });
 
+  it('keeps the sync error tooltip above the row and still opens the row on a click there', async () => {
+    const user = userEvent.setup();
+    setup('/o/acme/repos', undefined, 'operator', [repo('infra', { last_sync_error: 'auth failed' })]);
+    const failed = await screen.findByText('failed');
+    const tip = failed.closest('[title]');
+    expect(tip).toHaveAttribute('title', 'auth failed');
+    expect(tip).toHaveClass('relative', 'z-10');
+    await user.click(failed);
+    expect(await screen.findByRole('dialog', { name: 'infra' })).toBeInTheDocument();
+  });
+
   it('gives a viewer a row that opens nothing', async () => {
     setup('/o/acme/repos', undefined, 'viewer');
     await screen.findByText('1–25 of 30 repositories');
