@@ -17,7 +17,7 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 import { expectNoClippedCards } from './layout.ts';
 import { chooseRowAction } from './rowMenu.ts';
-import { fillCodeEditor } from './codeEditor.ts';
+import { createEditorPlaybook } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -51,16 +51,12 @@ function fieldRow(page: Page, name: string) {
 
 test('a template takes its variables from the playbook, and a group keeps manual fields', async ({ page }) => {
   // --- The editor playbook and a template running it --------------------
-  await page.goto(`${base}/playbooks`);
-  await page.getByRole('button', { name: 'New editor playbook' }).click();
-  let dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await fillCodeEditor(dialog, 'Playbook YAML', PLAYBOOK);
-  await dialog.getByRole('button', { name: 'Save playbook' }).click();
+  await createEditorPlaybook(page, base, PLAYBOOK);
   await toast(page, /Playbook (created|saved)/);
 
   await page.goto(`${base}/templates`);
   await page.getByRole('button', { name: 'Add template' }).click();
-  dialog = page.getByRole('dialog', { name: 'New job template' });
+  let dialog = page.getByRole('dialog', { name: 'New job template' });
   await dialog.getByLabel('Name').fill(TEMPLATE);
   await pickOption(dialog, 'Playbook', 'Pulsix variables e2e');
   await dialog.getByRole('button', { name: 'Create template' }).click();

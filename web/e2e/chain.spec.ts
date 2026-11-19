@@ -14,7 +14,7 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { workerServiceAvailable } from './worker.ts';
 import { pickOption } from './pickOption.ts';
 import { chooseRowAction } from './rowMenu.ts';
-import { fillCodeEditor } from './codeEditor.ts';
+import { createEditorPlaybook } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -64,11 +64,7 @@ test('a run starts its follow-up and the two runs link to each other', async ({ 
   // Creating a playbook and two templates, two real runs and the starter's
   // tick come to more than the suite's 60 s default.
   test.setTimeout(240_000);
-  await page.goto(`${base}/playbooks`);
-  await page.getByRole('button', { name: 'New editor playbook' }).click();
-  const editor = page.getByRole('dialog', { name: 'New editor playbook' });
-  await fillCodeEditor(editor, 'Playbook YAML', CHAIN_PLAYBOOK);
-  await editor.getByRole('button', { name: 'Save playbook' }).click();
+  await createEditorPlaybook(page, base, CHAIN_PLAYBOOK);
   await toast(page, 'Playbook created');
 
   await createTemplate(page, 'chain-b');

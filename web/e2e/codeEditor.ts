@@ -18,3 +18,18 @@ export async function fillCodeEditor(scope: Page | Locator, name: string, text: 
   await expect(content).toBeVisible();
   await content.fill(text);
 }
+
+/**
+ * createEditorPlaybook adds an editor playbook through the new playbook page
+ * (backlog 3.123): "New playbook" on the list, the YAML into the page's code
+ * editor, Create. It returns once the new playbook's own page is open; the
+ * caller still sees the "Playbook created" toast.
+ */
+export async function createEditorPlaybook(page: Page, base: string, yaml: string): Promise<void> {
+  await page.goto(`${base}/playbooks`);
+  await page.getByRole('button', { name: 'New playbook' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'New playbook' })).toBeVisible();
+  await fillCodeEditor(page, 'Playbook YAML', yaml);
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page).toHaveURL(/\/playbooks\/[0-9a-f-]{36}$/);
+}

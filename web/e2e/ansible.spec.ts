@@ -26,7 +26,7 @@ import { workerServiceAvailable } from './worker.ts';
 import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
 import { chooseRowAction } from './rowMenu.ts';
-import { fillCodeEditor } from './codeEditor.ts';
+import { createEditorPlaybook } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -178,11 +178,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await expect(page.getByText(/^synced \d{4}-\d{2}-\d{2}$/)).toBeVisible({ timeout: 30_000 });
 
   // --- The editor playbook and the job template ------------------------
-  await page.goto(`${base}/playbooks`);
-  await page.getByRole('button', { name: 'New editor playbook' }).click();
-  dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await fillCodeEditor(dialog, 'Playbook YAML', HELLO_PLAYBOOK);
-  await dialog.getByRole('button', { name: 'Save playbook' }).click();
+  await createEditorPlaybook(page, base, HELLO_PLAYBOOK);
   await toast(page, 'Playbook created');
 
   await page.goto(`${base}/templates`);
@@ -211,11 +207,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await expectRunStatus(page, 'succeeded');
 
   // --- The failure path and the retry ----------------------------------
-  await page.goto(`${base}/playbooks`);
-  await page.getByRole('button', { name: 'New editor playbook' }).click();
-  dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await fillCodeEditor(dialog, 'Playbook YAML', FAIL_PLAYBOOK);
-  await dialog.getByRole('button', { name: 'Save playbook' }).click();
+  await createEditorPlaybook(page, base, FAIL_PLAYBOOK);
   await toast(page, 'Playbook created');
 
   await page.goto(`${base}/templates`);
