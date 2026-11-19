@@ -237,7 +237,7 @@ describe('PlaybooksPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New editor playbook' })).not.toBeInTheDocument());
   });
 
-  it('switches the editor to full screen and back, Escape leaving full screen first', async () => {
+  it('switches the editor to full screen and back, Escape leaving full screen without a close request', async () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
@@ -247,7 +247,11 @@ describe('PlaybooksPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'New editor playbook' }));
     const dialog = await screen.findByRole('dialog', { name: 'New editor playbook' });
-    await findCodeEditor('Playbook YAML', within(dialog));
+    // A refused close request spends the browser's activation, after which
+    // the next one cannot be refused: leaving full screen must not use one.
+    let closeRequests = 0;
+    dialog.addEventListener('cancel', () => closeRequests++);
+    replaceCode(await findCodeEditor('Playbook YAML', within(dialog)), '- hosts: all');
     const toggle = within(dialog).getByRole('button', { name: 'Full screen' });
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await user.click(toggle);
@@ -255,7 +259,24 @@ describe('PlaybooksPage', () => {
     expect(within(dialog).getByRole('form', { name: 'New editor playbook' })).toHaveAttribute('data-fullscreen', 'true');
     await user.keyboard('{Escape}');
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(closeRequests).toBe(0);
+    // The next Escape still asks before the edit is dropped.
+    await user.keyboard('{Escape}');
+    expect(await screen.findByRole('dialog', { name: 'Discard changes?' })).toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'New editor playbook' })).toBeInTheDocument();
+  });
+
+  it('opens with the focus in the YAML', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [] },
+      'GET /api/v1/orgs/acme/repos': { repos: [] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New editor playbook' }));
+    const editor = await findCodeEditor('Playbook YAML');
+    await waitFor(() => expect(editor).toHaveFocus());
   });
 
   it('gives a repo playbook no editor: it is edited in its repository', async () => {

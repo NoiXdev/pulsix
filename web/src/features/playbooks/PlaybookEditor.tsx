@@ -121,8 +121,11 @@ function PlaybookForm({
     onClose();
   }
 
-  // Escape (the dialog's close request) leaves full screen first, then
-  // asks before unsaved changes are dropped.
+  // Escape (the dialog's close request) asks before unsaved changes are
+  // dropped. Full screen is left on the keydown instead (onKeyDown): a
+  // refused close request spends the browser's activation, and the next one
+  // could then not be refused — the question would come with the dialog
+  // already closing. This branch is only a fallback.
   function onCancel(): boolean {
     if (fullScreen) {
       setFullScreen(false);
@@ -133,9 +136,16 @@ function PlaybookForm({
     return false;
   }
 
-  // Ctrl/Cmd-S never reaches the browser's "Save page"; it submits only
-  // what the preview passes.
+  // Escape leaves full screen before it may close anything: a prevented
+  // keydown makes no close request. One the editor already took (to
+  // release Tab) is left alone. Ctrl/Cmd-S never reaches the browser's
+  // "Save page"; it submits only what the preview passes.
   function onKeyDown(ev: KeyboardEvent<HTMLFormElement>) {
+    if (ev.key === 'Escape' && fullScreen && !ev.defaultPrevented) {
+      ev.preventDefault();
+      setFullScreen(false);
+      return;
+    }
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
     ev.preventDefault();
     if (previewOk && !saving) form.current?.requestSubmit();
@@ -163,6 +173,7 @@ function PlaybookForm({
           </div>
           <CodeEditor
             labelledBy={labelId}
+            autoFocus
             language="yaml"
             value={text}
             onChange={setText}

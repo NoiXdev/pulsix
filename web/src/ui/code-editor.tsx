@@ -1,4 +1,4 @@
-import { lazy, Suspense, useId, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, type CSSProperties } from 'react';
 import { cn } from '../lib/utils.ts';
 import { useT } from '../i18n/useT.ts';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
@@ -33,6 +33,9 @@ interface CodeEditorBaseProps {
    * up to maxHeight, then scrolls. */
   minHeight?: string;
   maxHeight?: string;
+  /** Takes the focus when it mounts (and the editor again once it has
+   * loaded), also over a dialog's own first control. */
+  autoFocus?: boolean;
   className?: string;
 }
 
@@ -83,6 +86,7 @@ export function CodeEditor(props: CodeEditorProps) {
               height={props.height}
               minHeight={props.minHeight}
               maxHeight={props.maxHeight}
+              autoFocus={props.autoFocus}
             />
           </div>
         </Suspense>
@@ -98,9 +102,20 @@ export function CodeEditor(props: CodeEditorProps) {
 
 /** The textarea that stands in for the editor while it loads. */
 function PlainCode(props: CodeEditorProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const autoFocus = props.autoFocus;
+  useEffect(() => {
+    if (!autoFocus) return;
+    // Again after the current effects: a dialog opened in the same commit
+    // focuses its first control from its own, later effect.
+    const take = () => ref.current?.focus();
+    take();
+    queueMicrotask(take);
+  }, [autoFocus]);
   const style: CSSProperties = { height: props.height, minHeight: props.minHeight ?? '5rem', maxHeight: props.maxHeight };
   return (
     <textarea
+      ref={ref}
       aria-label={props.label}
       aria-labelledby={props.labelledBy}
       aria-describedby={props.describedBy}

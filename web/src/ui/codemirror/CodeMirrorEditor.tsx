@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Annotation, Compartment, EditorState, type Extension } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, Transaction, type Extension } from '@codemirror/state';
 import {
   EditorView,
   drawSelection,
@@ -33,6 +33,26 @@ export interface CodeMirrorEditorProps {
   height?: string;
   minHeight?: string;
   maxHeight?: string;
+  autoFocus?: boolean;
+}
+
+/** Puts the focus in the editor as it mounts, and again once the current
+ * effects have run: a dialog opened in the same commit focuses its first
+ * control from its own effect, after this one. When the editor replaced
+ * its focused stand-in textarea, the focus fell back to the page and comes
+ * here; it is not taken from another text field the user moved to. */
+function focusOnMount(v: EditorView) {
+  const take = () => {
+    if (v.dom.isConnected && !typingElsewhere(v)) v.focus();
+  };
+  take();
+  queueMicrotask(take);
+}
+
+function typingElsewhere(v: EditorView): boolean {
+  const el = document.activeElement;
+  if (!el || v.dom.contains(el)) return false;
+  return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el instanceof HTMLElement && el.isContentEditable);
 }
 
 /** Marks a transaction that brings the editor to the `value` prop, so the
@@ -161,8 +181,12 @@ export default function CodeMirrorEditor(props: CodeMirrorEditorProps) {
     const v = new EditorView({ state, parent: host.current! });
     view.current = v;
 
+    if (p.autoFocus) focusOnMount(v);
+
     let escapedAt = 0;
     const onKeyDown = (e: KeyboardEvent) => {
+      // A read-only editor binds no Tab: there is nothing to release.
+      if (latest.current.readOnly) return;
       if (e.key !== 'Escape') {
         if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) escapedAt = 0;
         return;
@@ -206,8 +230,19 @@ export default function CodeMirrorEditor(props: CodeMirrorEditorProps) {
     }
     unechoed.current = [];
     if (v.state.doc.toString() === value) return;
-    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value }, annotations: fromProps.of(true) });
+    // Not undoable: an undo would bring back what the caller replaced and
+    // report it to the caller as an edit.
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value }, annotations: [fromProps.of(true), Transaction.addToHistory.of(false)] });
   }, [value]);
+
+  // Once `value` is the document, every report before it has been echoed or
+  // overtaken: none may hold back a later outside value. (Edits that net
+  // out within one render, a type and a delete, leave `value` unchanged, so
+  // the effect above never sees them.)
+  useEffect(() => {
+    const v = view.current;
+    if (v && unechoed.current.length > 0 && v.state.doc.toString() === value) unechoed.current = [];
+  });
 
   // By content, not identity: a caller builds the list afresh every render.
   const diagnosticsKey = JSON.stringify(diagnostics ?? []);

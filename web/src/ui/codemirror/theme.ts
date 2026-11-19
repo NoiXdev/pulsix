@@ -55,6 +55,13 @@ export const editorTheme = EditorView.theme({
     borderRadius: '4px',
     fontSize: '11px',
   },
+  // CodeMirror's base theme paints its buttons with a fixed light (or dark)
+  // gradient that sits on top of any background colour: switched off, or
+  // the search panel's buttons are light text on light grey.
+  '.cm-button, .cm-panel button': {
+    backgroundImage: 'none',
+    '&:active': { backgroundImage: 'none', backgroundColor: tint('var(--px-accent)', 20) },
+  },
   '.cm-panel button:hover': { borderColor: 'var(--px-accent)' },
   '.cm-tooltip': {
     backgroundColor: 'var(--popover)',
@@ -62,11 +69,26 @@ export const editorTheme = EditorView.theme({
     border: '1px solid var(--border)',
     borderRadius: '6px',
   },
+  '.cm-tooltip-section:not(:first-child)': { borderTop: '1px solid var(--border)' },
+  '.cm-specialChar': { color: 'var(--px-crit)' },
+  // The lint layer's own colours are fixed hex values; every one the editor
+  // can show (an error is the only severity it is given) comes from tokens.
   '.cm-diagnostic-error': { borderLeftColor: 'var(--px-crit)' },
   '.cm-lintRange-error': {
     backgroundImage: 'none',
     textDecoration: 'underline wavy var(--px-crit)',
     textUnderlineOffset: '3px',
+  },
+  '.cm-lintRange-active': { backgroundColor: tint('var(--px-crit)', 15) },
+  '.cm-lintPoint-error:after, .cm-lintPoint:after': { borderBottomColor: 'var(--px-crit)' },
+  '.cm-lint-marker-error': {
+    content: 'normal',
+    boxSizing: 'border-box',
+    width: '0.6em',
+    height: '0.6em',
+    margin: '0.2em',
+    borderRadius: '50%',
+    backgroundColor: 'var(--px-crit)',
   },
   '.cm-placeholder': { color: 'var(--muted-foreground)' },
 });

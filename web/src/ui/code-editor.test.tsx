@@ -5,13 +5,14 @@ import userEvent from '@testing-library/user-event';
 import { CodeEditor } from './code-editor.tsx';
 import { codeOf, findCodeEditor, replaceCode } from '../test/codeEditor.ts';
 
-function Controlled({ initial = '', onValue, maxLength }: { initial?: string; onValue?: (v: string) => void; maxLength?: number }) {
+function Controlled({ initial = '', onValue, maxLength, autoFocus }: { initial?: string; onValue?: (v: string) => void; maxLength?: number; autoFocus?: boolean }) {
   const [value, setValue] = useState(initial);
   return (
     <CodeEditor
       label="Playbook YAML"
       language="yaml"
       maxLength={maxLength}
+      autoFocus={autoFocus}
       value={value}
       onChange={(v) => {
         setValue(v);
@@ -22,11 +23,14 @@ function Controlled({ initial = '', onValue, maxLength }: { initial?: string; on
 }
 
 describe('CodeEditor', () => {
+  // First in the file: the editor's chunk is loaded once per file, so only
+  // the first render sees the stand-in.
   it('offers a plain textarea with the same name while the editor loads, and it edits the value', () => {
     const onValue = vi.fn();
-    render(<Controlled initial="- hosts: all" onValue={onValue} />);
+    render(<Controlled initial="- hosts: all" onValue={onValue} autoFocus />);
     const fallback = screen.getByRole('textbox', { name: 'Playbook YAML' });
     expect(fallback.tagName).toBe('TEXTAREA');
+    expect(fallback).toHaveFocus();
     expect(fallback).toHaveValue('- hosts: all');
     fireEvent.change(fallback, { target: { value: '- hosts: web' } });
     expect(onValue).toHaveBeenLastCalledWith('- hosts: web');
@@ -114,6 +118,8 @@ describe('CodeEditor', () => {
     fireEvent.keyDown(editor, { key: 'Tab', keyCode: 9 });
     expect(codeOf(editor)).toBe('{}');
     expect(editor).not.toHaveAccessibleDescription(/Escape/);
+    // Nothing to release: Escape is left to whatever holds the editor.
+    expect(fireEvent.keyDown(editor, { key: 'Escape', keyCode: 27 })).toBe(true);
   });
 
   it('refuses an edit that would make the text longer than maxLength', async () => {
@@ -144,5 +150,59 @@ describe('CodeEditor', () => {
     );
     await findCodeEditor('Code');
     expect(container.querySelector('.cm-lintRange-error')).toBeNull();
+  });
+
+  it('applies a value the parent resets to after typing', async () => {
+    const user = userEvent.setup();
+    function Resettable() {
+      const [value, setValue] = useState('- hosts: all');
+      return (
+        <>
+          <CodeEditor label="Code" language="yaml" value={value} onChange={setValue} />
+          <button type="button" onClick={() => setValue('- hosts: all')}>
+            Reset
+          </button>
+        </>
+      );
+    }
+    render(<Resettable />);
+    const editor = await findCodeEditor('Code');
+    await user.click(editor);
+    await user.keyboard('{Control>}{End}{/Control}x');
+    expect(codeOf(editor)).toBe('- hosts: allx');
+    await user.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(codeOf(editor)).toBe('- hosts: all');
+  });
+
+  it('keeps a value set from outside out of the undo history', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(<CodeEditor label="Code" language="text" value="one" onChange={onChange} />);
+    const editor = await findCodeEditor('Code');
+    rerender(<CodeEditor label="Code" language="text" value="two" onChange={onChange} />);
+    await user.click(editor);
+    await user.keyboard('{Control>}z{/Control}');
+    expect(codeOf(editor)).toBe('two');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('takes the focus on request, once loaded', async () => {
+    render(<CodeEditor label="Code" language="yaml" value="- hosts: all" onChange={() => {}} autoFocus />);
+    const editor = await findCodeEditor('Code');
+    await waitFor(() => expect(editor).toHaveFocus());
+  });
+
+  it('paints panel buttons, lint marks and the error marker from the app’s tokens, not CodeMirror’s fixed colours', async () => {
+    render(<CodeEditor label="Code" language="yaml" value="x" onChange={() => {}} diagnostics={[]} />);
+    await findCodeEditor('Code');
+    const css = [
+      ...Array.from(document.querySelectorAll('style'), (el) => el.textContent ?? ''),
+      ...(document.adoptedStyleSheets ?? []).flatMap((sheet) => Array.from(sheet.cssRules, (r) => r.cssText)),
+    ].join('\n');
+    const rule = (selector: RegExp) => css.split('}').filter((r) => selector.test(r.split('{')[0] ?? ''));
+    expect(rule(/\.cm-button/).some((r) => /background-image:\s*none/.test(r))).toBe(true);
+    expect(rule(/\.cm-lintRange-active/).some((r) => /var\(--/.test(r))).toBe(true);
+    expect(rule(/\.cm-lint-marker-error/).some((r) => /var\(--px-crit\)/.test(r))).toBe(true);
+    expect(rule(/\.cm-lintPoint/).some((r) => /var\(--px-crit\)/.test(r))).toBe(true);
   });
 });
