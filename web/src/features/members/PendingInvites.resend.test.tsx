@@ -52,7 +52,7 @@ function setup(opts: Setup = {}) {
     path: '/settings/members', component: MembersPage, initial: '/o/acme/settings/members', locale: opts.locale, extraSearch: (s) => ({ ...validateMembersSearch(s) }),
     others: [{ path: '/settings/members/$userId', component: () => <div>MEMBER PAGE</div> }],
   });
-  return screen.findByRole('region', { name: opts.locale === 'de' ? 'Offene Einladungen' : 'Open invitations' });
+  return screen.findByRole('region', { name: opts.locale === 'de' ? 'Einladungen' : 'Invitations' });
 }
 
 const rowOf = (section: HTMLElement, email: string) =>
@@ -115,6 +115,16 @@ describe('PendingInvites resend', () => {
     });
     await chooseRowAction(user, 'old@acme.io (viewer)', 'Resend invitation');
     expect(await screen.findByText('The invitation e-mail could not be sent. The invitation is unchanged.')).toBeInTheDocument();
+  });
+
+  it('claims nothing about the invitation on a bare 502 from a proxy', async () => {
+    const user = userEvent.setup();
+    await setup({
+      resend: () => new Response('<html><body>502 Bad Gateway</body></html>', { status: 502, headers: { 'Content-Type': 'text/html' } }),
+    });
+    await chooseRowAction(user, 'old@acme.io (viewer)', 'Resend invitation');
+    expect(await screen.findByText('failed to resend invitation')).toBeInTheDocument();
+    expect(screen.queryByText(/The invitation is unchanged/)).not.toBeInTheDocument();
   });
 
   it('offers no resend without members.manage', async () => {

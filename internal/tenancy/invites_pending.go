@@ -22,16 +22,27 @@ type PendingInvite struct {
 	Expired       bool
 }
 
+// ExpiredInviteListWindow is how long an expired invitation stays in the
+// list asked for with the expired ones: it can be resent for that long
+// after it lapsed, and then drops out, so an organization's list does not
+// keep every invitation nobody accepted. The rows themselves stay (purging
+// them is backlog 3.128).
+const ExpiredInviteListWindow = 30 * 24 * time.Hour
+
 // PendingInvites lists orgID's open invitations (backlog 7.29). An
 // invitation is a standing offer of a membership, so the people who manage
 // members have to be able to see what is outstanding — before this, an
 // invitation sent to a wrong address could only be waited out.
-// includeExpired adds the invitations that are open but for their expiry,
-// each marked Expired against the service's clock, so they can be resent
-// (spec 2026-11-19 §4).
+// includeExpired adds the invitations that are open but for their expiry
+// and expired within ExpiredInviteListWindow, each marked Expired against
+// the service's clock, so they can be resent (spec 2026-11-19 §4).
 func (s *Service) PendingInvites(ctx context.Context, orgID uuid.UUID, includeExpired bool) ([]PendingInvite, error) {
 	now := s.now()
-	invites, err := s.store.ListPendingInvites(ctx, orgID, now, includeExpired)
+	expiresAfter := now
+	if includeExpired {
+		expiresAfter = now.Add(-ExpiredInviteListWindow)
+	}
+	invites, err := s.store.ListPendingInvites(ctx, orgID, expiresAfter)
 	if err != nil {
 		return nil, fmt.Errorf("list pending invites: %w", err)
 	}

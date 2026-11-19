@@ -389,13 +389,13 @@ func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Tim
 	return inv, nil
 }
 
-func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, now time.Time, includeExpired bool) ([]tenancy.PendingInvite, error) {
+func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, expiresAfter time.Time) ([]tenancy.PendingInvite, error) {
 	if err := f.take("ListPendingInvites"); err != nil {
 		return nil, err
 	}
 	var out []tenancy.PendingInvite
 	for _, inv := range f.invites {
-		if inv.OrgID == orgID && (includeExpired || now.Before(inv.ExpiresAt)) {
+		if inv.OrgID == orgID && expiresAfter.Before(inv.ExpiresAt) {
 			out = append(out, tenancy.PendingInvite{ID: inv.ID, Email: inv.Email, Role: inv.Role, InvitedBy: inv.InvitedBy, ExpiresAt: inv.ExpiresAt})
 		}
 	}

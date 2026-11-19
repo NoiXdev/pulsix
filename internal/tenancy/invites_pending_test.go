@@ -35,3 +35,34 @@ func TestPendingInvitesIncludeExpiredOnRequest(t *testing.T) {
 		}
 	}
 }
+
+// TestPendingInvitesListsOnlyRecentlyExpired: asked for the expired ones,
+// the list holds those that expired within ExpiredInviteListWindow of the
+// service's clock; older ones stay out, so the list does not grow forever.
+func TestPendingInvitesListsOnlyRecentlyExpired(t *testing.T) {
+	ctx := context.Background()
+	f := newResendFixture(t) // f.inv expires InviteTTL after the fixture's start
+	expiry := f.inv.ExpiresAt
+
+	cases := []struct {
+		name   string
+		now    time.Time
+		listed bool
+	}{
+		{"just expired", expiry.Add(time.Minute), true},
+		{"expired a day inside the window", expiry.Add(tenancy.ExpiredInviteListWindow - 24*time.Hour), true},
+		{"expired a day beyond the window", expiry.Add(tenancy.ExpiredInviteListWindow + 24*time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			*f.now = tc.now
+			all, err := f.svc.PendingInvites(ctx, f.org, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(all) == 1 && all[0].ID == f.inv.ID && all[0].Expired; got != tc.listed {
+				t.Fatalf("list with expired = %+v, want listed %v", all, tc.listed)
+			}
+		})
+	}
+}

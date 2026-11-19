@@ -76,10 +76,10 @@ export const enMembers = {
     readOnly: 'Only owners and admins can change roles or remove members.',
   },
   pending: {
-    title: 'Open invitations',
+    title: 'Invitations',
     invitedBy: 'Invited by',
     expires: 'Expires',
-    label: 'Open invitations',
+    label: 'Invitations',
     count: (n: number) => (n === 1 ? '1 invitation' : `${n} invitations`),
     expiredFilter: 'Expired',
     noMatch: 'No open invitation has expired.',

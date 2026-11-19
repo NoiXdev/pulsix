@@ -13771,7 +13771,7 @@ export interface operations {
     "get-api-v1-orgs-by-org-invites": {
         parameters: {
             query?: {
-                /** @description Also list the invitations that have expired, so they can be resent (default false); accepted ones are never listed */
+                /** @description Also list the invitations that expired within the last 30 days, so they can be resent (default false); older expired and accepted ones are never listed */
                 include_expired?: boolean;
             };
             header?: never;

@@ -72,10 +72,10 @@ export const deMembers: Messages['members'] = {
     readOnly: 'Nur Inhaber und Admins können Rollen ändern oder Mitglieder entfernen.',
   },
   pending: {
-    title: 'Offene Einladungen',
+    title: 'Einladungen',
     invitedBy: 'Eingeladen von',
     expires: 'Läuft ab',
-    label: 'Offene Einladungen',
+    label: 'Einladungen',
     count: (n: number) => (n === 1 ? '1 Einladung' : `${n} Einladungen`),
     expiredFilter: 'Abgelaufen',
     noMatch: 'Keine offene Einladung ist abgelaufen.',

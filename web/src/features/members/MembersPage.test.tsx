@@ -77,7 +77,7 @@ describe('MembersPage', () => {
     });
     renderPage(qc);
 
-    const section = await screen.findByRole('region', { name: 'Open invitations' });
+    const section = await screen.findByRole('region', { name: 'Invitations' });
     expect(within(section).getByText('wrong@acme.io')).toBeInTheDocument();
     expect(within(section).getByText('Admin')).toBeInTheDocument();
     expect(within(section).getByText(/Tim R\./)).toBeInTheDocument();
@@ -263,7 +263,7 @@ describe('MembersPage', () => {
 
     expect(within(rowOf(await screen.findByRole('link', { name: 'Sara K.' }))).getByText('Betrachter')).toBeInTheDocument();
     expect(within(rowOf(screen.getByRole('link', { name: 'Tim R.' }))).getByText('Inhaber')).toBeInTheDocument();
-    const invites = await screen.findByRole('region', { name: 'Offene Einladungen' });
+    const invites = await screen.findByRole('region', { name: 'Einladungen' });
     expect(within(invites).getByText('Admin')).toBeInTheDocument();
     expect(screen.queryByText('viewer')).not.toBeInTheDocument();
     expect(screen.queryByText('owner')).not.toBeInTheDocument();

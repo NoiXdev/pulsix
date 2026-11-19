@@ -137,14 +137,16 @@ UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NU
 UPDATE personal_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
 
 -- name: ListPendingInvites :many
--- The open invitations of one organization: those TakeInvite would still
--- take, issuer condition included (backlog 7.29), newest first. With
--- include_expired the expired ones come too, so they can be resent (spec
--- 2026-11-19 §4); accepted ones never do.
+-- The open invitations of one organization: those TakeInvite would take
+-- but for their expiry, issuer condition included (backlog 7.29), that
+-- expire after expires_after, newest first. expires_after is now for the
+-- ones TakeInvite still takes; an earlier cutoff lets the recently expired
+-- ones come too, so they can be resent (spec 2026-11-19 §4). Accepted ones
+-- never do.
 SELECT i.id, i.email, i.role, i.invited_by, u.display_name AS invited_by_name, i.expires_at, i.created_at
 FROM invites AS i JOIN users AS u ON u.id = i.invited_by
 WHERE i.org_id = sqlc.arg(org_id) AND i.accepted_at IS NULL
-  AND (sqlc.arg(include_expired)::boolean OR i.expires_at > sqlc.arg(now)::timestamptz)
+  AND i.expires_at > sqlc.arg(expires_after)::timestamptz
   AND EXISTS (
       SELECT 1 FROM org_memberships AS m JOIN users AS iu ON iu.id = m.user_id
       WHERE m.org_id = i.org_id AND m.user_id = i.invited_by

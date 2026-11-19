@@ -22,8 +22,9 @@ export function useInviteMember(org: string) {
 }
 
 /** usePendingInvites lists the organization's open invitations (backlog
- * 7.29), and with `includeExpired` the expired ones too, each marked
- * `expired`, so they can be resent (backlog 3.125). One whose sender may no
+ * 7.29), and with `includeExpired` those that expired within the last 30
+ * days too, each marked `expired`, so they can be resent (backlog 3.125).
+ * One whose sender may no
  * longer add members is not open and is not listed, which is why a role
  * change or a removal refreshes it too. */
 export function usePendingInvites(org: string, includeExpired = false) {

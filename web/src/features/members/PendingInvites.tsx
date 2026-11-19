@@ -20,8 +20,9 @@ import { useResendInviteCommand } from './useResendInviteCommand.ts';
  * renders nothing while there are none — or when the list cannot be loaded,
  * which must not take the member table down with it.
  *
- * Expired invitations are listed too, marked, so they can be resent
- * (backlog 3.125): a Resend button on an expired row and Resend invitation
+ * Invitations that expired within the last 30 days are listed too, marked,
+ * so they can be resent (backlog 3.125), under the heading "Invitations"
+ * since not all of them are open any more: a Resend button on an expired row and Resend invitation
  * in every row's menu, for a role that may manage members.
  */
 export function PendingInvites({ org, canManage }: { org: string; canManage: boolean }) {

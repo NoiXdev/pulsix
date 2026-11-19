@@ -11,8 +11,8 @@ import (
 
 // TestInviteListIncludesExpiredOnRequest is spec 2026-11-19 §4's list
 // half: by default the list is as before, open invitations only;
-// include_expired=true adds the expired ones, marked expired, so they can
-// be resent. Accepted invitations never come back, and the bar is
+// include_expired=true adds the ones that expired within the last 30 days,
+// marked expired, so they can be resent; older ones stay out. Accepted invitations never come back, and the bar is
 // members.manage as before.
 func TestInviteListIncludesExpiredOnRequest(t *testing.T) {
 	s := apitest.New(t)
@@ -25,6 +25,10 @@ func TestInviteListIncludesExpiredOnRequest(t *testing.T) {
 
 	expiredID, _ := inviteFor(t, s, c, base, "expired-listed@example.test")
 	if _, err := s.DB.Pool().Exec(context.Background(), "UPDATE invites SET expires_at = now() - interval '1 day' WHERE id = $1", expiredID); err != nil {
+		t.Fatal(err)
+	}
+	longExpiredID, _ := inviteFor(t, s, c, base, "long-expired-listed@example.test")
+	if _, err := s.DB.Pool().Exec(context.Background(), "UPDATE invites SET expires_at = now() - interval '31 days' WHERE id = $1", longExpiredID); err != nil {
 		t.Fatal(err)
 	}
 	openID, _ := inviteFor(t, s, c, base, "open-listed@example.test")
@@ -40,7 +44,7 @@ func TestInviteListIncludesExpiredOnRequest(t *testing.T) {
 	}
 	got := listInvites(t, c, base+"?include_expired=true")
 	if len(got) != 2 {
-		t.Fatalf("include_expired=true = %+v, want the open and the expired invitation", got)
+		t.Fatalf("include_expired=true = %+v, want the open and the recently expired invitation", got)
 	}
 	for _, inv := range got {
 		if want := inv.ID == expiredID; inv.Expired != want || (inv.ID != expiredID && inv.ID != openID) {

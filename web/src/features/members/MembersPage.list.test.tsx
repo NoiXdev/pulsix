@@ -152,7 +152,7 @@ describe('PendingInvites list', () => {
   it('is a second list whose sort and page stay out of the URL', async () => {
     const user = userEvent.setup();
     const router = setup({ members: [member('a'), member('b')], invites: invites() });
-    const section = await screen.findByRole('region', { name: 'Open invitations' });
+    const section = await screen.findByRole('region', { name: 'Invitations' });
     await within(section).findByText('1–3 of 3 invitations');
     await user.click(within(section).getByRole('button', { name: 'E-mail address' }));
     await waitFor(() =>
@@ -165,7 +165,7 @@ describe('PendingInvites list', () => {
     const user = userEvent.setup();
     let revoked = 0;
     setup({ members: [member('a')], invites: invites(), onRevoke: () => revoked++ });
-    await screen.findByRole('region', { name: 'Open invitations' });
+    await screen.findByRole('region', { name: 'Invitations' });
     expect(screen.queryByRole('button', { name: /^Revoke invitation/ })).not.toBeInTheDocument();
     await chooseRowAction(user, 'b1@acme.io (operator)', 'Revoke…');
     expect(await acceptConfirm(user)).toBe('Revoke the invitation to b1@acme.io? Its link stops working.');
@@ -175,12 +175,12 @@ describe('PendingInvites list', () => {
   it('shows no section without invitations', async () => {
     setup({ members: [member('a')] });
     await screen.findByText('1–1 of 1 member');
-    expect(screen.queryByRole('region', { name: 'Open invitations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Invitations' })).not.toBeInTheDocument();
   });
   it('narrows to the expired invitations with a local chip', async () => {
     const user = userEvent.setup();
     const router = setup({ members: [member('a')], invites: [invite('old@acme.io', { expired: true }), invite('new@acme.io', { expires_at: '2099-01-01T00:00:00Z' })] });
-    const section = await screen.findByRole('region', { name: 'Open invitations' });
+    const section = await screen.findByRole('region', { name: 'Invitations' });
     await within(section).findByText('1–2 of 2 invitations');
     await user.click(within(section).getByRole('button', { name: 'Expired' }));
     await waitFor(() => expect(names(section)).toEqual(['old@acme.io']));

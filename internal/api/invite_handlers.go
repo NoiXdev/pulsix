@@ -25,7 +25,7 @@ type pendingInviteDTO struct {
 
 type inviteListInput struct {
 	Org            string `path:"org"`
-	IncludeExpired bool   `query:"include_expired" doc:"Also list the invitations that have expired, so they can be resent (default false); accepted ones are never listed"`
+	IncludeExpired bool   `query:"include_expired" doc:"Also list the invitations that expired within the last 30 days, so they can be resent (default false); older expired and accepted ones are never listed"`
 }
 
 type inviteListOutput struct {

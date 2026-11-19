@@ -814,6 +814,7 @@ func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
 	}
 	open := invite(org.ID, admin, "open@example.test", now.Add(time.Hour))
 	invite(org.ID, admin, "expired@example.test", now.Add(-time.Minute))
+	invite(org.ID, admin, "long-expired@example.test", now.Add(-48*time.Hour))
 	invite(org.ID, demoted, "lapsed@example.test", now.Add(time.Hour))
 	invite(other.ID, admin, "elsewhere@example.test", now.Add(time.Hour))
 	accepted := invite(org.ID, admin, "accepted@example.test", now.Add(time.Hour))
@@ -821,16 +822,17 @@ func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list, err := store.ListPendingInvites(ctx, org.ID, now, false)
+	list, err := store.ListPendingInvites(ctx, org.ID, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list) != 1 || list[0].ID != open.ID || list[0].InvitedByName != "pending-admin@example.test" || list[0].Role != tenancy.RoleViewer {
 		t.Fatalf("pending invites = %+v, want only the open one", list)
 	}
-	// includeExpired adds the expired one and nothing else: the lapsed
-	// issuer's, the accepted and the other organization's stay out.
-	withExpired, err := store.ListPendingInvites(ctx, org.ID, now, true)
+	// An earlier cutoff adds the one that expired after it and nothing
+	// else: the one that expired before it, the lapsed issuer's, the
+	// accepted and the other organization's stay out.
+	withExpired, err := store.ListPendingInvites(ctx, org.ID, now.Add(-24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

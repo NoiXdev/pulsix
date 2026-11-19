@@ -179,10 +179,11 @@ type Store interface {
 	// step) so two concurrent accepts of the same token can never both
 	// succeed.
 	TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error)
-	// ListPendingInvites returns orgID's invitations TakeInvite would still
-	// take as of now, and with includeExpired also those it would take but
-	// for their expiry.
-	ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time, includeExpired bool) ([]PendingInvite, error)
+	// ListPendingInvites returns orgID's invitations TakeInvite would take
+	// but for their expiry, among them those that expire after
+	// expiresAfter: as of now with expiresAfter = now, and with an earlier
+	// cutoff also those that expired since.
+	ListPendingInvites(ctx context.Context, orgID uuid.UUID, expiresAfter time.Time) ([]PendingInvite, error)
 	// RevokeInvite deletes an unaccepted invitation of orgID, returning
 	// ErrNotFound when there is none with that id.
 	RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error
