@@ -20,7 +20,7 @@ type pendingInviteDTO struct {
 	InvitedByName string    `json:"invited_by_name"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	CreatedAt     time.Time `json:"created_at"`
-	Expired       bool      `json:"expired" doc:"Past expires_at; only listed with include_expired=true"`
+	Expired       bool      `json:"expired" doc:"True when past expires_at (only possible with include_expired=true)"`
 }
 
 type inviteListInput struct {

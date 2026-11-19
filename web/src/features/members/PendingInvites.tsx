@@ -8,8 +8,9 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
 import { useListView } from '../lists/useListView.ts';
-import { isExpired } from '../tokens/expiry.ts';
+import { InviteLinkDialog } from './InviteLinkDialog.tsx';
 import { inviteColumns } from './inviteColumns.tsx';
+import { useResendInviteCommand } from './useResendInviteCommand.ts';
 
 /**
  * PendingInvites lists the organization's open invitations under the
@@ -18,14 +19,19 @@ import { inviteColumns } from './inviteColumns.tsx';
  * second list: its sort and page live in the component, not in the URL. It
  * renders nothing while there are none — or when the list cannot be loaded,
  * which must not take the member table down with it.
+ *
+ * Expired invitations are listed too, marked, so they can be resent
+ * (backlog 3.125): a Resend button on an expired row and Resend invitation
+ * in every row's menu, for a role that may manage members.
  */
-export function PendingInvites({ org }: { org: string }) {
+export function PendingInvites({ org, canManage }: { org: string; canManage: boolean }) {
   const toast = useToast();
   const t = useT();
   const fmt = useFormat();
-  const invites = usePendingInvites(org);
+  const invites = usePendingInvites(org, true);
   const revoke = useRevokeInvite(org);
-  const columns = inviteColumns(t, fmt);
+  const resend = useResendInviteCommand(org);
+  const columns = inviteColumns(t, fmt, canManage ? { onResend: (i) => void resend.run(i), pending: resend.pending } : undefined);
   // The one filter lives in the component, like the list's sort and page.
   const [expired, setExpired] = useState(false);
   const view = useListView('invites', columns, { mode: 'client', urlState: false, rowKey: (i) => i.id, resetKey: String(expired) });
@@ -40,11 +46,12 @@ export function PendingInvites({ org }: { org: string }) {
   });
 
   const all = invites.data?.invites ?? [];
-  const shown = expired ? all.filter((i) => isExpired(i.expires_at)) : all;
+  const shown = expired ? all.filter((i) => i.expired) : all;
   const { rows, total } = view.view(view.ready ? shown : undefined);
   if (all.length === 0) return null;
 
   const rowActions = (i: PendingInvite): RowAction[] => [
+    ...(canManage ? [{ id: 'resend', label: t.members.pending.resendItem, onSelect: () => void resend.run(i), disabled: resend.pending.has(i.id) }] : []),
     { id: 'revoke', label: t.members.pending.revokeItem, destructive: true, onSelect: () => void del.run(i), disabled: del.pending.has(i.id) },
   ];
 
@@ -70,6 +77,7 @@ export function PendingInvites({ org }: { org: string }) {
         }
         {...view.listProps(total, t.members.pending.count)}
       />
+      <InviteLinkDialog link={resend.link} onClose={resend.closeLink} />
     </section>
   );
 }

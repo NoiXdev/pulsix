@@ -22,13 +22,27 @@ export function useInviteMember(org: string) {
 }
 
 /** usePendingInvites lists the organization's open invitations (backlog
- * 7.29). One whose sender may no longer add members is not open and is not
- * listed, which is why a role change or a removal refreshes it too. */
-export function usePendingInvites(org: string) {
+ * 7.29), and with `includeExpired` the expired ones too, each marked
+ * `expired`, so they can be resent (backlog 3.125). One whose sender may no
+ * longer add members is not open and is not listed, which is why a role
+ * change or a removal refreshes it too. */
+export function usePendingInvites(org: string, includeExpired = false) {
   return useQuery({
-    queryKey: ['invites', org],
-    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/invites', { params: { path: { org } } })),
+    queryKey: ['invites', org, { includeExpired }],
+    queryFn: () =>
+      unwrap(api.GET('/api/v1/orgs/{org}/invites', { params: { path: { org }, query: includeExpired ? { include_expired: true } : undefined } })),
     enabled: !!org,
+  });
+}
+
+/** useResendInvite sends an invitation again with a fresh link and expiry
+ * (backlog 3.125); the old link stops working. */
+export function useResendInvite(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) =>
+      unwrap(api.POST('/api/v1/orgs/{org}/invites/{inviteId}/resend', { params: { path: { org, inviteId } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invites', org] }),
   });
 }
 

@@ -23,7 +23,7 @@ function names(root: ParentNode = document): string[] {
   });
 }
 const invite = (email: string, over: Record<string, unknown> = {}) => ({
-  id: `i-${email.split('@')[0]}`, email, role: 'viewer', invited_by: 'u1', invited_by_name: 'Tim', expires_at: '2026-01-08T00:00:00Z', created_at: '2026-01-01T00:00:00Z', ...over,
+  id: `i-${email.split('@')[0]}`, email, role: 'viewer', invited_by: 'u1', invited_by_name: 'Tim', expires_at: '2026-01-08T00:00:00Z', created_at: '2026-01-01T00:00:00Z', expired: false, ...over,
 });
 
 function setup(opts: { locale?: 'de'; initial?: string; role?: string; members?: unknown[]; invites?: unknown[]; onRemove?: () => void; onRevoke?: () => void } = {}) {
@@ -179,7 +179,7 @@ describe('PendingInvites list', () => {
   });
   it('narrows to the expired invitations with a local chip', async () => {
     const user = userEvent.setup();
-    const router = setup({ members: [member('a')], invites: [invite('old@acme.io'), invite('new@acme.io', { expires_at: '2099-01-01T00:00:00Z' })] });
+    const router = setup({ members: [member('a')], invites: [invite('old@acme.io', { expired: true }), invite('new@acme.io', { expires_at: '2099-01-01T00:00:00Z' })] });
     const section = await screen.findByRole('region', { name: 'Open invitations' });
     await within(section).findByText('1–2 of 2 invitations');
     await user.click(within(section).getByRole('button', { name: 'Expired' }));

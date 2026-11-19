@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { Copy, UserPlus } from 'lucide-react';
+import { UserPlus } from 'lucide-react';
 import { DataList } from '../../ui/data-list/index.ts';
 import { Button } from '../../ui/button.tsx';
 import { ListToolbar, ResetFilters, ResultCount, SearchInput } from '../../ui/list-toolbar.tsx';
@@ -11,7 +11,6 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { copyText } from '../../lib/clipboard.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useInviteMember, useMembers } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
@@ -19,6 +18,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
+import { InviteLinkDialog, type InviteLink } from './InviteLinkDialog.tsx';
 import { PendingInvites } from './PendingInvites.tsx';
 import { roleOptions } from './roles.ts';
 import { FilterSelect } from '../lists/FilterSelect.tsx';
@@ -55,7 +55,7 @@ export function MembersPage() {
   // Set when an invitation was created but not e-mailed because the
   // instance has no outgoing mail configured: the link is shown for the
   // administrator to hand over instead.
-  const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
+  const [inviteLink, setInviteLink] = useState<InviteLink | null>(null);
 
   const t = useT();
   const fmt = useFormat();
@@ -125,7 +125,7 @@ export function MembersPage() {
         {...view.listProps(total, t.members.count)}
       />
 
-      <PendingInvites org={org} />
+      <PendingInvites org={org} canManage={canManage} />
 
       <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title={t.members.invite}>
         <form
@@ -180,37 +180,7 @@ export function MembersPage() {
         </form>
       </Dialog>
 
-      <Dialog open={!!inviteLink} onClose={() => setInviteLink(null)} title={t.members.shareLink.title}>
-        {inviteLink && (
-          <div className="flex flex-col gap-4">
-            <p className="text-xs text-muted-foreground">
-              {t.members.shareLink.before} <span className="font-semibold text-foreground">{inviteLink.email}</span>{' '}
-              {t.members.shareLink.after}
-            </p>
-            <code
-              aria-label={t.members.shareLink.linkLabel}
-              className="break-all rounded-md border border-border bg-background p-2 font-mono text-[11px]"
-            >
-              {inviteLink.url}
-            </code>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                onClick={async () => {
-                  const ok = await copyText(inviteLink.url);
-                  if (ok) toast.show(t.members.shareLink.copied);
-                  else toast.show(t.members.shareLink.copyFailed, 'destructive');
-                }}
-              >
-                <Copy size={14} /> {t.members.shareLink.copy}
-              </Button>
-              <Button type="button" variant="primary" onClick={() => setInviteLink(null)}>
-                {t.members.shareLink.done}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Dialog>
+      <InviteLinkDialog link={inviteLink} onClose={() => setInviteLink(null)} />
 
     </>
   );

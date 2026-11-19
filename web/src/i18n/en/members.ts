@@ -87,6 +87,13 @@ export const enMembers = {
     confirmRevoke: (email: string) => `Revoke the invitation to ${email}? Its link stops working.`,
     revoked: (email: string) => `Invitation to ${email} revoked`,
     revokeFailed: 'failed to revoke invitation',
+    expired: 'Expired',
+    resend: 'Resend',
+    resendLabel: (email: string) => `Resend the invitation to ${email}`,
+    resendItem: 'Resend invitation',
+    resent: (email: string) => `Invitation to ${email} sent again`,
+    resendMailFailed: 'The invitation e-mail could not be sent. The invitation is unchanged.',
+    resendFailed: 'failed to resend invitation',
   },
   accept: {
     joinTitle: 'Join the organization',

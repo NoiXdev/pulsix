@@ -6969,7 +6969,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             email: string;
-            /** @description Past expires_at; only listed with include_expired=true */
+            /** @description True when past expires_at (only possible with include_expired=true) */
             expired: boolean;
             /** Format: date-time */
             expires_at: string;

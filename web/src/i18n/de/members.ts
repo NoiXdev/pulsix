@@ -83,6 +83,13 @@ export const deMembers: Messages['members'] = {
     confirmRevoke: (email: string) => `Einladung an ${email} widerrufen? Der Link funktioniert dann nicht mehr.`,
     revoked: (email: string) => `Einladung an ${email} widerrufen`,
     revokeFailed: 'Einladung konnte nicht widerrufen werden',
+    expired: 'Abgelaufen',
+    resend: 'Erneut senden',
+    resendLabel: (email: string) => `Einladung an ${email} erneut senden`,
+    resendItem: 'Einladung erneut senden',
+    resent: (email: string) => `Einladung an ${email} erneut gesendet`,
+    resendMailFailed: 'Die Einladungs-E-Mail konnte nicht gesendet werden. Die Einladung ist unverändert.',
+    resendFailed: 'Einladung konnte nicht erneut gesendet werden',
   },
   accept: {
     joinTitle: 'Der Organisation beitreten',
