@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Save } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
@@ -22,6 +23,9 @@ interface PlaybookHeaderProps {
   role: string;
   /** The templates using the playbook; undefined while they are read. */
   templates: readonly Template[] | undefined;
+  /** The templates could not be read: Run… and Delete stay disabled and
+   * say why. */
+  templatesFailed: boolean;
   /** The preview's problem with the draft (null when it passes, and for a
    * repository playbook, whose text the page does not have). */
   problem: YAMLProblem | null;
@@ -38,9 +42,11 @@ interface PlaybookHeaderProps {
  * the state — Valid or the preview's problem, Unsaved while the draft
  * differs, and the source (the editor, or the repository and branch) —
  * the summary line, and the actions Run…, Save and the "⋯" menu with
- * Delete…, which is refused while a template uses the playbook.
+ * Delete…, which is refused while a template uses the playbook. Both need
+ * the templates: when they cannot be read, a line under the actions says
+ * so and describes the disabled Run….
  */
-export function PlaybookHeader({ org, playbook, role, templates, problem, dirty, canSave, onSave, onLeave }: PlaybookHeaderProps) {
+export function PlaybookHeader({ org, playbook, role, templates, templatesFailed, problem, dirty, canSave, onSave, onLeave }: PlaybookHeaderProps) {
   const t = useT();
   const p = t.playbooks.page;
   const fmt = useFormat();
@@ -51,6 +57,9 @@ export function PlaybookHeader({ org, playbook, role, templates, problem, dirty,
   const source = editorSource ? p.sourceEditor : p.sourceRepo(repo?.name ?? playbook.repo_id?.slice(0, 8) ?? '', repo?.branch ?? '…');
   // A repository playbook's summary is its path, which is already the name.
   const summary = playbook.summary && playbook.summary !== name ? playbook.summary : '';
+  const hintId = useId();
+  const canRun = may(role, 'jobs.run');
+  const canDelete = may(role, 'playbooks.write');
   const line = [summary, playbook.updated_at ? p.updated(fmt.relative(playbook.updated_at)) : ''].filter(Boolean).join(' · ');
 
   return (
@@ -64,14 +73,31 @@ export function PlaybookHeader({ org, playbook, role, templates, problem, dirty,
         </div>
         {line && <p className="text-[13px] text-muted-foreground">{line}</p>}
       </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {may(role, 'jobs.run') && <RunPlaybookButton org={org} playbookId={playbook.id} name={name} templates={templates} canCreateTemplate={may(role, 'templates.write')} />}
-        {editorSource && may(role, 'playbooks.write') && (
-          <Button variant="primary" disabled={!canSave} title={t.playbooks.editor.saveShortcut} aria-keyshortcuts="Control+S Meta+S" onClick={onSave}>
-            <Save size={14} /> {p.save}
-          </Button>
+      <div className="flex shrink-0 flex-col gap-1 md:items-end">
+        <div className="flex flex-wrap items-center gap-2">
+          {canRun && (
+            <RunPlaybookButton
+              org={org}
+              playbookId={playbook.id}
+              name={name}
+              templates={templates}
+              describedBy={templatesFailed ? hintId : undefined}
+              dirty={dirty}
+              canCreateTemplate={may(role, 'templates.write')}
+            />
+          )}
+          {editorSource && canDelete && (
+            <Button variant="primary" disabled={!canSave} title={t.playbooks.editor.saveShortcut} aria-keyshortcuts="Control+S Meta+S" onClick={onSave}>
+              <Save size={14} /> {p.save}
+            </Button>
+          )}
+          {canDelete && <DeleteMenu org={org} playbook={playbook} name={name} templates={templates} templatesFailed={templatesFailed} onLeave={onLeave} />}
+        </div>
+        {templatesFailed && (canRun || canDelete) && (
+          <p id={hintId} className="text-[11px] text-destructive">
+            {p.templatesFailed}
+          </p>
         )}
-        {may(role, 'playbooks.write') && <DeleteMenu org={org} playbook={playbook} name={name} templates={templates} onLeave={onLeave} />}
       </div>
     </div>
   );
@@ -79,7 +105,21 @@ export function PlaybookHeader({ org, playbook, role, templates, problem, dirty,
 
 /** The "⋯" menu with Delete…: refused, with the reason in the item, while a
  * template uses the playbook (the server refuses it too). */
-function DeleteMenu({ org, playbook, name, templates, onLeave }: { org: string; playbook: Playbook; name: string; templates: readonly Template[] | undefined; onLeave: () => Promise<void> }) {
+function DeleteMenu({
+  org,
+  playbook,
+  name,
+  templates,
+  templatesFailed,
+  onLeave,
+}: {
+  org: string;
+  playbook: Playbook;
+  name: string;
+  templates: readonly Template[] | undefined;
+  templatesFailed: boolean;
+  onLeave: () => Promise<void>;
+}) {
   const t = useT();
   const p = t.playbooks.page;
   const e = t.playbooks.editor;
@@ -108,6 +148,7 @@ function DeleteMenu({ org, playbook, name, templates, onLeave }: { org: string; 
       <RowMenuItem destructive disabled={!templates || inUse > 0 || remove.isPending} onSelect={() => void onDelete()}>
         <span className="block">{p.delete}</span>
         {inUse > 0 && <span className="block text-[11px] font-normal text-muted-foreground">{p.deleteInUse(inUse)}</span>}
+        {templatesFailed && <span className="block text-[11px] font-normal text-muted-foreground">{p.templatesFailed}</span>}
       </RowMenuItem>
     </RowMenu>
   );

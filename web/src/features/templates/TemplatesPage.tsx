@@ -25,7 +25,9 @@ import { TemplateDialog } from './TemplateDialog.tsx';
  * the thing an operator runs, and the run view's own entry point. The list (id
  * `templates`) is one request, sorted and paged in the browser; Run, Variables,
  * Triggers, Schedules, Edit and Delete are the row menu's. `?create=<playbook>`
- * opens the new template dialog with that playbook chosen. */
+ * opens the new template dialog with that playbook chosen, once the
+ * playbooks are known; an id that is none of them (or no UUID at all)
+ * opens it without a playbook. */
 export function TemplatesPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
@@ -63,6 +65,10 @@ export function TemplatesPage() {
   const columns = templateColumns({ t, playbookLabel, groupName, credentialName });
   const { filters, active, setFilter, reset } = useListFilters(TEMPLATES_FILTERS);
   const view = useListView('templates', columns, { mode: 'client', rowKey: (tpl) => tpl.id, resetKey: JSON.stringify(filters) });
+
+  // The preset waits for the playbook list: the form takes it once, on mount.
+  const createReady = !!search.create && (!!playbooks.data || playbooks.isError);
+  const preset = presetPlaybook(search.create, playbooks.data?.playbooks);
 
   const guard = useQueryGuard(templates);
   if (guard) return guard;
@@ -123,15 +129,23 @@ export function TemplatesPage() {
         {...view.listProps(total, t.templates.list.count)}
       />
       {actions.dialogs}
-      {canWrite && search.create && (
+      {canWrite && createReady && (
         <TemplateDialog
           org={org}
           canReadCredentials={canReadCredentials}
           canCreateCredential={canCreateCredential}
-          initialPlaybookId={search.create}
+          initialPlaybookId={preset}
           onClose={() => void navigate({ to: '/o/$org/templates', params: { org }, search: (prev) => ({ ...prev, create: undefined }), replace: true })}
         />
       )}
     </>
   );
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The `?create=` playbook when it is one of the organization's, else none. */
+function presetPlaybook(id: string | undefined, playbooks: readonly { id: string }[] | null | undefined): string | undefined {
+  if (!id || !UUID.test(id)) return undefined;
+  return playbooks?.some((p) => p.id === id) ? id : undefined;
 }

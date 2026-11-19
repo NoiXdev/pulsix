@@ -91,52 +91,6 @@ describe('PlaybookPage tabs and actions', () => {
     expect(await screen.findByRole('link', { name: 'Deploy web' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
   });
 
-  it('runs the one template that uses the playbook at once', async () => {
-    const user = userEvent.setup();
-    const started: string[] = [];
-    mockApi(
-      routes('operator', {
-        'POST /api/v1/orgs/acme/job-templates/t1/run': () => {
-          started.push('t1');
-          return { jobs: [{ id: 'j9' }] };
-        },
-      }),
-    );
-    renderAt('/o/acme/playbooks/p1');
-    await user.click(await screen.findByRole('button', { name: 'Run…' }));
-    await waitFor(() => expect(started).toEqual(['t1']));
-    expect(await screen.findByText('RUN')).toBeInTheDocument();
-  });
-
-  it('lets the person pick when several templates use the playbook', async () => {
-    const user = userEvent.setup();
-    const started: string[] = [];
-    mockApi(
-      routes('operator', {
-        'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1'), template('t2', 'Deploy staging', 'p1')] },
-        'POST /api/v1/orgs/acme/job-templates/t2/run': () => {
-          started.push('t2');
-          return { jobs: [{ id: 'j9' }] };
-        },
-      }),
-    );
-    renderAt('/o/acme/playbooks/p1');
-    await user.click(await screen.findByRole('button', { name: 'Run…' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Run Install nginx' });
-    await pickOption(within(dialog), 'Template', 'Deploy staging');
-    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
-    await waitFor(() => expect(started).toEqual(['t2']));
-  });
-
-  it('links to creating a template when none uses the playbook', async () => {
-    const user = userEvent.setup();
-    mockApi(routes());
-    renderAt('/o/acme/playbooks/p2');
-    await user.click(await screen.findByRole('button', { name: 'Run…' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Run playbooks/site.yml' });
-    expect(within(dialog).getByRole('link', { name: 'Create a template' })).toHaveAttribute('href', '/o/acme/templates?create=p2');
-  });
-
   it('refuses Delete while a template uses the playbook, and says why', async () => {
     const user = userEvent.setup();
     const deleted: string[] = [];

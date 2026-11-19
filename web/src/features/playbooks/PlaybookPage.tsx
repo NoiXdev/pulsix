@@ -48,6 +48,10 @@ export function PlaybookPage() {
 
 const PANEL_CLASS = 'flex min-w-0 flex-col gap-4';
 
+/** A dialog open in the document, modal or not: the page's shortcuts are
+ * not its. */
+const OPEN_DIALOG = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
 function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbook; role: string }) {
   const t = useT();
   const toast = useToast();
@@ -83,7 +87,9 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
   // Ctrl/Cmd-S saves from anywhere on the Editor tab of an editable
   // playbook (the header, the side column, the editor), and never opens
   // the browser's "Save page" there; save() itself refuses a clean,
-  // invalid or pending draft.
+  // invalid or pending draft. A key something else already took, or one
+  // pressed while a dialog is open (Run…, the delete confirmation, any
+  // other), is not the page's.
   const saveRef = useRef(save);
   useEffect(() => {
     saveRef.current = save;
@@ -92,7 +98,8 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
   useEffect(() => {
     if (!shortcut) return;
     const onKeyDown = (ev: KeyboardEvent) => {
-      if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
+      if (ev.defaultPrevented || !(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
+      if (document.querySelector(OPEN_DIALOG)) return;
       ev.preventDefault();
       void saveRef.current();
     };
@@ -118,6 +125,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
         playbook={playbook}
         role={role}
         templates={templates.data ? using : undefined}
+        templatesFailed={templates.isError}
         problem={playbook.source === 'editor' ? problem : null}
         dirty={dirty}
         canSave={canSave}
@@ -149,7 +157,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
           {tab === 'runs' ? (
             <PlaybookRunsTab org={org} playbookId={playbook.id} templates={using} canRun={may(role, 'jobs.run')} />
           ) : (
-            <PlaybookUsedByTab org={org} role={role} playbookId={playbook.id} templates={templates.data ? using : undefined} />
+            <PlaybookUsedByTab org={org} role={role} playbookId={playbook.id} templates={templates.data ? using : undefined} error={templates.isError ? templates.error : null} />
           )}
         </div>
       )}

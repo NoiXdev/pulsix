@@ -12,38 +12,41 @@ import { useRunTemplate } from '../templates/useRunTemplate.tsx';
 
 /**
  * RunPlaybookButton is the playbook page's Run…: a playbook runs through a
- * job template, which brings the hosts, credentials and variables. With one
- * template using the playbook it starts that template's run at once (the
- * templates list's own flow: follow-ups ask first); with several the person
- * picks one in a dialog; with none the dialog says so and links to creating
- * a template with this playbook chosen.
+ * job template, which brings the hosts, credentials and variables. It
+ * always opens a dialog, so one click never starts a run: the person picks
+ * the template (the only one already chosen) and Run starts it through the
+ * templates list's own flow (follow-ups ask first); with none the dialog
+ * says so and links to creating a template with this playbook chosen.
+ * While the page's draft is dirty the dialog says that the saved version
+ * runs, without the unsaved changes.
  */
 export function RunPlaybookButton({
   org,
   playbookId,
   name,
   templates,
+  describedBy,
+  dirty,
   canCreateTemplate,
 }: {
   org: string;
   playbookId: string;
   name: string;
-  /** Undefined while they are read: the button waits. */
+  /** Undefined while they are read (or when they cannot be): the button waits. */
   templates: readonly Template[] | undefined;
+  /** The id of the line that says why the button is disabled. */
+  describedBy?: string;
+  /** The page's draft differs from the saved playbook. */
+  dirty: boolean;
   canCreateTemplate: boolean;
 }) {
   const t = useT();
   const runner = useRunTemplate(org);
   const [picking, setPicking] = useState(false);
 
-  function onClick() {
-    if (templates?.length === 1) void runner.run(templates[0]);
-    else setPicking(true);
-  }
-
   return (
     <>
-      <Button disabled={!templates || runner.isPending} onClick={onClick}>
+      <Button disabled={!templates || runner.isPending} aria-describedby={describedBy} onClick={() => setPicking(true)}>
         <Play size={14} /> {t.playbooks.page.run}
       </Button>
       {picking && templates && (
@@ -51,6 +54,7 @@ export function RunPlaybookButton({
           playbookId={playbookId}
           name={name}
           templates={templates}
+          dirty={dirty}
           canCreateTemplate={canCreateTemplate}
           pending={runner.isPending}
           onRun={(tpl) => {
@@ -69,6 +73,7 @@ function RunDialog({
   playbookId,
   name,
   templates,
+  dirty,
   canCreateTemplate,
   pending,
   onRun,
@@ -77,6 +82,7 @@ function RunDialog({
   playbookId: string;
   name: string;
   templates: readonly Template[];
+  dirty: boolean;
   canCreateTemplate: boolean;
   pending: boolean;
   onRun: (tpl: Template) => void;
@@ -85,7 +91,7 @@ function RunDialog({
   const t = useT();
   const d = t.playbooks.page.runDialog;
   const { org } = useParams({ strict: false }) as { org: string };
-  const [id, setId] = useState('');
+  const [id, setId] = useState(templates.length === 1 ? templates[0].id : '');
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -118,6 +124,7 @@ function RunDialog({
           <Label htmlFor="run-playbook-template">{d.template}</Label>
           <Select id="run-playbook-template" options={templates.map((tpl) => ({ value: tpl.id, label: tpl.name }))} value={id} onChange={setId} placeholder={d.choose} />
         </div>
+        {dirty && <p className="text-[13px] text-muted-foreground">{d.savedRuns}</p>}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
             {t.common.cancel}

@@ -43,6 +43,21 @@ describe('TemplatesPage ?create=', () => {
     expect(router.state.location.search).not.toHaveProperty('create');
   });
 
+  it.each([
+    ['is no UUID', 'not-a-uuid'],
+    ['is no playbook of the organization', '99999999-8888-7777-6666-555555555555'],
+  ])('opens the new template without a playbook when the id %s', async (_case, id) => {
+    const user = userEvent.setup();
+    const posted: unknown[] = [];
+    setup(`/o/acme/templates?create=${id}`, posted);
+    const dialog = await screen.findByRole('dialog', { name: 'New job template' });
+    expect(within(dialog).getByLabelText('Playbook')).toHaveValue('');
+    await user.type(within(dialog).getByLabelText('Name'), 'deploy');
+    // The form holds no playbook: nothing to create yet.
+    expect(within(dialog).getByRole('button', { name: 'Create template' })).toBeDisabled();
+    expect(posted).toEqual([]);
+  });
+
   it('ignores the parameter for someone who may not create templates', async () => {
     setup(`/o/acme/templates?create=${PLAYBOOK}`, [], 'viewer');
     expect(await screen.findByText('No job templates yet.', { exact: false })).toBeInTheDocument();

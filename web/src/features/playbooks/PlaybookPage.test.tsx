@@ -105,6 +105,40 @@ describe('PlaybookPage', () => {
     await waitFor(() => expect(sent).toEqual([{ inline: '- hosts: db\n' }]));
   });
 
+  it('does not save with Mod-S while a modal dialog is open, and saves once it is gone', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    mockApi(routes('operator', { 'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => (sent.push(req.body), { playbook: editorPlaybook() }) }));
+    renderAt('/o/acme/playbooks/p1');
+    replaceCode(await findCodeEditor('Playbook YAML'), '- hosts: db\n');
+    await screen.findByText('Unsaved');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    document.body.appendChild(dialog);
+    try {
+      await user.keyboard('{Control>}s{/Control}');
+      expect(sent).toEqual([]);
+    } finally {
+      dialog.remove();
+    }
+    await user.keyboard('{Control>}s{/Control}');
+    await waitFor(() => expect(sent).toEqual([{ inline: '- hosts: db\n' }]));
+  });
+
+  it('leaves Mod-S alone when something before it took the key', async () => {
+    const sent: unknown[] = [];
+    mockApi(routes('operator', { 'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => (sent.push(req.body), { playbook: editorPlaybook() }) }));
+    renderAt('/o/acme/playbooks/p1');
+    replaceCode(await findCodeEditor('Playbook YAML'), '- hosts: db\n');
+    await screen.findByText('Unsaved');
+    const h1 = screen.getByRole('heading', { level: 1 });
+    h1.addEventListener('keydown', (e) => e.preventDefault());
+    fireEvent.keyDown(h1, { key: 's', ctrlKey: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toEqual([]);
+  });
+
   it('leaves Mod-S to the browser on another tab', async () => {
     const user = userEvent.setup();
     const sent: unknown[] = [];

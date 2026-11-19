@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
+import type { Locale } from '../../i18n/types.ts';
 import type { MockRoute } from '../../test/mockApi.ts';
 import { NewPlaybookPage } from './NewPlaybookPage.tsx';
 import { PlaybookPage } from './PlaybookPage.tsx';
@@ -54,7 +56,7 @@ export const routes = (role = 'operator', extra: Record<string, MockRoute> = {})
   ...extra,
 });
 
-export function renderAt(path: string) {
+export function renderAt(path: string, locale?: Locale) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -68,14 +70,13 @@ export function renderAt(path: string) {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([list, create, detail, templates, repos, run])]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
-  const view = render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <ConfirmProvider>
-          <RouterProvider router={router} />
-        </ConfirmProvider>
-      </ToastProvider>
-    </QueryClientProvider>,
+  const page = (
+    <ToastProvider>
+      <ConfirmProvider>
+        <RouterProvider router={router} />
+      </ConfirmProvider>
+    </ToastProvider>
   );
+  const view = render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{page}</I18nProvider> : page}</QueryClientProvider>);
   return { ...view, router, qc };
 }

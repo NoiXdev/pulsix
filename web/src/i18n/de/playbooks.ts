@@ -55,6 +55,7 @@ export const dePlaybooks: Messages['playbooks'] = {
     delete: 'Löschen…',
     deleteInUse: (n: number) =>
       n === 1 ? 'Eine Vorlage nutzt es: entferne es zuerst aus dieser Vorlage.' : `${n} Vorlagen nutzen es: entferne es zuerst aus ihnen.`,
+    templatesFailed: 'Die Vorlagen konnten nicht gelesen werden.',
     repoNoteTitle: 'Wird im Repository bearbeitet',
     repoNote: (path: string, repo: string, branch: string) =>
       `${path} liegt in ${repo} @ ${branch}. Änderungen kommen über Git: committe sie dort, die nächste Synchronisierung holt sie.`,
@@ -95,6 +96,7 @@ export const dePlaybooks: Messages['playbooks'] = {
       columns: { name: 'Vorlage', limit: 'Limit', schedules: 'Zeitpläne', triggers: 'Webhook-Auslöser' },
       noSchedules: 'keine',
       noTriggers: 'keine',
+      readFailed: 'konnte nicht gelesen werden',
       deleteNote: 'Löschen geht erst, wenn keine Vorlage das Playbook mehr nutzt.',
     },
     runDialog: {
@@ -104,6 +106,7 @@ export const dePlaybooks: Messages['playbooks'] = {
       run: 'Ausführen',
       none: 'Noch keine Vorlage führt dieses Playbook aus. Eine Vorlage liefert die Hosts, Zugangsdaten und Variablen, die ein Lauf braucht.',
       create: 'Vorlage anlegen',
+      savedRuns: 'Es läuft die gespeicherte Fassung: deine ungespeicherten Änderungen sind nicht dabei.',
     },
   },
   newPage: {

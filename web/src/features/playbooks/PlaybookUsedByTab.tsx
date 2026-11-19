@@ -19,9 +19,23 @@ import { useTemplateListActions } from '../templates/useTemplateListActions.tsx'
  * variables page) and has the templates list's own menu (Run, Variables,
  * Triggers, Schedules, Edit, Delete).
  * "Create template…" opens the new template dialog on the templates page
- * with this playbook chosen (`?create=`).
+ * with this playbook chosen (`?create=`). When the templates cannot be
+ * read, an alert line takes the list's place.
  */
-export function PlaybookUsedByTab({ org, role, playbookId, templates }: { org: string; role: string; playbookId: string; templates: readonly Template[] | undefined }) {
+export function PlaybookUsedByTab({
+  org,
+  role,
+  playbookId,
+  templates,
+  error,
+}: {
+  org: string;
+  role: string;
+  playbookId: string;
+  templates: readonly Template[] | undefined;
+  /** Why the templates could not be read; null while they can. */
+  error: unknown;
+}) {
   const t = useT();
   const u = t.playbooks.page.used;
   const canWrite = may(role, 'templates.write');
@@ -45,21 +59,27 @@ export function PlaybookUsedByTab({ org, role, playbookId, templates }: { org: s
           </Link>
         )}
       </div>
-      <DataList
-        label={u.label}
-        columns={columns}
-        rows={rows}
-        rowKey={(tpl) => tpl.id}
-        rowLabel={(tpl) => tpl.name}
-        rowActions={actions.rowActions}
-        // A writer opens the template's dialog, as on the templates list; a
-        // reader, who may not edit it, its variables page (read-only there).
-        rowLink={canWrite ? undefined : (tpl) => ({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id }, label: tpl.name })}
-        onRowActivate={actions.edit}
-        loading={!templates || !view.ready}
-        empty={u.none}
-        {...view.listProps(total, t.templates.list.count)}
-      />
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error instanceof Error ? error.message : t.playbooks.page.templatesFailed}
+        </p>
+      ) : (
+        <DataList
+          label={u.label}
+          columns={columns}
+          rows={rows}
+          rowKey={(tpl) => tpl.id}
+          rowLabel={(tpl) => tpl.name}
+          rowActions={actions.rowActions}
+          // A writer opens the template's dialog, as on the templates list; a
+          // reader, who may not edit it, its variables page (read-only there).
+          rowLink={canWrite ? undefined : (tpl) => ({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id }, label: tpl.name })}
+          onRowActivate={actions.edit}
+          loading={!templates || !view.ready}
+          empty={u.none}
+          {...view.listProps(total, t.templates.list.count)}
+        />
+      )}
       <p className="text-[11px] text-muted-foreground">{u.deleteNote}</p>
       {actions.dialogs}
     </>
@@ -105,8 +125,11 @@ function usedByColumns(t: Messages, org: string): DataListColumn<Template>[] {
   ];
 }
 
-/** Names, comma-separated, or the column's "none"; nothing while loading. */
-function Names({ names, none }: { names: string[] | undefined; none: string }) {
+/** Names, comma-separated, or the column's "none"; nothing while loading,
+ * and a short "could not be read" when the read failed. */
+function Names({ names, none, failed }: { names: string[] | undefined; none: string; failed: boolean }) {
+  const t = useT();
+  if (failed) return <span className={`block truncate text-destructive ${CELL_MINOR}`}>{t.playbooks.page.used.readFailed}</span>;
   if (!names) return null;
   return <span className={`block truncate ${names.length ? '' : 'text-muted-foreground'} ${CELL_MINOR}`}>{names.length ? names.join(', ') : none}</span>;
 }
@@ -114,11 +137,11 @@ function Names({ names, none }: { names: string[] | undefined; none: string }) {
 function TemplateSchedules({ org, templateId }: { org: string; templateId: string }) {
   const t = useT();
   const schedules = useSchedules(org, templateId);
-  return <Names names={schedules.data?.schedules?.map((s) => s.name)} none={t.playbooks.page.used.noSchedules} />;
+  return <Names names={schedules.data?.schedules?.map((s) => s.name)} none={t.playbooks.page.used.noSchedules} failed={schedules.isError} />;
 }
 
 function TemplateTriggers({ org, template }: { org: string; template: Template }) {
   const t = useT();
   const triggers = useTriggers(org, { kind: 'template_run', id: template.id, name: template.name });
-  return <Names names={triggers.data?.triggers?.map((x) => x.name)} none={t.playbooks.page.used.noTriggers} />;
+  return <Names names={triggers.data?.triggers?.map((x) => x.name)} none={t.playbooks.page.used.noTriggers} failed={triggers.isError} />;
 }

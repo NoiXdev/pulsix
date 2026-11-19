@@ -50,6 +50,7 @@ export const enPlaybooks = {
     more: (name: string) => `More actions for ${name}`,
     delete: 'Delete…',
     deleteInUse: (n: number) => (n === 1 ? 'A template uses it: remove it from that template first.' : `${n} templates use it: remove it from them first.`),
+    templatesFailed: 'Templates could not be read.',
     repoNoteTitle: 'Edited in its repository',
     repoNote: (path: string, repo: string, branch: string) =>
       `${path} lives in ${repo} @ ${branch}. Changes come through Git: commit them there, and the next sync brings them in.`,
@@ -90,6 +91,7 @@ export const enPlaybooks = {
       columns: { name: 'Template', limit: 'Limit', schedules: 'Schedules', triggers: 'Webhook triggers' },
       noSchedules: 'none',
       noTriggers: 'none',
+      readFailed: 'could not be read',
       deleteNote: 'The playbook can be deleted once no template uses it.',
     },
     runDialog: {
@@ -99,6 +101,7 @@ export const enPlaybooks = {
       run: 'Run',
       none: 'No template runs this playbook yet. A template adds the hosts, credentials and variables a run needs.',
       create: 'Create a template',
+      savedRuns: 'The saved version runs: your unsaved changes are not included.',
     },
   },
   newPage: {
