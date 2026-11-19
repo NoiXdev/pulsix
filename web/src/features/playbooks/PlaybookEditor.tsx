@@ -1,13 +1,15 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreatePlaybook, useDeletePlaybook, usePlaybook, useUpdatePlaybook } from '../../api/hooks/usePlaybooks.ts';
-import { validateYAML } from './validate.ts';
+import { validateYAMLProblem } from './validate.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
+import { CodeEditor } from '../../ui/code-editor.tsx';
 
 export interface PlaybookEditorProps {
   org: string;
@@ -17,10 +19,13 @@ export interface PlaybookEditorProps {
 }
 
 /**
- * PlaybookEditor is a plain controlled textarea in JetBrains Mono with the
- * server's validation ported as a client-side preview (validate.ts — the
- * same messages), so an operator sees the problem before submitting; the
- * server stays the authority and its rejected detail shows inline too.
+ * PlaybookEditor edits the YAML in the code editor (ui/code-editor.tsx,
+ * about 60 % of the viewport tall, or full screen) with the server's
+ * validation ported as a client-side preview (validate.ts — the same
+ * messages), so an operator sees the problem before submitting, marked on
+ * its line where the preview knows it; the server stays the authority and
+ * its rejected detail shows inline too. Ctrl/Cmd-S saves once the preview
+ * passes; closing with unsaved changes (Cancel, Escape) asks first.
  *
  * The edited document is read from the detail endpoint (the list DTO
  * carries no inline text); the loading/error guard lives here, the form is
@@ -65,67 +70,113 @@ function PlaybookForm({
   onClose: () => void;
 }) {
   const t = useT();
+  const e = t.playbooks.editor;
   const toast = useToast();
   const ask = useConfirm();
   const create = useCreatePlaybook(org);
   const update = useUpdatePlaybook(org, existing?.id ?? '');
   const remove = useDeletePlaybook(org);
-  const [text, setText] = useState(existing?.inline ?? '');
+  const initial = existing?.inline ?? '';
+  const [text, setText] = useState(initial);
   const [error, setError] = useState<string | null>(null);
+  const [fullScreen, setFullScreen] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+  const labelId = useId();
+  const title = existing?.summary || e.newTitle;
 
   // The preview runs on every keystroke; a document outside the minimal
   // parser's subset yields no message (the server judges those).
-  const preview = validateYAML(text, t);
-  const previewOk = preview === null;
+  const problem = validateYAMLProblem(text, t);
+  const previewOk = problem === null;
+  const dirty = text !== initial;
+  const saving = create.isPending || update.isPending;
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submit(ev: FormEvent) {
+    ev.preventDefault();
     setError(null);
-    const message = validateYAML(text, t);
-    if (message) return; // the preview already names it
+    if (!previewOk || saving) return; // the preview already names it
     try {
       if (existing) await update.mutateAsync({ inline: text });
       else await create.mutateAsync({ inline: text });
-      toast.show(existing ? t.playbooks.editor.saved : t.playbooks.editor.created);
+      toast.show(existing ? e.saved : e.created);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.playbooks.editor.saveFailed);
+      setError(err instanceof Error ? err.message : e.saveFailed);
     }
   }
 
   async function onDelete() {
-    if (!(await ask({ message: t.playbooks.editor.confirmDelete(existing?.summary || t.playbooks.editor.fallbackName), confirmLabel: t.common.delete, destructive: true }))) return;
+    if (!(await ask({ message: e.confirmDelete(existing?.summary || e.fallbackName), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(existing?.id ?? '');
-      toast.show(t.playbooks.editor.deleted);
+      toast.show(e.deleted);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.playbooks.editor.deleteFailed);
+      setError(err instanceof Error ? err.message : e.deleteFailed);
     }
   }
 
+  async function requestClose() {
+    if (dirty && !(await ask({ title: e.discardTitle, message: e.discardBody, confirmLabel: e.discard, destructive: true }))) return;
+    onClose();
+  }
+
+  // Escape (the dialog's close request) leaves full screen first, then
+  // asks before unsaved changes are dropped.
+  function onCancel(): boolean {
+    if (fullScreen) {
+      setFullScreen(false);
+      return false;
+    }
+    if (!dirty) return true;
+    void requestClose();
+    return false;
+  }
+
+  // Ctrl/Cmd-S never reaches the browser's "Save page"; it submits only
+  // what the preview passes.
+  function onKeyDown(ev: KeyboardEvent<HTMLFormElement>) {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.key.toLowerCase() !== 's') return;
+    ev.preventDefault();
+    if (previewOk && !saving) form.current?.requestSubmit();
+  }
+
   return (
-    <Dialog open onClose={onClose} size="wide" title={existing?.summary || t.playbooks.editor.newTitle}>
-      <form onSubmit={submit} className="flex flex-col gap-3">
+    <Dialog open onClose={onClose} onCancel={onCancel} size="wide" title={title}>
+      <form
+        ref={form}
+        aria-label={title}
+        data-fullscreen={fullScreen}
+        onSubmit={submit}
+        onKeyDown={onKeyDown}
+        className={fullScreen ? 'fixed inset-0 z-10 flex flex-col gap-3 bg-card p-5' : 'flex flex-col gap-3'}
+      >
         <div className="flex flex-col gap-1">
-          <label htmlFor="playbook-yaml" className="text-[11px] font-medium text-muted-foreground">
-            {t.playbooks.editor.yaml}
-          </label>
-          <textarea
-            id="playbook-yaml"
-            rows={14}
-            spellCheck={false}
-            className="rounded-md border border-border bg-background p-3 font-mono text-xs text-foreground focus-visible:border-primary focus-visible:outline-none"
+          <div className="flex items-center justify-between gap-2">
+            <span id={labelId} className="text-[11px] font-medium text-muted-foreground">
+              {e.yaml}
+            </span>
+            <Button type="button" variant="ghost" className="h-7 px-2 text-[11px] font-medium" aria-pressed={fullScreen} onClick={() => setFullScreen((f) => !f)}>
+              {fullScreen ? <Minimize2 size={13} aria-hidden="true" /> : <Maximize2 size={13} aria-hidden="true" />}
+              {e.fullScreen}
+            </Button>
+          </div>
+          <CodeEditor
+            labelledBy={labelId}
+            language="yaml"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={setText}
+            invalid={!previewOk}
+            height={fullScreen ? 'calc(100vh - 11rem)' : '60vh'}
+            diagnostics={problem ? [problem] : []}
           />
           {previewOk ? (
             <span role="status" className="text-[11px]" style={{ color: 'var(--px-ok)' }}>
-              {t.playbooks.editor.ready}
+              {e.ready}
             </span>
           ) : (
             <span role="alert" className="text-[11px] text-destructive">
-              {preview}
+              {problem.message}
             </span>
           )}
         </div>
@@ -140,12 +191,12 @@ function PlaybookForm({
               {t.common.delete}
             </Button>
           )}
-          <div className="flex gap-2">
-            <Button type="button" onClick={onClose}>
+          <div className="ml-auto flex gap-2">
+            <Button type="button" onClick={() => void requestClose()}>
               {t.common.cancel}
             </Button>
-            <Button type="submit" variant="primary" disabled={create.isPending || update.isPending || !previewOk}>
-              {t.playbooks.editor.save}
+            <Button type="submit" variant="primary" title={e.saveShortcut} aria-keyshortcuts="Control+S Meta+S" disabled={saving || !previewOk}>
+              {e.save}
             </Button>
           </div>
         </div>

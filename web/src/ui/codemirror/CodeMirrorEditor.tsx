@@ -1,0 +1,221 @@
+import { useEffect, useRef } from 'react';
+import { Annotation, Compartment, EditorState, type Extension } from '@codemirror/state';
+import {
+  EditorView,
+  drawSelection,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  keymap,
+  lineNumbers,
+  placeholder as placeholderText,
+} from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
+import { yaml } from '@codemirror/lang-yaml';
+import { json } from '@codemirror/lang-json';
+import { editorHighlighting, editorTheme } from './theme.ts';
+import type { CodeDiagnostic, CodeEditorLanguage } from '../code-editor.tsx';
+
+export interface CodeMirrorEditorProps {
+  value: string;
+  onChange?: (value: string) => void;
+  language: CodeEditorLanguage;
+  label?: string;
+  labelledBy?: string;
+  describedBy?: string;
+  readOnly?: boolean;
+  invalid?: boolean;
+  placeholder?: string;
+  maxLength?: number;
+  diagnostics?: readonly CodeDiagnostic[];
+  height?: string;
+  minHeight?: string;
+  maxHeight?: string;
+}
+
+/** Marks a transaction that brings the editor to the `value` prop, so the
+ * update listener does not report the caller's own value back to it. */
+const fromProps = Annotation.define<boolean>();
+
+/** How long a first Escape keeps Tab released, the same window CodeMirror
+ * gives its own tab-focus mode after an Escape. */
+const ESCAPE_WINDOW_MS = 2000;
+
+/** How many reported texts may wait for their echo (see `unechoed`). */
+const MAX_UNECHOED = 16;
+
+function languageOf(language: CodeEditorLanguage): Extension {
+  if (language === 'yaml') return yaml();
+  if (language === 'json') return json();
+  return [];
+}
+
+/** The extensions that follow the props; everything else is fixed for the
+ * editor's lifetime. */
+function dynamicExtensions(p: Omit<CodeMirrorEditorProps, 'value' | 'onChange' | 'diagnostics'>): Extension {
+  const attrs: Record<string, string> = { 'aria-multiline': 'true' };
+  if (p.label) attrs['aria-label'] = p.label;
+  if (p.labelledBy) attrs['aria-labelledby'] = p.labelledBy;
+  if (p.describedBy) attrs['aria-describedby'] = p.describedBy;
+  if (p.invalid) attrs['aria-invalid'] = 'true';
+  if (p.readOnly) {
+    attrs['aria-readonly'] = 'true';
+    // Not editable is not focusable: a reader still scrolls and selects
+    // with the keyboard.
+    attrs.tabindex = '0';
+  }
+  const size: Record<string, string> = {};
+  if (p.height) size.height = p.height;
+  const scroller: Record<string, string> = {};
+  if (p.maxHeight) scroller.maxHeight = p.maxHeight;
+  const max = p.maxLength;
+  return [
+    EditorView.contentAttributes.of(attrs),
+    EditorView.theme({ '&': size, '.cm-scroller': scroller, '.cm-content, .cm-gutter': p.minHeight ? { minHeight: p.minHeight } : {} }),
+    languageOf(p.language),
+    EditorState.readOnly.of(!!p.readOnly),
+    EditorView.editable.of(!p.readOnly),
+    // Tab indents while the text can be edited; a read-only editor leaves
+    // Tab to the browser.
+    p.readOnly ? [] : keymap.of([indentWithTab]),
+    p.placeholder ? placeholderText(p.placeholder) : [],
+    max === undefined
+      ? []
+      : EditorState.transactionFilter.of((tr) =>
+          tr.docChanged && !tr.annotation(fromProps) && tr.newDoc.length > max && tr.newDoc.length > tr.startState.doc.length ? [] : tr,
+        ),
+  ];
+}
+
+function toDiagnostics(state: EditorState, diagnostics: readonly CodeDiagnostic[] | undefined): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const d of diagnostics ?? []) {
+    if (d.line === undefined || d.line < 1 || d.line > state.doc.lines) continue;
+    const line = state.doc.line(d.line);
+    out.push({ from: line.from, to: line.to, severity: 'error', message: d.message });
+  }
+  return out;
+}
+
+/**
+ * CodeMirrorEditor is the CodeMirror 6 view behind ui/code-editor.tsx,
+ * loaded lazily as its own chunk. It is controlled: the `value` prop is
+ * the document (an outside change replaces it, marked so it is not
+ * reported back), every edit goes out through `onChange`.
+ *
+ * Tab indents (two spaces, never a tab character). CodeMirror's own
+ * escape hatch keeps that from trapping keyboard users: after Escape the
+ * next Tab moves the focus instead. In a native dialog Escape would also
+ * close the dialog, so the first Escape in the text is taken (prevented)
+ * for the escape hatch; a second one within the same window goes through
+ * and closes the dialog as everywhere else.
+ */
+export default function CodeMirrorEditor(props: CodeMirrorEditorProps) {
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  const dynamic = useRef(new Compartment());
+  const latest = useRef(props);
+  // Texts this editor reported that the caller has not echoed back as
+  // `value` yet, oldest first. A render for an earlier keystroke can run
+  // its effect after the user typed on: its `value` is one of these, and
+  // writing it into the document would drop what came after.
+  const unechoed = useRef<string[]>([]);
+  useEffect(() => {
+    latest.current = props;
+  });
+
+  // Created once; the props it reads at creation are the first render's.
+  useEffect(() => {
+    const p = latest.current;
+    const state = EditorState.create({
+      doc: p.value,
+      extensions: [
+        lineNumbers(),
+        foldGutter(),
+        p.diagnostics ? lintGutter() : [],
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        drawSelection(),
+        history(),
+        indentOnInput(),
+        bracketMatching(),
+        highlightSelectionMatches(),
+        search({ top: true }),
+        indentUnit.of('  '),
+        EditorState.tabSize.of(2),
+        editorTheme,
+        editorHighlighting,
+        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...foldKeymap]),
+        dynamic.current.of(dynamicExtensions(p)),
+        EditorView.updateListener.of((u) => {
+          if (!u.docChanged || u.transactions.some((tr) => tr.annotation(fromProps))) return;
+          const text = u.state.doc.toString();
+          // Bounded for a caller that never echoes (a value it ignores).
+          unechoed.current = [...unechoed.current.slice(-(MAX_UNECHOED - 1)), text];
+          latest.current.onChange?.(text);
+        }),
+      ],
+    });
+    const v = new EditorView({ state, parent: host.current! });
+    view.current = v;
+
+    let escapedAt = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') {
+        if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) escapedAt = 0;
+        return;
+      }
+      // Taken by the editor itself (a multi-cursor collapse, a fold).
+      if (e.defaultPrevented) return;
+      if (escapedAt && Date.now() - escapedAt <= ESCAPE_WINDOW_MS) {
+        escapedAt = 0;
+        return;
+      }
+      escapedAt = Date.now();
+      e.preventDefault();
+    };
+    // Registered after CodeMirror's own listener on the same element, so it
+    // sees whether a key binding already handled the Escape.
+    v.contentDOM.addEventListener('keydown', onKeyDown);
+    return () => {
+      v.contentDOM.removeEventListener('keydown', onKeyDown);
+      v.destroy();
+      view.current = null;
+    };
+  }, []);
+
+  const { value, language, label, labelledBy, describedBy, readOnly, invalid, placeholder, maxLength, height, minHeight, maxHeight, diagnostics } = props;
+
+  useEffect(() => {
+    view.current?.dispatch({
+      effects: dynamic.current.reconfigure(
+        dynamicExtensions({ language, label, labelledBy, describedBy, readOnly, invalid, placeholder, maxLength, height, minHeight, maxHeight }),
+      ),
+    });
+  }, [language, label, labelledBy, describedBy, readOnly, invalid, placeholder, maxLength, height, minHeight, maxHeight]);
+
+  useEffect(() => {
+    const v = view.current;
+    if (!v) return;
+    const echo = unechoed.current.lastIndexOf(value);
+    if (echo >= 0) {
+      unechoed.current = unechoed.current.slice(echo + 1);
+      return;
+    }
+    unechoed.current = [];
+    if (v.state.doc.toString() === value) return;
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value }, annotations: fromProps.of(true) });
+  }, [value]);
+
+  // By content, not identity: a caller builds the list afresh every render.
+  const diagnosticsKey = JSON.stringify(diagnostics ?? []);
+  useEffect(() => {
+    const v = view.current;
+    if (!v) return;
+    v.dispatch(setDiagnostics(v.state, toDiagnostics(v.state, JSON.parse(diagnosticsKey) as CodeDiagnostic[])));
+  }, [diagnosticsKey]);
+
+  return <div ref={host} className="min-w-0" />;
+}

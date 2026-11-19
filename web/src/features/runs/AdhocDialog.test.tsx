@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
+import { codeOf, findCodeEditor, replaceCode } from '../../test/codeEditor.ts';
+
+/** Types into the command editor, once it has loaded. */
+async function typeCommand(user: UserEvent, dialog: HTMLElement, text: string) {
+  const editor = await findCodeEditor('Command', within(dialog));
+  await user.click(editor);
+  await user.type(editor, text);
+}
 
 const host = (id: string, name: string) => ({ id, name, zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, created_at: '' });
 
@@ -51,7 +59,7 @@ describe('AdhocDialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     expect(await within(dialog).findByRole('checkbox', { name: 'web-02' })).toBeChecked();
     expect(within(dialog).getByRole('checkbox', { name: 'web-01' })).not.toBeChecked();
-    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h2'], module: 'shell', argv: 'uptime' });
   });
@@ -77,7 +85,7 @@ describe('AdhocDialog', () => {
     expect(boxes.map((b) => b.getAttribute('aria-label'))).toEqual(['zz-db-09', 'web-01', 'web-02']);
     expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
 
-    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h9'], module: 'shell', argv: 'uptime' });
   });
@@ -95,7 +103,7 @@ describe('AdhocDialog', () => {
     renderDialog();
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     await user.click(await within(dialog).findByRole('checkbox', { name: 'web-01' }));
-    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h1'], module: 'shell', argv: 'uptime' });
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
@@ -116,9 +124,28 @@ describe('AdhocDialog', () => {
     await user.click(await within(dialog).findByRole('checkbox', { name: 'web-01' }));
     await user.click(within(dialog).getByRole('checkbox', { name: 'web-02' }));
     expect(within(dialog).getByText('2 host(s) selected')).toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText('Command'), 'echo hi');
+    await typeCommand(user, dialog, 'echo hi');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h1', 'h2'], module: 'shell', argv: 'echo hi' });
+  });
+
+  it('runs a multi-line command as written', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': { hosts: [host('h1', 'web-01')], next_cursor: '' },
+      'POST /api/v1/orgs/acme/hosts/command': (req: MockRequest) => {
+        posted = req.body;
+        return { jobs: [] };
+      },
+    });
+    renderDialog(undefined, ['h1']);
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    const editor = await findCodeEditor('Command', within(dialog));
+    replaceCode(editor, 'apt-get update\n  && apt-get -y upgrade');
+    expect(codeOf(editor)).toBe('apt-get update\n  && apt-get -y upgrade');
+    await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
+    expect(posted).toEqual({ host_ids: ['h1'], module: 'shell', argv: 'apt-get update\n  && apt-get -y upgrade' });
   });
 
   it('refuses to submit without a host or a command', async () => {
@@ -163,7 +190,7 @@ describe('AdhocDialog', () => {
     expect(within(dialog).queryByRole('checkbox', { name: 'web-02' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Load more' }));
     await user.click(await within(dialog).findByRole('checkbox', { name: 'web-02' }));
-    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h2'], module: 'shell', argv: 'uptime' });
   });
@@ -177,7 +204,7 @@ describe('AdhocDialog', () => {
     renderDialog();
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     await user.click(await within(dialog).findByRole('checkbox', { name: 'web-01' }));
-    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(await within(dialog).findByText(/not supported/i)).toBeInTheDocument();
   });

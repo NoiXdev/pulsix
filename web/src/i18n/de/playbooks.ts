@@ -42,6 +42,11 @@ export const dePlaybooks: Messages['playbooks'] = {
     yaml: 'Playbook-YAML',
     ready: 'Wird als Liste von Plays gelesen – bereit zum Speichern.',
     save: 'Playbook speichern',
+    saveShortcut: 'Speichern (Strg+S oder ⌘S)',
+    fullScreen: 'Vollbild',
+    discardTitle: 'Änderungen verwerfen?',
+    discardBody: 'Deine Änderungen am Playbook sind nicht gespeichert.',
+    discard: 'Verwerfen',
   },
   validate: {
     tooLarge: 'das Playbook überschreitet 512 KiB',

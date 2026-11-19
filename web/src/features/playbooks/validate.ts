@@ -24,34 +24,61 @@ const PLAIN_BOOL = new Set(['true', 'True', 'TRUE', 'false', 'False', 'FALSE']);
  * comes from the catalogue; the parser's own detail after "malformed YAML:"
  * is passed through as the parser (go-yaml's vocabulary) words it. */
 export function validateYAML(inline: string, t: Messages): string | null {
+  return validateYAMLProblem(inline, t)?.message ?? null;
+}
+
+/** A problem validateYAML found: its message and, where the minimal parser
+ * can tell it cheaply, the 1-based line of the text it is on. Only the tab
+ * indentation check knows its line today: the rest of the parser works on
+ * trimmed, re-indented slices whose positions are lost. */
+export interface YAMLProblem {
+  message: string;
+  line?: number;
+}
+
+/** validateYAMLProblem is validateYAML with the problem's line, for the
+ * editor's lint marker. */
+export function validateYAMLProblem(inline: string, t: Messages): YAMLProblem | null {
+  const message = (m: string): YAMLProblem => ({ message: m });
   if (new TextEncoder().encode(inline).length > MAX_INLINE_BYTES) {
-    return t.playbooks.validate.tooLarge;
+    return message(t.playbooks.validate.tooLarge);
   }
   let doc: string[] | null;
   try {
     doc = firstDocument(inline);
   } catch (e) {
-    return t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse);
+    const problem = message(t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse));
+    return e instanceof LineError ? { ...problem, line: e.line } : problem;
   }
   if (doc === null) return null; // constructs outside the subset: the server judges
-  if (doc.every((l) => l.trim() === '')) return t.playbooks.validate.expectedList;
+  if (doc.every((l) => l.trim() === '')) return message(t.playbooks.validate.expectedList);
 
   let root: Node;
   try {
     root = parseBlock(doc);
   } catch (e) {
-    return t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse);
+    return message(t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse));
   }
   if (root.kind === 'skip') return null;
-  if (root.kind !== 'seq' || root.items.length === 0) return t.playbooks.validate.expectedList;
+  if (root.kind !== 'seq' || root.items.length === 0) return message(t.playbooks.validate.expectedList);
 
   const play = root.items[0];
   if (play.kind === 'skip') return null;
-  if (play.kind !== 'map') return t.playbooks.validate.playMapping;
+  if (play.kind !== 'map') return message(t.playbooks.validate.playMapping);
   const hosts = play.entries.find(([key]) => key === 'hosts');
-  if (!hosts || hosts[1].kind === 'null' || (hosts[1].kind === 'scalar' && hosts[1].text === '')) return t.playbooks.validate.missingHosts;
-  if (hosts[1].kind === 'nested' || hosts[1].kind !== 'scalar' || hosts[1].type !== 'string') return t.playbooks.validate.hostsString;
+  if (!hosts || hosts[1].kind === 'null' || (hosts[1].kind === 'scalar' && hosts[1].text === '')) return message(t.playbooks.validate.missingHosts);
+  if (hosts[1].kind === 'nested' || hosts[1].kind !== 'scalar' || hosts[1].type !== 'string') return message(t.playbooks.validate.hostsString);
   return null;
+}
+
+/** LineError is a parse error that knows its 1-based line in the text. */
+class LineError extends Error {
+  constructor(
+    message: string,
+    readonly line: number,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -77,10 +104,10 @@ type Node = MapNode | SeqNode | ScalarNode | NullNode | NestedNode | SkipNode;
  */
 function firstDocument(inline: string): string[] | null {
   const lines: (string | null)[] = inline.split('\n').map(stripComment);
-  for (const l of lines) {
+  for (const [i, l] of lines.entries()) {
     if (l === null) return null; // anchors, aliases, block scalars
     if (/^ *\t/.test(l) || /:\t/.test(l) || /^-\t/.test(l)) {
-      throw new Error('found character that cannot start any token');
+      throw new LineError('found character that cannot start any token', i + 1);
     }
   }
   const clean = lines as string[];

@@ -38,6 +38,11 @@ export const enPlaybooks = {
     yaml: 'Playbook YAML',
     ready: 'Parses as a list of plays — ready to save.',
     save: 'Save playbook',
+    saveShortcut: 'Save (Ctrl+S or ⌘S)',
+    fullScreen: 'Full screen',
+    discardTitle: 'Discard changes?',
+    discardBody: 'Your changes to the playbook are not saved.',
+    discard: 'Discard',
   },
   validate: {
     tooLarge: 'playbook exceeds 512 KiB',

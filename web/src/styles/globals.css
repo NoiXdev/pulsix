@@ -33,6 +33,16 @@
 }
 
 /*
+ * Syntax colours for code (the JSON viewer, the code editor): calm hues
+ * kept apart from the state colours, which mean something else. Keys use
+ * the brand colour and booleans/null the maintenance violet directly.
+ */
+:root {
+  --px-syntax-string: #A5D6A7;
+  --px-syntax-number: #F9A66C;
+}
+
+/*
  * List density (backlog 3.97). DensityEffect sets `data-density` on <html>
  * from the person's preferences; only DataList rows read these. Standard is
  * today's look: the spacing (py-2.5) and the type size (text-xs, 12px) the

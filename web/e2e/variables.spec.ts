@@ -17,6 +17,7 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 import { expectNoClippedCards } from './layout.ts';
 import { chooseRowAction } from './rowMenu.ts';
+import { fillCodeEditor } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -53,7 +54,7 @@ test('a template takes its variables from the playbook, and a group keeps manual
   await page.goto(`${base}/playbooks`);
   await page.getByRole('button', { name: 'New editor playbook' }).click();
   let dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await dialog.getByLabel('Playbook YAML', { exact: false }).fill(PLAYBOOK);
+  await fillCodeEditor(dialog, 'Playbook YAML', PLAYBOOK);
   await dialog.getByRole('button', { name: 'Save playbook' }).click();
   await toast(page, /Playbook (created|saved)/);
 

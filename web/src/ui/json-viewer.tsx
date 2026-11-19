@@ -29,8 +29,8 @@ type Token = 'key' | 'string' | 'number' | 'boolean' | 'null' | 'masked' | 'punc
  * calm hues kept apart from the state colours, which mean something else. */
 const TOKEN_CLASS: Record<Token, string> = {
   key: 'text-brand',
-  string: 'text-[#A5D6A7]',
-  number: 'text-[#F9A66C]',
+  string: 'text-[var(--px-syntax-string)]',
+  number: 'text-[var(--px-syntax-number)]',
   boolean: 'text-[var(--px-maintenance)]',
   null: 'text-muted-foreground italic',
   masked: 'text-warn',

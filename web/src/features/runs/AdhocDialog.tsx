@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Label } from '../../ui/label.tsx';
+import { CodeEditor } from '../../ui/code-editor.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useHost, useHosts } from '../../api/hooks/useHosts.ts';
@@ -125,16 +126,15 @@ export function AdhocDialog({
           <span className="text-[11px] text-muted-foreground">{t.runs.adhoc.selected(selected.length)}</span>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="adhoc-argv">{t.runs.adhoc.command}</Label>
-          <textarea
-            id="adhoc-argv"
-            aria-label={t.runs.adhoc.command}
-            rows={4}
-            spellCheck={false}
+          <Label id="adhoc-argv-label">{t.runs.adhoc.command}</Label>
+          <CodeEditor
+            labelledBy="adhoc-argv-label"
+            language="text"
             maxLength={MAX_ARGV}
-            className="rounded-md border border-border bg-background p-2 font-mono text-[11px] text-foreground"
+            minHeight="5rem"
+            maxHeight="16rem"
             value={argv}
-            onChange={(e) => setArgv(e.target.value)}
+            onChange={setArgv}
             placeholder="uptime"
           />
         </div>

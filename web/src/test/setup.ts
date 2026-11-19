@@ -216,3 +216,19 @@ class StubPath2D {
 // it; no test asserts on scrolling through these, so a no-op is the whole stub.
 window.scrollTo = (() => {}) as typeof window.scrollTo;
 if (!Element.prototype.scrollTo) Element.prototype.scrollTo = (() => {}) as Element['scrollTo'];
+
+// CodeMirror (ui/code-editor.tsx) measures its text through Range objects
+// once it has the focus or a measure cycle runs. jsdom does no layout and
+// leaves both Range measuring methods out, so the first click into an
+// editor threw "getClientRects is not a function" as an unhandled error.
+// Empty answers are all a test needs: nothing asserts on the editor's
+// geometry, and the editor treats empty rects as "not laid out".
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = function () {
+    const rects: DOMRect[] = [];
+    return Object.assign(rects, { item: (i: number) => rects[i] ?? null }) as unknown as DOMRectList;
+  };
+}
+if (!Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+}

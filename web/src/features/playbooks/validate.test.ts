@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateYAML as validate } from './validate.ts';
+import { validateYAML as validate, validateYAMLProblem } from './validate.ts';
 import { en } from '../../i18n/en/index.ts';
 
 const validateYAML = (inline: string) => validate(inline, en);
@@ -74,5 +74,23 @@ describe('validateYAML mirrors playbooks.ValidateYAML', () => {
     expect(new TextEncoder().encode(atLimit).length).toBe(512 * 1024);
     expect(validateYAML(atLimit)).toBeNull();
     expect(validateYAML(atLimit + 'x')).toBe('playbook exceeds 512 KiB');
+  });
+});
+
+describe('validateYAMLProblem', () => {
+  it('names the line of a tab indentation, counted in the whole text', () => {
+    expect(validateYAMLProblem('# intro\n- hosts: all\n\ttasks: []\n', en)).toEqual({
+      message: 'malformed YAML: found character that cannot start any token',
+      line: 3,
+    });
+  });
+
+  it('gives no line where the minimal parser cannot tell one cheaply', () => {
+    expect(validateYAMLProblem('- hosts: 123\n  tasks: []\n', en)).toEqual({ message: 'play 1: hosts must be a string' });
+    expect(validateYAMLProblem('hosts: all\n', en)).toEqual({ message: 'expected a list of plays' });
+  });
+
+  it('is null for a document that passes', () => {
+    expect(validateYAMLProblem('- hosts: all\n', en)).toBeNull();
   });
 });

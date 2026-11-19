@@ -14,6 +14,7 @@ import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { workerServiceAvailable } from './worker.ts';
 import { pickOption } from './pickOption.ts';
 import { chooseRowAction } from './rowMenu.ts';
+import { fillCodeEditor } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -66,7 +67,7 @@ test('a run starts its follow-up and the two runs link to each other', async ({ 
   await page.goto(`${base}/playbooks`);
   await page.getByRole('button', { name: 'New editor playbook' }).click();
   const editor = page.getByRole('dialog', { name: 'New editor playbook' });
-  await editor.getByLabel('Playbook YAML', { exact: false }).fill(CHAIN_PLAYBOOK);
+  await fillCodeEditor(editor, 'Playbook YAML', CHAIN_PLAYBOOK);
   await editor.getByRole('button', { name: 'Save playbook' }).click();
   await toast(page, 'Playbook created');
 

@@ -99,6 +99,9 @@ export const deUi: Messages['ui'] = {
     label: (what: string, range: string, samples: number) => `${what}, ${range}, ${samples} Messwerte`,
     empty: 'Keine Messwerte in diesem Zeitraum.',
   },
+  codeEditor: {
+    keyboardHint: 'Tab rückt ein. Um den Editor mit der Tastatur zu verlassen, drück Escape und dann Tab.',
+  },
   jsonViewer: {
     expandAll: 'Alle aufklappen',
     collapseAll: 'Alle zuklappen',

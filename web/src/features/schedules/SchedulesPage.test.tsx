@@ -9,6 +9,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { SchedulesPage } from './SchedulesPage.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+import { codeOf, findCodeEditor, replaceCode } from '../../test/codeEditor.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const template = { id: 't1', name: 'patch-all', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, created_at: '', updated_at: '' };
@@ -223,5 +224,28 @@ describe('SchedulesPage', () => {
     await pickOption(within(panel), 'When a targeted host is in a maintenance window', { value: 'exclude_hosts' });
     await user.click(within(panel).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toMatchObject({ guards: { maintenance: 'exclude_hosts' } }));
+  });
+
+  it('edits the extra vars as JSON in the code editor', async () => {
+    const user = userEvent.setup();
+    let put: unknown;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
+      'GET /api/v1/orgs/acme/schedules/s1': { schedule: schedule({ extra_vars: { release: 'v1.1' } }) },
+      'GET /api/v1/orgs/acme/schedules/s1/runs': { runs: [] },
+      'POST /api/v1/orgs/acme/schedules/preview': { cron: '0 3 * * 2,4', description: '', next: [] },
+      'PUT /api/v1/orgs/acme/schedules/s1': (req: MockRequest) => {
+        put = req.body;
+        return { schedule: schedule() };
+      },
+    });
+    renderPage('/o/acme/schedules?id=s1');
+    const panel = await screen.findByRole('region', { name: 'Schedule editor' });
+    const vars = await findCodeEditor('Extra vars', within(panel));
+    expect(codeOf(vars)).toBe('{\n  "release": "v1.1"\n}');
+    replaceCode(vars, '{"release": "v1.2", "reboot": true}');
+    await user.click(within(panel).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toMatchObject({ extra_vars: { release: 'v1.2', reboot: true } }));
   });
 });

@@ -26,6 +26,7 @@ import { workerServiceAvailable } from './worker.ts';
 import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
 import { chooseRowAction } from './rowMenu.ts';
+import { fillCodeEditor } from './codeEditor.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -180,7 +181,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await page.goto(`${base}/playbooks`);
   await page.getByRole('button', { name: 'New editor playbook' }).click();
   dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await dialog.getByLabel('Playbook YAML', { exact: false }).fill(HELLO_PLAYBOOK);
+  await fillCodeEditor(dialog, 'Playbook YAML', HELLO_PLAYBOOK);
   await dialog.getByRole('button', { name: 'Save playbook' }).click();
   await toast(page, 'Playbook created');
 
@@ -213,7 +214,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await page.goto(`${base}/playbooks`);
   await page.getByRole('button', { name: 'New editor playbook' }).click();
   dialog = page.getByRole('dialog', { name: 'New editor playbook' });
-  await dialog.getByLabel('Playbook YAML', { exact: false }).fill(FAIL_PLAYBOOK);
+  await fillCodeEditor(dialog, 'Playbook YAML', FAIL_PLAYBOOK);
   await dialog.getByRole('button', { name: 'Save playbook' }).click();
   await toast(page, 'Playbook created');
 

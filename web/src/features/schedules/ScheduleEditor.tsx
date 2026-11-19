@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { TimeField } from '../../ui/TimeField.tsx';
 import { Label } from '../../ui/label.tsx';
+import { CodeEditor } from '../../ui/code-editor.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -298,14 +299,16 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       />
       <Label htmlFor="sched-limit">{m.limit}</Label>
       <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={m.limitPlaceholder} disabled={!canWrite} />
-      <Label htmlFor="sched-vars">{m.extraVars}</Label>
-      <textarea
-        id="sched-vars"
-        className="min-h-20 rounded-md border border-border bg-background p-2 font-mono text-xs"
+      <Label id="sched-vars-label">{m.extraVars}</Label>
+      <CodeEditor
+        labelledBy="sched-vars-label"
+        language="json"
+        minHeight="5rem"
+        maxHeight="20rem"
         value={extraVars}
-        onChange={(e) => setExtraVars(e.target.value)}
+        onChange={setExtraVars}
         placeholder='{"release": "v1.2"}'
-        disabled={!canWrite}
+        readOnly={!canWrite}
       />
       {error && <p role="alert" className="text-xs text-[var(--px-crit)]">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">

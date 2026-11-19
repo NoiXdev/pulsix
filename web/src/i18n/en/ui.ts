@@ -106,6 +106,9 @@ export const enUi = {
     label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples} samples`,
     empty: 'No samples in this range.',
   },
+  codeEditor: {
+    keyboardHint: 'Tab indents. To leave the editor with the keyboard, press Escape, then Tab.',
+  },
   jsonViewer: {
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
