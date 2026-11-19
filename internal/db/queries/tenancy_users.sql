@@ -154,6 +154,31 @@ ORDER BY i.created_at DESC, i.id;
 -- is history and stays.
 DELETE FROM invites WHERE id = $1 AND org_id = $2 AND accepted_at IS NULL;
 
+-- name: RotateInvite :one
+-- Resending an invitation (spec 2026-11-19 §4): an unaccepted invitation of
+-- org_id, expired or not, gets a new link hash, expiry and issuer in one
+-- statement, and the values it replaced come back for RestoreInvite. The
+-- CTE locks the row, so a concurrent accept or resend serializes with this
+-- one and the replaced values are the ones this statement overwrote.
+WITH prev AS (
+  SELECT p.id, p.token_hash, p.expires_at, p.invited_by FROM invites AS p
+  WHERE p.id = sqlc.arg(id) AND p.org_id = sqlc.arg(org_id) AND p.accepted_at IS NULL
+  FOR UPDATE
+)
+UPDATE invites AS i
+SET token_hash = sqlc.arg(token_hash), expires_at = sqlc.arg(expires_at), invited_by = sqlc.arg(invited_by)
+FROM prev
+WHERE i.id = prev.id
+RETURNING i.id, i.org_id, i.email, i.role, i.invited_by, i.expires_at,
+  prev.token_hash AS prev_token_hash, prev.expires_at AS prev_expires_at, prev.invited_by AS prev_invited_by;
+
+-- name: RestoreInvite :exec
+-- Undoes RotateInvite after the new link could not be delivered, but only
+-- while the invitation is unaccepted and still carries that link.
+UPDATE invites
+SET token_hash = sqlc.arg(prev_token_hash), expires_at = sqlc.arg(prev_expires_at), invited_by = sqlc.arg(prev_invited_by)
+WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id) AND token_hash = sqlc.arg(current_token_hash) AND accepted_at IS NULL;
+
 -- name: DeleteInvite :exec
 -- Removes an invitation that was never delivered: tenancy.Service.Invite
 -- inserts the row before sending the mail that carries its link, and

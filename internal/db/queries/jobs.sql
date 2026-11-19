@@ -72,19 +72,23 @@ LEFT JOIN job_templates AS jt ON jt.id = j.template_id
 WHERE j.org_id = $1 AND j.id = $2;
 
 -- name: ListJobs :many
--- Every optional filter (zone, status, kind, template, run group, trigger,
--- trigger ref, and the cursor's own (created_at, id) keyset pair) is
+-- Every optional filter (zone, status, kind, template, playbook, run group,
+-- trigger, trigger ref, and the cursor's own (created_at, id) keyset pair) is
 -- expressed as "param IS NULL OR <condition>", the same
 -- one-query-serves-every-combination shape ListHosts uses. Ordering is
 -- descending on (created_at, id) — newest runs first, id as the tiebreaker
 -- — so the cursor condition resumes strictly before the last row of the
 -- previous page. The runs of one host are ListJobsForHost.
+-- The playbook filter keeps the runs of the templates that use the playbook
+-- now (spec 2026-11-19 §2); a run without a template never matches.
 SELECT * FROM jobs
-WHERE org_id = sqlc.arg(org_id)
+WHERE jobs.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -115,6 +119,8 @@ WHERE jh.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -131,11 +137,13 @@ LIMIT sqlc.arg(row_limit);
 -- The filters are ListJobs' own, without the cursor. Live runs only
 -- (status=active) are ListLiveJobs.
 SELECT * FROM jobs
-WHERE org_id = sqlc.arg(org_id)
+WHERE jobs.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -155,6 +163,8 @@ WHERE j.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -173,11 +183,13 @@ OFFSET sqlc.arg(row_offset) LIMIT sqlc.arg(row_limit);
 -- name: CountJobs :one
 -- ListJobsPage's filters, counted: the total of a paged answer.
 SELECT count(*) FROM jobs
-WHERE org_id = sqlc.arg(org_id)
+WHERE jobs.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid);
@@ -194,6 +206,8 @@ WHERE jh.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -213,6 +227,8 @@ WHERE jh.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -239,6 +255,8 @@ WHERE jh.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid);
@@ -264,6 +282,8 @@ WHERE j.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
@@ -294,6 +314,8 @@ WHERE j.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
   AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
   AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(playbook_id)::uuid IS NULL OR j.template_id IN (
+    SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = sqlc.narg(playbook_id)::uuid))
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid);

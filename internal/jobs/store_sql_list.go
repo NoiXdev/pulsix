@@ -28,6 +28,7 @@ func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, curs
 		Status:     textToPg(statusPtr(f.Status)),
 		Kind:       textToPg(kindPtr(f.Kind)),
 		TemplateID: uuidToPg(f.TemplateID),
+		PlaybookID: uuidToPg(f.PlaybookID),
 		RunGroupID: uuidToPg(f.RunGroupID),
 		Trigger:    textToPg(f.Trigger),
 		TriggerRef: uuidToPg(f.TriggerRef),
@@ -65,7 +66,7 @@ func (s *SQLStore) listJobRows(ctx context.Context, p gen.ListJobsParams, hostID
 	}
 	rows, err := s.q.ListJobsForHost(ctx, gen.ListJobsForHostParams{
 		OrgID: p.OrgID, HostID: *hostID,
-		ZoneID: p.ZoneID, Status: p.Status, Kind: p.Kind, TemplateID: p.TemplateID,
+		ZoneID: p.ZoneID, Status: p.Status, Kind: p.Kind, TemplateID: p.TemplateID, PlaybookID: p.PlaybookID,
 		RunGroupID: p.RunGroupID, Trigger: p.Trigger, TriggerRef: p.TriggerRef,
 		CursorAt: p.CursorAt, CursorID: p.CursorID, RowLimit: p.RowLimit,
 	})
@@ -90,7 +91,7 @@ func (s *SQLStore) ListJobsPage(ctx context.Context, orgID uuid.UUID, f Filter, 
 	}
 	base := gen.ListJobsParams{
 		OrgID: orgID, ZoneID: uuidToPg(f.ZoneID), Status: textToPg(statusPtr(f.Status)), Kind: textToPg(kindPtr(f.Kind)),
-		TemplateID: uuidToPg(f.TemplateID), RunGroupID: uuidToPg(f.RunGroupID), Trigger: textToPg(f.Trigger), TriggerRef: uuidToPg(f.TriggerRef),
+		TemplateID: uuidToPg(f.TemplateID), PlaybookID: uuidToPg(f.PlaybookID), RunGroupID: uuidToPg(f.RunGroupID), Trigger: textToPg(f.Trigger), TriggerRef: uuidToPg(f.TriggerRef),
 	}
 	offset, limit := p.Offset(), p.Size
 	var rows []gen.Job
@@ -101,7 +102,7 @@ func (s *SQLStore) ListJobsPage(ctx context.Context, orgID uuid.UUID, f Filter, 
 		if rows, err = s.listLive(ctx, orgID, f, base, p.Sort, p.Desc, offset, limit); err == nil {
 			total, err = s.q.CountLiveJobs(ctx, gen.CountLiveJobsParams{
 				OrgID: orgID, HostID: uuidToPg(f.HostID), ZoneID: base.ZoneID, Status: base.Status, Kind: base.Kind,
-				TemplateID: base.TemplateID, RunGroupID: base.RunGroupID, Trigger: base.Trigger, TriggerRef: base.TriggerRef,
+				TemplateID: base.TemplateID, PlaybookID: base.PlaybookID, RunGroupID: base.RunGroupID, Trigger: base.Trigger, TriggerRef: base.TriggerRef,
 			})
 		}
 	case f.HostID != nil:
@@ -125,12 +126,12 @@ func (s *SQLStore) pageAll(ctx context.Context, b gen.ListJobsParams, p paging.P
 	var err error
 	if p.Sort == SortCreated && p.Desc {
 		rows, err = s.q.ListJobsPage(ctx, gen.ListJobsPageParams{
-			OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+			OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 			RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef, RowOffset: offset, RowLimit: limit,
 		})
 	} else {
 		rows, err = s.q.ListJobsPageSorted(ctx, gen.ListJobsPageSortedParams{
-			OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+			OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 			RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef,
 			SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
 		})
@@ -139,7 +140,7 @@ func (s *SQLStore) pageAll(ctx context.Context, b gen.ListJobsParams, p paging.P
 		return nil, 0, err
 	}
 	total, err := s.q.CountJobs(ctx, gen.CountJobsParams{
-		OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+		OrgID: b.OrgID, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 		RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef,
 	})
 	return rows, total, err
@@ -150,7 +151,7 @@ func (s *SQLStore) pageForHost(ctx context.Context, b gen.ListJobsParams, host u
 	var rows []gen.Job
 	if p.Sort == SortCreated && p.Desc {
 		r, err := s.q.ListJobsForHostPage(ctx, gen.ListJobsForHostPageParams{
-			OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+			OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 			RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef, RowOffset: offset, RowLimit: limit,
 		})
 		if err != nil {
@@ -161,7 +162,7 @@ func (s *SQLStore) pageForHost(ctx context.Context, b gen.ListJobsParams, host u
 		}
 	} else {
 		r, err := s.q.ListJobsForHostPageSorted(ctx, gen.ListJobsForHostPageSortedParams{
-			OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+			OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 			RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef,
 			SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
 		})
@@ -173,7 +174,7 @@ func (s *SQLStore) pageForHost(ctx context.Context, b gen.ListJobsParams, host u
 		}
 	}
 	total, err := s.q.CountJobsForHost(ctx, gen.CountJobsForHostParams{
-		OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+		OrgID: b.OrgID, HostID: host, ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 		RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef,
 	})
 	return rows, total, err
@@ -182,7 +183,7 @@ func (s *SQLStore) pageForHost(ctx context.Context, b gen.ListJobsParams, host u
 // listLive reads the live runs matching f and b's other filters and cursor.
 func (s *SQLStore) listLive(ctx context.Context, orgID uuid.UUID, f Filter, b gen.ListJobsParams, sort string, desc bool, offset, limit int) ([]gen.Job, error) {
 	return s.q.ListLiveJobs(ctx, gen.ListLiveJobsParams{
-		OrgID: orgID, HostID: uuidToPg(f.HostID), ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID,
+		OrgID: orgID, HostID: uuidToPg(f.HostID), ZoneID: b.ZoneID, Status: b.Status, Kind: b.Kind, TemplateID: b.TemplateID, PlaybookID: b.PlaybookID,
 		RunGroupID: b.RunGroupID, Trigger: b.Trigger, TriggerRef: b.TriggerRef, CursorAt: b.CursorAt, CursorID: b.CursorID,
 		SortKey: sort, SortDesc: desc,
 		RowOffset: int32(offset), RowLimit: int32(limit), //nolint:gosec // a page offset capped by paging.MaxPage and a clamped limit

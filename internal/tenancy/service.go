@@ -185,6 +185,23 @@ type Store interface {
 	// RevokeInvite deletes an unaccepted invitation of orgID, returning
 	// ErrNotFound when there is none with that id.
 	RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error
+	// RotateInvite gives orgID's unaccepted invitation id next's token
+	// hash, expiry and issuer in one step, expired or not, and returns the
+	// invitation as it now is together with the values next replaced.
+	// ErrNotFound when orgID has no unaccepted invitation with that id.
+	RotateInvite(ctx context.Context, orgID, id uuid.UUID, next InviteRotation) (Invite, InviteRotation, error)
+	// RestoreInvite puts prev back on invitation id of orgID, but only
+	// while it is unaccepted and still carries the token hash current: a
+	// later resend or an acceptance in between is left alone.
+	RestoreInvite(ctx context.Context, orgID, id uuid.UUID, current []byte, prev InviteRotation) error
+}
+
+// InviteRotation is the part of an invitation a resend replaces: the
+// stored hash of its link secret, its expiry and its issuer.
+type InviteRotation struct {
+	TokenHash []byte
+	ExpiresAt time.Time
+	InvitedBy uuid.UUID
 }
 
 // Mailer sends transactional mail. Tests use a recording fake; production

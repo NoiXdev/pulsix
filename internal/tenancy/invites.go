@@ -51,29 +51,52 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 	if err != nil {
 		return Invite{}, err
 	}
-	secret := make([]byte, inviteSecretBytes)
-	if _, err := rand.Read(secret); err != nil {
+	token, sum, err := newInviteToken()
+	if err != nil {
 		return Invite{}, err
 	}
-	token := base64.RawURLEncoding.EncodeToString(secret)
-	sum := sha256.Sum256([]byte(token))
 	inv := Invite{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Email: strings.ToLower(email), Role: role,
 		InvitedBy: byUserID, ExpiresAt: s.now().Add(InviteTTL), Token: token,
 	}
-	if err := s.store.InsertInvite(ctx, inv, sum[:]); err != nil {
+	if err := s.store.InsertInvite(ctx, inv, sum); err != nil {
 		return Invite{}, fmt.Errorf("insert invite: %w", err)
 	}
-	link := s.publicURL + "/invite#token=" + token
+	if sendErr := s.mailInvite(ctx, org.Name, &inv); sendErr != nil {
+		if err := s.store.DeleteInvite(ctx, orgID, inv.ID); err != nil {
+			return Invite{}, fmt.Errorf("%w: %w (and removing the undelivered invitation failed: %w)", ErrInviteDelivery, sendErr, err)
+		}
+		return Invite{}, fmt.Errorf("%w: %w", ErrInviteDelivery, sendErr)
+	}
+	return inv, nil
+}
+
+// newInviteToken returns a fresh invitation link secret and the SHA-256
+// hash of it that is stored; the secret itself never is.
+func newInviteToken() (string, []byte, error) {
+	secret := make([]byte, inviteSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return "", nil, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(secret)
+	sum := sha256.Sum256([]byte(token))
+	return token, sum[:], nil
+}
+
+// mailInvite e-mails inv's acceptance link (inv.Token) to inv.Email. It
+// sets inv.Mailed when the mail went out and inv.AcceptURL when the
+// instance has no outgoing mail configured; any other delivery failure is
+// returned, and the caller undoes what it stored for the invitation.
+func (s *Service) mailInvite(ctx context.Context, orgName string, inv *Invite) error {
+	link := s.publicURL + "/invite#token=" + inv.Token
 	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s\n\nThe link expires in 7 days.",
-		org.Name, role, link)
+		orgName, inv.Role, link)
 	// The send is deliberately not governed by the request (backlog 1.25).
 	// A client that disconnects — a closed tab, a reverse proxy timing the
 	// request out — would otherwise tear the SMTP conversation down
-	// mid-flight, and the default branch below would delete an invitation
-	// whose mail may already have been accepted. Whether someone receives
-	// their invitation must not depend on whether the person who sent it
-	// stayed on the page.
+	// mid-flight, and the caller would undo an invitation whose mail may
+	// already have been accepted. Whether someone receives their invitation
+	// must not depend on whether the person who sent it stayed on the page.
 	//
 	// Detached, not unbounded: the mailer honours whatever context it is
 	// given (which is why this is done here and not inside it — the "send
@@ -82,19 +105,16 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 	// call forever.
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inviteSendTimeout)
 	defer cancel()
-	sendErr := s.mailer.Send(sendCtx, inv.Email, "Invitation to "+org.Name, body)
+	sendErr := s.mailer.Send(sendCtx, inv.Email, "Invitation to "+orgName, body)
 	switch {
 	case sendErr == nil:
 		inv.Mailed = true
 	case errors.Is(sendErr, mail.ErrNotConfigured):
 		inv.AcceptURL = link
 	default:
-		if err := s.store.DeleteInvite(ctx, orgID, inv.ID); err != nil {
-			return Invite{}, fmt.Errorf("%w: %w (and removing the undelivered invitation failed: %w)", ErrInviteDelivery, sendErr, err)
-		}
-		return Invite{}, fmt.Errorf("%w: %w", ErrInviteDelivery, sendErr)
+		return sendErr
 	}
-	return inv, nil
+	return nil
 }
 
 // AcceptInvite redeems token, creating or reusing the invited user, and

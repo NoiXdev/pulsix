@@ -273,6 +273,9 @@ type Filter struct {
 	// trigger's per-zone group (the run view's grouped-run listing).
 	TemplateID *uuid.UUID
 	RunGroupID *uuid.UUID
+	// PlaybookID narrows to the runs of the templates that use this
+	// playbook; a run without a template never matches.
+	PlaybookID *uuid.UUID
 	// Trigger narrows to one trigger kind (manual, schedule, webhook,
 	// system); TriggerRef to the runs one schedule or webhook started.
 	Trigger    *string

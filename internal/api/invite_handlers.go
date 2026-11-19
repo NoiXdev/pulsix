@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -26,9 +28,20 @@ type inviteListOutput struct {
 	}
 }
 
-type inviteRevokeInput struct {
+type inviteIDInput struct {
 	Org      string `path:"org"`
 	InviteID string `path:"inviteId"`
+}
+
+type inviteResendOutput struct {
+	Body struct {
+		ID        string    `json:"id"`
+		Email     string    `json:"email"`
+		Role      string    `json:"role"`
+		ExpiresAt time.Time `json:"expires_at" doc:"The new expiry: the normal validity from now"`
+		MailSent  bool      `json:"mail_sent" doc:"Whether the invitation e-mail went out"`
+		AcceptURL string    `json:"accept_url,omitempty" doc:"The new acceptance link, only when the instance has no outgoing mail configured"`
+	}
 }
 
 // registerInviteRoutes wires the open-invitation list and its revocation
@@ -36,6 +49,8 @@ type inviteRevokeInput struct {
 // shows who is about to join, and the revoke decides that they will not.
 // An invitation whose sender has since lost the right to add members is
 // not open any more and is not listed (tenancy's issuer condition).
+// Resending one (spec 2026-11-19 §4) mails a new link and so sits exactly
+// where sending one does, interactive session included.
 func registerInviteRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/invites", func(ctx context.Context, in *memberListInput) (*inviteListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
@@ -58,7 +73,7 @@ func registerInviteRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Delete(hapi, "/api/v1/orgs/{org}/invites/{inviteId}", func(ctx context.Context, in *inviteRevokeInput) (*okOutput, error) {
+	huma.Delete(hapi, "/api/v1/orgs/{org}/invites/{inviteId}", func(ctx context.Context, in *inviteIDInput) (*okOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
 		if err != nil {
 			return nil, err
@@ -73,4 +88,33 @@ func registerInviteRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, id.String(), "revoked invitation")
 		return &okOutput{}, nil
 	}, withAudit("revokeInvite", "invite"))
+
+	huma.Post(hapi, "/api/v1/orgs/{org}/invites/{inviteId}/resend", func(ctx context.Context, in *inviteIDInput) (*inviteResendOutput, error) {
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
+		if err != nil {
+			return nil, err
+		}
+		id, err := uuid.Parse(in.InviteID)
+		if err != nil {
+			return nil, huma.Error404NotFound("not found")
+		}
+		inv, err := deps.Tenancy.ResendInvite(ctx, scope.OrgID, scope.UserID, id)
+		if errors.Is(err, tenancy.ErrInviteDelivery) {
+			// As on create, the SMTP answer stays in the log; unlike create,
+			// the invitation is kept as it was, old link included.
+			slog.ErrorContext(ctx, "resent invitation e-mail could not be delivered", "err", err)
+			return nil, huma.Error502BadGateway("the invitation e-mail could not be delivered, so the invitation was left as it was; check the instance's outgoing mail settings and try again")
+		}
+		if err != nil {
+			return nil, mapTenancyErr(ctx, err)
+		}
+		setAuditObject(ctx, inv.ID.String(), "resent the invitation to "+inv.Email)
+		out := &inviteResendOutput{}
+		out.Body.ID, out.Body.Email, out.Body.Role, out.Body.ExpiresAt = inv.ID.String(), inv.Email, string(inv.Role), inv.ExpiresAt
+		out.Body.MailSent, out.Body.AcceptURL = inv.Mailed, inv.AcceptURL
+		return out, nil
+	}, withAudit("resendInvite", "invite"))
 }

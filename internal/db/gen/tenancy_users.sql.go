@@ -288,6 +288,35 @@ func (q *Queries) PeekInvite(ctx context.Context, arg PeekInviteParams) (Invite,
 	return i, err
 }
 
+const restoreInvite = `-- name: RestoreInvite :exec
+UPDATE invites
+SET token_hash = $1, expires_at = $2, invited_by = $3
+WHERE id = $4 AND org_id = $5 AND token_hash = $6 AND accepted_at IS NULL
+`
+
+type RestoreInviteParams struct {
+	PrevTokenHash    []byte    `json:"prev_token_hash"`
+	PrevExpiresAt    time.Time `json:"prev_expires_at"`
+	PrevInvitedBy    uuid.UUID `json:"prev_invited_by"`
+	ID               uuid.UUID `json:"id"`
+	OrgID            uuid.UUID `json:"org_id"`
+	CurrentTokenHash []byte    `json:"current_token_hash"`
+}
+
+// Undoes RotateInvite after the new link could not be delivered, but only
+// while the invitation is unaccepted and still carries that link.
+func (q *Queries) RestoreInvite(ctx context.Context, arg RestoreInviteParams) error {
+	_, err := q.db.Exec(ctx, restoreInvite,
+		arg.PrevTokenHash,
+		arg.PrevExpiresAt,
+		arg.PrevInvitedBy,
+		arg.ID,
+		arg.OrgID,
+		arg.CurrentTokenHash,
+	)
+	return err
+}
+
 const revokeInvite = `-- name: RevokeInvite :execrows
 DELETE FROM invites WHERE id = $1 AND org_id = $2 AND accepted_at IS NULL
 `
@@ -333,6 +362,68 @@ UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NU
 func (q *Queries) RevokeTokensForUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeTokensForUser, userID)
 	return err
+}
+
+const rotateInvite = `-- name: RotateInvite :one
+WITH prev AS (
+  SELECT p.id, p.token_hash, p.expires_at, p.invited_by FROM invites AS p
+  WHERE p.id = $4 AND p.org_id = $5 AND p.accepted_at IS NULL
+  FOR UPDATE
+)
+UPDATE invites AS i
+SET token_hash = $1, expires_at = $2, invited_by = $3
+FROM prev
+WHERE i.id = prev.id
+RETURNING i.id, i.org_id, i.email, i.role, i.invited_by, i.expires_at,
+  prev.token_hash AS prev_token_hash, prev.expires_at AS prev_expires_at, prev.invited_by AS prev_invited_by
+`
+
+type RotateInviteParams struct {
+	TokenHash []byte    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
+	InvitedBy uuid.UUID `json:"invited_by"`
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+}
+
+type RotateInviteRow struct {
+	ID            uuid.UUID `json:"id"`
+	OrgID         uuid.UUID `json:"org_id"`
+	Email         string    `json:"email"`
+	Role          OrgRole   `json:"role"`
+	InvitedBy     uuid.UUID `json:"invited_by"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	PrevTokenHash []byte    `json:"prev_token_hash"`
+	PrevExpiresAt time.Time `json:"prev_expires_at"`
+	PrevInvitedBy uuid.UUID `json:"prev_invited_by"`
+}
+
+// Resending an invitation (spec 2026-11-19 §4): an unaccepted invitation of
+// org_id, expired or not, gets a new link hash, expiry and issuer in one
+// statement, and the values it replaced come back for RestoreInvite. The
+// CTE locks the row, so a concurrent accept or resend serializes with this
+// one and the replaced values are the ones this statement overwrote.
+func (q *Queries) RotateInvite(ctx context.Context, arg RotateInviteParams) (RotateInviteRow, error) {
+	row := q.db.QueryRow(ctx, rotateInvite,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.InvitedBy,
+		arg.ID,
+		arg.OrgID,
+	)
+	var i RotateInviteRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.Role,
+		&i.InvitedBy,
+		&i.ExpiresAt,
+		&i.PrevTokenHash,
+		&i.PrevExpiresAt,
+		&i.PrevInvitedBy,
+	)
+	return i, err
 }
 
 const setUserPasswordAndName = `-- name: SetUserPasswordAndName :exec

@@ -1905,6 +1905,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/invites/{inviteId}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org invites by invite ID resend */
+        post: operations["resendInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/item-decisions": {
         parameters: {
             query?: never;
@@ -5716,6 +5733,26 @@ export interface components {
              */
             readonly $schema?: string;
             invites: components["schemas"]["PendingInviteDTO"][] | null;
+        };
+        InviteResendOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InviteResendOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The new acceptance link, only when the instance has no outgoing mail configured */
+            accept_url?: string;
+            email: string;
+            /**
+             * Format: date-time
+             * @description The new expiry: the normal validity from now
+             */
+            expires_at: string;
+            id: string;
+            /** @description Whether the invitation e-mail went out */
+            mail_sent: boolean;
+            role: string;
         };
         ItemDTO: {
             check_key: string;
@@ -13827,6 +13864,38 @@ export interface operations {
             };
         };
     };
+    resendInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteResendOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-item-decisions": {
         parameters: {
             query?: never;
@@ -14500,6 +14569,8 @@ export interface operations {
                 status?: string;
                 kind?: string;
                 template_id?: string;
+                /** @description Only the runs of the templates that use this playbook; runs without a template never match */
+                playbook_id?: string;
                 group?: string;
                 /** @description manual, schedule, webhook, system or chain */
                 trigger?: string;

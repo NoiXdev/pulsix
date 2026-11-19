@@ -289,6 +289,27 @@ func (s *SQLStore) RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error 
 	return nil
 }
 
+func (s *SQLStore) RotateInvite(ctx context.Context, orgID, id uuid.UUID, next InviteRotation) (Invite, InviteRotation, error) {
+	row, err := s.q.RotateInvite(ctx, gen.RotateInviteParams{
+		ID: id, OrgID: orgID, TokenHash: next.TokenHash, ExpiresAt: next.ExpiresAt, InvitedBy: next.InvitedBy,
+	})
+	if err != nil {
+		return Invite{}, InviteRotation{}, mapErr(err)
+	}
+	inv := Invite{
+		ID: row.ID, OrgID: row.OrgID, Email: row.Email, Role: Role(row.Role),
+		InvitedBy: row.InvitedBy, ExpiresAt: row.ExpiresAt,
+	}
+	return inv, InviteRotation{TokenHash: row.PrevTokenHash, ExpiresAt: row.PrevExpiresAt, InvitedBy: row.PrevInvitedBy}, nil
+}
+
+func (s *SQLStore) RestoreInvite(ctx context.Context, orgID, id uuid.UUID, current []byte, prev InviteRotation) error {
+	return s.q.RestoreInvite(ctx, gen.RestoreInviteParams{
+		ID: id, OrgID: orgID, CurrentTokenHash: current,
+		PrevTokenHash: prev.TokenHash, PrevExpiresAt: prev.ExpiresAt, PrevInvitedBy: prev.InvitedBy,
+	})
+}
+
 // inviteIssuerRoles are the roles an invitation's issuer must still hold
 // for it to be accepted (backlog 7.29): those that may manage members,
 // read from the permission matrix rather than repeated in SQL.
