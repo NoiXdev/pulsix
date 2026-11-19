@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -150,6 +150,49 @@ describe('HostInventoryCard', () => {
       expect(message).toContain('webserver');
       await screen.findByText('web-01 removed from webserver');
       expect(deleted).toBe(true);
+    });
+
+    it('reads the host’s groups again after a change, so the list follows it', async () => {
+      const user = userEvent.setup();
+      let member = true;
+      let reads = 0;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': () => {
+          reads++;
+          return { groups: member ? [MEMBERSHIP] : [] };
+        },
+        'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () => {
+          member = false;
+          return new Response(null, { status: 204 });
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      await acceptConfirm(user);
+      expect(await screen.findByText('Not in any inventory group yet.')).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'webserver' })).not.toBeInTheDocument();
+      expect(reads).toBe(2);
+    });
+
+    it('keeps the direct groups when the groups list for the inherited ones cannot be read', async () => {
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/inventory/groups': () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+      }));
+      renderCard(true, true);
+      expect(await screen.findByRole('link', { name: 'webserver' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add to group …' })).toBeInTheDocument();
+      expect(screen.queryByText('prod')).not.toBeInTheDocument();
+    });
+
+    it('says so when the group of a membership cannot be read for editing', async () => {
+      const user = userEvent.setup();
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => new Response(JSON.stringify({ detail: 'group read failed' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values … webserver' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
+      await waitFor(() => expect(within(dialog).getByText('Something went wrong')).toBeInTheDocument());
     });
 
     it('keeps the membership when the confirmation is declined', async () => {
