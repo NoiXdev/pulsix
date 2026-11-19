@@ -112,7 +112,7 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
     checks: () => <HostChecksTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} frozen={frozen} />,
     alerts: () => <HostAlertsTab org={org} host={host} role={role} actions={actions} openAlerts={openAlerts} />,
     runs: () => <HostRunsSection org={org} hostId={host.id} />,
-    inventory: () => <HostInventoryTab org={org} host={host} actions={actions} />,
+    inventory: () => <HostInventoryTab org={org} host={host} role={role} actions={actions} />,
     connection: () => <HostConnectionTab org={org} host={host} role={role} actions={actions} onSshAccess={openSsh} onKeySnippets={openKeySnippets} />,
   };
 

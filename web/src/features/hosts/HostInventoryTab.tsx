@@ -1,5 +1,6 @@
 import { Card } from '../../ui/table.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
+import { may } from '../../lib/roles.ts';
 import type { Host } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
@@ -11,13 +12,13 @@ import type { HostActions } from './useHostActions.tsx';
  * inventory (groups and variables, which only a managed host has; the
  * management-off hint stands in otherwise), then every fact it reported.
  */
-export function HostInventoryTab({ org, host, actions }: { org: string; host: Host; actions: HostActions }) {
+export function HostInventoryTab({ org, host, role, actions }: { org: string; host: Host; role: string; actions: HostActions }) {
   const t = useT();
   const s = t.hosts.detail.section;
   return (
     <>
       <Section id="inventory" title={s.inventory}>
-        {host.managed ? <HostInventoryCard org={org} hostId={host.id} managed /> : <ManagementOffHint actions={actions} />}
+        {host.managed ? <HostInventoryCard org={org} hostId={host.id} hostName={host.name} managed canWrite={may(role, 'inventory.write')} /> : <ManagementOffHint actions={actions} />}
       </Section>
       <Section id="facts" title={s.facts}>
         <FactsCard facts={host.facts} />

@@ -239,6 +239,7 @@ export const enInventory = {
     saveFailed: 'Saving failed',
     titleValues: (host: string) => `Values of ${host}`,
     titleAssign: (group: string) => `Assign host to ${group}`,
+    titleAddToGroup: (host: string) => `Add ${host} to a group`,
     groupValues: 'Group values (read-only)',
     saveValues: 'Save values',
     submit: (group: string) => `Assign to ${group}`,
@@ -253,6 +254,10 @@ export const enInventory = {
     more: 'More managed hosts match. Search to narrow the list, or load more.',
     noneMatching: (q: string) => `No managed host matching “${q}” is left to assign.`,
     allMembers: 'Every managed host is already a member.',
+    group: 'Group',
+    chooseGroup: 'Choose a group…',
+    groupsLoadFailed: (detail: string) => `Could not load the groups. ${detail}`,
+    allGroups: 'The host is already in every group.',
   },
   settings: {
     editTitle: 'Edit group',

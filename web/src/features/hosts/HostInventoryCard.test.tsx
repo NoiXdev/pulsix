@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { mockApi } from '../../test/mockApi.ts';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { acceptConfirm, findConfirmDialog } from '../../test/confirmDialog.ts';
+import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { HostInventoryCard } from './HostInventoryCard.tsx';
 
-function renderCard(managed: boolean) {
+function renderCard(managed: boolean, canWrite = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rootRoute = createRootRoute({ component: () => <HostInventoryCard org="acme" hostId="h1" managed={managed} /> });
+  const rootRoute = createRootRoute({ component: () => <HostInventoryCard org="acme" hostId="h1" hostName="web-01" managed={managed} canWrite={canWrite} /> });
   const groupRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/o/$org/groups/$id',
@@ -16,7 +20,11 @@ function renderCard(managed: boolean) {
   const router = createRouter({ routeTree: rootRoute.addChildren([groupRoute]), history: createMemoryHistory({ initialEntries: ['/'] }) });
   return render(
     <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -44,5 +52,123 @@ describe('HostInventoryCard', () => {
     const link = await screen.findByRole('link', { name: 'webserver' });
     expect(link.getAttribute('href')).toBe('/o/acme/groups/g1?tab=members');
     expect(screen.getByText('1 to fill in')).toBeInTheDocument();
+  });
+
+  describe('managing memberships', () => {
+    const summary = (id: string, name: string, parent_id: string | null = null) => ({
+      id, name, description: '', parent_id, members: 0, group_fields: 1, host_fields: 1, complete: true, revision: 1,
+    });
+    const GROUPS = { groups: [summary('p1', 'prod'), summary('g1', 'webserver', 'p1'), summary('g2', 'database'), summary('g3', 'mail')] };
+    const SCHEMA = { fields: [{ name: 'domain', type: 'string', scope: 'host', required: true }] };
+    const full = (id: string, name: string) => ({
+      group: { id, name, description: '', revision: 2, schema: SCHEMA, vars: {}, problems: [], orphaned: [], created_at: '', updated_at: '' },
+    });
+    const MEMBERSHIP = { group_id: 'g1', group_name: 'webserver', host_id: 'h1', host_name: 'web-01', vars: { domain: 'a.io' }, complete: true, problems: [], orphaned: [], revision: 4 };
+    const routes = (extra: Record<string, unknown> = {}) => ({
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [MEMBERSHIP] },
+      'GET /api/v1/orgs/acme/inventory/groups': GROUPS,
+      'GET /api/v1/orgs/acme/inventory/groups/g1': full('g1', 'webserver'),
+      'GET /api/v1/orgs/acme/inventory/groups/g2': full('g2', 'database'),
+      ...extra,
+    });
+
+    it('shows no actions to a reader', async () => {
+      mockApi(routes());
+      renderCard(true, false);
+      await screen.findByRole('link', { name: 'webserver' });
+      expect(screen.queryByRole('button', { name: /Add to group/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Edit values/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Remove from group/ })).not.toBeInTheDocument();
+    });
+
+    it('lists inherited groups muted, with the subgroup they come through and no actions', async () => {
+      mockApi(routes());
+      renderCard(true, true);
+      const item = (await screen.findByText('prod')).closest('li')!;
+      expect(within(item).getByText('via webserver')).toBeInTheDocument();
+      expect(within(item).queryByRole('button')).not.toBeInTheDocument();
+    });
+
+    it('offers only groups the host is not in and assigns to the chosen one', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'PUT /api/v1/orgs/acme/inventory/groups/g2/members/h1': (req: MockRequest) => {
+          put = req;
+          return { member: { ...MEMBERSHIP, group_id: 'g2', group_name: 'database' } };
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Add to group …' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Add web-01 to a group' });
+      await user.click(within(dialog).getByLabelText('Group'));
+      expect(within(dialog).queryByRole('option', { name: 'webserver' })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole('option', { name: 'all' })).not.toBeInTheDocument();
+      expect(within(dialog).getByRole('option', { name: 'database' })).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('option', { name: 'database' }));
+      await user.type(await within(dialog).findByLabelText('domain'), 'db.io');
+      await user.click(within(dialog).getByRole('button', { name: 'Assign to database' }));
+      await screen.findByText('Host assigned to database');
+      expect(put?.body).toEqual({ vars: { domain: 'db.io' } });
+    });
+
+    it('edits the values of a membership with its revision', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/members/h1': (req: MockRequest) => {
+          put = req;
+          return { member: MEMBERSHIP };
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values … webserver' }));
+      const dialog = await screen.findByRole('dialog');
+      const domain = await within(dialog).findByLabelText('domain');
+      expect(domain).toHaveValue('a.io');
+      await user.clear(domain);
+      await user.type(domain, 'b.io');
+      await user.click(within(dialog).getByRole('button', { name: 'Save values' }));
+      await screen.findByText('Values of web-01 saved');
+      expect(put?.body).toEqual({ vars: { domain: 'b.io' } });
+      expect(put?.headers.get('If-Match')).toBe('"4"');
+    });
+
+    it('asks before removing the host from a group and then unassigns it', async () => {
+      const user = userEvent.setup();
+      let deleted = false;
+      mockApi(routes({
+        'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () => {
+          deleted = true;
+          return new Response(null, { status: 204 });
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      const message = await acceptConfirm(user);
+      expect(message).toContain('web-01');
+      expect(message).toContain('webserver');
+      await screen.findByText('web-01 removed from webserver');
+      expect(deleted).toBe(true);
+    });
+
+    it('keeps the membership when the confirmation is declined', async () => {
+      const user = userEvent.setup();
+      let deleted = false;
+      mockApi(routes({ 'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () => ((deleted = true), new Response(null, { status: 204 })) }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Remove from group … webserver' }));
+      const dialog = await findConfirmDialog();
+      await user.click(within(dialog).getAllByRole('button')[0]);
+      expect(deleted).toBe(false);
+    });
+
+    it('shows the missing values of a membership on its row', async () => {
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [{ ...MEMBERSHIP, complete: false, problems: [{ path: 'domain', message: 'is required' }] }] },
+      }));
+      renderCard(true, true);
+      expect(await screen.findByText('1 to fill in')).toBeInTheDocument();
+    });
   });
 });

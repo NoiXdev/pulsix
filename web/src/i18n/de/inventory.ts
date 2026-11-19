@@ -250,6 +250,7 @@ export const deInventory: Messages['inventory'] = {
     saveFailed: 'Speichern fehlgeschlagen',
     titleValues: (host: string) => `Werte von ${host}`,
     titleAssign: (group: string) => `Host der Gruppe ${group} zuweisen`,
+    titleAddToGroup: (host: string) => `${host} zu einer Gruppe hinzufügen`,
     groupValues: 'Gruppenwerte (schreibgeschützt)',
     saveValues: 'Werte speichern',
     submit: (group: string) => `Der Gruppe ${group} zuweisen`,
@@ -264,6 +265,10 @@ export const deInventory: Messages['inventory'] = {
     more: 'Weitere verwaltete Hosts passen zur Suche. Die Suche eingrenzen oder mehr laden.',
     noneMatching: (q: string) => `Kein verbleibender verwalteter Host passt zu „${q}“.`,
     allMembers: 'Jeder verwaltete Host ist bereits Mitglied.',
+    group: 'Gruppe',
+    chooseGroup: 'Gruppe wählen…',
+    groupsLoadFailed: (detail: string) => `Die Gruppen konnten nicht geladen werden. ${detail}`,
+    allGroups: 'Der Host ist bereits in jeder Gruppe.',
   },
   settings: {
     editTitle: 'Gruppe bearbeiten',

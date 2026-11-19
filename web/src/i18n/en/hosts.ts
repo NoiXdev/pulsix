@@ -302,6 +302,13 @@ export const enHosts = {
     none: 'Not in any inventory group yet.',
     complete: 'complete',
     toFill: (n: number) => `${n} to fill in`,
+    addToGroup: 'Add to group …',
+    editValues: 'Edit values …',
+    removeFromGroup: 'Remove from group …',
+    editValuesFor: (group: string) => `Edit values … ${group}`,
+    removeFromGroupFor: (group: string) => `Remove from group … ${group}`,
+    inheritedVia: (group: string) => `via ${group}`,
+    inheritedLabel: 'Inherited through a subgroup',
   },
   ssh: {
     user: 'User',

@@ -296,6 +296,13 @@ export const deHosts: Messages['hosts'] = {
     none: 'In noch keiner Inventargruppe.',
     complete: 'vollständig',
     toFill: (n: number) => `${n} auszufüllen`,
+    addToGroup: 'Zu Gruppe hinzufügen …',
+    editValues: 'Werte bearbeiten …',
+    removeFromGroup: 'Aus Gruppe entfernen …',
+    editValuesFor: (group: string) => `Werte bearbeiten … ${group}`,
+    removeFromGroupFor: (group: string) => `Aus Gruppe entfernen … ${group}`,
+    inheritedVia: (group: string) => `über ${group}`,
+    inheritedLabel: 'Über eine Untergruppe geerbt',
   },
   ssh: {
     user: 'Benutzer',
