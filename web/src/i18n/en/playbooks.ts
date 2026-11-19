@@ -65,6 +65,7 @@ export const enPlaybooks = {
       title: 'Variables',
       hint: 'A hint read from the YAML: the names its {{ }} expressions use.',
       none: 'The playbook uses no variables.',
+      varsFiles: 'A play loads vars_files: names set there may show here as needing a value.',
       vars: 'set in vars',
       task: 'set by a task',
       external: 'needs a value from the template or inventory',

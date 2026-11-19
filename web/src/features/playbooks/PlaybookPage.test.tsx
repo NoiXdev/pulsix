@@ -94,6 +94,35 @@ describe('PlaybookPage', () => {
     expect(screen.getByText('Unsaved')).toBeInTheDocument();
   });
 
+  it('takes a newer stored text into a clean draft', async () => {
+    let current = editorPlaybook();
+    mockApi(routes('operator', { 'GET /api/v1/orgs/acme/playbooks/p1': () => ({ playbook: current }) }));
+    const { qc } = renderAt('/o/acme/playbooks/p1');
+    const editor = await findCodeEditor('Playbook YAML');
+    expect(codeOf(editor)).toBe(INLINE);
+    current = editorPlaybook({ inline: '- hosts: elsewhere\n' });
+    await qc.invalidateQueries({ queryKey: ['playbooks', 'acme'] });
+    await waitFor(() => expect(codeOf(editor)).toBe('- hosts: elsewhere\n'));
+    expect(screen.queryByText('Unsaved')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('keeps a dirty draft when the stored text changes', async () => {
+    let current = editorPlaybook();
+    let reads = 0;
+    mockApi(routes('operator', { 'GET /api/v1/orgs/acme/playbooks/p1': () => (reads++, { playbook: current }) }));
+    const { qc } = renderAt('/o/acme/playbooks/p1');
+    const editor = await findCodeEditor('Playbook YAML');
+    replaceCode(editor, '- hosts: mine\n');
+    await screen.findByText('Unsaved');
+    current = editorPlaybook({ inline: '- hosts: elsewhere\n' });
+    const before = reads;
+    await qc.invalidateQueries({ queryKey: ['playbooks', 'acme'] });
+    await waitFor(() => expect(reads).toBeGreaterThan(before));
+    expect(codeOf(editor)).toBe('- hosts: mine\n');
+    expect(screen.getByText('Unsaved')).toBeInTheDocument();
+  });
+
   it('keeps the draft across tab switches without asking', async () => {
     const user = userEvent.setup();
     mockApi(routes());
@@ -168,6 +197,19 @@ describe('PlaybookPage', () => {
     expect(within(panel).getByText('domain')).toBeInTheDocument();
     expect(within(panel).getByText('needs a value from the template or inventory')).toBeInTheDocument();
     expect(within(panel).getByText(/A hint read from the YAML/)).toBeInTheDocument();
+  });
+
+  it('says that names may come from vars_files when a play loads some', async () => {
+    mockApi(
+      routes('operator', {
+        'GET /api/v1/orgs/acme/playbooks/p1': {
+          playbook: editorPlaybook({ inline: '- hosts: all\n  vars_files:\n    - vars/main.yml\n  tasks:\n    - ansible.builtin.debug:\n        msg: "{{ domain }}"\n' }),
+        },
+      }),
+    );
+    renderAt('/o/acme/playbooks/p1');
+    const panel = await screen.findByRole('region', { name: 'Variables' });
+    expect(await within(panel).findByText('A play loads vars_files: names set there may show here as needing a value.')).toBeInTheDocument();
   });
 
   it('shows the latest runs with a way to the Runs tab', async () => {

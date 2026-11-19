@@ -70,6 +70,7 @@ export const dePlaybooks: Messages['playbooks'] = {
       title: 'Variablen',
       hint: 'Ein Hinweis aus dem YAML: die Namen, die seine {{ }}-Ausdrücke verwenden.',
       none: 'Das Playbook verwendet keine Variablen.',
+      varsFiles: 'Ein Play lädt vars_files: Namen von dort können hier als fehlend erscheinen.',
       vars: 'gesetzt in vars',
       task: 'von einem Task gesetzt',
       external: 'braucht einen Wert aus der Vorlage oder dem Inventar',

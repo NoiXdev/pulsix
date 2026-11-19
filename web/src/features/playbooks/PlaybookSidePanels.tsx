@@ -1,6 +1,6 @@
 import { useId, useMemo, type ReactNode } from 'react';
 import { useT } from '../../i18n/useT.ts';
-import { playbookVariables, type VariableSource } from './variables.ts';
+import { playbookVariables, usesVarsFiles, type VariableSource } from './variables.ts';
 import type { YAMLProblem } from './validate.ts';
 
 /** SidePanel is one titled box of the playbook page's side column, a region
@@ -64,9 +64,11 @@ export function PlaybookVariablesPanel({ yaml }: { yaml: string }) {
   const t = useT();
   const v = t.playbooks.page.variables;
   const names = useMemo(() => playbookVariables(yaml), [yaml]);
+  const varsFiles = useMemo(() => usesVarsFiles(yaml), [yaml]);
   return (
     <SidePanel title={v.title}>
       <p className="text-[11px] text-muted-foreground">{v.hint}</p>
+      {varsFiles && <p className="text-[11px] text-muted-foreground">{v.varsFiles}</p>}
       {names.length === 0 ? (
         <p className="text-xs text-muted-foreground">{v.none}</p>
       ) : (

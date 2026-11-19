@@ -11,8 +11,9 @@
  *
  * This is a conservative line-based reading (the bundle carries no full YAML
  * parser; validate.ts is only a minimal one): it knows block mappings
- * indented as YAML writes them and a one-line flow mapping (`vars: { a: 1 }`),
- * not anchors or `vars_files`. Statements (`{% %}`), Jinja comments and YAML
+ * indented as YAML writes them, a list of one-key mappings, a one-line flow
+ * mapping (`vars: { a: 1 }`) and `set_fact: a=1`, not anchors or what
+ * `vars_files` loads (usesVarsFiles says when a play has some). Statements (`{% %}`), Jinja comments and YAML
  * comments are left out, and so are Ansible's own names (facts, magic
  * variables, `item` and a `loop_var`), literals and calls (`lookup(…)`).
  */
@@ -60,7 +61,8 @@ function stripComment(line: string): string {
 
 /** The top-level name of one expression's body, or null. */
 function topName(expr: string): string | null {
-  let rest = expr.trim();
+  // Whitespace control (`{{- x -}}`, `{{+ x }}`) is not part of the name.
+  let rest = expr.trim().replace(/^[-+]/, '');
   for (;;) {
     rest = rest.replace(/^[(\s]+/, '');
     const m = IDENT.exec(rest);
@@ -123,8 +125,9 @@ function childKeys(lines: Line[], at: number, indent: number): string[] {
     if (l.indent <= indent) break;
     if (child < 0) child = l.indent;
     if (l.indent !== child) continue;
+    // A mapping's keys, or a list of one-key mappings (`- a: 1`).
     const m = KEY_LINE.exec(l.text);
-    if (m && !/^\s*-/.test(l.text)) keys.push(m[3]);
+    if (m) keys.push(m[3]);
   }
   return keys;
 }
@@ -137,42 +140,68 @@ function keyAt(text: string): { key: string; column: number; value: string } | n
   return { key: m[3], column: dash[0].length, value: m[4] };
 }
 
+/** The playbook's lines, comments stripped, with their indentation. */
+function readLines(yaml: string): Line[] {
+  return yaml.split('\n').map((raw) => {
+    const text = stripComment(raw);
+    return { indent: text.length - text.trimStart().length, text };
+  });
+}
+
+/** A line's play (-1 before the first) and, when the line starts a key,
+ * that key and whether it is one of the play's own keys. */
+interface PlayLine {
+  play: number;
+  key: { key: string; column: number; value: string } | null;
+  playKey: boolean;
+}
+
+/** The plays: items of the first top-level sequence; their own keys sit
+ * just after the dash. */
+function playLines(lines: Line[]): PlayLine[] {
+  let seqIndent = -1;
+  let keyIndent = -1;
+  let play = -1;
+  return lines.map((l) => {
+    const t = l.text.trim();
+    if (seqIndent < 0 && t !== '' && t !== '---' && t.startsWith('- ')) seqIndent = l.indent;
+    if (seqIndent >= 0 && l.indent === seqIndent && /^-(\s|$)/.test(t)) {
+      play++;
+      keyIndent = /^(\s*-\s+)/.exec(l.text)?.[1].length ?? seqIndent + 2;
+    }
+    const key = keyAt(l.text);
+    return { play, key, playKey: play >= 0 && key !== null && key.column === keyIndent };
+  });
+}
+
+/** The names a `set_fact: a=1 b=2` line sets. */
+function keyValueNames(value: string): string[] {
+  return [...value.matchAll(/(?:^|\s)([A-Za-z_]\w*)=/g)].map((m) => m[1]);
+}
+
+/** usesVarsFiles says whether a play loads `vars_files`, whose names the
+ * hint cannot see. */
+export function usesVarsFiles(yaml: string): boolean {
+  return playLines(readLines(yaml)).some((p) => p.playKey && p.key?.key === 'vars_files');
+}
+
 /**
  * playbookVariables lists the names the playbook's expressions use, each
  * once in the order of first use, with where its value comes from.
  */
 export function playbookVariables(yaml: string): PlaybookVariable[] {
-  const lines: Line[] = yaml.split('\n').map((raw) => {
-    const text = stripComment(raw);
-    return { indent: text.length - text.trimStart().length, text };
-  });
-
-  // The plays: items of the first top-level sequence; their keys sit just
-  // after the dash.
-  let seqIndent = -1;
-  let keyIndent = -1;
-  let play = -1;
-  const playOf: number[] = [];
+  const lines = readLines(yaml);
+  const info = playLines(lines);
+  const playOf = info.map((p) => p.play);
   const playVars: Set<string>[] = [];
   const taskSet = new Set<string>();
   const skip = new Set<string>();
 
-  lines.forEach((l, i) => {
-    const t = l.text.trim();
-    if (seqIndent < 0 && t !== '' && t !== '---' && t.startsWith('- ')) {
-      seqIndent = l.indent;
-    }
-    if (seqIndent >= 0 && l.indent === seqIndent && /^-(\s|$)/.test(t)) {
-      play++;
-      playVars[play] = new Set();
-      keyIndent = /^(\s*-\s+)/.exec(l.text)?.[1].length ?? seqIndent + 2;
-    }
-    playOf[i] = play;
-
-    const k = keyAt(l.text);
+  info.forEach(({ play, key: k, playKey }, i) => {
+    if (play >= 0) playVars[play] ??= new Set();
     if (!k) return;
-    if (play >= 0 && k.column === keyIndent && k.key === 'vars') {
-      const keys = k.value.trim() ? flowKeys(k.value) : childKeys(lines, i, keyIndent);
+    if (playKey && k.key === 'vars') {
+      const keys = k.value.trim() ? flowKeys(k.value) : childKeys(lines, i, k.column);
       for (const key of keys) playVars[play].add(key);
     }
     if (k.key === 'register') {
@@ -184,7 +213,8 @@ export function playbookVariables(yaml: string): PlaybookVariable[] {
       if (name) skip.add(name);
     }
     if (k.key === 'set_fact' || k.key === 'ansible.builtin.set_fact') {
-      const keys = k.value.trim() ? flowKeys(k.value) : childKeys(lines, i, l.indent);
+      const value = k.value.trim();
+      const keys = value === '' ? childKeys(lines, i, lines[i].indent) : value.startsWith('{') ? flowKeys(k.value) : keyValueNames(value);
       for (const key of keys) if (key !== 'cacheable') taskSet.add(key);
     }
   });

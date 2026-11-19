@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playbookVariables, type PlaybookVariable } from './variables.ts';
+import { playbookVariables, usesVarsFiles, type PlaybookVariable } from './variables.ts';
 
 const lines = (...l: string[]) => l.join('\n');
 
@@ -133,6 +133,39 @@ describe('playbookVariables', () => {
       ],
     },
     {
+      name: 'whitespace control around an expression',
+      yaml: lines('- hosts: all', '  tasks:', '    - ansible.builtin.debug:', '        msg: "{{- trimmed -}} {{+ plus }} {{-tight}}"'),
+      want: [
+        { name: 'trimmed', source: 'external' },
+        { name: 'plus', source: 'external' },
+        { name: 'tight', source: 'external' },
+      ],
+    },
+    {
+      name: 'vars written as a list of mappings',
+      yaml: lines('- hosts: all', '  vars:', '    - first: 1', '    - second: 2', '  tasks:', '    - ansible.builtin.debug:', '        msg: "{{ first }}{{ second }}{{ third }}"'),
+      want: [
+        { name: 'first', source: 'vars' },
+        { name: 'second', source: 'vars' },
+        { name: 'third', source: 'external' },
+      ],
+    },
+    {
+      name: 'set_fact in its key=value form',
+      yaml: lines(
+        '- hosts: all',
+        '  tasks:',
+        '    - ansible.builtin.set_fact: color=blue size="{{ base }}"',
+        '    - ansible.builtin.debug:',
+        '        msg: "{{ color }} {{ size }}"',
+      ),
+      want: [
+        { name: 'base', source: 'external' },
+        { name: 'color', source: 'task' },
+        { name: 'size', source: 'task' },
+      ],
+    },
+    {
       name: 'an unclosed expression is no name',
       yaml: lines('- hosts: all', '  tasks:', '    - ansible.builtin.debug:', '        msg: "{{ broken"'),
       want: [],
@@ -141,5 +174,16 @@ describe('playbookVariables', () => {
 
   it.each(cases)('$name', ({ yaml, want }) => {
     expect(playbookVariables(yaml)).toEqual(want);
+  });
+});
+
+describe('usesVarsFiles', () => {
+  it.each([
+    ['no vars_files', '- hosts: all\n  vars:\n    a: 1\n', false],
+    ["a play's vars_files", '- hosts: all\n  vars_files:\n    - vars/main.yml\n', true],
+    ['as the first key', '- vars_files: [a.yml]\n  hosts: all\n', true],
+    ["a task's key of the same name is not the play's", '- hosts: all\n  tasks:\n    - name: x\n      vars_files: nope\n', false],
+  ])('%s', (_name, yaml, want) => {
+    expect(usesVarsFiles(yaml)).toBe(want);
   });
 });

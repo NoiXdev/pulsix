@@ -16,6 +16,7 @@ import { PlaybookHeader } from './PlaybookHeader.tsx';
 import { PlaybookRunsTab } from './PlaybookRunsTab.tsx';
 import { PlaybookUsedByTab } from './PlaybookUsedByTab.tsx';
 import { parsePlaybookTab, playbookPanelId, playbookTabId, type PlaybookTab } from './playbookTabs.ts';
+import { usePlaybookDraft } from './usePlaybookDraft.ts';
 import { validateYAMLProblem } from './validate.ts';
 
 /**
@@ -24,7 +25,8 @@ import { validateYAMLProblem } from './validate.ts';
  * actions, and the tabs Editor, Runs and Used by, the open one in the URL
  * (`?tab=`, Editor when absent).
  *
- * The draft lives here, above the tabs, and the Editor panel stays mounted
+ * The draft lives here, above the tabs (usePlaybookDraft: a clean draft
+ * follows the stored text), and the Editor panel stays mounted
  * (hidden) while another tab is open, so a tab switch keeps unsaved text and
  * the editor's own undo history; leaving the page with it asks first
  * (useUnsavedGuard), a tab switch does not.
@@ -56,10 +58,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
   const update = useUpdatePlaybook(org, playbook.id);
   const editable = playbook.source === 'editor' && may(role, 'playbooks.write');
 
-  // `saved` is the text the server holds as far as this page knows: what
-  // it loaded, then what each save stored.
-  const [saved, setSaved] = useState(playbook.inline ?? '');
-  const [draft, setDraft] = useState(saved);
+  const { saved, draft, setDraft, markSaved } = usePlaybookDraft(playbook.inline ?? '');
   const [serverError, setServerError] = useState<string | null>(null);
   const dirty = editable && draft !== saved;
   const release = useUnsavedGuard(dirty, { samePath: true });
@@ -74,7 +73,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
     setServerError(null);
     try {
       await update.mutateAsync({ inline: sent });
-      setSaved(sent);
+      markSaved(sent);
       toast.show(t.playbooks.editor.saved);
     } catch (err) {
       setServerError(err instanceof Error ? err.message : t.playbooks.editor.saveFailed);
