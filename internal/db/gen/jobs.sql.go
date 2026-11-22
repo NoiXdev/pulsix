@@ -86,6 +86,7 @@ UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), st
 WHERE id = (
   SELECT j.id FROM jobs AS j
   WHERE j.status = 'queued' AND j.org_id = $3::uuid AND j.zone_id = ANY($4::uuid[])
+    AND (NOT j.check_mode OR $5::boolean)
     -- A dependent job waits until its dependency SUCCEEDED (any other end
     -- cancels it in the dependency's terminal transition).
     AND (j.depends_on IS NULL OR EXISTS (
@@ -99,10 +100,11 @@ RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, c
 `
 
 type ClaimJobParams struct {
-	WorkerID        pgtype.UUID `json:"worker_id"`
-	CancelStopsPlay *bool       `json:"cancel_stops_play"`
-	OrgID           uuid.UUID   `json:"org_id"`
-	ZoneIds         []uuid.UUID `json:"zone_ids"`
+	WorkerID          pgtype.UUID `json:"worker_id"`
+	CancelStopsPlay   *bool       `json:"cancel_stops_play"`
+	OrgID             uuid.UUID   `json:"org_id"`
+	ZoneIds           []uuid.UUID `json:"zone_ids"`
+	SupportsCheckMode bool        `json:"supports_check_mode"`
 }
 
 // THE org-unscoped claim (plan Global Constraints): runs on the raw pool,
@@ -119,13 +121,19 @@ type ClaimJobParams struct {
 // are visible through each organization's API, so the zone filter alone
 // must never be what keeps another organization's jobs out of reach.
 // cancel_stops_play is the claiming worker's own answer (migration 00072),
-// NULL for an in-process claim.
+// NULL for an in-process claim. supports_check_mode is the claiming
+// worker's announcement that it honours a job's check flag (backlog
+// 3.126): a check-mode job (a playbook dry run, migration 00115) is never
+// handed to a claim without it — an older worker would run the play for
+// real — so the filter sits in the statement, the dry run stays queued for
+// a capable worker, and the jobs behind it are still claimed.
 func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error) {
 	row := q.db.QueryRow(ctx, claimJob,
 		arg.WorkerID,
 		arg.CancelStopsPlay,
 		arg.OrgID,
 		arg.ZoneIds,
+		arg.SupportsCheckMode,
 	)
 	var i Job
 	err := row.Scan(

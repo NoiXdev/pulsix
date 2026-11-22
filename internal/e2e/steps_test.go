@@ -51,6 +51,7 @@ type (
 		Job struct {
 			ID         string         `json:"id"`
 			Status     string         `json:"status"`
+			CheckMode  bool           `json:"check_mode"`
 			RunGroupID string         `json:"run_group_id"`
 			Hosts      []string       `json:"hosts"`
 			Stats      map[string]any `json:"stats"`

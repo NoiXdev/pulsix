@@ -141,6 +141,9 @@ func (s *scenario) drive() {
 	}
 	s.assertSSE(collected.frames, "succeeded")
 
+	// --- The dry run -------------------------------------------------------
+	s.dryRun()
+
 	// The failure path uses the same stream contract; the retry below
 	// covers the second template's runs.
 	// --- The failure path --------------------------------------------------

@@ -129,14 +129,14 @@ func TestGRPCPortAdapters(t *testing.T) {
 		worker.ID, org.ID, zone); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false)
+	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false, false)
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
 	if claim.Token == "" || claim.Job.GetId() != j.ID.String() {
 		t.Fatalf("claim = %+v", claim)
 	}
-	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false)
+	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false, false)
 	if err != nil || empty != nil {
 		t.Fatalf("drained claim = %v, %v", empty, err)
 	}
@@ -204,5 +204,61 @@ func TestSystemAuditorMapsOrgID(t *testing.T) {
 	}
 	if err := a.Record(ctx, grpcsrv.SystemEvent{Operation: "x", ObjectType: "job", ObjectID: "y", OrgID: "nope", Summary: "s"}); err == nil {
 		t.Fatal("unparseable org id must fail")
+	}
+}
+
+// TestClaimerAdapterPassesCheckModeSupport (backlog 3.126): the adapter
+// hands the worker's supports_check_mode to the queue in its own position,
+// apart from cancel_stops_play, so an older worker's claim never takes a
+// dry run.
+func TestClaimerAdapterPassesCheckModeSupport(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "app-jobs-check", Name: "app jobs check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'check', 'check')`, zone, org.ID); err != nil {
+		t.Fatal(err)
+	}
+	worker := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, 'check', 'check-serial')`,
+		worker, org.ID, zone); err != nil {
+		t.Fatal(err)
+	}
+	queue := jobs.NewSQLQueue(d, stubBox{}, stubSnapshot{}, stubCreds{}, stubTemplates{}, stubBastions{}, time.Now, rand.Reader)
+	queue.SetKeyPins(stubPins{})
+	store := jobs.NewSQLStore(d)
+	j := jobs.Job{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone, Kind: jobs.KindRun, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())},
+		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, CreatedAt: time.Now(), CheckMode: true,
+	}
+	if err := store.CreateJob(db.WithOrgScope(ctx, org.ID), j, nil); err != nil {
+		t.Fatal(err)
+	}
+	status := func() jobs.Status {
+		t.Helper()
+		got, err := store.GetJob(db.WithOrgScope(ctx, org.ID), org.ID, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Status
+	}
+	scope := grpcsrv.ClaimScope{WorkerID: worker, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}
+	if c, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", true, false); err != nil || c != nil {
+		t.Fatalf("Claim without check mode support = %+v, %v; want nothing", c, err)
+	}
+	if got := status(); got != jobs.StatusQueued {
+		t.Fatalf("the dry run is %q after a claim without support, want queued", got)
+	}
+	// With support the statement hands the row over (the stub template
+	// source then fails its payload, which is not what this test is about).
+	if _, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := status(); got == jobs.StatusQueued {
+		t.Fatal("a claim with check mode support did not take the dry run")
 	}
 }

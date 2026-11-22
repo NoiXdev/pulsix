@@ -231,9 +231,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.sweepRepoCacheIfDue(ctx)
 		// A cancel stops the play only under the play supervisor
 		// (backlog 2.107); the claim says so, and the manager records it
-		// on the job for the run view (2.113).
+		// on the job for the run view (2.113). The runner honours a job's
+		// check, diff and tags (backlog 3.126); without the announcement
+		// the manager hands this worker no dry run.
 		resp, err := l.client.ClaimJob(ctx, &workerpb.ClaimJobRequest{
 			Version: l.cfg.Version, ZoneIds: zoneIDs, CancelStopsPlay: l.cfg.PlaySupervisor != "",
+			SupportsCheckMode: true,
 		})
 		if err != nil {
 			if ctx.Err() != nil {

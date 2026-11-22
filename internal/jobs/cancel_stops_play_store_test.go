@@ -15,7 +15,7 @@ import (
 func (w *atomicWorld) claimForWith(t *testing.T, worker WorkerRef, cancelStopsPlay bool) Job {
 	t.Helper()
 	j := w.queueRotateJob(t, worker.ZoneID)
-	if c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{worker.ZoneID}, "v1", cancelStopsPlay); err != nil || c == nil || c.Job.GetId() != j.ID.String() {
+	if c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{worker.ZoneID}, "v1", cancelStopsPlay, false); err != nil || c == nil || c.Job.GetId() != j.ID.String() {
 		t.Fatalf("ClaimFor = %+v, %v", c, err)
 	}
 	return j

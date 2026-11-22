@@ -34,7 +34,7 @@ func TestClaimForARevokedWorkerClaimsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true)
+	c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true, false)
 	if err != nil || c != nil {
 		t.Fatalf("ClaimFor by a revoked worker = %+v, %v; want nothing", c, err)
 	}
@@ -69,7 +69,7 @@ func TestClaimWaitsForARevocationInFlight(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		c, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true)
+		c, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true, false)
 		done <- result{c != nil, err}
 	}()
 	select {
@@ -131,7 +131,7 @@ func TestClaimDoesNotHandARevokedWorkerItsPayload(t *testing.T) {
 	q := NewSQLQueue(w.d, fakeBox{}, revokingRenderer{fakeRenderer: inner, w: w, worker: worker.ID}, fullProbeCreds{}, fakeTemplates{}, fakeBastions{}, time.Now, rand.Reader)
 	q.SetKeyPins(fakePins{})
 
-	c, err := q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true)
+	c, err := q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true, false)
 	if err != nil || c != nil {
 		t.Fatalf("ClaimFor across a revocation mid-build = %+v, %v; want nothing handed out", c, err)
 	}

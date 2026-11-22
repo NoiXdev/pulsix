@@ -2,7 +2,9 @@
 // event_data) mapped onto the claim's stats contract (internal/jobs,
 // Task 5): failed_hosts / unreachable_hosts — which RetryFailed reads, and
 // which carry the claim's host UUIDs where the connection map names one —
-// plus the ok/changed/skipped host lists ansible's recap carries.
+// plus the ok/changed/skipped host lists ansible's recap carries, and the
+// recap's counts per host (host_counts, backlog 3.126: a dry run's "would
+// change n tasks" reads them; every run gets them).
 package runner
 
 import (
@@ -21,7 +23,19 @@ const (
 	statsOKHosts          = "ok_hosts"
 	statsChangedHosts     = "changed_hosts"
 	statsSkippedHosts     = "skipped_hosts"
+	// statsHostCounts maps each host (the same ids as the lists) to its
+	// recap counts. Additive: readers that do not know it ignore it.
+	statsHostCounts = "host_counts"
 )
+
+// hostCounts is one host's recap counts in the stats' host_counts.
+type hostCounts struct {
+	Ok          int `json:"ok"`
+	Changed     int `json:"changed"`
+	Skipped     int `json:"skipped"`
+	Failed      int `json:"failed"`
+	Unreachable int `json:"unreachable"`
+}
 
 // buildStats maps the recap onto the claim's stats contract. connections is
 // the claim's hostname → connection JSON map (the source of host uuids).
@@ -47,8 +61,10 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 	slices.Sort(names)
 
 	var failed, unreachable, ok, changed, skipped []string
+	counts := make(map[string]hostCounts, len(names))
 	for _, name := range names {
 		s := stats[name]
+		counts[idOf(name)] = hostCounts{Ok: s.Ok, Changed: s.Changed, Skipped: s.Skipped, Failed: s.Failed, Unreachable: s.Unreachable}
 		// A host can fail one task and lose connection on the next; the
 		// failed and unreachable lists are independent, a host lands in
 		// each list its counters name.
@@ -75,5 +91,6 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 		statsOKHosts:          ok,
 		statsChangedHosts:     changed,
 		statsSkippedHosts:     skipped,
+		statsHostCounts:       counts,
 	}
 }

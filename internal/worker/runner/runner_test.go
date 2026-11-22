@@ -1715,8 +1715,13 @@ func assertStats(t *testing.T, stats map[string]any, want map[string]any) {
 			}
 		}
 	}
-	if len(stats) != len(want) {
-		t.Errorf("stats carries %d keys (%v), want %d", len(stats), stats, len(want))
+	// Every run's stats also carry the per-host counts (backlog 3.126;
+	// check_mode_test.go pins their content).
+	if _, ok := stats[statsHostCounts].(map[string]hostCounts); !ok {
+		t.Errorf("stats[%q] = %#v, want the per-host counts", statsHostCounts, stats[statsHostCounts])
+	}
+	if len(stats) != len(want)+1 {
+		t.Errorf("stats carries %d keys (%v), want %d", len(stats), stats, len(want)+1)
 	}
 }
 

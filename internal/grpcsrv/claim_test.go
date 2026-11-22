@@ -133,6 +133,39 @@ func TestClaimJobPassesOnWhetherCancelStopsThePlay(t *testing.T) {
 	}
 }
 
+// TestClaimJobPassesOnWhetherTheWorkerSupportsCheckMode (backlog 3.126):
+// the worker's announcement reaches the claim port unchanged and apart from
+// cancel_stops_play, so the queue can keep a dry run away from a worker
+// that would run it for real; an older worker that never sends the field
+// reads as false.
+func TestClaimJobPassesOnWhetherTheWorkerSupportsCheckMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  *workerpb.ClaimJobRequest
+		want bool
+	}{
+		{"announced", &workerpb.ClaimJobRequest{Version: "0.3.0", SupportsCheckMode: true}, true},
+		{"announced without cancel stops play", &workerpb.ClaimJobRequest{Version: "0.3.0", SupportsCheckMode: true, CancelStopsPlay: false}, true},
+		{"an older worker that only says cancel stops play", &workerpb.ClaimJobRequest{Version: "0.2.0", CancelStopsPlay: true}, false},
+		{"an older worker that says nothing", &workerpb.ClaimJobRequest{Version: "0.2.0"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+			client := h.client(certPEM, keyPEM)
+			h.enqueueClaim(uuid.Must(uuid.NewV7()), orgID, zoneID)
+
+			if _, err := client.ClaimJob(t.Context(), tc.req); err != nil {
+				t.Fatal(err)
+			}
+			calls := h.claims.Calls()
+			if len(calls) != 1 || calls[0].SupportsCheckMode != tc.want || calls[0].CancelStopsPlay != tc.req.GetCancelStopsPlay() {
+				t.Fatalf("Claim calls = %+v, want one with SupportsCheckMode %v and CancelStopsPlay %v", calls, tc.want, tc.req.GetCancelStopsPlay())
+			}
+		})
+	}
+}
+
 // TestClaimJobZoneAuthorization (fix round 1, Critical): a worker claims
 // only for the zone its certificate was enrolled for. A request naming any
 // other zone — another organization's zone (zone ids are visible through

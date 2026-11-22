@@ -52,8 +52,11 @@ type Claimer interface {
 	// scope's organization, marks it claimed and returns its payload plus a
 	// fresh binding token. nil claim = queue empty. cancelStopsPlay is the
 	// worker's own word that a cancel stops the play on it (backlog
-	// 2.113); the claimed job records it.
-	Claim(ctx context.Context, scope ClaimScope, version string, cancelStopsPlay bool) (*JobClaim, error)
+	// 2.113); the claimed job records it. supportsCheckMode is the
+	// worker's announcement that it honours a job's check flag (backlog
+	// 3.126): without it an implementation must never return a check-mode
+	// job (a playbook dry run), which the worker would run for real.
+	Claim(ctx context.Context, scope ClaimScope, version string, cancelStopsPlay, supportsCheckMode bool) (*JobClaim, error)
 }
 
 // Event is one run event a worker streams in mid-run.

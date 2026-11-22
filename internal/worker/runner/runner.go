@@ -17,7 +17,10 @@
 // 2.x series — the 1.x `stream` subcommand no longer exists):
 //
 //	ansible-runner run <work-dir> --json --playbook <path> \
-//	    --inventory <work-dir>/inventory --ident <job-id-prefix> [--limit <limit>]
+//	    --inventory <work-dir>/inventory --ident <job-id-prefix> [--limit <limit>] \
+//	    [--cmdline=<--check --diff --tags '<tags>'>]
+//
+// The --cmdline element appears only for a dry run (see checkmode.go).
 //
 // `--json` streams each event as one JSON line on stdout, which the parser
 // consumes; ansible-runner additionally keeps artifacts under
@@ -156,6 +159,9 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	default:
 		return worker.StatusError, nil, fmt.Errorf("job kind %q has no ansible-runner executor", job.GetKind())
 	}
+	if err := checkKind(job); err != nil {
+		return worker.StatusError, nil, err
+	}
 
 	bin := r.RunnerBin
 	if bin == "" {
@@ -204,6 +210,9 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	}
 	if limit := job.GetLimit(); limit != "" {
 		args = append(args, "--limit", limit)
+	}
+	if cmdline := cmdlineArg(job); cmdline != "" {
+		args = append(args, cmdline)
 	}
 
 	cmd, err := newRunnerCmd(bin, args, env, r.subprocessEnv(env, ansibleBin), r.killGrace())

@@ -382,12 +382,18 @@ SELECT EXISTS (SELECT 1 FROM workers WHERE id = sqlc.arg(id) AND status = 'activ
 -- are visible through each organization's API, so the zone filter alone
 -- must never be what keeps another organization's jobs out of reach.
 -- cancel_stops_play is the claiming worker's own answer (migration 00072),
--- NULL for an in-process claim.
+-- NULL for an in-process claim. supports_check_mode is the claiming
+-- worker's announcement that it honours a job's check flag (backlog
+-- 3.126): a check-mode job (a playbook dry run, migration 00115) is never
+-- handed to a claim without it — an older worker would run the play for
+-- real — so the filter sits in the statement, the dry run stays queued for
+-- a capable worker, and the jobs behind it are still claimed.
 UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now(),
     attempts = attempts + 1, cancel_stops_play = sqlc.narg(cancel_stops_play)::boolean
 WHERE id = (
   SELECT j.id FROM jobs AS j
   WHERE j.status = 'queued' AND j.org_id = sqlc.arg(org_id)::uuid AND j.zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
+    AND (NOT j.check_mode OR sqlc.arg(supports_check_mode)::boolean)
     -- A dependent job waits until its dependency SUCCEEDED (any other end
     -- cancels it in the dependency's terminal transition).
     AND (j.depends_on IS NULL OR EXISTS (

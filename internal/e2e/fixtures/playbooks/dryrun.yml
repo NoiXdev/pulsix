@@ -1,0 +1,17 @@
+# The dry-run gate's playbook (backlog 3.126). Run for real, its first task
+# creates the marker file the template's `dry_marker` extra var names; in
+# check mode Ansible skips that task (raw has no check mode), and the
+# second reports a change only when the play ran in check mode — so a dry
+# run leaves no file behind and still counts one change on the host.
+# Exec-only tasks, like hello.yml: the fixture host serves exec sessions
+# only.
+- name: Pulsix dry run
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Pulsix dry-run marker
+      ansible.builtin.raw: touch "{{ dry_marker }}"
+    - name: Pulsix check mode seen
+      ansible.builtin.debug:
+        msg: "check mode: {{ ansible_check_mode }}"
+      changed_when: ansible_check_mode

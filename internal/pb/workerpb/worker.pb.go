@@ -34,8 +34,15 @@ type ClaimJobRequest struct {
 	// play was stopped. Workers older than the field never send it, which
 	// reads as false, the cautious answer.
 	CancelStopsPlay bool `protobuf:"varint,3,opt,name=cancel_stops_play,json=cancelStopsPlay,proto3" json:"cancel_stops_play,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// supports_check_mode says that this worker honours Job.check (runs the
+	// play with Ansible's --check) and Job.diff and Job.tags (backlog 3.126).
+	// The manager never hands a check-mode job (a playbook dry run) to a
+	// claim without it: a worker older than the field would ignore Job.check
+	// and run the play for real. Workers older than the field never send it,
+	// which reads as false — their claims only ever get ordinary jobs.
+	SupportsCheckMode bool `protobuf:"varint,4,opt,name=supports_check_mode,json=supportsCheckMode,proto3" json:"supports_check_mode,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ClaimJobRequest) Reset() {
@@ -85,6 +92,13 @@ func (x *ClaimJobRequest) GetZoneIds() []string {
 func (x *ClaimJobRequest) GetCancelStopsPlay() bool {
 	if x != nil {
 		return x.CancelStopsPlay
+	}
+	return false
+}
+
+func (x *ClaimJobRequest) GetSupportsCheckMode() bool {
+	if x != nil {
+		return x.SupportsCheckMode
 	}
 	return false
 }
@@ -194,8 +208,18 @@ type Job struct {
 	// ansible.cfg at all of them by label (vault_identity_list), which is
 	// what lets one playbook mix files encrypted under different passwords.
 	VaultIdentities []*VaultIdentity `protobuf:"bytes,21,rep,name=vault_identities,json=vaultIdentities,proto3" json:"vault_identities,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// check runs the play in Ansible's check mode (--check): a playbook dry
+	// run. Sent only to a claim that announced supports_check_mode. Check
+	// mode is not a sandbox: a task with check_mode: false still runs.
+	Check bool `protobuf:"varint,22,opt,name=check,proto3" json:"check,omitempty"`
+	// diff asks Ansible for --diff: what a task would change, in the task's
+	// result (res.diff) and its display text. Set only with check.
+	Diff bool `protobuf:"varint,23,opt,name=diff,proto3" json:"diff,omitempty"`
+	// tags narrows the play to these tags (--tags). Set only with check;
+	// the manager validated every entry (^[A-Za-z0-9_.:-]{1,64}$).
+	Tags          []string `protobuf:"bytes,24,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
@@ -364,6 +388,27 @@ func (x *Job) GetBastionKnownHosts() map[string]string {
 func (x *Job) GetVaultIdentities() []*VaultIdentity {
 	if x != nil {
 		return x.VaultIdentities
+	}
+	return nil
+}
+
+func (x *Job) GetCheck() bool {
+	if x != nil {
+		return x.Check
+	}
+	return false
+}
+
+func (x *Job) GetDiff() bool {
+	if x != nil {
+		return x.Diff
+	}
+	return false
+}
+
+func (x *Job) GetTags() []string {
+	if x != nil {
+		return x.Tags
 	}
 	return nil
 }
@@ -971,13 +1016,14 @@ var File_pulsix_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"r\n" +
+	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa2\x01\n" +
 	"\x0fClaimJobRequest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\x12*\n" +
-	"\x11cancel_stops_play\x18\x03 \x01(\bR\x0fcancelStopsPlay\";\n" +
+	"\x11cancel_stops_play\x18\x03 \x01(\bR\x0fcancelStopsPlay\x12.\n" +
+	"\x13supports_check_mode\x18\x04 \x01(\bR\x11supportsCheckMode\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x96\v\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xd4\v\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -1002,7 +1048,10 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x06redact\x18\x11 \x03(\tR\x06redact\x12V\n" +
 	"\x11bastion_host_keys\x18\x12 \x03(\v2*.pulsix.worker.v1.Job.BastionHostKeysEntryR\x0fbastionHostKeys\x12\\\n" +
 	"\x13bastion_known_hosts\x18\x13 \x03(\v2,.pulsix.worker.v1.Job.BastionKnownHostsEntryR\x11bastionKnownHosts\x12J\n" +
-	"\x10vault_identities\x18\x15 \x03(\v2\x1f.pulsix.worker.v1.VaultIdentityR\x0fvaultIdentities\x1a<\n" +
+	"\x10vault_identities\x18\x15 \x03(\v2\x1f.pulsix.worker.v1.VaultIdentityR\x0fvaultIdentities\x12\x14\n" +
+	"\x05check\x18\x16 \x01(\bR\x05check\x12\x12\n" +
+	"\x04diff\x18\x17 \x01(\bR\x04diff\x12\x12\n" +
+	"\x04tags\x18\x18 \x03(\tR\x04tags\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

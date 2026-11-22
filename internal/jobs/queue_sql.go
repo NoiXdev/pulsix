@@ -232,21 +232,26 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 // fails the job with the reason instead of shipping a partial one, and the
 // claim reports an empty queue — the worker polls again and gets the next
 // job.
+//
+// An in-process claim never takes a check-mode job: nobody behind it has
+// said it honours the check flag.
 func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version, nil)
+	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version, nil, false)
 }
 
 // ClaimFor is Claim on behalf of an enrolled worker: the claimed row
 // records workerID (jobs.worker_id), and only that worker's FinishFor is
 // accepted for the job afterwards, and the worker's cancelStopsPlay
-// (jobs.cancel_stops_play, backlog 2.113). The gRPC claim path uses this;
-// Claim (no binding, and nobody to say whether a cancel stops the play)
-// remains for the manager's own in-process callers.
-func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string, cancelStopsPlay bool) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version, &cancelStopsPlay)
+// (jobs.cancel_stops_play, backlog 2.113). supportsCheckMode is the
+// worker's announcement that it honours a job's check flag (backlog
+// 3.126): without it the claim never takes a check-mode job. The gRPC
+// claim path uses this; Claim (no binding, and nobody to say whether a
+// cancel stops the play) remains for the manager's own in-process callers.
+func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string, cancelStopsPlay, supportsCheckMode bool) (*Claim, error) {
+	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version, &cancelStopsPlay, supportsCheckMode)
 }
 
-func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string, cancelStopsPlay *bool) (*Claim, error) {
+func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string, cancelStopsPlay *bool, supportsCheckMode bool) (*Claim, error) {
 	if len(zones) == 0 {
 		return nil, nil
 	}
@@ -268,7 +273,9 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 			return nil, nil
 		}
 	}
-	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones})
+	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{
+		WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones, SupportsCheckMode: supportsCheckMode,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -433,6 +440,11 @@ func (q *SQLQueue) failJob(ctx context.Context, jobID uuid.UUID, cause error) er
 // never log it. It writes through out because a protobuf message must
 // never be copied by value (vet copylocks).
 func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job) error {
+	// Only a template run can be a dry run (backlog 3.126); any other
+	// kind's claim has no check flag and would run for real.
+	if job.CheckMode && job.Kind != KindRun {
+		return invalidDryRun("%s job %s is marked check mode", job.Kind, job.ID)
+	}
 	// A connection_test job is also deliberately not snapshot-bound: the
 	// probe target is fully resolved into the kind payload at claim time —
 	// the effective connection comes from the same rendered route run jobs
@@ -534,6 +546,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	var extraVars map[string]string
 	var defaultCred *uuid.UUID
 	var redact redactSet
+	var check claimCheck
 	if job.Kind == KindRun {
 		if job.TemplateID == nil {
 			return fmt.Errorf("run job %s carries no template", job.ID)
@@ -553,6 +566,14 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		ov, err := q.runOverrides(job)
 		if err != nil {
 			return err
+		}
+		// A dry run's flags, and its draft in place of the stored playbook
+		// (backlog 3.126): only for a check-mode row.
+		if check, err = checkClaim(job, tmpl, ov); err != nil {
+			return err
+		}
+		if check.playbook != nil {
+			playbook = *check.playbook
 		}
 		limit = tmpl.Limit
 		if ov != nil && ov.Limit != nil {
@@ -741,6 +762,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		KindPayload:       kindPayload,
 		VaultIdentities:   vaultIdentities,
 		Redact:            redact.list,
+		Check:             check.check,
+		Diff:              check.diff,
+		Tags:              check.tags,
 	}
 	return nil
 }

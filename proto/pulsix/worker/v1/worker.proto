@@ -44,6 +44,13 @@ message ClaimJobRequest {
   // play was stopped. Workers older than the field never send it, which
   // reads as false, the cautious answer.
   bool cancel_stops_play = 3;
+  // supports_check_mode says that this worker honours Job.check (runs the
+  // play with Ansible's --check) and Job.diff and Job.tags (backlog 3.126).
+  // The manager never hands a check-mode job (a playbook dry run) to a
+  // claim without it: a worker older than the field would ignore Job.check
+  // and run the play for real. Workers older than the field never send it,
+  // which reads as false — their claims only ever get ordinary jobs.
+  bool supports_check_mode = 4;
 }
 
 message ClaimJobResponse {
@@ -118,6 +125,16 @@ message Job {
   // ansible.cfg at all of them by label (vault_identity_list), which is
   // what lets one playbook mix files encrypted under different passwords.
   repeated VaultIdentity vault_identities = 21;
+  // check runs the play in Ansible's check mode (--check): a playbook dry
+  // run. Sent only to a claim that announced supports_check_mode. Check
+  // mode is not a sandbox: a task with check_mode: false still runs.
+  bool check = 22;
+  // diff asks Ansible for --diff: what a task would change, in the task's
+  // result (res.diff) and its display text. Set only with check.
+  bool diff = 23;
+  // tags narrows the play to these tags (--tags). Set only with check;
+  // the manager validated every entry (^[A-Za-z0-9_.:-]{1,64}$).
+  repeated string tags = 24;
 }
 
 // VaultIdentity is one labelled Ansible Vault password, already resolved

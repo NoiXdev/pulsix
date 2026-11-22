@@ -436,6 +436,13 @@ func writeFakeRunner(t *testing.T) string {
 import json, os, shlex, subprocess, sys, time
 
 workdir = sys.argv[2]
+# A dry run's options (backlog 3.126) arrive as ansible-runner's
+# --cmdline=<value>, which the real runner shlex-splits.
+cmdline = []
+for arg in sys.argv[3:]:
+    if arg.startswith("--cmdline="):
+        cmdline = shlex.split(arg[len("--cmdline="):])
+check = "--check" in cmdline
 doc = json.loads(subprocess.run([os.path.join(workdir, "inventory")], capture_output=True, check=True).stdout)
 host, hv = next(iter(doc["_meta"]["hostvars"].items()))
 extravars = {}
@@ -497,6 +504,24 @@ if ssh.returncode != 0:
          "fatal: [%s]: UNREACHABLE! => %s" % (host, reason))
     emit("playbook_on_stats", {"ok": {}, "changed": {}, "failures": {}, "dark": {host: 1}, "skipped": {}})
     sys.exit(4)
+
+# dry_marker (dryrun_test.go, fixtures/playbooks/dryrun.yml): the marker
+# task creates the file for real and is skipped in check mode; the second
+# task reports a change only in check mode.
+dry_marker = extravars.get("dry_marker")
+if dry_marker:
+    if check:
+        emit("runner_on_skipped", {"host": host, "task": "Pulsix dry-run marker", "res": {"skipped": True}}, "skipping: [%s]" % host)
+        emit("runner_on_ok", {"host": host, "task": "Pulsix check mode seen", "res": {"changed": True, "msg": "check mode: True", "cmdline": cmdline}},
+             "changed: [%s]" % host)
+        emit("playbook_on_stats", {"ok": {host: 1}, "changed": {host: 1}, "failures": {}, "dark": {}, "skipped": {host: 1}})
+    else:
+        open(dry_marker, "w").close()
+        emit("runner_on_ok", {"host": host, "task": "Pulsix dry-run marker", "res": {"changed": True}}, "changed: [%s]" % host)
+        emit("runner_on_ok", {"host": host, "task": "Pulsix check mode seen", "res": {"changed": False, "msg": "check mode: False"}},
+             "ok: [%s]" % host)
+        emit("playbook_on_stats", {"ok": {host: 2}, "changed": {host: 1}, "failures": {}, "dark": {}, "skipped": {}})
+    sys.exit(0)
 
 greeting = extravars.get("greeting", "")
 emit("runner_on_start", {"host": host, "task": "Pulsix greeting", "task_action": "debug"})

@@ -1021,6 +1021,31 @@ func TestLoopClaimsSayWhetherCancelStopsThePlay(t *testing.T) {
 	}
 }
 
+// TestLoopClaimsAnnounceCheckModeSupport (backlog 3.126): every claim says
+// the worker honours a job's check, diff and tags, with and without the
+// play supervisor — the manager hands a dry run to no claim without it.
+func TestLoopClaimsAnnounceCheckModeSupport(t *testing.T) {
+	for _, supervisor := range []string{"/usr/local/bin/pulsix-worker", ""} {
+		cfg := cfgFor(t.TempDir())
+		cfg.PlaySupervisor = supervisor
+		client := &fakeWorkerClient{}
+		l := NewLoop(cfg, client, &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+			return StatusSucceeded, nil, nil
+		}})
+		cancel, done := runLoop(t, l)
+		waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 2 })
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		for i, c := range client.claimsNow() {
+			if !c.GetSupportsCheckMode() {
+				t.Fatalf("supervisor %q: claim %d does not announce supports_check_mode", supervisor, i)
+			}
+		}
+	}
+}
+
 // TestLoopSequentialClaims: with MaxConcurrent = 1 a second queued job is
 // claimed only after the first run finished.
 func TestLoopSequentialClaims(t *testing.T) {
