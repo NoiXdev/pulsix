@@ -3,6 +3,7 @@ package playbooks
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -44,17 +45,21 @@ func hostsText(n *yaml.Node) string {
 	if n.Kind != yaml.SequenceNode {
 		return scalarText(n)
 	}
-	parts := make([]string, 0, len(n.Content))
+	var parts []string
+	size := 0
 	for _, c := range n.Content {
 		if s := scalarText(resolveAlias(c)); s != "" {
 			parts = append(parts, s)
+			if size += len(s) + 1; size > maxOutlineText {
+				break // the caller clips the result anyway
+			}
 		}
 	}
 	return strings.Join(parts, ",")
 }
 
 func isTrue(n *yaml.Node) bool {
-	if n.Kind != yaml.ScalarNode {
+	if n.Kind != yaml.ScalarNode || len(n.Value) > 8 {
 		return false
 	}
 	switch strings.ToLower(n.Value) {
@@ -68,7 +73,7 @@ func isTrue(n *yaml.Node) bool {
 // strings Ansible's own boolean parsing accepts).
 func isFalse(n *yaml.Node, key string) bool {
 	v, ok := lookup(n, key)
-	if !ok || v.Kind != yaml.ScalarNode {
+	if !ok || v.Kind != yaml.ScalarNode || len(v.Value) > 8 {
 		return false
 	}
 	switch strings.ToLower(v.Value) {
@@ -105,6 +110,10 @@ func (w *outlineWalker) tagsOf(n *yaml.Node) []string {
 	}
 	out := make([]string, 0, min(len(raw), maxOutlineTagsPerList))
 	for _, t := range raw {
+		if len(t) > maxOutlineText { // checked before trimming: never trim a huge part
+			w.out.Truncated = true
+			continue
+		}
 		if t = strings.TrimSpace(t); t == "" {
 			continue
 		}
@@ -161,4 +170,19 @@ func sortedKeys(set map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// clip cuts s to maxOutlineText bytes on a rune boundary, ending in an
+// ellipsis, and marks the outline truncated when it cuts.
+func (w *outlineWalker) clip(s string) string {
+	const ellipsis = "…"
+	if len(s) <= maxOutlineText {
+		return s
+	}
+	w.out.Truncated = true
+	cut := maxOutlineText - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
 }

@@ -1,11 +1,13 @@
 package playbooks
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func entryOf(section, kind, name string, line, depth int, check bool, tags ...string) OutlineEntry {
@@ -382,5 +384,72 @@ func TestOutlineDistinctTagsAcrossEntriesAreBoundedInUnion(t *testing.T) {
 	}
 	if !o.Truncated || len(o.Tags) != maxOutlineTags {
 		t.Fatalf("truncated = %v, union = %d", o.Truncated, len(o.Tags))
+	}
+}
+
+func TestOutlineHugeTextIsBounded(t *testing.T) {
+	big := strings.Repeat("a", 400_000)
+	for name, task := range map[string]string{
+		"name": "    - {name: *big, ping: }\n",
+		"tag":  "    - {tags: *big, ping: }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var b strings.Builder
+			b.WriteString("- hosts: a\n  vars: {big: &big \"" + big + "\"}\n  tasks:\n")
+			for range 2000 {
+				b.WriteString(task)
+			}
+			o, err := Outline([]byte(b.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !o.Truncated || len(raw) > 2<<20 {
+				t.Fatalf("truncated = %v, json = %d bytes", o.Truncated, len(raw))
+			}
+		})
+	}
+}
+
+func TestOutlineHugeHostsAndPlayNameAreClipped(t *testing.T) {
+	big := strings.Repeat("h", 150_000)
+	o, err := Outline([]byte("- name: " + big + "\n  hosts: " + big + "\n- import_playbook: " + big + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range o.Plays {
+		if len(p.Name) > maxOutlineText || len(p.Hosts) > maxOutlineText {
+			t.Fatalf("play not clipped: %d, %d bytes", len(p.Name), len(p.Hosts))
+		}
+	}
+	if !o.Truncated {
+		t.Fatal("not truncated")
+	}
+}
+
+func TestOutlineClipKeepsValidUTF8(t *testing.T) {
+	for _, r := range []string{"é", "日", "😀"} {
+		name := strings.Repeat(r, 400)
+		o, err := Outline([]byte("- hosts: a\n  tasks:\n    - name: " + name + "\n      ping:\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := o.Plays[0].Entries[0].Name
+		if !utf8.ValidString(got) || len(got) > maxOutlineText || !strings.HasSuffix(got, "…") || !o.Truncated {
+			t.Fatalf("%q: %q (%d bytes), truncated %v", r, got, len(got), o.Truncated)
+		}
+	}
+}
+
+func TestOutlineShortTextIsUntouched(t *testing.T) {
+	o, err := Outline([]byte("- hosts: a\n  tasks:\n    - name: " + strings.Repeat("n", maxOutlineText) + "\n      tags: [" + strings.Repeat("g", maxOutlineText) + "]\n      ping:\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Truncated || len(o.Tags) != 1 {
+		t.Fatalf("truncated = %v, tags = %d", o.Truncated, len(o.Tags))
 	}
 }

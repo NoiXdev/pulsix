@@ -22,6 +22,9 @@ const (
 	// the top-level union.
 	maxOutlineTagsPerList = 64
 	maxOutlineTags        = 512
+	// maxOutlineText bounds every string the outline emits (names, hosts,
+	// import paths, tags), in bytes.
+	maxOutlineText = 256
 )
 
 // Outline sections, in the order a play runs them (handlers last).
@@ -158,18 +161,18 @@ func (w *outlineWalker) play(n *yaml.Node) {
 	for _, key := range outlineImportPlaybook {
 		if v, ok := lookup(n, key); ok {
 			w.out.Plays = append(w.out.Plays, OutlinePlay{
-				Name: scalarText(v), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
+				Name: w.clip(scalarText(v)), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
 			})
 			return
 		}
 	}
 	p := OutlinePlay{Line: n.Line, Tags: w.effectiveTags(nil, n), Entries: []OutlineEntry{}}
 	if v, ok := lookup(n, "hosts"); ok {
-		p.Hosts = hostsText(v)
+		p.Hosts = w.clip(hostsText(v))
 	}
 	p.Name = p.Hosts
 	if v, ok := lookup(n, "name"); ok && scalarText(v) != "" {
-		p.Name = scalarText(v)
+		p.Name = w.clip(scalarText(v))
 	}
 	if v, ok := lookup(n, "become"); ok {
 		p.Become = isTrue(v)
@@ -206,6 +209,7 @@ type entryContext struct {
 
 // add appends one entry; its item was already charged by the caller.
 func (w *outlineWalker) add(e OutlineEntry) {
+	e.Name = w.clip(e.Name)
 	w.entries = append(w.entries, e)
 	w.noteTags(e.Tags)
 	switch {
