@@ -313,3 +313,74 @@ func TestOutlineAliasedBlockFanOutIsBounded(t *testing.T) {
 		t.Fatalf("size = %d", size(o))
 	}
 }
+
+func checkTagBounds(t *testing.T, o PlaybookOutline, wantEntries int) {
+	t.Helper()
+	if !o.Truncated || len(o.Tags) > maxOutlineTags {
+		t.Fatalf("truncated = %v, union = %d", o.Truncated, len(o.Tags))
+	}
+	n := 0
+	for _, p := range o.Plays {
+		if len(p.Tags) > maxOutlineTagsPerList {
+			t.Fatalf("play has %d tags", len(p.Tags))
+		}
+		for _, e := range p.Entries {
+			n++
+			if len(e.Tags) > maxOutlineTagsPerList {
+				t.Fatalf("entry %q has %d tags", e.Name, len(e.Tags))
+			}
+		}
+	}
+	if n != wantEntries {
+		t.Fatalf("entries = %d, want %d", n, wantEntries)
+	}
+}
+
+func TestOutlineHugePlayTagListIsBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("- hosts: a\n  tags: [")
+	for i := range 50000 {
+		fmt.Fprintf(&b, "t%d,", i)
+	}
+	b.WriteString("x]\n  tasks:\n")
+	for range 1999 {
+		b.WriteString("    - ping:\n")
+	}
+	o, err := Outline([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkTagBounds(t, o, 1999)
+}
+
+func TestOutlineAliasedTagListIsBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("- hosts: a\n  vars: {l: &l [" + strings.Repeat("1,", 100000) + "1]}\n  tasks:\n")
+	for i := range 2000 {
+		fmt.Fprintf(&b, "    - {name: n%d, tags: *l, ping: }\n", i)
+	}
+	o, err := Outline([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkTagBounds(t, o, 1999)
+}
+
+func TestOutlineDistinctTagsAcrossEntriesAreBoundedInUnion(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("- hosts: a\n  tasks:\n")
+	for i := range 100 {
+		b.WriteString("    - ping:\n      tags: [")
+		for j := range 20 {
+			fmt.Fprintf(&b, "t%d_%d,", i, j)
+		}
+		b.WriteString("z]\n")
+	}
+	o, err := Outline([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || len(o.Tags) != maxOutlineTags {
+		t.Fatalf("truncated = %v, union = %d", o.Truncated, len(o.Tags))
+	}
+}

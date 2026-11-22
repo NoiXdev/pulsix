@@ -3,7 +3,6 @@
 package playbooks
 
 import (
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +17,11 @@ const (
 	maxOutlineEntries = 2000
 	// maxOutlineDepth bounds how deep block/rescue/always nest.
 	maxOutlineDepth = 64
+	// maxOutlineTagsPerList bounds the tags read from one tags: list and an
+	// entry's effective (own plus inherited) tag set; maxOutlineTags bounds
+	// the top-level union.
+	maxOutlineTagsPerList = 64
+	maxOutlineTags        = 512
 )
 
 // Outline sections, in the order a play runs them (handlers last).
@@ -159,7 +163,7 @@ func (w *outlineWalker) play(n *yaml.Node) {
 			return
 		}
 	}
-	p := OutlinePlay{Line: n.Line, Tags: sortedUnique(nil, tagsOf(n)), Entries: []OutlineEntry{}}
+	p := OutlinePlay{Line: n.Line, Tags: w.effectiveTags(nil, n), Entries: []OutlineEntry{}}
 	if v, ok := lookup(n, "hosts"); ok {
 		p.Hosts = hostsText(v)
 	}
@@ -170,9 +174,7 @@ func (w *outlineWalker) play(n *yaml.Node) {
 	if v, ok := lookup(n, "become"); ok {
 		p.Become = isTrue(v)
 	}
-	for _, t := range p.Tags {
-		w.tagSet[t] = true
-	}
+	w.noteTags(p.Tags)
 	ctx := entryContext{tags: p.Tags, check: !isFalse(n, "check_mode")}
 	w.entries = p.Entries
 	for _, sec := range []string{SectionPreTasks, SectionRoles, SectionTasks, SectionPostTasks, SectionHandlers} {
@@ -205,9 +207,7 @@ type entryContext struct {
 // add appends one entry; its item was already charged by the caller.
 func (w *outlineWalker) add(e OutlineEntry) {
 	w.entries = append(w.entries, e)
-	for _, t := range e.Tags {
-		w.tagSet[t] = true
-	}
+	w.noteTags(e.Tags)
 	switch {
 	case e.Section == SectionHandlers && e.Kind != KindBlock && e.Kind != KindRole:
 		w.out.Counts.Handlers++
@@ -222,7 +222,7 @@ func (w *outlineWalker) role(n *yaml.Node, ctx entryContext) {
 	case yaml.ScalarNode:
 		e.Name = n.Value
 	case yaml.MappingNode:
-		e.Tags = sortedUnique(ctx.tags, tagsOf(n))
+		e.Tags = w.effectiveTags(ctx.tags, n)
 		e.RunsInCheckMode = ctx.check && !isFalse(n, "check_mode")
 		for _, key := range []string{"role", "name"} {
 			if v, ok := lookup(n, key); ok && scalarText(v) != "" {
@@ -242,7 +242,7 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 	}
 	e := OutlineEntry{
 		Section: w.section, Kind: KindTask, Line: n.Line, Depth: depth,
-		Tags:            sortedUnique(ctx.tags, tagsOf(n)),
+		Tags:            w.effectiveTags(ctx.tags, n),
 		RunsInCheckMode: ctx.check && !isFalse(n, "check_mode"),
 	}
 	name := ""
@@ -316,118 +316,4 @@ func includeTarget(arg *yaml.Node) string {
 		}
 	}
 	return ""
-}
-
-func resolveAlias(n *yaml.Node) *yaml.Node {
-	for i := 0; n.Kind == yaml.AliasNode && n.Alias != nil && i < 8; i++ {
-		n = n.Alias
-	}
-	return n
-}
-
-func lookup(n *yaml.Node, key string) (*yaml.Node, bool) {
-	if n.Kind != yaml.MappingNode {
-		return nil, false
-	}
-	v, ok := mappingValue(n, key)
-	if !ok {
-		return nil, false
-	}
-	return resolveAlias(v), true
-}
-
-func lookupOrNil(n *yaml.Node, key string) *yaml.Node {
-	v, _ := lookup(n, key)
-	return v
-}
-
-func scalarText(n *yaml.Node) string {
-	if n.Kind != yaml.ScalarNode || n.Tag == "!!null" {
-		return ""
-	}
-	return n.Value
-}
-
-// hostsText reads hosts as written: a string, or a list joined by commas.
-func hostsText(n *yaml.Node) string {
-	if n.Kind != yaml.SequenceNode {
-		return scalarText(n)
-	}
-	parts := make([]string, 0, len(n.Content))
-	for _, c := range n.Content {
-		if s := scalarText(resolveAlias(c)); s != "" {
-			parts = append(parts, s)
-		}
-	}
-	return strings.Join(parts, ",")
-}
-
-func isTrue(n *yaml.Node) bool {
-	if n.Kind != yaml.ScalarNode {
-		return false
-	}
-	switch strings.ToLower(n.Value) {
-	case "true", "yes", "on", "1":
-		return true
-	}
-	return false
-}
-
-// isFalse reports key set to a false value (YAML bool or the yes/no style
-// strings Ansible's own boolean parsing accepts).
-func isFalse(n *yaml.Node, key string) bool {
-	v, ok := lookup(n, key)
-	if !ok || v.Kind != yaml.ScalarNode {
-		return false
-	}
-	switch strings.ToLower(v.Value) {
-	case "false", "no", "off", "0":
-		return true
-	}
-	return false
-}
-
-// tagsOf reads a tags key: a comma-separated string or a list of strings.
-func tagsOf(n *yaml.Node) []string {
-	v, ok := lookup(n, "tags")
-	if !ok {
-		return nil
-	}
-	var raw []string
-	switch v.Kind {
-	case yaml.ScalarNode:
-		raw = strings.Split(scalarText(v), ",")
-	case yaml.SequenceNode:
-		for _, c := range v.Content {
-			raw = append(raw, strings.Split(scalarText(resolveAlias(c)), ",")...)
-		}
-	}
-	out := make([]string, 0, len(raw))
-	for _, t := range raw {
-		if t = strings.TrimSpace(t); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// sortedUnique merges tag lists into a new sorted, duplicate-free, non-nil
-// slice.
-func sortedUnique(lists ...[]string) []string {
-	set := map[string]bool{}
-	for _, l := range lists {
-		for _, t := range l {
-			set[t] = true
-		}
-	}
-	return sortedKeys(set)
-}
-
-func sortedKeys(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for t := range set {
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	return out
 }
