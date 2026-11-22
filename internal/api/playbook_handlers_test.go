@@ -291,3 +291,80 @@ func TestPlaybookListBoundsVariableSources(t *testing.T) {
 		t.Fatalf("list: %d, %d bytes", resp.StatusCode, len(list))
 	}
 }
+
+func TestPlaybookOutline(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("pbo-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("pbo-org", owner)
+	viewer := s.SeedUser("pbo-viewer@example.test", "correct horse battery")
+	s.AddMember(org, viewer, tenancy.RoleViewer)
+	outsider := s.SeedUser("pbo-out@example.test", "correct horse battery")
+	s.SeedOrg("pbo-other", outsider)
+	url := s.HTTP.URL + "/api/v1/orgs/pbo-org/playbooks/outline"
+
+	const content = "- name: web\n  hosts: all\n  tags: site\n  tasks:\n    - name: probe\n      check_mode: false\n      ping:\n"
+
+	resp := postJSON(t, s.LoginAs(viewer), url, map[string]any{"content": content})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("viewer outline: %d %s", resp.StatusCode, body)
+	}
+	var got struct {
+		Plays []struct {
+			Name    string   `json:"name"`
+			Hosts   string   `json:"hosts"`
+			Line    int      `json:"line"`
+			Tags    []string `json:"tags"`
+			Entries []struct {
+				Section         string   `json:"section"`
+				Kind            string   `json:"kind"`
+				Name            string   `json:"name"`
+				Line            int      `json:"line"`
+				Depth           int      `json:"depth"`
+				Tags            []string `json:"tags"`
+				RunsInCheckMode bool     `json:"runs_in_check_mode"`
+			} `json:"entries"`
+		} `json:"plays"`
+		Tags      []string `json:"tags"`
+		Truncated bool     `json:"truncated"`
+		Counts    struct {
+			Plays, Tasks, Handlers int
+		} `json:"counts"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Plays) != 1 || got.Plays[0].Name != "web" || got.Plays[0].Hosts != "all" || got.Plays[0].Line != 1 || len(got.Plays[0].Entries) != 1 {
+		t.Fatalf("plays = %s", body)
+	}
+	e := got.Plays[0].Entries[0]
+	if e.Section != "tasks" || e.Kind != "task" || e.Name != "probe" || e.Line != 5 || e.RunsInCheckMode || len(e.Tags) != 1 || e.Tags[0] != "site" {
+		t.Fatalf("entry = %+v", e)
+	}
+	if got.Counts.Plays != 1 || got.Counts.Tasks != 1 || got.Counts.Handlers != 0 || got.Truncated || len(got.Tags) != 1 || got.Tags[0] != "site" {
+		t.Fatalf("outline = %s", body)
+	}
+
+	for name, content := range map[string]string{
+		"not a list":  "hosts: all\n",
+		"no hosts":    "- name: x\n",
+		"bad yaml":    "- hosts: [\n",
+		"over 512KiB": strings.Repeat("a", playbooks.MaxInlineBytes+1),
+	} {
+		resp := postJSON(t, s.LoginAs(owner), url, map[string]any{"content": content})
+		if b := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("%s: %d %s", name, resp.StatusCode, b)
+		}
+	}
+	resp = postJSON(t, s.LoginAs(owner), url, map[string]any{"content": "- hosts: [\n"})
+	if b := mustReadBody(t, resp); !strings.Contains(b, "malformed YAML") {
+		t.Fatalf("422 body lacks the validation message: %s", b)
+	}
+
+	if resp := postJSON(t, s.LoginAs(outsider), url, map[string]any{"content": content}); resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("non-member: %d", resp.StatusCode)
+	}
+	if resp := postJSON(t, s.Client(), url, map[string]any{"content": content}); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous: %d", resp.StatusCode)
+	}
+}

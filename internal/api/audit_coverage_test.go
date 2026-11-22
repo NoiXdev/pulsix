@@ -135,6 +135,7 @@ var auditAllowlist = map[string]string{
 	// Task 7: computes the next occurrences of a cron/simple timetable an
 	// operator is still editing — like /hosts/query above, POST only
 	// because the shape is a request body — and persists nothing.
+	"POST /api/v1/orgs/{org}/playbooks/outline": "a read (parses a playbook text into its structure) that uses POST only because the text is a request body; persists nothing, and the editor calls it on a debounce while typing",
 	"POST /api/v1/orgs/{org}/schedules/preview": "read-only computation of the next occurrences; mutates nothing",
 
 	// v0.3b-2 Task 10: the rule editor's validate-only route — the same

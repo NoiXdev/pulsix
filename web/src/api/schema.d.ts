@@ -2685,6 +2685,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/playbooks/outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org playbooks outline */
+        post: operations["post-api-v1-orgs-by-org-playbooks-outline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks/{id}": {
         parameters: {
             query?: never;
@@ -6869,6 +6886,34 @@ export interface components {
             readonly $schema?: string;
             name: string;
         };
+        OutlineCounts: {
+            /** Format: int64 */
+            handlers: number;
+            /** Format: int64 */
+            plays: number;
+            /** Format: int64 */
+            tasks: number;
+        };
+        OutlineEntry: {
+            /** Format: int64 */
+            depth: number;
+            kind: string;
+            /** Format: int64 */
+            line: number;
+            name: string;
+            runs_in_check_mode: boolean;
+            section: string;
+            tags: string[] | null;
+        };
+        OutlinePlay: {
+            become: boolean;
+            entries: components["schemas"]["OutlineEntry"][] | null;
+            hosts: string;
+            /** Format: int64 */
+            line: number;
+            name: string;
+            tags: string[] | null;
+        };
         OwnLocaleInputBody: {
             /**
              * Format: uri
@@ -7248,6 +7293,28 @@ export interface components {
              */
             readonly $schema?: string;
             playbooks: components["schemas"]["PlaybookDTO"][] | null;
+        };
+        PlaybookOutline: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookOutline.json
+             */
+            readonly $schema?: string;
+            counts: components["schemas"]["OutlineCounts"];
+            plays: components["schemas"]["OutlinePlay"][] | null;
+            tags: string[] | null;
+            truncated: boolean;
+        };
+        PlaybookOutlineInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookOutlineInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The playbook YAML text, e.g. the editor's current buffer */
+            content: string;
         };
         PlaybookUpdateInputBody: {
             /**
@@ -16153,6 +16220,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaybookDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-orgs-by-org-playbooks-outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybookOutlineInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookOutline"];
                 };
             };
             /** @description Error */
