@@ -10,8 +10,11 @@ import (
 )
 
 const (
-	// maxOutlineEntries caps the entries one outline carries across all
-	// plays; past it the outline stops growing and is marked truncated.
+	// maxOutlineEntries is the work budget of one outline: every play and
+	// every visited list item (used or skipped, aliased or not) is charged
+	// against it, so neither the walk's time nor the result's size can grow
+	// with the input. Past it the walk stops and the outline is marked
+	// truncated.
 	maxOutlineEntries = 2000
 	// maxOutlineDepth bounds how deep block/rescue/always nest.
 	maxOutlineDepth = 64
@@ -115,7 +118,7 @@ func Outline(content []byte) (PlaybookOutline, error) {
 	w := &outlineWalker{tagSet: map[string]bool{}}
 	w.out.Plays = []OutlinePlay{}
 	for _, item := range resolveAlias(doc.Content[0]).Content {
-		if w.truncated() {
+		if !w.spend() {
 			break
 		}
 		w.play(resolveAlias(item))
@@ -133,7 +136,16 @@ type outlineWalker struct {
 	entries []OutlineEntry
 }
 
-func (w *outlineWalker) truncated() bool { return w.out.Truncated }
+// spend charges one visited item against the shared budget; false (and the
+// outline marked truncated) once it is used up.
+func (w *outlineWalker) spend() bool {
+	if w.total >= maxOutlineEntries {
+		w.out.Truncated = true
+		return false
+	}
+	w.total++
+	return true
+}
 
 func (w *outlineWalker) play(n *yaml.Node) {
 	if n.Kind != yaml.MappingNode {
@@ -170,7 +182,7 @@ func (w *outlineWalker) play(n *yaml.Node) {
 		}
 		w.section = sec
 		for _, item := range list.Content {
-			if w.truncated() {
+			if !w.spend() {
 				break
 			}
 			if sec == SectionRoles {
@@ -190,14 +202,8 @@ type entryContext struct {
 	check bool
 }
 
-// add appends one entry unless the cap is reached, which marks the outline
-// truncated instead.
-func (w *outlineWalker) add(e OutlineEntry) bool {
-	if w.total >= maxOutlineEntries {
-		w.out.Truncated = true
-		return false
-	}
-	w.total++
+// add appends one entry; its item was already charged by the caller.
+func (w *outlineWalker) add(e OutlineEntry) {
 	w.entries = append(w.entries, e)
 	for _, t := range e.Tags {
 		w.tagSet[t] = true
@@ -208,7 +214,6 @@ func (w *outlineWalker) add(e OutlineEntry) bool {
 	case e.Kind != KindBlock && e.Kind != KindRole:
 		w.out.Counts.Tasks++
 	}
-	return true
 }
 
 func (w *outlineWalker) role(n *yaml.Node, ctx entryContext) {
@@ -250,9 +255,7 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 		if e.Name == "" {
 			e.Name = "block"
 		}
-		if !w.add(e) {
-			return
-		}
+		w.add(e)
 		if depth >= maxOutlineDepth {
 			w.out.Truncated = true
 			return
@@ -263,7 +266,7 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 				continue
 			}
 			for _, item := range part.Content {
-				if w.truncated() {
+				if !w.spend() {
 					return
 				}
 				w.task(resolveAlias(item), child, depth+1)

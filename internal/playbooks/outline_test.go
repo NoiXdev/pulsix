@@ -202,19 +202,19 @@ func TestOutlineCapTruncates(t *testing.T) {
 	for _, p := range o.Plays {
 		total += len(p.Entries)
 	}
-	if total != maxOutlineEntries {
-		t.Fatalf("entries = %d, want %d", total, maxOutlineEntries)
+	if got := total + len(o.Plays); got != maxOutlineEntries {
+		t.Fatalf("plays+entries = %d, want %d", got, maxOutlineEntries)
 	}
 }
 
 func TestOutlineExactlyAtCapIsNotTruncated(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("- hosts: all\n  tasks:\n")
-	for range maxOutlineEntries {
+	for range maxOutlineEntries - 1 { // plus the play itself
 		b.WriteString("    - ping:\n")
 	}
 	o, err := Outline([]byte(b.String()))
-	if err != nil || o.Truncated || len(o.Plays[0].Entries) != maxOutlineEntries {
+	if err != nil || o.Truncated || len(o.Plays[0].Entries) != maxOutlineEntries-1 {
 		t.Fatalf("err=%v truncated=%v", err, o.Truncated)
 	}
 }
@@ -264,5 +264,52 @@ func TestOutlineToleratesOddLaterPlays(t *testing.T) {
 	}
 	if len(o.Plays) != 2 || o.Plays[1].Hosts != "db,cache" {
 		t.Fatalf("plays = %+v", o.Plays)
+	}
+}
+
+// size is what a result costs the caller: its plays plus all their entries.
+func size(o PlaybookOutline) int {
+	n := len(o.Plays)
+	for _, p := range o.Plays {
+		n += len(p.Entries)
+	}
+	return n
+}
+
+func TestOutlineManyPlaysAreBounded(t *testing.T) {
+	o, err := Outline([]byte(strings.Repeat("- hosts: a\n", 5000)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || len(o.Plays) != maxOutlineEntries {
+		t.Fatalf("plays = %d, truncated = %v", len(o.Plays), o.Truncated)
+	}
+}
+
+// One anchored list shared by every section of every play: the amplification
+// that made a 512 KiB document cost a minute and megabytes of output.
+func TestOutlineAliasedLargeListIsBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("- hosts: a\n  x: &s [" + strings.Repeat("1,", 100000) + "1]\n")
+	b.WriteString("- &p {hosts: a, pre_tasks: *s, tasks: *s, post_tasks: *s, handlers: *s}\n")
+	for range 20000 {
+		b.WriteString("- *p\n")
+	}
+	o, err := Outline([]byte(b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || size(o) > maxOutlineEntries {
+		t.Fatalf("truncated = %v, size = %d", o.Truncated, size(o))
+	}
+}
+
+func TestOutlineAliasedBlockFanOutIsBounded(t *testing.T) {
+	o, err := Outline([]byte("- hosts: a\n  tasks:\n    - &b {block: [1,1,1,1,1,1,1,1,1,1], rescue: [1,1,1,1,1,1,1,1,1,1], always: [1,1,1,1,1,1,1,1,1,1]}\n    - &c {block: [*b,*b,*b,*b,*b], rescue: [*b,*b,*b], always: [*b,*b]}\n    - {block: [*c,*c,*c,*c,*c,*c,*c,*c]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size(o) > maxOutlineEntries {
+		t.Fatalf("size = %d", size(o))
 	}
 }
