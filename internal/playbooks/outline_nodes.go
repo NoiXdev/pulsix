@@ -62,25 +62,25 @@ func isTrue(n *yaml.Node) bool {
 	if n.Kind != yaml.ScalarNode || len(n.Value) > 8 {
 		return false
 	}
+	// The true spellings Ansible's own boolean parsing accepts.
 	switch strings.ToLower(n.Value) {
-	case "true", "yes", "on", "1":
+	case "true", "yes", "on", "1", "y", "t":
 		return true
 	}
 	return false
 }
 
-// isFalse reports key set to a false value (YAML bool or the yes/no style
-// strings Ansible's own boolean parsing accepts).
-func isFalse(n *yaml.Node, key string) bool {
-	v, ok := lookup(n, key)
-	if !ok || v.Kind != yaml.ScalarNode || len(v.Value) > 8 {
-		return false
+// inCheckMode reports whether an entry runs in check mode during a dry
+// run: unset (or null), it inherits from its play or block; literally true,
+// ansible forces check mode on it. Every other value — false, a template
+// such as "{{ real }}", anything not a plain scalar — may run it for real,
+// so it reads as running for real and the dry run tab warns about it.
+func inCheckMode(n *yaml.Node, inherited bool) bool {
+	v, ok := lookup(n, "check_mode")
+	if !ok || (v.Kind == yaml.ScalarNode && v.Tag == "!!null") {
+		return inherited
 	}
-	switch strings.ToLower(v.Value) {
-	case "false", "no", "off", "0":
-		return true
-	}
-	return false
+	return isTrue(v)
 }
 
 // tagsOf reads a tags key: a comma-separated string or a list of strings.

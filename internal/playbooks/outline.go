@@ -67,8 +67,9 @@ type OutlinePlay struct {
 
 // OutlineEntry is one task, block, include/import or role of a play.
 // Tags are the entry's own plus those inherited from the play and enclosing
-// blocks; RunsInCheckMode is false when check_mode: false is set on the
-// entry or an enclosing block or play.
+// blocks; RunsInCheckMode is false when the entry may run for real in a dry
+// run: its own check_mode, else the nearest enclosing block's or play's, is
+// set to anything but literally true (false, a template, …).
 type OutlineEntry struct {
 	Section         string   `json:"section"`
 	Kind            string   `json:"kind"`
@@ -178,7 +179,7 @@ func (w *outlineWalker) play(n *yaml.Node) {
 		p.Become = isTrue(v)
 	}
 	w.noteTags(p.Tags)
-	ctx := entryContext{tags: p.Tags, check: !isFalse(n, "check_mode")}
+	ctx := entryContext{tags: p.Tags, check: inCheckMode(n, true)}
 	w.entries = p.Entries
 	for _, sec := range []string{SectionPreTasks, SectionRoles, SectionTasks, SectionPostTasks, SectionHandlers} {
 		list, ok := lookup(n, sec)
@@ -227,7 +228,7 @@ func (w *outlineWalker) role(n *yaml.Node, ctx entryContext) {
 		e.Name = n.Value
 	case yaml.MappingNode:
 		e.Tags = w.effectiveTags(ctx.tags, n)
-		e.RunsInCheckMode = ctx.check && !isFalse(n, "check_mode")
+		e.RunsInCheckMode = inCheckMode(n, ctx.check)
 		for _, key := range []string{"role", "name"} {
 			if v, ok := lookup(n, key); ok && scalarText(v) != "" {
 				e.Name = scalarText(v)
@@ -247,7 +248,7 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 	e := OutlineEntry{
 		Section: w.section, Kind: KindTask, Line: n.Line, Depth: depth,
 		Tags:            w.effectiveTags(ctx.tags, n),
-		RunsInCheckMode: ctx.check && !isFalse(n, "check_mode"),
+		RunsInCheckMode: inCheckMode(n, ctx.check),
 	}
 	name := ""
 	if v, ok := lookup(n, "name"); ok {

@@ -70,6 +70,33 @@ func TestOutlineEntries(t *testing.T) {
 			},
 		},
 		{
+			name: "check_mode other than literally true (or null) may run for real",
+			yaml: "- hosts: all\n  tasks:\n    - name: templated\n      check_mode: \"{{ real }}\"\n      ping:\n    - name: forced\n      check_mode: yes\n      ping:\n    - name: odd\n      check_mode: [x]\n      ping:\n    - name: empty\n      check_mode:\n      ping:\n    - name: plain\n      ping:\n",
+			want: []OutlineEntry{
+				entryOf("tasks", "task", "templated", 3, 0, false),
+				entryOf("tasks", "task", "forced", 6, 0, true),
+				entryOf("tasks", "task", "odd", 9, 0, false),
+				entryOf("tasks", "task", "empty", 12, 0, true),
+				entryOf("tasks", "task", "plain", 15, 0, true),
+			},
+		},
+		{
+			name: "templated check_mode on a block reaches descendants",
+			yaml: "- hosts: all\n  tasks:\n    - block:\n        - ping:\n      check_mode: \"{{ x | bool }}\"\n",
+			want: []OutlineEntry{
+				entryOf("tasks", "block", "block", 3, 0, false),
+				entryOf("tasks", "task", "ping", 4, 1, false),
+			},
+		},
+		{
+			name: "check_mode true on a task overrides a play that runs for real",
+			yaml: "- hosts: all\n  check_mode: \"{{ x }}\"\n  tasks:\n    - name: forced\n      check_mode: true\n      ping:\n    - name: inherits\n      ping:\n",
+			want: []OutlineEntry{
+				entryOf("tasks", "task", "forced", 4, 0, true),
+				entryOf("tasks", "task", "inherits", 7, 0, false),
+			},
+		},
+		{
 			name: "block nested in rescue and always gains depth",
 			yaml: "- hosts: all\n  tasks:\n    - block:\n        - ping:\n      rescue:\n        - block:\n            - name: deep\n              ping:\n      always:\n        - name: fin\n          ping:\n",
 			want: []OutlineEntry{
