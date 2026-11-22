@@ -572,6 +572,7 @@ type Job struct {
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
+	CheckMode               bool               `json:"check_mode"`
 }
 
 type JobEvent struct {

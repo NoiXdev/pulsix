@@ -95,7 +95,7 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode
 `
 
 type ClaimJobParams struct {
@@ -155,6 +155,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
+		&i.CheckMode,
 	)
 	return i, err
 }
@@ -188,9 +189,10 @@ WHERE jobs.org_id = $1
   AND ($5::uuid IS NULL OR template_id = $5::uuid)
   AND ($6::uuid IS NULL OR template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = $6::uuid))
-  AND ($7::uuid IS NULL OR run_group_id = $7::uuid)
-  AND ($8::text IS NULL OR trigger = $8::text)
-  AND ($9::uuid IS NULL OR trigger_ref = $9::uuid)
+  AND ($7::boolean IS NULL OR check_mode = $7::boolean)
+  AND ($8::uuid IS NULL OR run_group_id = $8::uuid)
+  AND ($9::text IS NULL OR trigger = $9::text)
+  AND ($10::uuid IS NULL OR trigger_ref = $10::uuid)
 `
 
 type CountJobsParams struct {
@@ -200,6 +202,7 @@ type CountJobsParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -214,6 +217,7 @@ func (q *Queries) CountJobs(ctx context.Context, arg CountJobsParams) (int64, er
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -235,9 +239,10 @@ WHERE jh.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
 `
 
 type CountJobsForHostParams struct {
@@ -248,6 +253,7 @@ type CountJobsForHostParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -263,6 +269,7 @@ func (q *Queries) CountJobsForHost(ctx context.Context, arg CountJobsForHostPara
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -284,9 +291,10 @@ WHERE j.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
 `
 
 type CountLiveJobsParams struct {
@@ -297,6 +305,7 @@ type CountLiveJobsParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -312,6 +321,7 @@ func (q *Queries) CountLiveJobs(ctx context.Context, arg CountLiveJobsParams) (i
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -324,15 +334,15 @@ func (q *Queries) CountLiveJobs(ctx context.Context, arg CountLiveJobsParams) (i
 const createJob = `-- name: CreateJob :one
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
   SELECT j.org_id, j.id, h.id, j.created_at
   FROM j, (SELECT id FROM hosts WHERE org_id = $2 AND id = ANY ($6::uuid[]) FOR KEY SHARE) AS h
 )
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM j
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM j
 `
 
 type CreateJobParams struct {
@@ -351,6 +361,7 @@ type CreateJobParams struct {
 	RotationCredentialID pgtype.UUID `json:"rotation_credential_id"`
 	TriggerRef           pgtype.UUID `json:"trigger_ref"`
 	HostsExcluded        int32       `json:"hosts_excluded"`
+	CheckMode            bool        `json:"check_mode"`
 }
 
 type CreateJobRow struct {
@@ -380,6 +391,7 @@ type CreateJobRow struct {
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
+	CheckMode               bool               `json:"check_mode"`
 }
 
 // Every insert path of a job goes through this one statement, which also
@@ -413,6 +425,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJob
 		arg.RotationCredentialID,
 		arg.TriggerRef,
 		arg.HostsExcluded,
+		arg.CheckMode,
 	)
 	var i CreateJobRow
 	err := row.Scan(
@@ -442,6 +455,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJob
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
+		&i.CheckMode,
 	)
 	return i, err
 }
@@ -520,7 +534,7 @@ func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedSt
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -561,6 +575,7 @@ type GetJobRow struct {
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
+	CheckMode               bool               `json:"check_mode"`
 	ActorName               *string            `json:"actor_name"`
 	WorkerName              *string            `json:"worker_name"`
 	TemplateName            *string            `json:"template_name"`
@@ -606,6 +621,7 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
+		&i.CheckMode,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -803,7 +819,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -811,15 +827,16 @@ WHERE jobs.org_id = $1
   AND ($5::uuid IS NULL OR template_id = $5::uuid)
   AND ($6::uuid IS NULL OR template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = $6::uuid))
-  AND ($7::uuid IS NULL OR run_group_id = $7::uuid)
-  AND ($8::text IS NULL OR trigger = $8::text)
-  AND ($9::uuid IS NULL OR trigger_ref = $9::uuid)
+  AND ($7::boolean IS NULL OR check_mode = $7::boolean)
+  AND ($8::uuid IS NULL OR run_group_id = $8::uuid)
+  AND ($9::text IS NULL OR trigger = $9::text)
+  AND ($10::uuid IS NULL OR trigger_ref = $10::uuid)
   AND (
-    $10::timestamptz IS NULL
-    OR (created_at, id) < ($10::timestamptz, $11::uuid)
+    $11::timestamptz IS NULL
+    OR (created_at, id) < ($11::timestamptz, $12::uuid)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $12
+LIMIT $13
 `
 
 type ListJobsParams struct {
@@ -829,6 +846,7 @@ type ListJobsParams struct {
 	Kind       *string            `json:"kind"`
 	TemplateID pgtype.UUID        `json:"template_id"`
 	PlaybookID pgtype.UUID        `json:"playbook_id"`
+	CheckMode  *bool              `json:"check_mode"`
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
 	Trigger    *string            `json:"trigger"`
 	TriggerRef pgtype.UUID        `json:"trigger_ref"`
@@ -837,7 +855,7 @@ type ListJobsParams struct {
 	RowLimit   int32              `json:"row_limit"`
 }
 
-// Every optional filter (zone, status, kind, template, playbook, run group,
+// Every optional filter (zone, status, kind, template, playbook, check mode, run group,
 // trigger, trigger ref, and the cursor's own (created_at, id) keyset pair) is
 // expressed as "param IS NULL OR <condition>", the same
 // one-query-serves-every-combination shape ListHosts uses. Ordering is
@@ -854,6 +872,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -895,6 +914,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
+			&i.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -907,7 +927,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listJobsForHost = `-- name: ListJobsForHost :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -918,15 +938,16 @@ WHERE jh.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
   AND (
-    $11::timestamptz IS NULL
-    OR (jh.created_at, jh.job_id) < ($11::timestamptz, $12::uuid)
+    $12::timestamptz IS NULL
+    OR (jh.created_at, jh.job_id) < ($12::timestamptz, $13::uuid)
   )
 ORDER BY jh.created_at DESC, jh.job_id DESC
-LIMIT $13
+LIMIT $14
 `
 
 type ListJobsForHostParams struct {
@@ -937,6 +958,7 @@ type ListJobsForHostParams struct {
 	Kind       *string            `json:"kind"`
 	TemplateID pgtype.UUID        `json:"template_id"`
 	PlaybookID pgtype.UUID        `json:"playbook_id"`
+	CheckMode  *bool              `json:"check_mode"`
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
 	Trigger    *string            `json:"trigger"`
 	TriggerRef pgtype.UUID        `json:"trigger_ref"`
@@ -968,6 +990,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1009,6 +1032,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 			&i.Job.ResolvedVaultIdentities,
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
+			&i.Job.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1021,7 +1045,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 }
 
 const listJobsForHostPage = `-- name: ListJobsForHostPage :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -1032,11 +1056,12 @@ WHERE jh.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
 ORDER BY jh.created_at DESC, jh.job_id DESC
-OFFSET $11 LIMIT $12
+OFFSET $12 LIMIT $13
 `
 
 type ListJobsForHostPageParams struct {
@@ -1047,6 +1072,7 @@ type ListJobsForHostPageParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -1069,6 +1095,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1109,6 +1136,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 			&i.Job.ResolvedVaultIdentities,
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
+			&i.Job.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1121,7 +1149,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 }
 
 const listJobsForHostPageSorted = `-- name: ListJobsForHostPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
@@ -1134,20 +1162,21 @@ WHERE jh.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
 ORDER BY
-  (CASE WHEN $11::text = 'created' AND NOT $12::boolean THEN j.created_at END) ASC,
-  (CASE WHEN $11::text = 'created' AND $12::boolean THEN j.created_at END) DESC,
-  (CASE WHEN $11::text = 'status' AND NOT $12::boolean THEN r.rank END) ASC,
-  (CASE WHEN $11::text = 'status' AND $12::boolean THEN r.rank END) DESC,
-  (CASE WHEN $11::text = 'kind' AND NOT $12::boolean THEN j.kind END) ASC,
-  (CASE WHEN $11::text = 'kind' AND $12::boolean THEN j.kind END) DESC,
-  (CASE WHEN $11::text = 'trigger' AND NOT $12::boolean THEN j.trigger END) ASC,
-  (CASE WHEN $11::text = 'trigger' AND $12::boolean THEN j.trigger END) DESC,
+  (CASE WHEN $12::text = 'created' AND NOT $13::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $12::text = 'created' AND $13::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $12::text = 'status' AND NOT $13::boolean THEN r.rank END) ASC,
+  (CASE WHEN $12::text = 'status' AND $13::boolean THEN r.rank END) DESC,
+  (CASE WHEN $12::text = 'kind' AND NOT $13::boolean THEN j.kind END) ASC,
+  (CASE WHEN $12::text = 'kind' AND $13::boolean THEN j.kind END) DESC,
+  (CASE WHEN $12::text = 'trigger' AND NOT $13::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $12::text = 'trigger' AND $13::boolean THEN j.trigger END) DESC,
   j.created_at DESC, j.id DESC
-OFFSET $13 LIMIT $14
+OFFSET $14 LIMIT $15
 `
 
 type ListJobsForHostPageSortedParams struct {
@@ -1158,6 +1187,7 @@ type ListJobsForHostPageSortedParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -1181,6 +1211,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1223,6 +1254,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 			&i.Job.ResolvedVaultIdentities,
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
+			&i.Job.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1235,7 +1267,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 }
 
 const listJobsPage = `-- name: ListJobsPage :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -1243,11 +1275,12 @@ WHERE jobs.org_id = $1
   AND ($5::uuid IS NULL OR template_id = $5::uuid)
   AND ($6::uuid IS NULL OR template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = jobs.org_id AND jt.playbook_id = $6::uuid))
-  AND ($7::uuid IS NULL OR run_group_id = $7::uuid)
-  AND ($8::text IS NULL OR trigger = $8::text)
-  AND ($9::uuid IS NULL OR trigger_ref = $9::uuid)
+  AND ($7::boolean IS NULL OR check_mode = $7::boolean)
+  AND ($8::uuid IS NULL OR run_group_id = $8::uuid)
+  AND ($9::text IS NULL OR trigger = $9::text)
+  AND ($10::uuid IS NULL OR trigger_ref = $10::uuid)
 ORDER BY created_at DESC, id DESC
-OFFSET $10 LIMIT $11
+OFFSET $11 LIMIT $12
 `
 
 type ListJobsPageParams struct {
@@ -1257,6 +1290,7 @@ type ListJobsPageParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -1276,6 +1310,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1316,6 +1351,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
+			&i.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1328,7 +1364,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 }
 
 const listJobsPageSorted = `-- name: ListJobsPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1338,20 +1374,21 @@ WHERE j.org_id = $1
   AND ($5::uuid IS NULL OR j.template_id = $5::uuid)
   AND ($6::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $6::uuid))
-  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
-  AND ($8::text IS NULL OR j.trigger = $8::text)
-  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+  AND ($7::boolean IS NULL OR j.check_mode = $7::boolean)
+  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
+  AND ($9::text IS NULL OR j.trigger = $9::text)
+  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
 ORDER BY
-  (CASE WHEN $10::text = 'created' AND NOT $11::boolean THEN j.created_at END) ASC,
-  (CASE WHEN $10::text = 'created' AND $11::boolean THEN j.created_at END) DESC,
-  (CASE WHEN $10::text = 'status' AND NOT $11::boolean THEN r.rank END) ASC,
-  (CASE WHEN $10::text = 'status' AND $11::boolean THEN r.rank END) DESC,
-  (CASE WHEN $10::text = 'kind' AND NOT $11::boolean THEN j.kind END) ASC,
-  (CASE WHEN $10::text = 'kind' AND $11::boolean THEN j.kind END) DESC,
-  (CASE WHEN $10::text = 'trigger' AND NOT $11::boolean THEN j.trigger END) ASC,
-  (CASE WHEN $10::text = 'trigger' AND $11::boolean THEN j.trigger END) DESC,
+  (CASE WHEN $11::text = 'created' AND NOT $12::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $11::text = 'created' AND $12::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $11::text = 'status' AND NOT $12::boolean THEN r.rank END) ASC,
+  (CASE WHEN $11::text = 'status' AND $12::boolean THEN r.rank END) DESC,
+  (CASE WHEN $11::text = 'kind' AND NOT $12::boolean THEN j.kind END) ASC,
+  (CASE WHEN $11::text = 'kind' AND $12::boolean THEN j.kind END) DESC,
+  (CASE WHEN $11::text = 'trigger' AND NOT $12::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $11::text = 'trigger' AND $12::boolean THEN j.trigger END) DESC,
   j.created_at DESC, j.id DESC
-OFFSET $12 LIMIT $13
+OFFSET $13 LIMIT $14
 `
 
 type ListJobsPageSortedParams struct {
@@ -1361,6 +1398,7 @@ type ListJobsPageSortedParams struct {
 	Kind       *string     `json:"kind"`
 	TemplateID pgtype.UUID `json:"template_id"`
 	PlaybookID pgtype.UUID `json:"playbook_id"`
+	CheckMode  *bool       `json:"check_mode"`
 	RunGroupID pgtype.UUID `json:"run_group_id"`
 	Trigger    *string     `json:"trigger"`
 	TriggerRef pgtype.UUID `json:"trigger_ref"`
@@ -1382,6 +1420,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1424,6 +1463,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
+			&i.CheckMode,
 		); err != nil {
 			return nil, err
 		}
@@ -1436,7 +1476,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1449,24 +1489,25 @@ WHERE j.org_id = $1
   AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
   AND ($7::uuid IS NULL OR j.template_id IN (
     SELECT jt.id FROM job_templates jt WHERE jt.org_id = j.org_id AND jt.playbook_id = $7::uuid))
-  AND ($8::uuid IS NULL OR j.run_group_id = $8::uuid)
-  AND ($9::text IS NULL OR j.trigger = $9::text)
-  AND ($10::uuid IS NULL OR j.trigger_ref = $10::uuid)
+  AND ($8::boolean IS NULL OR j.check_mode = $8::boolean)
+  AND ($9::uuid IS NULL OR j.run_group_id = $9::uuid)
+  AND ($10::text IS NULL OR j.trigger = $10::text)
+  AND ($11::uuid IS NULL OR j.trigger_ref = $11::uuid)
   AND (
-    $11::timestamptz IS NULL
-    OR (j.created_at, j.id) < ($11::timestamptz, $12::uuid)
+    $12::timestamptz IS NULL
+    OR (j.created_at, j.id) < ($12::timestamptz, $13::uuid)
   )
 ORDER BY
-  (CASE WHEN $13::text = 'created' AND NOT $14::boolean THEN j.created_at END) ASC,
-  (CASE WHEN $13::text = 'created' AND $14::boolean THEN j.created_at END) DESC,
-  (CASE WHEN $13::text = 'status' AND NOT $14::boolean THEN r.rank END) ASC,
-  (CASE WHEN $13::text = 'status' AND $14::boolean THEN r.rank END) DESC,
-  (CASE WHEN $13::text = 'kind' AND NOT $14::boolean THEN j.kind END) ASC,
-  (CASE WHEN $13::text = 'kind' AND $14::boolean THEN j.kind END) DESC,
-  (CASE WHEN $13::text = 'trigger' AND NOT $14::boolean THEN j.trigger END) ASC,
-  (CASE WHEN $13::text = 'trigger' AND $14::boolean THEN j.trigger END) DESC,
+  (CASE WHEN $14::text = 'created' AND NOT $15::boolean THEN j.created_at END) ASC,
+  (CASE WHEN $14::text = 'created' AND $15::boolean THEN j.created_at END) DESC,
+  (CASE WHEN $14::text = 'status' AND NOT $15::boolean THEN r.rank END) ASC,
+  (CASE WHEN $14::text = 'status' AND $15::boolean THEN r.rank END) DESC,
+  (CASE WHEN $14::text = 'kind' AND NOT $15::boolean THEN j.kind END) ASC,
+  (CASE WHEN $14::text = 'kind' AND $15::boolean THEN j.kind END) DESC,
+  (CASE WHEN $14::text = 'trigger' AND NOT $15::boolean THEN j.trigger END) ASC,
+  (CASE WHEN $14::text = 'trigger' AND $15::boolean THEN j.trigger END) DESC,
   j.created_at DESC, j.id DESC
-OFFSET $15 LIMIT $16
+OFFSET $16 LIMIT $17
 `
 
 type ListLiveJobsParams struct {
@@ -1477,6 +1518,7 @@ type ListLiveJobsParams struct {
 	Kind       *string            `json:"kind"`
 	TemplateID pgtype.UUID        `json:"template_id"`
 	PlaybookID pgtype.UUID        `json:"playbook_id"`
+	CheckMode  *bool              `json:"check_mode"`
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
 	Trigger    *string            `json:"trigger"`
 	TriggerRef pgtype.UUID        `json:"trigger_ref"`
@@ -1506,6 +1548,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]J
 		arg.Kind,
 		arg.TemplateID,
 		arg.PlaybookID,
+		arg.CheckMode,
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
@@ -1550,6 +1593,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]J
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
+			&i.CheckMode,
 		); err != nil {
 			return nil, err
 		}

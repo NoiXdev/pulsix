@@ -2721,6 +2721,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/playbooks/{id}/dry-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org playbooks by ID dry run */
+        post: operations["dryRunPlaybook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos": {
         parameters: {
             query?: never;
@@ -5887,6 +5904,8 @@ export interface components {
             job: components["schemas"]["JobStruct"];
         };
         JobDTO: {
+            /** @description A dry run: the play ran in check mode */
+            check_mode: boolean;
             /** Format: date-time */
             created_at: string;
             id: string;
@@ -5912,6 +5931,8 @@ export interface components {
             /** @description Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker */
             cancel_stops_play: boolean;
             chain: components["schemas"]["ChainDTO"];
+            /** @description A dry run: the play ran in check mode */
+            check_mode: boolean;
             /** Format: date-time */
             created_at: string;
             error?: string;
@@ -7284,6 +7305,24 @@ export interface components {
              */
             readonly $schema?: string;
             playbook: components["schemas"]["PlaybookDTO"];
+        };
+        PlaybookDryRunBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookDryRunBody.json
+             */
+            readonly $schema?: string;
+            /** @description Show the differences a task would make; true when omitted */
+            diff?: boolean;
+            /** @description An editor playbook's unsaved text, checked instead of the saved one; needs playbooks.write */
+            draft?: string;
+            /** @description Narrow the run to these of the template's target hosts; empty runs on all of them */
+            host_ids?: string[] | null;
+            /** @description Run only the tasks with these tags; each 1 to 64 letters, digits or _ . : - */
+            tags?: string[] | null;
+            /** @description A template whose playbook is this one */
+            template_id: string;
         };
         PlaybookListOutputBody: {
             /**
@@ -14650,6 +14689,8 @@ export interface operations {
                 trigger_ref?: string;
                 /** @description Only the runs that targeted this host (the host was one of the run's target hosts) */
                 host_id?: string;
+                /** @description true for the dry runs only, false for the real runs only; both when omitted */
+                check_mode?: "true" | "false";
                 cursor?: string;
                 limit?: number;
                 /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */
@@ -16355,6 +16396,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    dryRunPlaybook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaybookDryRunBody"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStartOutputBody"];
                 };
             };
             /** @description Error */

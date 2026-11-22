@@ -198,11 +198,15 @@ type Job struct {
 	// never claimed, claimed in process or before the migration, or
 	// requeued since.
 	CancelStopsPlay bool
-	ClaimedAt       *time.Time
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	Stats           map[string]any
-	Error           string
+	// CheckMode marks a run in Ansible's check mode, a playbook dry run
+	// (spec 2026-11-22 §1, migration 00115): set at enqueue from
+	// RunOverrides.Check, never changed after.
+	CheckMode  bool
+	ClaimedAt  *time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	Stats      map[string]any
+	Error      string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
@@ -283,6 +287,9 @@ type Filter struct {
 	// HostID narrows to the runs that targeted one host (the job's
 	// host_ids contain it).
 	HostID *uuid.UUID
+	// CheckMode, when set, keeps only the dry runs (true) or only the
+	// real ones (false).
+	CheckMode *bool
 	// Active keeps the live runs only: queued, claimed, running or
 	// cancelling (the API's status=active).
 	Active bool
@@ -679,7 +686,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
-			HostsExcluded: excluded,
+			HostsExcluded: excluded, CheckMode: req.Overrides.check(),
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
@@ -1146,6 +1153,11 @@ func (s *Service) retryTarget(ctx context.Context, orgID, id uuid.UUID) (Job, []
 	}
 	if j.Kind != KindRun {
 		return Job{}, nil, fmt.Errorf("%w: only run jobs can be retried", ErrInvalidInput)
+	}
+	if j.CheckMode {
+		// A retry is a real run of the failed hosts: a dry run's failures
+		// are no reason to change them (spec 2026-11-22 §1).
+		return Job{}, nil, ErrDryRunNotRetryable
 	}
 	if !j.Status.Terminal() {
 		return Job{}, nil, fmt.Errorf("%w: job has not finished yet", ErrNotRunning)

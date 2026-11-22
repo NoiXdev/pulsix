@@ -47,6 +47,7 @@ type jobDTO struct {
 	RunGroupID string    `json:"run_group_id"`
 	Trigger    string    `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
 	TriggerRef string    `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
+	CheckMode  bool      `json:"check_mode" doc:"A dry run: the play ran in check mode"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -54,7 +55,7 @@ func toJobDTO(j jobs.Job) jobDTO {
 	out := jobDTO{
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(),
-		Trigger: j.Trigger, CreatedAt: j.CreatedAt,
+		Trigger: j.Trigger, CheckMode: j.CheckMode, CreatedAt: j.CreatedAt,
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()
@@ -96,6 +97,7 @@ type jobDetailDTO struct {
 	RunGroupID string                 `json:"run_group_id"`
 	Trigger    string                 `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
 	TriggerRef string                 `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
+	CheckMode  bool                   `json:"check_mode" doc:"A dry run: the play ran in check mode"`
 	ActorName  string                 `json:"actor_name,omitempty"`
 	WorkerName string                 `json:"worker_name,omitempty"`
 	Hosts      []string               `json:"hosts" doc:"The job's target host ids"`
@@ -153,7 +155,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(), Trigger: j.Trigger,
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
-		CancelStopsPlay: j.CancelStopsPlay,
+		CancelStopsPlay: j.CancelStopsPlay, CheckMode: j.CheckMode,
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()
@@ -276,6 +278,7 @@ type jobListInput struct {
 	Trigger    string `query:"trigger" doc:"manual, schedule, webhook, system or chain"`
 	TriggerRef string `query:"trigger_ref" doc:"Only the runs this schedule or webhook trigger started"`
 	HostID     string `query:"host_id" doc:"Only the runs that targeted this host (the host was one of the run's target hosts)"`
+	CheckMode  string `query:"check_mode" enum:"true,false" doc:"true for the dry runs only, false for the real runs only; both when omitted"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
 	// Page switches the list to offset paging (see PageQuery); Sort is the
@@ -500,6 +503,10 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if filter.PlaybookID, err = parseOptionalUUID(&in.PlaybookID, "playbook_id"); err != nil {
 			return nil, err
 		}
+		if in.CheckMode != "" {
+			check := in.CheckMode == "true"
+			filter.CheckMode = &check
+		}
 		if in.HostID != "" {
 			hostID, err := parseUUID(in.HostID, "host_id")
 			if err != nil {
@@ -710,6 +717,10 @@ func authorizeCancel(ctx context.Context, deps Deps, org, rawID string) (Scope, 
 // applies to.
 func mapJobsErr(ctx context.Context, err error) error {
 	switch {
+	case errors.Is(err, jobs.ErrInvalidDryRun):
+		return huma.Error422UnprocessableEntity(err.Error())
+	case errors.Is(err, jobs.ErrDryRunNotRetryable):
+		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, jobs.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, jobs.ErrInvalidCursor):

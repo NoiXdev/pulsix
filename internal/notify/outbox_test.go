@@ -146,6 +146,20 @@ func TestRunGroupFinishedFiltersByCategoryAndTrigger(t *testing.T) {
 	}
 }
 
+// TestRunGroupFinishedIgnoresADryRun: a dry run's outcome notifies nobody
+// (spec 2026-11-22 §1), whatever its trigger says; only a manual run can
+// be one, and this pins the rule should that ever change.
+func TestRunGroupFinishedIgnoresADryRun(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-dry-run")
+	w.finish(t, jobs.RunGroupResult{
+		OrgID: w.org, GroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerSchedule, TriggerRef: &w.schedule,
+		Status: jobs.StatusFailed, Hosts: 2, HostsChanged: 1, HostsFailed: 1, CheckMode: true,
+	})
+	if got := w.queued(t); len(got) != 0 {
+		t.Fatalf("queued = %+v, want nothing for a dry run", got)
+	}
+}
+
 func TestEnqueueDecisionSkipsDisabledChannelsAndTriggeredDecisions(t *testing.T) {
 	w := newOutboxWorld(t, "outbox-decision")
 	decide := func(outcome string, runID uuid.UUID) {

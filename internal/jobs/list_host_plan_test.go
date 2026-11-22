@@ -227,9 +227,9 @@ func TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan(t *testing.T) {
 	org, host, app := seedHostFilterJobs(t)
 
 	// gen.ListJobsForHostParams order: org, host, zone, status, kind,
-	// template, playbook, run group, trigger, trigger ref, cursor at,
-	// cursor id, limit.
-	args := fmt.Sprintf(`'%s', '%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`, org, host)
+	// template, playbook, check mode, run group, trigger, trigger ref,
+	// cursor at, cursor id, limit.
+	args := fmt.Sprintf(`'%s', '%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`, org, host)
 
 	plan, _ := explainGeneric(t, app, org, query, args, false)
 	pretty, _ := json.MarshalIndent(plan, "", " ")
@@ -266,7 +266,7 @@ func TestExplainGenericFreesItsStatementAfterAFailure(t *testing.T) {
 	defer conn.Release()
 
 	query := generatedQuery(t, "listJobsForHost")
-	const tail = `, '` + "00000000-0000-0000-0000-000000000000" + `', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`
+	const tail = `, '` + "00000000-0000-0000-0000-000000000000" + `', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`
 	_, _, err = explainGenericOn(ctx, conn.Conn(), org, query, `'not-a-uuid'`+tail, false)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "22P02" || !strings.HasPrefix(err.Error(), "explain: ") {
@@ -302,11 +302,11 @@ func TestListLiveJobsUsesTheLiveIndexUnderAGenericPlan(t *testing.T) {
 	}
 
 	// gen.ListLiveJobsParams order: org, host, zone, status, kind, template,
-	// playbook, run group, trigger, trigger ref, cursor at, cursor id, sort
-	// key, sort desc, offset, limit.
+	// playbook, check mode, run group, trigger, trigger ref, cursor at,
+	// cursor id, sort key, sort desc, offset, limit.
 	for name, args := range map[string]string{
-		"list":  fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'created', true, 0, 25`, org),
-		"count": fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL`, org),
+		"list":  fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'created', true, 0, 25`, org),
+		"count": fmt.Sprintf(`'%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL`, org),
 	} {
 		query := generatedQuery(t, map[string]string{"list": "listLiveJobs", "count": "countLiveJobs"}[name])
 		plan, _ := explainGeneric(t, app, org, query, args, false)

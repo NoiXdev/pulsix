@@ -31,11 +31,23 @@ type RunOverrides struct {
 	// re-checks the limit (ansiblevars.Inert, CheckUntrustedLimit). It is
 	// sealed together with the values, so it cannot be dropped on its own.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// Check runs the play in Ansible's check mode (a playbook dry run, spec
+	// 2026-11-22 §1); Diff, Tags and Playbook belong to such a run. Diff
+	// asks for --diff, Tags for --tags. Playbook is an editor playbook's
+	// unsaved text, run instead of the stored one, and is refused without
+	// Check: a draft never runs for real (checkRunRequest).
+	Check    bool     `json:"check,omitempty"`
+	Diff     bool     `json:"diff,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	Playbook *string  `json:"playbook,omitempty"`
 }
 
 func (o *RunOverrides) empty() bool {
-	return o == nil || (o.Limit == nil && len(o.ExtraVars) == 0)
+	return o == nil || (o.Limit == nil && len(o.ExtraVars) == 0 && !o.Check && !o.Diff && len(o.Tags) == 0 && o.Playbook == nil)
 }
+
+// check reports whether the overrides ask for a check-mode run.
+func (o *RunOverrides) check() bool { return o != nil && o.Check }
 
 // ErrAllHostsExcluded means every host of the run's scope was excluded
 // by the request (a schedule's maintenance guard, spec §6): nothing is
@@ -99,6 +111,10 @@ type RunRequest struct {
 	// run request passes its own id, so a claim of any of its jobs finds
 	// the request (spec 2026-11-16 assistant access).
 	RunGroupID uuid.UUID
+	// PlaybookID, when set, is the playbook the template must run, else the
+	// enqueue fails with ErrInvalidDryRun: a dry run started from that
+	// playbook's page (spec 2026-11-22 §1).
+	PlaybookID *uuid.UUID
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -139,6 +155,9 @@ const replayListLimit = 200
 // EnqueueRunWith is EnqueueRun with an explicit trigger and overrides.
 func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req RunRequest) ([]Job, error) {
 	if err := req.validate(); err != nil {
+		return nil, err
+	}
+	if err := checkRunRequest(req); err != nil {
 		return nil, err
 	}
 	group := s.newID()
@@ -183,6 +202,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	if err := checkRunTemplate(tmpl, req); err != nil {
+		return nil, err
+	}
 	scope, err := parseScope(tmpl.Scope)
 	if err != nil {
 		return nil, err
@@ -193,8 +215,12 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 			return nil, err
 		}
 	}
-	if err := s.planFollowUps(ctx, orgID, group, tmpl, req); err != nil {
-		return nil, err
+	if !req.Overrides.check() {
+		// A dry run starts nothing after it, whatever the template's own
+		// follow-ups say (spec 2026-11-22 §1).
+		if err := s.planFollowUps(ctx, orgID, group, tmpl, req); err != nil {
+			return nil, err
+		}
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, gate, req, group, alreadyDone)
 }

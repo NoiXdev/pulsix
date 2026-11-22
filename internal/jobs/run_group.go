@@ -57,6 +57,9 @@ type RunGroupResult struct {
 	// hint that three more were left out for a window (backlog 2.81).
 	HostsExcluded         int
 	StartedAt, FinishedAt *time.Time
+	// CheckMode marks a dry run's group (spec 2026-11-22 §1): its outcome
+	// changed nothing, so it notifies nobody.
+	CheckMode bool
 }
 
 // HostsOK is the number of targeted hosts this run reached a verdict on
@@ -118,7 +121,7 @@ func (q *SQLQueue) SetRunGroupSink(sink RunGroupSink) { q.runGroups = sink }
 // read it as one.
 const runGroupQuery = `
 WITH g AS (
-  SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats, hosts_excluded
+  SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats, hosts_excluded, check_mode
   FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'run'
 ),
 lists AS (
@@ -149,7 +152,8 @@ SELECT
   (SELECT id FROM g ORDER BY created_at, id LIMIT 1),
   (SELECT template_id FROM g LIMIT 1),
   (SELECT trigger FROM g LIMIT 1),
-  (SELECT trigger_ref FROM g LIMIT 1)`
+  (SELECT trigger_ref FROM g LIMIT 1),
+  (SELECT COALESCE(bool_or(check_mode), false) FROM g)`
 
 // recordRunGroup hands a completed run group to the sink, inside the
 // finishing transaction, which already holds the group's advisory lock
@@ -243,7 +247,7 @@ func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, o
 	var first *uuid.UUID
 	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID).Scan(
 		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed, &r.HostsNoResult,
-		&r.HostsExcluded, &r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef,
+		&r.HostsExcluded, &r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef, &r.CheckMode,
 	); err != nil {
 		return r, false, fmt.Errorf("read group: %w", err)
 	}

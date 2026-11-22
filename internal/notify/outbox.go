@@ -105,8 +105,12 @@ type eventContext struct {
 
 // RunGroupFinished implements jobs.RunGroupSink: a scheduled run group
 // that finished is reported to the channels its schedule's rules name for
-// the run's categories. ctx carries the finishing transaction.
+// the run's categories. ctx carries the finishing transaction. A dry run
+// (check mode) changed nothing and notifies nobody.
 func (o *Outbox) RunGroupFinished(ctx context.Context, r jobs.RunGroupResult) error {
+	if r.CheckMode {
+		return nil
+	}
 	if r.Trigger == jobs.TriggerChain {
 		return o.chainedRunFinished(ctx, r)
 	}

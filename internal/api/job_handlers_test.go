@@ -162,6 +162,8 @@ type jobDTO struct {
 	VaultIdentitiesSource string `json:"vault_identities_source"`
 	// CancelStopsPlay is a pointer so a test can tell false from absent.
 	CancelStopsPlay *bool `json:"cancel_stops_play"`
+	// CheckMode is a pointer for the same reason.
+	CheckMode *bool `json:"check_mode"`
 }
 
 func runJob(t *testing.T, c *http.Client, url string) []jobDTO {

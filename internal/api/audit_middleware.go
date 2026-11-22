@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"strings"
 
@@ -86,6 +87,9 @@ type auditCarrier struct {
 	kind     audit.ActorKind
 	objectID string
 	summary  string
+	// meta holds the handler's own details for the event (setAuditMeta),
+	// merged under the middleware's own keys.
+	meta map[string]any
 }
 
 func withAuditCarrier(ctx context.Context) (context.Context, *auditCarrier) {
@@ -152,6 +156,18 @@ func setAuditScopeAs(ctx context.Context, orgID *uuid.UUID, userID uuid.UUID, ki
 func setAuditObject(ctx context.Context, objectID, summary string) {
 	if c, ok := auditCarrierFromContext(ctx); ok {
 		c.objectID, c.summary = objectID, summary
+	}
+}
+
+// setAuditMeta adds one detail to the event's meta, next to source_ip: what
+// the summary cannot carry in a form a reader filters on (a dry run's tags,
+// say). Nothing secret belongs here; meta is shown in the activity log.
+func setAuditMeta(ctx context.Context, key string, value any) {
+	if c, ok := auditCarrierFromContext(ctx); ok {
+		if c.meta == nil {
+			c.meta = map[string]any{}
+		}
+		c.meta[key] = value
 	}
 }
 
@@ -295,6 +311,7 @@ func auditMiddleware(deps Deps) func(huma.Context, func(huma.Context)) {
 		objType, _ := op.Metadata["auditObject"].(string)
 		userID := carrier.userID
 		meta := map[string]any{}
+		maps.Copy(meta, carrier.meta)
 		if ip := clientAddr(deps, ctx); ip.IsValid() {
 			meta["source_ip"] = ip.String()
 		}
