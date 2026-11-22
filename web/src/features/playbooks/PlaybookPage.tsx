@@ -11,19 +11,23 @@ import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import type { Playbook } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
+import { PlaybookDryRunTab } from './PlaybookDryRunTab.tsx';
 import { PlaybookEditorTab } from './PlaybookEditorTab.tsx';
 import { PlaybookHeader } from './PlaybookHeader.tsx';
 import { PlaybookRunsTab } from './PlaybookRunsTab.tsx';
 import { PlaybookUsedByTab } from './PlaybookUsedByTab.tsx';
 import { parsePlaybookTab, playbookPanelId, playbookTabId, type PlaybookTab } from './playbookTabs.ts';
 import { usePlaybookDraft } from './usePlaybookDraft.ts';
+import { usePlaybookOutline } from './usePlaybookOutline.ts';
 import { validateYAMLProblem } from './validate.ts';
 
 /**
  * PlaybookPage is one playbook on a page of its own (spec
  * 2026-11-19-playbook-pages-design.md §1): a header with its name, state and
- * actions, and the tabs Editor, Runs and Used by, the open one in the URL
- * (`?tab=`, Editor when absent).
+ * actions, and the tabs Editor, Dry run, Runs and Used by, the open one in
+ * the URL (`?tab=`, Editor when absent). An editor playbook's draft is
+ * outlined by the server (usePlaybookOutline): the header shows its counts
+ * and tags, the Editor tab its entries, the Dry run tab its tags.
  *
  * The draft lives here, above the tabs (usePlaybookDraft: a clean draft
  * follows the stored text), and the Editor panel stays mounted
@@ -68,6 +72,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
   const release = useUnsavedGuard(dirty, { samePath: true });
   const problem = playbook.source === 'editor' ? validateYAMLProblem(draft, t) : null;
   const canSave = editable && dirty && problem === null && !update.isPending;
+  const { outline, invalid: outlineStale } = usePlaybookOutline(org, draft, playbook.source === 'editor');
 
   const using = (templates.data?.templates ?? []).filter((tpl) => tpl.playbook_id === playbook.id);
 
@@ -114,6 +119,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
   const tabs = t.playbooks.page.tabs;
   const items: PageTabItem<PlaybookTab>[] = [
     { id: 'editor', label: tabs.editor },
+    { id: 'dry-run', label: tabs.dryRun },
     { id: 'runs', label: tabs.runs },
     { id: 'used', label: tabs.used, count: templates.data ? using.length : undefined },
   ];
@@ -131,6 +137,8 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
         canSave={canSave}
         onSave={() => void save()}
         onLeave={release}
+        outline={outline}
+        onDryRun={() => select('dry-run')}
       />
       <PageTabs label={t.playbooks.page.tabsLabel} tabs={items} active={tab} onSelect={select} tabId={playbookTabId} panelId={playbookPanelId} />
       <div
@@ -150,11 +158,15 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
           serverError={serverError}
           templates={using}
           onShowRuns={() => select('runs')}
+          outline={outline}
+          outlineStale={outlineStale}
         />
       </div>
       {tab !== 'editor' && (
         <div role="tabpanel" id={playbookPanelId(tab)} aria-labelledby={playbookTabId(tab)} className={PANEL_CLASS}>
-          {tab === 'runs' ? (
+          {tab === 'dry-run' ? (
+            <PlaybookDryRunTab org={org} playbook={playbook} role={role} templates={templates.data ? using : undefined} draft={draft} saved={saved} dirty={dirty} />
+          ) : tab === 'runs' ? (
             <PlaybookRunsTab org={org} playbookId={playbook.id} templates={using} canRun={may(role, 'jobs.run')} />
           ) : (
             <PlaybookUsedByTab org={org} role={role} playbookId={playbook.id} templates={templates.data ? using : undefined} error={templates.isError ? templates.error : null} />

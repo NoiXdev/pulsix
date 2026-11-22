@@ -38,6 +38,27 @@ export const job = (id: string, extra = {}) => ({
   id, kind: 'run', status: 'succeeded', trigger: 'manual', template_id: 't1', run_group_id: id, zone_id: 'z1', created_at: '2026-11-18T09:00:00Z', ...extra,
 });
 
+export const entry = (name: string, line: number, extra = {}) => ({ section: 'tasks', kind: 'task', name, line, depth: 0, tags: [], runs_in_check_mode: true, ...extra });
+
+/** The outline of `p1` as the server answers it: one play, three tasks
+ * (one runs for real in check mode) and a handler. */
+export const OUTLINE = {
+  plays: [
+    {
+      name: 'Install nginx', hosts: 'web', become: true, line: 1, tags: [],
+      entries: [
+        entry('Install package', 5, { tags: ['packages'] }),
+        entry('Render nginx config', 9, { tags: ['config'] }),
+        entry('Check config', 13, { runs_in_check_mode: false }),
+        entry('reload nginx', 18, { section: 'handlers' }),
+      ],
+    },
+  ],
+  tags: ['config', 'packages'],
+  counts: { plays: 1, tasks: 3, handlers: 1 },
+  truncated: false,
+};
+
 const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
 
 export const PREFS = { density: 'standard', page_size: 25, lists: {} };
@@ -53,6 +74,7 @@ export const routes = (role = 'operator', extra: Record<string, MockRoute> = {})
   'GET /api/v1/orgs/acme/jobs': { jobs: [job('j1')], next_cursor: '', total: 1 },
   'GET /api/v1/orgs/acme/schedules': { schedules: [] },
   'GET /api/v1/orgs/acme/triggers': { triggers: [] },
+  'POST /api/v1/orgs/acme/playbooks/outline': OUTLINE,
   ...extra,
 });
 

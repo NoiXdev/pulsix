@@ -1,14 +1,14 @@
 import { useId } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Save } from 'lucide-react';
+import { FlaskConical, Save } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { Pill, Tag } from '../../ui/badge.tsx';
 import { RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { useDeletePlaybook } from '../../api/hooks/usePlaybooks.ts';
 import { useRepos } from '../../api/hooks/useRepos.ts';
-import type { Playbook, Template } from '../../api/types.ts';
+import type { Playbook, PlaybookOutline, Template } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { may } from '../../lib/roles.ts';
@@ -35,18 +35,25 @@ interface PlaybookHeaderProps {
   /** Called before a deleted playbook's page is left: its draft went with
    * it, so leaving must not ask about it. */
   onLeave: () => Promise<void>;
+  /** The draft's outline (editor playbooks): its counts join the summary
+   * line, its tags show as chips. */
+  outline: PlaybookOutline | null;
+  /** Opens the Dry run tab. */
+  onDryRun: () => void;
 }
 
 /**
  * PlaybookHeader is the top of the playbook page: the name (monospaced),
  * the state — Valid or the preview's problem, Unsaved while the draft
  * differs, and the source (the editor, or the repository and branch) —
- * the summary line, and the actions Run…, Save and the "⋯" menu with
+ * the summary line (with the outline's counts of plays, tasks and handlers),
+ * the outline's tags, and the actions Dry run… (to the Dry run tab), Run…,
+ * Save and the "⋯" menu with
  * Delete…, which is refused while a template uses the playbook. Both need
  * the templates: when they cannot be read, a line under the actions says
  * so and describes the disabled Run….
  */
-export function PlaybookHeader({ org, playbook, role, templates, templatesFailed, problem, dirty, canSave, onSave, onLeave }: PlaybookHeaderProps) {
+export function PlaybookHeader({ org, playbook, role, templates, templatesFailed, problem, dirty, canSave, onSave, onLeave, outline, onDryRun }: PlaybookHeaderProps) {
   const t = useT();
   const p = t.playbooks.page;
   const fmt = useFormat();
@@ -60,7 +67,9 @@ export function PlaybookHeader({ org, playbook, role, templates, templatesFailed
   const hintId = useId();
   const canRun = may(role, 'jobs.run');
   const canDelete = may(role, 'playbooks.write');
-  const line = [summary, playbook.updated_at ? p.updated(fmt.relative(playbook.updated_at)) : ''].filter(Boolean).join(' · ');
+  const counts = outline ? p.counts(outline.counts.plays, outline.counts.tasks, outline.counts.handlers) : '';
+  const line = [summary, counts, playbook.updated_at ? p.updated(fmt.relative(playbook.updated_at)) : ''].filter(Boolean).join(' · ');
+  const tags = outline?.tags ?? [];
 
   return (
     <div data-testid="playbook-header" className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -72,9 +81,26 @@ export function PlaybookHeader({ org, playbook, role, templates, templatesFailed
           <PlaybookSourcePill source={playbook.source} label={source} />
         </div>
         {line && <p className="text-[13px] text-muted-foreground">{line}</p>}
+        {tags.length > 0 && (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span aria-hidden="true">{p.tags}:</span>
+            <ul aria-label={p.tags} className="flex flex-wrap gap-1">
+              {tags.map((tag) => (
+                <li key={tag}>
+                  <Tag>{tag}</Tag>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 flex-col gap-1 md:items-end">
         <div className="flex flex-wrap items-center gap-2">
+          {canRun && (
+            <Button onClick={onDryRun}>
+              <FlaskConical size={14} /> {p.dryRunButton}
+            </Button>
+          )}
           {canRun && (
             <RunPlaybookButton
               org={org}

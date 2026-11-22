@@ -40,3 +40,9 @@ export function replaceCode(content: HTMLElement, text: string): void {
   const view = viewOf(content);
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, userEvent: 'input.paste' });
 }
+
+/** cursorLineOf answers the 1-based line the editor's cursor is on. */
+export function cursorLineOf(content: HTMLElement): number {
+  const view = viewOf(content);
+  return view.state.doc.lineAt(view.state.selection.main.head).number;
+}

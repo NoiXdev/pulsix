@@ -43,6 +43,13 @@ export type HostSSH = components['schemas']['HostSSHDTO'];
 
 export type Repo = components['schemas']['RepoDTO'];
 export type Playbook = components['schemas']['PlaybookDTO'];
+/** An editor playbook's outline (POST /playbooks/outline): its plays, their
+ * tasks, handlers, blocks and roles with line and tags, and the tags used. */
+export type PlaybookOutline = components['schemas']['PlaybookOutline'];
+export type OutlinePlay = components['schemas']['OutlinePlay'];
+export type OutlineEntry = components['schemas']['OutlineEntry'];
+/** The body of a playbook's dry run (POST /playbooks/{id}/dry-run). */
+export type PlaybookDryRunInput = Omit<components['schemas']['PlaybookDryRunBody'], '$schema'>;
 export type Template = components['schemas']['TemplateDTO'];
 export type Job = components['schemas']['JobDTO'];
 export type JobDetail = components['schemas']['JobDetailDTO'];

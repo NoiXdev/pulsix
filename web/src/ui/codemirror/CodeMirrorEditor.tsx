@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 import { Annotation, Compartment, EditorState, Transaction, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -16,9 +16,11 @@ import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { yaml } from '@codemirror/lang-yaml';
 import { json } from '@codemirror/lang-json';
 import { editorHighlighting, editorTheme } from './theme.ts';
-import type { CodeDiagnostic, CodeEditorLanguage } from '../code-editor.tsx';
+import type { CodeDiagnostic, CodeEditorHandle, CodeEditorLanguage } from '../code-editor.tsx';
 
 export interface CodeMirrorEditorProps {
+  /** Receives revealLine (ui/code-editor.tsx's CodeEditorHandle). */
+  handle?: Ref<CodeEditorHandle>;
   value: string;
   onChange?: (value: string) => void;
   language: CodeEditorLanguage;
@@ -209,6 +211,21 @@ export default function CodeMirrorEditor(props: CodeMirrorEditorProps) {
       view.current = null;
     };
   }, []);
+
+  useImperativeHandle(
+    props.handle,
+    () => ({
+      revealLine(line: number) {
+        const v = view.current;
+        if (!v) return;
+        const n = Math.min(Math.max(1, Math.floor(line)), v.state.doc.lines);
+        const at = v.state.doc.line(n).from;
+        v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+        v.focus();
+      },
+    }),
+    [],
+  );
 
   const { value, language, label, labelledBy, describedBy, readOnly, invalid, placeholder, maxLength, height, minHeight, maxHeight, diagnostics } = props;
 

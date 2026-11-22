@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import type { PlaybookDryRunInput } from '../types.ts';
 
 function useInvalidate(org: string) {
   const qc = useQueryClient();
@@ -62,4 +63,31 @@ export function useDeletePlaybook(org: string) {
   });
   const forget = (id: string) => qc.removeQueries({ queryKey: ['playbooks', org, id], exact: true });
   return { ...mutation, forget };
+}
+
+/** usePlaybookOutline reads the outline of a playbook text (the editor's
+ * draft). Its own key prefix, so saving a playbook does not refetch it; a
+ * short gcTime because the key holds the draft. The previous outline stays
+ * while the next one loads; an invalid text answers 422, which is not
+ * retried. */
+export function usePlaybookOutlineQuery(org: string, content: string, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['playbook-outline', org, content],
+    queryFn: ({ signal }) => unwrap(api.POST('/api/v1/orgs/{org}/playbooks/outline', { params: { path: { org } }, body: { content }, signal })),
+    enabled: !!org && (opts.enabled ?? true),
+    placeholderData: keepPreviousData,
+    retry: false,
+    gcTime: 30_000,
+    staleTime: Infinity,
+  });
+}
+
+/** useDryRunPlaybook starts a dry run of the playbook through one of its
+ * templates (202, { jobs }), like a template run; the runs lists refetch. */
+export function useDryRunPlaybook(org: string, id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PlaybookDryRunInput) => unwrap(api.POST('/api/v1/orgs/{org}/playbooks/{id}/dry-run', { params: { path: { org, id } }, body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['jobs', org] }),
+  });
 }

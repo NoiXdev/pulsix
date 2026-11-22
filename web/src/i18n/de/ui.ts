@@ -102,6 +102,13 @@ export const deUi: Messages['ui'] = {
   codeEditor: {
     keyboardHint: 'Tab rückt ein. Um den Editor mit der Tastatur zu verlassen, drück Escape und dann Tab.',
   },
+  diff: {
+    label: 'Unterschiede',
+    none: 'Keine Unterschiede.',
+    noNewline: '\\ Kein Zeilenumbruch am Dateiende',
+    showAll: (n: number) => `Alle ${n} Zeilen zeigen`,
+    tooLarge: (n: number) => `Zu groß zum Vergleichen: eine Seite hat mehr als ${n} Zeilen.`,
+  },
   jsonViewer: {
     expandAll: 'Alle aufklappen',
     collapseAll: 'Alle zuklappen',

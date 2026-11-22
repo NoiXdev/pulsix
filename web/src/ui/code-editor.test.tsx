@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { CodeEditor } from './code-editor.tsx';
-import { codeOf, findCodeEditor, replaceCode } from '../test/codeEditor.ts';
+import { CodeEditor, type CodeEditorHandle } from './code-editor.tsx';
+import { codeOf, cursorLineOf, findCodeEditor, replaceCode } from '../test/codeEditor.ts';
 
 function Controlled({ initial = '', onValue, maxLength, autoFocus }: { initial?: string; onValue?: (v: string) => void; maxLength?: number; autoFocus?: boolean }) {
   const [value, setValue] = useState(initial);
@@ -186,6 +186,19 @@ describe('CodeEditor', () => {
     await user.keyboard('{Control>}z{/Control}');
     expect(codeOf(editor)).toBe('two');
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('moves the cursor to a line and focuses the editor on revealLine', async () => {
+    const ref = createRef<CodeEditorHandle>();
+    render(<CodeEditor ref={ref} label="Code" language="yaml" value={'- hosts: all\n  tasks:\n    - name: one\n    - name: two'} onChange={() => {}} />);
+    const editor = await findCodeEditor('Code');
+    expect(editor).not.toHaveFocus();
+    act(() => ref.current?.revealLine(3));
+    expect(cursorLineOf(editor)).toBe(3);
+    await waitFor(() => expect(editor).toHaveFocus());
+    // A line past the end goes to the last one.
+    act(() => ref.current?.revealLine(99));
+    expect(cursorLineOf(editor)).toBe(4);
   });
 
   it('takes the focus on request, once loaded', async () => {

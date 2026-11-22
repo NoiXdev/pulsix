@@ -1,4 +1,5 @@
 import type { Messages } from '../types.ts';
+import { dePlaybookDryRun, dePlaybookOutline } from './playbookDryRun.ts';
 
 export const dePlaybooks: Messages['playbooks'] = {
   list: {
@@ -43,13 +44,17 @@ export const dePlaybooks: Messages['playbooks'] = {
   },
   page: {
     tabsLabel: 'Playbook',
-    tabs: { editor: 'Editor', runs: 'Läufe', used: 'Verwendet von' },
+    tabs: { editor: 'Editor', dryRun: 'Probelauf', runs: 'Läufe', used: 'Verwendet von' },
     valid: 'Gültig',
     unsaved: 'Ungespeichert',
     sourceEditor: 'Editor',
     sourceRepo: (repo: string, branch: string) => `${repo} @ ${branch}`,
     updated: (when: string) => `aktualisiert ${when}`,
     run: 'Ausführen…',
+    dryRunButton: 'Probelauf…',
+    counts: (plays: number, tasks: number, handlers: number) =>
+      [plays === 1 ? '1 Play' : `${plays} Plays`, tasks === 1 ? '1 Task' : `${tasks} Tasks`, handlers === 1 ? '1 Handler' : `${handlers} Handler`].join(' · '),
+    tags: 'Tags',
     save: 'Speichern',
     more: (name: string) => `Weitere Aktionen für ${name}`,
     delete: 'Löschen…',
@@ -108,6 +113,8 @@ export const dePlaybooks: Messages['playbooks'] = {
       create: 'Vorlage anlegen',
       savedRuns: 'Es läuft die gespeicherte Fassung: deine ungespeicherten Änderungen sind nicht dabei.',
     },
+    outline: dePlaybookOutline,
+    dryRun: dePlaybookDryRun,
   },
   newPage: {
     title: 'Neues Playbook',

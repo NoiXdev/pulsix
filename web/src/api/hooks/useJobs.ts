@@ -18,6 +18,8 @@ export interface JobListFilter {
   triggerRef?: string;
   /** Only the runs that targeted this host (a host id). */
   host?: string;
+  /** Only the dry runs (true) or only the real runs (false); both when omitted. */
+  checkMode?: boolean;
   /** Page size; JOBS_PAGE_SIZE when omitted. */
   limit?: number;
 }
@@ -43,6 +45,7 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
               playbook_id: filter.playbook || undefined,
               trigger_ref: filter.triggerRef ?? '',
               host_id: filter.host ?? '',
+              check_mode: checkModeParam(filter.checkMode),
               cursor: pageParam || undefined,
               limit: filter.limit ?? JOBS_PAGE_SIZE,
             },
@@ -55,6 +58,40 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
 }
 
 type JobSort = 'created' | 'status' | 'kind' | 'trigger';
+
+const checkModeParam = (v: boolean | undefined): 'true' | 'false' | undefined => (v === undefined ? undefined : v ? 'true' : 'false');
+
+/** useNewestJob is the newest run matching the filter (null when none), one
+ * row of the list; `refetchInterval` keeps it current while a caller
+ * follows a live run. */
+export function useNewestJob(org: string, filter: Omit<JobListFilter, 'limit'>, opts: { enabled?: boolean; refetchInterval?: number | false } = {}) {
+  return useQuery({
+    queryKey: ['jobs', org, 'newest', filter],
+    queryFn: async () => {
+      const body = await unwrap(
+        api.GET('/api/v1/orgs/{org}/jobs', {
+          params: {
+            path: { org },
+            query: {
+              status: filter.status || undefined,
+              kind: filter.kind || undefined,
+              trigger: filter.trigger || undefined,
+              template_id: filter.template || undefined,
+              playbook_id: filter.playbook || undefined,
+              trigger_ref: filter.triggerRef || undefined,
+              host_id: filter.host || undefined,
+              check_mode: checkModeParam(filter.checkMode),
+              limit: 1,
+            },
+          },
+        }),
+      );
+      return body.jobs?.[0] ?? null;
+    },
+    enabled: !!org && (opts.enabled ?? true),
+    refetchInterval: opts.refetchInterval,
+  });
+}
 
 /**
  * useJobsPage is the runs list one numbered page at a time (the API's page
@@ -80,6 +117,7 @@ export function useJobsPage(org: string, filter: Omit<JobListFilter, 'limit'>, p
               playbook_id: filter.playbook || undefined,
               trigger_ref: filter.triggerRef || undefined,
               host_id: filter.host || undefined,
+              check_mode: checkModeParam(filter.checkMode),
               page: page.page,
               per_page: page.per_page,
               sort: page.sort as JobSort | undefined,

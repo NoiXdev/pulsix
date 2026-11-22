@@ -1,5 +1,5 @@
 /** The playbook page's tabs, in the order the strip shows them. */
-export const PLAYBOOK_TABS = ['editor', 'runs', 'used'] as const;
+export const PLAYBOOK_TABS = ['editor', 'dry-run', 'runs', 'used'] as const;
 
 export type PlaybookTab = (typeof PLAYBOOK_TABS)[number];
 

@@ -1,3 +1,5 @@
+import { enPlaybookDryRun, enPlaybookOutline } from './playbookDryRun.ts';
+
 /** Playbooks: the list, the playbook page, the new page and the YAML preview messages. */
 export const enPlaybooks = {
   list: {
@@ -39,13 +41,17 @@ export const enPlaybooks = {
   },
   page: {
     tabsLabel: 'Playbook',
-    tabs: { editor: 'Editor', runs: 'Runs', used: 'Used by' },
+    tabs: { editor: 'Editor', dryRun: 'Dry run', runs: 'Runs', used: 'Used by' },
     valid: 'Valid',
     unsaved: 'Unsaved',
     sourceEditor: 'Editor',
     sourceRepo: (repo: string, branch: string) => `${repo} @ ${branch}`,
     updated: (when: string) => `updated ${when}`,
     run: 'Run…',
+    dryRunButton: 'Dry run…',
+    counts: (plays: number, tasks: number, handlers: number) =>
+      [plays === 1 ? '1 play' : `${plays} plays`, tasks === 1 ? '1 task' : `${tasks} tasks`, handlers === 1 ? '1 handler' : `${handlers} handlers`].join(' · '),
+    tags: 'Tags',
     save: 'Save',
     more: (name: string) => `More actions for ${name}`,
     delete: 'Delete…',
@@ -103,6 +109,8 @@ export const enPlaybooks = {
       create: 'Create a template',
       savedRuns: 'The saved version runs: your unsaved changes are not included.',
     },
+    outline: enPlaybookOutline,
+    dryRun: enPlaybookDryRun,
   },
   newPage: {
     title: 'New playbook',

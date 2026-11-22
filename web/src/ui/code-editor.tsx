@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useRef, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useId, useImperativeHandle, useRef, type CSSProperties, type Ref, type RefObject } from 'react';
 import { cn } from '../lib/utils.ts';
 import { useT } from '../i18n/useT.ts';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
@@ -13,7 +13,15 @@ export interface CodeDiagnostic {
   message: string;
 }
 
+/** What a caller can do to the editor from outside (through `ref`). */
+export interface CodeEditorHandle {
+  /** Moves the cursor to the start of a 1-based line (past the end: the
+   * last line), scrolls it into view and focuses the editor. */
+  revealLine(line: number): void;
+}
+
 interface CodeEditorBaseProps {
+  ref?: Ref<CodeEditorHandle>;
   value: string;
   onChange?: (value: string) => void;
   language: CodeEditorLanguage;
@@ -63,18 +71,37 @@ const FRAME = 'overflow-hidden rounded-md border border-border bg-background foc
  * it with the keyboard (Escape, then Tab). It shows only with CodeMirror
  * itself: under the stand-in textarea Tab moves the focus as usual.
  */
-export function CodeEditor(props: CodeEditorProps) {
+export function CodeEditor({ ref, ...props }: CodeEditorProps) {
   const t = useT();
   const hintId = useId();
   const editable = !props.readOnly;
   const describedBy = [props.describedBy, editable ? hintId : undefined].filter(Boolean).join(' ') || undefined;
-  const fallback = <PlainCode {...props} describedBy={props.describedBy} />;
+  const editor = useRef<CodeEditorHandle>(null);
+  const plain = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      revealLine(line: number) {
+        if (editor.current) return editor.current.revealLine(line);
+        const area = plain.current;
+        if (!area) return;
+        const starts = area.value.split('\n');
+        const n = Math.min(Math.max(1, Math.floor(line)), starts.length);
+        const at = starts.slice(0, n - 1).reduce((sum, l) => sum + l.length + 1, 0);
+        area.focus();
+        area.setSelectionRange(at, at);
+      },
+    }),
+    [],
+  );
+  const fallback = <PlainCode {...props} describedBy={props.describedBy} ref={plain} />;
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', props.className)}>
       <ErrorBoundary fallback={fallback}>
         <Suspense fallback={fallback}>
           <div className={FRAME}>
             <CodeMirrorEditor
+              handle={editor}
               value={props.value}
               onChange={props.onChange}
               language={props.language}
@@ -104,8 +131,7 @@ export function CodeEditor(props: CodeEditorProps) {
 }
 
 /** The textarea that stands in for the editor while it loads. */
-function PlainCode(props: CodeEditorProps) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+function PlainCode({ ref, ...props }: Omit<CodeEditorBaseProps, 'ref'> & { label?: string; labelledBy?: string; ref: RefObject<HTMLTextAreaElement | null> }) {
   const autoFocus = props.autoFocus;
   useEffect(() => {
     if (!autoFocus) return;
@@ -114,7 +140,7 @@ function PlainCode(props: CodeEditorProps) {
     const take = () => ref.current?.focus();
     take();
     queueMicrotask(take);
-  }, [autoFocus]);
+  }, [autoFocus, ref]);
   const style: CSSProperties = { height: props.height, minHeight: props.minHeight ?? '5rem', maxHeight: props.maxHeight };
   return (
     <textarea

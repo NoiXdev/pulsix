@@ -4,11 +4,10 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Label } from '../../ui/label.tsx';
 import { CodeEditor } from '../../ui/code-editor.tsx';
-import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { useHost, useHosts } from '../../api/hooks/useHosts.ts';
 import { useRunAdhocCommand } from '../../api/hooks/useJobs.ts';
 import { useT } from '../../i18n/useT.ts';
+import { HostChecklist } from './HostChecklist.tsx';
 
 // MAX_ARGV mirrors the server's bound (internal/jobs/adhoc.go's
 // maxAdhocArgv, the API's huma maxLength): a client-side cap only, the
@@ -18,17 +17,10 @@ const MAX_ARGV = 8 << 10;
 /**
  * AdhocDialog runs one shell command on explicit managed hosts (spec §7,
  * backlog 2.14): a paginated, searchable multi-select of managed hosts
- * (every managed host stays reachable, the same "search past the loaded
- * page" contract ManagedHostPicker uses for the single-select case) plus
- * the command itself. Module is fixed to shell in v0.2b — the field exists
- * server-side so v0.3 can extend it, nothing to choose here yet. On
- * success the dialog navigates to the run view of the first job of the
- * group, the same landing every other run action uses.
- *
- * A selected host that is not on the loaded page — a preselected one that
- * sorts past the first page, or one picked before the search changed — is
- * pinned above the list as a checked row, its name read with useHost, so
- * the selection the dialog will send is always on screen.
+ * (HostChecklist) plus the command itself. Module is fixed to shell in
+ * v0.2b — the field exists server-side so v0.3 can extend it, nothing to
+ * choose here yet. On success the dialog navigates to the run view of the
+ * first job of the group, the same landing every other run action uses.
  */
 export function AdhocDialog({
   org,
@@ -45,17 +37,9 @@ export function AdhocDialog({
   const toast = useToast();
   const navigate = useNavigate();
   const runAdhoc = useRunAdhocCommand(org);
-  const [q, setQ] = useState('');
   const [selected, setSelected] = useState<readonly string[]>(initialHostIds ?? []);
   const [argv, setArgv] = useState('');
   const [error, setError] = useState<string | null>(null);
-
-  const hosts = useHosts(org, { managed: true, q }, { keepPrevious: true });
-  const page = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
-  // Only once the page is known: before that every selection would be
-  // pinned and then jump into the list as the page arrives.
-  const pinned = hosts.data ? selected.filter((id) => !page.some((h) => h.id === id)) : [];
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = hosts;
 
   function toggle(id: string) {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -90,41 +74,7 @@ export function AdhocDialog({
         <p className="text-xs text-muted-foreground">
           {t.runs.adhoc.intro}
         </p>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="adhoc-search">{t.runs.adhoc.hosts}</Label>
-          <input
-            id="adhoc-search"
-            type="search"
-            aria-label={t.runs.adhoc.searchLabel}
-            placeholder={t.runs.adhoc.searchPlaceholder}
-            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-border p-2">
-            {pinned.map((id) => (
-              <PinnedHostRow key={id} org={org} id={id} onToggle={() => toggle(id)} />
-            ))}
-            {page.map((h) => (
-              <label key={h.id} className="flex items-center gap-2 text-xs">
-                <input type="checkbox" checked={selected.includes(h.id)} onChange={() => toggle(h.id)} aria-label={h.name} />
-                {h.name}
-              </label>
-            ))}
-            {hosts.data && page.length === 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                {q ? t.runs.adhoc.noMatch(q) : t.runs.adhoc.noHosts}
-              </span>
-            )}
-          </div>
-          {hasNextPage && (
-            <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span>{t.runs.adhoc.more}</span>
-              <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
-            </div>
-          )}
-          <span className="text-[11px] text-muted-foreground">{t.runs.adhoc.selected(selected.length)}</span>
-        </div>
+        <HostChecklist org={org} id="adhoc-search" label={t.runs.adhoc.hosts} selected={selected} onToggle={toggle} />
         <div className="flex flex-col gap-1">
           <Label id="adhoc-argv-label">{t.runs.adhoc.command}</Label>
           <CodeEditor
@@ -153,19 +103,5 @@ export function AdhocDialog({
         </div>
       </form>
     </Dialog>
-  );
-}
-
-/** PinnedHostRow is one selected host that the loaded page does not carry:
- * checked, and unchecking it drops it from the selection (and so from
- * view). Its name comes from GET /hosts/{id}; the id stands in until then. */
-function PinnedHostRow({ org, id, onToggle }: { org: string; id: string; onToggle: () => void }) {
-  const host = useHost(org, id);
-  const name = host.data?.host.name ?? id;
-  return (
-    <label className="flex items-center gap-2 text-xs">
-      <input type="checkbox" checked onChange={onToggle} aria-label={name} />
-      {name}
-    </label>
   );
 }

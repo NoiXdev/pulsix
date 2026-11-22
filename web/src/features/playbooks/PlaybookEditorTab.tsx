@@ -1,11 +1,12 @@
-import { useId } from 'react';
-import { CodeEditor } from '../../ui/code-editor.tsx';
+import { useId, useRef } from 'react';
+import { CodeEditor, type CodeEditorHandle } from '../../ui/code-editor.tsx';
 import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { useRepos } from '../../api/hooks/useRepos.ts';
-import type { Playbook, Template } from '../../api/types.ts';
+import type { Playbook, PlaybookOutline, Template } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PlaybookCheckPanel, PlaybookVariablesPanel } from './PlaybookSidePanels.tsx';
 import { PlaybookLatestRuns } from './PlaybookLatestRuns.tsx';
+import { PlaybookOutlinePanel } from './PlaybookOutlinePanel.tsx';
 import type { YAMLProblem } from './validate.ts';
 
 /** The editor's height: the page's own, less the shell's bar, the header
@@ -23,6 +24,10 @@ interface PlaybookEditorTabProps {
   serverError: string | null;
   templates: readonly Template[];
   onShowRuns: () => void;
+  /** The draft's outline (usePlaybookOutline) and whether it is the last
+   * good one of a draft that does not parse now. */
+  outline: PlaybookOutline | null;
+  outlineStale: boolean;
 }
 
 /**
@@ -33,16 +38,20 @@ interface PlaybookEditorTabProps {
  * playbook has no text in Pulsix: a note says where it lives and that it
  * changes through Git. A reader gets the text read-only.
  */
-export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, problem, serverError, templates, onShowRuns }: PlaybookEditorTabProps) {
+export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, problem, serverError, templates, onShowRuns, outline, outlineStale }: PlaybookEditorTabProps) {
   const t = useT();
   const labelId = useId();
+  const editor = useRef<CodeEditorHandle>(null);
   const latest = <PlaybookLatestRuns org={org} playbookId={playbook.id} templates={templates} onShowAll={onShowRuns} />;
 
   if (playbook.source === 'repo') {
     return (
       <div className="grid grid-cols-1 items-start gap-5 min-[1100px]:grid-cols-[minmax(0,1fr)_300px]">
         <RepoNote org={org} playbook={playbook} />
-        <aside className="flex min-w-0 flex-col gap-4">{latest}</aside>
+        <aside className="flex min-w-0 flex-col gap-4">
+          <PlaybookOutlinePanel outline={null} repo />
+          {latest}
+        </aside>
       </div>
     );
   }
@@ -54,6 +63,7 @@ export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, pr
           {t.playbooks.editor.yaml}
         </span>
         <CodeEditor
+          ref={editor}
           labelledBy={labelId}
           language="yaml"
           value={draft}
@@ -67,6 +77,7 @@ export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, pr
       </div>
       <aside className="flex min-w-0 flex-col gap-4">
         <PlaybookCheckPanel problem={problem} serverError={serverError} />
+        <PlaybookOutlinePanel outline={outline} stale={outlineStale} onReveal={(line) => editor.current?.revealLine(line)} />
         <PlaybookVariablesPanel yaml={draft} />
         {latest}
       </aside>

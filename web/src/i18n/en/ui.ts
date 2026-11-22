@@ -109,6 +109,13 @@ export const enUi = {
   codeEditor: {
     keyboardHint: 'Tab indents. To leave the editor with the keyboard, press Escape, then Tab.',
   },
+  diff: {
+    label: 'Differences',
+    none: 'No differences.',
+    noNewline: '\\ No newline at end of file',
+    showAll: (n: number) => `Show all ${n} lines`,
+    tooLarge: (n: number) => `Too large to compare: a side has more than ${n} lines.`,
+  },
   jsonViewer: {
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
