@@ -4816,6 +4816,14 @@ export interface components {
             /** Format: int64 */
             warnings: number;
         };
+        DryRunDTO: {
+            /** @description Whether the run reported differences */
+            diff: boolean;
+            /** @description Whether the run checked an unsaved draft instead of the saved playbook */
+            draft: boolean;
+            /** @description The tags the run was limited to; empty for all tasks */
+            tags: string[];
+        };
         EffectiveRuleDTO: {
             /** @description The key of the check that reports this tuple, which may differ from the winner's check_key (the plugin's) */
             check_key: string;
@@ -5908,6 +5916,8 @@ export interface components {
             check_mode: boolean;
             /** Format: date-time */
             created_at: string;
+            /** @description A dry run's options; absent for every other job */
+            dry_run?: components["schemas"]["DryRunDTO"];
             id: string;
             /** @enum {string} */
             kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";
@@ -5935,6 +5945,8 @@ export interface components {
             check_mode: boolean;
             /** Format: date-time */
             created_at: string;
+            /** @description A dry run's options; absent for every other job */
+            dry_run?: components["schemas"]["DryRunDTO"];
             error?: string;
             /** Format: date-time */
             finished_at?: string;

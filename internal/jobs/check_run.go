@@ -19,6 +19,26 @@ var (
 	ErrDryRunNotRetryable = errors.New("a dry run cannot be retried: start a new dry run, or run the template")
 )
 
+// DryRun is what a check-mode run records about itself on its job row
+// (jobs.dry_run, migration 00116), so the run view can show it without
+// opening the sealed payload: the tags, whether --diff was asked for and
+// whether an unsaved draft ran. Never the draft's text or its hash.
+type DryRun struct {
+	Tags  []string `json:"tags"`
+	Diff  bool     `json:"diff"`
+	Draft bool     `json:"draft"`
+}
+
+// dryRun is the record a run with these overrides carries: nil unless it
+// is a check run. Tags is never nil, so the record reads "no tags" as [].
+func (o *RunOverrides) dryRun() *DryRun {
+	if !o.check() {
+		return nil
+	}
+	tags := append([]string{}, o.Tags...)
+	return &DryRun{Tags: tags, Diff: o.Diff, Draft: o.Playbook != nil}
+}
+
 // MaxCheckTags caps the tags of one check-mode run.
 const MaxCheckTags = 32
 

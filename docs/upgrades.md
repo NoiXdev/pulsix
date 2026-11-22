@@ -475,7 +475,7 @@ than the call answers `Unimplemented`; the worker then removes nothing, logs
 that once per attempt at info level, and keeps the caches of deleted
 repositories as before. An older worker never asks.
 
-Playbook dry runs (backlog 3.126) add migration 00115 and additive proto fields.
+Playbook dry runs (backlog 3.126) add migrations 00115 and 00116 and additive proto fields.
 00115 adds `jobs.check_mode boolean NOT NULL DEFAULT false` (a catalog change,
 nothing rewritten; every existing run reads as an ordinary run), set when a dry
 run is enqueued; a dry run's check, diff, tags and unsaved draft travel in the
@@ -497,7 +497,10 @@ A run's stats gain `host_counts` (each host id's ok, changed, skipped, failed an
 unreachable counts from the recap; the existing host lists are unchanged); it is
 additive in `jobs.stats`, written by a new worker for every run, and an older
 manager and an older SPA ignore it. A run reported by an older worker has no
-`host_counts`. A downgrade needs the usual restore of a backup from before the
+`host_counts`. 00116 adds the nullable `jobs.dry_run jsonb` (a catalog change,
+nothing rewritten), set with `check_mode` to a dry run's tags, diff and draft
+flag (never the draft's text) for the run view, and NULL for every other job.
+A downgrade needs the usual restore of a backup from before the
 upgrade (see Downgrading).
 
 ## Behaviour changes to check after an upgrade

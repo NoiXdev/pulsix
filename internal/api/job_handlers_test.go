@@ -164,6 +164,12 @@ type jobDTO struct {
 	CancelStopsPlay *bool `json:"cancel_stops_play"`
 	// CheckMode is a pointer for the same reason.
 	CheckMode *bool `json:"check_mode"`
+	// DryRun is a dry run's recorded options; nil when absent.
+	DryRun *struct {
+		Tags  []string `json:"tags"`
+		Diff  bool     `json:"diff"`
+		Draft bool     `json:"draft"`
+	} `json:"dry_run"`
 }
 
 func runJob(t *testing.T, c *http.Client, url string) []jobDTO {

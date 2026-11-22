@@ -255,3 +255,42 @@ func TestEnqueueSyncRefusesCheckOverrides(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
 }
+
+// TestCheckRunRecordsItsOptions: a dry run's job records its non-secret
+// options (tags, diff, whether a draft ran) for the run view; the draft's
+// text stays in the sealed payload only. An ordinary run records none.
+func TestCheckRunRecordsItsOptions(t *testing.T) {
+	f := newChainFixture(t)
+	draft := "- hosts: all\n  tasks: []\n"
+	for _, c := range []struct {
+		name string
+		req  jobs.RunRequest
+		want *jobs.DryRun
+	}{
+		{"draft with tags", checkRun(jobs.RunOverrides{Diff: true, Tags: []string{"web", "db"}, Playbook: &draft}), &jobs.DryRun{Tags: []string{"web", "db"}, Diff: true, Draft: true}},
+		{"saved playbook", checkRun(jobs.RunOverrides{}), &jobs.DryRun{Tags: []string{}}},
+		{"real run", jobs.RunRequest{Trigger: jobs.TriggerManual}, nil},
+		{"real run with overrides", jobs.RunRequest{Trigger: jobs.TriggerManual, Overrides: &jobs.RunOverrides{ExtraVars: map[string]any{"a": 1}}}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, c.req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, j := range out {
+				for _, got := range []*jobs.DryRun{j.DryRun, f.store.jobs[j.ID].j.DryRun} {
+					if !dryRunEqual(got, c.want) {
+						t.Fatalf("dry run = %+v, want %+v", got, c.want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func dryRunEqual(a, b *jobs.DryRun) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Diff == b.Diff && a.Draft == b.Draft && slices.Equal(a.Tags, b.Tags) && (a.Tags == nil) == (b.Tags == nil)
+}

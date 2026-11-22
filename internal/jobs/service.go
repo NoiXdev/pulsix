@@ -201,7 +201,10 @@ type Job struct {
 	// CheckMode marks a run in Ansible's check mode, a playbook dry run
 	// (spec 2026-11-22 §1, migration 00115): set at enqueue from
 	// RunOverrides.Check, never changed after.
-	CheckMode  bool
+	CheckMode bool
+	// DryRun is a check-mode run's non-secret options (migration 00116),
+	// set at enqueue together with CheckMode; nil for every other job.
+	DryRun     *DryRun
 	ClaimedAt  *time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
@@ -686,7 +689,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
-			HostsExcluded: excluded, CheckMode: req.Overrides.check(),
+			HostsExcluded: excluded, CheckMode: req.Overrides.check(), DryRun: req.Overrides.dryRun(),
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {

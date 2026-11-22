@@ -96,7 +96,7 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run
 `
 
 type ClaimJobParams struct {
@@ -164,6 +164,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
 		&i.CheckMode,
+		&i.DryRun,
 	)
 	return i, err
 }
@@ -342,15 +343,15 @@ func (q *Queries) CountLiveJobs(ctx context.Context, arg CountLiveJobsParams) (i
 const createJob = `-- name: CreateJob :one
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode, dry_run)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
   SELECT j.org_id, j.id, h.id, j.created_at
   FROM j, (SELECT id FROM hosts WHERE org_id = $2 AND id = ANY ($6::uuid[]) FOR KEY SHARE) AS h
 )
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM j
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run FROM j
 `
 
 type CreateJobParams struct {
@@ -370,6 +371,7 @@ type CreateJobParams struct {
 	TriggerRef           pgtype.UUID `json:"trigger_ref"`
 	HostsExcluded        int32       `json:"hosts_excluded"`
 	CheckMode            bool        `json:"check_mode"`
+	DryRun               []byte      `json:"dry_run"`
 }
 
 type CreateJobRow struct {
@@ -400,6 +402,7 @@ type CreateJobRow struct {
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 	CheckMode               bool               `json:"check_mode"`
+	DryRun                  []byte             `json:"dry_run"`
 }
 
 // Every insert path of a job goes through this one statement, which also
@@ -434,6 +437,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJob
 		arg.TriggerRef,
 		arg.HostsExcluded,
 		arg.CheckMode,
+		arg.DryRun,
 	)
 	var i CreateJobRow
 	err := row.Scan(
@@ -464,6 +468,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJob
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
 		&i.CheckMode,
+		&i.DryRun,
 	)
 	return i, err
 }
@@ -542,7 +547,7 @@ func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedSt
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -584,6 +589,7 @@ type GetJobRow struct {
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 	CheckMode               bool               `json:"check_mode"`
+	DryRun                  []byte             `json:"dry_run"`
 	ActorName               *string            `json:"actor_name"`
 	WorkerName              *string            `json:"worker_name"`
 	TemplateName            *string            `json:"template_name"`
@@ -630,6 +636,7 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.HostsExcluded,
 		&i.CancelStopsPlay,
 		&i.CheckMode,
+		&i.DryRun,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -827,7 +834,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -923,6 +930,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
 			&i.CheckMode,
+			&i.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -935,7 +943,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listJobsForHost = `-- name: ListJobsForHost :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -1041,6 +1049,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
 			&i.Job.CheckMode,
+			&i.Job.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -1053,7 +1062,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 }
 
 const listJobsForHostPage = `-- name: ListJobsForHostPage :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -1145,6 +1154,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
 			&i.Job.CheckMode,
+			&i.Job.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -1157,7 +1167,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 }
 
 const listJobsForHostPageSorted = `-- name: ListJobsForHostPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
@@ -1263,6 +1273,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 			&i.Job.HostsExcluded,
 			&i.Job.CancelStopsPlay,
 			&i.Job.CheckMode,
+			&i.Job.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -1275,7 +1286,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 }
 
 const listJobsPage = `-- name: ListJobsPage :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -1360,6 +1371,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
 			&i.CheckMode,
+			&i.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -1372,7 +1384,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 }
 
 const listJobsPageSorted = `-- name: ListJobsPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1472,6 +1484,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
 			&i.CheckMode,
+			&i.DryRun,
 		); err != nil {
 			return nil, err
 		}
@@ -1484,7 +1497,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1602,6 +1615,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]J
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
 			&i.CheckMode,
+			&i.DryRun,
 		); err != nil {
 			return nil, err
 		}

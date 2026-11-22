@@ -15,8 +15,8 @@
 -- foreign key check blocks anyway; a host edit is not held up.
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode, dry_run)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
   RETURNING *
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)

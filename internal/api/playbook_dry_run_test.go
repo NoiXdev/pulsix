@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -101,11 +102,27 @@ func TestPlaybookDryRunStartsACheckModeRun(t *testing.T) {
 	if detail.Job.CheckMode == nil || !*detail.Job.CheckMode {
 		t.Fatalf("detail = %+v, want check_mode true", detail.Job)
 	}
+	if dr := detail.Job.DryRun; dr == nil || !slices.Equal(dr.Tags, []string{"web", "db"}) || !dr.Diff || dr.Draft {
+		t.Fatalf("detail dry_run = %+v, want tags web,db, diff, no draft", dr)
+	}
+	if dr := started[0].DryRun; dr == nil || !slices.Equal(dr.Tags, []string{"web", "db"}) {
+		t.Fatalf("started dry_run = %+v", dr)
+	}
 
 	draft := "- name: draft-text-7c1e\n  hosts: all\n  tasks: []\n"
-	startDryRun(t, f.operatorC, f.dryRunURL(f.playbook), map[string]any{
+	drafted := startDryRun(t, f.operatorC, f.dryRunURL(f.playbook), map[string]any{
 		"template_id": f.templateID.String(), "draft": draft, "diff": false,
 	})
+	if dr := jobDetail(t, f, drafted[0].ID).DryRun; dr == nil || dr.Tags == nil || len(dr.Tags) != 0 || dr.Diff || !dr.Draft {
+		t.Fatalf("draft detail dry_run = %+v, want no tags, no diff, draft", dr)
+	}
+	if ordinary := runJob(t, f.operatorC, f.runURL())[0]; ordinary.DryRun != nil || jobDetail(t, f, ordinary.ID).DryRun != nil {
+		t.Fatalf("an ordinary run carries a dry_run: %+v", ordinary)
+	}
+	resp = requestJSON(t, f.viewerC, http.MethodGet, f.baseURL()+"/"+started[0].ID, nil)
+	if body := mustReadBody(t, resp); strings.Contains(body, "draft-text-7c1e") {
+		t.Fatalf("the detail carries the draft text: %s", body)
+	}
 
 	audit := f.dryRunAudit(t)
 	if len(audit) != 2 {
@@ -132,6 +149,20 @@ func TestPlaybookDryRunStartsACheckModeRun(t *testing.T) {
 	if strings.Contains(string(raw)+second.summary, "draft-text-7c1e") {
 		t.Fatalf("the audit row carries the draft text: %s %s", second.summary, raw)
 	}
+}
+
+// jobDetail reads one job's detail record.
+func jobDetail(t *testing.T, f runFixture, id string) jobDTO {
+	t.Helper()
+	resp := requestJSON(t, f.viewerC, http.MethodGet, f.baseURL()+"/"+id, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail %s: status %d", id, resp.StatusCode)
+	}
+	var detail struct {
+		Job jobDTO `json:"job"`
+	}
+	decodeInto(t, resp, &detail)
+	return detail.Job
 }
 
 // TestPlaybookDryRunNarrowsToChosenHosts is Review Focus 3 at the API: the

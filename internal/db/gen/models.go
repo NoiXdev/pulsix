@@ -573,6 +573,7 @@ type Job struct {
 	HostsExcluded           int32              `json:"hosts_excluded"`
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 	CheckMode               bool               `json:"check_mode"`
+	DryRun                  []byte             `json:"dry_run"`
 }
 
 type JobEvent struct {

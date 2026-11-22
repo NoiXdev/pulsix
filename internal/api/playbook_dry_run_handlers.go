@@ -125,3 +125,23 @@ func auditDryRun(ctx context.Context, playbookID, templateID uuid.UUID, ov *jobs
 		setAuditMeta(ctx, "draft_sha256", hex.EncodeToString(sum[:]))
 	}
 }
+
+// dryRunDTO is what a dry run recorded about itself: its tags, whether
+// differences were shown and whether it checked an unsaved draft (never
+// the draft itself).
+type dryRunDTO struct {
+	Tags  []string `json:"tags" nullable:"false" doc:"The tags the run was limited to; empty for all tasks"`
+	Diff  bool     `json:"diff" doc:"Whether the run reported differences"`
+	Draft bool     `json:"draft" doc:"Whether the run checked an unsaved draft instead of the saved playbook"`
+}
+
+func toDryRunDTO(d *jobs.DryRun) *dryRunDTO {
+	if d == nil {
+		return nil
+	}
+	tags := d.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	return &dryRunDTO{Tags: tags, Diff: d.Diff, Draft: d.Draft}
+}

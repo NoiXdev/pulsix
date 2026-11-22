@@ -39,23 +39,24 @@ import (
 // action's response carry. It is deliberately the display-minimal half:
 // no payload, no stats.
 type jobDTO struct {
-	ID         string    `json:"id"`
-	ZoneID     string    `json:"zone_id"`
-	Kind       string    `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,revoke_key,sync_repo"`
-	Status     string    `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
-	TemplateID string    `json:"template_id,omitempty"`
-	RunGroupID string    `json:"run_group_id"`
-	Trigger    string    `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
-	TriggerRef string    `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
-	CheckMode  bool      `json:"check_mode" doc:"A dry run: the play ran in check mode"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string     `json:"id"`
+	ZoneID     string     `json:"zone_id"`
+	Kind       string     `json:"kind" enum:"run,adhoc,connection_test,bootstrap,rotate_key,revoke_key,sync_repo"`
+	Status     string     `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
+	TemplateID string     `json:"template_id,omitempty"`
+	RunGroupID string     `json:"run_group_id"`
+	Trigger    string     `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
+	TriggerRef string     `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
+	CheckMode  bool       `json:"check_mode" doc:"A dry run: the play ran in check mode"`
+	DryRun     *dryRunDTO `json:"dry_run,omitempty" doc:"A dry run's options; absent for every other job"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 func toJobDTO(j jobs.Job) jobDTO {
 	out := jobDTO{
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(),
-		Trigger: j.Trigger, CheckMode: j.CheckMode, CreatedAt: j.CreatedAt,
+		Trigger: j.Trigger, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun), CreatedAt: j.CreatedAt,
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()
@@ -98,6 +99,7 @@ type jobDetailDTO struct {
 	Trigger    string                 `json:"trigger" enum:"manual,schedule,webhook,system,chain"`
 	TriggerRef string                 `json:"trigger_ref,omitempty" doc:"The schedule or webhook trigger that started the job"`
 	CheckMode  bool                   `json:"check_mode" doc:"A dry run: the play ran in check mode"`
+	DryRun     *dryRunDTO             `json:"dry_run,omitempty" doc:"A dry run's options; absent for every other job"`
 	ActorName  string                 `json:"actor_name,omitempty"`
 	WorkerName string                 `json:"worker_name,omitempty"`
 	Hosts      []string               `json:"hosts" doc:"The job's target host ids"`
@@ -155,7 +157,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(), Trigger: j.Trigger,
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
-		CancelStopsPlay: j.CancelStopsPlay, CheckMode: j.CheckMode,
+		CancelStopsPlay: j.CancelStopsPlay, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun),
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()
