@@ -40,9 +40,10 @@ func TestRunPassesCheckDiffAndTagsThroughCmdline(t *testing.T) {
 		tags    []string
 		cmdline string
 	}{
-		{"check, diff and tags", true, true, []string{"web", "db:init"}, "--check --diff --tags 'web,db:init'"},
+		{"check, diff and tags", true, true, []string{"web", "db:init"}, "--check --diff --tags='web,db:init'"},
 		{"check alone", true, false, nil, "--check"},
-		{"check with one tag", true, false, []string{"a.b-c_d"}, "--check --tags 'a.b-c_d'"},
+		{"check with one tag", true, false, []string{"a.b-c_d"}, "--check --tags='a.b-c_d'"},
+		{"check with a leading-dash tag", true, false, []string{"-x", "web"}, "--check --tags='-x,web'"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			job := runJob(t)
@@ -89,25 +90,58 @@ func TestRunRefusesCheckOnAnotherKind(t *testing.T) {
 
 // TestCmdlineSurvivesShlexSplit: ansible-runner 2.4.3 splits --cmdline
 // with Python's shlex.split; every token the worker builds comes back
-// whole, quotes and all. Checked against Python itself where it exists.
+// whole, quotes and all. The tags travel as ONE token "--tags=<list>", so
+// ansible-playbook's argparse reads a list that starts with "-" as the
+// option's value instead of an option of its own. Checked against Python
+// itself where it exists.
 func TestCmdlineSurvivesShlexSplit(t *testing.T) {
-	tags := []string{"web", "it's", "a b", `back\slash`, `"dq"`}
-	line := checkCmdline(&workerpb.Job{Check: true, Diff: true, Tags: tags})
-	want := []string{"--check", "--diff", "--tags", strings.Join(tags, ",")}
 	py, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skipf("python3 not installed: %v", err)
 	}
-	out, err := exec.Command(py, "-I", "-c", "import json, shlex, sys; print(json.dumps(shlex.split(sys.argv[1])))", line).Output()
+	for _, tags := range [][]string{
+		{"web", "it's", "a b", `back\slash`, `"dq"`},
+		{"-x", "web"},
+		{"--check"},
+	} {
+		line := checkCmdline(&workerpb.Job{Check: true, Diff: true, Tags: tags})
+		want := []string{"--check", "--diff", "--tags=" + strings.Join(tags, ",")}
+		out, err := exec.Command(py, "-I", "-c", "import json, shlex, sys; print(json.dumps(shlex.split(sys.argv[1])))", line).Output()
+		if err != nil {
+			t.Fatalf("python3 shlex.split: %v", err)
+		}
+		var got []string
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("shlex.split(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// TestLeadingDashTagsReachArgparseAsAValue: the token form matters to
+// ansible-playbook's own parser. argparse refuses "--tags -x" (it reads
+// -x as an unknown option) and accepts "--tags=-x"; this pins that the
+// worker's tokens are of the accepted form, checked with Python's argparse
+// where it exists.
+func TestLeadingDashTagsReachArgparseAsAValue(t *testing.T) {
+	py, err := exec.LookPath("python3")
 	if err != nil {
-		t.Fatalf("python3 shlex.split: %v", err)
+		t.Skipf("python3 not installed: %v", err)
 	}
-	var got []string
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatal(err)
+	line := checkCmdline(&workerpb.Job{Check: true, Tags: []string{"-x"}})
+	script := "import argparse, shlex, sys\n" +
+		"p = argparse.ArgumentParser()\n" +
+		"p.add_argument('--check', action='store_true')\n" +
+		"p.add_argument('--tags', action='append')\n" +
+		"print(p.parse_args(shlex.split(sys.argv[1])).tags[0])\n"
+	out, err := exec.Command(py, "-I", "-c", script, line).CombinedOutput()
+	if err != nil {
+		t.Fatalf("argparse refused %q: %v\n%s", line, err, out)
 	}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("shlex.split(%q) = %q, want %q", line, got, want)
+	if got := strings.TrimSpace(string(out)); got != "-x" {
+		t.Fatalf("--tags = %q, want -x", got)
 	}
 }
 

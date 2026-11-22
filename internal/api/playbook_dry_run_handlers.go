@@ -19,7 +19,7 @@ import (
 // §1): a run of template_id in Ansible's check mode.
 type playbookDryRunBody struct {
 	TemplateID string   `json:"template_id" doc:"A template whose playbook is this one"`
-	HostIDs    []string `json:"host_ids,omitempty" doc:"Narrow the run to these of the template's target hosts; empty runs on all of them"`
+	HostIDs    []string `json:"host_ids,omitempty" maxItems:"500" doc:"Narrow the run to these of the template's target hosts; empty runs on all of them"`
 	Tags       []string `json:"tags,omitempty" maxItems:"32" doc:"Run only the tasks with these tags; each 1 to 64 letters, digits or _ . : -"`
 	Diff       *bool    `json:"diff,omitempty" doc:"Show the differences a task would make; true when omitted"`
 	Draft      *string  `json:"draft,omitempty" doc:"An editor playbook's unsaved text, checked instead of the saved one; needs playbooks.write"`

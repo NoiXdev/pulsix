@@ -18,9 +18,9 @@
 //
 //	ansible-runner run <work-dir> --json --playbook <path> \
 //	    --inventory <work-dir>/inventory --ident <job-id-prefix> [--limit <limit>] \
-//	    [--cmdline=<--check --diff --tags '<tags>'>]
+//	    [--cmdline=<--check --diff --tags='<tags>'>]
 //
-// The --cmdline element appears only for a dry run (see checkmode.go).
+// The --cmdline element appears only for a dry run (see check_mode.go).
 //
 // `--json` streams each event as one JSON line on stdout, which the parser
 // consumes; ansible-runner additionally keeps artifacts under

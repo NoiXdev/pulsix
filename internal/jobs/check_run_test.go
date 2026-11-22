@@ -100,6 +100,34 @@ func TestCheckRunValidatesTags(t *testing.T) {
 	}
 }
 
+// TestTagsAndDiffNeedCheckMode: tags and diff belong to a dry run only. A
+// real run that named tags would ship without them (the payload drops
+// them off a non-check run), running every task where the caller asked
+// for a few — so the service refuses them without Check, and nothing is
+// enqueued.
+func TestTagsAndDiffNeedCheckMode(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ov   jobs.RunOverrides
+	}{
+		{"tags", jobs.RunOverrides{Tags: []string{"web"}}},
+		{"diff", jobs.RunOverrides{Diff: true}},
+		{"both", jobs.RunOverrides{Tags: []string{"web"}, Diff: true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newChainFixture(t)
+			ov := c.ov
+			_, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{Trigger: jobs.TriggerManual, Overrides: &ov})
+			if !errors.Is(err, jobs.ErrInvalidDryRun) {
+				t.Fatalf("err = %v, want ErrInvalidDryRun", err)
+			}
+			if len(f.store.jobs) != 0 || len(f.planner.plans) != 0 {
+				t.Fatalf("stored %d jobs and %d plans, want none", len(f.store.jobs), len(f.planner.plans))
+			}
+		})
+	}
+}
+
 // TestCheckRunNarrowsToTheChosenHosts is Review Focus 3: the chosen hosts
 // narrow the template's targets and never widen them.
 func TestCheckRunNarrowsToTheChosenHosts(t *testing.T) {

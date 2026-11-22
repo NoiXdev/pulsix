@@ -8,7 +8,10 @@
 // env/cmdline file is the same string's fallback, read only when the
 // option is empty). No shell is involved: the worker passes the option as
 // one argv element, and every token it builds is single-quoted where it
-// carries a value, so shlex hands each back whole.
+// carries a value, so shlex hands each back whole. A value travels inside
+// its option's token ("--tags=<list>"): ansible-playbook's argparse reads
+// a separate value that starts with "-" (a tag such as "-x") as an option
+// of its own and refuses the command line.
 package runner
 
 import (
@@ -41,7 +44,7 @@ func checkCmdline(job *workerpb.Job) string {
 		parts = append(parts, "--diff")
 	}
 	if tags := job.GetTags(); len(tags) > 0 {
-		parts = append(parts, "--tags", shlexQuote(strings.Join(tags, ",")))
+		parts = append(parts, "--tags="+shlexQuote(strings.Join(tags, ",")))
 	}
 	return strings.Join(parts, " ")
 }

@@ -51,8 +51,9 @@ func invalidDryRun(format string, args ...any) error {
 }
 
 // checkRunRequest validates a request's check-mode overrides on their own:
-// a draft only with Check, valid tags, and a check run only as a manual
-// run without follow-ups. Schedules, webhooks, chains and the system never
+// a draft, tags and diff only with Check (a real run would drop the tags
+// and so run more than was asked for), valid tags, and a check run only as
+// a manual run without follow-ups. Schedules, webhooks, chains and the system never
 // start one (spec non-goals).
 func checkRunRequest(req RunRequest) error {
 	ov := req.Overrides
@@ -66,6 +67,9 @@ func checkRunRequest(req RunRequest) error {
 		if *ov.Playbook == "" {
 			return invalidDryRun("the draft playbook is empty")
 		}
+	}
+	if !ov.Check && (len(ov.Tags) > 0 || ov.Diff) {
+		return invalidDryRun("tags and diff only apply to a dry run")
 	}
 	if len(ov.Tags) > MaxCheckTags {
 		return invalidDryRun("at most %d tags", MaxCheckTags)

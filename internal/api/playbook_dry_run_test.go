@@ -262,6 +262,73 @@ func TestPlaybookDryRunRefusals(t *testing.T) {
 	}
 }
 
+// TestPlaybookDryRunCapsItsHosts: host_ids is bounded by the schema
+// (maxItems 500), so an oversize list is refused before any lookup.
+func TestPlaybookDryRunCapsItsHosts(t *testing.T) {
+	f := newRunFixture(t, "dry-run-cap-org")
+	hosts := make([]string, 501)
+	for i := range hosts {
+		hosts[i] = uuid.Must(uuid.NewV7()).String()
+	}
+	resp := postJSON(t, f.operatorC, f.dryRunURL(f.playbook), map[string]any{"template_id": f.templateID.String(), "host_ids": hosts})
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "expected array length <= 500") {
+		t.Fatalf("status %d, body %s; want 422 with the schema's maxItems", resp.StatusCode, body)
+	}
+	if n := f.countJobs(t); n != 0 {
+		t.Fatalf("jobs = %d, want none", n)
+	}
+}
+
+// TestPlaybookDryRunStaysInItsOrg: a template of another organization is
+// not found through this one's dry-run route, and someone who is not a
+// member of the organization cannot start a dry run in it — the same
+// answers every other org route gives. Neither starts a job anywhere.
+func TestPlaybookDryRunStaysInItsOrg(t *testing.T) {
+	f := newRunFixture(t, "dry-run-tenancy-org")
+	outsider := f.s.SeedUser("dry-run-tenancy-outsider@example.test", "correct horse battery")
+	otherOrg := f.s.SeedOrg("dry-run-tenancy-other", outsider)
+	scoped := db.WithOrgScope(context.Background(), otherOrg)
+	otherPB, err := f.s.Deps.Playbooks.CreateEditor(scoped, otherOrg, playbooks.CreateInput{Name: "theirs", Inline: "- hosts: all\n  tasks: []\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTmpl, err := f.s.Deps.Templates.Create(scoped, otherOrg, templates.CreateInput{
+		Name: "theirs", PlaybookID: otherPB.ID, Scope: templates.Scope{HostIDs: []uuid.UUID{f.s.SeedHost(t, otherOrg)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A foreign template id on this org's route: not found.
+	resp := postJSON(t, f.operatorC, f.dryRunURL(f.playbook), map[string]any{"template_id": otherTmpl.ID.String()})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("foreign template: status %d, want 404, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	// The foreign playbook with its own template, through this org: not
+	// found either (the playbook is not this org's).
+	resp = postJSON(t, f.operatorC, f.dryRunURL(otherPB.ID), map[string]any{"template_id": otherTmpl.ID.String()})
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("foreign playbook: status %d, want 404 or 422, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	// A non-member on this org's route, with this org's own ids.
+	resp = postJSON(t, f.s.LoginAs(outsider), f.dryRunURL(f.playbook), map[string]any{"template_id": f.templateID.String()})
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("non-member: status %d, want 403/404, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	var n int
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT count(*) FROM jobs WHERE org_id = ANY($1)`, []uuid.UUID{f.orgID, otherOrg}).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("jobs = %d, want none in either org", n)
+	}
+	if rows := f.dryRunAudit(t); len(rows) != 0 {
+		t.Fatalf("audit rows = %d, want none", len(rows))
+	}
+}
+
 // TestJobListFiltersByCheckMode: check_mode=true lists only dry runs,
 // false only real runs, and omitted both, in cursor and page mode.
 func TestJobListFiltersByCheckMode(t *testing.T) {
