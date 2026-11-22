@@ -10,7 +10,7 @@ import { useDryRunPlaybook } from '../../api/hooks/usePlaybooks.ts';
 import type { Playbook, PlaybookDryRunInput, PlaybookOutline, Template } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { may } from '../../lib/roles.ts';
-import { HostChecklist } from '../runs/HostChecklist.tsx';
+import { DryRunHosts } from './DryRunHosts.tsx';
 import { DryRunResult } from './DryRunResult.tsx';
 import { usePlaybookOutline } from './usePlaybookOutline.ts';
 
@@ -29,7 +29,8 @@ interface PlaybookDryRunTabProps {
 
 /**
  * PlaybookDryRunTab is the playbook page's Dry run tab (spec §4): what a
- * dry run is, the form that starts one through a template (hosts, tags
+ * dry run is, the form that starts one through a template (hosts from the
+ * template's scope, cleared when another template is chosen; tags
  * from the outline, differences, the unsaved draft) and the warning about
  * the tasks that run for real anyway; below it the latest dry run of the
  * playbook — after Start, the one just started. Without `jobs.run` a
@@ -101,7 +102,17 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
 
       <div className="flex flex-col gap-1">
         <Label htmlFor="dry-run-template">{d.template}</Label>
-        <Select id="dry-run-template" options={list.map((tpl) => ({ value: tpl.id, label: tpl.name }))} value={chosen} onChange={setTemplateId} placeholder={d.chooseTemplate} />
+        <Select
+          id="dry-run-template"
+          options={list.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
+          value={chosen}
+          onChange={(id) => {
+            // Another template has other hosts: the choice starts over.
+            if (id !== chosen) setHostIds([]);
+            setTemplateId(id);
+          }}
+          placeholder={d.chooseTemplate}
+        />
         {templates && list.length === 0 && (
           <p className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <span>{d.noTemplates}</span>
@@ -114,10 +125,7 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
         )}
       </div>
 
-      <div className="flex flex-col gap-1">
-        <HostChecklist org={org} id="dry-run-hosts" label={d.hosts} selected={hostIds} onToggle={(h) => setHostIds((s) => toggle(s, h))} />
-        <span className="text-[11px] text-muted-foreground">{d.hostsHint}</span>
-      </div>
+      <DryRunHosts org={org} template={list.find((tpl) => tpl.id === chosen)} selected={hostIds} onToggle={(h) => setHostIds((s) => toggle(s, h))} />
 
       {available.length > 0 && (
         <div className="flex flex-col gap-1">

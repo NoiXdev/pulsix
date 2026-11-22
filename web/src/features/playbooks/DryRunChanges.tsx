@@ -2,9 +2,8 @@ import { useId } from 'react';
 import { UnifiedDiff } from '../../ui/diff/UnifiedDiff.tsx';
 import type { JobEvent } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
-import { eventDiffs } from '../runs/eventDiff.ts';
 import type { RecapCounts } from '../runs/hostCounts.ts';
-import { COUNT_KEYS } from './dryRunCounts.ts';
+import { changedTasks, COUNT_KEYS } from './dryRunTasks.ts';
 
 const COUNT_COLOR: Record<(typeof COUNT_KEYS)[number], string> = {
   ok: 'var(--px-ok)',
@@ -34,8 +33,9 @@ export function DryRunCounts({ counts }: { counts: RecapCounts }) {
 }
 
 /**
- * DryRunChanges lists each task a dry run would change, per host (its
- * `changed` events, in order), with the differences the task reported:
+ * DryRunChanges lists each task a dry run would change, per host, once —
+ * a loop's items and its own event fold into one (dryRunTasks.ts) — with
+ * the differences the task reported:
  * before/after compared line by line, a prepared diff as it is, a long one
  * collapsed (ui/diff). `final` says the run has ended, so "nothing would
  * change" is the answer rather than "nothing yet".
@@ -44,7 +44,7 @@ export function DryRunChanges({ events, final }: { events: readonly JobEvent[]; 
   const t = useT();
   const l = t.playbooks.page.dryRun.latest;
   const headingId = useId();
-  const changed = events.filter((e) => e.state === 'changed');
+  const changed = changedTasks(events);
   if (changed.length === 0) return final ? <p className="text-xs text-muted-foreground">{l.noChanges}</p> : null;
   return (
     <>
@@ -52,25 +52,22 @@ export function DryRunChanges({ events, final }: { events: readonly JobEvent[]; 
         {l.changes}
       </h3>
       <ul aria-labelledby={headingId} className="flex flex-col gap-3">
-        {changed.map((e) => {
-          const diffs = eventDiffs(e.payload);
-          return (
-            <li key={e.seq} className="flex min-w-0 flex-col gap-1.5">
-              <h4 className="text-xs font-medium break-words">{[e.task, e.host, l.wouldChange].filter(Boolean).join(' · ')}</h4>
-              {diffs.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">{l.noDiff}</p>
-              ) : (
-                diffs.map((d, i) =>
-                  d.kind === 'prepared' ? (
-                    <UnifiedDiff key={i} prepared={d.text} />
-                  ) : (
-                    <UnifiedDiff key={i} before={d.before} after={d.after} beforeHeader={d.beforeHeader} afterHeader={d.afterHeader} />
-                  ),
-                )
-              )}
-            </li>
-          );
-        })}
+        {changed.map((c) => (
+          <li key={c.key} className="flex min-w-0 flex-col gap-1.5">
+            <h4 className="text-xs font-medium break-words">{[c.task, c.host, l.wouldChange].filter(Boolean).join(' · ')}</h4>
+            {c.diffs.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">{l.noDiff}</p>
+            ) : (
+              c.diffs.map((d, i) =>
+                d.kind === 'prepared' ? (
+                  <UnifiedDiff key={i} prepared={d.text} />
+                ) : (
+                  <UnifiedDiff key={i} before={d.before} after={d.after} beforeHeader={d.beforeHeader} afterHeader={d.afterHeader} />
+                ),
+              )
+            )}
+          </li>
+        ))}
       </ul>
     </>
   );

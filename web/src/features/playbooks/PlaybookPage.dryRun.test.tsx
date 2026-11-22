@@ -232,6 +232,93 @@ describe('PlaybookPage Dry run tab', () => {
     expect(await within(f).findByRole('alert')).toHaveTextContent('a host is not among the template targets');
   });
 
+  it('lists a looped task once per host, with the diffs of its items', async () => {
+    const item = (seq: number, before: string, after: string) => ({
+      seq, attempt: 1, at: '', host: 'web-01', task: 'Render configs', state: 'changed',
+      payload: { event: 'runner_item_on_ok', event_data: { task_uuid: 'u7', res: { changed: true, diff: { before, after } } } },
+    });
+    const loop = [
+      item(1, 'a\n', 'A\n'),
+      item(2, 'b\n', 'B\n'),
+      { seq: 3, attempt: 1, at: '', host: 'web-01', task: 'Render configs', state: 'changed', payload: { event: 'runner_on_ok', event_data: { task_uuid: 'u7', res: { changed: true, results: [{ diff: { before: 'a\n', after: 'A\n' } }, { diff: { before: 'b\n', after: 'B\n' } }] } } } },
+    ];
+    mockApi(dryRoutes('operator', { detailOf: detail('d1', { status: 'running', stats: {} }), extra: { 'GET /api/v1/orgs/acme/jobs/d1/events': { events: loop } } }).routes);
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const result = await screen.findByRole('region', { name: 'Latest dry run' });
+    const changes = await within(result).findByRole('list', { name: 'What would change' });
+    const items = within(changes).getAllByRole('listitem').filter((li) => li.parentElement === changes);
+    expect(items.map((li) => li.querySelector('h4')?.textContent)).toEqual(['Render configs · web-01 · would change']);
+    expect(within(items[0]).getByText('+A')).toBeInTheDocument();
+    expect(within(items[0]).getByText('+B')).toBeInTheDocument();
+    expect(within(items[0]).queryByText('No differences reported for this task.')).not.toBeInTheDocument();
+    const counts = within(result).getByRole('list', { name: 'Counts over all hosts' });
+    expect(within(counts).getAllByRole('listitem')[1]).toHaveTextContent('1would change');
+  });
+
+  it("offers only a template's own hosts when it names them", async () => {
+    mockApi(
+      dryRoutes('operator', {
+        extra: {
+          'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: null, host_ids: ['h2'] } })] },
+          'GET /api/v1/orgs/acme/hosts/h2': { host: { id: 'h2', name: 'web-02' } },
+        },
+      }).routes,
+    );
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    expect(await within(f).findByRole('checkbox', { name: 'web-02' })).toBeInTheDocument();
+    expect(within(f).queryByRole('checkbox', { name: 'web-01' })).not.toBeInTheDocument();
+    expect(within(f).queryByRole('searchbox')).not.toBeInTheDocument();
+  });
+
+  it("offers the members of a template's group and its subgroups, narrowed by its hosts", async () => {
+    const member = (group: string, host: string, name: string) => ({ group_id: group, group_name: group, host_id: host, host_name: name, complete: true, orphaned: [], problems: [], revision: 1, vars: {} });
+    const groups = { groups: [{ id: 'g1', name: 'web' }, { id: 'g2', name: 'edge', parent_id: 'g1' }, { id: 'g3', name: 'db' }] };
+    const routesFor = (hostIds: string[]) =>
+      dryRoutes('operator', {
+        extra: {
+          'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: 'g1', host_ids: hostIds } })] },
+          'GET /api/v1/orgs/acme/inventory/groups': groups,
+          'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [member('g1', 'h1', 'web-01')] },
+          'GET /api/v1/orgs/acme/inventory/groups/g2/members': { members: [member('g2', 'h3', 'edge-01'), member('g2', 'h1', 'web-01')] },
+          'GET /api/v1/orgs/acme/inventory/groups/g3/members': { members: [member('g3', 'h2', 'db-01')] },
+        },
+      }).routes;
+    mockApi(routesFor([]));
+    const { unmount } = renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    let f = await form();
+    await within(f).findByRole('checkbox', { name: 'edge-01' });
+    expect(within(f).getAllByRole('checkbox', { name: /-01$/ }).map((c) => c.getAttribute('aria-label'))).toEqual(['edge-01', 'web-01']);
+    unmount();
+
+    mockApi(routesFor(['h3']));
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    f = await form();
+    await within(f).findByRole('checkbox', { name: 'edge-01' });
+    expect(within(f).queryByRole('checkbox', { name: 'web-01' })).not.toBeInTheDocument();
+  });
+
+  it('clears the chosen hosts when another template is chosen', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    mockApi(
+      dryRoutes('operator', {
+        extra: {
+          'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1'), template('t2', 'Deploy staging', 'p1')] },
+          'POST /api/v1/orgs/acme/playbooks/p1/dry-run': (req: MockRequest) => (sent.push(req.body), { jobs: [job('d1')] }),
+        },
+      }).routes,
+    );
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    await pickOption(within(f), 'Template (brings variables and credentials)', 'Deploy web');
+    await user.click(await within(f).findByRole('checkbox', { name: 'web-01' }));
+    await pickOption(within(f), 'Template (brings variables and credentials)', 'Deploy staging');
+    expect(await within(f).findByRole('checkbox', { name: 'web-01' })).not.toBeChecked();
+    await startIn(f, user);
+    await waitFor(() => expect(sent).toEqual([{ template_id: 't2', diff: true }]));
+  });
+
   it('speaks German', async () => {
     mockApi(dryRoutes().routes);
     renderAt('/o/acme/playbooks/p1?tab=dry-run', 'de');

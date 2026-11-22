@@ -7,7 +7,7 @@ import { useT } from '../../i18n/useT.ts';
 import { sumHostCounts } from '../runs/hostCounts.ts';
 import { statusLabel } from '../runs/status.ts';
 import { DryRunChanges, DryRunCounts } from './DryRunChanges.tsx';
-import { countEvents } from './dryRunCounts.ts';
+import { countTaskResults } from './dryRunTasks.ts';
 
 /** How long a dry run may sit queued before the page says why it might. */
 const QUEUED_HINT_MS = 10_000;
@@ -20,7 +20,8 @@ const DETAIL_POLL_MS = 2000;
  * of this playbook with check_mode — or, once one was started from the tab,
  * that one. It follows a live run the way the run page does (the detail
  * polled, the log streamed by useRunLog): the counts summed over the hosts
- * (the recap's host_counts once there, the events until then), and each
+ * (the recap's host_counts once there, one result per task and host from
+ * the events until then), and each
  * task that would change, per host, with its differences.
  */
 export function DryRunResult({ org, playbookId, startedId }: { org: string; playbookId: string; startedId: string | null }) {
@@ -72,7 +73,7 @@ function ShownRun({ org, job, status, events }: { org: string; job: JobDetail; s
   const fmt = useFormat();
   const final = isTerminal(status);
   const waiting = useQueuedLong(status, job.created_at);
-  const counts = sumHostCounts(job.stats) ?? countEvents(events);
+  const counts = sumHostCounts(job.stats) ?? countTaskResults(events);
   const facts = [fmt.relative(job.created_at), statusLabel(status, t), job.template?.name ?? '', l.hosts((job.hosts ?? []).length)].filter(Boolean);
   return (
     <>

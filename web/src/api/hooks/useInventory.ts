@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { paths } from '../schema.d.ts';
 import type { VarSchema, Vars } from '../../features/variables/types.ts';
@@ -117,11 +117,28 @@ export function useSetGroupVars(org: string, id: string) {
   });
 }
 
-export function useGroupMembers(org: string, id: string) {
-  return useQuery({
+function groupMembersOptions(org: string, id: string) {
+  return {
     queryKey: ['inventory', org, 'members', id],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/inventory/groups/{id}/members', { params: { path: { org, id } } })),
     enabled: !!org && !!id,
+  };
+}
+
+export function useGroupMembers(org: string, id: string) {
+  return useQuery(groupMembersOptions(org, id));
+}
+
+/** useGroupsMembers reads the direct members of several groups at once
+ * (each its own useGroupMembers query): `members` once all have answered,
+ * `isError` when any could not. */
+export function useGroupsMembers(org: string, ids: readonly string[]) {
+  return useQueries({
+    queries: ids.map((id) => groupMembersOptions(org, id)),
+    combine: (results) => ({
+      members: results.every((r) => r.data) ? results.flatMap((r) => r.data?.members ?? []) : undefined,
+      isError: results.some((r) => r.isError),
+    }),
   });
 }
 

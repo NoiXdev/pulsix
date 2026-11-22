@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { HostInput } from '../types.ts';
 import type { ServerPageQuery } from './paging.ts';
@@ -108,6 +108,15 @@ function hostQueryOptions(org: string, id: string) {
 
 export function useHost(org: string, id: string) {
   return useQuery({ ...hostQueryOptions(org, id), enabled: !!org && !!id });
+}
+
+/** useHostNames names several hosts by id (each its own useHost query); an
+ * id stands in for a host not read (yet, or at all). */
+export function useHostNames(org: string, ids: readonly string[]) {
+  return useQueries({
+    queries: ids.map((id) => ({ ...hostQueryOptions(org, id), enabled: !!org && !!id })),
+    combine: (results) => ids.map((id, i) => ({ id, name: results[i]?.data?.host.name ?? id })),
+  });
 }
 
 export const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });

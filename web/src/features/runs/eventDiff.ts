@@ -33,12 +33,21 @@ function entryOf(raw: unknown): EventDiff | null {
   return out;
 }
 
-/** eventDiffs answers the differences an event's payload carries, none
- * when it carries none (or none that differ). */
-export function eventDiffs(payload: Record<string, unknown> | null | undefined): EventDiff[] {
-  const data = payload?.event_data;
-  const res = isMap(data) ? data.res : undefined;
+function diffsOf(res: unknown): EventDiff[] {
   const diff = isMap(res) ? res.diff : undefined;
   const list = Array.isArray(diff) ? diff : isMap(diff) ? [diff] : [];
   return list.map(entryOf).filter((d): d is EventDiff => d !== null);
+}
+
+/** eventDiffs answers the differences an event's payload carries, none
+ * when it carries none (or none that differ). A loop's own event has no
+ * `res.diff`: its items' differences sit in `res.results[]`, which the
+ * items' events carry again — read only with `loopResults`, for a loop
+ * whose item events are missing. */
+export function eventDiffs(payload: Record<string, unknown> | null | undefined, opts: { loopResults?: boolean } = {}): EventDiff[] {
+  const data = payload?.event_data;
+  const res = isMap(data) ? data.res : undefined;
+  const own = diffsOf(res);
+  if (own.length > 0 || !opts.loopResults || !isMap(res) || !Array.isArray(res.results)) return own;
+  return res.results.flatMap(diffsOf);
 }

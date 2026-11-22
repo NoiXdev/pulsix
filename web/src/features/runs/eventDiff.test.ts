@@ -22,6 +22,15 @@ describe('eventDiffs', () => {
     expect(d).toEqual({ kind: 'compare', before: '{\n  "path": "/srv",\n  "state": "absent"\n}\n', after: '{\n  "path": "/srv",\n  "state": "directory"\n}\n' });
   });
 
+  it("reads a loop's diffs from res.results only when asked", () => {
+    const parent = { event: 'runner_on_ok', event_data: { res: { changed: true, results: [{ diff: { before: 'a\n', after: 'b\n' } }, { diff: [{ prepared: 'p' }] }, { changed: false }] } } };
+    expect(eventDiffs(parent)).toEqual([]);
+    expect(eventDiffs(parent, { loopResults: true })).toEqual([
+      { kind: 'compare', before: 'a\n', after: 'b\n' },
+      { kind: 'prepared', text: 'p' },
+    ]);
+  });
+
   it.each([
     ['no event_data', {}],
     ['no res', { event_data: {} }],
