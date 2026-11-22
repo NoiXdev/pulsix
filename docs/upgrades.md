@@ -475,6 +475,31 @@ than the call answers `Unimplemented`; the worker then removes nothing, logs
 that once per attempt at info level, and keeps the caches of deleted
 repositories as before. An older worker never asks.
 
+Playbook dry runs (backlog 3.126) add migration 00115 and additive proto fields.
+00115 adds `jobs.check_mode boolean NOT NULL DEFAULT false` (a catalog change,
+nothing rewritten; every existing run reads as an ordinary run), set when a dry
+run is enqueued; a dry run's check, diff, tags and unsaved draft travel in the
+run's sealed payload. The worker announces support on every claim
+(`ClaimJobRequest.supports_check_mode`, alongside `cancel_stops_play`) and gets
+`Job.check`, `Job.diff` and `Job.tags`, which it passes to ansible-playbook as
+`--check`, `--diff` and `--tags` through ansible-runner's `--cmdline`. The claim
+statement hands a `check_mode` job only to a claim that announced support.
+**An older worker never gets a dry run**: it does not announce support, so a dry
+run waits queued (the usual "no worker" and queued signals apply) while that
+worker keeps claiming the ordinary jobs behind it; update the zone's workers to
+run dry runs. **An older manager would hand a dry run to any worker, and the
+worker would run the play for real**: an older manager still running while the
+new version migrates does not know the column, claims a dry run like any run and
+ships it without `check` (and, for a draft, ships the template's saved playbook,
+not the draft). **Stop every manager instance before the new version starts**
+(as for 00099 to 00103), and start no dry run until every manager is upgraded.
+A run's stats gain `host_counts` (each host id's ok, changed, skipped, failed and
+unreachable counts from the recap; the existing host lists are unchanged); it is
+additive in `jobs.stats`, written by a new worker for every run, and an older
+manager and an older SPA ignore it. A run reported by an older worker has no
+`host_counts`. A downgrade needs the usual restore of a backup from before the
+upgrade (see Downgrading).
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
