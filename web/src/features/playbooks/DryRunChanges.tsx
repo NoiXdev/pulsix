@@ -1,9 +1,9 @@
 import { useId } from 'react';
-import type { JobEvent } from '../../api/types.ts';
+import { isTerminal } from '../../api/hooks/useJobs.ts';
 import { useT } from '../../i18n/useT.ts';
 import { EventDiffList } from '../runs/EventDiffList.tsx';
 import type { RecapCounts } from '../runs/hostCounts.ts';
-import { changedTasks, COUNT_KEYS } from './dryRunTasks.ts';
+import { COUNT_KEYS, type ChangedTask } from './dryRunTasks.ts';
 
 const COUNT_COLOR: Record<(typeof COUNT_KEYS)[number], string> = {
   ok: 'var(--px-ok)',
@@ -37,15 +37,19 @@ export function DryRunCounts({ counts }: { counts: RecapCounts }) {
  * a loop's items and its own event fold into one (dryRunTasks.ts) — with
  * the differences the task reported:
  * before/after compared line by line, a prepared diff as it is, a long one
- * collapsed (ui/diff). `final` says the run has ended, so "nothing would
- * change" is the answer rather than "nothing yet".
+ * collapsed (ui/diff). Without changes, `status` (the run group's) decides
+ * the line: "nothing would change" only for a run that succeeded — one
+ * that failed or was cancelled may have stopped before a task that would
+ * have — a neutral line for any other ended run, nothing while it runs.
  */
-export function DryRunChanges({ events, final }: { events: readonly JobEvent[]; final: boolean }) {
+export function DryRunChanges({ changed, status }: { changed: readonly ChangedTask[]; status: string }) {
   const t = useT();
   const l = t.playbooks.page.dryRun.latest;
   const headingId = useId();
-  const changed = changedTasks(events);
-  if (changed.length === 0) return final ? <p className="text-xs text-muted-foreground">{l.noChanges}</p> : null;
+  if (changed.length === 0) {
+    if (status === 'succeeded') return <p className="text-xs text-muted-foreground">{l.noChanges}</p>;
+    return isTerminal(status) ? <p className="text-xs text-muted-foreground">{l.noChangesEnded}</p> : null;
+  }
   return (
     <>
       <h3 id={headingId} className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">

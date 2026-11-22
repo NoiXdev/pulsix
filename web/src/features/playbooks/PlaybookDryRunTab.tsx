@@ -57,6 +57,7 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
   const toast = useToast();
   const start = useDryRunPlaybook(org, playbook.id);
   const tagsId = useId();
+  const diffHintId = useId();
   const editorSource = playbook.source === 'editor';
   const [templateId, setTemplateId] = useState('');
   const [hostIds, setHostIds] = useState<string[]>([]);
@@ -72,7 +73,7 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
   const checkDraft = canDraft && useDraft;
   // The outline of the text that will run: the draft when it is checked
   // (or equal to the saved text), else the saved one.
-  const { outline } = usePlaybookOutline(org, checkDraft || !dirty ? draft : saved, editorSource);
+  const { outline, invalid } = usePlaybookOutline(org, checkDraft || !dirty ? draft : saved, editorSource);
   const available = outline?.tags ?? [];
 
   async function submit(e: FormEvent) {
@@ -87,6 +88,8 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
     try {
       const { jobs } = await start.mutateAsync(body);
       toast.show(d.started);
+      // One job per zone, all in one run group: the result follows the
+      // first, and through its group the others.
       if (jobs && jobs.length > 0) onStarted(jobs[0].id);
     } catch (err) {
       setError(err instanceof Error ? err.message : d.failed);
@@ -152,10 +155,15 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
         </div>
       )}
 
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" checked={diff} onChange={(e) => setDiff(e.target.checked)} />
-        {d.diff}
-      </label>
+      <div className="flex flex-col gap-0.5">
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={diff} onChange={(e) => setDiff(e.target.checked)} aria-describedby={diffHintId} />
+          {d.diff}
+        </label>
+        <span id={diffHintId} className="pl-6 text-[11px] text-muted-foreground">
+          {d.diffHint}
+        </span>
+      </div>
       {canDraft && (
         <div className="flex flex-col gap-0.5">
           <label className="flex items-center gap-2 text-xs">
@@ -166,7 +174,7 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
         </div>
       )}
 
-      <RealTasks outline={outline} />
+      <RealTasks outline={outline} invalid={invalid} repo={!editorSource} />
 
       {error && (
         <p role="alert" className="text-xs text-destructive">
@@ -182,13 +190,17 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
   );
 }
 
-/** The entries of the outline that run for real even in check mode. */
-function RealTasks({ outline }: { outline: PlaybookOutline | null }) {
+/** The entries of the outline that run for real even in check mode, and a
+ * note whenever the outline cannot answer that in full: still loading, not
+ * available, shortened, or a repository playbook without one. */
+function RealTasks({ outline, invalid, repo }: { outline: PlaybookOutline | null; invalid: boolean; repo: boolean }) {
   const t = useT();
   const d = t.playbooks.page.dryRun;
   const id = useId();
   const real = (outline?.plays ?? []).flatMap((p) => p.entries ?? []).filter((e) => !e.runs_in_check_mode);
-  if (real.length === 0) return null;
+  const note = repo ? d.unchecked.repo : invalid ? d.unchecked.failed : !outline ? d.unchecked.loading : outline.truncated ? d.unchecked.truncated : null;
+  const noteLine = note && <p className="text-[11px] text-muted-foreground">{note}</p>;
+  if (real.length === 0) return noteLine;
   return (
     <div
       className="flex flex-col gap-1 rounded-md border p-3 text-xs"
@@ -202,6 +214,7 @@ function RealTasks({ outline }: { outline: PlaybookOutline | null }) {
           <li key={`${e.line}-${i}`}>{d.realItem(e.name || t.playbooks.page.outline.unnamed, e.line)}</li>
         ))}
       </ul>
+      {noteLine}
     </div>
   );
 }

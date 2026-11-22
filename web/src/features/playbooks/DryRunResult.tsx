@@ -1,13 +1,12 @@
-import { useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { isTerminal, useJob, useNewestJob, useRunLog } from '../../api/hooks/useJobs.ts';
-import type { JobDetail, JobEvent } from '../../api/types.ts';
+import type { JobDetail } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
-import { sumHostCounts } from '../runs/hostCounts.ts';
 import { statusLabel } from '../runs/status.ts';
 import { DryRunChanges, DryRunCounts } from './DryRunChanges.tsx';
-import { countTaskResults } from './dryRunTasks.ts';
+import { groupChanges, groupCounts, groupStatus, type RunFeed } from './dryRunGroup.ts';
 
 /** How long a dry run may sit queued before the page says why it might. */
 const QUEUED_HINT_MS = 10_000;
@@ -15,14 +14,22 @@ const QUEUED_HINT_MS = 10_000;
 /** A live run's detail is read this often (its log streams on its own). */
 const DETAIL_POLL_MS = 2000;
 
+/** The detail of a live job is polled; an ended one is read once. */
+const pollWhileLive = (q: { state: { data?: unknown } }) => {
+  const data = q.state.data as { job?: JobDetail } | undefined;
+  return data && !isTerminal(data.job?.status) ? DETAIL_POLL_MS : false;
+};
+
 /**
  * DryRunResult is the Dry run tab's latest dry run (spec §4): the newest run
  * of this playbook with check_mode — or, once one was started from the tab,
- * that one. It follows a live run the way the run page does (the detail
- * polled, the log streamed by useRunLog): the counts summed over the hosts
- * (the recap's host_counts once there, one result per task and host from
- * the events until then), and each
- * task that would change, per host, with its differences.
+ * that one — together with the rest of its run group (a template over hosts
+ * in several zones starts one job per zone). It follows each live job the
+ * way the run page does (the detail polled, the log streamed by
+ * useRunLog): the counts summed over every job's hosts (the recap's
+ * host_counts once there, one result per task and host from the events
+ * until then), and each task that would change, per host, with its
+ * differences.
  */
 export function DryRunResult({ org, playbookId, startedId }: { org: string; playbookId: string; startedId: string | null }) {
   const t = useT();
@@ -30,13 +37,7 @@ export function DryRunResult({ org, playbookId, startedId }: { org: string; play
   const headingId = useId();
   const newest = useNewestJob(org, { playbook: playbookId, checkMode: true }, { enabled: !startedId });
   const id = startedId ?? newest.data?.id ?? '';
-  const job = useJob(org, id, {
-    refetchInterval: (q) => {
-      const data = q.state.data as { job?: JobDetail } | undefined;
-      return data && !isTerminal(data.job?.status) ? DETAIL_POLL_MS : false;
-    },
-  });
-  const log = useRunLog(org, id);
+  const job = useJob(org, id, { refetchInterval: pollWhileLive });
 
   let body;
   if (!id) {
@@ -54,7 +55,7 @@ export function DryRunResult({ org, playbookId, startedId }: { org: string; play
       </p>
     );
   } else if (job.data) {
-    body = <ShownRun org={org} job={job.data.job} status={log.status ?? job.data.job.status} events={log.events} />;
+    body = <ShownGroup key={id} org={org} lead={job.data.job} />;
   }
 
   return (
@@ -67,19 +68,37 @@ export function DryRunResult({ org, playbookId, startedId }: { org: string; play
   );
 }
 
-function ShownRun({ org, job, status, events }: { org: string; job: JobDetail; status: string; events: readonly JobEvent[] }) {
+/**
+ * ShownGroup is the lead job (the one found or started) with the other jobs
+ * of its run group: a RunFeedReader per job reads it and reports here, and
+ * the view folds what was read — a job not read yet counts with the status
+ * the lead's group lists for it. "Open run" opens the lead, whose run page
+ * lists the group.
+ */
+function ShownGroup({ org, lead }: { org: string; lead: JobDetail }) {
   const t = useT();
   const l = t.playbooks.page.dryRun.latest;
   const fmt = useFormat();
-  const final = isTerminal(status);
-  const waiting = useQueuedLong(status, job.created_at);
-  const counts = sumHostCounts(job.stats) ?? countTaskResults(events);
-  const facts = [fmt.relative(job.created_at), statusLabel(status, t), job.template?.name ?? '', l.hosts((job.hosts ?? []).length)].filter(Boolean);
+  const members = lead.group ?? [];
+  const ids = [lead.id, ...members.map((m) => m.id)];
+  const [feeds, setFeeds] = useState<Readonly<Record<string, RunFeed>>>({});
+  const report = useCallback((f: RunFeed) => setFeeds((all) => (all[f.job.id] === f ? all : { ...all, [f.job.id]: f })), []);
+
+  const read = ids.flatMap((id) => (feeds[id] ? [feeds[id]] : []));
+  const statuses = ids.map((id) => feeds[id]?.status ?? members.find((m) => m.id === id)?.status ?? lead.status);
+  const status = groupStatus(statuses);
+  const waiting = useQueuedLong(statuses.includes('queued'), lead.created_at);
+  const hosts = read.length > 0 ? read.reduce((n, f) => n + (f.job.hosts ?? []).length, 0) : (lead.hosts ?? []).length;
+  const errors = [...new Set(read.map((f) => f.job.error).filter((e): e is string => !!e))];
+  const facts = [fmt.relative(lead.created_at), statusLabel(status, t), lead.template?.name ?? '', l.hosts(hosts), ids.length > 1 ? l.zones(ids.length) : ''].filter(Boolean);
   return (
     <>
+      {ids.map((id) => (
+        <RunFeedReader key={id} org={org} id={id} onRead={report} />
+      ))}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <span className="text-muted-foreground">{facts.join(' · ')}</span>
-        <Link to="/o/$org/runs/$id" params={{ org, id: job.id }} className="font-medium text-primary hover:underline">
+        <Link to="/o/$org/runs/$id" params={{ org, id: lead.id }} className="font-medium text-primary hover:underline">
           {l.open}
         </Link>
       </div>
@@ -88,26 +107,41 @@ function ShownRun({ org, job, status, events }: { org: string; job: JobDetail; s
           {l.waiting}
         </p>
       )}
-      {!final && status !== 'queued' && (
+      {!isTerminal(status) && status !== 'queued' && (
         <p role="status" className="text-xs text-muted-foreground">
           {l.live}
         </p>
       )}
-      {job.error && (
-        <p role="alert" className="text-xs text-destructive [overflow-wrap:anywhere]">
-          {job.error}
+      {errors.map((e) => (
+        <p key={e} role="alert" className="text-xs text-destructive [overflow-wrap:anywhere]">
+          {e}
         </p>
-      )}
-      <DryRunCounts counts={counts} />
-      <DryRunChanges events={events} final={final} />
+      ))}
+      <DryRunCounts counts={groupCounts(read)} />
+      <DryRunChanges changed={groupChanges(read)} status={status} />
     </>
   );
 }
 
-/** useQueuedLong says a run has been queued for QUEUED_HINT_MS or longer:
- * a dry run no worker takes (only workers that support check mode do). */
-function useQueuedLong(status: string, createdAt: string): boolean {
-  const queued = status === 'queued';
+/** RunFeedReader reads one job of the group — its detail polled while it
+ * is live, its log streamed — and reports each new state; it renders
+ * nothing itself. */
+function RunFeedReader({ org, id, onRead }: { org: string; id: string; onRead: (f: RunFeed) => void }) {
+  const job = useJob(org, id, { refetchInterval: pollWhileLive });
+  const log = useRunLog(org, id);
+  const detail = job.data?.job;
+  const status = log.status ?? detail?.status;
+  const events = log.events;
+  useEffect(() => {
+    if (detail && status) onRead({ job: detail, status, events });
+  }, [detail, status, events, onRead]);
+  return null;
+}
+
+/** useQueuedLong says a job of the run has been queued for QUEUED_HINT_MS
+ * or longer: a dry run no worker of its zone takes (only workers that
+ * support check mode do). */
+function useQueuedLong(queued: boolean, createdAt: string): boolean {
   const due = Date.parse(createdAt) + QUEUED_HINT_MS;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
