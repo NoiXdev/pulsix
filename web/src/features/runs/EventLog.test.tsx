@@ -44,4 +44,25 @@ describe('EventLog', () => {
     expect(within(log).getByText('Install nginx')).toBeInTheDocument();
     expect(within(log).getByText('PLAY RECAP')).toBeInTheDocument();
   });
+
+  it('shows the differences a task event reports, a loop\'s own event without repeating its items', () => {
+    const res = (diff: unknown) => ({ event: 'runner_on_ok', event_data: { res: diff } });
+    render(
+      <EventLog
+        events={[
+          ev(1, 1, 'Write config', { state: 'changed', payload: res({ changed: true, diff: { before: 'port 80\n', after: 'port 8080\n', before_header: '/etc/app.conf' } }) }),
+          ev(2, 1, 'Template', { state: 'changed', payload: res({ diff: [{ prepared: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new-prepared\n' }] }) }),
+          ev(3, 1, 'Loop', { state: 'changed', payload: res({ results: [{ diff: { before: 'a\n', after: 'loop-item\n' } }] }) }),
+          ev(4, 1, 'Same', { state: 'ok', payload: res({ diff: { before: 'x\n', after: 'x\n' } }) }),
+        ]}
+      />,
+    );
+    const log = screen.getByRole('list', { name: 'Run events' });
+    const diffs = within(log).getAllByRole('figure', { name: 'Differences' });
+    expect(diffs).toHaveLength(2);
+    expect(within(diffs[0]).getByText('-port 80')).toBeInTheDocument();
+    expect(within(diffs[0]).getByText('+port 8080')).toBeInTheDocument();
+    expect(within(diffs[1]).getByText('+new-prepared')).toBeInTheDocument();
+    expect(within(log).queryByText('+loop-item')).not.toBeInTheDocument();
+  });
 });

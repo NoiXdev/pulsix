@@ -11,6 +11,7 @@ import { useFollowLog } from './useFollowLog.ts';
 import { Switch } from '../../ui/switch.tsx';
 import { RunSidebar } from './RunSidebar.tsx';
 import { RunResultSection } from './RunResultSection.tsx';
+import { RunDryRunBanner } from './RunDryRunBanner.tsx';
 import { RunGroupSection } from './RunGroupSection.tsx';
 import { RunChainSection } from './RunChainSection.tsx';
 import { RunVaultSection } from './RunVaultSection.tsx';
@@ -20,9 +21,9 @@ import { useT } from '../../i18n/useT.ts';
 /**
  * RunDetailPage is the run view (spec §7, backlog 2.12), laid out like the
  * host page: a sticky sidebar with the run's status, facts and the
- * operator's cancel / retry-failed actions, and the sections Result, Run
- * group (only with sibling jobs), Vault identities (only when the run has
- * any) and the live Event log — EventSource on the org-scoped
+ * operator's cancel / retry-failed actions, a dry run's banner, and the
+ * sections Result, Run group (only with sibling jobs), Vault identities
+ * (only when the run has any) and the live Event log — EventSource on the org-scoped
  * /jobs/{id}/stream with the seq-gap polling fallback (useRunLog). The log
  * comes last because it grows while the run is live.
  */
@@ -74,6 +75,7 @@ export function RunDetailPage() {
 
   return (
     <DetailLayout sidebar={<RunSidebar org={org} job={j} status={status} canRun={canRun} />} nav={nav} navLabel={t.common.sections}>
+      {j.check_mode && <RunDryRunBanner dryRun={j.dry_run} />}
       <RunResultSection job={j} status={status} events={log.events} />
       {siblings.length > 0 && <RunGroupSection org={org} siblings={siblings} />}
       {followUps.length > 0 && <RunChainSection org={org} followUps={followUps} />}

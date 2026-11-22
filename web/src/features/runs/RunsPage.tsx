@@ -18,6 +18,7 @@ import { useListFilters } from '../lists/filterSearch.ts';
 import { useListView } from '../lists/useListView.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
 import { HostFilterChip } from './HostFilterChip.tsx';
+import { RunModeFilter } from './RunModeFilter.tsx';
 import { runColumns } from './runColumns.tsx';
 import { RUN_KINDS, RUN_STATUSES, RUNS_FILTERS } from './runsSearch.ts';
 import { isCancellable, kindLabel, shortId, statusLabel } from './status.ts';
@@ -29,8 +30,9 @@ import { useT } from '../../i18n/useT.ts';
 /**
  * RunsPage is the org's run list (spec §7, backlog 2.12; list id `runs`):
  * sorted and paged by the server, filterable by status (`active` for the
- * live runs), kind, trigger and schedule (spec 2026-09-18 §8). The filters
- * live in the URL (?status=&kind=&trigger=&schedule=&host=, runsSearch.ts),
+ * live runs), kind, trigger, schedule (spec 2026-09-18 §8) and mode (the dry
+ * runs or the real ones, backlog 3.126). The filters live in the URL
+ * (?status=&kind=&trigger=&schedule=&host=&check_mode=, runsSearch.ts),
  * validated by the route; any change starts again at page 1. The host filter (the runs that targeted one host, linked from
  * the host view and the hosts list's Active runs) shows as a removable
  * chip. Each row opens its run; its menu offers Open and, for a live run
@@ -44,7 +46,7 @@ export function RunsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const { filters: search, setFilter, setFilters, active, reset } = useListFilters(RUNS_FILTERS);
-  const filter = { status: search.status, kind: search.kind, trigger: search.trigger, template: search.template, triggerRef: search.schedule, host: search.host };
+  const filter = { status: search.status, kind: search.kind, trigger: search.trigger, template: search.template, triggerRef: search.schedule, host: search.host, checkMode: search.check_mode };
   const schedules = useSchedules(search.trigger === 'schedule' ? org : '');
   const orgInfo = useOrg(org);
   const templates = useTemplates(org);
@@ -145,6 +147,7 @@ export function RunsPage() {
               value={search.template}
               onChange={(v) => setFilter('template', v)}
             />
+            <RunModeFilter value={search.check_mode} onChange={(v) => setFilter('check_mode', v)} />
             {search.trigger === 'schedule' && (
               <FilterSelect
                 label={t.runs.list.filterSchedule}

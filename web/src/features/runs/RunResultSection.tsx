@@ -21,7 +21,8 @@ const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
 
 /**
  * RunResultSection is what the run did: the run's error, the per-host table
- * folded from its recap and, for a cancelled run, what each target host was
+ * folded from its recap (each host's counts when the run has them, else
+ * which states it reached) and, for a cancelled run, what each target host was
  * left doing with the warnings that go with it. The table stays a table:
  * the recap names hosts by their inventory name, not their id, so there is
  * no host page to link a row to. A run with none of these yet (still
@@ -61,11 +62,9 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
                 {rows.map((r) => (
                   <tr key={r.host} className="border-t border-border">
                     <td className="px-4 py-1.5 font-mono text-[13px] [overflow-wrap:anywhere]">{r.host}</td>
-                    <StateCell on={r.ok} color="var(--px-ok)" label={t.runs.detail.hostState.ok} />
-                    <StateCell on={r.changed} color="var(--px-accent)" label={t.runs.detail.hostState.changed} />
-                    <StateCell on={r.failed} color="var(--px-crit)" label={t.runs.detail.hostState.failed} />
-                    <StateCell on={r.unreachable} color="var(--px-crit)" label={t.runs.detail.hostState.unreachable} />
-                    <StateCell on={r.skipped} color="var(--px-unknown)" label={t.runs.detail.hostState.skipped} />
+                    {STATE_CELLS.map(([state, color]) => (
+                      <StateCell key={state} on={r[state]} count={r.counts?.[state]} color={color} label={t.runs.detail.hostState[state]} />
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -144,12 +143,24 @@ function CancelWarning({ children }: { children: ReactNode }) {
   );
 }
 
-function StateCell({ on, color, label }: { on: boolean; color: string; label: string }) {
+/** The table's state columns in order, each with its colour. */
+const STATE_CELLS = [
+  ['ok', 'var(--px-ok)'],
+  ['changed', 'var(--px-accent)'],
+  ['failed', 'var(--px-crit)'],
+  ['unreachable', 'var(--px-crit)'],
+  ['skipped', 'var(--px-unknown)'],
+] as const;
+
+/** One host's state: its recap count when the run has counts (a count of
+ * zero reads as the dot), else the state's name when it applies. */
+function StateCell({ on, count, color, label }: { on: boolean; count: number | undefined; color: string; label: string }) {
+  const shown = count !== undefined ? count > 0 : on;
   return (
     <td className="px-2 py-1.5 text-center">
-      {on ? (
-        <span className="font-mono text-[11px] font-semibold" style={{ color }}>
-          {label}
+      {shown ? (
+        <span className="font-mono text-[11px] font-semibold" style={{ color }} title={count !== undefined ? label : undefined}>
+          {count ?? label}
         </span>
       ) : (
         <span className="text-muted-foreground">·</span>

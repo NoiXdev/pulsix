@@ -27,10 +27,20 @@ export function runColumns(t: Messages, fmt: Pick<Format, 'relative' | 'dateTime
     {
       id: 'kind',
       label: c.kind,
-      width: '120px',
+      width: '150px',
       sortKey: 'kind',
       defaultVisible: true,
-      render: (j) => <span>{kindLabel(j.kind, t)}</span>,
+      // A dry run is a run in check mode: its badge sits next to the kind.
+      render: (j) => (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate">{kindLabel(j.kind, t)}</span>
+          {j.check_mode && (
+            <span className="shrink-0">
+              <Pill tone="accent">{t.runs.dryRun.badge}</Pill>
+            </span>
+          )}
+        </span>
+      ),
     },
     {
       id: 'status',

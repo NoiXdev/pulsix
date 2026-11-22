@@ -66,6 +66,21 @@ export const enRuns = {
     },
     empty: 'No runs match.',
   },
+  /** Dry runs (backlog 3.126): their filter, badge and the run view's banner. */
+  dryRun: {
+    badge: 'Dry run',
+    filter: 'Filter by mode',
+    all: 'All runs',
+    dry: 'Dry runs',
+    real: 'Real runs',
+    title: 'Dry run',
+    text: 'This run ran in check mode: Ansible reported what it would change and changed nothing, except tasks marked to run anyway (check_mode: false).',
+    tags: 'Tags',
+    allTags: 'All tasks',
+    draft: 'Unsaved draft',
+    diffOn: 'Differences shown',
+    diffOff: 'Differences not shown',
+  },
   adhoc: {
     chooseHost: 'choose at least one host',
     commandRequired: 'a command is required',

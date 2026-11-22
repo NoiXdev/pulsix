@@ -8,10 +8,11 @@ export const RUN_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancel
 export const RUN_KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key', 'sync_repo'] as const;
 
 /**
- * The runs list's filters in the URL (?status=&kind=&trigger=&template=&schedule=&host=).
+ * The runs list's filters in the URL (?status=&kind=&trigger=&template=&schedule=&host=&check_mode=).
  * `status=active` asks for the live runs; `host` is the one host the list
  * is narrowed to (linked from the host view and the hosts list's Active
- * runs); `template` is a job template's id (the server's `template_id`).
+ * runs); `template` is a job template's id (the server's `template_id`);
+ * `check_mode` is true for the dry runs only, false for the real runs only.
  * A value outside the offered ones is dropped. The server has no zone filter,
  * so the list offers none.
  */
@@ -22,6 +23,7 @@ export const RUNS_FILTERS = {
   template: param.uuid(),
   schedule: param.uuid(),
   host: param.uuid(),
+  check_mode: param.bool(),
 };
 
 export type RunsSearch = ListSearch & FilterSearch<typeof RUNS_FILTERS>;

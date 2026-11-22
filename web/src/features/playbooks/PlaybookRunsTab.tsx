@@ -9,6 +9,7 @@ import { useT } from '../../i18n/useT.ts';
 import { FilterSelect } from '../lists/FilterSelect.tsx';
 import { useListView } from '../lists/useListView.ts';
 import { runColumns } from '../runs/runColumns.tsx';
+import { RunModeFilter } from '../runs/RunModeFilter.tsx';
 import { RUN_STATUSES } from '../runs/runsSearch.ts';
 import { isCancellable, shortId, statusLabel } from '../runs/status.ts';
 import { TRIGGERS, triggerLabel } from '../runs/trigger.ts';
@@ -18,13 +19,16 @@ interface Filters {
   status?: string;
   trigger?: string;
   template?: string;
+  /** The dry runs only (true), the real runs only (false); both when unset. */
+  checkMode?: boolean;
 }
 
 /**
  * PlaybookRunsTab is the playbook page's Runs tab: the runs list (its
  * columns, row menu and server-side sorting and paging) narrowed to this
  * playbook by the server (`playbook_id`: the runs of the templates that use
- * it). Status, trigger and template narrow it further. The page's URL holds
+ * it). Status, trigger, mode (dry runs or real ones) and template narrow it
+ * further. The page's URL holds
  * only the tab, so sort, page and filters live in the component (list id
  * `playbook-runs`).
  */
@@ -34,7 +38,7 @@ export function PlaybookRunsTab({ org, playbookId, templates, canRun }: { org: s
   const navigate = useNavigate();
   const cancel = useCancelRuns(org);
   const [filters, setFilters] = useState<Filters>({});
-  const active = Object.values(filters).some(Boolean);
+  const active = Object.values(filters).some((v) => v !== undefined && v !== '');
   const set = (patch: Filters) => setFilters((f) => ({ ...f, ...patch }));
   const filter = { ...filters, playbook: playbookId };
 
@@ -83,6 +87,7 @@ export function PlaybookRunsTab({ org, playbookId, templates, canRun }: { org: s
                 value={filters.trigger}
                 onChange={(trigger) => set({ trigger })}
               />
+              <RunModeFilter value={filters.checkMode} onChange={(checkMode) => set({ checkMode })} />
               {templates.length > 1 && (
                 <FilterSelect
                   label={t.runs.list.filterTemplate}

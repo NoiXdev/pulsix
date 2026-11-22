@@ -1,7 +1,7 @@
 import { useId } from 'react';
-import { UnifiedDiff } from '../../ui/diff/UnifiedDiff.tsx';
 import type { JobEvent } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { EventDiffList } from '../runs/EventDiffList.tsx';
 import type { RecapCounts } from '../runs/hostCounts.ts';
 import { changedTasks, COUNT_KEYS } from './dryRunTasks.ts';
 
@@ -58,13 +58,7 @@ export function DryRunChanges({ events, final }: { events: readonly JobEvent[]; 
             {c.diffs.length === 0 ? (
               <p className="text-[11px] text-muted-foreground">{l.noDiff}</p>
             ) : (
-              c.diffs.map((d, i) =>
-                d.kind === 'prepared' ? (
-                  <UnifiedDiff key={i} prepared={d.text} />
-                ) : (
-                  <UnifiedDiff key={i} before={d.before} after={d.after} beforeHeader={d.beforeHeader} afterHeader={d.afterHeader} />
-                ),
-              )
+              <EventDiffList diffs={c.diffs} />
             )}
           </li>
         ))}

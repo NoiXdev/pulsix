@@ -75,6 +75,20 @@ describe('hostResultRows', () => {
     ]);
   });
 
+  it('carries each host\'s recap counts when the stats have host_counts', () => {
+    const rows = hostResultRows({
+      ok_hosts: ['h1', 'h2'],
+      changed_hosts: ['h1'],
+      host_counts: { h1: { ok: 5, changed: 2, skipped: 1, failed: 0, unreachable: 0 }, h3: { ok: 0, changed: 0, skipped: 0, failed: 1, unreachable: 0 } },
+    });
+    expect(rows).toEqual([
+      { host: 'h1', ok: true, changed: true, failed: false, unreachable: false, skipped: true, counts: { ok: 5, changed: 2, skipped: 1, failed: 0, unreachable: 0 } },
+      // A host the lists name but host_counts does not keeps its booleans only.
+      { host: 'h2', ok: true, changed: false, failed: false, unreachable: false, skipped: false },
+      { host: 'h3', ok: false, changed: false, failed: true, unreachable: false, skipped: false, counts: { ok: 0, changed: 0, skipped: 0, failed: 1, unreachable: 0 } },
+    ]);
+  });
+
   it('ignores non-string entries and empty stats', () => {
     expect(hostResultRows({ ok_hosts: [1, 'h1', null] })).toEqual([
       { host: 'h1', ok: true, changed: false, failed: false, unreachable: false, skipped: false },

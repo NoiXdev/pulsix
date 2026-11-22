@@ -44,6 +44,28 @@ describe('PlaybookPage tabs and actions', () => {
     await waitFor(() => expect(asked.some((s) => s.has('page') && s.get('status') === 'failed' && s.get('playbook_id') === 'p1')).toBe(true));
   });
 
+  it('narrows the runs to the dry runs and marks them', async () => {
+    const asked: URLSearchParams[] = [];
+    mockApi(
+      routes('operator', {
+        'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+          asked.push(req.search);
+          return { jobs: [job('aaaaaaaa-0000-0000-0000-000000000001', { check_mode: true })], next_cursor: '', total: 1 };
+        },
+      }),
+    );
+    renderAt('/o/acme/playbooks/p1?tab=runs');
+    const list = await screen.findByRole('table', { name: 'Runs of this playbook' });
+    expect(await within(list).findByText('Dry run')).toBeInTheDocument();
+    await pickOption(screen, 'Filter by mode', 'Dry runs');
+    await waitFor(() => expect(asked.some((s) => s.has('page') && s.get('check_mode') === 'true' && s.get('playbook_id') === 'p1')).toBe(true));
+    expect(screen.getByRole('button', { name: 'Reset every filter' })).toBeInTheDocument();
+    await pickOption(screen, 'Filter by mode', 'Real runs');
+    await waitFor(() => expect(asked.some((s) => s.has('page') && s.get('check_mode') === 'false')).toBe(true));
+    // "Real runs" is a filter too, though false.
+    expect(screen.getByRole('button', { name: 'Reset every filter' })).toBeInTheDocument();
+  });
+
   it('lists the templates using the playbook with their schedules and webhook triggers', async () => {
     const asked: string[] = [];
     mockApi(

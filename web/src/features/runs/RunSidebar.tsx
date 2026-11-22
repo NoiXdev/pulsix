@@ -98,7 +98,7 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
           </Button>
         </div>
       )}
-      {canRun && (cancellable || terminal) && (
+      {canRun && (cancellable || (terminal && !job.check_mode)) && (
         <div className="flex flex-col items-start gap-2">
           <div className="flex flex-wrap items-center gap-2">
             {cancellable && (
@@ -106,7 +106,8 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
                 {t.runs.detail.cancel}
               </Button>
             )}
-            {terminal && (
+            {/* A dry run is never retried: the retry would run its hosts for real. */}
+            {terminal && !job.check_mode && (
               <Button
                 type="button"
                 variant="primary"
@@ -118,7 +119,7 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
               </Button>
             )}
           </div>
-          {terminal && retryDropsOverrides && (
+          {terminal && !job.check_mode && retryDropsOverrides && (
             <span id="retry-overrides-note" className="text-[11px] text-muted-foreground">
               {t.runs.detail.retryNote(job.trigger)}
             </span>

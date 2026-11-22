@@ -1,5 +1,6 @@
 import type { Tone } from '../../ui/badge.tsx';
 import type { Messages } from '../../i18n/types.ts';
+import { readHostCounts, type RecapCounts } from './hostCounts.ts';
 
 /** statusTone maps a job status onto the design's state colours: the
  * active pair (running/cancelling) reads accent/warn, the terminal pair
@@ -51,29 +52,38 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
-export interface HostResultRow {
+type HostState = 'ok' | 'changed' | 'failed' | 'unreachable' | 'skipped';
+
+export interface HostResultRow extends Record<HostState, boolean> {
   host: string;
-  ok: boolean;
-  changed: boolean;
-  failed: boolean;
-  unreachable: boolean;
-  skipped: boolean;
+  /** The host's recap counts (stats.host_counts); absent for a run older
+   * than them and for a host they do not name. */
+  counts?: RecapCounts;
 }
+
+const STATES: readonly HostState[] = ['ok', 'changed', 'failed', 'unreachable', 'skipped'];
 
 /** hostResultRows folds the run's stats (the worker's recap contract:
  * ok_hosts / changed_hosts / failed_hosts / unreachable_hosts /
  * skipped_hosts, each an array of host ids — or, for targets the claim
  * does not name, ansible host names) into one row per host with a boolean
- * per state, for the per-host result table. */
+ * per state, for the per-host result table. A run whose stats carry
+ * host_counts (hostCounts.ts) adds each host's counts, and a count above
+ * zero sets its state too. */
 export function hostResultRows(stats: Record<string, unknown> | undefined | null): HostResultRow[] {
   const rows = new Map<string, HostResultRow>();
-  for (const key of ['ok_hosts', 'changed_hosts', 'failed_hosts', 'unreachable_hosts', 'skipped_hosts'] as const) {
-    const state = key.replace(/_hosts$/, '') as keyof Omit<HostResultRow, 'host'>;
-    for (const host of stringList(stats?.[key])) {
-      const row = rows.get(host) ?? { host, ok: false, changed: false, failed: false, unreachable: false, skipped: false };
-      row[state] = true;
-      rows.set(host, row);
-    }
+  const rowOf = (host: string) => {
+    const row = rows.get(host) ?? { host, ok: false, changed: false, failed: false, unreachable: false, skipped: false };
+    rows.set(host, row);
+    return row;
+  };
+  for (const state of STATES) {
+    for (const host of stringList(stats?.[`${state}_hosts`])) rowOf(host)[state] = true;
+  }
+  for (const [host, counts] of readHostCounts(stats) ?? []) {
+    const row = rowOf(host);
+    row.counts = counts;
+    for (const state of STATES) if (counts[state] > 0) row[state] = true;
   }
   return [...rows.values()].sort((a, b) => a.host.localeCompare(b.host));
 }
