@@ -271,9 +271,11 @@ func TestFieldBecomesSecretOnlyWhileEmpty(t *testing.T) {
 		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "pw", "type": "secret"}}}}}, nil)
 }
 
-// TestSchemaToolsDescribeFieldTypesAlike: update_job_template says what an
-// extra_vars_schema holds in the same words as set_group_schema, so an
-// assistant learns secret and repeater from either tool.
+// TestSchemaToolsDescribeFieldTypesAlike: update_job_template and
+// create_job_template say what an extra_vars_schema holds in the same
+// words as set_group_schema, so an assistant learns secret and repeater
+// from either tool; only the group schema names a scope, which means
+// nothing for template extra vars.
 func TestSchemaToolsDescribeFieldTypesAlike(t *testing.T) {
 	f := newOrgFixture(t)
 	cs := mustConnect(t, f.s, f.token)
@@ -281,7 +283,12 @@ func TestSchemaToolsDescribeFieldTypesAlike(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const words = "fields with name, type (string, int, float, bool, enum, secret, list, repeater, object), scope (group or host) and more"
+	const (
+		types     = "fields with name, type (string, int, float, bool, enum, secret, list, repeater, object)"
+		template  = types + " and more"
+		group     = types + ", scope (group or host) and more"
+		scopeText = "scope (group or host)"
+	)
 	desc := map[string]string{}
 	for _, tl := range res.Tools {
 		desc[tl.Name] = tl.Description
@@ -290,16 +297,28 @@ func TestSchemaToolsDescribeFieldTypesAlike(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(raw), words) {
-				t.Errorf("create_job_template extra_vars_schema property lacks the words: %s", raw)
+			if !strings.Contains(string(raw), template) || strings.Contains(string(raw), scopeText) {
+				t.Errorf("create_job_template extra_vars_schema property = %s, want the template words without a scope", raw)
+			}
+		}
+		if tl.Name == "set_group_schema" {
+			raw, err := json.Marshal(tl.InputSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), group) {
+				t.Errorf("set_group_schema schema property lacks the group words: %s", raw)
 			}
 		}
 	}
-	for _, name := range []string{"set_group_schema", "update_job_template"} {
-		for _, want := range []string{words, "secret", "repeater"} {
-			if !strings.Contains(desc[name], want) {
-				t.Errorf("%s description lacks %q: %q", name, want, desc[name])
+	for name, want := range map[string]string{"set_group_schema": group, "update_job_template": template} {
+		for _, w := range []string{want, "secret", "repeater"} {
+			if !strings.Contains(desc[name], w) {
+				t.Errorf("%s description lacks %q: %q", name, w, desc[name])
 			}
 		}
+	}
+	if strings.Contains(desc["update_job_template"], scopeText) {
+		t.Errorf("update_job_template names a scope its extra vars do not have: %q", desc["update_job_template"])
 	}
 }
