@@ -15,7 +15,9 @@
 // requirements entry; nothing in that read fails the job. Success emits
 // the requirements step's lines as stdout events, then one run event
 // carrying {"repo_id", "requirements_installed", "var_sources"} (the
-// sources only as a summary) for the run view.
+// sources only as a summary) for the run view. The playbook texts, when
+// the claim asks for them (sync_texts.go), travel in the result's stats
+// only, never in the event.
 package worker
 
 import (
@@ -30,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/varsource"
 	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
@@ -155,10 +158,16 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	if err != nil {
 		return StatusError, nil, err
 	}
-	sources, summary := e.readVarSources(ctx, dir, payload.Repo.Subpath, installed)
+	sources, summary, paths := e.readVarSources(ctx, dir, payload.Repo.Subpath, installed)
 	if err := ctx.Err(); err != nil {
 		// The job was cancelled during the read: its report is partial.
 		return StatusError, nil, fmt.Errorf("read variable sources: %w", err)
+	}
+	// The playbook texts go only to a manager that asked for them, and
+	// only beside a report: they belong to the report's paths.
+	var texts, textsLeftOut map[string]string
+	if job.GetWantPlaybookTexts() && sources != nil {
+		texts, textsLeftOut = e.readTexts(ctx, dir, payload.Repo.Subpath, paths)
 	}
 
 	// The one run event the sync reports; its payload carries no
@@ -186,6 +195,10 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	stats := maps.Clone(report)
 	if sources != nil {
 		stats[VarSourcesStatsKey] = sources
+	}
+	if texts != nil {
+		stats[varsource.PlaybookTextsStatsKey] = texts
+		stats[varsource.PlaybookTextsLeftOutStatsKey] = textsLeftOut
 	}
 	return StatusSucceeded, stats, nil
 }

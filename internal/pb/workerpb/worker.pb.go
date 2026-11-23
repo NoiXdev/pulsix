@@ -217,9 +217,15 @@ type Job struct {
 	Diff bool `protobuf:"varint,23,opt,name=diff,proto3" json:"diff,omitempty"`
 	// tags narrows the play to these tags (--tags). Set only with check;
 	// the manager validated every entry (^[A-Za-z0-9_.:-]{1,64}$).
-	Tags          []string `protobuf:"bytes,24,rep,name=tags,proto3" json:"tags,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Tags []string `protobuf:"bytes,24,rep,name=tags,proto3" json:"tags,omitempty"`
+	// want_playbook_texts asks a sync_repo job to ship each reported
+	// playbook's file text beside the variable sources (backlog 3.127).
+	// Set on every sync_repo claim by a manager that stores the texts; an
+	// older manager never sets it and so never receives them, and an older
+	// worker ignores it.
+	WantPlaybookTexts bool `protobuf:"varint,25,opt,name=want_playbook_texts,json=wantPlaybookTexts,proto3" json:"want_playbook_texts,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
@@ -411,6 +417,13 @@ func (x *Job) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *Job) GetWantPlaybookTexts() bool {
+	if x != nil {
+		return x.WantPlaybookTexts
+	}
+	return false
 }
 
 // VaultIdentity is one labelled Ansible Vault password, already resolved
@@ -1023,7 +1036,7 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x11cancel_stops_play\x18\x03 \x01(\bR\x0fcancelStopsPlay\x12.\n" +
 	"\x13supports_check_mode\x18\x04 \x01(\bR\x11supportsCheckMode\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
-	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\xd4\v\n" +
+	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x84\f\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -1051,7 +1064,8 @@ const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\x10vault_identities\x18\x15 \x03(\v2\x1f.pulsix.worker.v1.VaultIdentityR\x0fvaultIdentities\x12\x14\n" +
 	"\x05check\x18\x16 \x01(\bR\x05check\x12\x12\n" +
 	"\x04diff\x18\x17 \x01(\bR\x04diff\x12\x12\n" +
-	"\x04tags\x18\x18 \x03(\tR\x04tags\x1a<\n" +
+	"\x04tags\x18\x18 \x03(\tR\x04tags\x12.\n" +
+	"\x13want_playbook_texts\x18\x19 \x01(\bR\x11wantPlaybookTexts\x1a<\n" +
 	"\x0eExtraVarsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

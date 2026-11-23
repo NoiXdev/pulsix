@@ -54,10 +54,11 @@ const varSourcesTimeLimit = 60 * time.Second
 type parseRepoFunc func(ctx context.Context, fsys fs.FS, in varsource.Installed, commit string) varsource.Report
 
 // readVarSources reads the clone's variable sources under subpath and
-// returns the encoded report and the ok event's summary of it. Without a
-// report that encodes, both are nil (the manager then treats the sync as
+// returns the encoded report, the ok event's summary of it and the paths
+// of the playbooks the encoded report names, in its order. Without a
+// report that encodes, all are nil (the manager then treats the sync as
 // one that sent no sources and keeps the previous record).
-func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string, installed requirements.Entry) (json.RawMessage, map[string]any) {
+func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string, installed requirements.Entry) (json.RawMessage, map[string]any, []string) {
 	limit := e.sourcesTimeLimit
 	if limit <= 0 {
 		limit = varSourcesTimeLimit
@@ -72,10 +73,14 @@ func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string, 
 		data, sent, err = varsource.Encode(unreadReport(r.Commit, "the variable sources are too large to send; no playbooks read"), varsource.MaxReportBytes)
 		if err != nil {
 			e.logger().ErrorContext(ctx, "encode variable sources", "err", err)
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
-	return data, map[string]any{"commit": sent.Commit, "playbooks": len(sent.Playbooks), "warnings": warningCount(sent)}
+	paths := make([]string, 0, len(sent.Playbooks))
+	for _, pb := range sent.Playbooks {
+		paths = append(paths, pb.Path)
+	}
+	return data, map[string]any{"commit": sent.Commit, "playbooks": len(sent.Playbooks), "warnings": warningCount(sent)}, paths
 }
 
 // collectVarSources is the report of the clone's sources: the commit and

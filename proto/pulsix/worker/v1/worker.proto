@@ -135,6 +135,12 @@ message Job {
   // tags narrows the play to these tags (--tags). Set only with check;
   // the manager validated every entry (^[A-Za-z0-9_.:-]{1,64}$).
   repeated string tags = 24;
+  // want_playbook_texts asks a sync_repo job to ship each reported
+  // playbook's file text beside the variable sources (backlog 3.127).
+  // Set on every sync_repo claim by a manager that stores the texts; an
+  // older manager never sets it and so never receives them, and an older
+  // worker ignores it.
+  bool want_playbook_texts = 25;
 }
 
 // VaultIdentity is one labelled Ansible Vault password, already resolved

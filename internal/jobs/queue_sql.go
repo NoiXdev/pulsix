@@ -499,7 +499,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// inventory secrets ship on a job that cannot use them. The claim-time
 	// enrichment (Task 11) resolves the repository the job syncs — url,
 	// branch, subpath and the git credential as `git:<repo-id>` — the same
-	// way a repo playbook's run claim carries its fetch target.
+	// way a repo playbook's run claim carries its fetch target. Every sync
+	// asks for the playbook texts (backlog 3.127): this manager stores
+	// them; an older one never asks, so its workers never send them.
 	if job.Kind == KindSyncRepo {
 		kindPayload, credentials, err := q.syncRepoPayload(ctx, job)
 		if err != nil {
@@ -513,7 +515,8 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 			Id: job.ID.String(), Kind: string(job.Kind),
 			OrgId: job.OrgID.String(), ZoneId: job.ZoneID.String(),
 			InventoryDoc: "{}", Credentials: credentials, KindPayload: kindPayload,
-			Redact: redact.list,
+			Redact:            redact.list,
+			WantPlaybookTexts: true,
 		}
 		return nil
 	}
