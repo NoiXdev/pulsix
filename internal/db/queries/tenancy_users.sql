@@ -190,3 +190,12 @@ WHERE id = sqlc.arg(id) AND org_id = sqlc.arg(org_id) AND token_hash = sqlc.arg(
 -- deletes it again when that delivery fails, so a failed invitation leaves
 -- no orphaned row behind.
 DELETE FROM invites WHERE id = $1 AND org_id = $2;
+
+-- name: DeleteStaleInvites :execrows
+-- The invite reaper's purge (backlog 3.128): removes every unaccepted
+-- invitation, in every organization, that expired before expired_before
+-- (the sweep's now minus tenancy.ExpiredInviteListWindow, so only ones no
+-- list shows any more). Accepted invitations are history and stay. Runs
+-- without a pulsix.org_id binding, which the org_isolation_bypass policy
+-- of invites allows across organizations.
+DELETE FROM invites WHERE accepted_at IS NULL AND expires_at < @expired_before::timestamptz;

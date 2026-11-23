@@ -488,7 +488,7 @@ func TestNotFoundMapsOnlyTheStoreSentinels(t *testing.T) {
 func TestBuildOptionsApply(t *testing.T) {
 	fixed := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	var o buildOptions
-	for _, opt := range []Option{WithScheduleClock(func() time.Time { return fixed }), WithAuthReaperInterval(time.Second)} {
+	for _, opt := range []Option{WithScheduleClock(func() time.Time { return fixed }), WithAuthReaperInterval(time.Second), WithInviteReaperInterval(2 * time.Second)} {
 		opt(&o)
 	}
 	if o.scheduleNow == nil || !o.scheduleNow().Equal(fixed) {
@@ -496,5 +496,8 @@ func TestBuildOptionsApply(t *testing.T) {
 	}
 	if o.authReaperInterval != time.Second {
 		t.Fatalf("authReaperInterval = %v, want 1s", o.authReaperInterval)
+	}
+	if o.inviteReaperInterval != 2*time.Second {
+		t.Fatalf("inviteReaperInterval = %v, want 2s", o.inviteReaperInterval)
 	}
 }

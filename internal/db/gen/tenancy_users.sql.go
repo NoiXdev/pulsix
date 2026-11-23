@@ -69,6 +69,24 @@ func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipPara
 	return result.RowsAffected(), nil
 }
 
+const deleteStaleInvites = `-- name: DeleteStaleInvites :execrows
+DELETE FROM invites WHERE accepted_at IS NULL AND expires_at < $1::timestamptz
+`
+
+// The invite reaper's purge (backlog 3.128): removes every unaccepted
+// invitation, in every organization, that expired before expired_before
+// (the sweep's now minus tenancy.ExpiredInviteListWindow, so only ones no
+// list shows any more). Accepted invitations are history and stay. Runs
+// without a pulsix.org_id binding, which the org_isolation_bypass policy
+// of invites allows across organizations.
+func (q *Queries) DeleteStaleInvites(ctx context.Context, expiredBefore time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStaleInvites, expiredBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const disableUser = `-- name: DisableUser :one
 UPDATE users AS u SET disabled_at = $2
 WHERE u.id = $1

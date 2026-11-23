@@ -10,6 +10,10 @@ type buildOptions struct {
 	// seam so the app integration test can watch a sweep happen without
 	// waiting an hour.
 	authReaperInterval time.Duration
+	// inviteReaperInterval overrides the stale-invitation purge's sweep
+	// period (0 keeps tenancy.DefaultInviteReaperInterval); a test seam
+	// like authReaperInterval.
+	inviteReaperInterval time.Duration
 	// retentionPurgeInterval overrides the retention purge's period (0
 	// keeps monitorsettings.RetentionPurgeInterval); a test seam like
 	// authReaperInterval.
@@ -33,6 +37,12 @@ func WithScheduleClock(now func() time.Time) Option {
 // seam; production passes no option and keeps the hourly default.
 func WithAuthReaperInterval(d time.Duration) Option {
 	return func(o *buildOptions) { o.authReaperInterval = d }
+}
+
+// WithInviteReaperInterval overrides the invite reaper's sweep period — a
+// test seam; production passes no option and keeps the hourly default.
+func WithInviteReaperInterval(d time.Duration) Option {
+	return func(o *buildOptions) { o.inviteReaperInterval = d }
 }
 
 // WithRetentionPurgeInterval overrides the retention purge's period — a

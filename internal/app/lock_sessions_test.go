@@ -27,7 +27,7 @@ func TestBuildAndCloseOnASmallPool(t *testing.T) {
 	for i := range 5 {
 		done := make(chan error, 1)
 		go func() {
-			a, err := Build(context.Background(), cfg, WithAuthReaperInterval(5*time.Millisecond))
+			a, err := Build(context.Background(), cfg, WithAuthReaperInterval(5*time.Millisecond), WithInviteReaperInterval(5*time.Millisecond))
 			if err != nil {
 				done <- err
 				return

@@ -25,8 +25,8 @@ type PendingInvite struct {
 // ExpiredInviteListWindow is how long an expired invitation stays in the
 // list asked for with the expired ones: it can be resent for that long
 // after it lapsed, and then drops out, so an organization's list does not
-// keep every invitation nobody accepted. The rows themselves stay (purging
-// them is backlog 3.128).
+// keep every invitation nobody accepted. The InviteReaper (backlog 3.128)
+// then deletes the rows that fell out of it.
 const ExpiredInviteListWindow = 30 * 24 * time.Hour
 
 // PendingInvites lists orgID's open invitations (backlog 7.29). An

@@ -111,6 +111,9 @@ type App struct {
 	// stopAuthReaper stops the expired-ceremony and expired-session reaper
 	// (backlog 1.21), waiting until its goroutine has returned.
 	stopAuthReaper func()
+	// stopInviteReaper stops the stale-invitation purge (backlog 3.128),
+	// waiting until its goroutine has returned.
+	stopInviteReaper func()
 	// stopItemExpiry stops the item expiry loop (backlog 3.12b).
 	stopItemExpiry func()
 	// stopRetentionPurge stops the per-organization retention purge
@@ -206,6 +209,9 @@ func (a *App) Close() {
 	}
 	if a.stopAuthReaper != nil {
 		a.stopAuthReaper()
+	}
+	if a.stopInviteReaper != nil {
+		a.stopInviteReaper()
 	}
 	if a.stopTicker != nil {
 		a.stopTicker()
@@ -809,6 +815,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// Stopped in Close.
 	authReaperStop := startLoop(auth.NewReaper(q, schedule.NewAdvisoryLocker(lockDB.Pool(), auth.AdvisoryKeyAuthReaper), o.authReaperInterval, time.Now, slog.Default()).Run)
 
+	// The stale-invitation purge (backlog 3.128): deletes unaccepted
+	// invitations that expired over 30 days ago, under its own advisory
+	// key. Stopped in Close.
+	inviteReaperStop := startLoop(tenancy.NewInviteReaper(q, schedule.NewAdvisoryLocker(lockDB.Pool(), tenancy.AdvisoryKeyInviteReaper), o.inviteReaperInterval, time.Now, slog.Default()).Run)
+
 	// The schedule ticker (spec §2): one per manager; SKIP LOCKED makes
 	// several safe. Stopped in Close and on every early return below;
 	// stopping waits for a batch still in flight (startLoop).
@@ -908,6 +919,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			itemExpiryStop()
 			retentionPurgeStop()
 			authReaperStop()
+			inviteReaperStop()
 			tickerStop()
 			chainStop()
 			dispatchStop()
@@ -936,6 +948,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				itemExpiryStop()
 				retentionPurgeStop()
 				authReaperStop()
+				inviteReaperStop()
 				tickerStop()
 				chainStop()
 				dispatchStop()
@@ -962,7 +975,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, locks: lockDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }
