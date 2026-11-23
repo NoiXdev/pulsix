@@ -22,6 +22,15 @@ const (
 	// the top-level union.
 	maxOutlineTagsPerList = 64
 	maxOutlineTags        = 512
+	// maxOutlineTagsTotal bounds the tags emitted across the whole outline
+	// (every play's and entry's list together), so the JSON stays near
+	// 1 MiB at the worst case of maxOutlineText bytes per tag. Up to half of
+	// it, entries carry their inherited tags; past that only their own,
+	// and past the whole budget none.
+	maxOutlineTagsTotal = 3840
+	// maxOutlineTagsText bounds how much of one tags string (or list item)
+	// is split into tags; it is cut by length before it is scanned.
+	maxOutlineTagsText = maxOutlineTagsPerList * (maxOutlineText + 1)
 	// maxOutlineText bounds every string the outline emits (names, hosts,
 	// import paths, tags), in bytes.
 	maxOutlineText = 256
@@ -96,7 +105,7 @@ var taskKeywords = map[string]bool{
 	"loop_control": true, "become": true, "become_user": true, "become_method": true,
 	"become_flags": true, "check_mode": true, "diff": true, "delegate_to": true,
 	"delegate_facts": true, "environment": true, "any_errors_fatal": true,
-	"ignore_errors": true, "ignore_unreachable": true, "no_log": true, "run_once": true,
+	"async": true, "poll": true, "ignore_errors": true, "ignore_unreachable": true, "no_log": true, "run_once": true,
 	"changed_when": true, "failed_when": true, "notify": true, "listen": true, "args": true,
 	"until": true, "retries": true, "delay": true, "throttle": true, "timeout": true,
 	"connection": true, "remote_user": true, "port": true, "collections": true,
@@ -140,6 +149,7 @@ type outlineWalker struct {
 	out     PlaybookOutline
 	total   int
 	tagSet  map[string]bool
+	tagsOut int // tags emitted so far, against maxOutlineTagsTotal
 	section string
 	entries []OutlineEntry
 }
@@ -161,8 +171,12 @@ func (w *outlineWalker) play(n *yaml.Node) {
 	}
 	for _, key := range outlineImportPlaybook {
 		if v, ok := lookup(n, key); ok {
+			name := scalarText(v)
+			if name == "" {
+				name = KindImport
+			}
 			w.out.Plays = append(w.out.Plays, OutlinePlay{
-				Name: w.clip(scalarText(v)), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
+				Name: w.clip(name), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
 			})
 			return
 		}
@@ -210,6 +224,9 @@ type entryContext struct {
 
 // add appends one entry; its item was already charged by the caller.
 func (w *outlineWalker) add(e OutlineEntry) {
+	if e.Name == "" {
+		e.Name = e.Kind
+	}
 	e.Name = w.clip(e.Name)
 	w.entries = append(w.entries, e)
 	w.noteTags(e.Tags)
@@ -280,6 +297,9 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 		return
 	}
 	module, arg := moduleOf(n)
+	if module == "action" || module == "local_action" {
+		module = actionModule(arg)
+	}
 	if kind, ok := includeImportKinds[strings.TrimPrefix(strings.TrimPrefix(module, "ansible.builtin."), "ansible.legacy.")]; ok {
 		e.Kind = kind
 		if name == "" {
@@ -304,6 +324,25 @@ func moduleOf(n *yaml.Node) (string, *yaml.Node) {
 		return k.Value, resolveAlias(n.Content[i+1])
 	}
 	return "", nil
+}
+
+// actionModule names the module an action: / local_action: runs: the first
+// word of its string value, or the module key of its mapping.
+func actionModule(arg *yaml.Node) string {
+	if arg == nil {
+		return ""
+	}
+	switch arg.Kind {
+	case yaml.ScalarNode:
+		if f := strings.Fields(scalarText(arg)); len(f) > 0 {
+			return f[0]
+		}
+	case yaml.MappingNode:
+		if v, ok := lookup(arg, "module"); ok {
+			return scalarText(v)
+		}
+	}
+	return ""
 }
 
 // includeTarget names what an include/import points at: the scalar

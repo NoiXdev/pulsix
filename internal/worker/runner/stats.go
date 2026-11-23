@@ -64,7 +64,14 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 	counts := make(map[string]hostCounts, len(names))
 	for _, name := range names {
 		s := stats[name]
-		counts[idOf(name)] = hostCounts{Ok: s.Ok, Changed: s.Changed, Skipped: s.Skipped, Failed: s.Failed, Unreachable: s.Unreachable}
+		// Two inventory names can map to one host: their counts add up.
+		c := counts[idOf(name)]
+		c.Ok += s.Ok
+		c.Changed += s.Changed
+		c.Skipped += s.Skipped
+		c.Failed += s.Failed
+		c.Unreachable += s.Unreachable
+		counts[idOf(name)] = c
 		// A host can fail one task and lose connection on the next; the
 		// failed and unreachable lists are independent, a host lands in
 		// each list its counters name.

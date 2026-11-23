@@ -45,9 +45,9 @@ export type Repo = components['schemas']['RepoDTO'];
 export type Playbook = components['schemas']['PlaybookDTO'];
 /** An editor playbook's outline (POST /playbooks/outline): its plays, their
  * tasks, handlers, blocks and roles with line and tags, and the tags used. */
-export type PlaybookOutline = components['schemas']['PlaybookOutline'];
-export type OutlinePlay = components['schemas']['OutlinePlay'];
-export type OutlineEntry = components['schemas']['OutlineEntry'];
+export type PlaybookOutline = components['schemas']['PlaybookOutlineDTO'];
+export type OutlinePlay = components['schemas']['PlaybookOutlinePlayDTO'];
+export type OutlineEntry = components['schemas']['PlaybookOutlineEntryDTO'];
 /** A repository playbook's text as of the last sync, or why there is none
  * (GET /playbooks/{id}/content). */
 export type PlaybookContent = Omit<components['schemas']['PlaybookContentOutputBody'], '$schema'>;

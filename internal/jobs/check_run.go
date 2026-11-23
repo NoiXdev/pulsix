@@ -39,6 +39,10 @@ func (o *RunOverrides) dryRun() *DryRun {
 	return &DryRun{Tags: tags, Diff: o.Diff, Draft: o.Playbook != nil}
 }
 
+// MaxDraftBytes caps a dry run's draft playbook: the size an editor playbook
+// may be stored with (playbooks.MaxInlineBytes, which a test keeps equal).
+const MaxDraftBytes = 512 * 1024
+
 // MaxCheckTags caps the tags of one check-mode run.
 const MaxCheckTags = 32
 
@@ -66,6 +70,9 @@ func checkRunRequest(req RunRequest) error {
 		}
 		if *ov.Playbook == "" {
 			return invalidDryRun("the draft playbook is empty")
+		}
+		if len(*ov.Playbook) > MaxDraftBytes {
+			return invalidDryRun("the draft playbook exceeds 512 KiB")
 		}
 	}
 	if !ov.Check && (len(ov.Tags) > 0 || ov.Diff) {

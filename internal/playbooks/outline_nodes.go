@@ -95,14 +95,14 @@ func (w *outlineWalker) tagsOf(n *yaml.Node) []string {
 	var raw []string
 	switch v.Kind {
 	case yaml.ScalarNode:
-		raw = strings.SplitN(scalarText(v), ",", maxOutlineTagsPerList+1)
+		raw = w.splitTags(scalarText(v))
 	case yaml.SequenceNode:
 		items := v.Content
 		if len(items) > maxOutlineTagsPerList {
 			items, w.out.Truncated = items[:maxOutlineTagsPerList], true
 		}
 		for _, c := range items {
-			raw = append(raw, strings.SplitN(scalarText(resolveAlias(c)), ",", maxOutlineTagsPerList+1)...)
+			raw = append(raw, w.splitTags(scalarText(resolveAlias(c)))...)
 			if len(raw) > maxOutlineTagsPerList {
 				break
 			}
@@ -126,13 +126,39 @@ func (w *outlineWalker) tagsOf(n *yaml.Node) []string {
 	return out
 }
 
+// splitTags splits one comma-separated tags text. Its length is checked
+// first: past maxOutlineTagsText the rest is not looked at (outline
+// truncated), so a huge text is never scanned.
+func (w *outlineWalker) splitTags(text string) []string {
+	if len(text) > maxOutlineTagsText {
+		w.out.Truncated = true
+		cut := maxOutlineTagsText
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+		text = text[:cut]
+	}
+	return strings.SplitN(text, ",", maxOutlineTagsPerList+1)
+}
+
 // effectiveTags is the sorted unique union of inherited and the node's own
-// tags, cut to maxOutlineTagsPerList (outline truncated when it cuts).
+// tags, cut to maxOutlineTagsPerList (outline truncated when it cuts). The
+// tags emitted across the outline are budgeted (maxOutlineTagsTotal): once
+// half of it is used an entry carries its own tags only, once all of it is
+// used none; the outline is truncated then.
 func (w *outlineWalker) effectiveTags(inherited []string, n *yaml.Node) []string {
-	tags := sortedUnique(inherited, w.tagsOf(n))
+	own := sortedUnique(w.tagsOf(n))
+	tags := sortedUnique(inherited, own)
 	if len(tags) > maxOutlineTagsPerList {
 		tags, w.out.Truncated = tags[:maxOutlineTagsPerList], true
 	}
+	if w.tagsOut+len(tags) > maxOutlineTagsTotal/2 && len(inherited) > 0 {
+		tags, w.out.Truncated = own, true
+	}
+	if w.tagsOut+len(tags) > maxOutlineTagsTotal {
+		tags, w.out.Truncated = []string{}, true
+	}
+	w.tagsOut += len(tags)
 	return tags
 }
 

@@ -6936,34 +6936,6 @@ export interface components {
             readonly $schema?: string;
             name: string;
         };
-        OutlineCounts: {
-            /** Format: int64 */
-            handlers: number;
-            /** Format: int64 */
-            plays: number;
-            /** Format: int64 */
-            tasks: number;
-        };
-        OutlineEntry: {
-            /** Format: int64 */
-            depth: number;
-            kind: string;
-            /** Format: int64 */
-            line: number;
-            name: string;
-            runs_in_check_mode: boolean;
-            section: string;
-            tags: string[] | null;
-        };
-        OutlinePlay: {
-            become: boolean;
-            entries: components["schemas"]["OutlineEntry"][] | null;
-            hosts: string;
-            /** Format: int64 */
-            line: number;
-            name: string;
-            tags: string[] | null;
-        };
         OwnLocaleInputBody: {
             /**
              * Format: uri
@@ -7391,17 +7363,39 @@ export interface components {
             readonly $schema?: string;
             playbooks: components["schemas"]["PlaybookDTO"][] | null;
         };
-        PlaybookOutline: {
+        PlaybookOutlineCountsDTO: {
+            /** Format: int64 */
+            handlers: number;
+            /** Format: int64 */
+            plays: number;
+            /** Format: int64 */
+            tasks: number;
+        };
+        PlaybookOutlineDTO: {
             /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/PlaybookOutline.json
+             * @example https://example.com/schemas/PlaybookOutlineDTO.json
              */
             readonly $schema?: string;
-            counts: components["schemas"]["OutlineCounts"];
-            plays: components["schemas"]["OutlinePlay"][] | null;
-            tags: string[] | null;
+            counts: components["schemas"]["PlaybookOutlineCountsDTO"];
+            plays: components["schemas"]["PlaybookOutlinePlayDTO"][];
+            /** @description Every tag the outline carries, sorted */
+            tags: string[];
+            /** @description True when a cap cut the outline short: entries, depth, tags or text were left out or clipped */
             truncated: boolean;
+        };
+        PlaybookOutlineEntryDTO: {
+            /** Format: int64 */
+            depth: number;
+            kind: string;
+            /** Format: int64 */
+            line: number;
+            name: string;
+            /** @description False when the entry may run for real in a dry run */
+            runs_in_check_mode: boolean;
+            section: string;
+            tags: string[];
         };
         PlaybookOutlineInputBody: {
             /**
@@ -7412,6 +7406,15 @@ export interface components {
             readonly $schema?: string;
             /** @description The playbook YAML text, e.g. the editor's current buffer */
             content: string;
+        };
+        PlaybookOutlinePlayDTO: {
+            become: boolean;
+            entries: components["schemas"]["PlaybookOutlineEntryDTO"][];
+            hosts: string;
+            /** Format: int64 */
+            line: number;
+            name: string;
+            tags: string[];
         };
         PlaybookUpdateInputBody: {
             /**
@@ -16354,7 +16357,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PlaybookOutline"];
+                    "application/json": components["schemas"]["PlaybookOutlineDTO"];
                 };
             };
             /** @description Error */
