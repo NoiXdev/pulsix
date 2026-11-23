@@ -27,14 +27,16 @@ const TextNotSent = "not_sent"
 
 // RepoText is a repo playbook's text as of its repository's last sync
 // (backlog 3.127). Content is nil when the sync stored none; LeftOut then
-// says why. Commit is empty when the last sync left the playbook unread
-// (a cap) and the text is from an earlier read.
+// says why. FromEarlierSync is set when the last sync left the playbook
+// unread (a cap) and the text is from an earlier read; Commit, the last
+// sync's, is then empty, as the text is not that commit's.
 type RepoText struct {
-	Path     string
-	Commit   string
-	SyncedAt time.Time
-	Content  *string
-	LeftOut  string
+	Path            string
+	Commit          string
+	SyncedAt        time.Time
+	Content         *string
+	LeftOut         string
+	FromEarlierSync bool
 }
 
 // RepoText is the stored text of a repo playbook: ErrNotFound when the
@@ -60,7 +62,7 @@ func (s *Service) RepoText(ctx context.Context, orgID, playbookID uuid.UUID) (Re
 		Content: stored.Content, LeftOut: stored.LeftOut,
 	}
 	if stored.Kept {
-		out.Commit = ""
+		out.Commit, out.FromEarlierSync = "", true
 	}
 	if out.Content == nil && out.LeftOut == "" {
 		out.LeftOut = TextNotSent

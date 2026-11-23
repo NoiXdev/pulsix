@@ -130,3 +130,15 @@ func keptTexts(texts, prev map[string]PlaybookText, kept []varsource.Playbook) m
 	}
 	return texts
 }
+
+// nameUnreadKept gives each of kept that a cap left unread and that has
+// neither a text nor a reason (a worker older than the texts stored its
+// row, or it had no row) the reason unreadable: this sync did not read the
+// file, and "not sent" would name other causes.
+func nameUnreadKept(texts map[string]PlaybookText, kept []varsource.Playbook) {
+	for _, pb := range kept {
+		if t := texts[pb.Path]; t.Content == nil && t.LeftOut == "" {
+			texts[pb.Path] = PlaybookText{LeftOut: varsource.TextUnreadable}
+		}
+	}
+}

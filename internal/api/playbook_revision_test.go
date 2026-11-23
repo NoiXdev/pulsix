@@ -75,6 +75,14 @@ func TestPlaybookSaveRevisionAndIfMatch(t *testing.T) {
 		t.Fatalf("PUT without If-Match: %+v", saved.Playbook)
 	}
 
+	// "*" matches any current revision: saved, revision moves again.
+	resp = requestWithHeaders(t, c, http.MethodPut, url, map[string]any{"inline": revisionTextTwo}, map[string]string{"If-Match": "*"})
+	decodeInto(t, resp, &saved)
+	if resp.StatusCode != http.StatusOK || saved.Playbook.Revision != 4 || saved.Playbook.Inline != revisionTextTwo {
+		t.Fatalf("PUT with If-Match *: %d %+v", resp.StatusCode, saved.Playbook)
+	}
+	decodeInto(t, requestJSON(t, c, http.MethodPut, url, map[string]any{"inline": revisionTextOne}), &saved)
+
 	// The list carries the revision too.
 	resp = requestJSON(t, c, http.MethodGet, base, nil)
 	var list struct {
@@ -83,7 +91,7 @@ func TestPlaybookSaveRevisionAndIfMatch(t *testing.T) {
 		} `json:"playbooks"`
 	}
 	decodeInto(t, resp, &list)
-	if len(list.Playbooks) != 1 || list.Playbooks[0].Revision != 3 {
+	if len(list.Playbooks) != 1 || list.Playbooks[0].Revision != 5 {
 		t.Fatalf("list = %+v", list)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -187,6 +188,12 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 		}
 		playbooks = append(playbooks, kept...)
 		texts = keptTexts(texts, prevTexts, kept)
+		if len(kept) > 0 {
+			nameUnreadKept(texts, kept)
+		}
+		// A path the report read is not left out, whatever else it says: the
+		// record's left_out is what marks a row as kept.
+		r.LeftOut = slices.DeleteFunc(slices.Clone(r.LeftOut), func(p string) bool { return read[p] })
 	}
 	return nextRecord{
 		record: SourcesRecord{

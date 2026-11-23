@@ -38,22 +38,30 @@ func TestRepoText(t *testing.T) {
 		content *string
 		leftOut string
 		commit  string
+		earlier bool
 	}{
-		{"site.yml", strPtr(validPlaybook), "", commit},
-		{"big.yml", nil, varsource.TextTooLarge, commit},
+		{"site.yml", strPtr(validPlaybook), "", commit, false},
+		{"big.yml", nil, varsource.TextTooLarge, commit, false},
 		// No text and no reason: the last sync stored none for it.
-		{"old.yml", nil, playbooks.TextNotSent, commit},
+		{"old.yml", nil, playbooks.TextNotSent, commit, false},
 		// Kept from an earlier read: its commit is not the record's.
-		{"capped.yml", strPtr(validPlaybook), "", ""},
+		{"capped.yml", strPtr(validPlaybook), "", "", true},
 	} {
 		got, err := svc.RepoText(ctx, org, register(tc.path))
 		if err != nil {
 			t.Fatalf("RepoText(%s): %v", tc.path, err)
 		}
-		if got.Path != tc.path || got.Commit != tc.commit || !got.SyncedAt.Equal(at) || got.LeftOut != tc.leftOut ||
+		if got.Path != tc.path || got.Commit != tc.commit || !got.SyncedAt.Equal(at) || got.LeftOut != tc.leftOut || got.FromEarlierSync != tc.earlier ||
 			(got.Content == nil) != (tc.content == nil) || (got.Content != nil && *got.Content != *tc.content) {
-			t.Fatalf("RepoText(%s) = %+v, want content %v, left out %q, commit %q", tc.path, got, tc.content, tc.leftOut, tc.commit)
+			t.Fatalf("RepoText(%s) = %+v, want content %v, left out %q, commit %q, from earlier sync %v", tc.path, got, tc.content, tc.leftOut, tc.commit, tc.earlier)
 		}
+	}
+
+	// A record without a commit is not a text kept from an earlier sync.
+	rs.texts[repoID]["nocommit.yml"] = repos.StoredPlaybookText{SyncedAt: at, PlaybookText: repos.PlaybookText{Content: strPtr(validPlaybook)}}
+	nc, err := svc.RepoText(ctx, org, register("nocommit.yml"))
+	if err != nil || nc.Commit != "" || nc.FromEarlierSync {
+		t.Fatalf("RepoText(record without a commit) = %+v, %v; want commit \"\" and not from an earlier sync", nc, err)
 	}
 
 	// A synced repository without a row for the path: no text as of

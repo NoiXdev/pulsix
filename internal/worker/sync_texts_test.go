@@ -28,7 +28,7 @@ func textsOf(t *testing.T, dir string, paths ...string) (map[string]string, map[
 		t.Fatal(err)
 	}
 	defer func() { _ = fsys.Close() }()
-	return readPlaybookTexts(fsys, paths)
+	return readPlaybookTexts(context.Background(), fsys, paths)
 }
 
 func TestReadPlaybookTextsKeepsEveryReadableText(t *testing.T) {
@@ -165,6 +165,103 @@ func TestReadPlaybookTextsNeverLeavesTheReadRoot(t *testing.T) {
 	// A link that stays inside the root is followed.
 	if !reflect.DeepEqual(texts, map[string]string{"inside.yml": textPlay}) {
 		t.Fatalf("texts = %q, want only inside.yml", texts)
+	}
+}
+
+// openCounter records the names fs.FS.Open is called with.
+type openCounter struct {
+	fs.FS
+	opened []string
+}
+
+// Stat keeps fs.Stat from falling back to Open, which would count a stat.
+func (o *openCounter) Stat(name string) (fs.FileInfo, error) { return fs.Stat(o.FS, name) }
+
+func (o *openCounter) Open(name string) (fs.File, error) {
+	o.opened = append(o.opened, name)
+	return o.FS.Open(name)
+}
+
+func TestReadPlaybookTextsDoesNotOpenAFileThatCannotFitTheBudget(t *testing.T) {
+	clone := t.TempDir()
+	full := strings.Repeat("x", varsource.MaxFileBytes)
+	files := map[string]string{"small.yml": textPlay}
+	var paths []string
+	for _, name := range []string{"p1.yml", "p2.yml", "p3.yml", "p4.yml", "p5.yml", "p6.yml", "p7.yml", "p8.yml", "p9.yml", "p10.yml"} {
+		files[name] = full
+		paths = append(paths, name)
+	}
+	writeTree(t, clone, files)
+	// Eight files take the whole 4 MiB: the two after them are left out as
+	// over the budget from their size alone, and so is the small one, as
+	// no byte is left.
+	counter := &openCounter{FS: os.DirFS(clone)}
+	texts, left := readPlaybookTexts(context.Background(), counter, append(paths, "small.yml"))
+	if len(texts) != 8 || left["p9.yml"] != varsource.TextBudget || left["p10.yml"] != varsource.TextBudget ||
+		left["small.yml"] != varsource.TextBudget {
+		t.Fatalf("texts = %d, left out = %q; want 8 kept, the rest over the budget", len(texts), left)
+	}
+	if len(counter.opened) != 8 {
+		t.Fatalf("opened %q, want only the eight kept files (a full budget needs no read)", counter.opened)
+	}
+
+	// With room left, a file that does not fit is not opened but a later
+	// one that does still is.
+	counter = &openCounter{FS: os.DirFS(clone)}
+	texts, left = readPlaybookTexts(context.Background(), counter, []string{"p1.yml", "p2.yml", "p3.yml", "p4.yml", "p5.yml", "p6.yml", "p7.yml", "small.yml", "p9.yml"})
+	if texts["small.yml"] != textPlay || left["p9.yml"] != varsource.TextBudget || len(texts) != 8 {
+		t.Fatalf("texts = %d, left out = %q; want small.yml kept", len(texts), left)
+	}
+	for _, name := range counter.opened {
+		if name == "p9.yml" {
+			t.Fatalf("p9.yml was opened although it cannot fit (%q)", counter.opened)
+		}
+	}
+}
+
+func TestReadPlaybookTextsStopsWhenTheContextIsDone(t *testing.T) {
+	clone := t.TempDir()
+	writeTree(t, clone, map[string]string{"a.yml": textPlay, "b.yml": textPlay})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	counter := &openCounter{FS: os.DirFS(clone)}
+	texts, left := readPlaybookTexts(ctx, counter, []string{"a.yml", "b.yml"})
+	if len(counter.opened) != 0 || len(texts) != 0 || texts == nil || left == nil {
+		t.Fatalf("opened %q, texts %q, left out %q; want nothing read and two non-nil maps", counter.opened, texts, left)
+	}
+}
+
+func TestReadTextsConfinesAnInnerSubpath(t *testing.T) {
+	// The read root is the subpath: a link inside it that leaves it, even
+	// to a file that is inside the clone, is unreadable.
+	clone := t.TempDir()
+	writeTree(t, clone, map[string]string{
+		"ansible/site.yml":    textPlay,
+		"ansible/sub/own.yml": textPlay,
+		"other/outside.yml":   "- hosts: all # outside the subpath\n",
+		"top.yml":             "- hosts: all # clone root\n",
+	})
+	for name, target := range map[string]string{
+		"ansible/to-other.yml": "../other/outside.yml",
+		"ansible/to-top.yml":   "../top.yml",
+		"ansible/to-site.yml":  "site.yml",
+	} {
+		if err := os.Symlink(target, filepath.Join(clone, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &SyncExecutor{Log: slog.New(slog.DiscardHandler)}
+	texts, left := e.readTexts(context.Background(), clone, "ansible",
+		[]string{"site.yml", "sub/own.yml", "to-other.yml", "to-top.yml", "to-site.yml", "../top.yml", "../other/outside.yml"})
+	wantLeft := map[string]string{
+		"to-other.yml": varsource.TextUnreadable, "to-top.yml": varsource.TextUnreadable,
+		"../top.yml": varsource.TextUnreadable, "../other/outside.yml": varsource.TextUnreadable,
+	}
+	if !reflect.DeepEqual(left, wantLeft) {
+		t.Fatalf("left out = %q, want %q", left, wantLeft)
+	}
+	if want := map[string]string{"site.yml": textPlay, "sub/own.yml": textPlay, "to-site.yml": textPlay}; !reflect.DeepEqual(texts, want) {
+		t.Fatalf("texts = %q, want %q", texts, want)
 	}
 }
 

@@ -168,6 +168,10 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	var texts, textsLeftOut map[string]string
 	if job.GetWantPlaybookTexts() && sources != nil {
 		texts, textsLeftOut = e.readTexts(ctx, dir, payload.Repo.Subpath, paths)
+		if err := ctx.Err(); err != nil {
+			// Cancelled during the read: the texts are partial.
+			return StatusError, nil, fmt.Errorf("read playbook texts: %w", err)
+		}
 	}
 
 	// The one run event the sync reports; its payload carries no

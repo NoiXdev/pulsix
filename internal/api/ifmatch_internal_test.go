@@ -47,6 +47,10 @@ func TestIfMatch(t *testing.T) {
 	if rev, err := optionalIfMatch(`"3"`); err != nil || *rev != 3 {
 		t.Fatalf("optionalIfMatch = %v, %v", rev, err)
 	}
+	// "*" is any current representation (RFC 9110): no revision to compare.
+	if rev, err := optionalIfMatch(" * "); rev != nil || err != nil {
+		t.Fatalf("optionalIfMatch(*) = %v, %v; want no revision and no error", rev, err)
+	}
 	if _, err := optionalIfMatch("junk"); statusOf(err) != http.StatusPreconditionFailed {
 		t.Fatalf("optionalIfMatch(junk) = %v", err)
 	}

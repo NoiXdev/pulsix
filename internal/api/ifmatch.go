@@ -23,8 +23,14 @@ func requireIfMatch(header string) (int64, error) {
 	return rev, nil
 }
 
-// optionalIfMatch reads If-Match when the client sent one.
+// optionalIfMatch reads If-Match when the client sent one. "*" matches
+// whatever revision is current (RFC 9110), so it names none: nil, like no
+// header. The required routes still refuse it, as they need the revision
+// the write is based on.
 func optionalIfMatch(header string) (*int64, error) {
+	if strings.TrimSpace(header) == "*" {
+		return nil, nil
+	}
 	rev, ok, err := parseIfMatch(header)
 	if err != nil || !ok {
 		return nil, err

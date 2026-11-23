@@ -59,10 +59,8 @@ func TextProblem(text string) string {
 // quotes left out: what it costs against MaxPlaybookTextsBytes. The
 // encoder escapes control characters, <, >, & and U+2028/U+2029.
 func EncodedTextLen(text string) int {
-	raw, err := json.Marshal(text)
-	if err != nil {
-		// A string always encodes; count the worst case if it ever did not.
-		return 6 * len(text)
-	}
+	// A string always encodes (invalid UTF-8 becomes U+FFFD), so there is
+	// no error to handle.
+	raw, _ := json.Marshal(text)
 	return len(raw) - 2
 }

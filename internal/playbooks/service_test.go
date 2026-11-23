@@ -394,9 +394,17 @@ func TestUpdateEditor(t *testing.T) {
 	if _, err := svc.UpdateEditor(ctx, org, uuid.Must(uuid.NewV7()), playbooks.CreateInput{Inline: validPlaybook}, nil); !errors.Is(err, playbooks.ErrNotFound) {
 		t.Fatalf("unknown playbook = %v, want ErrNotFound", err)
 	}
-	stale := int64(editor.Revision + 5)
+	stale := updated.Revision + 5
 	if _, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Inline: validPlaybook}, &stale); !errors.Is(err, playbooks.ErrRevisionMismatch) {
 		t.Fatalf("stale revision = %v, want ErrRevisionMismatch", err)
+	}
+	// A refused save leaves the text and the revision as the last save made them.
+	kept, err := svc.Get(ctx, org, editor.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Inline == nil || *kept.Inline != "- hosts: db\n  tasks: []\n" || kept.Revision != updated.Revision {
+		t.Fatalf("after a stale save: inline %v, revision %d; want the saved text at revision %d", kept.Inline, kept.Revision, updated.Revision)
 	}
 
 	// A repo playbook is edited in its repository, not here.

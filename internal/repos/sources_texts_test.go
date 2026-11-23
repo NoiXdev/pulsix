@@ -188,3 +188,38 @@ func TestRecordVarSourcesKeepsTheTextOfALeftOutPlaybook(t *testing.T) {
 	recordTexts(t, store, r, encodeTexts(t, map[string]any{"a.yml": "new a"}, map[string]any{}))
 	assertTexts(t, store.texts, map[string]repos.PlaybookText{"a.yml": text("new a"), "b.yml": text("old b")})
 }
+
+func TestRecordVarSourcesNamesWhyAKeptPlaybookHasNoText(t *testing.T) {
+	// A cap left b.yml and c.yml unread. b.yml's row had a reason, which it
+	// keeps; c.yml's row had neither text nor reason (stored by a worker
+	// older than the texts), so it reads as a file this sync did not read,
+	// not as "not sent". d.yml was never stored: it has no row at all.
+	store := previousRead()
+	store.texts = map[string]repos.PlaybookText{"b.yml": leftOut(varsource.TextTooLarge), "c.yml": {}}
+	r := reportOf("a.yml")
+	r.Incomplete, r.LeftOut = true, []string{"b.yml", "c.yml", "d.yml"}
+	recordTexts(t, store, r, encodeTexts(t, map[string]any{"a.yml": "new a"}, map[string]any{}))
+	assertTexts(t, store.texts, map[string]repos.PlaybookText{
+		"a.yml": text("new a"), "b.yml": leftOut(varsource.TextTooLarge), "c.yml": leftOut(varsource.TextUnreadable),
+	})
+}
+
+func TestRecordVarSourcesAPathInBothTextMapsKeepsTheText(t *testing.T) {
+	store := &sourcesStore{fakeStore: newFakeStore()}
+	recordTexts(t, store, reportOf("a.yml"), encodeTexts(t,
+		map[string]any{"a.yml": playText}, map[string]any{"a.yml": varsource.TextTooLarge}))
+	assertTexts(t, store.texts, map[string]repos.PlaybookText{"a.yml": text(playText)})
+}
+
+func TestRecordVarSourcesAReadPathIsNeverRecordedAsLeftOut(t *testing.T) {
+	// A forged report names a.yml both read and left out. The read wins:
+	// the record must not list it as left out, or its fresh text would be
+	// served as one kept from an earlier sync.
+	store := previousRead()
+	r := reportOf("a.yml")
+	r.Incomplete, r.LeftOut = true, []string{"a.yml", "b.yml"}
+	recordTexts(t, store, r, encodeTexts(t, map[string]any{"a.yml": "new a"}, map[string]any{}))
+	if got := store.record.LeftOut; len(got) != 1 || got[0] != "b.yml" {
+		t.Fatalf("record left out = %q, want [b.yml]", got)
+	}
+}

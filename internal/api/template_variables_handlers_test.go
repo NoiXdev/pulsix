@@ -71,6 +71,11 @@ func TestTemplateVariablesEndpoint(t *testing.T) {
 	if got := mustReadBody(t, resp); resp.StatusCode != http.StatusPreconditionFailed || !strings.Contains(got, "reload") {
 		t.Fatalf("put stale: %d %s, want 412", resp.StatusCode, got)
 	}
+	// "*" matches whatever revision is current, so it saves where "1" is stale.
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, put, map[string]string{"If-Match": "*"})
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"3"` {
+		t.Fatalf("put If-Match *: %d ETag %q %s", resp.StatusCode, resp.Header.Get("ETag"), mustReadBody(t, resp))
+	}
 	if resp := requestJSON(t, f.c, http.MethodPut, url, put); resp.StatusCode != http.StatusOK {
 		t.Fatalf("put without If-Match: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}

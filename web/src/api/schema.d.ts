@@ -7279,10 +7279,12 @@ export interface components {
              * @example https://example.com/schemas/PlaybookContentOutputBody.json
              */
             readonly $schema?: string;
-            /** @description The commit the last sync read; empty when unknown, e.g. a limit left the playbook unread and the text is from an earlier sync */
+            /** @description The commit the last sync read; empty when the text is from an earlier sync (see from_earlier_sync) */
             commit: string;
             /** @description The playbook file's text as of the last sync; absent when the sync stored none */
             content?: string;
+            /** @description True when a limit left the playbook unread in the last sync and the text is from an earlier one */
+            from_earlier_sync: boolean;
             /**
              * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)
              * @enum {string}

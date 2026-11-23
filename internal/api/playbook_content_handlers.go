@@ -13,11 +13,12 @@ import (
 
 type playbookContentOutput struct {
 	Body struct {
-		Path     string    `json:"path" doc:"The playbook's path inside its repository"`
-		Commit   string    `json:"commit" doc:"The commit the last sync read; empty when unknown, e.g. a limit left the playbook unread and the text is from an earlier sync"`
-		SyncedAt time.Time `json:"synced_at" doc:"When the last sync recorded the repository"`
-		Content  *string   `json:"content,omitempty" doc:"The playbook file's text as of the last sync; absent when the sync stored none"`
-		LeftOut  string    `json:"left_out,omitempty" enum:"too_large,budget,not_utf8,unreadable,not_sent" doc:"Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)"`
+		Path            string    `json:"path" doc:"The playbook's path inside its repository"`
+		Commit          string    `json:"commit" doc:"The commit the last sync read; empty when the text is from an earlier sync (see from_earlier_sync)"`
+		FromEarlierSync bool      `json:"from_earlier_sync" doc:"True when a limit left the playbook unread in the last sync and the text is from an earlier one"`
+		SyncedAt        time.Time `json:"synced_at" doc:"When the last sync recorded the repository"`
+		Content         *string   `json:"content,omitempty" doc:"The playbook file's text as of the last sync; absent when the sync stored none"`
+		LeftOut         string    `json:"left_out,omitempty" enum:"too_large,budget,not_utf8,unreadable,not_sent" doc:"Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)"`
 	}
 }
 
@@ -48,6 +49,7 @@ func registerPlaybookContentRoutes(hapi huma.API, deps Deps) {
 		out := &playbookContentOutput{}
 		out.Body.Path, out.Body.Commit, out.Body.SyncedAt = text.Path, text.Commit, text.SyncedAt
 		out.Body.Content, out.Body.LeftOut = text.Content, text.LeftOut
+		out.Body.FromEarlierSync = text.FromEarlierSync
 		return out, nil
 	})
 }

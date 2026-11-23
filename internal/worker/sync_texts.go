@@ -38,23 +38,29 @@ func (e *SyncExecutor) readTexts(ctx context.Context, dir, subpath string, paths
 		return map[string]string{}, leftOut
 	}
 	defer func() { _ = fsys.Close() }()
-	return readPlaybookTexts(fsys, paths)
+	return readPlaybookTexts(ctx, fsys, paths)
 }
 
 // readPlaybookTexts reads each of paths from fsys, in order: every path
 // ends up either in texts or, with the reason, in leftOut. Neither map is
-// nil.
-func readPlaybookTexts(fsys fs.FS, paths []string) (texts, leftOut map[string]string) {
+// nil. A file is statted first: one that cannot fit what is left of the
+// budget is left out without being opened (its encoded size is never less
+// than its size). A done ctx ends the read early; the caller then drops
+// the partial result.
+func readPlaybookTexts(ctx context.Context, fsys fs.FS, paths []string) (texts, leftOut map[string]string) {
 	texts, leftOut = map[string]string{}, map[string]string{}
 	budget := varsource.MaxPlaybookTextsBytes
 	for _, p := range paths {
+		if ctx.Err() != nil {
+			break
+		}
 		if _, done := texts[p]; done {
 			continue
 		}
 		if _, done := leftOut[p]; done {
 			continue
 		}
-		text, reason := readPlaybookText(fsys, p)
+		text, reason := readPlaybookText(fsys, p, budget)
 		if reason == "" {
 			if cost := varsource.EncodedTextLen(text); cost <= budget {
 				budget -= cost
@@ -69,9 +75,10 @@ func readPlaybookTexts(fsys fs.FS, paths []string) (texts, leftOut map[string]st
 }
 
 // readPlaybookText reads one playbook file: its text, or the reason it has
-// none. Only a regular file is opened (a FIFO would block the read), and
-// it is read no further than one byte past the per-file limit.
-func readPlaybookText(fsys fs.FS, name string) (string, string) {
+// none. Only a regular file is opened (a FIFO would block the read), one
+// larger than budget is not opened at all (TextBudget), and it is read no
+// further than one byte past the per-file limit.
+func readPlaybookText(fsys fs.FS, name string, budget int) (string, string) {
 	if !fs.ValidPath(name) || !varsource.PlaybookPathPattern.MatchString(name) {
 		return "", varsource.TextUnreadable
 	}
@@ -81,6 +88,9 @@ func readPlaybookText(fsys fs.FS, name string) (string, string) {
 	}
 	if info.Size() > varsource.MaxFileBytes {
 		return "", varsource.TextTooLarge
+	}
+	if info.Size() > int64(budget) {
+		return "", varsource.TextBudget
 	}
 	f, err := fsys.Open(name)
 	if err != nil {
