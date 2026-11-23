@@ -341,12 +341,35 @@ func (c *testClock) advance(d time.Duration) { c.nanos.Add(int64(d)) }
 // the person approved. A change after the approval but before the claim
 // (the assistant may still hold write areas) fails the job instead of
 // running something nobody saw; an unchanged approved run claims normally.
+// Every case carries secret group, membership and extra vars, a host
+// credential and a jump host, so the unchanged case proves the claim
+// guard, which opens every sealed value in its own context, digests them
+// exactly as the approval did.
 func TestApprovedRunStaysBoundUntilClaim(t *testing.T) {
-	cases := map[string]func(t *testing.T, f runRequestFixture){
-		"template limit": func(t *testing.T, f runRequestFixture) {
-			updateTemplate(t, f, func(in *templates.UpdateInput) { in.Limit = "web-*" })
+	cases := map[string]func(t *testing.T, f runRequestFixture, g inventory.GroupView){
+		"template limit": func(t *testing.T, f runRequestFixture, _ inventory.GroupView) {
+			updateTemplate(t, f, func(in *templates.UpdateInput) {
+				in.Limit = "web-*"
+				// The fixture's deploy_tag is no field of the secret
+				// schema: the store carries it over, a write must omit it.
+				delete(in.ExtraVars, "deploy_tag")
+			})
 		},
-		"host address": func(t *testing.T, f runRequestFixture) {
+		"secret group var": func(t *testing.T, f runRequestFixture, g inventory.GroupView) {
+			if _, err := f.s.Deps.Inventory.SetVars(f.scoped, f.orgID, g.ID, g.Revision, map[string]any{"db_pass": "group-s3cret-changed"}); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"secret extra var": func(t *testing.T, f runRequestFixture, _ inventory.GroupView) {
+			// Every template write moves the revision, which the picture
+			// covers on its own; put it back so only the value differs.
+			rev := f.getTemplate(t, f.templateID).Template.Revision
+			updateTemplate(t, f, secretExtraVars("extra-s3cret-changed"))
+			if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE job_templates SET revision = $1 WHERE id = $2`, rev, f.templateID); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"host address": func(t *testing.T, f runRequestFixture, _ inventory.GroupView) {
 			h, err := f.s.Deps.Hosts.GetHost(f.scoped, f.orgID, f.hostA)
 			if err != nil {
 				t.Fatal(err)
@@ -360,13 +383,20 @@ func TestApprovedRunStaysBoundUntilClaim(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newRunRequestFixture(t, "rr-claim-"+strings.ReplaceAll(name, " ", "-"))
+			g := f.secretGroup(t, "group-s3cret-6b0e", "member-s3cret-13fa")
+			updateTemplate(t, f, secretExtraVars("extra-s3cret-e4d2"))
+			f.jumpHost(t)
 			created := f.request(t, map[string]any{"reason": "x"})
-			resp := f.approve(t, f.adminC, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint)
+			d := f.detail(t, created.Request.ID)
+			if pic := string(d.Picture); !strings.Contains(pic, `"jump_host_id"`) || !strings.Contains(pic, `"credential_id"`) {
+				t.Fatalf("the approved picture lacks the jump host or the host credential: %s", pic)
+			}
+			resp := f.approve(t, f.adminC, created.Request.ID, d.Fingerprint)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
 			}
 			if change != nil {
-				change(t, f)
+				change(t, f, g)
 			}
 			group := uuid.MustParse(f.detail(t, created.Request.ID).Request.RunGroupID)
 			list, _, err := f.s.Deps.Jobs.List(f.scoped, f.orgID, jobs.Filter{RunGroupID: &group}, "", 10)
@@ -402,6 +432,24 @@ func TestApprovedRunStaysBoundUntilClaim(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// jumpHost puts the fixture's first host, which keeps its own login
+// credential, behind a jump host that logs in with that same credential.
+func (f runRequestFixture) jumpHost(t *testing.T) {
+	t.Helper()
+	cred := f.hostCredential(t)
+	b, err := f.s.Deps.SSH.CreateBastion(f.scoped, f.orgID, sshconf.BastionInput{
+		Name: "jump-1", Address: "10.0.0.9", Port: 22, Username: "ops", CredentialID: &cred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Deps.SSH.SetHostSSH(f.scoped, f.orgID, f.hostA, sshconf.HostSSHInput{
+		CredentialID: &cred, Port: 22, BastionMode: sshconf.ModeExplicit, BastionID: &b.ID,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
