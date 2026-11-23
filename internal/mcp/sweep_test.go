@@ -32,13 +32,13 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 	f := newOrgFixture(t)
 	// The SSH key's markers are its PEM armour and the first line of its
 	// base64 body, which is what a leaked key would show.
-	pem, pemBody := sweepPEM(t)
+	keyPEM, pemBody := sweepPEM(t)
 	markers := []string{"vault-passphrase-7f3a", "sweep-ssh-password-91c2", "sweep-git-token-55aa", "sweep-group-secret-3e1f", "sweep-template-secret-8b0d", "sweep-org-secret-c4d2", "sweep-member-secret-a9e7", "OPENSSH PRIVATE KEY", pemBody}
 
 	if _, err := f.s.Deps.Credentials.Create(f.scoped, f.org, credentials.CreateInput{Name: "login", Kind: credentials.KindSSHPassword, Username: "root", Material: credentials.Material{Password: markers[1]}}); err != nil {
 		t.Fatal(err)
 	}
-	pemKey, err := f.s.Deps.Credentials.Create(f.scoped, f.org, credentials.CreateInput{Name: "pem-key", Kind: credentials.KindSSHKey, Username: "ansible", Material: credentials.Material{PrivateKey: pem}})
+	pemKey, err := f.s.Deps.Credentials.Create(f.scoped, f.org, credentials.CreateInput{Name: "pem-key", Kind: credentials.KindSSHKey, Username: "ansible", Material: credentials.Material{PrivateKey: keyPEM}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,8 +311,10 @@ func firstNonEmpty(a, b string) string {
 	return b
 }
 
-// sweepPEM returns an OpenSSH private key and the first line of its base64
-// body, a string no output may carry.
+// sweepPEM returns an OpenSSH private key and a line from the middle of its
+// base64 body, a string no output may carry. The body's first line is the
+// same for every unencrypted ed25519 key, so it would not catch a leak of the
+// key material itself.
 func sweepPEM(t *testing.T) (pemText, bodyLine string) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -325,5 +327,5 @@ func sweepPEM(t *testing.T) (pemText, bodyLine string) {
 	}
 	pemText = string(pem.EncodeToMemory(block))
 	lines := strings.Split(pemText, "\n")
-	return pemText, lines[1]
+	return pemText, lines[len(lines)/2]
 }

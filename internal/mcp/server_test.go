@@ -175,9 +175,10 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestTokensStayOutOfTheLogs captures everything the process logs (the
-// endpoint's slog calls and the request logger that slog.SetDefault also
-// carries) over a good call, a revoked-token call and a malformed-token
+// TestTokensStayOutOfTheLogs captures what the endpoint logs through slog
+// (the HTTP request logger is a separate standard logger that prints no
+// headers, and the token travels only in the Authorization header) over a
+// good call, a revoked-token call and a malformed-token
 // call, and asserts no token plaintext reaches it. The server takes no
 // injected logger, so the test swaps the default and restores it; it is not
 // parallel for that reason.
