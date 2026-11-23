@@ -75,6 +75,7 @@ export const enRuns = {
     real: 'Real runs',
     title: 'Dry run',
     text: 'This run ran in check mode: Ansible reported what it would change and changed nothing, except tasks marked to run anyway (check_mode: false).',
+    textLive: 'This run runs in check mode: Ansible reports what it would change and changes nothing, except tasks marked to run anyway (check_mode: false).',
     tags: 'Tags',
     allTags: 'All tasks',
     draft: 'Unsaved draft',

@@ -17,6 +17,7 @@ export const enPlaybookOutline = {
   repo: {
     loading: 'Reading the text of the last sync for its outline…',
     notSynced: 'No outline yet: the repository has not been synced.',
+    noRoute: 'No outline: this server does not serve the repository text yet.',
     failed: 'No outline: the text of the last sync could not be read.',
     leftOut: 'No outline: the last sync stored no text for this playbook.',
   },

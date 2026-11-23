@@ -48,6 +48,14 @@ describe('RunDetailPage dry runs', () => {
     expect(within(banner).getByText('Differences shown')).toBeInTheDocument();
   });
 
+  it('speaks in the present tense while the dry run is live, in the past once it is over', async () => {
+    render({ ...DRY, status: 'running', finished_at: null });
+    const live = await screen.findByRole('note', { name: 'Dry run' });
+    expect(live).toHaveTextContent('This run runs in check mode');
+    expect(live).toHaveTextContent('changes nothing');
+    expect(live).not.toHaveTextContent('ran in check mode');
+  });
+
   it('says a dry run of the saved playbook ran every task, without differences', async () => {
     render({ check_mode: true, dry_run: { tags: [], diff: false, draft: false } });
     const banner = await screen.findByRole('note', { name: 'Dry run' });
@@ -80,6 +88,24 @@ describe('RunDetailPage dry runs', () => {
     const row = within(table).getByText('h1').closest('tr') as HTMLElement;
     const cells = within(row).getAllByRole('cell').map((c) => c.textContent);
     expect(cells).toEqual(['h1', '5', '2', '·', '·', '·']);
+  });
+
+  it('shows no counts, and no labels among numbers, for a host the counts do not name', async () => {
+    render({
+      stats: {
+        ok_hosts: ['h1', 'h2'],
+        failed_hosts: ['h2'],
+        host_counts: { h1: { ok: 5, changed: 0, skipped: 0, failed: 0, unreachable: 0 } },
+      },
+    });
+    const table = await screen.findByRole('table', { name: 'Per-host results' });
+    const row = within(table).getByText('h2').closest('tr') as HTMLElement;
+    const cells = within(row).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells).toEqual(['h2', '●', '·', '●', '·', '·']);
+    // The state is still told, to assistive technology.
+    expect(within(row).getByRole('img', { name: 'ok' })).toBeInTheDocument();
+    expect(within(row).getByRole('img', { name: 'failed' })).toBeInTheDocument();
+    expect(within(table).getByText('h1').closest('tr')).toHaveTextContent('5');
   });
 
   it('shows the host states of an older run without counts', async () => {

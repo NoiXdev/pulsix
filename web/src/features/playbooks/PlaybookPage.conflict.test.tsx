@@ -25,10 +25,12 @@ const stale = () =>
 function server(start = editorPlaybook({ revision: 4 })) {
   let current = start;
   let gate: Promise<void> | null = null;
+  let failing = false;
   const puts: { ifMatch: string | null; body: unknown }[] = [];
   const api = routes('operator', {
     'GET /api/v1/orgs/acme/playbooks/p1': async () => {
       if (gate) await gate;
+      if (failing) return new Response(JSON.stringify({ status: 500, detail: 'read broke' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
       return { playbook: current };
     },
     'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => {
@@ -44,6 +46,9 @@ function server(start = editorPlaybook({ revision: 4 })) {
     puts,
     others: (inline: string) => {
       current = editorPlaybook({ inline, revision: current.revision + 1 });
+    },
+    failReads: () => {
+      failing = true;
     },
     holdReads: () => {
       let release!: () => void;
@@ -174,6 +179,22 @@ describe('PlaybookPage save conflicts', () => {
     await user.click(anyway);
     expect(await screen.findByText('Playbook saved')).toBeInTheDocument();
     expect(s.puts.at(-1)).toEqual({ ifMatch: '"6"', body: { inline: MINE } });
+  });
+
+  it('shows an error, not a conflict or an unhandled rejection, when the read after a 412 fails', async () => {
+    const user = userEvent.setup();
+    const s = server();
+    mockApi(s.api);
+    renderAt('/o/acme/playbooks/p1');
+    const editor = await findCodeEditor('Playbook YAML');
+    replaceCode(editor, MINE);
+    s.others(THEIRS);
+    s.failReads();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await within(screen.getByRole('region', { name: 'Check' })).findByText(/read broke/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: NOTICE })).not.toBeInTheDocument();
+    expect(codeOf(editor)).toBe(MINE);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
   it('takes a newer text and its revision into a clean draft, and saves on that revision', async () => {

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { JobEvent } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { eventDiffs } from './eventDiff.ts';
@@ -49,7 +50,11 @@ export function EventLog({ events }: { events: readonly JobEvent[] }) {
   );
 }
 
-function EventRow({ e }: { e: JobEvent }) {
+/** One event's row. Memoised on the event object: the log hook keeps each
+ * event's object across merges (mergeEvents copies the array, not the
+ * events), so `e` is the only prop and is stable, and a log of thousands of
+ * rows renders only the one an arriving event adds. */
+const EventRow = memo(function EventRow({ e }: { e: JobEvent }) {
   const t = useT();
   const text = typeof e.payload.text === 'string' ? (e.payload.text as string) : null;
   if (text !== null && text !== '') {
@@ -76,4 +81,4 @@ function EventRow({ e }: { e: JobEvent }) {
       )}
     </li>
   );
-}
+});

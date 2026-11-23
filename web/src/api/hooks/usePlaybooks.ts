@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import { ifMatch } from '../ifMatch.ts';
+import { errorStatus } from '../../lib/apiError.ts';
 import type { PlaybookDryRunInput } from '../types.ts';
 
 function useInvalidate(org: string) {
@@ -55,15 +56,24 @@ export function useUpdatePlaybook(org: string, id: string) {
 }
 
 /** usePlaybookContent reads a repository playbook's text as of the last
- * sync, or why there is none. 404 (the repository was never synced) is a
- * state the page shows, not an error to retry. */
+ * sync, or why there is none. A 404 (never synced, or a server without the
+ * route) and a 422 are answers the page shows, not errors to retry; a
+ * network failure or a 5xx is retried twice, after half a second and a
+ * second. */
 export function usePlaybookContent(org: string, id: string, enabled: boolean) {
   return useQuery({
     queryKey: ['playbooks', org, id, 'content'],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/playbooks/{id}/content', { params: { path: { org, id } } })),
     enabled: enabled && !!org && !!id,
-    retry: false,
+    retry: (failures, error) => failures < 2 && transient(error),
+    retryDelay: (failures) => 500 * 2 ** failures,
   });
+}
+
+/** A failure that may pass: no answer from the server, or a 5xx. */
+function transient(error: unknown): boolean {
+  const status = errorStatus(error);
+  return status === null || status >= 500;
 }
 
 /** The deleted playbook's own read is not refetched: the page showing it

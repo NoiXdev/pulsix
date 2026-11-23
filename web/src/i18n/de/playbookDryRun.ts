@@ -17,6 +17,7 @@ export const dePlaybookOutline: Messages['playbooks']['page']['outline'] = {
   repo: {
     loading: 'Lese den Text der letzten Synchronisierung für die Gliederung…',
     notSynced: 'Noch keine Gliederung: das Repository wurde noch nicht synchronisiert.',
+    noRoute: 'Keine Gliederung: dieser Server liefert den Repository-Text noch nicht.',
     failed: 'Keine Gliederung: der Text der letzten Synchronisierung konnte nicht gelesen werden.',
     leftOut: 'Keine Gliederung: die letzte Synchronisierung hat keinen Text für dieses Playbook gespeichert.',
   },

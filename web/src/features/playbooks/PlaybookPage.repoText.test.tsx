@@ -47,12 +47,28 @@ describe('PlaybookPage repository text', () => {
   });
 
   it('says the text is from an earlier sync when the last one left it out', async () => {
-    mockApi(repoRoutes(content({ commit: '' })));
+    mockApi(repoRoutes(content({ commit: '', from_earlier_sync: true })));
     renderAt('/o/acme/playbooks/p2');
     await findCodeEditor('Playbook YAML');
     const when = new Date(SYNCED).toLocaleString('en');
     expect(screen.getByText(`From an earlier sync: the last one, on ${when}, left this playbook unread`)).toBeInTheDocument();
     expect(screen.queryByText(/commit/)).not.toBeInTheDocument();
+  });
+
+  it('reads "earlier sync" from the flag, not from an empty commit', async () => {
+    mockApi(repoRoutes(content({ commit: '', from_earlier_sync: false })));
+    renderAt('/o/acme/playbooks/p2');
+    await findCodeEditor('Playbook YAML');
+    const when = new Date(SYNCED).toLocaleString('en');
+    expect(screen.getByText(`As of the sync on ${when}`)).toBeInTheDocument();
+    expect(screen.queryByText(/earlier sync/)).not.toBeInTheDocument();
+  });
+
+  it('says a flagged text is from an earlier sync even with a commit on record', async () => {
+    mockApi(repoRoutes(content({ from_earlier_sync: true })));
+    renderAt('/o/acme/playbooks/p2');
+    await findCodeEditor('Playbook YAML');
+    expect(screen.getByText(/From an earlier sync/)).toBeInTheDocument();
   });
 
   it('checks and outlines the text, and lists its variables with the stored sources', async () => {
@@ -95,7 +111,7 @@ describe('PlaybookPage repository text', () => {
     ['too_large', 'The last sync stored no text for this playbook: the file is over 512 KiB.'],
     ['budget', "The last sync stored no text for this playbook: the sync's texts were full (4 MiB in all)."],
     ['not_utf8', 'The last sync stored no text for this playbook: the file is not UTF-8 text.'],
-    ['unreadable', 'The last sync stored no text for this playbook: the file could not be read.'],
+    ['unreadable', 'The last sync stored no text for this playbook: the file could not be read, or a limit of the sync left it unread.'],
     [
       'not_sent',
       'The last sync stored no text for this playbook: the file may be gone from the repository, or the sync ran on an older worker. Sync again once workers are updated.',
@@ -119,10 +135,42 @@ describe('PlaybookPage repository text', () => {
     expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline yet: the repository has not been synced.')).toBeInTheDocument();
   });
 
+  it('says an older server without the route does not serve the text yet', async () => {
+    mockApi(repoRoutes(problem(404, 'Not Found')));
+    renderAt('/o/acme/playbooks/p2');
+    expect(await within(await note()).findByText('This server does not serve the repository text yet.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline: this server does not serve the repository text yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/has not been synced yet/)).not.toBeInTheDocument();
+  });
+
+  it('speaks German about a server without the route', async () => {
+    mockApi(repoRoutes(problem(404, 'Not Found')));
+    renderAt('/o/acme/playbooks/p2', 'de');
+    const n = await screen.findByRole('note', { name: 'Wird im Repository bearbeitet' });
+    expect(await within(n).findByText('Dieser Server liefert den Repository-Text noch nicht.')).toBeInTheDocument();
+  });
+
+  it('retries a transient failure of the text', async () => {
+    let calls = 0;
+    mockApi(repoRoutes(() => (++calls === 1 ? problem(503, 'busy') : content())));
+    renderAt('/o/acme/playbooks/p2');
+    expect(codeOf(await findCodeEditor('Playbook YAML'))).toBe(TEXT);
+    expect(calls).toBe(2);
+  });
+
+  it('does not retry a 422', async () => {
+    let calls = 0;
+    mockApi(repoRoutes(() => (calls++, problem(422, 'an editor playbook'))));
+    renderAt('/o/acme/playbooks/p2');
+    await within(await note()).findByText(/The text could not be read/);
+    expect(calls).toBe(1);
+  });
+
   it('says when the text could not be read', async () => {
     mockApi(repoRoutes(problem(500, 'boom')));
     renderAt('/o/acme/playbooks/p2');
-    expect(await within(await note()).findByText('The text could not be read: boom')).toBeInTheDocument();
+    // After the two retries of a 5xx.
+    expect(await within(await note()).findByText('The text could not be read: boom', {}, { timeout: 4000 })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline: the text of the last sync could not be read.')).toBeInTheDocument();
   });
 

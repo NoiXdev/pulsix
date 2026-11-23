@@ -13,6 +13,7 @@ type RepoOutlineNotes = Messages['playbooks']['page']['outline']['repo'];
 const REPO_NOTE: Record<RepoNoText, (r: RepoOutlineNotes) => string> = {
   loading: (r) => r.loading,
   'not-synced': (r) => r.notSynced,
+  'no-route': (r) => r.noRoute,
   failed: (r) => r.failed,
   'left-out': (r) => r.leftOut,
 };

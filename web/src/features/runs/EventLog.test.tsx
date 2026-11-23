@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { EventLog } from './EventLog.tsx';
+import * as diffs from './eventDiff.ts';
 import type { JobEvent } from '../../api/types.ts';
 
 const ev = (seq: number, attempt: number, task: string, over: Partial<JobEvent> = {}): JobEvent => ({
@@ -64,5 +65,17 @@ describe('EventLog', () => {
     expect(within(diffs[0]).getByText('+port 8080')).toBeInTheDocument();
     expect(within(diffs[1]).getByText('+new-prepared')).toBeInTheDocument();
     expect(within(log).queryByText('+loop-item')).not.toBeInTheDocument();
+  });
+
+  it('does not render the rows already shown again when an event is appended', () => {
+    // The log hook keeps each event's object across merges, so a row's props
+    // are unchanged by a new event and the memoised row is skipped.
+    const spy = vi.spyOn(diffs, 'eventDiffs');
+    const first = [ev(1, 1, 'a'), ev(2, 1, 'b')];
+    const view = render(<EventLog events={first} />);
+    expect(spy).toHaveBeenCalledTimes(2);
+    view.rerender(<EventLog events={[...first, ev(3, 1, 'c')]} />);
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
   });
 });

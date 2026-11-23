@@ -59,7 +59,7 @@ function RepoTextEditor({ org, playbook, repo, text, latest }: { org: string; pl
     <div className={EDITOR_GRID}>
       <div className="flex min-w-0 flex-col gap-1">
         <p className="text-xs text-muted-foreground">
-          <span>{text.commit ? r.asOf(when, text.commit.slice(0, 7)) : r.earlier(when)}</span>
+          <span>{text.earlier ? r.earlier(when) : text.commit ? r.asOf(when, text.commit.slice(0, 7)) : r.syncedOn(when)}</span>
           {' · '}
           <RepoLink org={org} playbook={playbook} repo={repo} />
         </p>
@@ -117,7 +117,7 @@ function RepoNote({ playbook, repo, text }: { playbook: Playbook; repo: Repo | u
   const t = useT();
   const r = t.playbooks.page.repoText;
   const reason =
-    text.state === 'loading' ? r.loading : text.state === 'not-synced' ? r.notSynced : text.state === 'failed' ? r.readFailed(text.message) : r.leftOut[text.reason];
+    text.state === 'loading' ? r.loading : text.state === 'not-synced' ? r.notSynced : text.state === 'no-route' ? r.noRoute : text.state === 'failed' ? r.readFailed(text.message) : r.leftOut[text.reason];
   return (
     <DisabledHint
       title={t.playbooks.page.repoNoteTitle}

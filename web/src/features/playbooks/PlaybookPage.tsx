@@ -51,7 +51,7 @@ export function PlaybookPage() {
   if (guard) return guard;
   if (!orgInfo.data || !detail.data) return <QueryLoading />;
   // Keyed by the playbook: a draft never follows the person to another one.
-  return <PlaybookDetail key={id} org={org} playbook={detail.data.playbook} role={orgInfo.data.org.role} reread={detail.refetch} />;
+  return <PlaybookDetail key={id} org={org} playbook={detail.data.playbook} role={orgInfo.data.org.role} reread={() => detail.refetch({ throwOnError: true })} />;
 }
 
 const PANEL_CLASS = 'flex min-w-0 flex-col gap-4';

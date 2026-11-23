@@ -136,7 +136,8 @@ export function useJob(
   id: string,
   opts: { refetchInterval?: number | false | ((query: { state: { data?: unknown } }) => number | false | undefined) } = {},
 ) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: ['job', org, id],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/jobs/{id}', { params: { path: { org, id } } })),
     enabled: !!org && !!id,
@@ -144,6 +145,21 @@ export function useJob(
     // the run detail page can stop polling once the job is terminal.
     refetchInterval: opts.refetchInterval as number | false | ((query: unknown) => number | false | undefined) | undefined,
   });
+  // A repository sync that completes while it is watched changes what the
+  // repository-derived queries show (the playbooks it found, the text it
+  // stored): they refetch now, as they do when a sync is started.
+  const status = query.data?.job.status;
+  const kind = query.data?.job.kind;
+  const seen = useRef<{ id: string; status: string | undefined }>({ id, status: undefined });
+  useEffect(() => {
+    const before = seen.current.id === id ? seen.current.status : undefined;
+    seen.current = { id, status };
+    if (kind === 'sync_repo' && before !== undefined && !isTerminal(before) && isTerminal(status)) {
+      void qc.invalidateQueries({ queryKey: ['repos', org] });
+      void qc.invalidateQueries({ queryKey: ['playbooks', org] });
+    }
+  }, [qc, org, id, kind, status]);
+  return query;
 }
 
 function useInvalidateJobs(org: string) {

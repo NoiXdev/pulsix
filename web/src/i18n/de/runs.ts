@@ -71,6 +71,7 @@ export const deRuns: Messages['runs'] = {
     real: 'Echte Läufe',
     title: 'Probelauf',
     text: 'Dieser Lauf lief im Prüfmodus: Ansible hat gemeldet, was es ändern würde, und nichts geändert – außer Tasks, die trotzdem laufen sollen (check_mode: false).',
+    textLive: 'Dieser Lauf läuft im Prüfmodus: Ansible meldet, was es ändern würde, und ändert nichts – außer Tasks, die trotzdem laufen sollen (check_mode: false).',
     tags: 'Tags',
     allTags: 'Alle Tasks',
     draft: 'Ungespeicherter Entwurf',

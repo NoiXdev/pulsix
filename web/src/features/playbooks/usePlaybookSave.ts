@@ -16,7 +16,8 @@ interface PlaybookSaveOptions {
   dirty: boolean;
   markSaved: (text: string, revision: number) => void;
   reload: () => void;
-  /** Reads the playbook again (the page's own query). */
+  /** Reads the playbook again (the page's own query); it rejects when the
+   * read fails. */
   reread: () => Promise<unknown>;
 }
 
@@ -28,7 +29,8 @@ interface PlaybookSaveOptions {
  * (the 412 carries neither), and `conflict` holds until the person reloads,
  * saves anyway (on the revision just read: a newer save still answers
  * 412), saves successfully, or makes the draft clean again. Any other
- * refusal is the server's message (`serverError`).
+ * refusal is the server's message (`serverError`), and so is a failing
+ * re-read (no conflict is shown without the text to compare).
  *
  * `pending` covers the read after a 412 as well, so nothing is sent on the
  * old revision before the current one is in. `savedAgain` counts the times
@@ -66,6 +68,11 @@ export function usePlaybookSave({ org, playbook, draft, revision, dirty, markSav
       setRereading(true);
       try {
         await reread();
+      } catch (readErr) {
+        // Without the current text there is nothing to compare: the draft
+        // stays, and the failed read is the error to show (Save tries again).
+        setServerError(readErr instanceof Error ? readErr.message : t.playbooks.editor.saveFailed);
+        return;
       } finally {
         setRereading(false);
       }

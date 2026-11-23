@@ -4,18 +4,20 @@ const variables = (n: number) => (n === 1 ? '1 variable' : `${n} variables`);
  * (backlog 3.127). */
 export const enPlaybookRepoText = {
   asOf: (when: string, commit: string) => `As of the sync on ${when}, commit ${commit}`,
+  syncedOn: (when: string) => `As of the sync on ${when}`,
   earlier: (when: string) => `From an earlier sync: the last one, on ${when}, left this playbook unread`,
   readOnly: 'Read-only: changes come through Git, and the next sync brings them in.',
   loading: 'Reading the text of the last sync…',
   ready: 'Parses as a list of plays.',
   checkHint: 'Checked in the browser, on the text of the last sync.',
   notSynced: 'The repository has not been synced yet: sync it to see the text here.',
+  noRoute: 'This server does not serve the repository text yet.',
   readFailed: (message: string) => `The text could not be read: ${message}`,
   leftOut: {
     too_large: 'The last sync stored no text for this playbook: the file is over 512 KiB.',
     budget: "The last sync stored no text for this playbook: the sync's texts were full (4 MiB in all).",
     not_utf8: 'The last sync stored no text for this playbook: the file is not UTF-8 text.',
-    unreadable: 'The last sync stored no text for this playbook: the file could not be read.',
+    unreadable: 'The last sync stored no text for this playbook: the file could not be read, or a limit of the sync left it unread.',
     not_sent:
       'The last sync stored no text for this playbook: the file may be gone from the repository, or the sync ran on an older worker. Sync again once workers are updated.',
   },

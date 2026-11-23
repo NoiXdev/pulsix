@@ -31,6 +31,8 @@ const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
 export function RunResultSection({ job, status, events }: { job: JobDetail; status: string; events: readonly JobEvent[] }) {
   const t = useT();
   const rows = hostResultRows(job.stats);
+  // Whether the run carries recap counts at all (an older one does not).
+  const counted = rows.some((r) => r.counts !== undefined);
   // A cancelled run gets no Ansible recap (the worker stops before
   // playbook_on_stats runs), so the per-host table renders empty;
   // this derives what each target host was left doing from the event log
@@ -63,7 +65,7 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
                   <tr key={r.host} className="border-t border-border">
                     <td className="px-4 py-1.5 font-mono text-[13px] [overflow-wrap:anywhere]">{r.host}</td>
                     {STATE_CELLS.map(([state, color]) => (
-                      <StateCell key={state} on={r[state]} count={r.counts?.[state]} color={color} label={t.runs.detail.hostState[state]} />
+                      <StateCell key={state} on={r[state]} count={r.counts?.[state]} counted={counted} color={color} label={t.runs.detail.hostState[state]} />
                     ))}
                   </tr>
                 ))}
@@ -154,11 +156,17 @@ const STATE_CELLS = [
 
 /** One host's state: its recap count when the run has counts (a count of
  * zero reads as the dot), else the state's name when it applies. */
-function StateCell({ on, count, color, label }: { on: boolean; count: number | undefined; color: string; label: string }) {
+function StateCell({ on, count, counted, color, label }: { on: boolean; count: number | undefined; counted: boolean; color: string; label: string }) {
   const shown = count !== undefined ? count > 0 : on;
   return (
     <td className="px-2 py-1.5 text-center">
-      {shown ? (
+      {shown && count === undefined && counted ? (
+        // The run has counts but not for this host: its state is known, its
+        // number is not, so a mark stands in (no label among numbers).
+        <span role="img" aria-label={label} title={label} className="text-[11px]" style={{ color }}>
+          ●
+        </span>
+      ) : shown ? (
         <span className="font-mono text-[11px] font-semibold" style={{ color }} title={count !== undefined ? label : undefined}>
           {count ?? label}
         </span>

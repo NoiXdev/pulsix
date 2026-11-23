@@ -8,9 +8,10 @@ import { useT } from '../../i18n/useT.ts';
  * check mode and changed nothing, with the options it recorded — its tags
  * (all tasks when none), whether it checked an unsaved draft and whether
  * it reported differences. A dry run without a record (none is expected,
- * but the field is optional) shows the banner without the options.
+ * but the field is optional) shows the banner without the options. While
+ * the run is live the text is in the present tense, after it in the past.
  */
-export function RunDryRunBanner({ dryRun }: { dryRun: JobDetail['dry_run'] }) {
+export function RunDryRunBanner({ dryRun, live }: { dryRun: JobDetail['dry_run']; live: boolean }) {
   const t = useT();
   const d = t.runs.dryRun;
   const titleId = useId();
@@ -24,7 +25,7 @@ export function RunDryRunBanner({ dryRun }: { dryRun: JobDetail['dry_run'] }) {
       <span id={titleId} className="text-[13px] font-semibold" style={{ color: 'var(--px-accent)' }}>
         {d.title}
       </span>
-      <p className="text-muted-foreground">{d.text}</p>
+      <p className="text-muted-foreground">{live ? d.textLive : d.text}</p>
       {dryRun && (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-muted-foreground">{d.tags}:</span>

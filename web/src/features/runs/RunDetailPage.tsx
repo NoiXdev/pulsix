@@ -75,7 +75,7 @@ export function RunDetailPage() {
 
   return (
     <DetailLayout sidebar={<RunSidebar org={org} job={j} status={status} canRun={canRun} />} nav={nav} navLabel={t.common.sections}>
-      {j.check_mode && <RunDryRunBanner dryRun={j.dry_run} />}
+      {j.check_mode && <RunDryRunBanner dryRun={j.dry_run} live={live} />}
       <RunResultSection job={j} status={status} events={log.events} />
       {siblings.length > 0 && <RunGroupSection org={org} siblings={siblings} />}
       {followUps.length > 0 && <RunChainSection org={org} followUps={followUps} />}
