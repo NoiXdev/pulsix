@@ -87,6 +87,25 @@ describe('DataList name cell description', () => {
     expect(a).toHaveAccessibleDescription(expect.stringContaining('Managed'));
   });
 
+  // A name cell that says nothing beyond the label would be read twice.
+  const PLAIN: DataListColumn<Repo>[] = [{ ...COLUMNS[0], render: (r) => <span>{r.name}</span> }, COLUMNS[1]];
+
+  it('leaves the row link undescribed when the name cell repeats its label', async () => {
+    renderList({ columns: PLAIN, rowLink: (r) => ({ ...link(r), label: r.name }) });
+    await screen.findByRole('table', { name: 'Repos' });
+    const a = screen.getByRole('link', { name: 'infra' });
+    expect(a).not.toHaveAttribute('aria-describedby');
+    expect(a).toHaveAccessibleDescription('');
+  });
+
+  it('leaves the row button undescribed when the name cell repeats its label', async () => {
+    renderList({ columns: PLAIN, onRowActivate: vi.fn() });
+    await screen.findByRole('table', { name: 'Repos' });
+    const button = screen.getByRole('button', { name: 'apps' });
+    expect(button).not.toHaveAttribute('aria-describedby');
+    expect(button).toHaveAccessibleDescription('');
+  });
+
   it('gives every row its own description', async () => {
     renderList({ onRowActivate: vi.fn() });
     await screen.findByRole('table', { name: 'Repos' });

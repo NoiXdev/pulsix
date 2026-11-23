@@ -58,12 +58,12 @@ export function RunRequestDetailPage() {
   const members = useMembers(org);
   const approve = useApproveRunRequest(org, id);
   const reject = useRejectRunRequest(org, id);
-  // The fingerprint of the picture the person reviewed: the first one the
-  // page showed, until they accept a newer one. `refusedFor` is the request
-  // whose approval the server refused as changed. Both name their request,
-  // as the page stays mounted when it moves on to another one.
-  const [reviewed, setReviewed] = useState<{ id: string; fingerprint: string }>();
-  const [refusedFor, setRefusedFor] = useState<string>();
+  // The review of one request: the fingerprint of the picture the person
+  // reviewed (the first one the page showed, until they accept a newer one)
+  // and whether the server refused an approval as changed. It names its
+  // request, as the page stays mounted when it moves on to another one, and
+  // starts afresh there.
+  const [review, setReview] = useState<{ id: string; fingerprint: string; refused: boolean }>();
   // The deselected direct follow-ups belong to one loaded picture: a new
   // fingerprint (a refetch after a change) starts again from "all checked".
   const [deselection, setDeselection] = useState<{ fingerprint: string; ids: ReadonlySet<string> }>({
@@ -78,12 +78,11 @@ export function RunRequestDetailPage() {
   const { request, picture, fingerprint } = detail.data;
   // The first picture shown is the one reviewed (state set during render,
   // React's way of deriving state from what arrives).
-  const reviewedHere = reviewed?.id === id ? reviewed.fingerprint : undefined;
-  if (reviewedHere === undefined) setReviewed({ id, fingerprint });
-  const changed = refusedFor === id || (reviewedHere !== undefined && reviewedHere !== fingerprint);
+  const reviewHere = review?.id === id ? review : undefined;
+  if (!reviewHere) setReview({ id, fingerprint, refused: false });
+  const changed = !!reviewHere && (reviewHere.refused || reviewHere.fingerprint !== fingerprint);
   function acceptNewVersion() {
-    setReviewed({ id, fingerprint });
-    setRefusedFor(undefined);
+    setReview({ id, fingerprint, refused: false });
   }
   const deselected = deselection.fingerprint === fingerprint ? deselection.ids : new Set<string>();
   const startable = startableFollowUps(picture.follow_ups);
@@ -138,7 +137,7 @@ export function RunRequestDetailPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
       if (message.includes(RUN_REQUEST_CHANGED)) {
-        setRefusedFor(id);
+        setReview((r) => (r?.id === id ? { ...r, refused: true } : r));
         await detail.refetch();
         return;
       }

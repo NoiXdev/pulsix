@@ -1,4 +1,4 @@
-import { useId, type KeyboardEvent, type MouseEvent } from 'react';
+import { useId, useLayoutEffect, useRef, type KeyboardEvent, type MouseEvent } from 'react';
 import { Link } from '@tanstack/react-router';
 import { cn } from '../../lib/utils.ts';
 import type { MenuPoint } from '../menuPlacement.ts';
@@ -20,6 +20,11 @@ const INTERACTIVE = 'a[href], button, input, select, textarea, label, summary, [
 
 export type MenuSource = 'pointer' | 'keyboard';
 
+/** Text as a screen reader compares it: runs of whitespace as one space. */
+function spoken(text: string | null | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim();
+}
+
 /** What a row asks of its list to open its context menu. */
 export type OpenRowMenu = (row: HTMLElement, point: MenuPoint, source: MenuSource, returnTo: HTMLElement | null) => void;
 
@@ -35,7 +40,9 @@ export type OpenRowMenu = (row: HTMLElement, point: MenuPoint, source: MenuSourc
  * by `activateLabel`: Enter and Space press it, and the context menu stays
  * the row's (without the link entries). A named link or button is described
  * by the name cell's full text (`aria-describedby`), so a screen reader
- * still hears what the cell adds to the name (a detail line, a badge).
+ * still hears what the cell adds to the name (a detail line, a badge). A
+ * name cell whose text is the label itself adds nothing, so it describes
+ * nothing: the name is not read twice.
  *
  * An element a cell raises above the stretched link or button (`relative
  * z-10`) to keep its native `title` tooltip takes the click away from it:
@@ -77,6 +84,18 @@ export function DataRow<Row>({
 }) {
   const hasActions = actions.length > 0;
   const descId = useId();
+  const descRef = useRef<HTMLSpanElement>(null);
+  const label = link ? link.label : activateLabel;
+
+  // The description is the name cell's rendered text, known only after the
+  // render; it is set here, outside React's props, so no second render is
+  // needed. Every render checks again, as the cell may say more next time.
+  useLayoutEffect(() => {
+    const owner = descRef.current?.closest('[data-row-link], [data-row-activate]');
+    if (!owner) return;
+    if (label && spoken(descRef.current?.textContent) !== spoken(label)) owner.setAttribute('aria-describedby', descId);
+    else owner.removeAttribute('aria-describedby');
+  });
 
   // The open "…" menu is portalled out of the row but is still its child in
   // React, so its key and pointer events bubble here: only events from the
@@ -142,7 +161,7 @@ export function DataRow<Row>({
         const content = c.render(row, { density });
         const owner = (link || activate) && c.id === linkColumn;
         const described = owner ? (
-          <span id={descId} className="block min-w-0">
+          <span id={descId} ref={descRef} className="block min-w-0">
             {content}
           </span>
         ) : (
@@ -157,7 +176,6 @@ export function DataRow<Row>({
                 search={link.search}
                 hash={link.hash}
                 aria-label={link.label}
-                aria-describedby={descId}
                 data-row-link=""
                 className={STRETCHED}
               >
@@ -168,7 +186,6 @@ export function DataRow<Row>({
                 type="button"
                 onClick={activate}
                 aria-label={activateLabel}
-                aria-describedby={activateLabel ? descId : undefined}
                 data-row-activate=""
                 className={cn(STRETCHED, 'w-full cursor-pointer text-left')}
               >

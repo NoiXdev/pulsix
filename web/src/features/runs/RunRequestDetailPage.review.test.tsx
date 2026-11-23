@@ -16,6 +16,15 @@ function renderDetail(qc = new QueryClient({ defaultOptions: { queries: { retry:
   return qc;
 }
 
+const OTHER = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c';
+
+function conflict() {
+  return new Response(JSON.stringify({ status: 409, detail: 'changed since you looked at it; review it again' }), {
+    status: 409,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 function requestedBy(): HTMLElement {
   const label = screen.getByText('Requested by');
   return label.parentElement as HTMLElement;
@@ -138,5 +147,73 @@ describe('RunRequestDetailPage reviewed version', () => {
     await qc.refetchQueries({ queryKey: ['run-request'] });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled());
     expect(screen.queryByText(CHANGED_NOTICE)).not.toBeInTheDocument();
+  });
+
+  it('keeps what was reviewed and refused to its own request when the page moves between requests', async () => {
+    const user = userEvent.setup();
+    let aLoads = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [DETAIL_PATH]: () => {
+        aLoads += 1;
+        return detail({ fingerprint: aLoads === 1 ? 'fp-a1' : 'fp-a2' });
+      },
+      [`GET /api/v1/orgs/acme/run-requests/${OTHER}`]: detail({ fingerprint: 'fp-b', request: { id: OTHER, reason: 'Other request' } }),
+      [APPROVE_PATH]: () => conflict(),
+    });
+    const router = renderRoutes([{ path: '/runs/requests/$id', component: RunRequestDetailPage }], `/o/acme/runs/requests/${RQ}`);
+
+    // A: the approval is refused as changed, the notice holds Approve.
+    await user.click(await screen.findByRole('button', { name: 'Approve' }));
+    expect(await screen.findByText(CHANGED_NOTICE)).toBeInTheDocument();
+
+    // B: nothing of A's review carries over.
+    router.history.push(`/o/acme/runs/requests/${OTHER}`);
+    expect(await screen.findByText('Other request')).toBeInTheDocument();
+    expect(screen.queryByText(CHANGED_NOTICE)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+
+    // Back on A: opened afresh, what it shows now is what is reviewed.
+    router.history.push(`/o/acme/runs/requests/${RQ}`);
+    expect(await screen.findByText('Roll out the new nginx config')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled());
+    expect(screen.queryByText(CHANGED_NOTICE)).not.toBeInTheDocument();
+  });
+
+  it('starts the follow-up selection again for the new version and keeps it after the review', async () => {
+    const user = userEvent.setup();
+    let version = 1;
+    const sent: unknown[] = [];
+    const followUps = {
+      start: true,
+      templates: [
+        { template_id: 'f1', template_name: 'reload-lb', template_revision: 3 },
+        { template_id: 'f2', template_name: 'warm-cache', template_revision: 9 },
+      ],
+    };
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [DETAIL_PATH]: () => detail({ fingerprint: `fp-${version}`, picture: { follow_ups: followUps } }),
+      [APPROVE_PATH]: (req: MockRequest) => {
+        sent.push(req.body);
+        return { request: request({ status: 'approved' }) };
+      },
+    });
+    const qc = renderDetail();
+    await user.click(await screen.findByRole('checkbox', { name: 'reload-lb' }));
+    expect(screen.getByRole('checkbox', { name: 'reload-lb' })).not.toBeChecked();
+
+    version = 2;
+    await qc.refetchQueries({ queryKey: ['run-request'] });
+    expect(await screen.findByText(CHANGED_NOTICE)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'reload-lb' })).toBeChecked());
+
+    await user.click(screen.getByRole('button', { name: 'Review the new version' }));
+    expect(screen.getByRole('checkbox', { name: 'reload-lb' })).toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'warm-cache' }));
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(sent).toEqual([{ fingerprint: 'fp-2', follow_ups: ['f1'] }]));
   });
 });
