@@ -4,7 +4,7 @@ import { api, SESSION_LOCKED, unwrap } from '../client.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { invalidateRepoDerived } from './invalidateRepoDerived.ts';
 import { isTerminal, JOB_POLL_MS } from './useJobs.ts';
-import { SyncWatchContext, type Watch } from './syncWatchContext.ts';
+import { SYNC_WATCH_KEY, SyncWatchContext, type Watch } from './syncWatchContext.ts';
 
 /** How many failed reads drop a watched job. */
 const MAX_ERRORS = 3;
@@ -52,7 +52,7 @@ export function SyncWatchProvider({
       qc.getQueryCache().subscribe((event) => {
         if (event.type !== 'removed') return;
         const [kind, org, id] = event.query.queryKey;
-        if (kind !== 'sync-watch') return;
+        if (kind !== SYNC_WATCH_KEY) return;
         setPending((list) => (list.some((w) => w.org === org && w.id === id) ? list.filter((w) => !(w.org === org && w.id === id)) : list));
       }),
     [qc],
@@ -92,7 +92,7 @@ function WatchedSync({
   // Failed reads in a row; a good read starts the count over.
   const [failures, setFailures] = useState(0);
   const query = useQuery({
-    queryKey: ['sync-watch', org, id],
+    queryKey: [SYNC_WATCH_KEY, org, id],
     queryFn: async ({ signal }) => {
       try {
         const body = await unwrap(api.GET('/api/v1/orgs/{org}/jobs/{id}', { params: { path: { org, id } }, signal }));

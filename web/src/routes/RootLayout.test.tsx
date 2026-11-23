@@ -8,6 +8,7 @@ import { api, unwrap } from '../api/client.ts';
 import { RootLayout } from './RootLayout.tsx';
 import { RootRedirect } from './RootRedirect.tsx';
 import { useConfirm } from '../ui/confirmContext.ts';
+import { SYNC_WATCH_KEY } from '../api/hooks/syncWatchContext.ts';
 import { postSessionMessage } from '../features/lock/lockChannel.ts';
 import { waitFor } from '@testing-library/react';
 
@@ -127,6 +128,19 @@ describe('RootLayout', () => {
       expect(screen.queryByText('ORGS PAGE')).not.toBeInTheDocument();
       expect(qcRef.getQueryData(['orgs', 'secret'])).toBeUndefined();
       expect(qcRef.getQueryData(['me'])).toBeDefined();
+    });
+
+    it('keeps the sync watch queries through a lock, so a watched job survives it', async () => {
+      renderAt('/orgs', { 'GET /api/v1/auth/me': meBody(false), 'GET /api/v1/orgs': { orgs: [] } });
+      expect(await screen.findByText('ORGS PAGE')).toBeInTheDocument();
+      qcRef.setQueryData([SYNC_WATCH_KEY, 'acme', 'j1'], { job: { id: 'j1' } });
+      qcRef.setQueryData(['orgs', 'secret'], { secret: 1 });
+
+      postSessionMessage({ type: 'locked' });
+
+      expect(await screen.findByLabelText('PIN')).toBeInTheDocument();
+      await waitFor(() => expect(qcRef.getQueryData(['orgs', 'secret'])).toBeUndefined());
+      expect(qcRef.getQueryData([SYNC_WATCH_KEY, 'acme', 'j1'])).toBeDefined();
     });
 
     it('drops every mutation, and the PIN it carried, from the cache when the session locks', async () => {

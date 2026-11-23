@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useRouter, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { onPasswordChangeRequired, onSessionLocked } from '../api/client.ts';
+import { SYNC_WATCH_KEY } from '../api/hooks/syncWatchContext.ts';
 import { refetchMe, useMe } from '../api/hooks/useMe.ts';
 import { ConfirmProvider } from '../ui/confirm.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
@@ -100,11 +101,12 @@ export function RootLayout() {
   );
 
   // The page is gone from the tree by now (this runs after the commit that
-  // swapped it for the lock screen); drop what it had fetched, and every
+  // swapped it for the lock screen); drop what it had fetched (but not the
+  // sync watcher's reads: a locked session keeps its watched jobs), and every
   // mutation it sent (a PIN set just before locking rides in `variables`).
   useEffect(() => {
     if (!locked) return;
-    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' && q.queryKey[0] !== SYNC_WATCH_KEY });
     qc.getMutationCache().clear();
   }, [locked, qc]);
 
