@@ -170,9 +170,12 @@ func containsAll(s string, subs ...string) bool {
 // 50, each naming the target and sharing the round's At.
 func TestProbeRoundReachesTheStreamInChunks(t *testing.T) {
 	lt := newLoopTest(t)
+	// The certificate first, the clock after it: NotBefore is stored to
+	// the second, so a clock read before issuing can fall a second boundary
+	// short of it and the identity reads as not yet valid.
+	lt.withIdentity()
 	clock := &settableClock{now: time.Now()}
 	lt.setNow(clock.Now)
-	lt.withIdentity()
 	stream := newFakeStream()
 	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
 	const n = 2*maxResultsPerMessage + 50
