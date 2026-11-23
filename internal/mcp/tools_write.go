@@ -39,6 +39,12 @@ type hostCreateArgs struct {
 	Kind      string `json:"kind,omitempty" jsonschema:"server (default) or client"`
 }
 
+// schemaFieldWords says what a variable schema's fields are. The two tools
+// that take a schema (set_group_schema, update_job_template) describe it in
+// these words; the argument tags below repeat them because a struct tag
+// cannot hold a constant.
+const schemaFieldWords = "fields with name, type (string, int, float, bool, enum, secret, list, repeater, object), scope (group or host) and more"
+
 type updateArgs struct {
 	Revision *int64         `json:"revision,omitempty" jsonschema:"the revision you read; omitted means the current one"`
 	Fields   map[string]any `json:"fields" jsonschema:"the fields to change; the others keep their current value"`
@@ -128,7 +134,7 @@ type templateCreateArgs struct {
 	Scope           *templateScope  `json:"scope,omitempty" jsonschema:"the run's targets: a group, hosts or both; empty means every managed host"`
 	Limit           string          `json:"limit,omitempty" jsonschema:"an Ansible limit pattern"`
 	ExtraVars       map[string]any  `json:"extra_vars,omitempty"`
-	ExtraVarsSchema map[string]any  `json:"extra_vars_schema,omitempty" jsonschema:"the typed schema the extra vars must satisfy, as {\"fields\": [...]}"`
+	ExtraVarsSchema map[string]any  `json:"extra_vars_schema,omitempty" jsonschema:"the typed schema the extra vars must satisfy, as {\"fields\": [...]}: fields with name, type (string, int, float, bool, enum, secret, list, repeater, object), scope (group or host) and more"`
 	CredentialID    string          `json:"credential_id,omitempty" jsonschema:"the default SSH credential"`
 	VaultIdentities []vaultIdentity `json:"vault_identities,omitempty" jsonschema:"added vault passwords by label, e.g. noidee"`
 }
@@ -174,7 +180,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "group", groupKeys, in.updateArgs, nil, true, "/inventory/groups/%s", in.GroupID)
 			}),
-		define("set_group_schema", "Set group schema", "Replace a group's variable schema. Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type.",
+		define("set_group_schema", "Set group schema", "Replace a group's variable schema ("+schemaFieldWords+"). Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupSchemaArgs) (any, error) {
 				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -308,7 +314,7 @@ func writeTools() []toolDef {
 				}
 				return send(ctx, c, http.MethodPost, in, "", "/job-templates")
 			}),
-		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type.",
+		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type. The extra_vars_schema field is {\"fields\": [...]}: "+schemaFieldWords+".",
 			tenancy.AreaTemplatesWrite, writeTool, func(ctx context.Context, c *caller, in templateUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPut, "template", templateKeys, in.updateArgs, templateSecrets, true, "/job-templates/%s", in.TemplateID)
 			}),

@@ -3,8 +3,11 @@ package mcp_test
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
@@ -132,5 +135,105 @@ func TestEveryCallReauthenticates(t *testing.T) {
 	}
 	if _, err := cs.CallTool(context.Background(), toolParams("get_organization", nil)); err == nil {
 		t.Fatal("a call succeeded with a revoked token")
+	}
+}
+
+// TestAnExpiredTokenIsRefused: expiry is checked on every call, so a token
+// that lapses between tools/list and tools/call ends the session too.
+func TestAnExpiredTokenIsRefused(t *testing.T) {
+	s := apitest.New(t)
+	org, asst := s.OrgWithAssistantToken(t, tenancy.RoleOperator, tenancy.AreaInventoryRead)
+	cs := mustConnect(t, s, asst)
+	callOK(t, cs, "get_organization", nil, nil)
+	if _, err := s.DB.Pool().Exec(context.Background(), `UPDATE api_tokens SET expires_at = now() - interval '1 hour' WHERE org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.CallTool(context.Background(), toolParams("get_organization", nil)); err == nil {
+		t.Fatal("a call succeeded with an expired token")
+	}
+	if resp := rawPost(t, s, asst, nil, []byte(initBody)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expired token = %d, want 401", resp.StatusCode)
+	}
+}
+
+// lockedBuffer is a log sink the server's goroutines write to while the
+// test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestTokensStayOutOfTheLogs captures everything the process logs (the
+// endpoint's slog calls and the request logger that slog.SetDefault also
+// carries) over a good call, a revoked-token call and a malformed-token
+// call, and asserts no token plaintext reaches it. The server takes no
+// injected logger, so the test swaps the default and restores it; it is not
+// parallel for that reason.
+func TestTokensStayOutOfTheLogs(t *testing.T) {
+	s := apitest.New(t)
+	_, asst := s.OrgWithAssistantToken(t, tenancy.RoleOperator, tenancy.AreaInventoryRead)
+	revokedOrg, revoked := s.OrgWithAssistantToken(t, tenancy.RoleOperator, tenancy.AreaInventoryRead)
+	const malformed = "pxt_malformed-token-plaintext-0123456789"
+
+	var sink lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&sink, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	callOK(t, mustConnect(t, s, asst), "get_organization", nil, nil)
+
+	rcs := mustConnect(t, s, revoked)
+	toks, err := s.Deps.Tokens.List(db.WithOrgScope(context.Background(), revokedOrg), revokedOrg)
+	if err != nil || len(toks) == 0 {
+		t.Fatalf("tokens = %v %v", toks, err)
+	}
+	if err := s.Deps.Tokens.Revoke(db.WithOrgScope(context.Background(), revokedOrg), revokedOrg, toks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rcs.CallTool(context.Background(), toolParams("get_organization", nil)); err == nil {
+		t.Fatal("a call succeeded with a revoked token")
+	}
+	if resp := rawPost(t, s, revoked, nil, []byte(initBody)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("revoked token = %d, want 401", resp.StatusCode)
+	}
+	if resp := rawPost(t, s, malformed, nil, []byte(initBody)); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("malformed token = %d, want 401", resp.StatusCode)
+	}
+
+	// A store failure is the one path that logs: a cancelled context makes the
+	// token lookup fail with an error that is not "unauthenticated", which the
+	// endpoint logs. Without it the capture would see nothing to check.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/mcp", strings.NewReader(initBody)).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+asst)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rec := httptest.NewRecorder()
+	s.HTTP.Config.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("failed lookup = %d, want 401", rec.Code)
+	}
+
+	logged := sink.String()
+	if logged == "" {
+		t.Fatal("the capture saw no log line, so the test proves nothing")
+	}
+	for name, secret := range map[string]string{"good token": asst, "revoked token": revoked, "malformed token": malformed, "bearer header": "Bearer " + asst} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("the log contains the %s plaintext:\n%s", name, logged)
+		}
 	}
 }

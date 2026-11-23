@@ -270,3 +270,36 @@ func TestFieldBecomesSecretOnlyWhileEmpty(t *testing.T) {
 	callOK(t, cs, "update_job_template", map[string]any{"template_id": tmpl, "fields": map[string]any{
 		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "pw", "type": "secret"}}}}}, nil)
 }
+
+// TestSchemaToolsDescribeFieldTypesAlike: update_job_template says what an
+// extra_vars_schema holds in the same words as set_group_schema, so an
+// assistant learns secret and repeater from either tool.
+func TestSchemaToolsDescribeFieldTypesAlike(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const words = "fields with name, type (string, int, float, bool, enum, secret, list, repeater, object), scope (group or host) and more"
+	desc := map[string]string{}
+	for _, tl := range res.Tools {
+		desc[tl.Name] = tl.Description
+		if tl.Name == "create_job_template" {
+			raw, err := json.Marshal(tl.InputSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), words) {
+				t.Errorf("create_job_template extra_vars_schema property lacks the words: %s", raw)
+			}
+		}
+	}
+	for _, name := range []string{"set_group_schema", "update_job_template"} {
+		for _, want := range []string{words, "secret", "repeater"} {
+			if !strings.Contains(desc[name], want) {
+				t.Errorf("%s description lacks %q: %q", name, want, desc[name])
+			}
+		}
+	}
+}
