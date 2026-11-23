@@ -110,8 +110,10 @@ export function useHost(org: string, id: string) {
   return useQuery({ ...hostQueryOptions(org, id), enabled: !!org && !!id });
 }
 
-/** Hosts named per request: the list route's id filter takes at most this many. */
-const NAME_CHUNK = 500;
+/** Hosts named per request. The server takes up to 500 ids, but each id is
+ * about 40 bytes of query string: 100 keep the URL near 4 KB, under the 8 KB
+ * request line limit common reverse proxies enforce. */
+const NAME_CHUNK = 100;
 
 /** useHostNames names several hosts by id: one list request per NAME_CHUNK
  * ids (the id filter answers them all in one page); an id stands in for a host that is not there (deleted, or not of

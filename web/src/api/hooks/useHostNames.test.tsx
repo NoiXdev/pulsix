@@ -21,10 +21,10 @@ function listRoute(calls: URLSearchParams[]) {
 }
 
 describe('useHostNames', () => {
-  it('names up to 500 hosts with one list request, an absent host keeping its id', async () => {
+  it('names up to 100 hosts with one list request, an absent host keeping its id', async () => {
     const calls: URLSearchParams[] = [];
     mockApi({ 'GET /api/v1/orgs/acme/hosts': listRoute(calls) });
-    const ids = idsOf(500);
+    const ids = idsOf(100);
     const { result } = renderHook(() => useHostNames('acme', ids), { wrapper: wrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -34,14 +34,25 @@ describe('useHostNames', () => {
     expect(result.current.hosts[3]).toEqual({ id: 'h3', name: 'h3' });
   });
 
-  it('splits 501 hosts into two requests', async () => {
+  it('splits 101 hosts into two requests', async () => {
     const calls: URLSearchParams[] = [];
     mockApi({ 'GET /api/v1/orgs/acme/hosts': listRoute(calls) });
-    const ids = idsOf(501);
+    const ids = idsOf(101);
     const { result } = renderHook(() => useHostNames('acme', ids), { wrapper: wrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(calls.map((c) => c.getAll('id').length).sort()).toEqual([1, 500]);
-    expect(result.current.hosts[500].name).toBe('name-h500');
+    expect(calls.map((c) => c.getAll('id').length)).toEqual([100, 1]);
+    expect(result.current.hosts[100].name).toBe('name-h100');
+  });
+
+  it('reads 500 hosts in five requests', async () => {
+    const calls: URLSearchParams[] = [];
+    mockApi({ 'GET /api/v1/orgs/acme/hosts': listRoute(calls) });
+    const ids = idsOf(500);
+    const { result } = renderHook(() => useHostNames('acme', ids), { wrapper: wrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(calls).toHaveLength(5);
+    expect(result.current.hosts[499].name).toBe('name-h499');
   });
 });
