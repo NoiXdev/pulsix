@@ -111,8 +111,8 @@ func TestApproveRetryUsesRetryFailed(t *testing.T) {
 	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.enq.retries) != 1 || w.enq.retries[0] != job {
-		t.Fatalf("retries = %+v", w.enq.retries)
+	if len(w.enq.retries) != 1 || w.enq.retries[0] != job || w.enq.retryKeys[0] != "run-request:"+r.ID.String() {
+		t.Fatalf("retries = %+v keys %q", w.enq.retries, w.enq.retryKeys)
 	}
 }
 

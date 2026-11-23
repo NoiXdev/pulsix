@@ -333,7 +333,7 @@ func TestApprovedRunRequestPlansFollowUpsInItsGroup(t *testing.T) {
 			TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: grp,
 			Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
 		}}
-		got, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request, nil)
+		got, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, "", request, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +360,7 @@ func TestRetryFailedIntoFiltersFollowUps(t *testing.T) {
 		Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
 	}}
 	only := []uuid.UUID{x}
-	if _, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, request, &only); err != nil {
+	if _, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, "", request, &only); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.planner.copies) != 1 {
@@ -368,6 +368,44 @@ func TestRetryFailedIntoFiltersFollowUps(t *testing.T) {
 	}
 	if got := f.planner.copies[0].only; got == nil || !slices.Equal(*got, only) {
 		t.Fatalf("only = %v, want %v", got, only)
+	}
+}
+
+// TestRetryFailedIntoIsIdempotentPerKey: an approved retry request passes
+// its own key (backlog 2.120), so approving it again after a failed
+// enqueue put it back to pending replays the first attempt's jobs instead
+// of enqueueing the retry a second time. Without a key every call is its
+// own retry.
+func TestRetryFailedIntoIsIdempotentPerKey(t *testing.T) {
+	f := newChainFixture(t)
+	orig, grp, request, actor := id7(), id7(), id7(), id7()
+	f.store.jobs[orig] = storedJob{j: jobs.Job{
+		ID: orig, OrgID: f.org, Kind: jobs.KindRun, Status: jobs.StatusFailed,
+		TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: grp,
+		Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
+	}}
+	key := "run-request:" + request.String()
+	first, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, key, request, nil)
+	if err != nil || len(first) != 1 || first[0].RunGroupID != request {
+		t.Fatalf("first = %+v %v, want one job in the request's group", first, err)
+	}
+	stored := len(f.store.jobs)
+	second, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, key, id7(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.store.jobs) != stored {
+		t.Fatalf("stored jobs = %d after the replay, want still %d", len(f.store.jobs), stored)
+	}
+	if len(second) != 1 || second[0].ID != first[0].ID {
+		t.Fatalf("replayed = %+v, want the first attempt's job", second)
+	}
+
+	if _, err := f.svc.RetryFailedInto(ctx, f.org, orig, &actor, "", id7(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.store.jobs) != stored+1 {
+		t.Fatalf("stored jobs = %d after an unkeyed retry, want %d", len(f.store.jobs), stored+1)
 	}
 }
 

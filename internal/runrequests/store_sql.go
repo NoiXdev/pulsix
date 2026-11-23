@@ -44,14 +44,49 @@ func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Request, error
 }
 
 // List implements Store.
-func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Request, error) {
-	rows, err := s.q.ListRunRequests(ctx, orgID)
+func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID, status *Status, now time.Time) ([]Request, error) {
+	var st *string
+	if status != nil {
+		v := string(*status)
+		st = &v
+	}
+	rows, err := s.q.ListRunRequests(ctx, gen.ListRunRequestsParams{OrgID: orgID, Status: st, Now: now})
 	if err != nil {
 		return nil, fmt.Errorf("list run requests: %w", err)
 	}
 	out := make([]Request, len(rows))
 	for i, row := range rows {
 		out[i] = fromRow(row)
+	}
+	return out, nil
+}
+
+// CountPending implements Store.
+func (s *SQLStore) CountPending(ctx context.Context, orgID uuid.UUID, token *uuid.UUID, now time.Time) (int, error) {
+	n, err := s.q.CountPendingRunRequests(ctx, gen.CountPendingRunRequestsParams{OrgID: orgID, Now: now, Token: pgUUID(token)})
+	if err != nil {
+		return 0, fmt.Errorf("count pending run requests: %w", err)
+	}
+	return int(n), nil
+}
+
+// Tokens implements Store.
+func (s *SQLStore) Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]TokenRecord, error) {
+	out := make(map[uuid.UUID]TokenRecord, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListRunRequestTokens(ctx, gen.ListRunRequestTokensParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("list run request tokens: %w", err)
+	}
+	for _, row := range rows {
+		rec := TokenRecord{Name: row.Name, Revoked: row.Revoked}
+		if row.ExpiresAt.Valid {
+			at := row.ExpiresAt.Time
+			rec.ExpiresAt = &at
+		}
+		out[row.ID] = rec
 	}
 	return out, nil
 }

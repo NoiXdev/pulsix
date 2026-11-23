@@ -2932,6 +2932,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/run-requests/pending-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org run requests pending count */
+        get: operations["get-api-v1-orgs-by-org-run-requests-pending-count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/run-requests/{id}": {
         parameters: {
             query?: never;
@@ -7903,11 +7920,18 @@ export interface components {
             kind: "run" | "retry_failed";
             reason: string;
             requested_by_token_id?: string;
+            /** @description The requesting token's name; empty when the token is gone or there is none */
+            requested_by_token_name: string;
             requested_by_user_id: string;
             run_group_id?: string;
             /** @enum {string} */
             status: "pending" | "approved" | "rejected" | "expired";
             template_id: string;
+            /**
+             * @description Whether the requesting token can still ask for runs; approving starts the run either way
+             * @enum {string}
+             */
+            token_state?: "active" | "revoked" | "expired" | "deleted";
         };
         RunRequestDetailOutputBody: {
             /**
@@ -7941,6 +7965,19 @@ export interface components {
              */
             readonly $schema?: string;
             request: components["schemas"]["RunRequestDTO"];
+        };
+        RunRequestPendingCountOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RunRequestPendingCountOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Pending run requests that have not expired
+             */
+            count: number;
         };
         ScheduleBody: {
             /**
@@ -17112,6 +17149,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRequestListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-run-requests-pending-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestPendingCountOutputBody"];
                 };
             };
             /** @description Error */

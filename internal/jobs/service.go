@@ -719,26 +719,9 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 // dropped hosts were actually excluded for a changed key, not
 // maintenance), and the unpinned-hosts refusal (backlog 2.44).
 func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, int, error) {
-	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
-	if err == nil && len(targets) == 0 {
-		err = ErrEmptyScope
-	}
+	targets, err := s.scopeTargets(ctx, orgID, scope, limit, req)
 	if err != nil {
-		if (req.OnlyHost != nil || len(req.OnlyHosts) > 0) && errors.Is(err, ErrEmptyScope) {
-			// A scope that selects nothing does not select the one host either.
-			return nil, 0, ErrHostNotInScope
-		}
 		return nil, 0, err
-	}
-	if req.OnlyHost != nil {
-		if targets = onlyHost(targets, *req.OnlyHost); len(targets) == 0 {
-			return nil, 0, ErrHostNotInScope
-		}
-	}
-	if len(req.OnlyHosts) > 0 {
-		if targets = onlyHosts(targets, req.OnlyHosts); len(targets) == 0 {
-			return nil, 0, ErrHostNotInScope
-		}
 	}
 	if s.keyGuard != nil {
 		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
@@ -767,6 +750,35 @@ func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope 
 		return nil, 0, err
 	}
 	return targets, excluded, nil
+}
+
+// scopeTargets is resolveRunTargets' first two guards, which CheckRunScope
+// shares: the scope under limit (ErrEmptyScope) and the narrowing to
+// req.OnlyHost or req.OnlyHosts (ErrHostNotInScope, also for a scope that
+// selects nothing).
+func (s *Service) scopeTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, error) {
+	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
+	if err == nil && len(targets) == 0 {
+		err = ErrEmptyScope
+	}
+	if err != nil {
+		if (req.OnlyHost != nil || len(req.OnlyHosts) > 0) && errors.Is(err, ErrEmptyScope) {
+			// A scope that selects nothing does not select the one host either.
+			return nil, ErrHostNotInScope
+		}
+		return nil, err
+	}
+	if req.OnlyHost != nil {
+		if targets = onlyHost(targets, *req.OnlyHost); len(targets) == 0 {
+			return nil, ErrHostNotInScope
+		}
+	}
+	if len(req.OnlyHosts) > 0 {
+		if targets = onlyHosts(targets, req.OnlyHosts); len(targets) == 0 {
+			return nil, ErrHostNotInScope
+		}
+	}
+	return targets, nil
 }
 
 // onlyHost keeps just the given host of the per-zone targets: at most one
@@ -1109,16 +1121,24 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, s.newID(), nil)
+	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil)
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:
 // an approved run request passes its own id (spec 2026-11-16 assistant
 // access), so a claim of the retry finds the request. followUps narrows the
 // follow-ups copied from the original run: nil copies all, a list only
-// those templates, an empty one none.
-func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID, followUps *[]uuid.UUID) ([]Job, error) {
+// those templates, an empty one none. idempotencyKey is
+// RunRequest.IdempotencyKey for a retry: an approved retry request passes
+// the key its run approval would (backlog 2.120), so approving it again
+// after a failed enqueue replays the jobs the first attempt created instead
+// of retrying twice. Empty (the retry route) reserves nothing.
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID) ([]Job, error) {
 	j, retry, err := s.retryTarget(ctx, orgID, id)
+	if err != nil {
+		return nil, err
+	}
+	group, alreadyDone, err := s.reserveRunGroup(ctx, orgID, idempotencyKey, group)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,7 +1151,7 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, group, nil)
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, group, alreadyDone)
 }
 
 // RetryTargets is RetryFailed's checks without the enqueue: the template

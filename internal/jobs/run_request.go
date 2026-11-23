@@ -164,39 +164,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if req.RunGroupID != uuid.Nil {
 		group = req.RunGroupID
 	}
-	var alreadyDone []Job
-	if req.IdempotencyKey != "" {
-		claimed, won, err := s.store.ReserveRunGroup(ctx, orgID, req.IdempotencyKey, group)
-		if err != nil {
-			return nil, fmt.Errorf("reserve run group: %w", err)
-		}
-		group = claimed
-		if !won {
-			// An earlier call already claimed this occurrence. enqueueRunScope
-			// below still resolves the scope and still runs every guard, but
-			// skips creating a job for any zone alreadyDone already covers —
-			// which is every zone, for the ordinary retry this key exists to
-			// catch (an earlier call that fully enqueued, then the write-back
-			// that should have recorded it failed): nothing new is created,
-			// and these are returned as-is.
-			//
-			// The empty-zone-list case (the earlier call claimed the key but
-			// never created a single job — it failed before reaching
-			// enqueueRunScope at all: ErrEmptyScope, a dead template lookup, a
-			// transient store error) and the PARTIAL case (it created jobs for
-			// some zones but was interrupted — e.g. a manager shutdown —
-			// before reaching the rest) both fall out of the same mechanism:
-			// enqueueRunScope creates jobs only for the zones alreadyDone does
-			// not already have, which is every zone in the first case and the
-			// missing ones in the second. Short-circuiting here on "any
-			// existing job at all" would silently leave the second case's
-			// un-enqueued zones un-enqueued forever.
-			existing, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &group}, "", replayListLimit)
-			if err != nil {
-				return nil, fmt.Errorf("list reserved run group: %w", err)
-			}
-			alreadyDone = existing
-		}
+	group, alreadyDone, err := s.reserveRunGroup(ctx, orgID, req.IdempotencyKey, group)
+	if err != nil {
+		return nil, err
 	}
 	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
 	if err != nil {
@@ -223,6 +193,46 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		}
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, gate, req, group, alreadyDone)
+}
+
+// reserveRunGroup claims key for group (RunRequest.IdempotencyKey): it
+// returns the run group the jobs join and, when an earlier call already
+// claimed the key, that call's jobs. An empty key reserves nothing.
+func (s *Service) reserveRunGroup(ctx context.Context, orgID uuid.UUID, key string, group uuid.UUID) (uuid.UUID, []Job, error) {
+	if key == "" {
+		return group, nil, nil
+	}
+	claimed, won, err := s.store.ReserveRunGroup(ctx, orgID, key, group)
+	if err != nil {
+		return uuid.Nil, nil, fmt.Errorf("reserve run group: %w", err)
+	}
+	if won {
+		return claimed, nil, nil
+	}
+	// An earlier call already claimed this occurrence. enqueueRunScope
+	// still resolves the scope and still runs every guard, but
+	// skips creating a job for any zone the returned jobs already cover —
+	// which is every zone, for the ordinary retry this key exists to
+	// catch (an earlier call that fully enqueued, then the write-back
+	// that should have recorded it failed): nothing new is created,
+	// and these are returned as-is.
+	//
+	// The empty-zone-list case (the earlier call claimed the key but
+	// never created a single job — it failed before reaching
+	// enqueueRunScope at all: ErrEmptyScope, a dead template lookup, a
+	// transient store error) and the PARTIAL case (it created jobs for
+	// some zones but was interrupted — e.g. a manager shutdown —
+	// before reaching the rest) both fall out of the same mechanism:
+	// enqueueRunScope creates jobs only for the zones the returned jobs
+	// do not already cover, which is every zone in the first case and the
+	// missing ones in the second. Short-circuiting here on "any
+	// existing job at all" would silently leave the second case's
+	// un-enqueued zones un-enqueued forever.
+	existing, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &claimed}, "", replayListLimit)
+	if err != nil {
+		return uuid.Nil, nil, fmt.Errorf("list reserved run group: %w", err)
+	}
+	return claimed, existing, nil
 }
 
 // narrowToHost checks req.OnlyHost before anything is enqueued and returns
@@ -267,6 +277,38 @@ func effectiveLimit(tmplLimit string, ov *RunOverrides) string {
 		return *ov.Limit
 	}
 	return tmplLimit
+}
+
+// CheckRunScope is EnqueueRunWith's scope checks of a manual run without
+// the enqueue: the template's scope resolved under the template's own limit
+// (ErrEmptyScope when nothing is left) and, for onlyHost, the narrowing to
+// that host. A run request is checked with it when it is made (backlog
+// 2.120); the approval enqueues through EnqueueRunWith, which checks again.
+// An unknown or unmanaged onlyHost is ErrHostNotInScope here, not
+// ErrNotFound: the request names a host the run would not reach. The guards
+// that depend on the moment of the run (changed host keys, unpinned hosts)
+// are left to the enqueue.
+func (s *Service) CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error {
+	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
+	if err != nil {
+		return err
+	}
+	scope, err := parseScope(tmpl.Scope)
+	if err != nil {
+		return err
+	}
+	gate := effectiveLimit(tmpl.Limit, nil)
+	req := RunRequest{OnlyHost: onlyHost}
+	if onlyHost != nil {
+		if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("%w (%s)", ErrHostNotInScope, err.Error())
+			}
+			return err
+		}
+	}
+	_, err = s.scopeTargets(ctx, orgID, scope, gate, req)
+	return err
 }
 
 // RunTargets resolves the template's scope into the managed host ids a

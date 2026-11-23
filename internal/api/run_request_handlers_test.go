@@ -47,6 +47,7 @@ type runRequestDTO struct {
 	Reason           string `json:"reason"`
 	RunGroupID       string `json:"run_group_id"`
 	RequestedByToken string `json:"requested_by_token_name"`
+	TokenState       string `json:"token_state"`
 }
 
 type runRequestDetail struct {

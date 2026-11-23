@@ -83,7 +83,7 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil {
 		t.Fatalf("after revert = %+v", got)
 	}
-	list, err := store.List(f.ctx, f.org)
+	list, err := store.List(f.ctx, f.org, nil, now)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("List = %+v %v", list, err)
 	}
@@ -102,7 +102,166 @@ func TestSQLStoreIsolatesOrganizations(t *testing.T) {
 	if _, err := store.Get(b.ctx, a.org, r.ID); !errors.Is(err, runrequests.ErrNotFound) {
 		t.Fatalf("org a's request read in org b's scope = %v, want ErrNotFound", err)
 	}
-	if list, err := store.List(b.ctx, b.org); err != nil || len(list) != 0 {
+	if list, err := store.List(b.ctx, b.org, nil, time.Now()); err != nil || len(list) != 0 {
 		t.Fatalf("org b's list = %+v %v", list, err)
+	}
+}
+
+func (f sqlFixture) insert(t *testing.T, store *runrequests.SQLStore, token *uuid.UUID, created time.Time) runrequests.Request {
+	t.Helper()
+	r := runrequests.Request{ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Kind: runrequests.KindRun, TemplateID: f.template,
+		Reason: "x", RequestedByUser: f.user, RequestedByToken: token, Status: runrequests.StatusPending,
+		ExpiresAt: created.Add(runrequests.TTL), CreatedAt: created}
+	if err := store.Insert(f.ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestSQLStoreFiltersStatusInTheQuery: the status filter runs before the
+// list's cap of 500 rows (backlog 2.120), so the pending request behind 501
+// newer decided ones is still found, and pending and expired are told
+// apart on the caller's clock.
+func TestSQLStoreFiltersStatusInTheQuery(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-filter")
+	store := runrequests.NewSQLStore(d)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expired := f.insert(t, store, nil, now.Add(-2*time.Hour))
+	pending := f.insert(t, store, nil, now.Add(-time.Minute))
+	if _, err := d.Pool().Exec(context.Background(), `
+		INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, reason, requested_by_user, status, decided_by, decided_at, expires_at, created_at)
+		SELECT gen_random_uuid(), $1, 'run', $2, 1, 'x', $3, 'rejected', $3, $4::timestamptz, $4::timestamptz + interval '1 hour', $4::timestamptz + n * interval '1 millisecond'
+		FROM generate_series(1, 501) AS n`, f.org, f.template, f.user, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		status runrequests.Status
+		want   uuid.UUID
+	}{{runrequests.StatusPending, pending.ID}, {runrequests.StatusExpired, expired.ID}} {
+		st := tc.status
+		got, err := store.List(f.ctx, f.org, &st, now)
+		if err != nil || len(got) != 1 || got[0].ID != tc.want {
+			t.Fatalf("%s = %d rows %v, want only %s", st, len(got), err, tc.want)
+		}
+	}
+	st := runrequests.StatusRejected
+	if got, err := store.List(f.ctx, f.org, &st, now); err != nil || len(got) != 500 {
+		t.Fatalf("rejected = %d rows %v, want the cap of 500", len(got), err)
+	}
+	if got, err := store.List(f.ctx, f.org, nil, now); err != nil || len(got) != 500 {
+		t.Fatalf("all = %d rows %v, want the cap of 500", len(got), err)
+	}
+}
+
+// TestSQLStoreCountsPending: unexpired pending requests of the
+// organization, of one token when it is given.
+func TestSQLStoreCountsPending(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-count")
+	other := newSQLFixture(t, d, "runreq-count-other")
+	store := runrequests.NewSQLStore(d)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	tok, tok2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	f.insert(t, store, &tok, now.Add(-time.Minute))
+	f.insert(t, store, &tok, now.Add(-time.Minute))
+	f.insert(t, store, &tok2, now.Add(-time.Minute))
+	f.insert(t, store, nil, now.Add(-time.Minute))
+	f.insert(t, store, &tok, now.Add(-runrequests.TTL)) // expires exactly now
+	decided := f.insert(t, store, &tok, now.Add(-time.Minute))
+	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, ""); err != nil || !ok {
+		t.Fatalf("Decide = %v %v", ok, err)
+	}
+	other.insert(t, store, &tok, now.Add(-time.Minute))
+	for _, tc := range []struct {
+		name  string
+		token *uuid.UUID
+		want  int
+	}{{"organization", nil, 4}, {"token", &tok, 2}, {"other token", &tok2, 1}} {
+		if n, err := store.CountPending(f.ctx, f.org, tc.token, now); err != nil || n != tc.want {
+			t.Fatalf("%s = %d %v, want %d", tc.name, n, err, tc.want)
+		}
+	}
+}
+
+// TestSQLStoreReadsTheRequestingTokens: an organization token or a personal
+// token, by id, with what makes it unable to ask any more.
+func TestSQLStoreReadsTheRequestingTokens(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-tokens")
+	store := runrequests.NewSQLStore(d)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := d.Pool().Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO org_memberships (org_id, user_id, role) VALUES ($1, $2, 'operator')`, f.org, f.user)
+	expiry := time.Now().UTC().Truncate(time.Microsecond).Add(time.Hour)
+	id := func() uuid.UUID { return uuid.Must(uuid.NewV7()) }
+	active, revoked, expiring, personal, blocked, gone := id(), id(), id(), id(), id(), id()
+	orgToken := func(tid uuid.UUID, name string, revokedAt *time.Time, expiresAt *time.Time) {
+		exec(`INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash, expires_at, revoked_at) VALUES ($1, $2, $3, $4, 'operator', $5, $6, $7)`,
+			tid, f.user, f.org, name, tid[:], expiresAt, revokedAt)
+	}
+	at := time.Now()
+	orgToken(active, "org-active", nil, nil)
+	orgToken(revoked, "org-revoked", &at, nil)
+	orgToken(expiring, "org-expiring", nil, &expiry)
+	// The blocked token belongs to another member: an admin's block is per
+	// person, so it would stop every token of its owner here.
+	blockedOwner := id()
+	exec(`INSERT INTO users (id, email, display_name) VALUES ($1, 'runreq-tokens-2@example.test', 'b')`, blockedOwner)
+	exec(`INSERT INTO org_memberships (org_id, user_id, role) VALUES ($1, $2, 'operator')`, f.org, blockedOwner)
+	for tid, owner := range map[uuid.UUID]uuid.UUID{personal: f.user, blocked: blockedOwner} {
+		exec(`INSERT INTO personal_tokens (id, user_id, name, secret_hash) VALUES ($1, $2, $3, $4)`, tid, owner, "personal-"+tid.String()[:8], tid[:])
+	}
+	exec(`INSERT INTO personal_token_grants (token_id, user_id, org_id, role) VALUES ($1, $2, $3, 'operator')`, personal, f.user, f.org)
+	exec(`INSERT INTO personal_token_grants (token_id, user_id, org_id, role, blocked_at) VALUES ($1, $2, $3, 'operator', now())`, blocked, blockedOwner, f.org)
+
+	got, err := store.Tokens(f.ctx, f.org, []uuid.UUID{active, revoked, expiring, personal, blocked, gone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("tokens = %+v, want five (the deleted one missing)", got)
+	}
+	check := func(name string, tid uuid.UUID, wantName string, wantRevoked bool, wantExpiry *time.Time) {
+		t.Helper()
+		rec := got[tid]
+		if rec.Name != wantName || rec.Revoked != wantRevoked || (wantExpiry == nil) != (rec.ExpiresAt == nil) ||
+			(wantExpiry != nil && !rec.ExpiresAt.Equal(*wantExpiry)) {
+			t.Fatalf("%s = %+v", name, rec)
+		}
+	}
+	check("active", active, "org-active", false, nil)
+	check("revoked", revoked, "org-revoked", true, nil)
+	check("expiring", expiring, "org-expiring", false, &expiry)
+	check("personal", personal, "personal-"+personal.String()[:8], false, nil)
+	// A blocked grant stops the token in this organization: it reads as
+	// revoked here.
+	check("blocked personal", blocked, "personal-"+blocked.String()[:8], true, nil)
+
+	// With personal tokens switched off in the organization, none can ask.
+	exec(`INSERT INTO org_token_settings (org_id, personal_tokens_allowed) VALUES ($1, false)`, f.org)
+	if got, err := store.Tokens(f.ctx, f.org, []uuid.UUID{personal}); err != nil || !got[personal].Revoked {
+		t.Fatalf("personal token with personal tokens off = %+v %v, want revoked", got, err)
+	}
+	exec(`DELETE FROM org_token_settings WHERE org_id = $1`, f.org)
+	// Another organization's token is not this organization's to name.
+	other := newSQLFixture(t, d, "runreq-tokens-other")
+	if got, err := store.Tokens(other.ctx, other.org, []uuid.UUID{active}); err != nil || len(got) != 0 {
+		t.Fatalf("another organization's token = %+v %v, want none", got, err)
+	}
+
+	// A personal token that lost its grant here (the membership ended)
+	// cannot ask here either.
+	exec(`DELETE FROM personal_token_grants WHERE token_id = $1`, personal)
+	if got, err := store.Tokens(f.ctx, f.org, []uuid.UUID{personal}); err != nil || !got[personal].Revoked {
+		t.Fatalf("personal token without a grant = %+v %v, want revoked", got, err)
+	}
+	if got, err := store.Tokens(f.ctx, f.org, nil); err != nil || len(got) != 0 {
+		t.Fatalf("no ids = %+v %v", got, err)
 	}
 }

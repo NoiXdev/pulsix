@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/google/uuid"
 
@@ -35,9 +34,10 @@ type (
 	}
 	JobRunner interface {
 		RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
+		CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, group uuid.UUID, followUps *[]uuid.UUID) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID) ([]jobs.Job, error)
 	}
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
@@ -96,21 +96,24 @@ type Resolver struct{ src Sources }
 // NewResolver wires the resolver.
 func NewResolver(src Sources) *Resolver { return &Resolver{src: src} }
 
-// ValidateRun implements Validator: the template exists, and the one-host
-// narrowing names one of its targets.
+// ValidateRun implements Validator: the template exists, and a run of it
+// started now would reach a host: its scope under its own limit selects
+// one, and the one-host narrowing names a host of those (jobs.CheckRunScope,
+// the enqueue's own check). The approval checks again: things can change
+// in between.
 func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) (int64, error) {
 	tmpl, err := r.src.Templates.Get(ctx, orgID, templateID)
 	if err != nil {
 		return 0, mapNotFound(err)
 	}
-	if onlyHost != nil {
-		targets, err := r.src.Jobs.RunTargets(ctx, orgID, templateID)
-		if err != nil {
-			return 0, mapNotFound(err)
-		}
-		if !slices.Contains(targets, *onlyHost) {
+	if err := r.src.Jobs.CheckRunScope(ctx, orgID, templateID, onlyHost); err != nil {
+		switch {
+		case errors.Is(err, jobs.ErrEmptyScope):
+			return 0, fmt.Errorf("%w: the template's scope matches no host", ErrInvalidInput)
+		case errors.Is(err, jobs.ErrHostNotInScope):
 			return 0, fmt.Errorf("%w: %s", ErrInvalidInput, jobs.ErrHostNotInScope)
 		}
+		return 0, mapNotFound(err)
 	}
 	return tmpl.Revision, nil
 }
@@ -146,13 +149,13 @@ func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHos
 }
 
 // RetryFailed implements Enqueuer through the retry path, with Run's
-// follow-up handling.
-func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error {
+// follow-up handling and idempotency key.
+func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
 		return fmt.Errorf("clear unstarted follow-ups: %w", err)
 	}
 	list := nonNil(followUps)
-	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, group, &list)
+	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, key, group, &list)
 	return err
 }
 

@@ -21,20 +21,24 @@ import (
 )
 
 type runRequestDTO struct {
-	ID                 string     `json:"id"`
-	Kind               string     `json:"kind" enum:"run,retry_failed"`
-	Status             string     `json:"status" enum:"pending,approved,rejected,expired"`
-	TemplateID         string     `json:"template_id"`
-	HostID             string     `json:"host_id,omitempty"`
-	JobID              string     `json:"job_id,omitempty"`
-	Reason             string     `json:"reason"`
-	RequestedByUserID  string     `json:"requested_by_user_id"`
-	RequestedByTokenID string     `json:"requested_by_token_id,omitempty"`
-	DecidedByUserID    string     `json:"decided_by_user_id,omitempty"`
-	DecidedAt          *time.Time `json:"decided_at,omitempty"`
-	RunGroupID         string     `json:"run_group_id,omitempty"`
-	ExpiresAt          time.Time  `json:"expires_at"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID                 string `json:"id"`
+	Kind               string `json:"kind" enum:"run,retry_failed"`
+	Status             string `json:"status" enum:"pending,approved,rejected,expired"`
+	TemplateID         string `json:"template_id"`
+	HostID             string `json:"host_id,omitempty"`
+	JobID              string `json:"job_id,omitempty"`
+	Reason             string `json:"reason"`
+	RequestedByUserID  string `json:"requested_by_user_id"`
+	RequestedByTokenID string `json:"requested_by_token_id,omitempty"`
+	// RequestedByTokenName and TokenState describe the requesting token as
+	// it is now: a hint for the approver, never a block.
+	RequestedByTokenName string     `json:"requested_by_token_name" doc:"The requesting token's name; empty when the token is gone or there is none"`
+	TokenState           string     `json:"token_state,omitempty" enum:"active,revoked,expired,deleted" doc:"Whether the requesting token can still ask for runs; approving starts the run either way"`
+	DecidedByUserID      string     `json:"decided_by_user_id,omitempty"`
+	DecidedAt            *time.Time `json:"decided_at,omitempty"`
+	RunGroupID           string     `json:"run_group_id,omitempty"`
+	ExpiresAt            time.Time  `json:"expires_at"`
+	CreatedAt            time.Time  `json:"created_at"`
 }
 
 func toRunRequestDTO(r runrequests.Request) runRequestDTO {
@@ -42,6 +46,7 @@ func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateID: r.TemplateID.String(),
 		Reason: r.Reason, RequestedByUserID: r.RequestedByUser.String(), DecidedAt: r.DecidedAt,
 		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		RequestedByTokenName: r.TokenName, TokenState: string(r.TokenState),
 	}
 	dto.HostID, dto.JobID, dto.RequestedByTokenID = uuidString(r.HostID), uuidString(r.JobID), uuidString(r.RequestedByToken)
 	dto.DecidedByUserID, dto.RunGroupID = uuidString(r.DecidedBy), uuidString(r.RunGroupID)
@@ -73,6 +78,12 @@ type runRequestOutput struct {
 type runRequestListOutput struct {
 	Body struct {
 		Requests []runRequestDTO `json:"requests"`
+	}
+}
+
+type runRequestPendingCountOutput struct {
+	Body struct {
+		Count int `json:"count" doc:"Pending run requests that have not expired"`
 	}
 }
 
@@ -166,6 +177,22 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		for i, r := range rows {
 			out.Body.Requests[i] = toRunRequestDTO(r)
 		}
+		return out, nil
+	})
+
+	huma.Get(hapi, "/api/v1/orgs/{org}/run-requests/pending-count", func(ctx context.Context, in *struct {
+		Org string `path:"org"`
+	}) (*runRequestPendingCountOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRead)
+		if err != nil {
+			return nil, err
+		}
+		n, err := deps.RunRequests.PendingCount(ctx, scope.OrgID)
+		if err != nil {
+			return nil, mapRunRequestErr(ctx, err)
+		}
+		out := &runRequestPendingCountOutput{}
+		out.Body.Count = n
 		return out, nil
 	})
 
@@ -281,6 +308,8 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, runrequests.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
+	case errors.Is(err, runrequests.ErrTooManyPending):
+		return huma.Error429TooManyRequests(err.Error())
 	case errors.Is(err, runrequests.ErrExpired), errors.Is(err, runrequests.ErrDecided), errors.Is(err, runrequests.ErrChanged):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, inventory.ErrUnrenderable):

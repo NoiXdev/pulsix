@@ -12,10 +12,22 @@ import (
 )
 
 type memStore struct {
-	rows map[uuid.UUID]runrequests.Request
+	rows   map[uuid.UUID]runrequests.Request
+	tokens map[uuid.UUID]runrequests.TokenRecord
 }
 
-func newMemStore() *memStore { return &memStore{rows: map[uuid.UUID]runrequests.Request{}} }
+func newMemStore() *memStore {
+	return &memStore{rows: map[uuid.UUID]runrequests.Request{}, tokens: map[uuid.UUID]runrequests.TokenRecord{}}
+}
+
+// effective is the SQL store's status filter: a pending row at or past its
+// expiry reads as expired.
+func effective(r runrequests.Request, now time.Time) runrequests.Status {
+	if r.Status == runrequests.StatusPending && !now.Before(r.ExpiresAt) {
+		return runrequests.StatusExpired
+	}
+	return r.Status
+}
 
 func (m *memStore) Insert(_ context.Context, r runrequests.Request) error {
 	m.rows[r.ID] = r
@@ -30,11 +42,35 @@ func (m *memStore) Get(_ context.Context, orgID, id uuid.UUID) (runrequests.Requ
 	return r, nil
 }
 
-func (m *memStore) List(_ context.Context, orgID uuid.UUID) ([]runrequests.Request, error) {
+func (m *memStore) List(_ context.Context, orgID uuid.UUID, status *runrequests.Status, now time.Time) ([]runrequests.Request, error) {
 	var out []runrequests.Request
 	for _, r := range m.rows {
-		if r.OrgID == orgID {
+		if r.OrgID == orgID && (status == nil || effective(r, now) == *status) {
 			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) CountPending(_ context.Context, orgID uuid.UUID, token *uuid.UUID, now time.Time) (int, error) {
+	n := 0
+	for _, r := range m.rows {
+		if r.OrgID != orgID || effective(r, now) != runrequests.StatusPending {
+			continue
+		}
+		if token != nil && (r.RequestedByToken == nil || *r.RequestedByToken != *token) {
+			continue
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]runrequests.TokenRecord, error) {
+	out := map[uuid.UUID]runrequests.TokenRecord{}
+	for _, id := range ids {
+		if rec, ok := m.tokens[id]; ok {
+			out[id] = rec
 		}
 	}
 	return out, nil
@@ -77,12 +113,13 @@ func (f *fakePictures) Picture(context.Context, uuid.UUID, runrequests.Request) 
 }
 
 type fakeEnqueuer struct {
-	runs    []string // idempotency keys
-	retries []uuid.UUID
-	actor   uuid.UUID
-	err     error
-	group   uuid.UUID   // the run group the last enqueue was given
-	list    []uuid.UUID // the follow-up list the last enqueue was given
+	runs      []string // idempotency keys
+	retries   []uuid.UUID
+	retryKeys []string
+	actor     uuid.UUID
+	err       error
+	group     uuid.UUID   // the run group the last enqueue was given
+	list      []uuid.UUID // the follow-up list the last enqueue was given
 }
 
 func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
@@ -93,11 +130,11 @@ func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.
 	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.retries, f.actor, f.group, f.list = append(f.retries, jobID), actor, group, followUps
+	f.retries, f.retryKeys, f.actor, f.group, f.list = append(f.retries, jobID), append(f.retryKeys, key), actor, group, followUps
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -54,6 +55,8 @@ type (
 		retryTmpl  uuid.UUID
 		failed     []uuid.UUID
 		retryErr   error
+		checkErr   error
+		checked    []*uuid.UUID
 	}
 	switchable struct {
 		on  bool
@@ -123,6 +126,11 @@ func (r *targetRunner) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid
 	return r.targets, r.targetsErr
 }
 
+func (r *targetRunner) CheckRunScope(_ context.Context, _, _ uuid.UUID, onlyHost *uuid.UUID) error {
+	r.checked = append(r.checked, onlyHost)
+	return r.checkErr
+}
+
 func (r *targetRunner) RetryTargets(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error) {
 	return r.retryTmpl, uuid.Nil, r.failed, r.retryErr
 }
@@ -131,7 +139,7 @@ func (r *targetRunner) EnqueueRunWith(context.Context, uuid.UUID, uuid.UUID, job
 	return nil, nil
 }
 
-func (r *targetRunner) RetryFailedInto(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, uuid.UUID, *[]uuid.UUID) ([]jobs.Job, error) {
+func (r *targetRunner) RetryFailedInto(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, string, uuid.UUID, *[]uuid.UUID) ([]jobs.Job, error) {
 	return nil, nil
 }
 
@@ -367,15 +375,29 @@ func TestValidateRun(t *testing.T) {
 	if rev, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2); err != nil || rev != 3 {
 		t.Fatalf("one target = %d %v", rev, err)
 	}
-	if _, err := w.resolver().ValidateRun(ctx, org, w.x, &w.pb); !errors.Is(err, runrequests.ErrInvalidInput) {
-		t.Fatalf("host outside the targets = %v", err)
+	// The check is the enqueue's own scope check under the template's
+	// limit (jobs.CheckRunScope), with the request's one host.
+	if len(w.jobs.checked) != 2 || w.jobs.checked[0] != nil || w.jobs.checked[1] == nil || *w.jobs.checked[1] != w.h2 {
+		t.Fatalf("checked = %v, want the whole run, then h2", w.jobs.checked)
 	}
 	if _, err := w.resolver().ValidateRun(ctx, org, id(), nil); !errors.Is(err, runrequests.ErrNotFound) {
 		t.Fatalf("unknown template = %v", err)
 	}
-	w.jobs.targetsErr = jobs.ErrNotFound
-	if _, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2); !errors.Is(err, runrequests.ErrNotFound) {
-		t.Fatalf("targets gone = %v", err)
+	for _, tc := range []struct {
+		name string
+		err  error
+		is   error
+		msg  string
+	}{
+		{"host outside the limited targets", jobs.ErrHostNotInScope, runrequests.ErrInvalidInput, jobs.ErrHostNotInScope.Error()},
+		{"scope the limit empties", jobs.ErrEmptyScope, runrequests.ErrInvalidInput, "the template's scope matches no host"},
+		{"scope group gone", jobs.ErrNotFound, runrequests.ErrNotFound, ""},
+	} {
+		w.jobs.checkErr = tc.err
+		_, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2)
+		if !errors.Is(err, tc.is) || !strings.Contains(err.Error(), tc.msg) {
+			t.Fatalf("%s = %v, want %v with %q", tc.name, err, tc.is, tc.msg)
+		}
 	}
 }
 

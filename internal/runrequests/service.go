@@ -25,6 +25,10 @@ const TTL = time.Hour
 // MaxReasonLength caps the assistant's one-line reason.
 const MaxReasonLength = 300
 
+// MaxPendingPerToken caps the pending, unexpired requests of one token
+// (backlog 2.120), so an assistant cannot bury the approvers' queue.
+const MaxPendingPerToken = 20
+
 // Kind is what a request asks for.
 type Kind string
 
@@ -53,6 +57,9 @@ var (
 	ErrDecided      = errors.New("the request was already decided")
 	ErrChanged      = errors.New("changed since you looked at it; review it again")
 	ErrInvalidInput = errors.New("invalid run request")
+	// ErrTooManyPending refuses a request of a token that already has
+	// MaxPendingPerToken pending ones.
+	ErrTooManyPending = fmt.Errorf("this token already has %d pending run requests; wait until a person decides on them, or they expire, before asking again", MaxPendingPerToken)
 )
 
 // Request is one stored run request.
@@ -77,6 +84,10 @@ type Request struct {
 	ApprovedFingerprint string
 	ExpiresAt           time.Time
 	CreatedAt           time.Time
+	// TokenName and TokenState describe RequestedByToken as it is now,
+	// filled on every read (see TokenState); both empty without a token.
+	TokenName  string
+	TokenState TokenState
 }
 
 // CreateInput is what Create takes.
@@ -94,8 +105,15 @@ type CreateInput struct {
 type Store interface {
 	Insert(ctx context.Context, r Request) error
 	Get(ctx context.Context, orgID, id uuid.UUID) (Request, error)
-	// List returns every request of orgID, newest first.
-	List(ctx context.Context, orgID uuid.UUID) ([]Request, error)
+	// List returns orgID's requests, newest first, at most a capped page;
+	// status, when given, keeps those whose effective status at now
+	// matches, before the cap.
+	List(ctx context.Context, orgID uuid.UUID, status *Status, now time.Time) ([]Request, error)
+	// CountPending counts orgID's requests pending and unexpired at now;
+	// token, when given, only that token's.
+	CountPending(ctx context.Context, orgID uuid.UUID, token *uuid.UUID, now time.Time) (int, error)
+	// Tokens reads the tokens of ids that still exist (TokenRecord).
+	Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]TokenRecord, error)
 	// Decide moves a pending request to to; false when it was not pending.
 	// An approval records fingerprint and sets the run group to the
 	// request's own id, in the same write.
@@ -116,7 +134,7 @@ type Pictures interface {
 type Enqueuer interface {
 	// Run and RetryFailed enqueue into the run group group.
 	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
-	RetryFailed(ctx context.Context, orgID, jobID, actor, group uuid.UUID, followUps []uuid.UUID) error
+	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
 }
 
 // Validator checks a request the way the run and retry routes would check
@@ -141,11 +159,15 @@ func NewService(store Store, pictures Pictures, enqueuer Enqueuer, validator Val
 	return &Service{store: store, pictures: pictures, enqueuer: enqueuer, validator: validator, now: now, newID: newID}
 }
 
-// Create records a pending request.
+// Create records a pending request. A token's request is refused with
+// ErrTooManyPending while the token has MaxPendingPerToken pending ones.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Request, error) {
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" || utf8.RuneCountInString(reason) > MaxReasonLength {
 		return Request{}, fmt.Errorf("%w: a reason of 1 to %d characters is required", ErrInvalidInput, MaxReasonLength)
+	}
+	if err := s.checkPendingCap(ctx, orgID, in.RequestedByToken); err != nil {
+		return Request{}, err
 	}
 	r := Request{
 		ID: s.newID(), OrgID: orgID, Kind: in.Kind, Reason: reason,
@@ -175,6 +197,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err := s.store.Insert(ctx, r); err != nil {
 		return Request{}, fmt.Errorf("store run request: %w", err)
 	}
+	if err := s.withTokens(ctx, orgID, []*Request{&r}); err != nil {
+		return Request{}, err
+	}
 	return r, nil
 }
 
@@ -186,6 +211,9 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Request, Pictur
 		return Request{}, Picture{}, "", err
 	}
 	r.Status = s.effective(r)
+	if err := s.withTokens(ctx, orgID, []*Request{&r}); err != nil {
+		return Request{}, Picture{}, "", err
+	}
 	p, err := s.pictures.Picture(ctx, orgID, r)
 	if err != nil {
 		return Request{}, Picture{}, "", fmt.Errorf("resolve run picture: %w", err)
@@ -194,20 +222,22 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Request, Pictur
 }
 
 // List returns orgID's requests, newest first; status, when given, keeps
-// only those whose effective status matches.
+// only those whose effective status matches. The store filters before its
+// cap, so decided requests never hide a pending one.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]Request, error) {
-	rows, err := s.store.List(ctx, orgID)
+	rows, err := s.store.List(ctx, orgID, status, s.now())
 	if err != nil {
 		return nil, err
 	}
-	out := rows[:0]
-	for _, r := range rows {
-		r.Status = s.effective(r)
-		if status == nil || r.Status == *status {
-			out = append(out, r)
-		}
+	refs := make([]*Request, len(rows))
+	for i := range rows {
+		rows[i].Status = s.effective(rows[i])
+		refs[i] = &rows[i]
 	}
-	return out, nil
+	if err := s.withTokens(ctx, orgID, refs); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // Approved is the outcome of an approval: the decided request, the
@@ -267,9 +297,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	}
 	group := r.ID
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group, list)
+		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, idempotencyKey(r.ID), group, list)
 	} else {
-		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group, list)
+		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, idempotencyKey(r.ID), group, list)
 	}
 	if err != nil {
 		if rerr := s.store.RevertToPending(ctx, orgID, id); rerr != nil {
@@ -338,6 +368,9 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	r.Status, r.DecidedBy, r.DecidedAt = StatusRejected, &by, &at
+	if err := s.withTokens(ctx, orgID, []*Request{&r}); err != nil {
+		return Request{}, err
+	}
 	return r, nil
 }
 
@@ -353,6 +386,11 @@ func (s *Service) CreatedByToken(ctx context.Context, orgID, runGroup, tokenID u
 	}
 	return r.RequestedByToken != nil && *r.RequestedByToken == tokenID, nil
 }
+
+// idempotencyKey is the key an approval enqueues with, a run or a retry
+// alike, so approving a request again after a failed enqueue replays what
+// the first attempt created instead of enqueueing it twice.
+func idempotencyKey(id uuid.UUID) string { return "run-request:" + id.String() }
 
 func (s *Service) effective(r Request) Status {
 	if r.Status == StatusPending && !s.now().Before(r.ExpiresAt) {

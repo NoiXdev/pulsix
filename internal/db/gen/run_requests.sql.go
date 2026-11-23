@@ -13,11 +13,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPendingRunRequests = `-- name: CountPendingRunRequests :one
+SELECT count(*)::int AS n FROM run_requests
+WHERE org_id = $1 AND status = 'pending' AND expires_at > $2::timestamptz
+  AND ($3::uuid IS NULL OR requested_by_token = $3::uuid)
+`
+
+type CountPendingRunRequestsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Now   time.Time   `json:"now"`
+	Token pgtype.UUID `json:"token"`
+}
+
+// The pending, unexpired requests of the organization (the approval badge)
+// or, when token is given, of that one token (the per-token cap).
+func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingRunRequestsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countPendingRunRequests, arg.OrgID, arg.Now, arg.Token)
+	var n int32
+	err := row.Scan(&n)
+	return n, err
+}
+
 const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
   approved_fingerprint = $4,
   run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END
-WHERE org_id = $5 AND id = $6 AND status = 'pending'
+WHERE org_id = $5::uuid AND id = $6 AND status = 'pending'
 `
 
 type DecideRunRequestParams struct {
@@ -158,13 +179,88 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 	return err
 }
 
-const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint FROM run_requests WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 500
+const listRunRequestTokens = `-- name: ListRunRequestTokens :many
+SELECT t.id, t.name, (t.revoked_at IS NOT NULL OR u.disabled_at IS NOT NULL)::boolean AS revoked, t.expires_at
+FROM api_tokens t JOIN users u ON u.id = t.user_id
+WHERE t.org_id = $1::uuid AND t.id = ANY($2::uuid[])
+UNION ALL
+SELECT t.id, t.name, (
+  t.revoked_at IS NOT NULL OR u.disabled_at IS NOT NULL OR g.token_id IS NULL OR g.blocked_at IS NOT NULL
+  OR EXISTS (SELECT 1 FROM personal_token_grants b
+             WHERE b.org_id = $1::uuid AND b.user_id = t.user_id AND b.blocked_at IS NOT NULL)
+  OR NOT COALESCE((SELECT s.personal_tokens_allowed FROM org_token_settings s WHERE s.org_id = $1::uuid), true)
+)::boolean AS revoked, t.expires_at
+FROM personal_tokens t JOIN users u ON u.id = t.user_id
+LEFT JOIN personal_token_grants g ON g.token_id = t.id AND g.org_id = $1::uuid
+WHERE t.id = ANY($2::uuid[])
 `
 
+type ListRunRequestTokensParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+type ListRunRequestTokensRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Name      string             `json:"name"`
+	Revoked   bool               `json:"revoked"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+// The tokens that made requests, by id (backlog 2.120): the name and whether
+// the token can still ask here. requested_by_token has no foreign key, so a
+// deleted token is simply missing. An organization token is confined to
+// the organization (row-level security and org_id); a personal token
+// (backlog 3.100) reads as revoked here when it is revoked, its grant for
+// this organization is gone or blocked (its owner's block included), or the
+// organization no longer allows personal tokens. A deactivated owner stops
+// both kinds. Columns are named, never t.*: secret_hash is not read.
+func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTokensParams) ([]ListRunRequestTokensRow, error) {
+	rows, err := q.db.Query(ctx, listRunRequestTokens, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunRequestTokensRow
+	for rows.Next() {
+		var i ListRunRequestTokensRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Revoked,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunRequests = `-- name: ListRunRequests :many
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint FROM run_requests
+WHERE org_id = $1
+  AND ($2::text IS NULL OR $2::text = CASE
+    WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
+ORDER BY created_at DESC, id DESC LIMIT 500
+`
+
+type ListRunRequestsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	Status *string   `json:"status"`
+	Now    time.Time `json:"now"`
+}
+
 // Newest first, at most the 500 most recent: a list view, not an archive.
-func (q *Queries) ListRunRequests(ctx context.Context, orgID uuid.UUID) ([]RunRequest, error) {
-	rows, err := q.db.Query(ctx, listRunRequests, orgID)
+// The status filter is the effective status (backlog 2.120), applied before
+// the cap so decided rows never hide a pending one: "expired" is a pending
+// row at or past expires_at on the caller's clock (now), "pending" one
+// before it. A NULL status lists every row.
+func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams) ([]RunRequest, error) {
+	rows, err := q.db.Query(ctx, listRunRequests, arg.OrgID, arg.Status, arg.Now)
 	if err != nil {
 		return nil, err
 	}

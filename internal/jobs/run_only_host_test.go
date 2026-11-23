@@ -233,3 +233,75 @@ func TestEnqueueRunWithOnlyHost(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckRunScope pins the request-time check of a run (backlog 2.120):
+// the enqueue's own scope resolution under the template's limit and its
+// one-host narrowing, without creating anything.
+func TestCheckRunScope(t *testing.T) {
+	t.Run("the whole template under its limit", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "web*")
+		if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, nil); err != nil {
+			t.Fatalf("CheckRunScope: %v", err)
+		}
+		if len(f.res.limits) != 1 || f.res.limits[0] != "web*" {
+			t.Fatalf("resolved under limits %q, want the template's own", f.res.limits)
+		}
+	})
+
+	t.Run("one host of the targets", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "web*")
+		if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, &f.a); err != nil {
+			t.Fatalf("CheckRunScope: %v", err)
+		}
+	})
+
+	t.Run("a scope the limit empties", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "db*")
+		f.res.err = jobs.ErrEmptyScope
+		if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, nil); !errors.Is(err, jobs.ErrEmptyScope) {
+			t.Fatalf("err = %v, want ErrEmptyScope", err)
+		}
+	})
+
+	t.Run("hosts the run would not reach", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			limit string
+			host  func(f onlyHostFixture) uuid.UUID
+		}{
+			"excluded by the limit": {"db*", func(f onlyHostFixture) uuid.UUID { return f.a }},
+			"outside the scope":     {"", func(f onlyHostFixture) uuid.UUID { return f.c }},
+			"unmanaged":             {"", func(f onlyHostFixture) uuid.UUID { return f.u }},
+			"unknown":               {"", func(onlyHostFixture) uuid.UUID { return uuid.Must(uuid.NewV7()) }},
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := newOnlyHostFixture(t, tc.limit)
+				host := tc.host(f)
+				if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, &host); !errors.Is(err, jobs.ErrHostNotInScope) {
+					t.Fatalf("err = %v, want ErrHostNotInScope", err)
+				}
+			})
+		}
+	})
+
+	t.Run("one host of a scope that resolves to nothing", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "")
+		f.res.err = jobs.ErrEmptyScope
+		if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, &f.a); !errors.Is(err, jobs.ErrHostNotInScope) {
+			t.Fatalf("err = %v, want ErrHostNotInScope", err)
+		}
+	})
+
+	t.Run("an unknown template", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "")
+		if err := f.svc.CheckRunScope(ctx, f.org, uuid.Must(uuid.NewV7()), nil); !errors.Is(err, jobs.ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("creates nothing", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "")
+		if err := f.svc.CheckRunScope(ctx, f.org, f.templateID, &f.a); err != nil || len(f.store.jobs) != 0 {
+			t.Fatalf("err = %v, stored %d jobs, want none", err, len(f.store.jobs))
+		}
+	})
+}
