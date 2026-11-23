@@ -578,6 +578,41 @@ at the API:
   with a `limit` meanwhile drops the id stand-ins from the dry run's host choice
   until every manager is updated (the server still decides at run time).
 
+The run request approval loose ends (2.120) add no migration, no table and no
+proto change; workers and agents are not affected. What they change:
+- **Every run request fingerprint changes.** The picture gains the ids of the
+  credentials, jump hosts and the repository's git credential, and the vars
+  digest is now a keyed HMAC (key derived from the master key, bound to the
+  request) over the real values the run uses, secrets included. So, once:
+  - a request pending across the upgrade answers "changed since you looked at
+    it"; the page shows the notice and *Review the new version*;
+  - **every** run approved before the upgrade and not yet claimed fails its
+    claim with "changed after it was approved; ask for the run again", not only
+    runs with follow-ups.
+- **Mixed manager versions: approve no run request until every manager runs
+  this version.** A run approved on one version and claimed on the other fails
+  its claim, and a detail and an approval served by different versions answer
+  409 "changed". All managers already share the master key.
+- **New route `GET /api/v1/orgs/{org}/run-requests/pending-count`** (`{count}`,
+  the list's permission). A new SPA that reaches an older manager gets 404 there:
+  the navigation badge is missing until the request lands on an upgraded
+  manager. An old SPA on a new manager works fully. `?status=pending` (and
+  `expired`) are now filtered before the list's 500-row cap.
+- **API and assistant clients see new answers.** Creating a request answers
+  `422` when the template's hosts under its limit match nothing or the named host
+  is outside them (accepted until approval before), and `429` when the token
+  already has 20 pending, unexpired requests. Detail and approval answer `409`,
+  not 500, when the targets' inventory cannot be rendered (a sealed value under
+  a field that is no longer secret, a broken jump host chain); such a value
+  anywhere in the organization's inventory blocks every request's detail until
+  a person enters it again, as it already blocks every run.
+- **New response fields** (additive): `requested_by_token_name` (always present,
+  possibly empty) and `token_state` (optional: `active`, `revoked`, `expired`,
+  `deleted`). Older clients ignore them.
+- **Retry approvals carry an idempotency key** like run approvals. A retry
+  request reverted to pending before the upgrade and approved after it reserves
+  a fresh key.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
