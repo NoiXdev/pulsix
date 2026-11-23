@@ -36,7 +36,19 @@ export interface DataListColumn<Row> {
    * the name cell renders inside that <a> or <button>, so its `render` must
    * return phrasing content only: spans and text, no <div>, no <p>, and no
    * links or buttons of its own (interactive content cannot nest there).
-   * Its full text becomes the link's or button's accessible description. */
+   *
+   * Its full text becomes the link's or button's accessible description,
+   * unless that text equals the row's accessible name (`RowLink.label`, or
+   * `rowLabel` for an activation button): then it describes nothing, so a
+   * screen reader does not hear the name twice. The comparison has two
+   * limits:
+   * - It reads the cell's `textContent`, not its accessible text. What the
+   *   cell adds to the name must be text (an `sr-only` span is fine); an
+   *   `aria-label`, `title` or `<img alt>` is not seen, so a cell whose only
+   *   addition is one of those gets no description.
+   * - It is decided when the row renders. A cell that changes its own text
+   *   without the row rendering again (its own state or query) keeps the
+   *   decision of the row's last render. */
   required?: boolean;
   defaultVisible: boolean;
   align?: 'start' | 'end';
