@@ -214,7 +214,10 @@ type ListRunRequestTokensRow struct {
 // (backlog 3.100) reads as revoked here when it is revoked, its grant for
 // this organization is gone or blocked (its owner's block included), or the
 // organization no longer allows personal tokens. A deactivated owner stops
-// both kinds. Columns are named, never t.*: secret_hash is not read.
+// both kinds. These are the sign-in rules of GetAPITokenByHash (tokens.sql),
+// GetPersonalTokenByHash, GetPersonalTokenGrant and PersonalTokensAllowed
+// (personal_tokens.sql): change them together. Columns are named, never
+// t.*: secret_hash is not read.
 func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTokensParams) ([]ListRunRequestTokensRow, error) {
 	rows, err := q.db.Query(ctx, listRunRequestTokens, arg.OrgID, arg.Ids)
 	if err != nil {

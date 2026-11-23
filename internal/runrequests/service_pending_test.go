@@ -158,3 +158,32 @@ func TestRequestsCarryTheirTokensState(t *testing.T) {
 		t.Fatalf("Approve = %q %v", approved.Request.TokenState, err)
 	}
 }
+
+// TestAFailedTokenReadNeverFailsAWrite: the token state is a hint, so once
+// Create or Reject has written, a failing token read leaves the request
+// without its token fields instead of failing an outcome that already
+// happened. A plain read still fails.
+func TestAFailedTokenReadNeverFailsAWrite(t *testing.T) {
+	w := newWiring()
+	ctx := context.Background()
+	tok := uuid.Must(uuid.NewV7())
+	w.store.tokens[tok] = runrequests.TokenRecord{Name: "claude"}
+	w.store.tokensErr = errors.New("token table unreachable")
+	r, err := w.createFor(&tok)
+	if err != nil || r.TokenName != "" || r.TokenState != "" {
+		t.Fatalf("Create = %q %q %v, want the request without its token fields", r.TokenName, r.TokenState, err)
+	}
+	if _, ok := w.store.rows[r.ID]; !ok {
+		t.Fatal("the request was not stored")
+	}
+	rejected, err := w.svc.Reject(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()))
+	if err != nil || rejected.Status != runrequests.StatusRejected || rejected.TokenState != "" {
+		t.Fatalf("Reject = %+v %v, want rejected without its token fields", rejected, err)
+	}
+	if _, _, _, err := w.svc.Get(ctx, w.org, r.ID); !errors.Is(err, w.store.tokensErr) {
+		t.Fatalf("Get = %v, want the token read's error", err)
+	}
+	if _, err := w.svc.List(ctx, w.org, nil); !errors.Is(err, w.store.tokensErr) {
+		t.Fatalf("List = %v, want the token read's error", err)
+	}
+}

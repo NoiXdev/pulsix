@@ -3,6 +3,7 @@ package runrequests
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,4 +75,16 @@ func (s *Service) withTokens(ctx context.Context, orgID uuid.UUID, rs []*Request
 		r.TokenName, r.TokenState = rec.Name, rec.state(now)
 	}
 	return nil
+}
+
+// withTokensAfterWrite is withTokens for a request a write has just
+// committed (Create, Reject): the token state is a hint, so a failing read
+// is logged and the request goes back without its token fields rather than
+// turning an outcome that already happened into an error (a retried
+// create would ask twice, a retried reject would find it decided).
+func (s *Service) withTokensAfterWrite(ctx context.Context, orgID uuid.UUID, r *Request) {
+	if err := s.withTokens(ctx, orgID, []*Request{r}); err != nil {
+		slog.WarnContext(ctx, "run request: read the requesting token", "err", err, "request_id", r.ID)
+		r.TokenName, r.TokenState = "", ""
+	}
 }

@@ -36,7 +36,10 @@ WHERE org_id = sqlc.arg(org_id) AND status = 'pending' AND expires_at > sqlc.arg
 -- (backlog 3.100) reads as revoked here when it is revoked, its grant for
 -- this organization is gone or blocked (its owner's block included), or the
 -- organization no longer allows personal tokens. A deactivated owner stops
--- both kinds. Columns are named, never t.*: secret_hash is not read.
+-- both kinds. These are the sign-in rules of GetAPITokenByHash (tokens.sql),
+-- GetPersonalTokenByHash, GetPersonalTokenGrant and PersonalTokensAllowed
+-- (personal_tokens.sql): change them together. Columns are named, never
+-- t.*: secret_hash is not read.
 SELECT t.id, t.name, (t.revoked_at IS NOT NULL OR u.disabled_at IS NOT NULL)::boolean AS revoked, t.expires_at
 FROM api_tokens t JOIN users u ON u.id = t.user_id
 WHERE t.org_id = sqlc.arg(org_id)::uuid AND t.id = ANY(sqlc.arg(ids)::uuid[])

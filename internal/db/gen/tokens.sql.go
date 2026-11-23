@@ -73,6 +73,8 @@ type GetAPITokenByHashRow struct {
 // carries in auth.sql (Finding 2, Task 10 fix round 1): a bearer token
 // minted by a since-disabled user must stop resolving here too, not just
 // get revoked at deactivation time.
+// ListRunRequestTokens (run_requests.sql) repeats this filter to tell
+// whether a requesting token can still ask: change them together.
 func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashParams) (GetAPITokenByHashRow, error) {
 	row := q.db.QueryRow(ctx, getAPITokenByHash, arg.SecretHash, arg.Now)
 	var i GetAPITokenByHashRow

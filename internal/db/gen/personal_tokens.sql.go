@@ -189,6 +189,9 @@ type GetPersonalTokenByHashRow struct {
 // A deactivated owner's token stops resolving here too (the same backstop
 // GetAPITokenByHash carries). users.instance_admin is deliberately not read:
 // a personal token never acts as an instance administrator.
+// ListRunRequestTokens (run_requests.sql) repeats this filter, the grant
+// check and the organization's switch to tell whether a requesting token
+// can still ask: change them together.
 func (q *Queries) GetPersonalTokenByHash(ctx context.Context, arg GetPersonalTokenByHashParams) (GetPersonalTokenByHashRow, error) {
 	row := q.db.QueryRow(ctx, getPersonalTokenByHash, arg.SecretHash, arg.Now)
 	var i GetPersonalTokenByHashRow

@@ -14,6 +14,9 @@ INSERT INTO personal_token_grants (token_id, user_id, org_id, role) VALUES ($1, 
 -- A deactivated owner's token stops resolving here too (the same backstop
 -- GetAPITokenByHash carries). users.instance_admin is deliberately not read:
 -- a personal token never acts as an instance administrator.
+-- ListRunRequestTokens (run_requests.sql) repeats this filter, the grant
+-- check and the organization's switch to tell whether a requesting token
+-- can still ask: change them together.
 SELECT t.id, t.user_id, t.name, t.kind, t.areas, t.expires_at, t.last_used_at, t.created_at
 FROM personal_tokens t JOIN users u ON u.id = t.user_id
 WHERE t.secret_hash = $1 AND t.revoked_at IS NULL

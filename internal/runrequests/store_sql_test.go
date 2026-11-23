@@ -265,3 +265,66 @@ func TestSQLStoreReadsTheRequestingTokens(t *testing.T) {
 		t.Fatalf("no ids = %+v %v", got, err)
 	}
 }
+
+// TestSQLStoreTokenRulesFollowTheOwner: the rules that stop a token at
+// sign-in also stop it here (GetAPITokenByHash, GetPersonalTokenByHash,
+// GetPersonalTokenGrant): a deactivated owner stops both kinds, and an
+// admin's block of any one grant of the owner stops every personal token
+// of theirs in the organization, even one whose own grant is not blocked.
+func TestSQLStoreTokenRulesFollowTheOwner(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-owner")
+	store := runrequests.NewSQLStore(d)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := d.Pool().Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := func() uuid.UUID { return uuid.Must(uuid.NewV7()) }
+	member := func(email string) uuid.UUID {
+		u := id()
+		exec(`INSERT INTO users (id, email, display_name) VALUES ($1, $2, 'x')`, u, email)
+		exec(`INSERT INTO org_memberships (org_id, user_id, role) VALUES ($1, $2, 'operator')`, f.org, u)
+		return u
+	}
+	personalToken := func(owner uuid.UUID, blocked bool) uuid.UUID {
+		tid := id()
+		exec(`INSERT INTO personal_tokens (id, user_id, name, secret_hash) VALUES ($1, $2, 'p', $3)`, tid, owner, tid[:])
+		exec(`INSERT INTO personal_token_grants (token_id, user_id, org_id, role, blocked_at)
+			VALUES ($1, $2, $3, 'operator', CASE WHEN $4::boolean THEN now() END)`, tid, owner, f.org, blocked)
+		return tid
+	}
+	revoked := func(name string, tid uuid.UUID) bool {
+		t.Helper()
+		got, err := store.Tokens(f.ctx, f.org, []uuid.UUID{tid})
+		rec, ok := got[tid]
+		if err != nil || !ok {
+			t.Fatalf("%s = %+v %v, want a record", name, got, err)
+		}
+		return rec.Revoked
+	}
+
+	disabled := member("runreq-owner-disabled@example.test")
+	orgTok := id()
+	exec(`INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash) VALUES ($1, $2, $3, 'o', 'operator', $4)`, orgTok, disabled, f.org, orgTok[:])
+	persTok := personalToken(disabled, false)
+	if revoked("org token of an active owner", orgTok) || revoked("personal token of an active owner", persTok) {
+		t.Fatal("an active owner's tokens read as revoked")
+	}
+	exec(`UPDATE users SET disabled_at = now() WHERE id = $1`, disabled)
+	if !revoked("org token of a deactivated owner", orgTok) || !revoked("personal token of a deactivated owner", persTok) {
+		t.Fatal("a deactivated owner's tokens still read as able to ask")
+	}
+
+	blockedOwner := member("runreq-owner-blocked@example.test")
+	open := personalToken(blockedOwner, false)
+	if revoked("personal token before the block", open) {
+		t.Fatal("an unblocked personal token reads as revoked")
+	}
+	personalToken(blockedOwner, true) // another token of the owner, blocked here
+	if !revoked("personal token of a blocked owner", open) {
+		t.Fatal("a personal token whose owner is blocked through another grant still reads as able to ask")
+	}
+}

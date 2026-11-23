@@ -13,6 +13,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF(sqlc.arg(kind)::text, ''), '
 -- carries in auth.sql (Finding 2, Task 10 fix round 1): a bearer token
 -- minted by a since-disabled user must stop resolving here too, not just
 -- get revoked at deactivation time.
+-- ListRunRequestTokens (run_requests.sql) repeats this filter to tell
+-- whether a requesting token can still ask: change them together.
 SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, t.kind, t.areas, u.instance_admin
 FROM api_tokens t JOIN users u ON u.id = t.user_id
 WHERE t.secret_hash = $1 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > sqlc.arg(now)::timestamptz) AND u.disabled_at IS NULL;

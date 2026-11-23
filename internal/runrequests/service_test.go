@@ -12,8 +12,9 @@ import (
 )
 
 type memStore struct {
-	rows   map[uuid.UUID]runrequests.Request
-	tokens map[uuid.UUID]runrequests.TokenRecord
+	rows      map[uuid.UUID]runrequests.Request
+	tokens    map[uuid.UUID]runrequests.TokenRecord
+	tokensErr error
 }
 
 func newMemStore() *memStore {
@@ -67,6 +68,9 @@ func (m *memStore) CountPending(_ context.Context, orgID uuid.UUID, token *uuid.
 }
 
 func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]runrequests.TokenRecord, error) {
+	if m.tokensErr != nil {
+		return nil, m.tokensErr
+	}
 	out := map[uuid.UUID]runrequests.TokenRecord{}
 	for _, id := range ids {
 		if rec, ok := m.tokens[id]; ok {
