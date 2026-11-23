@@ -65,8 +65,6 @@ describe('PlaybookPage Dry run tab, the form under change', () => {
       dryRoutes('operator', {
         extra: {
           'GET /api/v1/orgs/acme/job-templates': () => ({ templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: null, host_ids: ids } })] }),
-          'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-01' } },
-          'GET /api/v1/orgs/acme/hosts/h2': { host: { id: 'h2', name: 'web-02' } },
           'POST /api/v1/orgs/acme/playbooks/p1/dry-run': (req: MockRequest) => (sent.push(req.body), { jobs: [job('d1')] }),
         },
       }).routes,

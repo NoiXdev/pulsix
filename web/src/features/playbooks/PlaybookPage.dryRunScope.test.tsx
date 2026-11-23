@@ -60,7 +60,7 @@ describe('PlaybookPage Dry run tab, the hosts offered', () => {
       dryRoutes('operator', {
         extra: {
           'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { limit: '~web.*', scope: { group_id: null, host_ids: ['h2'] } })] },
-          'GET /api/v1/orgs/acme/hosts/h2': { host: { id: 'h2', name: 'db-02' } },
+          'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h2', name: 'db-02' }], next_cursor: '' },
         },
       }).routes,
     );
@@ -75,7 +75,7 @@ describe('PlaybookPage Dry run tab, the hosts offered', () => {
       dryRoutes('operator', {
         extra: {
           'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { limit: 'web-*', scope: { group_id: null, host_ids: ['h1'] } })] },
-          'GET /api/v1/orgs/acme/hosts/h1': () => named,
+          'GET /api/v1/orgs/acme/hosts': () => named,
         },
       }).routes,
     );
@@ -83,19 +83,22 @@ describe('PlaybookPage Dry run tab, the hosts offered', () => {
     const f = await form();
     expect(await within(f).findByText("Reading the template's hosts…")).toBeInTheDocument();
     expect(within(f).queryByText("The template's scope holds no hosts.")).not.toBeInTheDocument();
-    answer({ host: { id: 'h1', name: 'web-01' } });
+    answer({ hosts: [{ id: 'h1', name: 'web-01' }], next_cursor: '' });
     expect(await within(f).findByRole('checkbox', { name: 'web-01' })).toBeInTheDocument();
     expect(within(f).queryByText("The template's scope holds no hosts.")).not.toBeInTheDocument();
   });
 
-  it('names explicit hosts with a bounded number of requests at once', async () => {
+  it('names explicit hosts with one request', async () => {
     const ids = Array.from({ length: 12 }, (_, i) => `h${i + 1}`);
-    const names = tracked((id) => ({ host: { id, name: `web-${id.slice(1).padStart(2, '0')}` } }));
+    const asked: URLSearchParams[] = [];
     mockApi(
       dryRoutes('operator', {
         extra: {
           'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: null, host_ids: ids } })] },
-          ...Object.fromEntries(ids.map((id) => [`GET /api/v1/orgs/acme/hosts/${id}`, names.route])),
+          'GET /api/v1/orgs/acme/hosts': (req: { search: URLSearchParams }) => {
+            asked.push(req.search);
+            return { hosts: req.search.getAll('id').map((id) => ({ id, name: `web-${id.slice(1).padStart(2, '0')}` })), next_cursor: '' };
+          },
         },
       }).routes,
     );
@@ -103,8 +106,8 @@ describe('PlaybookPage Dry run tab, the hosts offered', () => {
     const f = await form();
     await within(f).findByRole('checkbox', { name: 'web-12' });
     expect(within(f).getAllByRole('checkbox', { name: /^web-/ })).toHaveLength(12);
-    expect(names.stats.calls).toBe(12);
-    expect(names.stats.peak).toBeLessThanOrEqual(4);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].getAll('id')).toEqual(ids);
   });
 
   it("reads a template group's subgroups with a bounded number of requests at once", async () => {

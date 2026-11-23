@@ -150,6 +150,10 @@ type ListFilter struct {
 	// run queued, claimed, running or cancelling, false those with none,
 	// nil both.
 	ActiveRuns *bool
+	// IDs, if non-empty, keeps only the hosts with these ids (those that
+	// exist in the organization; unknown ids are simply absent). At most
+	// MaxListIDs.
+	IDs []uuid.UUID
 }
 
 // Store is the persistence contract for zones and hosts. Every method that
@@ -321,6 +325,9 @@ type Store interface {
 const (
 	DefaultListLimit = 20
 	MaxListLimit     = 100
+	// MaxListIDs bounds ListFilter.IDs and, with ids named, is the page
+	// size of ListHosts: such a list is a read of exactly those hosts.
+	MaxListIDs = 500
 )
 
 func clampLimit(limit int) int {
@@ -575,6 +582,13 @@ func (s *Service) SetCapabilities(ctx context.Context, orgID, id uuid.UUID, mana
 // limit is clamped by clampLimit exactly like audit.Recorder.List clamps
 // its own limit.
 func (s *Service) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, cursor string, limit int) ([]Host, string, error) {
+	if len(f.IDs) > MaxListIDs {
+		return nil, "", fmt.Errorf("%w: at most %d ids", ErrInvalidInput, MaxListIDs)
+	}
+	if len(f.IDs) > 0 {
+		// Named hosts are one read of exactly those: a single page.
+		return s.store.ListHosts(ctx, orgID, f, cursor, MaxListIDs)
+	}
 	return s.store.ListHosts(ctx, orgID, f, cursor, clampLimit(limit))
 }
 
@@ -591,6 +605,9 @@ const (
 // ListHostsPage returns one offset page of orgID's hosts matching f and the
 // total number of matches (see Store.ListHostsPage).
 func (s *Service) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFilter, p paging.Page) ([]Host, int, error) {
+	if len(f.IDs) > MaxListIDs {
+		return nil, 0, fmt.Errorf("%w: at most %d ids", ErrInvalidInput, MaxListIDs)
+	}
 	return s.store.ListHostsPage(ctx, orgID, f, p)
 }
 

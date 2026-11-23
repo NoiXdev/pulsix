@@ -96,19 +96,21 @@ WITH live AS MATERIALIZED (
 )
 SELECT count(*) FROM hosts h
 WHERE h.org_id = $1
-  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
-  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
-  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND ($2::uuid[] IS NULL OR h.id = ANY($2::uuid[]))
+  AND ($3::uuid IS NULL OR h.zone_id = $3::uuid)
+  AND ($4::boolean IS NULL OR h.managed = $4::boolean)
+  AND ($5::boolean IS NULL OR h.monitored = $5::boolean)
   AND (
-    $5::text IS NULL
-    OR h.name ILIKE '%' || $5::text || '%'
-    OR h.address ILIKE '%' || $5::text || '%'
+    $6::text IS NULL
+    OR h.name ILIKE '%' || $6::text || '%'
+    OR h.address ILIKE '%' || $6::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = (h.id IN (SELECT host_id FROM live)))
+  AND ($7::boolean IS NULL OR $7::boolean = (h.id IN (SELECT host_id FROM live)))
 `
 
 type CountHostsParams struct {
 	OrgID      uuid.UUID   `json:"org_id"`
+	Ids        []uuid.UUID `json:"ids"`
 	ZoneID     pgtype.UUID `json:"zone_id"`
 	Managed    *bool       `json:"managed"`
 	Monitored  *bool       `json:"monitored"`
@@ -120,6 +122,7 @@ type CountHostsParams struct {
 func (q *Queries) CountHosts(ctx context.Context, arg CountHostsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countHosts,
 		arg.OrgID,
+		arg.Ids,
 		arg.ZoneID,
 		arg.Managed,
 		arg.Monitored,
@@ -421,25 +424,27 @@ WITH live AS MATERIALIZED (
 )
 SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
 WHERE h.org_id = $1
-  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
-  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
-  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
-  AND (
-    $5::text IS NULL
-    OR h.name ILIKE '%' || $5::text || '%'
-    OR h.address ILIKE '%' || $5::text || '%'
-  )
+  AND ($2::uuid[] IS NULL OR h.id = ANY($2::uuid[]))
+  AND ($3::uuid IS NULL OR h.zone_id = $3::uuid)
+  AND ($4::boolean IS NULL OR h.managed = $4::boolean)
+  AND ($5::boolean IS NULL OR h.monitored = $5::boolean)
   AND (
     $6::text IS NULL
-    OR (h.name, h.id) > ($6::text, $7::uuid)
+    OR h.name ILIKE '%' || $6::text || '%'
+    OR h.address ILIKE '%' || $6::text || '%'
   )
-  AND ($8::boolean IS NULL OR $8::boolean = (h.id IN (SELECT host_id FROM live)))
+  AND (
+    $7::text IS NULL
+    OR (h.name, h.id) > ($7::text, $8::uuid)
+  )
+  AND ($9::boolean IS NULL OR $9::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
-LIMIT $9
+LIMIT $10
 `
 
 type ListHostsParams struct {
 	OrgID      uuid.UUID   `json:"org_id"`
+	Ids        []uuid.UUID `json:"ids"`
 	ZoneID     pgtype.UUID `json:"zone_id"`
 	Managed    *bool       `json:"managed"`
 	Monitored  *bool       `json:"monitored"`
@@ -464,6 +469,7 @@ type ListHostsParams struct {
 func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHosts,
 		arg.OrgID,
+		arg.Ids,
 		arg.ZoneID,
 		arg.Managed,
 		arg.Monitored,
@@ -566,21 +572,23 @@ WITH live AS MATERIALIZED (
 )
 SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision, h.kind FROM hosts h
 WHERE h.org_id = $1
-  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
-  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
-  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND ($2::uuid[] IS NULL OR h.id = ANY($2::uuid[]))
+  AND ($3::uuid IS NULL OR h.zone_id = $3::uuid)
+  AND ($4::boolean IS NULL OR h.managed = $4::boolean)
+  AND ($5::boolean IS NULL OR h.monitored = $5::boolean)
   AND (
-    $5::text IS NULL
-    OR h.name ILIKE '%' || $5::text || '%'
-    OR h.address ILIKE '%' || $5::text || '%'
+    $6::text IS NULL
+    OR h.name ILIKE '%' || $6::text || '%'
+    OR h.address ILIKE '%' || $6::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = (h.id IN (SELECT host_id FROM live)))
+  AND ($7::boolean IS NULL OR $7::boolean = (h.id IN (SELECT host_id FROM live)))
 ORDER BY h.name ASC, h.id ASC
-OFFSET $7 LIMIT $8
+OFFSET $8 LIMIT $9
 `
 
 type ListHostsPageParams struct {
 	OrgID      uuid.UUID   `json:"org_id"`
+	Ids        []uuid.UUID `json:"ids"`
 	ZoneID     pgtype.UUID `json:"zone_id"`
 	Managed    *bool       `json:"managed"`
 	Monitored  *bool       `json:"monitored"`
@@ -597,6 +605,7 @@ type ListHostsPageParams struct {
 func (q *Queries) ListHostsPage(ctx context.Context, arg ListHostsPageParams) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHostsPage,
 		arg.OrgID,
+		arg.Ids,
 		arg.ZoneID,
 		arg.Managed,
 		arg.Monitored,
@@ -651,34 +660,36 @@ SELECT h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.f
 JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
 LEFT JOIN live ON live.host_id = h.id
 WHERE h.org_id = $1
-  AND ($2::uuid IS NULL OR h.zone_id = $2::uuid)
-  AND ($3::boolean IS NULL OR h.managed = $3::boolean)
-  AND ($4::boolean IS NULL OR h.monitored = $4::boolean)
+  AND ($2::uuid[] IS NULL OR h.id = ANY($2::uuid[]))
+  AND ($3::uuid IS NULL OR h.zone_id = $3::uuid)
+  AND ($4::boolean IS NULL OR h.managed = $4::boolean)
+  AND ($5::boolean IS NULL OR h.monitored = $5::boolean)
   AND (
-    $5::text IS NULL
-    OR h.name ILIKE '%' || $5::text || '%'
-    OR h.address ILIKE '%' || $5::text || '%'
+    $6::text IS NULL
+    OR h.name ILIKE '%' || $6::text || '%'
+    OR h.address ILIKE '%' || $6::text || '%'
   )
-  AND ($6::boolean IS NULL OR $6::boolean = (COALESCE(live.n, 0) > 0))
+  AND ($7::boolean IS NULL OR $7::boolean = (COALESCE(live.n, 0) > 0))
 ORDER BY
-  (CASE WHEN $7::text = 'name' AND NOT $8::boolean THEN h.name END) ASC,
-  (CASE WHEN $7::text = 'name' AND $8::boolean THEN h.name END) DESC,
-  (CASE WHEN $7::text = 'zone' AND NOT $8::boolean THEN z.name END) ASC,
-  (CASE WHEN $7::text = 'zone' AND $8::boolean THEN z.name END) DESC,
-  (CASE WHEN $7::text = 'managed' AND NOT $8::boolean THEN h.managed::int END) ASC,
-  (CASE WHEN $7::text = 'managed' AND $8::boolean THEN h.managed::int END) DESC,
-  (CASE WHEN $7::text = 'monitored' AND NOT $8::boolean THEN h.monitored::int END) ASC,
-  (CASE WHEN $7::text = 'monitored' AND $8::boolean THEN h.monitored::int END) DESC,
-  (CASE WHEN $7::text = 'last_seen' AND NOT $8::boolean THEN h.last_seen_at END) ASC NULLS LAST,
-  (CASE WHEN $7::text = 'last_seen' AND $8::boolean THEN h.last_seen_at END) DESC NULLS LAST,
-  (CASE WHEN $7::text = 'active_runs' AND NOT $8::boolean THEN COALESCE(live.n, 0) END) ASC,
-  (CASE WHEN $7::text = 'active_runs' AND $8::boolean THEN COALESCE(live.n, 0) END) DESC,
+  (CASE WHEN $8::text = 'name' AND NOT $9::boolean THEN h.name END) ASC,
+  (CASE WHEN $8::text = 'name' AND $9::boolean THEN h.name END) DESC,
+  (CASE WHEN $8::text = 'zone' AND NOT $9::boolean THEN z.name END) ASC,
+  (CASE WHEN $8::text = 'zone' AND $9::boolean THEN z.name END) DESC,
+  (CASE WHEN $8::text = 'managed' AND NOT $9::boolean THEN h.managed::int END) ASC,
+  (CASE WHEN $8::text = 'managed' AND $9::boolean THEN h.managed::int END) DESC,
+  (CASE WHEN $8::text = 'monitored' AND NOT $9::boolean THEN h.monitored::int END) ASC,
+  (CASE WHEN $8::text = 'monitored' AND $9::boolean THEN h.monitored::int END) DESC,
+  (CASE WHEN $8::text = 'last_seen' AND NOT $9::boolean THEN h.last_seen_at END) ASC NULLS LAST,
+  (CASE WHEN $8::text = 'last_seen' AND $9::boolean THEN h.last_seen_at END) DESC NULLS LAST,
+  (CASE WHEN $8::text = 'active_runs' AND NOT $9::boolean THEN COALESCE(live.n, 0) END) ASC,
+  (CASE WHEN $8::text = 'active_runs' AND $9::boolean THEN COALESCE(live.n, 0) END) DESC,
   h.name ASC, h.id ASC
-OFFSET $9 LIMIT $10
+OFFSET $10 LIMIT $11
 `
 
 type ListHostsPageSortedParams struct {
 	OrgID      uuid.UUID   `json:"org_id"`
+	Ids        []uuid.UUID `json:"ids"`
 	ZoneID     pgtype.UUID `json:"zone_id"`
 	Managed    *bool       `json:"managed"`
 	Monitored  *bool       `json:"monitored"`
@@ -697,6 +708,7 @@ type ListHostsPageSortedParams struct {
 func (q *Queries) ListHostsPageSorted(ctx context.Context, arg ListHostsPageSortedParams) ([]Host, error) {
 	rows, err := q.db.Query(ctx, listHostsPageSorted,
 		arg.OrgID,
+		arg.Ids,
 		arg.ZoneID,
 		arg.Managed,
 		arg.Monitored,

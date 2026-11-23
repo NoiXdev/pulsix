@@ -203,7 +203,6 @@ describe('PlaybookPage Dry run tab', () => {
       dryRoutes('operator', {
         extra: {
           'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: null, host_ids: ['h2'] } })] },
-          'GET /api/v1/orgs/acme/hosts/h2': { host: { id: 'h2', name: 'web-02' } },
         },
       }).routes,
     );

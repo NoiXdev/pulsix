@@ -52,7 +52,11 @@ export function dryRoutes(role = 'operator', opts: { latest?: string | null; det
       },
       'GET /api/v1/orgs/acme/jobs/d1': opts.detailOf ?? detail('d1'),
       'GET /api/v1/orgs/acme/jobs/d1/events': { events: EVENTS },
-      'GET /api/v1/orgs/acme/hosts': HOSTS,
+      // The host list, honouring the id filter the form names hosts with.
+      'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+        const ids = req.search.getAll('id');
+        return ids.length ? { hosts: HOSTS.hosts.filter((h) => ids.includes(h.id)), next_cursor: '' } : HOSTS;
+      },
       ...opts.extra,
     }),
   };

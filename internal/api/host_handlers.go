@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -241,6 +242,11 @@ type hostListInput struct {
 	Managed   string `query:"managed"`
 	Monitored string `query:"monitored"`
 	Q         string `query:"q"`
+	// IDs reads exactly these hosts of the organization (repeat the
+	// parameter; unknown and foreign ids are absent, more than
+	// hosts.MaxListIDs is 422). In cursor mode they are all answered in one
+	// page whatever limit says, so one request reads them all.
+	IDs []string `query:"id,explode" doc:"Only these hosts; repeat the parameter, at most 500 (more is 422). Ids that name no host of the organization are absent. Without page they are all answered at once, limit ignored"`
 	// ActiveRuns keeps hosts with (true) or without (false) a live run.
 	ActiveRuns string `query:"active_runs" enum:"true,false"`
 	Cursor     string `query:"cursor"`
@@ -344,6 +350,9 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if filter.IDs, err = parseHostIDs(in.IDs); err != nil {
+			return nil, err
+		}
 		page, err := pageOf(in.PageQuery, in.Sort, in.Cursor, hosts.SortName, false)
 		if err != nil {
 			return nil, err
@@ -444,6 +453,23 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		out.Body.Host = toHostDTO(h)
 		return out, nil
 	}, withAudit("setHostCapabilities", "host"))
+}
+
+// parseHostIDs reads the repeated id parameter: a malformed id is 400 like
+// the other filters, more than hosts.MaxListIDs distinct ids is 422.
+func parseHostIDs(raw []string) ([]uuid.UUID, error) {
+	if len(raw) > hosts.MaxListIDs {
+		return nil, huma.Error422UnprocessableEntity(fmt.Sprintf("at most %d ids", hosts.MaxListIDs))
+	}
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, s := range raw {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid id")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // parseHostListFilter turns the list route's string-typed query parameters

@@ -12645,6 +12645,8 @@ export interface operations {
                 managed?: string;
                 monitored?: string;
                 q?: string;
+                /** @description Only these hosts; repeat the parameter, at most 500 (more is 422). Ids that name no host of the organization are absent. Without page they are all answered at once, limit ignored */
+                id?: string[] | null;
                 active_runs?: "true" | "false";
                 cursor?: string;
                 /** @description Page number, 1 to 1000000 (higher is 422); when set the list is offset-paged and answers total */

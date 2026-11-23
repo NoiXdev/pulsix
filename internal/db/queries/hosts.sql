@@ -112,6 +112,7 @@ WITH live AS MATERIALIZED (
 )
 SELECT h.* FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(ids)::uuid[] IS NULL OR h.id = ANY(sqlc.narg(ids)::uuid[]))
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
   AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
@@ -186,6 +187,7 @@ WITH live AS MATERIALIZED (
 )
 SELECT h.* FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(ids)::uuid[] IS NULL OR h.id = ANY(sqlc.narg(ids)::uuid[]))
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
   AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
@@ -216,6 +218,7 @@ SELECT h.* FROM hosts h
 JOIN zones z ON z.id = h.zone_id AND z.org_id = h.org_id
 LEFT JOIN live ON live.host_id = h.id
 WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(ids)::uuid[] IS NULL OR h.id = ANY(sqlc.narg(ids)::uuid[]))
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
   AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)
@@ -254,6 +257,7 @@ WITH live AS MATERIALIZED (
 )
 SELECT count(*) FROM hosts h
 WHERE h.org_id = sqlc.arg(org_id)
+  AND (sqlc.narg(ids)::uuid[] IS NULL OR h.id = ANY(sqlc.narg(ids)::uuid[]))
   AND (sqlc.narg(zone_id)::uuid IS NULL OR h.zone_id = sqlc.narg(zone_id)::uuid)
   AND (sqlc.narg(managed)::boolean IS NULL OR h.managed = sqlc.narg(managed)::boolean)
   AND (sqlc.narg(monitored)::boolean IS NULL OR h.monitored = sqlc.narg(monitored)::boolean)

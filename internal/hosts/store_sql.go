@@ -155,7 +155,7 @@ func (s *SQLStore) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter,
 	}
 	rows, err := s.q.ListHosts(ctx, gen.ListHostsParams{
 		OrgID: orgID, ZoneID: uuidPtrToPg(f.ZoneID), Managed: f.Managed, Monitored: f.Monitored,
-		Query: nilIfEmpty(f.Query), ActiveRuns: f.ActiveRuns,
+		Query: nilIfEmpty(f.Query), ActiveRuns: f.ActiveRuns, Ids: nilIfNoIDs(f.IDs),
 		CursorName: cursorNameToPg(cursor, cursorName), CursorID: cursorIDToPg(cursor, cursorID),
 		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.ListHosts before it ever reaches here
 	})
@@ -187,18 +187,18 @@ func (s *SQLStore) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFil
 	default:
 		return nil, 0, fmt.Errorf("%w: unknown sort key %q", ErrInvalidInput, p.Sort)
 	}
-	zone, query := uuidPtrToPg(f.ZoneID), nilIfEmpty(f.Query)
+	zone, query, ids := uuidPtrToPg(f.ZoneID), nilIfEmpty(f.Query), nilIfNoIDs(f.IDs)
 	offset, limit := int32(p.Offset()), int32(p.Size) //nolint:gosec // paging.Page.Offset is capped at paging.MaxPage*100 and the size is one of paging.Sizes, so both fit an int32
 	var rows []gen.Host
 	var err error
 	if p.Sort == SortName && !p.Desc {
 		rows, err = s.q.ListHostsPage(ctx, gen.ListHostsPageParams{
-			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns, Ids: ids,
 			RowOffset: offset, RowLimit: limit,
 		})
 	} else {
 		rows, err = s.q.ListHostsPageSorted(ctx, gen.ListHostsPageSortedParams{
-			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+			OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns, Ids: ids,
 			SortKey: p.Sort, SortDesc: p.Desc, RowOffset: offset, RowLimit: limit,
 		})
 	}
@@ -206,7 +206,7 @@ func (s *SQLStore) ListHostsPage(ctx context.Context, orgID uuid.UUID, f ListFil
 		return nil, 0, err
 	}
 	total, err := s.q.CountHosts(ctx, gen.CountHostsParams{
-		OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns,
+		OrgID: orgID, ZoneID: zone, Managed: f.Managed, Monitored: f.Monitored, Query: query, ActiveRuns: f.ActiveRuns, Ids: ids,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -334,4 +334,13 @@ func cursorIDToPg(cursor string, id uuid.UUID) pgtype.UUID {
 		return pgtype.UUID{}
 	}
 	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+// nilIfNoIDs maps an empty id filter to nil, which the queries read as "no
+// filter" (an empty array would match nothing).
+func nilIfNoIDs(ids []uuid.UUID) []uuid.UUID {
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
 }

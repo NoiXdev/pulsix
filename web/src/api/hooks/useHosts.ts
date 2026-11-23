@@ -1,6 +1,5 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
-import { mapPool } from '../../lib/pool.ts';
 import type { HostInput } from '../types.ts';
 import type { ServerPageQuery } from './paging.ts';
 
@@ -111,34 +110,35 @@ export function useHost(org: string, id: string) {
   return useQuery({ ...hostQueryOptions(org, id), enabled: !!org && !!id });
 }
 
-/** Requests in flight at once when several hosts are named: the API has no
- * list-by-ids, so each host is one read, but never a burst. */
-const NAME_POOL = 4;
+/** Hosts named per request: the list route's id filter takes at most this many. */
+const NAME_CHUNK = 500;
 
-/** useHostNames names several hosts by id: one read per host (the cache of
- * useHost shared), at most NAME_POOL at once; an id stands in for a host
- * that could not be read. `loading` is true until the names are in: the
- * ids stand in for them until then, which a caller matching names must
- * not take for the names. */
+/** useHostNames names several hosts by id: one list request per NAME_CHUNK
+ * ids (the id filter answers them all in one page); an id stands in for a host that is not there (deleted, or not of
+ * this organization). `loading` is true until the names are in: the ids
+ * stand in for them until then, which a caller matching names must not
+ * take for the names. */
 export function useHostNames(org: string, ids: readonly string[]) {
-  const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['host-names', org, ids],
-    queryFn: ({ signal }) =>
-      mapPool(
-        ids,
-        NAME_POOL,
-        (id) =>
-          qc.fetchQuery({ ...hostQueryOptions(org, id), staleTime: 30_000 }).then(
-            (r) => r.host.name,
-            () => id,
-          ),
-        signal,
-      ),
+    queryFn: async ({ signal }) => {
+      const names = new Map<string, string>();
+      for (let i = 0; i < ids.length; i += NAME_CHUNK) {
+        const chunk = ids.slice(i, i + NAME_CHUNK);
+        const { hosts } = await unwrap(
+          api.GET('/api/v1/orgs/{org}/hosts', {
+            params: { path: { org }, query: { id: chunk } },
+            signal,
+          }),
+        );
+        for (const h of hosts ?? []) names.set(h.id, h.name);
+      }
+      return names;
+    },
     enabled: !!org && ids.length > 0,
   });
   return {
-    hosts: ids.map((id, i) => ({ id, name: query.data?.[i] ?? id })),
+    hosts: ids.map((id) => ({ id, name: query.data?.get(id) ?? id })),
     loading: query.isLoading,
   };
 }
