@@ -43,23 +43,33 @@ export function SyncWatchProvider({ children, pollMs = JOB_POLL_MS }: { children
 function WatchedSync({ org, id, pollMs, onDone }: { org: string; id: string; pollMs: number; onDone: (org: string, id: string) => void }) {
   const qc = useQueryClient();
   const done = useRef(false);
+  // Failed reads in a row; a good read starts the count over.
+  const [failures, setFailures] = useState(0);
   const query = useQuery({
     queryKey: ['sync-watch', org, id],
-    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/jobs/{id}', { params: { path: { org, id } } })),
+    queryFn: async () => {
+      try {
+        const body = await unwrap(api.GET('/api/v1/orgs/{org}/jobs/{id}', { params: { path: { org, id } } }));
+        setFailures(0);
+        return body;
+      } catch (err) {
+        setFailures((n) => n + 1);
+        throw err;
+      }
+    },
     retry: false,
     gcTime: 0,
     refetchInterval: pollMs,
   });
   const ended = isTerminal(query.data?.job.status);
-  const gone = errorStatus(query.error) === 404 || query.errorUpdateCount >= MAX_ERRORS;
+  const gone = errorStatus(query.error) === 404 || (query.isError && failures >= MAX_ERRORS);
   useEffect(() => {
     if (done.current || !(ended || gone)) return;
     done.current = true;
-    if (ended) {
-      void qc.invalidateQueries({ queryKey: ['repos', org] });
-      void qc.invalidateQueries({ queryKey: ['playbooks', org] });
-      void qc.invalidateQueries({ queryKey: ['jobs', org] });
-    }
+    // A dropped job may have finished unseen: refreshing is harmless.
+    void qc.invalidateQueries({ queryKey: ['repos', org] });
+    void qc.invalidateQueries({ queryKey: ['playbooks', org] });
+    void qc.invalidateQueries({ queryKey: ['jobs', org] });
     onDone(org, id);
   }, [ended, gone, qc, org, id, onDone]);
   return null;

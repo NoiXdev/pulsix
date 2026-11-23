@@ -44,6 +44,8 @@ const start = async () => {
 };
 const settle = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
 
+const boom = () => new Response(JSON.stringify({ status: 500, detail: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+
 describe('SyncWatchProvider', () => {
   it('invalidates repos, playbooks and jobs once when the started job turns terminal, then stops polling', async () => {
     let n = 0;
@@ -65,6 +67,32 @@ describe('SyncWatchProvider', () => {
     await waitFor(() => expect(calls.job).toBe(3));
     await settle(80);
     expect(calls.job).toBe(3);
+    expect(invalidated).toHaveLength(6);
+  });
+
+  it('keeps watching a job whose errors are scattered between good reads', async () => {
+    let n = 0;
+    const { calls, invalidated } = setup(() => (++n % 2 === 1 ? boom() : detail('running')));
+    await start();
+    await waitFor(() => expect(calls.job).toBeGreaterThanOrEqual(7));
     expect(invalidated).toHaveLength(3);
+  });
+
+  it('refreshes once anyway when it drops a job after three errors in a row', async () => {
+    const { calls, invalidated } = setup(boom);
+    await start();
+    await waitFor(() => expect(invalidated).toHaveLength(6));
+    expect([...invalidated.slice(3)].sort()).toEqual(['jobs', 'playbooks', 'repos']);
+    await settle(80);
+    expect(calls.job).toBe(3);
+    expect(invalidated).toHaveLength(6);
+  });
+
+  it('refreshes once anyway when the job is gone', async () => {
+    const { invalidated } = setup(() => new Response(JSON.stringify({ status: 404, detail: 'gone' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
+    await start();
+    await waitFor(() => expect(invalidated).toHaveLength(6));
+    await settle(80);
+    expect(invalidated).toHaveLength(6);
   });
 });
