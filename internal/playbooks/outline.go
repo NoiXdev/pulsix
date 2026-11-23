@@ -23,8 +23,9 @@ const (
 	maxOutlineTagsPerList = 64
 	maxOutlineTags        = 512
 	// maxOutlineTagsTotal bounds the tags emitted across the whole outline
-	// (every play's and entry's list together), so the JSON stays near
-	// 1 MiB at the worst case of maxOutlineText bytes per tag. Up to half of
+	// (every play's and entry's list together): at maxOutlineText bytes per
+	// tag they are about 1 MiB of JSON (the whole outline, with 256-byte
+	// names and the top-level union, stays under about 1.6 MiB). Up to half of
 	// it, entries carry their inherited tags; past that only their own,
 	// and past the whole budget none.
 	maxOutlineTagsTotal = 3840

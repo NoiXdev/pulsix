@@ -72,7 +72,7 @@ func checkRunRequest(req RunRequest) error {
 			return invalidDryRun("the draft playbook is empty")
 		}
 		if len(*ov.Playbook) > MaxDraftBytes {
-			return invalidDryRun("the draft playbook exceeds 512 KiB")
+			return invalidDryRun("the draft playbook exceeds %d KiB", MaxDraftBytes/1024)
 		}
 	}
 	if !ov.Check && (len(ov.Tags) > 0 || ov.Diff) {

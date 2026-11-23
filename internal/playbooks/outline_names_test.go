@@ -3,6 +3,7 @@ package playbooks
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -126,24 +127,21 @@ func TestOutlineTagsStringIsCutBeforeItIsScanned(t *testing.T) {
 			t.Fatal("a tag beyond the length cut was read")
 		}
 	}
-	if got := o.Plays[0].Entries[0].Tags; len(got) == 0 || got[len(got)-1] != "early" && got[0] != "early" {
+	if got := o.Plays[0].Entries[0].Tags; !slices.Contains(got, "early") {
 		t.Fatalf("tags = %v, want early kept", got)
 	}
 }
 
-// A huge list item is measured before it is split.
+// A huge list item is measured before it is split: its first part is longer
+// than the cut, so "late" is read only when the text is scanned past it.
 func TestOutlineTagsListItemIsMeasuredBeforeSplit(t *testing.T) {
-	huge := strings.Repeat("a,", maxOutlineTagsText) + "late"
+	huge := strings.Repeat("x", maxOutlineTagsText+10) + ",late"
 	o, err := Outline([]byte("- hosts: a\n  tasks:\n    - {tags: [first, \"" + huge + "\"], ping: }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !o.Truncated {
-		t.Fatal("truncated = false")
-	}
-	for _, tag := range o.Plays[0].Entries[0].Tags {
-		if tag == "late" {
-			t.Fatal("a tag beyond the length cut was read")
-		}
+	tags := o.Plays[0].Entries[0].Tags
+	if !o.Truncated || !slices.Contains(tags, "first") || slices.Contains(tags, "late") {
+		t.Fatalf("truncated = %v, tags = %v: want first kept, late (past the cut) not read", o.Truncated, tags)
 	}
 }

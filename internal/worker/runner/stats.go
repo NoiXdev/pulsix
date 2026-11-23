@@ -76,20 +76,20 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 		// failed and unreachable lists are independent, a host lands in
 		// each list its counters name.
 		if s.Failed > 0 {
-			failed = append(failed, idOf(name))
+			failed = appendOnce(failed, idOf(name))
 		}
 		if s.Unreachable > 0 {
-			unreachable = append(unreachable, idOf(name))
+			unreachable = appendOnce(unreachable, idOf(name))
 		}
 		// The ok list carries every host the recap counted, failed or not.
 		if s.Ok > 0 {
-			ok = append(ok, idOf(name))
+			ok = appendOnce(ok, idOf(name))
 		}
 		if s.Changed > 0 {
-			changed = append(changed, idOf(name))
+			changed = appendOnce(changed, idOf(name))
 		}
 		if s.Skipped > 0 {
-			skipped = append(skipped, idOf(name))
+			skipped = appendOnce(skipped, idOf(name))
 		}
 	}
 	return map[string]any{
@@ -100,4 +100,13 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 		statsSkippedHosts:     skipped,
 		statsHostCounts:       counts,
 	}
+}
+
+// appendOnce appends id unless the list already names it: two inventory
+// names can map to one host.
+func appendOnce(list []string, id string) []string {
+	if slices.Contains(list, id) {
+		return list
+	}
+	return append(list, id)
 }
