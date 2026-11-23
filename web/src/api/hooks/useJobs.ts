@@ -6,6 +6,9 @@ import type { ServerPageQuery } from './paging.ts';
 
 export const JOBS_PAGE_SIZE = 50;
 
+/** How often a live run's detail is read again. */
+export const JOB_POLL_MS = 2000;
+
 export interface JobListFilter {
   status?: string;
   kind?: string;

@@ -3,7 +3,7 @@ import { Card } from '../../ui/table.tsx';
 import { DetailLayout, Section, type SectionNavItem } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useJob, useRunLog, isTerminal } from '../../api/hooks/useJobs.ts';
+import { useJob, useRunLog, isTerminal, JOB_POLL_MS } from '../../api/hooks/useJobs.ts';
 import { may } from '../../lib/roles.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { EventLog } from './EventLog.tsx';
@@ -39,7 +39,7 @@ export function RunDetailPage() {
       // Keep polling while the run is live or a follow-up has yet to start,
       // so "Waiting" turns into "Started" without a reload.
       const waiting = (data.job?.chain?.follow_ups ?? []).some((f) => f.state === 'pending' || f.state === 'due');
-      return !isTerminal(data.job?.status) || waiting ? 2000 : false;
+      return !isTerminal(data.job?.status) || waiting ? JOB_POLL_MS : false;
     },
   });
   const log = useRunLog(org, id);

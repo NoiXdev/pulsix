@@ -4,7 +4,7 @@ import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi } from '../../test/mockApi.ts';
 import type { Host } from '../types.ts';
-import { useSetCapabilitiesOfHost, useUpdateHost } from './useHosts.ts';
+import { useDeleteHost, useSetCapabilitiesOfHost, useUpdateHost } from './useHosts.ts';
 
 const HOST = { id: 'h1', name: 'web-01', zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, revision: 3, created_at: '' } as Host;
 
@@ -25,6 +25,21 @@ describe('host writes and the host names a form read', () => {
     await act(async () => {
       await result.current.mutateAsync({ name: 'web-02', zone_id: 'z', address: '', revision: 3 });
     });
+    expect(qc.getQueryState(['host-names', 'acme', ['h1']])?.isInvalidated).toBe(true);
+  });
+});
+
+describe('useDeleteHost', () => {
+  it('invalidates the hosts and the names useHostNames cached', async () => {
+    mockApi({ 'DELETE /api/v1/orgs/acme/hosts/h1': {} });
+    const { qc, wrapper } = setup();
+    qc.setQueryData(['host-names', 'acme', ['h1']], ['web-01']);
+    qc.setQueryData(['hosts', 'acme'], { hosts: [] });
+    const { result } = renderHook(() => useDeleteHost('acme'), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync('h1');
+    });
+    expect(qc.getQueryState(['hosts', 'acme'])?.isInvalidated).toBe(true);
     expect(qc.getQueryState(['host-names', 'acme', ['h1']])?.isInvalidated).toBe(true);
   });
 });

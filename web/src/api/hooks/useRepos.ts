@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { RepoInput } from '../types.ts';
+import { useWatchSync } from './syncWatchContext.ts';
 
 function useInvalidate(org: string) {
   const qc = useQueryClient();
@@ -66,9 +67,14 @@ export function useClearRepoKey(org: string, id: string) {
  * body — { job } — so the page can point at the run view. */
 export function useSyncRepo(org: string) {
   const invalidate = useInvalidate(org);
+  const watch = useWatchSync();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/repos/{id}/sync', { params: { path: { org, id } } })),
-    onSuccess: invalidate,
+    onSuccess: (body) => {
+      invalidate();
+      // The end of the sync is noticed wherever the user is by then.
+      watch(org, body.job.id);
+    },
   });
 }
 

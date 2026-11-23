@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router.tsx';
 import { ToastProvider } from './ui/toast.tsx';
+import { SyncWatchProvider } from './api/hooks/syncWatch.tsx';
 import { I18nProvider } from './i18n/I18nProvider.tsx';
 import './styles/globals.css';
 import { applyDensityHint } from './features/lists/densityHint.ts';
@@ -31,7 +32,9 @@ createRoot(rootEl).render(
           follows the language — and switches without a reload. */}
       <I18nProvider>
         <ToastProvider>
-          <RouterProvider router={router} />
+          <SyncWatchProvider>
+            <RouterProvider router={router} />
+          </SyncWatchProvider>
         </ToastProvider>
       </I18nProvider>
     </QueryClientProvider>

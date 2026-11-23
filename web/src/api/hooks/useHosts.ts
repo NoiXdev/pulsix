@@ -242,7 +242,10 @@ export function useDeleteHost(org: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/hosts/{id}', { params: { path: { org, id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hosts', org] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['host-names', org] });
+      return qc.invalidateQueries({ queryKey: ['hosts', org] });
+    },
   });
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { codeOf, findCodeEditor } from '../../test/codeEditor.ts';
@@ -29,6 +29,10 @@ const repoRoutes = (body: unknown, extra = {}) =>
 const note = () => screen.findByRole('note', { name: 'Edited in its repository' });
 
 describe('PlaybookPage repository text', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('shows the text of the last sync read-only, with the sync line and no Save', async () => {
     mockApi(repoRoutes(content()));
     renderAt('/o/acme/playbooks/p2');
@@ -183,9 +187,12 @@ describe('PlaybookPage repository text', () => {
 
   it('says when the text could not be read', async () => {
     mockApi(repoRoutes(problem(500, 'boom')));
+    // The retries' backoff (half a second, then a second) runs on a clock
+    // the test moves, not in real time.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     renderAt('/o/acme/playbooks/p2');
-    // After the two retries of a 5xx.
-    expect(await within(await note()).findByText('The text could not be read: boom', {}, { timeout: 4000 })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await within(await note()).findByText('The text could not be read: boom')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline: the text of the last sync could not be read.')).toBeInTheDocument();
   });
 
