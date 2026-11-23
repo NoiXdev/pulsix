@@ -55,17 +55,27 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error
 	for i, r := range rows {
 		out[i] = Playbook{
 			ID: r.ID, OrgID: r.OrgID, RepoID: db.UUIDPtr(r.RepoID),
-			Path: r.Path, Inline: r.Inline, Source: r.Source,
+			Path: r.Path, Inline: r.Inline, Source: r.Source, Revision: r.Revision,
 			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		}
 	}
 	return out, nil
 }
 
-func (s *SQLStore) UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage) (Playbook, error) {
-	row, err := s.q.UpdatePlaybookInline(ctx, gen.UpdatePlaybookInlineParams{OrgID: orgID, ID: id, Inline: &inline, VarSource: source})
+func (s *SQLStore) UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage, expectedRevision *int64) (Playbook, error) {
+	row, err := s.q.UpdatePlaybookInline(ctx, gen.UpdatePlaybookInlineParams{
+		OrgID: orgID, ID: id, Inline: &inline, VarSource: source, ExpectedRevision: expectedRevision,
+	})
 	if err != nil {
-		return Playbook{}, mapErr(err)
+		err = mapErr(err)
+		if expectedRevision != nil && errors.Is(err, ErrNotFound) {
+			// No row matched: a stale revision when the playbook is still
+			// there as an editor playbook, otherwise it is not found.
+			if cur, getErr := s.Get(ctx, orgID, id); getErr == nil && cur.Source == SourceEditor {
+				return Playbook{}, ErrRevisionMismatch
+			}
+		}
+		return Playbook{}, err
 	}
 	return toPlaybook(row), nil
 }
@@ -139,7 +149,7 @@ func mapErr(err error) error {
 func toPlaybook(r gen.Playbook) Playbook {
 	return Playbook{
 		ID: r.ID, OrgID: r.OrgID, RepoID: db.UUIDPtr(r.RepoID),
-		Path: r.Path, Inline: r.Inline, Source: r.Source, InlineSource: r.VarSource,
+		Path: r.Path, Inline: r.Inline, Source: r.Source, Revision: r.Revision, InlineSource: r.VarSource,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

@@ -41,6 +41,9 @@ func (f *fakeStore) Create(_ context.Context, p playbooks.Playbook) (playbooks.P
 	if f.nextErr != nil {
 		return playbooks.Playbook{}, f.nextErr
 	}
+	if p.Revision == 0 {
+		p.Revision = 1
+	}
 	f.byID[p.ID] = p
 	return p, nil
 }
@@ -67,15 +70,19 @@ func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]playbooks.Playbo
 	return out, nil
 }
 
-func (f *fakeStore) UpdateInline(_ context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage) (playbooks.Playbook, error) {
+func (f *fakeStore) UpdateInline(_ context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage, expected *int64) (playbooks.Playbook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p, ok := f.byID[id]
 	if !ok || p.OrgID != orgID {
 		return playbooks.Playbook{}, playbooks.ErrNotFound
 	}
+	if expected != nil && *expected != p.Revision {
+		return playbooks.Playbook{}, playbooks.ErrRevisionMismatch
+	}
 	p.Inline = &inline
 	p.InlineSource = source
+	p.Revision++
 	f.byID[id] = p
 	return p, nil
 }
@@ -374,18 +381,22 @@ func TestUpdateEditor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Name: "deploy", Inline: "- hosts: db\n  tasks: []\n"})
+	updated, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Name: "deploy", Inline: "- hosts: db\n  tasks: []\n"}, nil)
 	if err != nil {
 		t.Fatalf("UpdateEditor: %v", err)
 	}
 	if updated.Inline == nil || *updated.Inline != "- hosts: db\n  tasks: []\n" {
 		t.Fatalf("updated = %+v", updated)
 	}
-	if _, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Inline: "hosts: all\n"}); !errors.Is(err, playbooks.ErrInvalidInput) {
+	if _, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Inline: "hosts: all\n"}, nil); !errors.Is(err, playbooks.ErrInvalidInput) {
 		t.Fatalf("invalid inline = %v", err)
 	}
-	if _, err := svc.UpdateEditor(ctx, org, uuid.Must(uuid.NewV7()), playbooks.CreateInput{Inline: validPlaybook}); !errors.Is(err, playbooks.ErrNotFound) {
+	if _, err := svc.UpdateEditor(ctx, org, uuid.Must(uuid.NewV7()), playbooks.CreateInput{Inline: validPlaybook}, nil); !errors.Is(err, playbooks.ErrNotFound) {
 		t.Fatalf("unknown playbook = %v, want ErrNotFound", err)
+	}
+	stale := int64(editor.Revision + 5)
+	if _, err := svc.UpdateEditor(ctx, org, editor.ID, playbooks.CreateInput{Inline: validPlaybook}, &stale); !errors.Is(err, playbooks.ErrRevisionMismatch) {
+		t.Fatalf("stale revision = %v, want ErrRevisionMismatch", err)
 	}
 
 	// A repo playbook is edited in its repository, not here.
@@ -395,7 +406,7 @@ func TestUpdateEditor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repoSvc.UpdateEditor(ctx, org, repoPlaybook.ID, playbooks.CreateInput{Inline: validPlaybook}); !errors.Is(err, playbooks.ErrInvalidInput) {
+	if _, err := repoSvc.UpdateEditor(ctx, org, repoPlaybook.ID, playbooks.CreateInput{Inline: validPlaybook}, nil); !errors.Is(err, playbooks.ErrInvalidInput) {
 		t.Fatalf("updating a repo playbook = %v, want ErrInvalidInput", err)
 	}
 }

@@ -17,16 +17,19 @@ SELECT * FROM playbooks WHERE org_id = $1 AND id = $2;
 -- name: ListPlaybooks :many
 -- Every column but var_source (backlog 7.114): an editor playbook's parse
 -- result is up to 1 MiB and a list never shows it.
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at
+SELECT id, org_id, repo_id, path, inline, source, revision, created_at, updated_at
 FROM playbooks WHERE org_id = $1 ORDER BY created_at, id;
 
 -- name: UpdatePlaybookInline :one
 -- An editor playbook's inline text is its only editable field; its parse
 -- result (var_source) is replaced with it. The source guard in the WHERE
 -- clause refuses a repo playbook even if a caller skipped the service's
--- own check.
-UPDATE playbooks SET inline = @inline, var_source = @var_source, updated_at = now()
+-- own check. A non-NULL expected_revision the row has moved past finds no
+-- row either (the store tells the two apart); every update moves revision
+-- by one (backlog 3.127).
+UPDATE playbooks SET inline = @inline, var_source = @var_source, updated_at = now(), revision = revision + 1
 WHERE org_id = @org_id AND id = @id AND source = 'editor'
+  AND (sqlc.narg(expected_revision)::bigint IS NULL OR revision = sqlc.narg(expected_revision))
 RETURNING *;
 
 -- name: FindRepoPlaybook :one

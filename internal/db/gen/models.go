@@ -874,6 +874,7 @@ type Playbook struct {
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	VarSource []byte      `json:"var_source"`
+	Revision  int64       `json:"revision"`
 }
 
 type ProbeAssignment struct {

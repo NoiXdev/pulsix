@@ -28,6 +28,9 @@ var (
 	ErrNotFound     = errors.New("not found")
 	// ErrInUse means a job template still references the playbook.
 	ErrInUse = errors.New("playbook is in use")
+	// ErrRevisionMismatch means a save named a revision the playbook has
+	// moved past (backlog 3.127).
+	ErrRevisionMismatch = errors.New("revision mismatch")
 )
 
 // Source tells a playbook's origin. The values are the stored ones — the
@@ -55,6 +58,9 @@ type Playbook struct {
 	Path   *string
 	Inline *string
 	Source string
+	// Revision starts at 1 and moves with every saved text; a save may
+	// name the revision it is based on (UpdateEditor).
+	Revision int64
 	// InlineSource is an editor playbook's stored variable sources, the
 	// encoded varsource.ParseInline result of Inline (backlog 7.75). It is
 	// nil for a repo playbook, for an editor playbook saved before it
@@ -117,7 +123,7 @@ type Store interface {
 	// UpdateInline replaces the inline text of an editor playbook and its
 	// stored variable sources (nil stores none). A repo playbook's stored
 	// text lives in its git repository and has no inline column to update.
-	UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage) (Playbook, error)
+	UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage, expectedRevision *int64) (Playbook, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	// FindRepo is the oldest playbook registered for the repository path.
 	FindRepo(ctx context.Context, orgID, repoID uuid.UUID, path string) (Playbook, error)
@@ -229,8 +235,10 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error)
 // stored variable sources. A repo playbook is edited in its repository,
 // not here — ErrInvalidInput. Once saved, the InlineApplier (if set)
 // brings the new sources to the templates that use the playbook; its
-// failure is logged and never fails the save.
-func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in CreateInput) (Playbook, error) {
+// failure is logged and never fails the save. A non-nil expectedRevision
+// the playbook has moved past is ErrRevisionMismatch (checked after the
+// source, so a repo playbook never answers it); nil saves unconditionally.
+func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in CreateInput, expectedRevision *int64) (Playbook, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return Playbook{}, err
@@ -241,7 +249,7 @@ func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in Crea
 	if err := ValidateYAML(in.Inline); err != nil {
 		return Playbook{}, err
 	}
-	p, err := s.store.UpdateInline(ctx, orgID, id, in.Inline, s.inlineSource(ctx, orgID, in.Inline))
+	p, err := s.store.UpdateInline(ctx, orgID, id, in.Inline, s.inlineSource(ctx, orgID, in.Inline), expectedRevision)
 	if err != nil {
 		return Playbook{}, err
 	}

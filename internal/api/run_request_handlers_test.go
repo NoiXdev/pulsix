@@ -215,7 +215,7 @@ func TestRunRequestApprovalBindsToWhatWasSeen(t *testing.T) {
 			updateTemplate(t, f, func(in *templates.UpdateInput) { in.CredentialID = &cred })
 		},
 		"playbook edit": func(t *testing.T, f runRequestFixture) {
-			if _, err := f.s.Deps.Playbooks.UpdateEditor(f.scoped, f.orgID, f.playbook, playbooks.CreateInput{Inline: "- name: other\n  hosts: all\n  tasks: []\n"}); err != nil {
+			if _, err := f.s.Deps.Playbooks.UpdateEditor(f.scoped, f.orgID, f.playbook, playbooks.CreateInput{Inline: "- name: other\n  hosts: all\n  tasks: []\n"}, nil); err != nil {
 				t.Fatal(err)
 			}
 		},

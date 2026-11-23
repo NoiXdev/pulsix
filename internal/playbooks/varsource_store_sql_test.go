@@ -176,7 +176,7 @@ func TestEditorPlaybookVarSourceIsStored(t *testing.T) {
 		t.Fatalf("VarSource = %+v, %v", src, err)
 	}
 
-	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: validPlaybook}); err != nil {
+	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: validPlaybook}, nil); err != nil {
 		t.Fatalf("UpdateEditor: %v", err)
 	}
 	if src, err := svc.VarSource(scoped, org, p.ID); err != nil || len(src.Playbook.Fields) != 0 {
@@ -184,7 +184,7 @@ func TestEditorPlaybookVarSourceIsStored(t *testing.T) {
 	}
 
 	nul := "- hosts: all\n  vars:\n    x: \"a\\0b\"  # pulsix: X\n  tasks: []\n"
-	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: nul}); err != nil {
+	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: nul}, nil); err != nil {
 		t.Fatalf("UpdateEditor(NUL default): %v", err)
 	}
 	if raw := stored(p.ID); raw != nil {
@@ -196,7 +196,7 @@ func TestEditorPlaybookVarSourceIsStored(t *testing.T) {
 
 	// The six characters \u0000 are no NUL: stored, and read back as they are.
 	literal := "- hosts: all\n  vars:\n    x: 'a\\u0000b'  # pulsix: X\n  tasks: []\n"
-	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: literal}); err != nil {
+	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: literal}, nil); err != nil {
 		t.Fatalf("UpdateEditor(literal \\u0000): %v", err)
 	}
 	if raw := stored(p.ID); raw == nil {

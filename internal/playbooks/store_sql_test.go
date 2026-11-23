@@ -93,9 +93,22 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 		t.Fatalf("List = %v, %v", list, err)
 	}
 
-	updated, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: db\n", nil)
+	updated, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: db\n", nil, nil)
 	if err != nil || updated.Inline == nil || *updated.Inline != "- hosts: db\n" {
 		t.Fatalf("UpdateInline = %+v, %v", updated, err)
+	}
+	if got.Revision != 1 || updated.Revision != 2 {
+		t.Fatalf("revision = %d then %d, want 1 then 2", got.Revision, updated.Revision)
+	}
+	one, two := int64(1), int64(2)
+	if _, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: stale\n", nil, &one); !errors.Is(err, playbooks.ErrRevisionMismatch) {
+		t.Fatalf("stale UpdateInline = %v, want ErrRevisionMismatch", err)
+	}
+	if _, err := store.UpdateInline(scoped, org, uuid.Must(uuid.NewV7()), "- hosts: x\n", nil, &one); !errors.Is(err, playbooks.ErrNotFound) {
+		t.Fatalf("unknown UpdateInline with a revision = %v, want ErrNotFound", err)
+	}
+	if again, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: db2\n", nil, &two); err != nil || again.Revision != 3 {
+		t.Fatalf("current UpdateInline = %+v, %v", again, err)
 	}
 	if err := store.Delete(scoped, org, editor.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -166,7 +179,7 @@ func TestSQLStoreUpdateInlineRefusesRepoPlaybook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateInline(scoped, org, repoPb.ID, "- hosts: db\n", nil); !errors.Is(err, playbooks.ErrNotFound) {
+	if _, err := store.UpdateInline(scoped, org, repoPb.ID, "- hosts: db\n", nil, nil); !errors.Is(err, playbooks.ErrNotFound) {
 		t.Fatalf("UpdateInline on a repo playbook = %v, want ErrNotFound", err)
 	}
 }

@@ -16,7 +16,7 @@ import (
 const createPlaybook = `-- name: CreatePlaybook :one
 INSERT INTO playbooks (id, org_id, repo_id, path, inline, source, var_source)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
+RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source, revision
 `
 
 type CreatePlaybookParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) CreatePlaybook(ctx context.Context, arg CreatePlaybookParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VarSource,
+		&i.Revision,
 	)
 	return i, err
 }
@@ -79,7 +80,7 @@ func (q *Queries) DeletePlaybook(ctx context.Context, arg DeletePlaybookParams) 
 }
 
 const findRepoPlaybook = `-- name: FindRepoPlaybook :one
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source, revision FROM playbooks
 WHERE org_id = $1 AND repo_id = $2 AND path = $3
 ORDER BY created_at, id
 LIMIT 1
@@ -107,12 +108,13 @@ func (q *Queries) FindRepoPlaybook(ctx context.Context, arg FindRepoPlaybookPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VarSource,
+		&i.Revision,
 	)
 	return i, err
 }
 
 const getPlaybook = `-- name: GetPlaybook :one
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks WHERE org_id = $1 AND id = $2
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source, revision FROM playbooks WHERE org_id = $1 AND id = $2
 `
 
 type GetPlaybookParams struct {
@@ -136,12 +138,13 @@ func (q *Queries) GetPlaybook(ctx context.Context, arg GetPlaybookParams) (Playb
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VarSource,
+		&i.Revision,
 	)
 	return i, err
 }
 
 const listPlaybooks = `-- name: ListPlaybooks :many
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at
+SELECT id, org_id, repo_id, path, inline, source, revision, created_at, updated_at
 FROM playbooks WHERE org_id = $1 ORDER BY created_at, id
 `
 
@@ -152,6 +155,7 @@ type ListPlaybooksRow struct {
 	Path      *string     `json:"path"`
 	Inline    *string     `json:"inline"`
 	Source    string      `json:"source"`
+	Revision  int64       `json:"revision"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 }
@@ -174,6 +178,7 @@ func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]ListPla
 			&i.Path,
 			&i.Inline,
 			&i.Source,
+			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -226,28 +231,33 @@ func (q *Queries) ListRepoPlaybookPaths(ctx context.Context, arg ListRepoPlayboo
 }
 
 const updatePlaybookInline = `-- name: UpdatePlaybookInline :one
-UPDATE playbooks SET inline = $1, var_source = $2, updated_at = now()
+UPDATE playbooks SET inline = $1, var_source = $2, updated_at = now(), revision = revision + 1
 WHERE org_id = $3 AND id = $4 AND source = 'editor'
-RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
+  AND ($5::bigint IS NULL OR revision = $5)
+RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source, revision
 `
 
 type UpdatePlaybookInlineParams struct {
-	Inline    *string   `json:"inline"`
-	VarSource []byte    `json:"var_source"`
-	OrgID     uuid.UUID `json:"org_id"`
-	ID        uuid.UUID `json:"id"`
+	Inline           *string   `json:"inline"`
+	VarSource        []byte    `json:"var_source"`
+	OrgID            uuid.UUID `json:"org_id"`
+	ID               uuid.UUID `json:"id"`
+	ExpectedRevision *int64    `json:"expected_revision"`
 }
 
 // An editor playbook's inline text is its only editable field; its parse
 // result (var_source) is replaced with it. The source guard in the WHERE
 // clause refuses a repo playbook even if a caller skipped the service's
-// own check.
+// own check. A non-NULL expected_revision the row has moved past finds no
+// row either (the store tells the two apart); every update moves revision
+// by one (backlog 3.127).
 func (q *Queries) UpdatePlaybookInline(ctx context.Context, arg UpdatePlaybookInlineParams) (Playbook, error) {
 	row := q.db.QueryRow(ctx, updatePlaybookInline,
 		arg.Inline,
 		arg.VarSource,
 		arg.OrgID,
 		arg.ID,
+		arg.ExpectedRevision,
 	)
 	var i Playbook
 	err := row.Scan(
@@ -260,6 +270,7 @@ func (q *Queries) UpdatePlaybookInline(ctx context.Context, arg UpdatePlaybookIn
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.VarSource,
+		&i.Revision,
 	)
 	return i, err
 }

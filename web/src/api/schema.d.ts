@@ -7344,6 +7344,11 @@ export interface components {
             inline?: string;
             path?: string;
             repo_id?: string;
+            /**
+             * Format: int64
+             * @description The playbook's revision; send it back as If-Match (quoted, like the ETag) on a text save
+             */
+            revision: number;
             /** @enum {string} */
             source: "repo" | "editor";
             summary: string;
@@ -16310,6 +16315,7 @@ export interface operations {
             /** @description Created */
             201: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -16377,6 +16383,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -16397,7 +16404,10 @@ export interface operations {
     updatePlaybook: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The playbook's ETag; optional, a stale one answers 412 */
+                "If-Match"?: string;
+            };
             path: {
                 org: string;
                 id: string;
@@ -16413,6 +16423,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {

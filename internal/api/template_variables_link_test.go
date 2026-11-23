@@ -236,7 +236,7 @@ func TestInlinePlaybookSaveAppliesAutomaticTemplates(t *testing.T) {
 	}
 
 	if _, err := f.s.Deps.Playbooks.UpdateEditor(scoped, f.orgID, pb.ID, playbooks.CreateInput{
-		Inline: "- hosts: all\n  vars:\n    region: eu  # pulsix: Region\n    size: 3  # pulsix: Size\n  tasks: []\n"}); err != nil {
+		Inline: "- hosts: all\n  vars:\n    region: eu  # pulsix: Region\n    size: 3  # pulsix: Size\n  tasks: []\n"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var got linkedVariablesBody

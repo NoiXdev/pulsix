@@ -20,13 +20,14 @@ type playbookDTO struct {
 	Path      string    `json:"path,omitempty"`
 	Inline    string    `json:"inline,omitempty"`
 	Summary   string    `json:"summary"`
+	Revision  int64     `json:"revision" doc:"The playbook's revision; send it back as If-Match (quoted, like the ETag) on a text save"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func toPlaybookDTO(p playbooks.Playbook) playbookDTO {
 	dto := playbookDTO{
-		ID: p.ID.String(), Source: p.Source, Summary: p.Summary(),
+		ID: p.ID.String(), Source: p.Source, Summary: p.Summary(), Revision: p.Revision,
 		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 	if p.RepoID != nil {
@@ -65,6 +66,7 @@ type playbookGetInput struct {
 }
 
 type playbookDetailOutput struct {
+	ETag string `header:"ETag"`
 	Body struct {
 		Playbook playbookDTO `json:"playbook"`
 	}
@@ -85,9 +87,10 @@ type playbookCreateInput struct {
 }
 
 type playbookUpdateInput struct {
-	Org  string `path:"org"`
-	ID   string `path:"id"`
-	Body struct {
+	Org     string `path:"org"`
+	ID      string `path:"id"`
+	IfMatch string `header:"If-Match" doc:"The playbook's ETag; optional, a stale one answers 412"`
+	Body    struct {
 		Name   string `json:"name,omitempty" maxLength:"255"`
 		Inline string `json:"inline" doc:"Editor playbooks: the replacement YAML document"`
 	}
@@ -168,7 +171,11 @@ func registerPlaybookRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := deps.Playbooks.UpdateEditor(ctx, scope.OrgID, id, playbooks.CreateInput{Name: in.Body.Name, Inline: in.Body.Inline})
+		ifRevision, err := optionalIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		p, err := deps.Playbooks.UpdateEditor(ctx, scope.OrgID, id, playbooks.CreateInput{Name: in.Body.Name, Inline: in.Body.Inline}, ifRevision)
 		if err != nil {
 			return nil, mapPlaybooksErr(ctx, err)
 		}
@@ -194,7 +201,7 @@ func registerPlaybookRoutes(hapi huma.API, deps Deps) {
 }
 
 func playbookDetail(p playbooks.Playbook) *playbookDetailOutput {
-	out := &playbookDetailOutput{}
+	out := &playbookDetailOutput{ETag: revisionETag(p.Revision)}
 	out.Body.Playbook = toPlaybookDTO(p)
 	return out
 }
@@ -219,6 +226,8 @@ func mapPlaybooksErr(ctx context.Context, err error) error {
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, playbooks.ErrNotFound):
 		return huma.Error404NotFound("not found")
+	case errors.Is(err, playbooks.ErrRevisionMismatch):
+		return huma.Error412PreconditionFailed("this changed since you loaded it; reload and apply your change again")
 	case errors.Is(err, playbooks.ErrInUse):
 		return huma.Error409Conflict("the playbook is still referenced by a job template")
 	default:

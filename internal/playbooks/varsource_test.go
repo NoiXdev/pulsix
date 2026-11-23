@@ -89,7 +89,7 @@ func TestCreateEditorStoresItsVarSource(t *testing.T) {
 	if err != nil || againSrc.Rev != src.Rev {
 		t.Fatalf("same text Rev = %q, %v; want %q", againSrc.Rev, err, src.Rev)
 	}
-	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: strings.Replace(markedPlaybook, "8080", "8081", 1)}); err != nil {
+	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: strings.Replace(markedPlaybook, "8080", "8081", 1)}, nil); err != nil {
 		t.Fatal(err)
 	}
 	edited, err := svc.VarSource(ctx, org, p.ID)
@@ -161,7 +161,7 @@ func TestUpdateEditorReparsesAndApplies(t *testing.T) {
 	applier := &recordingApplier{}
 	svc.SetInlineApplier(applier)
 
-	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: markedPlaybook}); err != nil {
+	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: markedPlaybook}, nil); err != nil {
 		t.Fatalf("UpdateEditor: %v", err)
 	}
 	if len(applier.calls) != 1 || applier.calls[0] != p.ID {
@@ -174,7 +174,7 @@ func TestUpdateEditorReparsesAndApplies(t *testing.T) {
 
 	// An applier failure is logged; the save stands.
 	applier.err = errors.New("apply boom")
-	updated, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: validPlaybook})
+	updated, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: validPlaybook}, nil)
 	if err != nil {
 		t.Fatalf("UpdateEditor with a failing applier = %v, want the save to succeed", err)
 	}
@@ -189,7 +189,7 @@ func TestUpdateEditorReparsesAndApplies(t *testing.T) {
 	}
 
 	// A refused update applies nothing.
-	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: "hosts: all\n"}); !errors.Is(err, playbooks.ErrInvalidInput) {
+	if _, err := svc.UpdateEditor(ctx, org, p.ID, playbooks.CreateInput{Inline: "hosts: all\n"}, nil); !errors.Is(err, playbooks.ErrInvalidInput) {
 		t.Fatalf("invalid update = %v", err)
 	}
 	if len(applier.calls) != 2 {
