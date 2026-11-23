@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { AdhocInput, JobEvent } from '../types.ts';
+import { invalidateRepoDerived } from './invalidateRepoDerived.ts';
 import type { ServerPageQuery } from './paging.ts';
 
 export const JOBS_PAGE_SIZE = 50;
@@ -158,8 +159,7 @@ export function useJob(
     const before = seen.current.id === id ? seen.current.status : undefined;
     seen.current = { id, status };
     if (kind === 'sync_repo' && before !== undefined && !isTerminal(before) && isTerminal(status)) {
-      void qc.invalidateQueries({ queryKey: ['repos', org] });
-      void qc.invalidateQueries({ queryKey: ['playbooks', org] });
+      invalidateRepoDerived(qc, org);
     }
   }, [qc, org, id, kind, status]);
   return query;

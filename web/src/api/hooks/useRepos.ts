@@ -1,16 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { RepoInput } from '../types.ts';
+import { invalidateRepoDerived } from './invalidateRepoDerived.ts';
 import { useWatchSync } from './syncWatchContext.ts';
 
 function useInvalidate(org: string) {
   const qc = useQueryClient();
-  return () => {
-    void qc.invalidateQueries({ queryKey: ['repos', org] });
-    // A sync produces playbooks; an edit can change what a sync will do.
-    void qc.invalidateQueries({ queryKey: ['playbooks', org] });
-    void qc.invalidateQueries({ queryKey: ['jobs', org] });
-  };
+  // A sync produces playbooks and variable sources; an edit can change
+  // what a sync will do.
+  return () => invalidateRepoDerived(qc, org);
 }
 
 export function useRepos(org: string) {

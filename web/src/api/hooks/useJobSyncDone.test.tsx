@@ -37,6 +37,13 @@ describe('useJob on a repository sync', () => {
     await waitFor(() => expect(contents()).toBe(2));
   });
 
+  it('refreshes the template variable sources too', async () => {
+    const { result, qc } = await setup('sync_repo', ['running', 'succeeded']);
+    qc.setQueryData(['templates', 'acme', 't1', 'variables'], { sources: [] });
+    await result.current.job.refetch();
+    await waitFor(() => expect(qc.getQueryState(['templates', 'acme', 't1', 'variables'])?.isInvalidated).toBe(true));
+  });
+
   it('does so once, not on every poll of a finished sync', async () => {
     const { result, contents } = await setup('sync_repo', ['succeeded']);
     await result.current.job.refetch();
