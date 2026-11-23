@@ -68,6 +68,26 @@ describe('PlaybookPage Dry run tab, the hosts offered', () => {
     expect(await within(await form()).findByRole('checkbox', { name: 'db-02' })).toBeInTheDocument();
   });
 
+  it('reads explicit hosts under a limit before it says the scope holds none', async () => {
+    let answer: (v: unknown) => void = () => {};
+    const named = new Promise((resolve) => (answer = resolve));
+    mockApi(
+      dryRoutes('operator', {
+        extra: {
+          'GET /api/v1/orgs/acme/job-templates': { templates: [template('t1', 'Deploy web', 'p1', { limit: 'web-*', scope: { group_id: null, host_ids: ['h1'] } })] },
+          'GET /api/v1/orgs/acme/hosts/h1': () => named,
+        },
+      }).routes,
+    );
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    expect(await within(f).findByText("Reading the template's hosts…")).toBeInTheDocument();
+    expect(within(f).queryByText("The template's scope holds no hosts.")).not.toBeInTheDocument();
+    answer({ host: { id: 'h1', name: 'web-01' } });
+    expect(await within(f).findByRole('checkbox', { name: 'web-01' })).toBeInTheDocument();
+    expect(within(f).queryByText("The template's scope holds no hosts.")).not.toBeInTheDocument();
+  });
+
   it('names explicit hosts with a bounded number of requests at once', async () => {
     const ids = Array.from({ length: 12 }, (_, i) => `h${i + 1}`);
     const names = tracked((id) => ({ host: { id, name: `web-${id.slice(1).padStart(2, '0')}` } }));

@@ -56,11 +56,15 @@ describe('UnifiedDiff', () => {
     const lines = Array.from({ length: MAX_PREPARED_LINES + 100 }, (_, i) => `+line ${i}`);
     render(<UnifiedDiff prepared={`@@ -0,0 +1,${lines.length} @@\n${lines.join('\n')}\n`} />);
     expect(rows()).toHaveLength(MAX_SHOWN_LINES);
-    await user.click(screen.getByRole('button', { name: /^Show all/ }));
-    // The cap, plus the note saying the rest is not shown.
-    expect(rows()).toHaveLength(MAX_PREPARED_LINES + 1);
-    expect(rows().at(-1)).toHaveTextContent(`Cut off: showing the first ${MAX_PREPARED_LINES} of ${MAX_PREPARED_LINES + 101} lines.`);
-  });
+    // The count is of diff lines: the note about the cut is no line of it.
+    await user.click(screen.getByRole('button', { name: `Show all ${MAX_PREPARED_LINES} lines` }));
+    // The cap, plus the note saying the rest is not shown. The rows are
+    // counted off the DOM: a role query over 20 000 of them is what made
+    // this test slow under load.
+    const all = screen.getByRole('figure', { name: 'Differences' }).querySelectorAll('li');
+    expect(all).toHaveLength(MAX_PREPARED_LINES + 1);
+    expect(all[all.length - 1]).toHaveTextContent(`Cut off: showing the first ${MAX_PREPARED_LINES} of ${MAX_PREPARED_LINES + 101} lines.`);
+  }, 15_000);
 
   it('refuses to compare a side that is too large', () => {
     render(<UnifiedDiff before={'x\n'.repeat(MAX_COMPARE_LINES + 1)} after="y\n" />);

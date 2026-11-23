@@ -14,6 +14,8 @@ type RowKind = 'header' | 'hunk' | 'context' | 'delete' | 'insert' | 'note';
 interface Row {
   kind: RowKind;
   text: string;
+  /** The note that a prepared diff was cut: no line of the diff. */
+  cut?: true;
 }
 
 export type UnifiedDiffProps =
@@ -60,7 +62,7 @@ function preparedRows(text: string, cut: (shown: number, total: number) => strin
     if (line.startsWith('\\')) return { kind: 'note', text: line };
     return { kind: 'context', text: line };
   });
-  return total > MAX_PREPARED_LINES ? [...rows, { kind: 'note', text: cut(MAX_PREPARED_LINES, total) }] : rows;
+  return total > MAX_PREPARED_LINES ? [...rows, { kind: 'note', text: cut(MAX_PREPARED_LINES, total), cut: true }] : rows;
 }
 
 /**
@@ -103,7 +105,7 @@ export function UnifiedDiff(props: UnifiedDiffProps) {
       </ol>
       {shown.length < result.length && (
         <button type="button" className="self-start text-[11px] font-medium text-primary hover:underline" onClick={() => setAll(true)}>
-          {d.showAll(result.length)}
+          {d.showAll(result.at(-1)?.cut ? result.length - 1 : result.length)}
         </button>
       )}
     </figure>

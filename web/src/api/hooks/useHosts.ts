@@ -117,7 +117,9 @@ const NAME_POOL = 4;
 
 /** useHostNames names several hosts by id: one read per host (the cache of
  * useHost shared), at most NAME_POOL at once; an id stands in for a host
- * not read (yet, or at all). */
+ * that could not be read. `loading` is true until the names are in: the
+ * ids stand in for them until then, which a caller matching names must
+ * not take for the names. */
 export function useHostNames(org: string, ids: readonly string[]) {
   const qc = useQueryClient();
   const query = useQuery({
@@ -135,7 +137,10 @@ export function useHostNames(org: string, ids: readonly string[]) {
       ),
     enabled: !!org && ids.length > 0,
   });
-  return ids.map((id, i) => ({ id, name: query.data?.[i] ?? id }));
+  return {
+    hosts: ids.map((id, i) => ({ id, name: query.data?.[i] ?? id })),
+    loading: query.isLoading,
+  };
 }
 
 export const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });

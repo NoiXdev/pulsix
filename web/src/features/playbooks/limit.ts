@@ -34,7 +34,13 @@ function globRegExp(pat: string): RegExp | null {
       return null;
     }
   }
-  return new RegExp(`^${out}$`);
+  try {
+    return new RegExp(`^${out}$`);
+  } catch {
+    // A class the RegExp refuses (a reversed range such as [9-0]) is
+    // undecidable here, never an error while the form renders.
+    return null;
+  }
 }
 
 /** limitMatcher answers whether a host name passes `limit`. */

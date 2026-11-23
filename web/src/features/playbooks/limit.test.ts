@@ -22,7 +22,7 @@ describe('limitMatcher', () => {
     expect(limitMatcher(limit)(name)).toBe(want);
   });
 
-  it.each(['~web.*', 'web-01:&db', '{a,b}', '@file', 'web 01', '[!a]b'])('keeps every host when %j cannot be decided here', (limit) => {
+  it.each(['~web.*', 'web-01:&db', '{a,b}', '@file', 'web 01', '[!a]b', 'web[9-0]', '[a-.]', 'web-*:!db[z-a]'])('keeps every host when %j cannot be decided here', (limit) => {
     expect(limitMatcher(limit)('anything')).toBe(true);
   });
 });

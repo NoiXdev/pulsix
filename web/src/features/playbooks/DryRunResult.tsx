@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { fetchJobEvents, isTerminal, useJob, useNewestJob, useRunLog } from '../../api/hooks/useJobs.ts';
+import { fetchJobEvents, isTerminal, mergeEvents, useJob, useNewestJob, useRunLog } from '../../api/hooks/useJobs.ts';
 import type { JobDetail, JobEvent } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -92,9 +92,12 @@ function ShownGroup({ org, lead }: { org: string; lead: JobDetail }) {
   const statuses = ids.map((id) => feeds[id]?.status ?? members.find((m) => m.id === id)?.status ?? lead.status);
   const status = groupStatus(statuses);
   const waiting = useQueuedLong(statuses.includes('queued'), lead.created_at);
-  const hosts = read.length > 0 ? read.reduce((n, f) => n + (f.job.hosts ?? []).length, 0) : (lead.hosts ?? []).length;
-  // A zone whose job has not been read yet has hosts that are not counted.
-  const unread = ids.length - read.length;
+  // The lead's detail is in hand before its feed reports, so its hosts count
+  // from the start; a zone whose job has not been read yet has hosts that
+  // are not counted, and is one that has not reported.
+  const reported = feeds[lead.id] ? read : [{ job: lead }, ...read];
+  const hosts = reported.reduce((n, f) => n + (f.job.hosts ?? []).length, 0);
+  const unread = ids.length - reported.length;
   const errors = [...new Set(read.map((f) => f.job.error).filter((e): e is string => !!e))];
   const facts = [fmt.relative(lead.created_at), statusLabel(status, t), lead.template?.name ?? '', unread > 0 && ids.length > 1 ? l.hostsSoFar(hosts, unread) : l.hosts(hosts), ids.length > 1 ? l.zones(ids.length) : ''].filter(Boolean);
   return (
@@ -148,16 +151,22 @@ function RunFeedReader({ org, id, stream, onRead }: { org: string; id: string; s
 
 const NO_EVENTS: readonly JobEvent[] = [];
 
-/** usePolledEvents is a job's whole log, read again every DETAIL_POLL_MS
- * while the job is live and once more after it ended. Its `status` is the
+/** usePolledEvents is a job's whole log: each read, every DETAIL_POLL_MS
+ * while the job is live and once more after it ended, asks for the events
+ * after the last one it has and merges them in. Its `status` is the
  * job's, except that an ended job still reads as running until that last
  * read is in, so the result never shows an ended run with a log that is
  * still short. Off for an empty id. */
 function usePolledEvents(org: string, id: string, jobStatus: string | undefined): { events: readonly JobEvent[]; status: string | undefined } {
   const ended = jobStatus !== undefined && isTerminal(jobStatus);
+  const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['dry-run-events', org, id],
-    queryFn: () => fetchJobEvents(org, id, 0),
+    queryFn: async () => {
+      const have = qc.getQueryData<readonly JobEvent[]>(['dry-run-events', org, id]) ?? NO_EVENTS;
+      const next = await fetchJobEvents(org, id, have.length > 0 ? have[have.length - 1].seq : 0);
+      return next.length > 0 ? mergeEvents(have, next) : have;
+    },
     enabled: !!org && !!id,
     refetchInterval: ended ? false : DETAIL_POLL_MS,
   });

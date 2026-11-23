@@ -36,7 +36,13 @@ export function useTemplateHosts(org: string, template: Template | undefined): T
   const keep = limitMatcher(template?.limit ?? '');
 
   if (!template) return { kind: 'pending' };
-  if (!groupId) return hostIds.length > 0 ? { kind: 'listed', hosts: sortByName(named.filter((h) => keep(h.name))) } : { kind: 'open' };
+  if (!groupId) {
+    if (hostIds.length === 0) return { kind: 'open' };
+    // Until the names are in, ids stand in for them: the limit would match
+    // ids, and the list would read as empty or show ids.
+    if (named.loading) return { kind: 'pending' };
+    return { kind: 'listed', hosts: sortByName(named.hosts.filter((h) => keep(h.name))) };
+  }
   if (groups.isError || members.isError) return { kind: 'open' };
   if (!groups.data || !members.members) return { kind: 'pending' };
   const byId = new Map<string, ScopeHost>();
