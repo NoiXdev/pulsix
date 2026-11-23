@@ -503,6 +503,41 @@ flag (never the draft's text) for the run view, and NULL for every other job.
 A downgrade needs the usual restore of a backup from before the
 upgrade (see Downgrading).
 
+Repository playbook texts and the playbook save conflict guard (backlog 3.127)
+add migrations 00117 and 00118 and the additive proto field
+`Job.want_playbook_texts`. Both migrations are additive catalog changes that
+rewrite nothing: 00117 adds the nullable `repo_playbook_sources.content` and
+`content_left_out` (NULL for every existing row), 00118 adds
+`playbooks.revision bigint NOT NULL DEFAULT 1` (every existing playbook starts at
+revision 1). An older release ignores the columns, since it lists the columns it
+knows.
+- **An older worker's syncs store no texts.** A new manager sets
+  `want_playbook_texts` on every sync claim; an older worker ignores it and
+  reports the variable sources without texts. The finish replaces the
+  repository's rows as before, with `content` NULL, so a repository playbook's
+  Editor tab says the last sync stored no text (`not_sent`: "the file may be
+  gone from the repository, or the sync ran on an older worker") until a sync
+  runs on an updated worker. Nothing else about the sync changes.
+- **An older manager neither moves `playbooks.revision` nor checks `If-Match`.**
+  A text saved through an older manager still running during the roll leaves the
+  revision where it was, and that manager saves over whatever is stored. While
+  one runs, a save over someone else's save is not detected: not through the
+  older manager at all, and not through a new manager when the other save went
+  through the older one. An older SPA (a tab opened before the upgrade) sends no
+  `If-Match`, which a new manager takes as an unconditional save, as it does for
+  API clients.
+- **A sync claimed through a new manager and finished through an older one keeps
+  its texts in the run.** The new manager asks for the texts on the claim; the
+  older manager that receives the worker's report does not know the stats keys
+  `playbook_texts` and `playbook_texts_left_out`, so it does not take them out:
+  up to 4 MiB of playbook texts land in that sync's `jobs.stats` and show in its
+  run view, and the repository's rows get no text. **Stop every older manager
+  instance before the new version starts** (as the 00082 note recommends); the
+  next sync through a new manager stores the texts as intended.
+
+A downgrade needs the usual restore of a backup from before the upgrade (see
+Downgrading).
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
