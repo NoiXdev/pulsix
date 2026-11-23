@@ -565,6 +565,19 @@ no migration and no proto change; what they change at the API:
   covers a playbook a limit left unread with no earlier text to keep (it read
   `not_sent` before).
 
+The loose ends of 3.131 add no migration and no proto change; what they change
+at the API:
+- **`GET /api/v1/orgs/{org}/hosts` gains a repeatable `id` filter** (additive):
+  `?id=<uuid>&id=<uuid>` lists exactly those hosts of the organization, combined
+  with the other filters. At most 500 ids (the dry run's host cap); more answer
+  422. With ids given the answer is one page of at most 500 and `limit` is
+  ignored in cursor mode. Unknown or foreign ids are simply absent.
+- **Version skew:** an older manager ignores `id` and answers its first page of
+  the whole list. The new SPA then shows names for those of the asked hosts that
+  are on that page and ids for the rest; it never shows a wrong name. A template
+  with a `limit` meanwhile drops the id stand-ins from the dry run's host choice
+  until every manager is updated (the server still decides at run time).
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
