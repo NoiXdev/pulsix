@@ -42,8 +42,12 @@ func VarsDigestKey(masterKey [32]byte) []byte {
 // membership vars, parents included, secrets revealed, and each host's
 // connection) and the template's extra vars (secrets opened). Any change
 // to a value changes it, a secret included, while the digest the browser
-// sees cannot be tested against a guessed secret without the key.
-func (r *Resolver) varsDigest(ctx context.Context, orgID, templateID uuid.UUID, targets []uuid.UUID) (string, error) {
+// sees cannot be tested against a guessed secret without the key. The
+// request id is part of the input, so the digest of one request cannot be
+// compared with another's over the same values (a guess planted on a copy
+// template); the approval and the claim guard read the same request, so
+// they still agree.
+func (r *Resolver) varsDigest(ctx context.Context, orgID, requestID, templateID uuid.UUID, targets []uuid.UUID) (string, error) {
 	if len(r.src.VarsKey) < 32 {
 		return "", ErrNoVarsKey
 	}
@@ -62,9 +66,10 @@ func (r *Resolver) varsDigest(ctx context.Context, orgID, templateID uuid.UUID, 
 		return "", fmt.Errorf("read template extra vars: %w", mapNotFound(err))
 	}
 	doc, err := json.Marshal(struct {
+		Request   string            `json:"request"`
 		Inventory *render.Inventory `json:"inventory"`
 		ExtraVars map[string]any    `json:"extra_vars"`
-	}{inv, extra})
+	}{requestID.String(), inv, extra})
 	if err != nil {
 		return "", fmt.Errorf("encode vars digest: %w", err)
 	}

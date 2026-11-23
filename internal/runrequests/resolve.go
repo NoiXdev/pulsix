@@ -221,7 +221,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 	if err := r.describeHosts(ctx, orgID, targets, &p); err != nil {
 		return Picture{}, err
 	}
-	digest, err := r.varsDigest(ctx, orgID, tmpl.ID, targets)
+	digest, err := r.varsDigest(ctx, orgID, req.ID, tmpl.ID, targets)
 	if err != nil {
 		return Picture{}, err
 	}

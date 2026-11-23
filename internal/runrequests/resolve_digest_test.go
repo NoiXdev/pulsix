@@ -156,3 +156,20 @@ func TestVarsDigestNeedsAKey(t *testing.T) {
 		t.Fatalf("picture with a short key = %v, want ErrNoVarsKey", err)
 	}
 }
+
+// TestVarsDigestIsBoundToItsRequest: the served digest carries the request
+// id in its input, so two requests over the same values cannot be compared
+// to test a planted guess, while one request's digest stays deterministic.
+func TestVarsDigestIsBoundToItsRequest(t *testing.T) {
+	w := newWorld()
+	first := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x}
+	second := first
+	second.ID = id()
+	a := w.picture(t, first).VarsDigest
+	if again := w.picture(t, first).VarsDigest; again != a {
+		t.Fatalf("one request's vars digest changed between reads: %s then %s", a, again)
+	}
+	if b := w.picture(t, second).VarsDigest; b == a {
+		t.Fatal("two requests over the same values share a vars digest")
+	}
+}
