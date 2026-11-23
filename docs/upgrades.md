@@ -530,8 +530,9 @@ knows.
   its texts in the run.** The new manager asks for the texts on the claim; the
   older manager that receives the worker's report does not know the stats keys
   `playbook_texts` and `playbook_texts_left_out`, so it does not take them out:
-  up to 4 MiB of playbook texts land in that sync's `jobs.stats` and show in its
-  run view, and the repository's rows get no text. **Stop every older manager
+  up to 4 MiB of playbook texts land in that sync's `jobs.stats` (returned with the
+  job by the API to everyone who can read runs; the run view does not show them),
+  and the repository's rows get no text. **Stop every older manager
   instance before the new version starts** (as the 00082 note recommends); the
   next sync through a new manager stores the texts as intended.
 
