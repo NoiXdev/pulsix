@@ -130,6 +130,10 @@ type fakeRepos struct {
 	// sources is each repository's stored variable sources record and
 	// playbook rows; a repository without an entry has none.
 	sources map[uuid.UUID]fakeSources
+	// texts is each repository's stored playbook texts by path; err, when
+	// set, is what PlaybookText returns.
+	texts   map[uuid.UUID]map[string]repos.StoredPlaybookText
+	textErr error
 }
 
 type fakeSources struct {
@@ -141,7 +145,18 @@ func newFakeRepos(byID map[uuid.UUID]repos.Repo) *fakeRepos {
 	if byID == nil {
 		byID = map[uuid.UUID]repos.Repo{}
 	}
-	return &fakeRepos{byID: byID, sources: map[uuid.UUID]fakeSources{}}
+	return &fakeRepos{byID: byID, sources: map[uuid.UUID]fakeSources{}, texts: map[uuid.UUID]map[string]repos.StoredPlaybookText{}}
+}
+
+func (f *fakeRepos) PlaybookText(_ context.Context, orgID, repoID uuid.UUID, path string) (repos.StoredPlaybookText, error) {
+	if f.textErr != nil {
+		return repos.StoredPlaybookText{}, f.textErr
+	}
+	t, ok := f.texts[repoID][path]
+	if !ok || f.byID[repoID].OrgID != orgID {
+		return repos.StoredPlaybookText{}, repos.ErrNotFound
+	}
+	return t, nil
 }
 
 func (f *fakeRepos) VarSources(_ context.Context, orgID, repoID uuid.UUID) (repos.SourcesRecord, []varsource.Playbook, bool, error) {

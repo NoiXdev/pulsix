@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -21,7 +22,7 @@ import (
 // The variable source methods of the general fakeStore: it keeps none.
 // sourcesStore below is the fake the variable source tests use.
 
-func (f *fakeStore) ReplaceVarSources(context.Context, uuid.UUID, uuid.UUID, repos.SourcesRecord, []varsource.Playbook) error {
+func (f *fakeStore) ReplaceVarSources(context.Context, uuid.UUID, uuid.UUID, repos.SourcesRecord, []varsource.Playbook, map[string]repos.PlaybookText) error {
 	return errors.New("fakeStore keeps no variable sources")
 }
 
@@ -45,12 +46,21 @@ func (f *fakeStore) GetPlaybookVarSource(context.Context, uuid.UUID, uuid.UUID, 
 	return repos.SourcesRecord{}, nil, repos.ErrNotFound
 }
 
+func (f *fakeStore) ListPlaybookTexts(context.Context, uuid.UUID, uuid.UUID) (map[string]repos.PlaybookText, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetPlaybookText(context.Context, uuid.UUID, uuid.UUID, string) (repos.StoredPlaybookText, error) {
+	return repos.StoredPlaybookText{}, repos.ErrNotFound
+}
+
 // sourcesStore is one repository's variable sources in memory; ops is
 // the order of its calls.
 type sourcesStore struct {
 	*fakeStore
 	record     *repos.SourcesRecord
 	playbooks  []varsource.Playbook
+	texts      map[string]repos.PlaybookText
 	replaced   int
 	marked     []time.Time
 	ops        []string
@@ -63,7 +73,7 @@ func (s *sourcesStore) LockVarSources(context.Context, uuid.UUID, uuid.UUID) err
 	return s.lockErr
 }
 
-func (s *sourcesStore) ReplaceVarSources(_ context.Context, _, _ uuid.UUID, rec repos.SourcesRecord, pbs []varsource.Playbook) error {
+func (s *sourcesStore) ReplaceVarSources(_ context.Context, _, _ uuid.UUID, rec repos.SourcesRecord, pbs []varsource.Playbook, texts map[string]repos.PlaybookText) error {
 	s.ops = append(s.ops, "replace")
 	if s.replaceErr != nil {
 		return s.replaceErr
@@ -71,6 +81,7 @@ func (s *sourcesStore) ReplaceVarSources(_ context.Context, _, _ uuid.UUID, rec 
 	s.replaced++
 	s.record = &rec
 	s.playbooks = append([]varsource.Playbook(nil), pbs...)
+	s.texts = maps.Clone(texts)
 	return nil
 }
 
@@ -90,6 +101,11 @@ func (s *sourcesStore) GetVarSources(context.Context, uuid.UUID, uuid.UUID) (rep
 func (s *sourcesStore) ListPlaybookSources(context.Context, uuid.UUID, uuid.UUID) ([]varsource.Playbook, error) {
 	s.ops = append(s.ops, "list")
 	return append([]varsource.Playbook(nil), s.playbooks...), nil
+}
+
+func (s *sourcesStore) ListPlaybookTexts(context.Context, uuid.UUID, uuid.UUID) (map[string]repos.PlaybookText, error) {
+	s.ops = append(s.ops, "texts")
+	return maps.Clone(s.texts), nil
 }
 
 // previousRead is a store holding a read of a.yml, b.yml and c.yml at
@@ -116,7 +132,7 @@ func sourcesService(store *sourcesStore, log *bytes.Buffer) *repos.Service {
 func record(t *testing.T, store *sourcesStore, at time.Time, raw json.RawMessage) (stored bool, log string) {
 	t.Helper()
 	var buf bytes.Buffer
-	stored, err := sourcesService(store, &buf).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw)
+	stored, err := sourcesService(store, &buf).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil)
 	if err != nil {
 		t.Fatalf("RecordVarSources = %v, want nil", err)
 	}
@@ -166,7 +182,7 @@ func TestRecordVarSources(t *testing.T) {
 		raw := encodeReport(t, varsource.Report{Commit: "", Incomplete: true, LeftOut: []string{"b.yml"},
 			Playbooks: []varsource.Playbook{playbookSource("a.yml")}, Notes: []varsource.Note{}})
 		record(t, store, at, raw)
-		if want := []string{"lock", "get", "list", "replace"}; !sameStrings(store.ops, want) {
+		if want := []string{"lock", "get", "list", "texts", "replace"}; !sameStrings(store.ops, want) {
 			t.Fatalf("store calls = %v, want %v", store.ops, want)
 		}
 	})
@@ -323,7 +339,7 @@ func TestRecordVarSources(t *testing.T) {
 	} {
 		t.Run("a store failure at the "+name+" is returned", func(t *testing.T) {
 			raw := encodeReport(t, varsource.Report{Commit: commitB, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{}})
-			if _, err := sourcesService(store, &bytes.Buffer{}).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw); err == nil {
+			if _, err := sourcesService(store, &bytes.Buffer{}).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil); err == nil {
 				t.Fatal("RecordVarSources = nil, want the store failure (the finish retries)")
 			}
 		})

@@ -27,6 +27,7 @@ type sourceCall struct {
 	orgID, repoID uuid.UUID
 	at            time.Time
 	raw           json.RawMessage
+	texts         json.RawMessage
 }
 
 // recordingSourceSink records every RecordVarSources call and reports a
@@ -37,13 +38,13 @@ type recordingSourceSink struct {
 	err   error
 }
 
-func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) (bool, error) {
+func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return false, s.err
 	}
-	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw})
+	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw, texts})
 	return raw != nil, nil
 }
 

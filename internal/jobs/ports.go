@@ -61,12 +61,15 @@ type SyncSink interface {
 // inside the finish transaction: the concrete implementation is
 // repos.Service.RecordVarSources. raw is the encoded report the worker
 // sent under the stats key var_sources; nil means the worker sent none (an
-// older worker). stored reports whether new sources were stored, the one
-// case the SourceApplier runs for. It returns an error only for a failure
-// a retried finish can fix; a malformed report or a repository gone
+// older worker). texts is the playbook texts the worker sent beside it
+// (backlog 3.127): the stats keys playbook_texts and
+// playbook_texts_left_out as one JSON object, nil when it sent neither.
+// stored reports whether new sources were stored, the one case the
+// SourceApplier runs for. It returns an error only for a failure a
+// retried finish can fix; a malformed report or a repository gone
 // meanwhile is its own business to log and skip.
 type SourceSink interface {
-	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) (stored bool, err error)
+	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage) (stored bool, err error)
 }
 
 // SourceApplier is the optional port called once a successful sync whose

@@ -29,6 +29,9 @@ type terminalTransition struct {
 	// (finish takes it out of the stats); nil: none was sent. Only a
 	// succeeded sync records it (recordSync).
 	varSources json.RawMessage
+	// texts is the playbook texts a sync_repo result carried beside the
+	// report (takePlaybookTexts); nil: none were sent. Recorded with it.
+	texts json.RawMessage
 	// from is the set of current statuses the transition applies to; a job
 	// in any other status is left untouched and onMiss decides the answer.
 	from []Status
@@ -148,7 +151,7 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		if err := q.cancelDependents(ctx, t.jobID, t.status); err != nil {
 			return err
 		}
-		repoID, err := q.recordSync(ctx, t.jobID, t.status, t.errText, t.varSources)
+		repoID, err := q.recordSync(ctx, t.jobID, t.status, t.errText, t.varSources, t.texts)
 		if err != nil {
 			return err
 		}

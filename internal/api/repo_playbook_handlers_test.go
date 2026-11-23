@@ -40,7 +40,7 @@ type discoveredBody struct {
 // standing in for a sync's finish.
 func seedVarSources(t *testing.T, s *apitest.Server, orgID uuid.UUID, repoID string, rec repos.SourcesRecord, pbs []varsource.Playbook) {
 	t.Helper()
-	if err := repos.NewSQLStore(s.DB).ReplaceVarSources(db.WithOrgScope(context.Background(), orgID), orgID, uuid.MustParse(repoID), rec, pbs); err != nil {
+	if err := repos.NewSQLStore(s.DB).ReplaceVarSources(db.WithOrgScope(context.Background(), orgID), orgID, uuid.MustParse(repoID), rec, pbs, nil); err != nil {
 		t.Fatal(err)
 	}
 }

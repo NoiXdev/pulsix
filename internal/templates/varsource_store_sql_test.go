@@ -165,7 +165,7 @@ func TestApplyRepoSourcesThroughTheStores(t *testing.T) {
 	if err := repos.NewSQLStore(d).ReplaceVarSources(scoped, org, repoID,
 		repos.SourcesRecord{Commit: "c2", SyncedAt: time.Now(), WorkerReads: true},
 		[]varsource.Playbook{{Path: sitePath, Fields: []schema.Field{candidate("port", schema.TypeInt, withDefault(float64(81)))},
-			Files: []varsource.FileUse{{Path: sitePath, State: varsource.FileRead}}}}); err != nil {
+			Files: []varsource.FileUse{{Path: sitePath, State: varsource.FileRead}}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 

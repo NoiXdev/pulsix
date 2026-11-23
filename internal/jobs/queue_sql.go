@@ -1433,11 +1433,12 @@ func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUI
 			"job", jobID, "worker", worker.ID, "worker_org", worker.OrgID)
 		return ErrNotClaimedByWorker
 	}
-	// A sync's variable sources report goes to the source sink, never into
-	// jobs.stats.
-	var varSources json.RawMessage
+	// A sync's variable sources report and playbook texts go to the
+	// source sink, never into jobs.stats — whatever the sync's outcome.
+	var varSources, texts json.RawMessage
 	if Kind(kind) == KindSyncRepo {
 		stats, varSources = takeVarSources(ctx, stats)
+		stats, texts = takePlaybookTexts(ctx, stats)
 	}
 	statsJSON := []byte("{}")
 	if stats != nil {
@@ -1453,7 +1454,7 @@ func (q *SQLQueue) finish(ctx context.Context, worker *WorkerRef, jobID uuid.UUI
 		boundWorker = &worker.ID
 	}
 	_, err := q.terminate(ctx, terminalTransition{
-		jobID: jobID, status: status, stats: statsJSON, errText: errText, varSources: varSources,
+		jobID: jobID, status: status, stats: statsJSON, errText: errText, varSources: varSources, texts: texts,
 		from:   []Status{StatusRunning, StatusCancelling},
 		worker: boundWorker,
 		// Nothing matched: an already terminal job is the idempotent no-op,

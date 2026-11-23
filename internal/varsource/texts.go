@@ -1,5 +1,11 @@
 package varsource
 
+import (
+	"encoding/json"
+	"strings"
+	"unicode/utf8"
+)
+
 // The playbook texts a repo sync ships beside its report (backlog 3.127):
 // a manager that asks for them (the claim's want_playbook_texts) gets each
 // reported playbook's file, path → text, under PlaybookTextsStatsKey, and
@@ -35,3 +41,28 @@ const (
 	// files the sync may read (a link out of the subpath, git's own files).
 	TextUnreadable = "unreadable"
 )
+
+// TextProblem is why text cannot be sent or stored as a playbook text, or
+// "" when it can: longer than MaxFileBytes is TextTooLarge; not valid
+// UTF-8, or holding a NUL byte, is TextNotUTF8.
+func TextProblem(text string) string {
+	if len(text) > MaxFileBytes {
+		return TextTooLarge
+	}
+	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
+		return TextNotUTF8
+	}
+	return ""
+}
+
+// EncodedTextLen is the bytes text takes in a sync result's JSON, its
+// quotes left out: what it costs against MaxPlaybookTextsBytes. The
+// encoder escapes control characters, <, >, & and U+2028/U+2029.
+func EncodedTextLen(text string) int {
+	raw, err := json.Marshal(text)
+	if err != nil {
+		// A string always encodes; count the worst case if it ever did not.
+		return 6 * len(text)
+	}
+	return len(raw) - 2
+}

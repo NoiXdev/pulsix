@@ -40,10 +40,10 @@ func (s *SQLStore) LockVarSources(ctx context.Context, orgID, repoID uuid.UUID) 
 }
 
 // ReplaceVarSources implements Store: the repository's record and its
-// playbook rows are replaced in one transaction (a savepoint inside the
-// job finish's own). ErrNotFound when the repository is gone; nothing is
+// playbook rows, each with its text (texts), are replaced in one
+// transaction (a savepoint inside the job finish's own). ErrNotFound when the repository is gone; nothing is
 // written then.
-func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook) error {
+func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook, texts map[string]PlaybookText) error {
 	leftOut, err := json.Marshal(nonNil(rec.LeftOut))
 	if err != nil {
 		return fmt.Errorf("encode left-out playbooks: %w", err)
@@ -80,8 +80,10 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 		return fmt.Errorf("delete repo playbook sources: %w", err)
 	}
 	for i, pb := range playbooks {
+		text := texts[pb.Path]
 		if err := q.InsertRepoPlaybookSource(ctx, gen.InsertRepoPlaybookSourceParams{
 			OrgID: orgID, RepoID: repoID, Path: pb.Path, Result: results[i],
+			Content: text.Content, ContentLeftOut: nullString(text.LeftOut),
 		}); err != nil {
 			return fmt.Errorf("insert repo playbook source %q: %w", pb.Path, err)
 		}

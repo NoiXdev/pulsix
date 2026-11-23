@@ -2721,6 +2721,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/playbooks/{id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org playbooks by ID content */
+        get: operations["get-api-v1-orgs-by-org-playbooks-by-id-content"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/playbooks/{id}/dry-run": {
         parameters: {
             query?: never;
@@ -7282,6 +7299,30 @@ export interface components {
         PictureVault: {
             credential: string;
             label: string;
+        };
+        PlaybookContentOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PlaybookContentOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The commit the last sync read; empty when unknown, e.g. a limit left the playbook unread and the text is from an earlier sync */
+            commit: string;
+            /** @description The playbook file's text as of the last sync; absent when the sync stored none */
+            content?: string;
+            /**
+             * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none (not_sent)
+             * @enum {string}
+             */
+            left_out?: "too_large" | "budget" | "not_utf8" | "unreadable" | "not_sent";
+            /** @description The playbook's path inside its repository */
+            path: string;
+            /**
+             * Format: date-time
+             * @description When the last sync recorded the repository
+             */
+            synced_at: string;
         };
         PlaybookCreateInputBody: {
             /**
@@ -16408,6 +16449,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-playbooks-by-id-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaybookContentOutputBody"];
                 };
             };
             /** @description Error */

@@ -212,9 +212,10 @@ type Store interface {
 	// repository is gone.
 	LockVarSources(ctx context.Context, orgID, repoID uuid.UUID) error
 	// ReplaceVarSources replaces the repository's variable sources record
-	// and its playbook rows together (sources.go); ErrNotFound when the
+	// and its playbook rows together (sources.go), each row with its
+	// entry in texts (none: no text and no reason); ErrNotFound when the
 	// repository is gone.
-	ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook) error
+	ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook, texts map[string]PlaybookText) error
 	// MarkVarSourcesUnread flags the record as not read by the last sync's
 	// worker, creating an empty one when there is none; a repository gone
 	// meanwhile is a no-op.
@@ -227,6 +228,11 @@ type Store interface {
 	// playbook path, read together: ErrNotFound without a record, a nil
 	// playbook when the record has no row for the path.
 	GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (SourcesRecord, *varsource.Playbook, error)
+	// ListPlaybookTexts is every playbook row's text, by path.
+	ListPlaybookTexts(ctx context.Context, orgID, repoID uuid.UUID) (map[string]PlaybookText, error)
+	// GetPlaybookText is one playbook path's text with its record's commit
+	// and time; ErrNotFound without a record or a row for the path.
+	GetPlaybookText(ctx context.Context, orgID, repoID uuid.UUID, path string) (StoredPlaybookText, error)
 }
 
 // Service implements the repository registry.

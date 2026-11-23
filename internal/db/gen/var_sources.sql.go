@@ -71,6 +71,45 @@ func (q *Queries) GetPlaybookVarSource(ctx context.Context, arg GetPlaybookVarSo
 	return i, err
 }
 
+const getRepoPlaybookText = `-- name: GetRepoPlaybookText :one
+SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array(p.path))::boolean AS kept,
+       p.content, p.content_left_out
+FROM repo_var_sources r
+JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id
+WHERE r.org_id = $1 AND r.repo_id = $2 AND p.path = $3
+`
+
+type GetRepoPlaybookTextParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	RepoID uuid.UUID `json:"repo_id"`
+	Path   string    `json:"path"`
+}
+
+type GetRepoPlaybookTextRow struct {
+	CommitSha      string    `json:"commit_sha"`
+	SyncedAt       time.Time `json:"synced_at"`
+	Kept           bool      `json:"kept"`
+	Content        *string   `json:"content"`
+	ContentLeftOut *string   `json:"content_left_out"`
+}
+
+// One playbook path's text with the record it belongs to, in one statement
+// (one snapshot). kept: the record's left_out names the path, so its row
+// is from an earlier read than the record's commit. No row: no sync
+// recorded the repository, or none reported the path.
+func (q *Queries) GetRepoPlaybookText(ctx context.Context, arg GetRepoPlaybookTextParams) (GetRepoPlaybookTextRow, error) {
+	row := q.db.QueryRow(ctx, getRepoPlaybookText, arg.OrgID, arg.RepoID, arg.Path)
+	var i GetRepoPlaybookTextRow
+	err := row.Scan(
+		&i.CommitSha,
+		&i.SyncedAt,
+		&i.Kept,
+		&i.Content,
+		&i.ContentLeftOut,
+	)
+	return i, err
+}
+
 const getRepoVarSources = `-- name: GetRepoVarSources :one
 SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes
 FROM repo_var_sources
@@ -106,22 +145,29 @@ func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesPa
 }
 
 const insertRepoPlaybookSource = `-- name: InsertRepoPlaybookSource :exec
-INSERT INTO repo_playbook_sources (org_id, repo_id, path, result) VALUES ($1, $2, $3, $4)
+INSERT INTO repo_playbook_sources (org_id, repo_id, path, result, content, content_left_out)
+VALUES ($1, $2, $3, $4, $5::text, $6::text)
 `
 
 type InsertRepoPlaybookSourceParams struct {
-	OrgID  uuid.UUID `json:"org_id"`
-	RepoID uuid.UUID `json:"repo_id"`
-	Path   string    `json:"path"`
-	Result []byte    `json:"result"`
+	OrgID          uuid.UUID `json:"org_id"`
+	RepoID         uuid.UUID `json:"repo_id"`
+	Path           string    `json:"path"`
+	Result         []byte    `json:"result"`
+	Content        *string   `json:"content"`
+	ContentLeftOut *string   `json:"content_left_out"`
 }
 
+// content and content_left_out: the playbook's text as the sync sent it, or
+// why it sent none (backlog 3.127); both NULL when it sent neither.
 func (q *Queries) InsertRepoPlaybookSource(ctx context.Context, arg InsertRepoPlaybookSourceParams) error {
 	_, err := q.db.Exec(ctx, insertRepoPlaybookSource,
 		arg.OrgID,
 		arg.RepoID,
 		arg.Path,
 		arg.Result,
+		arg.Content,
+		arg.ContentLeftOut,
 	)
 	return err
 }
@@ -153,6 +199,43 @@ func (q *Queries) ListRepoPlaybookSources(ctx context.Context, arg ListRepoPlayb
 	for rows.Next() {
 		var i ListRepoPlaybookSourcesRow
 		if err := rows.Scan(&i.Path, &i.Result); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRepoPlaybookTexts = `-- name: ListRepoPlaybookTexts :many
+SELECT path, content, content_left_out FROM repo_playbook_sources
+WHERE org_id = $1 AND repo_id = $2
+`
+
+type ListRepoPlaybookTextsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	RepoID uuid.UUID `json:"repo_id"`
+}
+
+type ListRepoPlaybookTextsRow struct {
+	Path           string  `json:"path"`
+	Content        *string `json:"content"`
+	ContentLeftOut *string `json:"content_left_out"`
+}
+
+// Every playbook row's text, for a sync that keeps rows of an earlier one.
+func (q *Queries) ListRepoPlaybookTexts(ctx context.Context, arg ListRepoPlaybookTextsParams) ([]ListRepoPlaybookTextsRow, error) {
+	rows, err := q.db.Query(ctx, listRepoPlaybookTexts, arg.OrgID, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepoPlaybookTextsRow
+	for rows.Next() {
+		var i ListRepoPlaybookTextsRow
+		if err := rows.Scan(&i.Path, &i.Content, &i.ContentLeftOut); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

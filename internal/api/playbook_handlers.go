@@ -100,6 +100,7 @@ type playbookUpdateInput struct {
 func registerPlaybookRoutes(hapi huma.API, deps Deps) {
 	registerPlaybookOutlineRoutes(hapi, deps)
 	registerPlaybookDryRunRoutes(hapi, deps)
+	registerPlaybookContentRoutes(hapi, deps)
 	huma.Get(hapi, "/api/v1/orgs/{org}/playbooks", func(ctx context.Context, in *playbookListInput) (*playbookListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermPlaybooksRead)
 		if err != nil {

@@ -37,7 +37,10 @@ ON CONFLICT (repo_id) DO UPDATE SET worker_reads = false;
 DELETE FROM repo_playbook_sources WHERE org_id = @org_id AND repo_id = @repo_id;
 
 -- name: InsertRepoPlaybookSource :exec
-INSERT INTO repo_playbook_sources (org_id, repo_id, path, result) VALUES (@org_id, @repo_id, @path, @result);
+-- content and content_left_out: the playbook's text as the sync sent it, or
+-- why it sent none (backlog 3.127); both NULL when it sent neither.
+INSERT INTO repo_playbook_sources (org_id, repo_id, path, result, content, content_left_out)
+VALUES (@org_id, @repo_id, @path, @result, sqlc.narg(content)::text, sqlc.narg(content_left_out)::text);
 
 -- name: GetRepoVarSources :one
 SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes
@@ -60,3 +63,19 @@ SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.no
 FROM repo_var_sources r
 LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = sqlc.arg(path)
 WHERE r.org_id = sqlc.arg(org_id) AND r.repo_id = sqlc.arg(repo_id);
+
+-- name: ListRepoPlaybookTexts :many
+-- Every playbook row's text, for a sync that keeps rows of an earlier one.
+SELECT path, content, content_left_out FROM repo_playbook_sources
+WHERE org_id = @org_id AND repo_id = @repo_id;
+
+-- name: GetRepoPlaybookText :one
+-- One playbook path's text with the record it belongs to, in one statement
+-- (one snapshot). kept: the record's left_out names the path, so its row
+-- is from an earlier read than the record's commit. No row: no sync
+-- recorded the repository, or none reported the path.
+SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array(p.path))::boolean AS kept,
+       p.content, p.content_left_out
+FROM repo_var_sources r
+JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id
+WHERE r.org_id = @org_id AND r.repo_id = @repo_id AND p.path = @path;

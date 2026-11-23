@@ -920,10 +920,12 @@ type RecoveryCode struct {
 }
 
 type RepoPlaybookSource struct {
-	OrgID  uuid.UUID `json:"org_id"`
-	RepoID uuid.UUID `json:"repo_id"`
-	Path   string    `json:"path"`
-	Result []byte    `json:"result"`
+	OrgID          uuid.UUID `json:"org_id"`
+	RepoID         uuid.UUID `json:"repo_id"`
+	Path           string    `json:"path"`
+	Result         []byte    `json:"result"`
+	Content        *string   `json:"content"`
+	ContentLeftOut *string   `json:"content_left_out"`
 }
 
 type RepoVarSource struct {

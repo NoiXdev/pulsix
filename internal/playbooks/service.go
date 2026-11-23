@@ -76,11 +76,14 @@ type CreateInput struct {
 // RepoSource is the slice of repos.Service a repo playbook needs: the
 // referenced repository must exist in the organization, and its last
 // sync's variable sources are read for the discovered playbooks and a
-// repo playbook's VarSource.
+// repo playbook's VarSource, and its stored text for RepoText.
 type RepoSource interface {
 	Get(ctx context.Context, orgID, id uuid.UUID) (repos.Repo, error)
 	VarSources(ctx context.Context, orgID, repoID uuid.UUID) (repos.SourcesRecord, []varsource.Playbook, bool, error)
 	PlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (*repos.SourcesRecord, *varsource.Playbook, error)
+	// PlaybookText is a repo playbook's text as of the last sync;
+	// repos.ErrNotFound when no sync recorded the path (RepoText).
+	PlaybookText(ctx context.Context, orgID, repoID uuid.UUID, path string) (repos.StoredPlaybookText, error)
 }
 
 // TemplateResolver is the slice of shared.Service a new repo playbook

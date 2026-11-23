@@ -10,18 +10,16 @@
 // (clonefs.go): a link out of the subpath, or a path into git's own files,
 // is unreadable and never read. A text is at most varsource.MaxFileBytes;
 // all texts together at most varsource.MaxPlaybookTextsBytes, counted as
-// the result carries them (JSON-escaped). The budget is filled in the
-// report's path order, and a later file that still fits is kept. A file
-// that is not UTF-8, or holds a NUL byte, is not text.
+// the result carries them (JSON-escaped, varsource.EncodedTextLen). The
+// budget is filled in the report's path order, and a later file that still
+// fits is kept. A file that is not UTF-8, or holds a NUL byte, is not text
+// (varsource.TextProblem).
 package worker
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"io/fs"
-	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/varsource"
 )
@@ -58,7 +56,7 @@ func readPlaybookTexts(fsys fs.FS, paths []string) (texts, leftOut map[string]st
 		}
 		text, reason := readPlaybookText(fsys, p)
 		if reason == "" {
-			if cost := encodedLen(text); cost <= budget {
+			if cost := varsource.EncodedTextLen(text); cost <= budget {
 				budget -= cost
 				texts[p] = text
 				continue
@@ -96,22 +94,9 @@ func readPlaybookText(fsys fs.FS, name string) (string, string) {
 	if err != nil {
 		return "", varsource.TextUnreadable
 	}
-	if len(data) > varsource.MaxFileBytes {
-		return "", varsource.TextTooLarge
+	text := string(data)
+	if reason := varsource.TextProblem(text); reason != "" {
+		return "", reason
 	}
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
-		return "", varsource.TextNotUTF8
-	}
-	return string(data), ""
-}
-
-// encodedLen is the bytes text takes in the result's JSON, its quotes left
-// out: the encoder escapes control characters, <, >, & and U+2028/U+2029.
-func encodedLen(text string) int {
-	raw, err := json.Marshal(text)
-	if err != nil {
-		// A string always encodes; count the worst case if it ever did not.
-		return 6 * len(text)
-	}
-	return len(raw) - 2
+	return text, ""
 }

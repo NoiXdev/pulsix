@@ -1,0 +1,76 @@
+package playbooks_test
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/varsource"
+)
+
+func TestRepoText(t *testing.T) {
+	org, repoID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	rs := newFakeRepos(map[uuid.UUID]repos.Repo{repoID: {ID: repoID, OrgID: org, Name: "infra"}})
+	svc := newService(newFakeStore(), rs)
+	at := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
+	const commit = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+	rs.texts[repoID] = map[string]repos.StoredPlaybookText{
+		"site.yml":   {Commit: commit, SyncedAt: at, PlaybookText: repos.PlaybookText{Content: strPtr(validPlaybook)}},
+		"big.yml":    {Commit: commit, SyncedAt: at, PlaybookText: repos.PlaybookText{LeftOut: varsource.TextTooLarge}},
+		"old.yml":    {Commit: commit, SyncedAt: at},
+		"capped.yml": {Commit: commit, SyncedAt: at, Kept: true, PlaybookText: repos.PlaybookText{Content: strPtr(validPlaybook)}},
+	}
+	register := func(path string) uuid.UUID {
+		t.Helper()
+		p, err := svc.CreateRepo(ctx, org, repoID, path)
+		if err != nil {
+			t.Fatalf("CreateRepo(%s): %v", path, err)
+		}
+		return p.ID
+	}
+
+	for _, tc := range []struct {
+		path    string
+		content *string
+		leftOut string
+		commit  string
+	}{
+		{"site.yml", strPtr(validPlaybook), "", commit},
+		{"big.yml", nil, varsource.TextTooLarge, commit},
+		// No text and no reason: the last sync stored none for it.
+		{"old.yml", nil, playbooks.TextNotSent, commit},
+		// Kept from an earlier read: its commit is not the record's.
+		{"capped.yml", strPtr(validPlaybook), "", ""},
+	} {
+		got, err := svc.RepoText(ctx, org, register(tc.path))
+		if err != nil {
+			t.Fatalf("RepoText(%s): %v", tc.path, err)
+		}
+		if got.Path != tc.path || got.Commit != tc.commit || !got.SyncedAt.Equal(at) || got.LeftOut != tc.leftOut ||
+			(got.Content == nil) != (tc.content == nil) || (got.Content != nil && *got.Content != *tc.content) {
+			t.Fatalf("RepoText(%s) = %+v, want content %v, left out %q, commit %q", tc.path, got, tc.content, tc.leftOut, tc.commit)
+		}
+	}
+
+	if _, err := svc.RepoText(ctx, org, register("unsynced.yml")); !errors.Is(err, playbooks.ErrNoRepoText) {
+		t.Fatalf("RepoText(no sync record) = %v, want ErrNoRepoText", err)
+	}
+	editor, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: validPlaybook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RepoText(ctx, org, editor.ID); !errors.Is(err, playbooks.ErrNotRepo) {
+		t.Fatalf("RepoText(editor playbook) = %v, want ErrNotRepo", err)
+	}
+	if _, err := svc.RepoText(ctx, uuid.Must(uuid.NewV7()), register("site.yml")); !errors.Is(err, playbooks.ErrNotFound) {
+		t.Fatalf("RepoText(another org) = %v, want ErrNotFound", err)
+	}
+	rs.textErr = errors.New("connection reset")
+	if _, err := svc.RepoText(ctx, org, register("site.yml")); err == nil || errors.Is(err, playbooks.ErrNoRepoText) {
+		t.Fatalf("RepoText(store failure) = %v, want the failure", err)
+	}
+}

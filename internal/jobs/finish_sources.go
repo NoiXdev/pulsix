@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 // varSourcesStatsKey is the sync result's stats key carrying the encoded
@@ -43,6 +45,38 @@ func takeVarSources(ctx context.Context, stats map[string]any) (map[string]any, 
 	return rest, raw
 }
 
+// takePlaybookTexts splits a sync result's playbook texts off its stats
+// (backlog 3.127): the stats without the keys varsource.PlaybookTextsStatsKey
+// and varsource.PlaybookTextsLeftOutStatsKey (a copy, the caller's map is
+// left alone), and the keys present as one JSON object, nil when the
+// worker sent neither (an older worker, or an older manager's claim). A
+// value that does not encode is passed on as JSON null, which the sink
+// takes as no texts.
+func takePlaybookTexts(ctx context.Context, stats map[string]any) (map[string]any, json.RawMessage) {
+	keys := []string{varsource.PlaybookTextsStatsKey, varsource.PlaybookTextsLeftOutStatsKey}
+	taken := map[string]any{}
+	for _, k := range keys {
+		if v, ok := stats[k]; ok {
+			taken[k] = v
+		}
+	}
+	if len(taken) == 0 {
+		return stats, nil
+	}
+	rest := make(map[string]any, len(stats))
+	for k, val := range stats {
+		if _, ok := taken[k]; !ok {
+			rest[k] = val
+		}
+	}
+	raw, err := json.Marshal(taken)
+	if err != nil {
+		slog.ErrorContext(ctx, "sync result: playbook texts do not encode", "err", err)
+		return rest, json.RawMessage("null")
+	}
+	return rest, raw
+}
+
 // recordSync hands a finished sync_repo job's outcome to the optional
 // sync sink, inside Finish's transaction (ctx carries it). A database or
 // sink failure is returned and rolls the whole finish back; a data anomaly
@@ -52,11 +86,12 @@ func takeVarSources(ctx context.Context, stats map[string]any) (map[string]any, 
 // like a successful fetch. A non-sync job records nothing.
 //
 // A succeeded sync also hands its variable sources report varSources (nil:
-// the worker sent none) to the optional source sink, after the sync sink.
+// the worker sent none) and its playbook texts (nil: none) to the
+// optional source sink, after the sync sink.
 // The returned repository id is the one whose sources the finish should
 // apply once it committed: set only when the sink reports it stored new
 // sources (uuid.Nil otherwise).
-func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Status, errText string, varSources json.RawMessage) (uuid.UUID, error) {
+func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Status, errText string, varSources, texts json.RawMessage) (uuid.UUID, error) {
 	if (q.sync == nil && q.sources == nil) || status == StatusCancelled {
 		return uuid.Nil, nil
 	}
@@ -85,7 +120,7 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 	if status != StatusSucceeded || q.sources == nil {
 		return uuid.Nil, nil
 	}
-	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources)
+	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources, texts)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("record variable sources: %w", err)
 	}
