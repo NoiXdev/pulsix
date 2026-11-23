@@ -578,8 +578,8 @@ at the API:
   with a `limit` meanwhile drops the id stand-ins from the dry run's host choice
   until every manager is updated (the server still decides at run time).
 
-The run request approval loose ends (2.120) add no migration, no table and no
-proto change; workers and agents are not affected. What they change:
+The run request approval loose ends (2.120) add no migration, no table, no
+backup change and no proto change; workers and agents are not affected. What they change:
 - **Every run request fingerprint changes.** The picture gains the ids of the
   credentials, jump hosts and the repository's git credential, and the vars
   digest is now a keyed HMAC (key derived from the master key, bound to the
@@ -595,8 +595,8 @@ proto change; workers and agents are not affected. What they change:
   409 "changed". All managers already share the master key.
 - **New route `GET /api/v1/orgs/{org}/run-requests/pending-count`** (`{count}`,
   the list's permission). A new SPA that reaches an older manager gets 404 there:
-  the navigation badge is missing until the request lands on an upgraded
-  manager. An old SPA on a new manager works fully. `?status=pending` (and
+  the navigation badge and the run request list's pending count are missing
+  until the request lands on an upgraded manager. An old SPA on a new manager works fully. `?status=pending` (and
   `expired`) are now filtered before the list's 500-row cap.
 - **API and assistant clients see new answers.** Creating a request answers
   `422` when the template's hosts under its limit match nothing or the named host
