@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -50,6 +51,9 @@ func TestIfMatch(t *testing.T) {
 	// "*" is any current representation (RFC 9110): no revision to compare.
 	if rev, err := optionalIfMatch(" * "); rev != nil || err != nil {
 		t.Fatalf("optionalIfMatch(*) = %v, %v; want no revision and no error", rev, err)
+	}
+	if _, err := requireIfMatch("*"); statusOf(err) != http.StatusPreconditionFailed || !strings.Contains(err.Error(), "concrete revision") {
+		t.Fatalf("requireIfMatch(*) = %v, want 412 naming the concrete revision", err)
 	}
 	if _, err := optionalIfMatch("junk"); statusOf(err) != http.StatusPreconditionFailed {
 		t.Fatalf("optionalIfMatch(junk) = %v", err)

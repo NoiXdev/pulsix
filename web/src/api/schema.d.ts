@@ -7286,7 +7286,7 @@ export interface components {
             /** @description True when a limit left the playbook unread in the last sync and the text is from an earlier one */
             from_earlier_sync: boolean;
             /**
-             * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)
+             * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read, or a limit left the playbook unread and no earlier text exists (unreadable), or the last sync sent none or did not report the file (not_sent)
              * @enum {string}
              */
             left_out?: "too_large" | "budget" | "not_utf8" | "unreadable" | "not_sent";

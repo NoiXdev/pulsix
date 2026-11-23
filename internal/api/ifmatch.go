@@ -10,9 +10,20 @@ import (
 // revisionETag renders an object's revision as a strong ETag: "7".
 func revisionETag(rev int64) string { return `"` + strconv.FormatInt(rev, 10) + `"` }
 
+// If-Match on revisioned routes has two behaviours. A route that requires
+// the header (requireIfMatch: inventory groups, schedules, alert routes,
+// maintenance windows) forces a read before the write, so it needs the
+// concrete revision ETag and refuses "*" with 412 saying so. A route where
+// it is optional (optionalIfMatch: templates, playbooks) takes "*" as "any
+// current revision" (RFC 9110) and saves without a comparison.
+
 // requireIfMatch reads the revision a write is based on. Missing is 428,
-// anything that is not an ETag this API issued is 412 (spec §15).
+// "*" and anything else that is not an ETag this API issued is 412
+// (spec §15).
 func requireIfMatch(header string) (int64, error) {
+	if strings.TrimSpace(header) == "*" {
+		return 0, huma.Error412PreconditionFailed("this route needs the concrete revision ETag of the version you edited; If-Match: * is not accepted here")
+	}
 	rev, ok, err := parseIfMatch(header)
 	if err != nil {
 		return 0, err

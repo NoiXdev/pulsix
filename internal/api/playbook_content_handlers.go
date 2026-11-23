@@ -18,7 +18,7 @@ type playbookContentOutput struct {
 		FromEarlierSync bool      `json:"from_earlier_sync" doc:"True when a limit left the playbook unread in the last sync and the text is from an earlier one"`
 		SyncedAt        time.Time `json:"synced_at" doc:"When the last sync recorded the repository"`
 		Content         *string   `json:"content,omitempty" doc:"The playbook file's text as of the last sync; absent when the sync stored none"`
-		LeftOut         string    `json:"left_out,omitempty" enum:"too_large,budget,not_utf8,unreadable,not_sent" doc:"Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)"`
+		LeftOut         string    `json:"left_out,omitempty" enum:"too_large,budget,not_utf8,unreadable,not_sent" doc:"Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read, or a limit left the playbook unread and no earlier text exists (unreadable), or the last sync sent none or did not report the file (not_sent)"`
 	}
 }
 

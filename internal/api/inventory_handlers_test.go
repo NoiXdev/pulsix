@@ -141,7 +141,13 @@ func TestInventoryGroupsAndConcurrency(t *testing.T) {
 	if resp := requestWithHeaders(t, f.c, http.MethodPatch, url, map[string]any{"name": "web"}, map[string]string{"If-Match": "abc"}); resp.StatusCode != http.StatusPreconditionFailed {
 		t.Fatalf("malformed If-Match: %d", resp.StatusCode)
 	}
-	resp := requestWithHeaders(t, f.c, http.MethodPatch, url, map[string]any{"name": "web", "parent_id": prod.Group.ID}, map[string]string{"If-Match": `"1"`})
+	// "*" is not malformed, but this route needs the concrete revision.
+	resp := requestWithHeaders(t, f.c, http.MethodPatch, url, map[string]any{"name": "web"}, map[string]string{"If-Match": "*"})
+	if b := mustReadBody(t, resp); resp.StatusCode != http.StatusPreconditionFailed ||
+		!strings.Contains(b, "concrete revision") || !strings.Contains(b, "not accepted") || strings.Contains(b, "must be the quoted") {
+		t.Fatalf("If-Match *: %d %s, want 412 saying a concrete revision ETag is needed and * is not accepted", resp.StatusCode, b)
+	}
+	resp = requestWithHeaders(t, f.c, http.MethodPatch, url, map[string]any{"name": "web", "parent_id": prod.Group.ID}, map[string]string{"If-Match": `"1"`})
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"2"` {
 		t.Fatalf("rename: %d %q %s", resp.StatusCode, resp.Header.Get("ETag"), mustReadBody(t, resp))
 	}
