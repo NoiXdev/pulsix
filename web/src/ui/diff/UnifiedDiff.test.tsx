@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { UnifiedDiff, MAX_SHOWN_LINES } from './UnifiedDiff.tsx';
+import { UnifiedDiff, MAX_PREPARED_LINES, MAX_SHOWN_LINES } from './UnifiedDiff.tsx';
 import { MAX_COMPARE_LINES } from './lineDiff.ts';
 
 const rows = () => within(screen.getByRole('figure', { name: 'Differences' })).getAllByRole('listitem');
@@ -49,6 +49,17 @@ describe('UnifiedDiff', () => {
     await user.click(screen.getByRole('button', { name: `Show all ${MAX_SHOWN_LINES + 51} lines` }));
     expect(rows()).toHaveLength(MAX_SHOWN_LINES + 51);
     expect(screen.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument();
+  });
+
+  it('collapses a long prepared diff too, and cuts one that is far too long even for Show all', async () => {
+    const user = userEvent.setup();
+    const lines = Array.from({ length: MAX_PREPARED_LINES + 100 }, (_, i) => `+line ${i}`);
+    render(<UnifiedDiff prepared={`@@ -0,0 +1,${lines.length} @@\n${lines.join('\n')}\n`} />);
+    expect(rows()).toHaveLength(MAX_SHOWN_LINES);
+    await user.click(screen.getByRole('button', { name: /^Show all/ }));
+    // The cap, plus the note saying the rest is not shown.
+    expect(rows()).toHaveLength(MAX_PREPARED_LINES + 1);
+    expect(rows().at(-1)).toHaveTextContent(`Cut off: showing the first ${MAX_PREPARED_LINES} of ${MAX_PREPARED_LINES + 101} lines.`);
   });
 
   it('refuses to compare a side that is too large', () => {

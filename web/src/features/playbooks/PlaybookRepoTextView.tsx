@@ -53,7 +53,7 @@ function RepoTextEditor({ org, playbook, repo, text, latest }: { org: string; pl
   const labelId = useId();
   const editor = useRef<CodeEditorHandle>(null);
   const problem = useMemo(() => validateYAMLProblem(text.content, t), [text.content, t]);
-  const { outline, invalid } = usePlaybookOutline(org, text.content, true);
+  const { outline, problem: outlineProblem } = usePlaybookOutline(org, text.content, true);
   const when = fmt.dateTime(text.syncedAt);
   return (
     <div className={EDITOR_GRID}>
@@ -80,7 +80,7 @@ function RepoTextEditor({ org, playbook, repo, text, latest }: { org: string; pl
       </div>
       <aside className="flex min-w-0 flex-col gap-4">
         <PlaybookCheckPanel problem={problem} serverError={null} ready={r.ready} hint={r.checkHint} />
-        <PlaybookOutlinePanel outline={outline} stale={invalid} onReveal={(line) => editor.current?.revealLine(line)} />
+        <PlaybookOutlinePanel outline={outline} problem={outlineProblem} onReveal={(line) => editor.current?.revealLine(line)} />
         <PlaybookVariablesPanel yaml={text.content} stored={<StoredSources org={org} playbook={playbook} />} />
         {latest}
       </aside>

@@ -114,6 +114,7 @@ export const enUi = {
     none: 'No differences.',
     noNewline: '\\ No newline at end of file',
     showAll: (n: number) => `Show all ${n} lines`,
+    cut: (shown: number, total: number) => `Cut off: showing the first ${shown} of ${total} lines.`,
     tooLarge: (n: number) => `Too large to compare: a side has more than ${n} lines.`,
   },
   jsonViewer: {

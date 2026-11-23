@@ -74,7 +74,7 @@ function PlaybookDetail({ org, playbook, role, reread }: { org: string; playbook
   const problem = playbook.source === 'editor' ? validateYAMLProblem(draft, t) : null;
   const saving = usePlaybookSave({ org, playbook, draft, revision, dirty, markSaved, reload, reread });
   const canSave = editable && dirty && problem === null && !saving.pending;
-  const { outline, invalid: outlineStale } = usePlaybookOutline(org, draft, playbook.source === 'editor');
+  const { outline, problem: outlineProblem } = usePlaybookOutline(org, draft, playbook.source === 'editor');
 
   const using = (templates.data?.templates ?? []).filter((tpl) => tpl.playbook_id === playbook.id);
 
@@ -164,13 +164,13 @@ function PlaybookDetail({ org, playbook, role, reread }: { org: string; playbook
           templates={using}
           onShowRuns={() => select('runs')}
           outline={outline}
-          outlineStale={outlineStale}
+          outlineProblem={outlineProblem}
         />
       </div>
       {tab !== 'editor' && (
         <div role="tabpanel" id={playbookPanelId(tab)} aria-labelledby={playbookTabId(tab)} className={PANEL_CLASS}>
           {tab === 'dry-run' ? (
-            <PlaybookDryRunTab org={org} playbook={playbook} role={role} templates={templates.data ? using : undefined} draft={draft} saved={saved} dirty={dirty} />
+            <PlaybookDryRunTab org={org} playbook={playbook} role={role} templates={templates.data ? using : undefined} templatesFailed={templates.isError} onRetry={() => void templates.refetch()} draft={draft} saved={saved} dirty={dirty} />
           ) : tab === 'runs' ? (
             <PlaybookRunsTab org={org} playbookId={playbook.id} templates={using} canRun={may(role, 'jobs.run')} />
           ) : (

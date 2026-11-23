@@ -53,6 +53,15 @@ describe('PlaybookPage Dry run tab notes', () => {
     expect(await within(f).findByText('Tasks that run for real could not be checked: the outline is not available.')).toBeInTheDocument();
   });
 
+  it('says the text does not parse when the outline answers 422, not that the outline is unavailable', async () => {
+    const bad = () => new Response(JSON.stringify({ status: 422, detail: 'malformed YAML' }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+    mockApi(dryRoutes('operator', { extra: { 'POST /api/v1/orgs/acme/playbooks/outline': bad } }).routes);
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    expect(await within(f).findByText('Tasks that run for real could not be checked: the YAML does not parse.')).toBeInTheDocument();
+    expect(within(f).queryByText(/the outline is not available/)).not.toBeInTheDocument();
+  });
+
   it('says a shortened outline may miss tasks that run for real, and still lists those it has', async () => {
     mockApi(dryRoutes('operator', { extra: { 'POST /api/v1/orgs/acme/playbooks/outline': { ...OUTLINE, truncated: true } } }).routes);
     renderAt('/o/acme/playbooks/p1?tab=dry-run');

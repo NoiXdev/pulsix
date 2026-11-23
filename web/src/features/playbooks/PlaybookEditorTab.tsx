@@ -7,6 +7,7 @@ import { PlaybookCheckPanel, PlaybookVariablesPanel } from './PlaybookSidePanels
 import { PlaybookLatestRuns } from './PlaybookLatestRuns.tsx';
 import { PlaybookOutlinePanel } from './PlaybookOutlinePanel.tsx';
 import { PlaybookRepoTextView } from './PlaybookRepoTextView.tsx';
+import type { OutlineProblem } from './usePlaybookOutline.ts';
 import type { YAMLProblem } from './validate.ts';
 
 interface PlaybookEditorTabProps {
@@ -23,7 +24,7 @@ interface PlaybookEditorTabProps {
   /** The draft's outline (usePlaybookOutline) and whether it is the last
    * good one of a draft that does not parse now. */
   outline: PlaybookOutline | null;
-  outlineStale: boolean;
+  outlineProblem: OutlineProblem | null;
 }
 
 /**
@@ -34,7 +35,7 @@ interface PlaybookEditorTabProps {
  * playbook shows its text as of the last sync, read-only
  * (PlaybookRepoTextView). A reader gets the text read-only.
  */
-export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, problem, serverError, templates, onShowRuns, outline, outlineStale }: PlaybookEditorTabProps) {
+export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, problem, serverError, templates, onShowRuns, outline, outlineProblem }: PlaybookEditorTabProps) {
   const t = useT();
   const labelId = useId();
   const editor = useRef<CodeEditorHandle>(null);
@@ -63,7 +64,7 @@ export function PlaybookEditorTab({ org, playbook, canWrite, draft, onChange, pr
       </div>
       <aside className="flex min-w-0 flex-col gap-4">
         <PlaybookCheckPanel problem={problem} serverError={serverError} />
-        <PlaybookOutlinePanel outline={outline} stale={outlineStale} onReveal={(line) => editor.current?.revealLine(line)} />
+        <PlaybookOutlinePanel outline={outline} problem={outlineProblem} onReveal={(line) => editor.current?.revealLine(line)} />
         <PlaybookVariablesPanel yaml={draft} />
         {latest}
       </aside>

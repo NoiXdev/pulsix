@@ -106,6 +106,7 @@ export const deUi: Messages['ui'] = {
     label: 'Unterschiede',
     none: 'Keine Unterschiede.',
     noNewline: '\\ Kein Zeilenumbruch am Dateiende',
+    cut: (shown: number, total: number) => `Abgeschnitten: die ersten ${shown} von ${total} Zeilen.`,
     showAll: (n: number) => `Alle ${n} Zeilen zeigen`,
     tooLarge: (n: number) => `Zu groß zum Vergleichen: eine Seite hat mehr als ${n} Zeilen.`,
   },

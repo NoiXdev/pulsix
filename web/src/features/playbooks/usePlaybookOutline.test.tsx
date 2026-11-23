@@ -7,6 +7,8 @@ import { usePlaybookOutline } from './usePlaybookOutline.ts';
 
 const outline = (name: string) => ({ plays: [{ name, hosts: 'web', become: false, line: 1, tags: [], entries: [] }], tags: [], counts: { plays: 1, tasks: 0, handlers: 0 }, truncated: false });
 
+const unavailable = () => new Response(JSON.stringify({ status: 503, detail: 'down' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+
 const invalid = () => new Response(JSON.stringify({ status: 422, detail: 'malformed YAML' }), { status: 422, headers: { 'Content-Type': 'application/json' } });
 
 function setup() {
@@ -15,7 +17,7 @@ function setup() {
     'POST /api/v1/orgs/acme/playbooks/outline': (req: MockRequest) => {
       const content = (req.body as { content: string }).content;
       sent.push(content);
-      return content.startsWith('bad') ? invalid() : outline(content);
+      return content.startsWith('bad') ? invalid() : content.startsWith('down') ? unavailable() : outline(content);
     },
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -49,8 +51,21 @@ describe('usePlaybookOutline', () => {
     await waitFor(() => expect(result.current.outline?.plays?.[0].name).toBe('good'));
     rerender({ text: 'bad: [' });
     await waitFor(() => expect(sent).toContain('bad: ['));
-    await waitFor(() => expect(result.current.invalid).toBe(true));
+    await waitFor(() => expect(result.current.problem).toBe('invalid'));
     expect(result.current.outline?.plays?.[0].name).toBe('good');
+  });
+
+  it('tells a request that failed from a text that does not parse', async () => {
+    const { sent, wrapper } = setup();
+    const { result, rerender } = renderHook(({ text }) => usePlaybookOutline('acme', text, true), { wrapper, initialProps: { text: 'good' } });
+    await waitFor(() => expect(result.current.outline?.plays?.[0].name).toBe('good'));
+    expect(result.current.problem).toBeNull();
+    rerender({ text: 'down: 1' });
+    await waitFor(() => expect(result.current.problem).toBe('failed'));
+    expect(sent).toContain('down: 1');
+    expect(result.current.outline?.plays?.[0].name).toBe('good');
+    rerender({ text: 'bad: [' });
+    await waitFor(() => expect(result.current.problem).toBe('invalid'));
   });
 
   it('asks nothing when it is off (a repository playbook)', async () => {

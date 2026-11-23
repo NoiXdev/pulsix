@@ -5,6 +5,10 @@ import { lineDiff, MAX_COMPARE_LINES, type DiffHunk } from './lineDiff.ts';
 /** A longer diff shows this many rows until "Show all" is pressed. */
 export const MAX_SHOWN_LINES = 400;
 
+/** A prepared diff past this many lines is cut there, even for "Show all":
+ * what a task reports is not bounded, and the page must stay usable. */
+export const MAX_PREPARED_LINES = 20_000;
+
 type RowKind = 'header' | 'hunk' | 'context' | 'delete' | 'insert' | 'note';
 
 interface Row {
@@ -35,9 +39,20 @@ function hunkRows(hunks: readonly DiffHunk[], noNewline: string): Row[] {
 }
 
 /** A ready unified diff, line by line, its kind read from its first characters. */
-function preparedRows(text: string): Row[] {
-  const lines = text.replace(/\n$/, '').split('\n');
-  return lines.map((line): Row => {
+function preparedRows(text: string, cut: (shown: number, total: number) => string): Row[] {
+  const body = text.replace(/\n$/, '');
+  // Count the lines first: splitting a huge text only to throw most away is the cost to avoid.
+  let total = 1;
+  for (let at = body.indexOf('\n'); at >= 0; at = body.indexOf('\n', at + 1)) total++;
+  let lines: string[];
+  if (total > MAX_PREPARED_LINES) {
+    let end = -1;
+    for (let n = 0; n < MAX_PREPARED_LINES; n++) end = body.indexOf('\n', end + 1);
+    lines = body.slice(0, end).split('\n');
+  } else {
+    lines = body.split('\n');
+  }
+  const rows = lines.map((line): Row => {
     if (line.startsWith('--- ') || line.startsWith('+++ ')) return { kind: 'header', text: line };
     if (line.startsWith('@@')) return { kind: 'hunk', text: line };
     if (line.startsWith('-')) return { kind: 'delete', text: line };
@@ -45,6 +60,7 @@ function preparedRows(text: string): Row[] {
     if (line.startsWith('\\')) return { kind: 'note', text: line };
     return { kind: 'context', text: line };
   });
+  return total > MAX_PREPARED_LINES ? [...rows, { kind: 'note', text: cut(MAX_PREPARED_LINES, total) }] : rows;
 }
 
 /**
@@ -61,7 +77,7 @@ export function UnifiedDiff(props: UnifiedDiffProps) {
   const [all, setAll] = useState(false);
   const { prepared, before, after, beforeHeader, afterHeader } = props;
   const result = useMemo((): Row[] | 'tooLarge' => {
-    if (prepared !== undefined) return preparedRows(prepared);
+    if (prepared !== undefined) return preparedRows(prepared, d.cut);
     const diff = lineDiff(before, after);
     if (diff.kind === 'tooLarge') return 'tooLarge';
     if (diff.hunks.length === 0) return [];
@@ -70,7 +86,7 @@ export function UnifiedDiff(props: UnifiedDiffProps) {
       headers.push({ kind: 'header', text: `--- ${beforeHeader ?? ''}` }, { kind: 'header', text: `+++ ${afterHeader ?? ''}` });
     }
     return [...headers, ...hunkRows(diff.hunks, d.noNewline)];
-  }, [prepared, before, after, beforeHeader, afterHeader, d.noNewline]);
+  }, [prepared, before, after, beforeHeader, afterHeader, d.noNewline, d.cut]);
 
   if (result === 'tooLarge') return <p className="text-xs text-muted-foreground">{d.tooLarge(MAX_COMPARE_LINES)}</p>;
   if (result.length === 0) return <p className="text-xs text-muted-foreground">{d.none}</p>;

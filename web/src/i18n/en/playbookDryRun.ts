@@ -9,6 +9,9 @@ export const enPlaybookOutline = {
   unnamed: '(unnamed)',
   truncated: 'Outline shortened: the playbook is too long to list in full.',
   stale: 'The YAML does not parse right now: this is the last outline that did.',
+  staleNone: 'The YAML does not parse right now, so there is no outline.',
+  unavailable: 'The outline could not be read right now: this is the last one that was.',
+  unavailableNone: 'The outline could not be read right now.',
   none: 'No plays yet.',
   /** A repository playbook without a text to outline, by why. */
   repo: {
@@ -32,6 +35,8 @@ export const enPlaybookDryRun = {
   hostsHint: "None chosen runs on all of the template's hosts. A host outside the template is refused.",
   hostsScopedHint: "None chosen runs on all of the template's hosts; its limit still applies.",
   hostsReading: "Reading the template's hosts…",
+  templatesFailed: 'The templates could not be read, so a dry run cannot be started.',
+  retry: 'Retry',
   hostsNone: "The template's scope holds no hosts.",
   tags: 'Only these tags',
   tagsHint: 'None chosen runs every task.',
@@ -44,6 +49,7 @@ export const enPlaybookDryRun = {
   realItem: (name: string, line: number) => `${name} · line ${line}`,
   unchecked: {
     loading: 'Tasks that run for real could not be checked yet: the outline is still loading.',
+    invalid: 'Tasks that run for real could not be checked: the YAML does not parse.',
     failed: 'Tasks that run for real could not be checked: the outline is not available.',
     truncated: 'The outline is shortened: tasks past its end that run for real could not be checked.',
     repo: "The dry run runs the repository's current commit; its tasks are not checked here.",
@@ -58,6 +64,7 @@ export const enPlaybookDryRun = {
     readFailed: 'The latest dry run could not be read.',
     open: 'Open run',
     hosts: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
+    hostsSoFar: (n: number, waiting: number) => `${n === 1 ? '1 host' : `${n} hosts`} so far, ${waiting === 1 ? '1 zone has' : `${waiting} zones have`} not reported yet`,
     zones: (n: number) => `${n} zones`,
     waiting: "Waiting for a worker that supports dry runs. Older workers never take one: if it stays queued, update the zone's workers.",
     live: 'Running: the result follows live.',

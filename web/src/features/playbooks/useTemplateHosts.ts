@@ -2,6 +2,7 @@ import { useHostNames } from '../../api/hooks/useHosts.ts';
 import { useGroups, useGroupsMembers } from '../../api/hooks/useInventory.ts';
 import type { Template } from '../../api/types.ts';
 import { descendantIds } from '../inventory/tree.ts';
+import { limitMatcher } from './limit.ts';
 
 export interface ScopeHost {
   id: string;
@@ -21,7 +22,8 @@ const NONE: readonly string[] = [];
  * its members and those of every group below it; explicit hosts mean
  * those, and both together their intersection. A scope of neither (the
  * whole organization), or one whose reads failed, stays `open`. The
- * template's limit is left to the server.
+ * template's limit narrows the hosts it can name (limit.ts); one the browser
+ * cannot read keeps them all, the server applying it.
  */
 export function useTemplateHosts(org: string, template: Template | undefined): TemplateHosts {
   const groupId = template?.scope.group_id ?? '';
@@ -31,13 +33,16 @@ export function useTemplateHosts(org: string, template: Template | undefined): T
   const members = useGroupsMembers(org, subtree);
   const named = useHostNames(org, groupId ? NONE : hostIds);
 
+  const keep = limitMatcher(template?.limit ?? '');
+
   if (!template) return { kind: 'pending' };
-  if (!groupId) return hostIds.length > 0 ? { kind: 'listed', hosts: sortByName(named) } : { kind: 'open' };
+  if (!groupId) return hostIds.length > 0 ? { kind: 'listed', hosts: sortByName(named.filter((h) => keep(h.name))) } : { kind: 'open' };
   if (groups.isError || members.isError) return { kind: 'open' };
   if (!groups.data || !members.members) return { kind: 'pending' };
   const byId = new Map<string, ScopeHost>();
   for (const m of members.members) {
     if (hostIds.length > 0 && !hostIds.includes(m.host_id)) continue;
+    if (!keep(m.host_name)) continue;
     byId.set(m.host_id, { id: m.host_id, name: m.host_name });
   }
   return { kind: 'listed', hosts: sortByName([...byId.values()]) };

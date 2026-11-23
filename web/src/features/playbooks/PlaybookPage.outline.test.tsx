@@ -44,6 +44,19 @@ describe('PlaybookPage outline and header', () => {
     expect(await within(await outlinePanel()).findByText(/Outline shortened/)).toBeInTheDocument();
   });
 
+  it.each([
+    [422, 'The YAML does not parse right now'],
+    [503, 'The outline could not be read right now'],
+  ])('tells apart why there is no fresh outline (%i)', async (status, sentence) => {
+    const answer = () => new Response(JSON.stringify({ status, detail: 'nope' }), { status, headers: { 'Content-Type': 'application/json' } });
+    mockApi(routes('operator', { 'POST /api/v1/orgs/acme/playbooks/outline': answer }));
+    renderAt('/o/acme/playbooks/p1');
+    const panel = await outlinePanel();
+    expect(await within(panel).findByText(new RegExp(sentence))).toBeInTheDocument();
+    const other = status === 422 ? /could not be read right now/ : /does not parse/;
+    expect(within(panel).queryByText(other)).not.toBeInTheDocument();
+  });
+
   it('has no outline for a repository playbook never synced, and says so', async () => {
     const asked: string[] = [];
     mockApi(routes('operator', { 'POST /api/v1/orgs/acme/playbooks/outline': () => (asked.push('outline'), OUTLINE) }));

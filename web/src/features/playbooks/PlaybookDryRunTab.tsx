@@ -12,7 +12,8 @@ import { useT } from '../../i18n/useT.ts';
 import { may } from '../../lib/roles.ts';
 import { DryRunHosts } from './DryRunHosts.tsx';
 import { DryRunResult } from './DryRunResult.tsx';
-import { usePlaybookOutline } from './usePlaybookOutline.ts';
+import { useDraftTick } from './useDraftTick.ts';
+import { usePlaybookOutline, type OutlineProblem } from './usePlaybookOutline.ts';
 
 interface PlaybookDryRunTabProps {
   org: string;
@@ -20,6 +21,9 @@ interface PlaybookDryRunTabProps {
   role: string;
   /** The templates using the playbook; undefined while they are read. */
   templates: readonly Template[] | undefined;
+  /** The templates could not be read; `onRetry` reads them again. */
+  templatesFailed?: boolean;
+  onRetry?: () => void;
   /** The editor's text and the stored one (editor playbooks), and whether
    * they differ for someone who may save. */
   draft: string;
@@ -36,13 +40,13 @@ interface PlaybookDryRunTabProps {
  * playbook — after Start, the one just started. Without `jobs.run` a
  * notice takes the form's place; the latest dry run still shows.
  */
-export function PlaybookDryRunTab({ org, playbook, role, templates, draft, saved, dirty }: PlaybookDryRunTabProps) {
+export function PlaybookDryRunTab({ org, playbook, role, templates, templatesFailed, onRetry, draft, saved, dirty }: PlaybookDryRunTabProps) {
   const t = useT();
   const [started, setStarted] = useState<string | null>(null);
   return (
     <div className="flex max-w-4xl flex-col gap-5">
       {may(role, 'jobs.run') ? (
-        <DryRunForm org={org} playbook={playbook} role={role} templates={templates} draft={draft} saved={saved} dirty={dirty} onStarted={setStarted} />
+        <DryRunForm org={org} playbook={playbook} role={role} templates={templates} templatesFailed={templatesFailed} onRetry={onRetry} draft={draft} saved={saved} dirty={dirty} onStarted={setStarted} />
       ) : (
         <DisabledHint title={t.playbooks.page.dryRun.title} body={t.playbooks.page.dryRun.noAccess} />
       )}
@@ -51,7 +55,7 @@ export function PlaybookDryRunTab({ org, playbook, role, templates, draft, saved
   );
 }
 
-function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onStarted }: PlaybookDryRunTabProps & { onStarted: (id: string) => void }) {
+function DryRunForm({ org, playbook, role, templates, templatesFailed, onRetry, draft, saved, dirty, onStarted }: PlaybookDryRunTabProps & { onStarted: (id: string) => void }) {
   const t = useT();
   const d = t.playbooks.page.dryRun;
   const toast = useToast();
@@ -63,17 +67,23 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [diff, setDiff] = useState(true);
-  const [useDraft, setUseDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const list = templates ?? [];
   // The one template there is counts as chosen.
   const chosen = templateId || (list.length === 1 ? list[0].id : '');
   const canDraft = editorSource && dirty && may(role, 'playbooks.write');
-  const checkDraft = canDraft && useDraft;
+  const [checkDraft, setCheckDraft] = useDraftTick(canDraft);
+  // The hosts belong to the template they were chosen under: when the chosen
+  // one changes (another picked, or the only one replaced), the choice starts over.
+  const [hostsOf, setHostsOf] = useState(chosen);
+  if (hostsOf !== chosen) {
+    setHostsOf(chosen);
+    setHostIds([]);
+  }
   // The outline of the text that will run: the draft when it is checked
   // (or equal to the saved text), else the saved one.
-  const { outline, invalid } = usePlaybookOutline(org, checkDraft || !dirty ? draft : saved, editorSource);
+  const { outline, problem } = usePlaybookOutline(org, checkDraft || !dirty ? draft : saved, editorSource);
   const available = outline?.tags ?? [];
 
   async function submit(e: FormEvent) {
@@ -109,14 +119,20 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
           id="dry-run-template"
           options={list.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
           value={chosen}
-          onChange={(id) => {
-            // Another template has other hosts: the choice starts over.
-            if (id !== chosen) setHostIds([]);
-            setTemplateId(id);
-          }}
+          onChange={setTemplateId}
           placeholder={d.chooseTemplate}
         />
-        {templates && list.length === 0 && (
+        {templatesFailed && (
+          <p role="alert" className="flex flex-wrap items-center gap-2 text-[11px] text-destructive">
+            <span>{d.templatesFailed}</span>
+            {onRetry && (
+              <Button type="button" variant="ghost" onClick={onRetry}>
+                {d.retry}
+              </Button>
+            )}
+          </p>
+        )}
+        {templates && list.length === 0 && !templatesFailed && (
           <p className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <span>{d.noTemplates}</span>
             {may(role, 'templates.write') && (
@@ -167,14 +183,14 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
       {canDraft && (
         <div className="flex flex-col gap-0.5">
           <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={useDraft} onChange={(e) => setUseDraft(e.target.checked)} />
+            <input type="checkbox" checked={checkDraft} onChange={(e) => setCheckDraft(e.target.checked)} />
             {d.draft}
           </label>
           <span className="pl-6 text-[11px] text-muted-foreground">{d.draftHint}</span>
         </div>
       )}
 
-      <RealTasks outline={outline} invalid={invalid} repo={!editorSource} />
+      <RealTasks outline={outline} problem={problem} repo={!editorSource} />
 
       {error && (
         <p role="alert" className="text-xs text-destructive">
@@ -193,12 +209,12 @@ function DryRunForm({ org, playbook, role, templates, draft, saved, dirty, onSta
 /** The entries of the outline that run for real even in check mode, and a
  * note whenever the outline cannot answer that in full: still loading, not
  * available, shortened, or a repository playbook without one. */
-function RealTasks({ outline, invalid, repo }: { outline: PlaybookOutline | null; invalid: boolean; repo: boolean }) {
+function RealTasks({ outline, problem, repo }: { outline: PlaybookOutline | null; problem: OutlineProblem | null; repo: boolean }) {
   const t = useT();
   const d = t.playbooks.page.dryRun;
   const id = useId();
   const real = (outline?.plays ?? []).flatMap((p) => p.entries ?? []).filter((e) => !e.runs_in_check_mode);
-  const note = repo ? d.unchecked.repo : invalid ? d.unchecked.failed : !outline ? d.unchecked.loading : outline.truncated ? d.unchecked.truncated : null;
+  const note = repo ? d.unchecked.repo : problem === 'invalid' ? d.unchecked.invalid : problem === 'failed' ? d.unchecked.failed : !outline ? d.unchecked.loading : outline.truncated ? d.unchecked.truncated : null;
   const noteLine = note && <p className="text-[11px] text-muted-foreground">{note}</p>;
   if (real.length === 0) return noteLine;
   return (

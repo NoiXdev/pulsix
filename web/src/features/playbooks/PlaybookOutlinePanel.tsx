@@ -4,6 +4,7 @@ import type { OutlineEntry, OutlinePlay, PlaybookOutline } from '../../api/types
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { SidePanel } from './PlaybookSidePanels.tsx';
+import type { OutlineProblem } from './usePlaybookOutline.ts';
 import type { RepoNoText } from './usePlaybookRepoText.ts';
 
 type RepoOutlineNotes = Messages['playbooks']['page']['outline']['repo'];
@@ -22,8 +23,9 @@ const MAX_ENTRY_TAGS = 3;
 interface PlaybookOutlinePanelProps {
   /** The outline, null before the first one arrived (or for a repository playbook). */
   outline: PlaybookOutline | null;
-  /** The text does not parse right now: `outline` is the last one that did. */
-  stale?: boolean;
+  /** Why `outline` is not fresh: the text does not parse right now, or the
+   * request failed; `outline` is the last one that was read. */
+  problem?: OutlineProblem | null;
   /** A repository playbook without a text to outline, and why: its text is
    * loading, the repository was never synced, the read failed, or the last
    * sync stored none. */
@@ -40,7 +42,7 @@ interface PlaybookOutlinePanelProps {
  * line. An entry that runs for real in a dry run (check_mode: false on it
  * or around it) carries a warning mark.
  */
-export function PlaybookOutlinePanel({ outline, stale, repo, onReveal }: PlaybookOutlinePanelProps) {
+export function PlaybookOutlinePanel({ outline, problem, repo, onReveal }: PlaybookOutlinePanelProps) {
   const t = useT();
   const o = t.playbooks.page.outline;
   const plays = outline?.plays ?? [];
@@ -49,10 +51,13 @@ export function PlaybookOutlinePanel({ outline, stale, repo, onReveal }: Playboo
       {repo ? (
         <p className="text-xs text-muted-foreground">{REPO_NOTE[repo](o.repo)}</p>
       ) : plays.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{o.none}</p>
+        <>
+          {problem && <p className="text-[11px]" style={{ color: 'var(--px-warn)' }}>{problem === 'invalid' ? o.staleNone : o.unavailableNone}</p>}
+          {!problem && <p className="text-xs text-muted-foreground">{o.none}</p>}
+        </>
       ) : (
         <>
-          {stale && <p className="text-[11px]" style={{ color: 'var(--px-warn)' }}>{o.stale}</p>}
+          {problem && <p className="text-[11px]" style={{ color: 'var(--px-warn)' }}>{problem === 'invalid' ? o.stale : o.unavailable}</p>}
           {plays.map((play, i) => (
             <PlayOutline key={`${play.line}-${i}`} play={play} onReveal={onReveal} />
           ))}

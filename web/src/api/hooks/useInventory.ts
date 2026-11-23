@@ -1,5 +1,6 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { mapPool } from '../../lib/pool.ts';
 import type { paths } from '../schema.d.ts';
 import type { VarSchema, Vars } from '../../features/variables/types.ts';
 
@@ -129,17 +130,27 @@ export function useGroupMembers(org: string, id: string) {
   return useQuery(groupMembersOptions(org, id));
 }
 
-/** useGroupsMembers reads the direct members of several groups at once
- * (each its own useGroupMembers query): `members` once all have answered,
- * `isError` when any could not. */
+/** Requests in flight at once when several groups' members are read: the
+ * API lists one group's members per request, so a subtree is one read per
+ * group, never a burst. */
+const MEMBERS_POOL = 4;
+
+/** useGroupsMembers reads the direct members of several groups (each group
+ * one read, the cache of useGroupMembers shared, at most MEMBERS_POOL at
+ * once): `members` once all have answered, `isError` when any could not. */
 export function useGroupsMembers(org: string, ids: readonly string[]) {
-  return useQueries({
-    queries: ids.map((id) => groupMembersOptions(org, id)),
-    combine: (results) => ({
-      members: results.every((r) => r.data) ? results.flatMap((r) => r.data?.members ?? []) : undefined,
-      isError: results.some((r) => r.isError),
-    }),
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: ['inventory', org, 'members-of', ids],
+    queryFn: async () => {
+      const lists = await mapPool(ids, MEMBERS_POOL, (id) => qc.fetchQuery({ ...groupMembersOptions(org, id), staleTime: 30_000 }));
+      return lists.flatMap((l) => l.members ?? []);
+    },
+    enabled: !!org && ids.length > 0,
+    retry: false,
   });
+  if (ids.length === 0) return { members: [], isError: false };
+  return { members: query.data, isError: query.isError };
 }
 
 /** gcTime: 0 for the same reason as useSetGroupVars. */
