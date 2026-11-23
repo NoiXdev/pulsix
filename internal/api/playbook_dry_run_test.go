@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/templates"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 func (f runFixture) dryRunURL(playbook uuid.UUID) string {
@@ -239,7 +240,7 @@ func TestPlaybookDryRunRefusals(t *testing.T) {
 		{"invalid draft", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "draft": "hosts: [unclosed"}, http.StatusUnprocessableEntity},
 		{"draft without plays", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "draft": "{}"}, http.StatusUnprocessableEntity},
 		{"empty draft", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "draft": ""}, http.StatusUnprocessableEntity},
-		{"oversize draft", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "draft": valid + "# " + strings.Repeat("x", playbooks.MaxInlineBytes) + "\n"}, http.StatusUnprocessableEntity},
+		{"oversize draft", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "draft": valid + "# " + strings.Repeat("x", varsource.MaxPlaybookTextBytes) + "\n"}, http.StatusUnprocessableEntity},
 		{"33 tags", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "tags": tags33}, http.StatusUnprocessableEntity},
 		{"tag with a comma", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "tags": []string{"a,b"}}, http.StatusUnprocessableEntity},
 		{"tag with a space", f.operatorC, f.playbook, map[string]any{"template_id": tmpl, "tags": []string{"a b"}}, http.StatusUnprocessableEntity},

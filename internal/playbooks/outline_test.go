@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 func entryOf(section, kind, name string, line, depth int, check bool, tags ...string) OutlineEntry {
@@ -53,9 +55,9 @@ func TestOutlineEntries(t *testing.T) {
 			name: "check_mode false on a block reaches descendants",
 			yaml: "- hosts: all\n  tasks:\n    - block:\n        - ping:\n        - block:\n            - ping:\n      check_mode: false\n    - ping:\n",
 			want: []OutlineEntry{
-				entryOf("tasks", "block", "block", 3, 0, false),
+				entryOf("tasks", "block", "", 3, 0, false),
 				entryOf("tasks", "task", "ping", 4, 1, false),
-				entryOf("tasks", "block", "block", 5, 1, false),
+				entryOf("tasks", "block", "", 5, 1, false),
 				entryOf("tasks", "task", "ping", 6, 2, false),
 				entryOf("tasks", "task", "ping", 8, 0, true),
 			},
@@ -84,7 +86,7 @@ func TestOutlineEntries(t *testing.T) {
 			name: "templated check_mode on a block reaches descendants",
 			yaml: "- hosts: all\n  tasks:\n    - block:\n        - ping:\n      check_mode: \"{{ x | bool }}\"\n",
 			want: []OutlineEntry{
-				entryOf("tasks", "block", "block", 3, 0, false),
+				entryOf("tasks", "block", "", 3, 0, false),
 				entryOf("tasks", "task", "ping", 4, 1, false),
 			},
 		},
@@ -100,9 +102,9 @@ func TestOutlineEntries(t *testing.T) {
 			name: "block nested in rescue and always gains depth",
 			yaml: "- hosts: all\n  tasks:\n    - block:\n        - ping:\n      rescue:\n        - block:\n            - name: deep\n              ping:\n      always:\n        - name: fin\n          ping:\n",
 			want: []OutlineEntry{
-				entryOf("tasks", "block", "block", 3, 0, true),
+				entryOf("tasks", "block", "", 3, 0, true),
 				entryOf("tasks", "task", "ping", 4, 1, true),
-				entryOf("tasks", "block", "block", 6, 1, true),
+				entryOf("tasks", "block", "", 6, 1, true),
 				entryOf("tasks", "task", "deep", 7, 2, true),
 				entryOf("tasks", "task", "fin", 10, 1, true),
 			},
@@ -281,7 +283,7 @@ func TestOutlineInvalid(t *testing.T) {
 			t.Fatalf("%q: err = %v", in, err)
 		}
 	}
-	if _, err := Outline([]byte(strings.Repeat("a", MaxInlineBytes+1))); !errors.Is(err, ErrInvalidInput) {
+	if _, err := Outline([]byte(strings.Repeat("a", varsource.MaxPlaybookTextBytes+1))); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("oversize: %v", err)
 	}
 }

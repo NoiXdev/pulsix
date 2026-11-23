@@ -6,11 +6,9 @@ import (
 	"fmt"
 
 	"gopkg.in/yaml.v3"
-)
 
-// MaxInlineBytes is the stored playbook size limit; a bigger editor text is
-// rejected before it ever reaches the database.
-const MaxInlineBytes = 512 * 1024
+	"github.com/noixdev/pulsix/internal/varsource"
+)
 
 // ValidateYAML checks that inline is the beginning of a usable Ansible
 // playbook: at most 512 KiB of YAML, whose document node is a non-empty
@@ -27,7 +25,9 @@ const MaxInlineBytes = 512 * 1024
 // "malformed YAML: <cause>" and "playbook exceeds 512 KiB". Every failure
 // wraps ErrInvalidInput.
 func ValidateYAML(inline string) error {
-	if len(inline) > MaxInlineBytes {
+	// The stored playbook size limit: a bigger editor text is rejected
+	// before it ever reaches the database.
+	if len(inline) > varsource.MaxPlaybookTextBytes {
 		return fmt.Errorf("%w: playbook exceeds 512 KiB", ErrInvalidInput)
 	}
 	var doc yaml.Node

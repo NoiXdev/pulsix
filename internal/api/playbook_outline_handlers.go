@@ -47,7 +47,7 @@ type PlaybookOutlinePlayDTO struct {
 type PlaybookOutlineEntryDTO struct {
 	Section         string   `json:"section"`
 	Kind            string   `json:"kind"`
-	Name            string   `json:"name"`
+	Name            string   `json:"name" doc:"Empty when the entry has no usable name; show a word for its kind instead"`
 	Line            int      `json:"line"`
 	Depth           int      `json:"depth"`
 	Tags            []string `json:"tags" nullable:"false"`

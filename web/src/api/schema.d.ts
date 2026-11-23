@@ -7393,6 +7393,7 @@ export interface components {
             kind: string;
             /** Format: int64 */
             line: number;
+            /** @description Empty when the entry has no usable name; show a word for its kind instead */
             name: string;
             /** @description False when the entry may run for real in a dry run */
             runs_in_check_mode: boolean;

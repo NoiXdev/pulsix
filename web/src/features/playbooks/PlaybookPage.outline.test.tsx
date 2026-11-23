@@ -3,11 +3,28 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../test/mockApi.ts';
 import { cursorLineOf, findCodeEditor } from '../../test/codeEditor.ts';
-import { editorPlaybook, OUTLINE, renderAt, routes } from './playbookPageTestKit.tsx';
+import { editorPlaybook, entry, OUTLINE, renderAt, routes } from './playbookPageTestKit.tsx';
 
 const LONG = Array.from({ length: 20 }, (_, i) => (i === 0 ? '- name: Install nginx' : `  # line ${i + 1}`)).join('\n') + '\n';
 
 const outlinePanel = () => screen.findByRole('region', { name: 'Outline' });
+
+/** An outline whose entries carry no usable name: the server sends "". */
+const UNNAMED = {
+  ...OUTLINE,
+  plays: [
+    {
+      ...OUTLINE.plays[0],
+      entries: [
+        entry('', 3, { kind: 'block' }),
+        entry('', 4, { depth: 1 }),
+        entry('', 6, { section: 'roles', kind: 'role' }),
+        entry('', 7, { kind: 'include' }),
+        entry('', 8, { kind: 'import' }),
+      ],
+    },
+  ],
+};
 
 describe('PlaybookPage outline and header', () => {
   it('lists the plays and entries of the outline in the side column', async () => {
@@ -36,6 +53,26 @@ describe('PlaybookPage outline and header', () => {
     await user.click(await within(await outlinePanel()).findByRole('button', { name: 'Line 9: Render nginx config' }));
     expect(cursorLineOf(editor)).toBe(9);
     await waitFor(() => expect(editor).toHaveFocus());
+  });
+
+  it('names an entry without a name by its kind', async () => {
+    mockApi(routes('operator', { 'POST /api/v1/orgs/acme/playbooks/outline': UNNAMED }));
+    renderAt('/o/acme/playbooks/p1');
+    const panel = await outlinePanel();
+    expect(await within(panel).findByRole('button', { name: 'Line 3: (unnamed block)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Line 4: (unnamed task)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Line 6: (unnamed role)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Line 7: (unnamed include)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Line 8: (unnamed import)' })).toBeInTheDocument();
+  });
+
+  it('names an entry without a name by its kind in German', async () => {
+    mockApi(routes('operator', { 'POST /api/v1/orgs/acme/playbooks/outline': UNNAMED }));
+    renderAt('/o/acme/playbooks/p1', 'de');
+    const panel = await screen.findByRole('region', { name: 'Gliederung' });
+    expect(await within(panel).findByRole('button', { name: 'Zeile 3: (Block ohne Namen)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Zeile 4: (Task ohne Namen)' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Zeile 6: (Rolle ohne Namen)' })).toBeInTheDocument();
   });
 
   it('says when the outline is shortened', async () => {

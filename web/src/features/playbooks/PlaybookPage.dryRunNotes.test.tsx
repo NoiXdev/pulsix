@@ -3,7 +3,7 @@ import { screen, within } from '@testing-library/react';
 import { mockApi } from '../../test/mockApi.ts';
 import { FakeEventSource } from '../runs/runPageTestKit.tsx';
 import { dryRoutes, form } from './dryRunTestKit.ts';
-import { OUTLINE, renderAt, template } from './playbookPageTestKit.tsx';
+import { entry, OUTLINE, renderAt, template } from './playbookPageTestKit.tsx';
 
 /* The Dry run form's notes: what --diff puts into the run log, and what
  * the warning about tasks that run for real cannot see. */
@@ -60,6 +60,14 @@ describe('PlaybookPage Dry run tab notes', () => {
     const f = await form();
     expect(await within(f).findByText('Tasks that run for real could not be checked: the YAML does not parse.')).toBeInTheDocument();
     expect(within(f).queryByText(/the outline is not available/)).not.toBeInTheDocument();
+  });
+
+  it('names a task that runs for real without a name by its kind', async () => {
+    const outline = { ...OUTLINE, plays: [{ ...OUTLINE.plays[0], entries: [entry('', 4, { kind: 'block', runs_in_check_mode: false })] }] };
+    mockApi(dryRoutes('operator', { extra: { 'POST /api/v1/orgs/acme/playbooks/outline': outline } }).routes);
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    expect(await within(await within(f).findByRole('list', { name: REAL_LIST })).findByText('(unnamed block) · line 4')).toBeInTheDocument();
   });
 
   it('says a shortened outline may miss tasks that run for real, and still lists those it has', async () => {

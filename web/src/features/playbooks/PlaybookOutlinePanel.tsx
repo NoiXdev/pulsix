@@ -3,6 +3,7 @@ import { Tag } from '../../ui/badge.tsx';
 import type { OutlineEntry, OutlinePlay, PlaybookOutline } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { outlineEntryName } from './outlineNames.ts';
 import { SidePanel } from './PlaybookSidePanels.tsx';
 import type { OutlineProblem } from './usePlaybookOutline.ts';
 import type { RepoNoText } from './usePlaybookRepoText.ts';
@@ -102,7 +103,7 @@ function PlayOutline({ play, onReveal }: { play: OutlinePlay; onReveal?: (line: 
 function EntryRow({ entry, onReveal }: { entry: OutlineEntry; onReveal?: (line: number) => void }) {
   const t = useT();
   const o = t.playbooks.page.outline;
-  const name = entry.name || o.unnamed;
+  const name = outlineEntryName(entry, o);
   const real = !entry.runs_in_check_mode;
   const tags = entry.tags ?? [];
   return (

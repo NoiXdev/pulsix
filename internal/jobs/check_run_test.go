@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 // checkRun is the request a playbook page's dry run makes (spec
@@ -70,14 +71,14 @@ func TestDraftNeedsCheckMode(t *testing.T) {
 // the HTTP handler in front of it; the limit is the stored playbook's.
 func TestDraftSizeIsCheckedByTheService(t *testing.T) {
 	f := newChainFixture(t)
-	big := "- hosts: all\n" + strings.Repeat("#", jobs.MaxDraftBytes)
+	big := "- hosts: all\n" + strings.Repeat("#", varsource.MaxPlaybookTextBytes)
 	if _, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, checkRun(jobs.RunOverrides{Playbook: &big})); !errors.Is(err, jobs.ErrInvalidDryRun) {
 		t.Fatalf("oversized draft: err = %v, want ErrInvalidDryRun", err)
 	}
 	if len(f.store.jobs) != 0 {
 		t.Fatalf("stored %d jobs, want none", len(f.store.jobs))
 	}
-	ok := "- hosts: all\n" + strings.Repeat("#", jobs.MaxDraftBytes-len("- hosts: all\n"))
+	ok := "- hosts: all\n" + strings.Repeat("#", varsource.MaxPlaybookTextBytes-len("- hosts: all\n"))
 	if _, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, checkRun(jobs.RunOverrides{Playbook: &ok})); err != nil {
 		t.Fatalf("draft at the limit: %v", err)
 	}

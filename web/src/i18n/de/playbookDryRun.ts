@@ -8,6 +8,13 @@ export const dePlaybookOutline: Messages['playbooks']['page']['outline'] = {
   line: (n: number) => `Z. ${n}`,
   real: 'check_mode: false – läuft im Probelauf wirklich',
   unnamed: '(ohne Namen)',
+  unnamedKind: {
+    task: '(Task ohne Namen)',
+    block: '(Block ohne Namen)',
+    include: '(Include ohne Namen)',
+    import: '(Import ohne Namen)',
+    role: '(Rolle ohne Namen)',
+  },
   truncated: 'Gliederung gekürzt: das Playbook ist zu lang, um es ganz aufzulisten.',
   stale: 'Das YAML lässt sich gerade nicht lesen: das ist die letzte Gliederung, die ging.',
   staleNone: 'Das YAML lässt sich gerade nicht lesen, deshalb gibt es keine Gliederung.',

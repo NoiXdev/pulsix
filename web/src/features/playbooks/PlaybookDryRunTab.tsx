@@ -12,6 +12,7 @@ import { useT } from '../../i18n/useT.ts';
 import { may } from '../../lib/roles.ts';
 import { DryRunHosts } from './DryRunHosts.tsx';
 import { DryRunResult } from './DryRunResult.tsx';
+import { outlineEntryName } from './outlineNames.ts';
 import { useTemplateHosts } from './useTemplateHosts.ts';
 import { useDraftTick } from './useDraftTick.ts';
 import { usePlaybookOutline, type OutlineProblem } from './usePlaybookOutline.ts';
@@ -232,7 +233,7 @@ function RealTasks({ outline, problem, repo }: { outline: PlaybookOutline | null
       </span>
       <ul aria-labelledby={id} className="list-disc pl-6">
         {real.map((e, i) => (
-          <li key={`${e.line}-${i}`}>{d.realItem(e.name || t.playbooks.page.outline.unnamed, e.line)}</li>
+          <li key={`${e.line}-${i}`}>{d.realItem(outlineEntryName(e, t.playbooks.page.outline), e.line)}</li>
         ))}
       </ul>
       {noteLine}

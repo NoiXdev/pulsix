@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 var (
@@ -39,10 +41,6 @@ func (o *RunOverrides) dryRun() *DryRun {
 	return &DryRun{Tags: tags, Diff: o.Diff, Draft: o.Playbook != nil}
 }
 
-// MaxDraftBytes caps a dry run's draft playbook: the size an editor playbook
-// may be stored with (playbooks.MaxInlineBytes, which a test keeps equal).
-const MaxDraftBytes = 512 * 1024
-
 // MaxCheckTags caps the tags of one check-mode run.
 const MaxCheckTags = 32
 
@@ -71,8 +69,9 @@ func checkRunRequest(req RunRequest) error {
 		if *ov.Playbook == "" {
 			return invalidDryRun("the draft playbook is empty")
 		}
-		if len(*ov.Playbook) > MaxDraftBytes {
-			return invalidDryRun("the draft playbook exceeds %d KiB", MaxDraftBytes/1024)
+		// A draft may be as large as an editor playbook may be stored.
+		if len(*ov.Playbook) > varsource.MaxPlaybookTextBytes {
+			return invalidDryRun("the draft playbook exceeds %d KiB", varsource.MaxPlaybookTextBytes/1024)
 		}
 	}
 	if !ov.Check && (len(ov.Tags) > 0 || ov.Diff) {

@@ -142,24 +142,34 @@ func (w *outlineWalker) splitTags(text string) []string {
 }
 
 // effectiveTags is the sorted unique union of inherited and the node's own
-// tags, cut to maxOutlineTagsPerList (outline truncated when it cuts). The
-// tags emitted across the outline are budgeted (maxOutlineTagsTotal): once
-// half of it is used an entry carries its own tags only, once all of it is
-// used none; the outline is truncated then.
+// tags (a scalar node has none of its own), cut to maxOutlineTagsPerList
+// (outline truncated when it cuts). The tags emitted across the outline are
+// budgeted by bytes (maxOutlineTagBytes): past half of it an entry carries
+// its own tags only, past all of it none; the outline is truncated then.
 func (w *outlineWalker) effectiveTags(inherited []string, n *yaml.Node) []string {
 	own := sortedUnique(w.tagsOf(n))
 	tags := sortedUnique(inherited, own)
 	if len(tags) > maxOutlineTagsPerList {
 		tags, w.out.Truncated = tags[:maxOutlineTagsPerList], true
 	}
-	if w.tagsOut+len(tags) > maxOutlineTagsTotal/2 && len(inherited) > 0 {
+	if len(inherited) > 0 && w.tagBytes+tagListBytes(tags) > maxOutlineTagBytes/2 {
 		tags, w.out.Truncated = own, true
 	}
-	if w.tagsOut+len(tags) > maxOutlineTagsTotal {
+	if w.tagBytes+tagListBytes(tags) > maxOutlineTagBytes {
 		tags, w.out.Truncated = []string{}, true
 	}
-	w.tagsOut += len(tags)
+	w.tagBytes += tagListBytes(tags)
 	return tags
+}
+
+// tagListBytes is what a tag list adds to the outline's JSON: each tag with
+// its quotes and separating comma.
+func tagListBytes(tags []string) int {
+	n := 0
+	for _, t := range tags {
+		n += len(t) + 3
+	}
+	return n
 }
 
 // noteTags adds tags to the outline's top-level union, which holds at most

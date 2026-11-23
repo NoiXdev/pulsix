@@ -7,6 +7,14 @@ export const enPlaybookOutline = {
   line: (n: number) => `L${n}`,
   real: 'check_mode: false — runs for real in a dry run',
   unnamed: '(unnamed)',
+  /** An entry the server sends without a name, by its kind. */
+  unnamedKind: {
+    task: '(unnamed task)',
+    block: '(unnamed block)',
+    include: '(unnamed include)',
+    import: '(unnamed import)',
+    role: '(unnamed role)',
+  },
   truncated: 'Outline shortened: the playbook is too long to list in full.',
   stale: 'The YAML does not parse right now: this is the last outline that did.',
   staleNone: 'The YAML does not parse right now, so there is no outline.',

@@ -83,6 +83,10 @@ const (
 	MaxFileBytes   = 512 << 10
 	MaxImportDepth = 3
 	MaxReportBytes = 8 << 20
+	// MaxPlaybookTextBytes caps a playbook text the manager takes in: an
+	// editor playbook's stored text and a dry run's draft. It is the file
+	// cap, so every text taken in is one this package reads in full.
+	MaxPlaybookTextBytes = MaxFileBytes
 )
 
 // Limits of one playbook's walk, its imports and roles together. They are

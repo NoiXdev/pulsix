@@ -14,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 type playbookDTOBody struct {
@@ -349,7 +350,7 @@ func TestPlaybookOutline(t *testing.T) {
 		"not a list":  "hosts: all\n",
 		"no hosts":    "- name: x\n",
 		"bad yaml":    "- hosts: [\n",
-		"over 512KiB": strings.Repeat("a", playbooks.MaxInlineBytes+1),
+		"over 512KiB": strings.Repeat("a", varsource.MaxPlaybookTextBytes+1),
 	} {
 		resp := postJSON(t, s.LoginAs(owner), url, map[string]any{"content": content})
 		if b := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity {

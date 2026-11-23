@@ -257,7 +257,7 @@ func TestCreateEditorStoresInlinePlaybook(t *testing.T) {
 	if _, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Name: "x", Inline: "hosts: all\n"}); !errors.Is(err, playbooks.ErrInvalidInput) || !strings.Contains(err.Error(), "expected a list of plays") {
 		t.Fatalf("invalid inline = %v, want the validator's error", err)
 	}
-	if _, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Name: "x", Inline: strings.Repeat("x", playbooks.MaxInlineBytes+1)}); !errors.Is(err, playbooks.ErrInvalidInput) || !strings.Contains(err.Error(), "playbook exceeds 512 KiB") {
+	if _, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Name: "x", Inline: strings.Repeat("x", varsource.MaxPlaybookTextBytes+1)}); !errors.Is(err, playbooks.ErrInvalidInput) || !strings.Contains(err.Error(), "playbook exceeds 512 KiB") {
 		t.Fatalf("oversized inline = %v", err)
 	}
 }

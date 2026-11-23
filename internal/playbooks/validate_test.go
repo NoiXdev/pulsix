@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // TestValidateYAML covers the brief's table: the validator is the only gate
@@ -66,13 +64,5 @@ func TestValidateYAMLSizeLimit(t *testing.T) {
 	}
 	if err := ValidateYAML(atLimit + "x"); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "playbook exceeds 512 KiB") {
 		t.Fatalf("one byte over the limit = %v, want the exact size message", err)
-	}
-}
-
-// The jobs service refuses a draft past the stored playbook's size; the two
-// limits are one number (jobs cannot import this package).
-func TestDraftLimitMatchesStoredLimit(t *testing.T) {
-	if jobs.MaxDraftBytes != MaxInlineBytes {
-		t.Fatalf("jobs.MaxDraftBytes = %d, MaxInlineBytes = %d", jobs.MaxDraftBytes, MaxInlineBytes)
 	}
 }

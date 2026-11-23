@@ -22,13 +22,13 @@ const (
 	// the top-level union.
 	maxOutlineTagsPerList = 64
 	maxOutlineTags        = 512
-	// maxOutlineTagsTotal bounds the tags emitted across the whole outline
-	// (every play's and entry's list together): at maxOutlineText bytes per
-	// tag they are about 1 MiB of JSON (the whole outline, with 256-byte
-	// names and the top-level union, stays under about 1.6 MiB). Up to half of
-	// it, entries carry their inherited tags; past that only their own,
-	// and past the whole budget none.
-	maxOutlineTagsTotal = 3840
+	// maxOutlineTagBytes bounds the tags emitted across the whole outline
+	// (every play's and entry's list together) by what they add to the JSON
+	// (tagListBytes): about 1 MiB, so the whole outline, with 256-byte names
+	// and the top-level union, stays under about 2 MiB. Up to half of it,
+	// entries carry their inherited tags; past that only their own, and past
+	// the whole budget none. Ordinary playbooks never reach it.
+	maxOutlineTagBytes = 1 << 20
 	// maxOutlineTagsText bounds how much of one tags string (or list item)
 	// is split into tags; it is cut by length before it is scanned.
 	maxOutlineTagsText = maxOutlineTagsPerList * (maxOutlineText + 1)
@@ -79,7 +79,8 @@ type OutlinePlay struct {
 // Tags are the entry's own plus those inherited from the play and enclosing
 // blocks; RunsInCheckMode is false when the entry may run for real in a dry
 // run: its own check_mode, else the nearest enclosing block's or play's, is
-// set to anything but literally true (false, a template, …).
+// set to anything but literally true (false, a template, …). Name is empty
+// when the entry has no usable one; the client names it by its kind.
 type OutlineEntry struct {
 	Section         string   `json:"section"`
 	Kind            string   `json:"kind"`
@@ -147,12 +148,12 @@ func Outline(content []byte) (PlaybookOutline, error) {
 }
 
 type outlineWalker struct {
-	out     PlaybookOutline
-	total   int
-	tagSet  map[string]bool
-	tagsOut int // tags emitted so far, against maxOutlineTagsTotal
-	section string
-	entries []OutlineEntry
+	out      PlaybookOutline
+	total    int
+	tagSet   map[string]bool
+	tagBytes int // tag bytes emitted so far, against maxOutlineTagBytes
+	section  string
+	entries  []OutlineEntry
 }
 
 // spend charges one visited item against the shared budget; false (and the
@@ -172,12 +173,8 @@ func (w *outlineWalker) play(n *yaml.Node) {
 	}
 	for _, key := range outlineImportPlaybook {
 		if v, ok := lookup(n, key); ok {
-			name := scalarText(v)
-			if name == "" {
-				name = KindImport
-			}
 			w.out.Plays = append(w.out.Plays, OutlinePlay{
-				Name: w.clip(name), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
+				Name: w.clip(scalarText(v)), Line: n.Line, Tags: []string{}, Entries: []OutlineEntry{},
 			})
 			return
 		}
@@ -225,9 +222,6 @@ type entryContext struct {
 
 // add appends one entry; its item was already charged by the caller.
 func (w *outlineWalker) add(e OutlineEntry) {
-	if e.Name == "" {
-		e.Name = e.Kind
-	}
 	e.Name = w.clip(e.Name)
 	w.entries = append(w.entries, e)
 	w.noteTags(e.Tags)
@@ -240,10 +234,11 @@ func (w *outlineWalker) add(e OutlineEntry) {
 }
 
 func (w *outlineWalker) role(n *yaml.Node, ctx entryContext) {
-	e := OutlineEntry{Section: w.section, Kind: KindRole, Line: n.Line, Tags: ctx.tags, RunsInCheckMode: ctx.check}
+	e := OutlineEntry{Section: w.section, Kind: KindRole, Line: n.Line, RunsInCheckMode: ctx.check}
 	switch n.Kind {
 	case yaml.ScalarNode:
-		e.Name = n.Value
+		e.Name = scalarText(n)
+		e.Tags = w.effectiveTags(ctx.tags, n)
 	case yaml.MappingNode:
 		e.Tags = w.effectiveTags(ctx.tags, n)
 		e.RunsInCheckMode = inCheckMode(n, ctx.check)
@@ -275,9 +270,6 @@ func (w *outlineWalker) task(n *yaml.Node, ctx entryContext, depth int) {
 	if blk, ok := lookup(n, "block"); ok {
 		e.Kind = KindBlock
 		e.Name = name
-		if e.Name == "" {
-			e.Name = "block"
-		}
 		w.add(e)
 		if depth >= maxOutlineDepth {
 			w.out.Truncated = true
