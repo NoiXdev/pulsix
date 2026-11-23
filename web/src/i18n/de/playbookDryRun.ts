@@ -11,7 +11,12 @@ export const dePlaybookOutline: Messages['playbooks']['page']['outline'] = {
   truncated: 'Gliederung gekürzt: das Playbook ist zu lang, um es ganz aufzulisten.',
   stale: 'Das YAML lässt sich gerade nicht lesen: das ist die letzte Gliederung, die ging.',
   none: 'Noch keine Plays.',
-  repo: 'Keine Gliederung: die letzte Synchronisierung hat keinen Text für dieses Playbook gespeichert.',
+  repo: {
+    loading: 'Lese den Text der letzten Synchronisierung für die Gliederung…',
+    notSynced: 'Noch keine Gliederung: das Repository wurde noch nicht synchronisiert.',
+    failed: 'Keine Gliederung: der Text der letzten Synchronisierung konnte nicht gelesen werden.',
+    leftOut: 'Keine Gliederung: die letzte Synchronisierung hat keinen Text für dieses Playbook gespeichert.',
+  },
   hint: 'Ein Klick auf einen Eintrag setzt den Cursor in seine Zeile.',
 };
 
@@ -41,7 +46,7 @@ export const dePlaybookDryRun: Messages['playbooks']['page']['dryRun'] = {
     loading: 'Ob Tasks wirklich laufen, ließ sich noch nicht prüfen: die Gliederung lädt noch.',
     failed: 'Ob Tasks wirklich laufen, ließ sich nicht prüfen: die Gliederung ist nicht verfügbar.',
     truncated: 'Die Gliederung ist gekürzt: Tasks dahinter, die wirklich laufen, ließen sich nicht prüfen.',
-    repo: 'Ob Tasks wirklich laufen, ließ sich nicht prüfen: für Playbooks aus einem Repository gibt es keine Gliederung.',
+    repo: 'Der Probelauf nutzt den aktuellen Commit des Repositorys; seine Tasks werden hier nicht geprüft.',
   },
   start: 'Probelauf starten',
   started: 'Probelauf gestartet',

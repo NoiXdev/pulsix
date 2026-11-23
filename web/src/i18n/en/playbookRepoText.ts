@@ -38,4 +38,5 @@ export const enPlaybookConflict = {
   after: 'saved since',
   reload: 'Reload',
   saveAnyway: 'Save mine anyway',
+  savedAgain: 'They saved again in the meantime: check their changes once more.',
 };

@@ -12,6 +12,9 @@ export type RepoText =
   | { state: 'text'; content: string; commit: string; syncedAt: string }
   | { state: 'left-out'; reason: PlaybookTextLeftOut };
 
+/** The states in which there is no text to show. */
+export type RepoNoText = Exclude<RepoText['state'], 'text'>;
+
 /**
  * usePlaybookRepoText reads a repository playbook's text as of the last
  * sync (backlog 3.127) and says which of the page's states it is in: the

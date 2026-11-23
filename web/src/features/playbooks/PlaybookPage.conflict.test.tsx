@@ -13,18 +13,24 @@ import { INLINE, editorPlaybook, renderAt, routes } from './playbookPageTestKit.
 const THEIRS = '- name: Install nginx\n  hosts: everywhere\n  tasks: []\n';
 const MINE = '- hosts: mine\n';
 const NOTICE = 'Someone saved this playbook since you started editing.';
+const AGAIN = 'They saved again in the meantime: check their changes once more.';
 
 const stale = () =>
   new Response(JSON.stringify({ status: 412, detail: 'the playbook changed since it was read' }), { status: 412, headers: { 'Content-Type': 'application/json' } });
 
 /** A server holding one playbook at a revision: GET answers it, PUT saves
  * when If-Match is absent or current and answers 412 when stale. `others`
- * saves someone else's text behind the page's back. */
+ * saves someone else's text behind the page's back; `holdReads` keeps
+ * every GET open until the function it returns is called. */
 function server(start = editorPlaybook({ revision: 4 })) {
   let current = start;
+  let gate: Promise<void> | null = null;
   const puts: { ifMatch: string | null; body: unknown }[] = [];
   const api = routes('operator', {
-    'GET /api/v1/orgs/acme/playbooks/p1': () => ({ playbook: current }),
+    'GET /api/v1/orgs/acme/playbooks/p1': async () => {
+      if (gate) await gate;
+      return { playbook: current };
+    },
     'PUT /api/v1/orgs/acme/playbooks/p1': (req: MockRequest) => {
       const ifMatch = req.headers.get('If-Match');
       puts.push({ ifMatch, body: req.body });
@@ -38,6 +44,14 @@ function server(start = editorPlaybook({ revision: 4 })) {
     puts,
     others: (inline: string) => {
       current = editorPlaybook({ inline, revision: current.revision + 1 });
+    },
+    holdReads: () => {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => (release = resolve));
+      return () => {
+        gate = null;
+        release();
+      };
     },
   };
 }
@@ -85,6 +99,7 @@ describe('PlaybookPage save conflicts', () => {
     expect(within(notice).getByText(/Your changes are still here, not saved\./)).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Check' })).queryByText('The server refused the last save:')).not.toBeInTheDocument();
     expect(screen.queryByText('Playbook saved')).not.toBeInTheDocument();
+    expect(within(notice).queryByText(AGAIN)).not.toBeInTheDocument();
   });
 
   it('shows their changes as a diff of the text the draft started from against the current one', async () => {
@@ -125,14 +140,38 @@ describe('PlaybookPage save conflicts', () => {
     expect(codeOf(editor)).toBe(MINE);
   });
 
-  it('shows the notice again when the current revision went stale too', async () => {
+  it('says they saved again when the current revision went stale too, with their newest text', async () => {
     const { user, s, editor, notice } = await editAndHitConflict();
     s.others('- hosts: third\n');
     await user.click(within(notice).getByRole('button', { name: 'Save mine anyway' }));
-    await waitFor(() => expect(s.puts.at(-1)).toEqual({ ifMatch: '"5"', body: { inline: MINE } }));
-    const again = await screen.findByRole('region', { name: NOTICE });
+    // The line comes once the playbook was read again: only then is the
+    // next attempt on the newest revision.
+    expect(await within(notice).findByText(AGAIN)).toBeInTheDocument();
+    expect(notice).toHaveFocus();
+    expect(s.puts.at(-1)).toEqual({ ifMatch: '"5"', body: { inline: MINE } });
     expect(codeOf(editor)).toBe(MINE);
-    await user.click(within(again).getByRole('button', { name: 'Save mine anyway' }));
+    await user.click(within(notice).getByRole('button', { name: 'Show their changes' }));
+    const diff = await within(notice).findByRole('figure', { name: 'Differences' });
+    expect(within(diff).getAllByRole('listitem').map((r) => r.textContent)).toContain('+- hosts: third');
+    await user.click(within(notice).getByRole('button', { name: 'Save mine anyway' }));
+    expect(await screen.findByText('Playbook saved')).toBeInTheDocument();
+    expect(s.puts.at(-1)).toEqual({ ifMatch: '"6"', body: { inline: MINE } });
+  });
+
+  it('keeps Save mine anyway disabled until the playbook is read again', async () => {
+    const { user, s, notice } = await editAndHitConflict();
+    s.others('- hosts: third\n');
+    const release = s.holdReads();
+    const anyway = within(notice).getByRole('button', { name: 'Save mine anyway' });
+    await user.click(anyway);
+    await waitFor(() => expect(s.puts).toHaveLength(2));
+    await waitFor(() => expect(anyway).toBeDisabled());
+    await user.click(anyway);
+    expect(s.puts).toHaveLength(2);
+    release();
+    expect(await within(notice).findByText(AGAIN)).toBeInTheDocument();
+    await waitFor(() => expect(anyway).toBeEnabled());
+    await user.click(anyway);
     expect(await screen.findByText('Playbook saved')).toBeInTheDocument();
     expect(s.puts.at(-1)).toEqual({ ifMatch: '"6"', body: { inline: MINE } });
   });

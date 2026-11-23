@@ -126,5 +126,9 @@ export default defineConfig({
     { name: 'lists', testMatch: /lists\.spec\.ts/, dependencies: ['version-notice'] },
     { name: 'settings-area', testMatch: /settings-area\.spec\.ts/, dependencies: ['lists'] },
     { name: 'personal-tokens', testMatch: /personal-tokens\.spec\.ts/, dependencies: ['settings-area'] },
+    // Saving a playbook over someone else's save (backlog 3.127): an
+    // editor playbook of its own, saved by the manager alone, so it needs
+    // no worker; it signs in with the administrator's shared state.
+    { name: 'playbook-conflict', testMatch: /playbook-conflict\.spec\.ts/, dependencies: ['personal-tokens'] },
   ],
 });

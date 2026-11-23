@@ -70,11 +70,11 @@ describe('PlaybookPage Dry run tab notes', () => {
     expect(within(f).queryByRole('list', { name: REAL_LIST })).not.toBeInTheDocument();
   });
 
-  it('says a repository playbook cannot be checked for tasks that run for real', async () => {
+  it("says a repository playbook's tasks are not checked: the dry run runs the current commit", async () => {
     mockApi(dryRoutes('operator', { extra: { 'GET /api/v1/orgs/acme/job-templates': { templates: [template('t2', 'Deploy infra', 'p2')] } } }).routes);
     renderAt('/o/acme/playbooks/p2?tab=dry-run');
     const f = await form();
-    expect(await within(f).findByText('Tasks that run for real could not be checked: repository playbooks have no outline.')).toBeInTheDocument();
+    expect(await within(f).findByText("The dry run runs the repository's current commit; its tasks are not checked here.")).toBeInTheDocument();
   });
 
   it('says nothing more when the full outline was read', async () => {
@@ -85,10 +85,10 @@ describe('PlaybookPage Dry run tab notes', () => {
     expect(within(f).queryByText(/could not be checked/)).not.toBeInTheDocument();
   });
 
-  it('speaks German about an outline it could not read', async () => {
+  it('speaks German about the tasks of a repository playbook', async () => {
     mockApi(dryRoutes('operator', { extra: { 'GET /api/v1/orgs/acme/job-templates': { templates: [template('t2', 'Deploy infra', 'p2')] } } }).routes);
     renderAt('/o/acme/playbooks/p2?tab=dry-run', 'de');
     const f = await screen.findByRole('form', { name: 'Probelauf' });
-    expect(await within(f).findByText(/für Playbooks aus einem Repository gibt es keine Gliederung/)).toBeInTheDocument();
+    expect(await within(f).findByText('Der Probelauf nutzt den aktuellen Commit des Repositorys; seine Tasks werden hier nicht geprüft.')).toBeInTheDocument();
   });
 });

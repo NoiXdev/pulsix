@@ -37,7 +37,7 @@ export function PlaybookRepoTextView({ org, playbook, latest }: PlaybookRepoText
     <div className={EDITOR_GRID}>
       <RepoNote playbook={playbook} repo={repo} text={text} />
       <aside className="flex min-w-0 flex-col gap-4">
-        <PlaybookOutlinePanel outline={null} repo />
+        <PlaybookOutlinePanel outline={null} repo={text.state} />
         {latest}
       </aside>
     </div>

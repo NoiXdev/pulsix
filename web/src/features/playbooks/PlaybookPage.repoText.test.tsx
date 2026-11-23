@@ -116,12 +116,33 @@ describe('PlaybookPage repository text', () => {
     mockApi(repoRoutes(problem(404, 'the repository has not been synced yet')));
     renderAt('/o/acme/playbooks/p2');
     expect(await within(await note()).findByText('The repository has not been synced yet: sync it to see the text here.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline yet: the repository has not been synced.')).toBeInTheDocument();
   });
 
   it('says when the text could not be read', async () => {
     mockApi(repoRoutes(problem(500, 'boom')));
     renderAt('/o/acme/playbooks/p2');
     expect(await within(await note()).findByText('The text could not be read: boom')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline: the text of the last sync could not be read.')).toBeInTheDocument();
+  });
+
+  it('says the outline waits for the text while it loads', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    mockApi(repoRoutes(() => held.then(() => content())));
+    renderAt('/o/acme/playbooks/p2');
+    const outline = await screen.findByRole('region', { name: 'Outline' });
+    expect(within(outline).getByText('Reading the text of the last sync for its outline…')).toBeInTheDocument();
+    expect(within(await note()).getByText('Reading the text of the last sync…')).toBeInTheDocument();
+    release();
+    expect(await findCodeEditor('Playbook YAML')).toBeInTheDocument();
+  });
+
+  it('speaks German in the outline about a repository never synced', async () => {
+    mockApi(repoRoutes(problem(404, 'the repository has not been synced yet')));
+    renderAt('/o/acme/playbooks/p2', 'de');
+    const outline = await screen.findByRole('region', { name: 'Gliederung' });
+    expect(await within(outline).findByText('Noch keine Gliederung: das Repository wurde noch nicht synchronisiert.')).toBeInTheDocument();
   });
 
   it('speaks German about a sync from an older worker', async () => {

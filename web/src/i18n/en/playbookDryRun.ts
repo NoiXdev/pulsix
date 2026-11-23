@@ -10,7 +10,13 @@ export const enPlaybookOutline = {
   truncated: 'Outline shortened: the playbook is too long to list in full.',
   stale: 'The YAML does not parse right now: this is the last outline that did.',
   none: 'No plays yet.',
-  repo: 'No outline: the last sync stored no text for this playbook.',
+  /** A repository playbook without a text to outline, by why. */
+  repo: {
+    loading: 'Reading the text of the last sync for its outline…',
+    notSynced: 'No outline yet: the repository has not been synced.',
+    failed: 'No outline: the text of the last sync could not be read.',
+    leftOut: 'No outline: the last sync stored no text for this playbook.',
+  },
   hint: 'Click an entry to put the cursor on its line.',
 };
 
@@ -40,7 +46,7 @@ export const enPlaybookDryRun = {
     loading: 'Tasks that run for real could not be checked yet: the outline is still loading.',
     failed: 'Tasks that run for real could not be checked: the outline is not available.',
     truncated: 'The outline is shortened: tasks past its end that run for real could not be checked.',
-    repo: 'Tasks that run for real could not be checked: repository playbooks have no outline.',
+    repo: "The dry run runs the repository's current commit; its tasks are not checked here.",
   },
   start: 'Start dry run',
   started: 'Dry run started',

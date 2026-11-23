@@ -1,8 +1,20 @@
 import { TriangleAlert } from 'lucide-react';
 import { Tag } from '../../ui/badge.tsx';
 import type { OutlineEntry, OutlinePlay, PlaybookOutline } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { SidePanel } from './PlaybookSidePanels.tsx';
+import type { RepoNoText } from './usePlaybookRepoText.ts';
+
+type RepoOutlineNotes = Messages['playbooks']['page']['outline']['repo'];
+
+/** Each state without a text, to its sentence. */
+const REPO_NOTE: Record<RepoNoText, (r: RepoOutlineNotes) => string> = {
+  loading: (r) => r.loading,
+  'not-synced': (r) => r.notSynced,
+  failed: (r) => r.failed,
+  'left-out': (r) => r.leftOut,
+};
 
 /** At most this many tags show on an entry; the rest as "+n". */
 const MAX_ENTRY_TAGS = 3;
@@ -12,8 +24,10 @@ interface PlaybookOutlinePanelProps {
   outline: PlaybookOutline | null;
   /** The text does not parse right now: `outline` is the last one that did. */
   stale?: boolean;
-  /** A repository playbook: the page has no text to outline. */
-  repo?: boolean;
+  /** A repository playbook without a text to outline, and why: its text is
+   * loading, the repository was never synced, the read failed, or the last
+   * sync stored none. */
+  repo?: RepoNoText;
   /** Puts the editor's cursor on a line and focuses it. */
   onReveal?: (line: number) => void;
 }
@@ -33,7 +47,7 @@ export function PlaybookOutlinePanel({ outline, stale, repo, onReveal }: Playboo
   return (
     <SidePanel title={o.title}>
       {repo ? (
-        <p className="text-xs text-muted-foreground">{o.repo}</p>
+        <p className="text-xs text-muted-foreground">{REPO_NOTE[repo](o.repo)}</p>
       ) : plays.length === 0 ? (
         <p className="text-xs text-muted-foreground">{o.none}</p>
       ) : (

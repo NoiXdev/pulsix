@@ -29,6 +29,11 @@ interface PlaybookSaveOptions {
  * saves anyway (on the revision just read: a newer save still answers
  * 412), saves successfully, or makes the draft clean again. Any other
  * refusal is the server's message (`serverError`).
+ *
+ * `pending` covers the read after a 412 as well, so nothing is sent on the
+ * old revision before the current one is in. `savedAgain` counts the times
+ * Save mine anyway, sent on the revision just read, was refused too:
+ * someone saved once more in between.
  */
 export function usePlaybookSave({ org, playbook, draft, revision, dirty, markSaved, reload, reread }: PlaybookSaveOptions) {
   const t = useT();
@@ -36,36 +41,49 @@ export function usePlaybookSave({ org, playbook, draft, revision, dirty, markSav
   const update = useUpdatePlaybook(org, playbook.id);
   const [serverError, setServerError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
+  const [savedAgain, setSavedAgain] = useState(0);
+  const [rereading, setRereading] = useState(false);
+  const clear = () => {
+    setConflict(false);
+    setSavedAgain(0);
+  };
   // A draft made clean again (by hand, or by Reload) has nothing to save.
-  if (conflict && !dirty) setConflict(false);
+  if (conflict && !dirty) clear();
 
-  async function send(onRevision: number) {
+  async function send(onRevision: number, anyway: boolean) {
     const sent = draft;
     setServerError(null);
     try {
       const res = await update.mutateAsync({ inline: sent, revision: onRevision });
       markSaved(sent, res.playbook.revision);
-      setConflict(false);
+      clear();
       toast.show(t.playbooks.editor.saved);
     } catch (err) {
       if (errorStatus(err) !== 412) {
         setServerError(err instanceof Error ? err.message : t.playbooks.editor.saveFailed);
         return;
       }
-      await reread();
+      setRereading(true);
+      try {
+        await reread();
+      } finally {
+        setRereading(false);
+      }
       setConflict(true);
+      if (anyway) setSavedAgain((n) => n + 1);
     }
   }
 
   return {
-    pending: update.isPending,
+    pending: update.isPending || rereading,
     serverError,
     conflict,
-    save: () => send(revision),
-    saveAnyway: () => send(playbook.revision),
+    savedAgain,
+    save: () => send(revision, false),
+    saveAnyway: () => send(playbook.revision, true),
     reload: () => {
       reload();
-      setConflict(false);
+      clear();
       setServerError(null);
     },
   };

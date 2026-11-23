@@ -44,11 +44,11 @@ describe('PlaybookPage outline and header', () => {
     expect(await within(await outlinePanel()).findByText(/Outline shortened/)).toBeInTheDocument();
   });
 
-  it('has no outline for a repository playbook without a stored text, and says so', async () => {
+  it('has no outline for a repository playbook never synced, and says so', async () => {
     const asked: string[] = [];
     mockApi(routes('operator', { 'POST /api/v1/orgs/acme/playbooks/outline': () => (asked.push('outline'), OUTLINE) }));
     renderAt('/o/acme/playbooks/p2');
-    expect(await within(await outlinePanel()).findByText('No outline: the last sync stored no text for this playbook.')).toBeInTheDocument();
+    expect(await within(await outlinePanel()).findByText('No outline yet: the repository has not been synced.')).toBeInTheDocument();
     expect(within(screen.getByTestId('playbook-header')).queryByRole('list', { name: 'Tags' })).not.toBeInTheDocument();
     expect(asked).toEqual([]);
   });

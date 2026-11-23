@@ -142,6 +142,7 @@ function PlaybookDetail({ org, playbook, role, reread }: { org: string; playbook
             if (canSave) void saving.saveAnyway();
           }}
           saveDisabled={!canSave}
+          savedAgain={saving.savedAgain}
         />
       )}
       <PageTabs label={t.playbooks.page.tabsLabel} tabs={items} active={tab} onSelect={select} tabId={playbookTabId} panelId={playbookPanelId} />

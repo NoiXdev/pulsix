@@ -36,4 +36,5 @@ export const dePlaybookConflict: Messages['playbooks']['page']['conflict'] = {
   after: 'seitdem gespeichert',
   reload: 'Neu laden',
   saveAnyway: 'Trotzdem meine speichern',
+  savedAgain: 'Inzwischen wurde erneut gespeichert: sieh dir die Änderungen seitdem noch einmal an.',
 };
