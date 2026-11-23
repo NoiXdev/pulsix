@@ -15,6 +15,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -281,6 +282,12 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 	case errors.Is(err, runrequests.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, runrequests.ErrExpired), errors.Is(err, runrequests.ErrDecided), errors.Is(err, runrequests.ErrChanged):
+		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, inventory.ErrUnrenderable):
+		// The run picture renders the targets' inventory as the claim does,
+		// which fails closed (a stray sealed value, a broken jump host
+		// chain). The message names the group or host and the reason; the
+		// renderer never puts a value, let alone a secret, into it.
 		return huma.Error409Conflict(err.Error())
 	}
 	// Anything else came from the jobs paths an approval enqueues through.

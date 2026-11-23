@@ -74,16 +74,11 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 	if err != nil {
 		return jobs.TemplateRow{}, fmt.Errorf("encode template scope: %w", err)
 	}
-	// Only the values a run receives are opened (spec 7.75 goal 3): a
-	// value under an inactive or undeclared field is left out before
-	// anything is decrypted, so it never enters memory in the clear here
-	// and an envelope that would not open cannot fail the run. The queue's
-	// own filter (jobs.sendableVars) stays as the second line.
-	if t.ExtraVarsSchema != nil {
-		t.ExtraVars = schema.Sendable(t.ExtraVarsSchema.Fields, t.ExtraVars)
-		t.ExtraVars = dropStraySealed(ctx, t)
+	opened, secrets, stray, err := a.sendableOpened(t)
+	if len(stray) > 0 {
+		slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
+			"org", t.OrgID, "template", t.ID, "paths", stray)
 	}
-	opened, secrets, err := a.openExtraVars(t)
 	if err != nil {
 		return jobs.TemplateRow{}, err
 	}
@@ -134,27 +129,35 @@ func (a templateLookup) TemplateExists(ctx context.Context, orgID, id uuid.UUID)
 	return true, nil
 }
 
-// dropStraySealed is t's sendable values without every top-level value
-// that holds a sealed secret under a field that is not secret-typed (spec
-// 7.75 owner decision 4: a secret field a person removed keeps its sealed
-// value, and a source may declare the name again as a plain field). The
-// variables apply holds such a field for a person; this is the second
-// line, so a stray sealed value is never opened into a plain var whose
-// value the claim does not know to redact. A dropped value is logged
-// once per lookup.
-func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
-	out, paths := withoutStraySealed(t)
-	if len(paths) > 0 {
-		slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
-			"org", t.OrgID, "template", t.ID, "paths", paths)
+// sendableOpened is t's extra vars as a run receives them, the one filter
+// the claim (TemplateLookup) and the run request vars digest
+// (runRequestVars) share. Only the values a run receives are opened (spec
+// 7.75 goal 3): a value under an inactive or undeclared field is left out
+// before anything is decrypted, so it never enters memory in the clear
+// here and an envelope that would not open cannot fail the run; the
+// queue's own filter (jobs.sendableVars) stays as the second line. Stray
+// sealed values are left out too (dropStraySealed). It returns the opened
+// values, the plaintexts it opened (openExtraVars) and the paths of the
+// strays it left out, for the caller to log.
+func (a templateLookup) sendableOpened(t templates.Template) (map[string]any, []string, []string, error) {
+	var stray []string
+	if t.ExtraVarsSchema != nil {
+		t.ExtraVars = schema.Sendable(t.ExtraVarsSchema.Fields, t.ExtraVars)
+		t.ExtraVars, stray = dropStraySealed(t)
 	}
-	return out
+	opened, secrets, err := a.openExtraVars(t)
+	return opened, secrets, stray, err
 }
 
-// withoutStraySealed is dropStraySealed without the log line: t's values
-// without every top-level value holding a stray sealed secret, and the
-// paths of the strays.
-func withoutStraySealed(t templates.Template) (map[string]any, []string) {
+// dropStraySealed is t's values without every top-level value that holds a
+// sealed secret under a field that is not secret-typed (spec 7.75 owner
+// decision 4: a secret field a person removed keeps its sealed value, and
+// a source may declare the name again as a plain field), and the paths of
+// those strays. The variables apply holds such a field for a person; this
+// is the second line, so a stray sealed value is never opened into a
+// plain var whose value the claim does not know to redact. TemplateLookup
+// logs the dropped paths once per lookup.
+func dropStraySealed(t templates.Template) (map[string]any, []string) {
 	stray := schema.StraySealed(t.ExtraVarsSchema.Fields, t.ExtraVars)
 	if len(stray) == 0 {
 		return t.ExtraVars, nil

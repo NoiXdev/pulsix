@@ -13,7 +13,6 @@ import (
 
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/inventory/render"
-	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/templates"
 )
@@ -36,20 +35,15 @@ func (v runRequestVars) InventoryVars(ctx context.Context, orgID uuid.UUID, host
 }
 
 // ExtraVars implements runrequests.RunVarsSource: the template's extra vars
-// as TemplateLookup hands them to the claim (only active, declared fields
-// when the template has a schema, no stray sealed value, secrets opened),
-// read from the store directly for the reason templateLookup's own doc
-// comment gives. A stray sealed value is left out without the claim's log
-// line: a picture is read on every look at the approval page.
+// through the claim's own filter (templateLookup.sendableOpened), read
+// from the store directly for the reason templateLookup's own doc comment
+// gives. A stray sealed value is left out without the claim's log line: a
+// picture is read on every look at the approval page.
 func (v runRequestVars) ExtraVars(ctx context.Context, orgID, templateID uuid.UUID) (map[string]any, error) {
 	t, err := v.lookup.templates.Get(ctx, orgID, templateID)
 	if err != nil {
 		return nil, err
 	}
-	if t.ExtraVarsSchema != nil {
-		t.ExtraVars = schema.Sendable(t.ExtraVarsSchema.Fields, t.ExtraVars)
-		t.ExtraVars, _ = withoutStraySealed(t)
-	}
-	opened, _, err := v.lookup.openExtraVars(t)
+	opened, _, _, err := v.lookup.sendableOpened(t)
 	return opened, err
 }

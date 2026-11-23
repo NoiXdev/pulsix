@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"strconv"
 	"strings"
@@ -112,5 +113,52 @@ func TestRunRequestAuditNamesTheApprovedRevision(t *testing.T) {
 	}
 	if got, want := f.approvalSummary(t, created.Request.ID), "approved run request (template revision "+strconv.FormatInt(approvedRev, 10)+")"; got != want {
 		t.Fatalf("audit summary = %q, want %q", got, want)
+	}
+}
+
+// TestRunRequestUnrenderableInventoryIs409: a stray sealed value (a secret
+// field switched to a plain one, its sealed value left in place) makes
+// the inventory unrenderable for a run. The detail and the approval say so
+// with a 409 naming the group, the request stays pending, and no
+// ciphertext reaches the body.
+func TestRunRequestUnrenderableInventoryIs409(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-unrenderable")
+	created := f.request(t, map[string]any{"reason": "x"})
+	g := f.secretGroup(t, "stray-s3cret-91b", "member-s3cret-2c7")
+	if _, _, err := f.s.Deps.Inventory.SetSchema(f.scoped, f.orgID, g.ID, g.Revision, schema.Schema{Fields: []schema.Field{
+		{Name: "db_pass", Type: schema.TypeString, Scope: schema.ScopeGroup},
+		{Name: "host_pass", Type: schema.TypeSecret, Scope: schema.ScopeHost},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := inventory.NewSQLStore(f.s.DB).GetGroup(f.scoped, f.orgID, g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, ok := schema.SealedBytes(stored.Vars["db_pass"])
+	if !ok {
+		t.Fatalf("db_pass = %v, want a stored sealed value", stored.Vars["db_pass"])
+	}
+	cipher := base64.StdEncoding.EncodeToString(ct)
+
+	check := func(what string, resp *http.Response) {
+		t.Helper()
+		body := mustReadBody(t, resp)
+		if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "secrets") {
+			t.Fatalf("%s = %d %s, want 409 naming the group", what, resp.StatusCode, body)
+		}
+		if strings.Contains(body, cipher) || strings.Contains(body, "stray-s3cret-91b") {
+			t.Fatalf("%s carries the sealed value: %s", what, body)
+		}
+	}
+	check("detail", requestJSON(t, f.adminC, http.MethodGet, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+created.Request.ID, nil))
+	check("approve", f.approve(t, f.adminC, created.Request.ID, created.Fingerprint))
+
+	var status string
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT status FROM run_requests WHERE id = $1`, created.Request.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("status after a refused approval = %s, want pending", status)
 	}
 }

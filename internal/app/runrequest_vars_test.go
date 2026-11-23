@@ -107,8 +107,21 @@ func TestRunRequestVarsReadWhatTheClaimReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	row, err := NewTemplateLookup(store, playbooks.NewSQLStore(d), box).TemplateLookup(scoped, org.ID, tmplID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claimed map[string]any
+	if err := json.Unmarshal(row.ExtraVars, &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(extra, claimed) {
+		t.Fatalf("extra vars = %v, want what the claim sends: %v", extra, claimed)
+	}
+	// The fixture really exercises the filter: the inactive, undeclared
+	// and stray values are gone and the secret is opened.
 	if want := map[string]any{"api_key": "extra-key-5c9", "region": "eu"}; !reflect.DeepEqual(extra, want) {
-		t.Fatalf("extra vars = %v, want %v (what the claim sends, opened)", extra, want)
+		t.Fatalf("extra vars = %v, want %v", extra, want)
 	}
 	if _, err := vars.ExtraVars(scoped, org.ID, uuid.Must(uuid.NewV7())); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("unknown template = %v, want templates.ErrNotFound", err)
