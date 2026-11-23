@@ -142,12 +142,11 @@ export function useGroupsMembers(org: string, ids: readonly string[]) {
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['inventory', org, 'members-of', ids],
-    queryFn: async () => {
-      const lists = await mapPool(ids, MEMBERS_POOL, (id) => qc.fetchQuery({ ...groupMembersOptions(org, id), staleTime: 30_000 }));
+    queryFn: async ({ signal }) => {
+      const lists = await mapPool(ids, MEMBERS_POOL, (id) => qc.fetchQuery({ ...groupMembersOptions(org, id), staleTime: 30_000 }), signal);
       return lists.flatMap((l) => l.members ?? []);
     },
     enabled: !!org && ids.length > 0,
-    retry: false,
   });
   if (ids.length === 0) return { members: [], isError: false };
   return { members: query.data, isError: query.isError };

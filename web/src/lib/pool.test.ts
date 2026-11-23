@@ -20,6 +20,42 @@ describe('mapPool', () => {
     expect(await mapPool([], 4, () => Promise.reject(new Error('never')))).toEqual([]);
   });
 
+  it('hands out no new item after a rejection', async () => {
+    const started: number[] = [];
+    await expect(
+      mapPool([1, 2, 3, 4, 5, 6], 2, async (n) => {
+        started.push(n);
+        await new Promise((r) => setTimeout(r, 2));
+        if (n === 1) throw new Error('boom');
+        return n;
+      }),
+    ).rejects.toThrow('boom');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started.length).toBeLessThan(6);
+  });
+
+  it('stops handing out items once its signal aborts, and passes the signal on', async () => {
+    const ctl = new AbortController();
+    const seen: AbortSignal[] = [];
+    const started: number[] = [];
+    const run = mapPool(
+      [1, 2, 3, 4, 5, 6],
+      2,
+      async (n, signal) => {
+        started.push(n);
+        seen.push(signal as AbortSignal);
+        await new Promise((r) => setTimeout(r, 2));
+        if (n === 2) ctl.abort();
+        return n;
+      },
+      ctl.signal,
+    );
+    await expect(run).rejects.toThrow();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started.length).toBeLessThan(6);
+    expect(seen.every((s) => s === ctl.signal)).toBe(true);
+  });
+
   it('rejects when a call does', async () => {
     await expect(mapPool([1, 2], 2, (n) => (n === 2 ? Promise.reject(new Error('boom')) : Promise.resolve(n)))).rejects.toThrow('boom');
   });

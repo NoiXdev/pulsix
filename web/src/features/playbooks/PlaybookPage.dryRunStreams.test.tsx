@@ -48,6 +48,38 @@ describe('PlaybookPage Dry run tab, many zones', () => {
     expect(new Set(FakeEventSource.instances.map((e) => e.url)).size).toBe(FakeEventSource.instances.length);
   });
 
+  it("keeps a polled zone's changes on screen when its job ends, never saying nothing would change", async () => {
+    const zones = Array.from({ length: MAX_LIVE_STREAMS + 1 }, (_, i) => `d${i + 1}`);
+    const polled = zones[zones.length - 1];
+    const calls: Record<string, number> = {};
+    const extra: Record<string, unknown> = {};
+    zones.forEach((id, i) => {
+      extra[`GET /api/v1/orgs/acme/jobs/${id}`] = () => {
+        calls[id] = (calls[id] ?? 0) + 1;
+        const status = calls[id] > 2 ? 'succeeded' : 'running';
+        return detail(id, {
+          zone_id: `z${i + 1}`, run_group_id: 'd1', hosts: [`h${i + 1}`], status, stats: {},
+          group: zones.filter((o) => o !== id).map((o) => ({ id: o, status, zone_id: `z-${o}` })),
+        });
+      };
+      extra[`GET /api/v1/orgs/acme/jobs/${id}/events`] = { events: id === polled ? [changed(1, 'host-x', 'Task x', { before: 'a\n', after: 'b\n' })] : [] };
+    });
+    mockApi(dryRoutes('operator', { extra }).routes);
+    const flashed: string[] = [];
+    const watch = new MutationObserver(() => {
+      if (document.body.textContent?.includes('No task would change anything.')) flashed.push('seen');
+    });
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+    renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const result = await screen.findByRole('region', { name: 'Latest dry run' });
+    await within(result).findByRole('list', { name: 'What would change' });
+    await waitFor(() => expect(within(result).getByText(/· succeeded ·/)).toBeInTheDocument(), { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 300));
+    watch.disconnect();
+    expect(within(result).getAllByRole('heading', { level: 4 })).toHaveLength(1);
+    expect(flashed).toEqual([]);
+  }, 12_000);
+
   it.each([
     [undefined, /2 hosts so far, 1 zone has not reported yet/, 'Latest dry run'],
     ['de' as const, /2 Hosts bisher, 1 Zone hat noch nicht gemeldet/, 'Letzter Probelauf'],

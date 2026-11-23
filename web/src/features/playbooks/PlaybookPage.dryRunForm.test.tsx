@@ -57,6 +57,31 @@ describe('PlaybookPage Dry run tab, the form under change', () => {
     expect(within(f).getByRole('checkbox', { name: 'web-01' })).toBeChecked();
   });
 
+  it('drops chosen hosts the template no longer offers when its scope changes', async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    let ids = ['h1', 'h2'];
+    mockApi(
+      dryRoutes('operator', {
+        extra: {
+          'GET /api/v1/orgs/acme/job-templates': () => ({ templates: [template('t1', 'Deploy web', 'p1', { scope: { group_id: null, host_ids: ids } })] }),
+          'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-01' } },
+          'GET /api/v1/orgs/acme/hosts/h2': { host: { id: 'h2', name: 'web-02' } },
+          'POST /api/v1/orgs/acme/playbooks/p1/dry-run': (req: MockRequest) => (sent.push(req.body), { jobs: [job('d1')] }),
+        },
+      }).routes,
+    );
+    const { qc } = renderAt('/o/acme/playbooks/p1?tab=dry-run');
+    const f = await form();
+    await user.click(await within(f).findByRole('checkbox', { name: 'web-01' }));
+    await user.click(within(f).getByRole('checkbox', { name: 'web-02' }));
+    ids = ['h2'];
+    await qc.invalidateQueries();
+    await waitFor(() => expect(within(f).queryByRole('checkbox', { name: 'web-01' })).not.toBeInTheDocument());
+    await startIn(f, user);
+    await waitFor(() => expect(sent).toEqual([{ template_id: 't1', diff: true, host_ids: ['h2'] }]));
+  });
+
   it('says the templates could not be read, and reads them again on Retry', async () => {
     const user = userEvent.setup();
     let ok = false;

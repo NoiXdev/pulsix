@@ -2,7 +2,7 @@ import { useId } from 'react';
 import type { Template } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { HostChecklist } from '../runs/HostChecklist.tsx';
-import { useTemplateHosts } from './useTemplateHosts.ts';
+import type { TemplateHosts } from './useTemplateHosts.ts';
 
 /**
  * DryRunHosts chooses the hosts a dry run narrows to (none: all of the
@@ -10,11 +10,10 @@ import { useTemplateHosts } from './useTemplateHosts.ts';
  * in the browser (useTemplateHosts), else every managed host — the server
  * refuses one outside the template either way.
  */
-export function DryRunHosts({ org, template, selected, onToggle }: { org: string; template: Template | undefined; selected: readonly string[]; onToggle: (id: string) => void }) {
+export function DryRunHosts({ org, template, scope, selected, onToggle }: { org: string; template: Template | undefined; scope: TemplateHosts; selected: readonly string[]; onToggle: (id: string) => void }) {
   const t = useT();
   const d = t.playbooks.page.dryRun;
   const labelId = useId();
-  const scope = useTemplateHosts(org, template);
   if (!template) return null;
   if (scope.kind === 'open') {
     return (

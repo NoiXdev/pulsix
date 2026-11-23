@@ -16,6 +16,19 @@ function setup() {
   return { qc, wrapper, cached };
 }
 
+describe('host writes and the host names a form read', () => {
+  it('invalidate the names useHostNames cached', async () => {
+    mockApi({ 'PATCH /api/v1/orgs/acme/hosts/h1': { host: { ...HOST, name: 'web-02', revision: 4 } } });
+    const { qc, wrapper } = setup();
+    qc.setQueryData(['host-names', 'acme', ['h1']], ['web-01']);
+    const { result } = renderHook(() => useUpdateHost('acme', 'h1'), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ name: 'web-02', zone_id: 'z', address: '', revision: 3 });
+    });
+    expect(qc.getQueryState(['host-names', 'acme', ['h1']])?.isInvalidated).toBe(true);
+  });
+});
+
 describe('useUpdateHost', () => {
   it('puts the PATCH response host into the cached host, so a following tag or SSH write sends the new revision', async () => {
     mockApi({ 'PATCH /api/v1/orgs/acme/hosts/h1': { host: { ...HOST, name: 'web-02', revision: 4 } } });

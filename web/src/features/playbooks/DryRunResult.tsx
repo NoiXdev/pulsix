@@ -131,14 +131,15 @@ function ShownGroup({ org, lead }: { org: string; lead: JobDetail }) {
 
 /** RunFeedReader reads one job of the group — its detail polled while it
  * is live, its log streamed (or, past MAX_LIVE_STREAMS, polled) — and
- * reports each new state; it renders nothing itself. */
+ * reports each new state; it renders nothing itself. Streams are fixed by
+ * the job's place in the group; nothing hands one over to another job. */
 function RunFeedReader({ org, id, stream, onRead }: { org: string; id: string; stream: boolean; onRead: (f: RunFeed) => void }) {
   const job = useJob(org, id, { refetchInterval: pollWhileLive });
   const detail = job.data?.job;
   const log = useRunLog(org, stream ? id : '');
-  const polled = usePolledEvents(org, stream ? '' : id, !isTerminal(detail?.status));
-  const status = (stream ? log.status : null) ?? detail?.status;
-  const events = stream ? log.events : polled;
+  const polled = usePolledEvents(org, stream ? '' : id, detail?.status);
+  const status = stream ? (log.status ?? detail?.status) : polled.status;
+  const events = stream ? log.events : polled.events;
   useEffect(() => {
     if (detail && status) onRead({ job: detail, status, events });
   }, [detail, status, events, onRead]);
@@ -148,13 +149,30 @@ function RunFeedReader({ org, id, stream, onRead }: { org: string; id: string; s
 const NO_EVENTS: readonly JobEvent[] = [];
 
 /** usePolledEvents is a job's whole log, read again every DETAIL_POLL_MS
- * while the job `live`s, and once more when it ends. Off for an empty id. */
-function usePolledEvents(org: string, id: string, live: boolean): readonly JobEvent[] {
+ * while the job is live and once more after it ended. Its `status` is the
+ * job's, except that an ended job still reads as running until that last
+ * read is in, so the result never shows an ended run with a log that is
+ * still short. Off for an empty id. */
+function usePolledEvents(org: string, id: string, jobStatus: string | undefined): { events: readonly JobEvent[]; status: string | undefined } {
+  const ended = jobStatus !== undefined && isTerminal(jobStatus);
   const query = useQuery({
-    queryKey: ['dry-run-events', org, id, live],
+    queryKey: ['dry-run-events', org, id],
     queryFn: () => fetchJobEvents(org, id, 0),
     enabled: !!org && !!id,
-    refetchInterval: live ? DETAIL_POLL_MS : false,
+    refetchInterval: ended ? false : DETAIL_POLL_MS,
   });
-  return query.data ?? NO_EVENTS;
+  const [finalRead, setFinalRead] = useState(false);
+  const { refetch } = query;
+  useEffect(() => {
+    if (!ended || !id) return;
+    let alive = true;
+    // Even a failed last read ends the wait: an ended run must not read as running for good.
+    void refetch().then(() => {
+      if (alive) setFinalRead(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [ended, id, refetch]);
+  return { events: query.data ?? NO_EVENTS, status: ended && !finalRead ? 'running' : jobStatus };
 }

@@ -122,12 +122,16 @@ export function useHostNames(org: string, ids: readonly string[]) {
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['host-names', org, ids],
-    queryFn: () =>
-      mapPool(ids, NAME_POOL, (id) =>
-        qc.fetchQuery({ ...hostQueryOptions(org, id), staleTime: 30_000 }).then(
-          (r) => r.host.name,
-          () => id,
-        ),
+    queryFn: ({ signal }) =>
+      mapPool(
+        ids,
+        NAME_POOL,
+        (id) =>
+          qc.fetchQuery({ ...hostQueryOptions(org, id), staleTime: 30_000 }).then(
+            (r) => r.host.name,
+            () => id,
+          ),
+        signal,
       ),
     enabled: !!org && ids.length > 0,
   });
@@ -144,6 +148,7 @@ function useInvalidateHost(org: string) {
   return (id?: string) => {
     void qc.invalidateQueries({ queryKey: ['hosts', org] });
     void qc.invalidateQueries({ queryKey: id ? ['host', org, id] : ['host', org] });
+    void qc.invalidateQueries({ queryKey: ['host-names', org] });
     void qc.invalidateQueries({ queryKey: ['host-tags', org] });
     void qc.invalidateQueries({ queryKey: ['ssh', org] });
     void qc.invalidateQueries({ queryKey: ['inventory', org] });
@@ -218,6 +223,7 @@ export function useSetCapabilitiesOfHost(org: string) {
       qc.setQueryData(['host', org, id], res);
       void qc.invalidateQueries({ queryKey: ['hosts', org] });
       void qc.invalidateQueries({ queryKey: ['host', org, id] });
+      void qc.invalidateQueries({ queryKey: ['host-names', org] });
     },
   });
 }

@@ -26,8 +26,8 @@ export type OutlineProblem = 'invalid' | 'failed';
  * usePlaybookOutline is the server's outline of an editor playbook's text
  * (spec §3/§4): asked for once typing pauses (OUTLINE_DEBOUNCE_MS), and
  * while the text does not parse (422, `problem` 'invalid') or the request
- * fails (`problem` 'failed') the last good outline stays. Off (`enabled` false, a repository playbook) it asks
- * nothing and answers null.
+ * fails (`problem` 'failed') the last good outline stays. Off (`enabled`
+ * false, a repository playbook) it asks nothing and answers null.
  */
 export function usePlaybookOutline(org: string, content: string, enabled: boolean): { outline: PlaybookOutline | null; problem: OutlineProblem | null } {
   const settled = useDebounced(content, OUTLINE_DEBOUNCE_MS);

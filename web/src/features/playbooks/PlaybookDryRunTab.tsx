@@ -12,6 +12,7 @@ import { useT } from '../../i18n/useT.ts';
 import { may } from '../../lib/roles.ts';
 import { DryRunHosts } from './DryRunHosts.tsx';
 import { DryRunResult } from './DryRunResult.tsx';
+import { useTemplateHosts } from './useTemplateHosts.ts';
 import { useDraftTick } from './useDraftTick.ts';
 import { usePlaybookOutline, type OutlineProblem } from './usePlaybookOutline.ts';
 
@@ -76,6 +77,8 @@ function DryRunForm({ org, playbook, role, templates, templatesFailed, onRetry, 
   const [checkDraft, setCheckDraft] = useDraftTick(canDraft);
   // The hosts belong to the template they were chosen under: when the chosen
   // one changes (another picked, or the only one replaced), the choice starts over.
+  const chosenTemplate = list.find((tpl) => tpl.id === chosen);
+  const scope = useTemplateHosts(org, chosenTemplate);
   const [hostsOf, setHostsOf] = useState(chosen);
   if (hostsOf !== chosen) {
     setHostsOf(chosen);
@@ -91,7 +94,9 @@ function DryRunForm({ org, playbook, role, templates, templatesFailed, onRetry, 
     if (!chosen || start.isPending) return;
     setError(null);
     const body: PlaybookDryRunInput = { template_id: chosen, diff };
-    if (hostIds.length > 0) body.host_ids = hostIds;
+    // Hosts the template no longer offers (its scope or limit changed under the form) would be refused.
+    const offered = hostIds.filter((h) => scope.kind !== 'listed' || scope.hosts.some((x) => x.id === h));
+    if (offered.length > 0) body.host_ids = offered;
     const chosenTags = tags.filter((tag) => available.includes(tag));
     if (chosenTags.length > 0) body.tags = chosenTags;
     if (checkDraft) body.draft = draft;
@@ -144,7 +149,7 @@ function DryRunForm({ org, playbook, role, templates, templatesFailed, onRetry, 
         )}
       </div>
 
-      <DryRunHosts org={org} template={list.find((tpl) => tpl.id === chosen)} selected={hostIds} onToggle={(h) => setHostIds((s) => toggle(s, h))} />
+      <DryRunHosts org={org} template={chosenTemplate} scope={scope} selected={hostIds} onToggle={(h) => setHostIds((s) => toggle(s, h))} />
 
       {available.length > 0 && (
         <div className="flex flex-col gap-1">
