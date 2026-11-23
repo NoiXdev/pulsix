@@ -10,8 +10,8 @@ import { TemplateDialog } from './TemplateDialog.tsx';
 import type { Playbook } from '../../api/types.ts';
 
 const repo = { id: 'r1', name: 'infra', url: 'https://git.example/infra.git', branch: 'main', subpath: '', created_at: '', updated_at: '' };
-const editorPlaybook: Playbook = { id: 'pb1', source: 'editor', summary: 'Install nginx', created_at: '', updated_at: '' };
-const registered: Playbook = { id: 'pb7', source: 'repo', repo_id: 'r1', path: 'site.yml', summary: '', created_at: '', updated_at: '' };
+const editorPlaybook: Playbook = { id: 'pb1', source: 'editor', summary: 'Install nginx', revision: 1, created_at: '', updated_at: '' };
+const registered: Playbook = { id: 'pb7', source: 'repo', repo_id: 'r1', path: 'site.yml', summary: '', revision: 1, created_at: '', updated_at: '' };
 const discovered = (over: Record<string, unknown> = {}) => ({ path: 'deploy.yml', fields: 3, warnings: 0, failed: false, left_out: false, ...over });
 const sources = { commit: '9f8e7d6c5b4a', synced_at: '2026-11-05T10:00:00.123456Z', worker_reads: true, incomplete: false, left_out: [], notes: [] };
 

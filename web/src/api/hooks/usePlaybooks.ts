@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { ifMatch } from '../ifMatch.ts';
 import type { PlaybookDryRunInput } from '../types.ts';
 
 function useInvalidate(org: string) {
@@ -39,13 +40,29 @@ export function useCreatePlaybook(org: string) {
   });
 }
 
+/** useUpdatePlaybook saves an editor playbook's text. With `revision` (the
+ * one the draft's base came from) it sends If-Match, and a stale one
+ * answers 412 (an ApiError with that status); without one (a manager that
+ * keeps no revision) it saves unconditionally. */
 export function useUpdatePlaybook(org: string, id: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
-    mutationFn: (body: { inline: string }) =>
-      unwrap(api.PUT('/api/v1/orgs/{org}/playbooks/{id}', { params: { path: { org, id } }, body })),
+    mutationFn: ({ inline, revision }: { inline: string; revision?: number }) =>
+      unwrap(api.PUT('/api/v1/orgs/{org}/playbooks/{id}', { params: { path: { org, id }, header: revision ? ifMatch(revision) : undefined }, body: { inline } })),
     gcTime: 0,
     onSuccess: invalidate,
+  });
+}
+
+/** usePlaybookContent reads a repository playbook's text as of the last
+ * sync, or why there is none. 404 (the repository was never synced) is a
+ * state the page shows, not an error to retry. */
+export function usePlaybookContent(org: string, id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['playbooks', org, id, 'content'],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/playbooks/{id}/content', { params: { path: { org, id } } })),
+    enabled: enabled && !!org && !!id,
+    retry: false,
   });
 }
 

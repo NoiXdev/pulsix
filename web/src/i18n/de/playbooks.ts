@@ -1,5 +1,6 @@
 import type { Messages } from '../types.ts';
 import { dePlaybookDryRun, dePlaybookOutline } from './playbookDryRun.ts';
+import { dePlaybookConflict, dePlaybookRepoText } from './playbookRepoText.ts';
 
 export const dePlaybooks: Messages['playbooks'] = {
   list: {
@@ -115,6 +116,8 @@ export const dePlaybooks: Messages['playbooks'] = {
     },
     outline: dePlaybookOutline,
     dryRun: dePlaybookDryRun,
+    repoText: dePlaybookRepoText,
+    conflict: dePlaybookConflict,
   },
   newPage: {
     title: 'Neues Playbook',

@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { PageTabs, type PageTabItem } from '../../ui/page-tabs.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { usePlaybook, useUpdatePlaybook } from '../../api/hooks/usePlaybooks.ts';
+import { usePlaybook } from '../../api/hooks/usePlaybooks.ts';
 import { useTemplates } from '../../api/hooks/useTemplates.ts';
 import type { Playbook } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
@@ -15,10 +14,12 @@ import { PlaybookDryRunTab } from './PlaybookDryRunTab.tsx';
 import { PlaybookEditorTab } from './PlaybookEditorTab.tsx';
 import { PlaybookHeader } from './PlaybookHeader.tsx';
 import { PlaybookRunsTab } from './PlaybookRunsTab.tsx';
+import { PlaybookSaveConflict } from './PlaybookSaveConflict.tsx';
 import { PlaybookUsedByTab } from './PlaybookUsedByTab.tsx';
 import { parsePlaybookTab, playbookPanelId, playbookTabId, type PlaybookTab } from './playbookTabs.ts';
 import { usePlaybookDraft } from './usePlaybookDraft.ts';
 import { usePlaybookOutline } from './usePlaybookOutline.ts';
+import { usePlaybookSave } from './usePlaybookSave.ts';
 import { validateYAMLProblem } from './validate.ts';
 
 /**
@@ -30,7 +31,10 @@ import { validateYAMLProblem } from './validate.ts';
  * and tags, the Editor tab its entries, the Dry run tab its tags.
  *
  * The draft lives here, above the tabs (usePlaybookDraft: a clean draft
- * follows the stored text), and the Editor panel stays mounted
+ * follows the stored text and revision). A save sends the revision the
+ * draft started from; when someone saved meanwhile a notice above the tabs
+ * keeps the draft and offers their changes, Reload and Save mine anyway
+ * (usePlaybookSave, PlaybookSaveConflict). The Editor panel stays mounted
  * (hidden) while another tab is open, so a tab switch keeps unsaved text and
  * the editor's own undo history; leaving the page with it asks first
  * (useUnsavedGuard), a tab switch does not.
@@ -47,7 +51,7 @@ export function PlaybookPage() {
   if (guard) return guard;
   if (!orgInfo.data || !detail.data) return <QueryLoading />;
   // Keyed by the playbook: a draft never follows the person to another one.
-  return <PlaybookDetail key={id} org={org} playbook={detail.data.playbook} role={orgInfo.data.org.role} />;
+  return <PlaybookDetail key={id} org={org} playbook={detail.data.playbook} role={orgInfo.data.org.role} reread={detail.refetch} />;
 }
 
 const PANEL_CLASS = 'flex min-w-0 flex-col gap-4';
@@ -56,37 +60,26 @@ const PANEL_CLASS = 'flex min-w-0 flex-col gap-4';
  * not its. */
 const OPEN_DIALOG = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
-function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbook; role: string }) {
+function PlaybookDetail({ org, playbook, role, reread }: { org: string; playbook: Playbook; role: string; reread: () => Promise<unknown> }) {
   const t = useT();
-  const toast = useToast();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { tab?: unknown };
   const tab = parsePlaybookTab(search.tab);
   const templates = useTemplates(org);
-  const update = useUpdatePlaybook(org, playbook.id);
   const editable = playbook.source === 'editor' && may(role, 'playbooks.write');
 
-  const { saved, draft, setDraft, markSaved } = usePlaybookDraft(playbook.inline ?? '');
-  const [serverError, setServerError] = useState<string | null>(null);
+  const { saved, draft, revision, setDraft, markSaved, reload } = usePlaybookDraft(playbook.inline ?? '', playbook.revision);
   const dirty = editable && draft !== saved;
   const release = useUnsavedGuard(dirty, { samePath: true });
   const problem = playbook.source === 'editor' ? validateYAMLProblem(draft, t) : null;
-  const canSave = editable && dirty && problem === null && !update.isPending;
+  const saving = usePlaybookSave({ org, playbook, draft, revision, dirty, markSaved, reload, reread });
+  const canSave = editable && dirty && problem === null && !saving.pending;
   const { outline, invalid: outlineStale } = usePlaybookOutline(org, draft, playbook.source === 'editor');
 
   const using = (templates.data?.templates ?? []).filter((tpl) => tpl.playbook_id === playbook.id);
 
   async function save() {
-    if (!canSave) return;
-    const sent = draft;
-    setServerError(null);
-    try {
-      await update.mutateAsync({ inline: sent });
-      markSaved(sent);
-      toast.show(t.playbooks.editor.saved);
-    } catch (err) {
-      setServerError(err instanceof Error ? err.message : t.playbooks.editor.saveFailed);
-    }
+    if (canSave) await saving.save();
   }
 
   // Ctrl/Cmd-S saves from anywhere on the Editor tab of an editable
@@ -140,6 +133,17 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
         outline={outline}
         onDryRun={() => select('dry-run')}
       />
+      {saving.conflict && (
+        <PlaybookSaveConflict
+          base={saved}
+          current={playbook.inline ?? ''}
+          onReload={saving.reload}
+          onSaveAnyway={() => {
+            if (canSave) void saving.saveAnyway();
+          }}
+          saveDisabled={!canSave}
+        />
+      )}
       <PageTabs label={t.playbooks.page.tabsLabel} tabs={items} active={tab} onSelect={select} tabId={playbookTabId} panelId={playbookPanelId} />
       <div
         role="tabpanel"
@@ -155,7 +159,7 @@ function PlaybookDetail({ org, playbook, role }: { org: string; playbook: Playbo
           draft={draft}
           onChange={setDraft}
           problem={problem}
-          serverError={serverError}
+          serverError={saving.serverError}
           templates={using}
           onShowRuns={() => select('runs')}
           outline={outline}

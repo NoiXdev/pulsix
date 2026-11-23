@@ -10,7 +10,7 @@ export const enPlaybookOutline = {
   truncated: 'Outline shortened: the playbook is too long to list in full.',
   stale: 'The YAML does not parse right now: this is the last outline that did.',
   none: 'No plays yet.',
-  repo: 'The outline is not available for repository playbooks.',
+  repo: 'No outline: the last sync stored no text for this playbook.',
   hint: 'Click an entry to put the cursor on its line.',
 };
 

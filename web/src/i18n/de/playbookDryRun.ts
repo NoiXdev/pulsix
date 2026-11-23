@@ -11,7 +11,7 @@ export const dePlaybookOutline: Messages['playbooks']['page']['outline'] = {
   truncated: 'Gliederung gekürzt: das Playbook ist zu lang, um es ganz aufzulisten.',
   stale: 'Das YAML lässt sich gerade nicht lesen: das ist die letzte Gliederung, die ging.',
   none: 'Noch keine Plays.',
-  repo: 'Für Playbooks aus einem Repository gibt es keine Gliederung.',
+  repo: 'Keine Gliederung: die letzte Synchronisierung hat keinen Text für dieses Playbook gespeichert.',
   hint: 'Ein Klick auf einen Eintrag setzt den Cursor in seine Zeile.',
 };
 

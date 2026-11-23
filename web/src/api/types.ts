@@ -48,6 +48,12 @@ export type Playbook = components['schemas']['PlaybookDTO'];
 export type PlaybookOutline = components['schemas']['PlaybookOutline'];
 export type OutlinePlay = components['schemas']['OutlinePlay'];
 export type OutlineEntry = components['schemas']['OutlineEntry'];
+/** A repository playbook's text as of the last sync, or why there is none
+ * (GET /playbooks/{id}/content). */
+export type PlaybookContent = Omit<components['schemas']['PlaybookContentOutputBody'], '$schema'>;
+export type PlaybookTextLeftOut = NonNullable<PlaybookContent['left_out']>;
+/** One playbook a repository's last sync discovered (GET /repos/{id}/playbooks). */
+export type DiscoveredPlaybook = components['schemas']['DiscoveredPlaybookDTO'];
 /** The body of a playbook's dry run (POST /playbooks/{id}/dry-run). */
 export type PlaybookDryRunInput = Omit<components['schemas']['PlaybookDryRunBody'], '$schema'>;
 export type Template = components['schemas']['TemplateDTO'];

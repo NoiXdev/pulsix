@@ -12,18 +12,19 @@ import { validatePlaybookSearch } from './playbookTabs.ts';
 
 /* The playbook pages' test harness, shared by the PlaybookPage.*.test.tsx
  * and NewPlaybookPage.test.tsx files: an editor playbook `p1` used by one
- * template, a repository playbook `p2` nobody uses, and a router with the
+ * template, a repository playbook `p2` nobody uses (its repository never
+ * synced, so without a text), and a router with the
  * list, the new page, the playbook page (which reads `?tab=`) and stand-ins
  * for the pages they lead to. */
 
 export const INLINE = '- name: Install nginx\n  hosts: web\n  tasks: []\n';
 
 export const editorPlaybook = (extra = {}) => ({
-  id: 'p1', source: 'editor', summary: 'Install nginx', inline: INLINE, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-18T08:00:00Z', ...extra,
+  id: 'p1', source: 'editor', summary: 'Install nginx', inline: INLINE, revision: 1, created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-18T08:00:00Z', ...extra,
 });
 
 export const repoPlaybook = (extra = {}) => ({
-  id: 'p2', source: 'repo', summary: '', repo_id: 'r1', path: 'playbooks/site.yml', created_at: '', updated_at: '2026-11-18T08:00:00Z', ...extra,
+  id: 'p2', source: 'repo', summary: '', repo_id: 'r1', path: 'playbooks/site.yml', revision: 1, created_at: '', updated_at: '2026-11-18T08:00:00Z', ...extra,
 });
 
 export const REPO = { id: 'r1', name: 'infra', url: 'https://git.example/acme/infra.git', branch: 'main', subpath: '', created_at: '', updated_at: '' };
@@ -69,6 +70,8 @@ export const routes = (role = 'operator', extra: Record<string, MockRoute> = {})
   'GET /api/v1/orgs/acme/playbooks': { playbooks: [editorPlaybook(), repoPlaybook()] },
   'GET /api/v1/orgs/acme/playbooks/p1': { playbook: editorPlaybook() },
   'GET /api/v1/orgs/acme/playbooks/p2': { playbook: repoPlaybook() },
+  'GET /api/v1/orgs/acme/playbooks/p2/content': () =>
+    new Response(JSON.stringify({ status: 404, detail: 'the repository has not been synced yet' }), { status: 404, headers: { 'Content-Type': 'application/json' } }),
   'GET /api/v1/orgs/acme/repos': { repos: [REPO] },
   'GET /api/v1/orgs/acme/job-templates': TEMPLATES,
   'GET /api/v1/orgs/acme/jobs': { jobs: [job('j1')], next_cursor: '', total: 1 },

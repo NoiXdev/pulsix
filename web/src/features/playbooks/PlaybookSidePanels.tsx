@@ -20,11 +20,23 @@ export function SidePanel({ title, action, children }: { title: string; action?:
   );
 }
 
-/** PlaybookCheckPanel says whether the draft passes the preview (the
+interface PlaybookCheckPanelProps {
+  problem: YAMLProblem | null;
+  serverError: string | null;
+  /** Stands in for the verdict while there is nothing to judge yet (an
+   * empty new playbook). */
+  idle?: string;
+  /** The verdict for a text that passes, and the line under it, where the
+   * editor's ("ready to save", "checked as you type") do not fit: a
+   * repository playbook's text is not saved here. */
+  ready?: string;
+  hint?: string;
+}
+
+/** PlaybookCheckPanel says whether the text passes the preview (the
  * server's own messages, with the line where the preview knows it) and,
- * after a refused save, what the server said. `idle` stands in for the
- * verdict while there is nothing to judge yet (an empty new playbook). */
-export function PlaybookCheckPanel({ problem, serverError, idle }: { problem: YAMLProblem | null; serverError: string | null; idle?: string }) {
+ * after a refused save, what the server said. */
+export function PlaybookCheckPanel({ problem, serverError, idle, ready, hint }: PlaybookCheckPanelProps) {
   const t = useT();
   const c = t.playbooks.page.check;
   return (
@@ -38,7 +50,7 @@ export function PlaybookCheckPanel({ problem, serverError, idle }: { problem: YA
         </p>
       ) : (
         <p role="status" className="text-xs" style={{ color: 'var(--px-ok)' }}>
-          {t.playbooks.editor.ready}
+          {ready ?? t.playbooks.editor.ready}
         </p>
       )}
       {serverError && (
@@ -47,7 +59,7 @@ export function PlaybookCheckPanel({ problem, serverError, idle }: { problem: YA
           <span className="font-mono break-words">{serverError}</span>
         </div>
       )}
-      <p className="text-[11px] text-muted-foreground">{c.hint}</p>
+      <p className="text-[11px] text-muted-foreground">{hint ?? c.hint}</p>
     </SidePanel>
   );
 }
@@ -59,14 +71,17 @@ const SOURCE_COLOR: Record<VariableSource, string> = {
 };
 
 /** PlaybookVariablesPanel lists the names the YAML's expressions use and
- * where each gets its value (variables.ts) — a hint, and labelled so. */
-export function PlaybookVariablesPanel({ yaml }: { yaml: string }) {
+ * where each gets its value (variables.ts) — a hint, and labelled so.
+ * `stored` comes first: what the last sync read from a repository
+ * playbook's variable sources. */
+export function PlaybookVariablesPanel({ yaml, stored }: { yaml: string; stored?: ReactNode }) {
   const t = useT();
   const v = t.playbooks.page.variables;
   const names = useMemo(() => playbookVariables(yaml), [yaml]);
   const varsFiles = useMemo(() => usesVarsFiles(yaml), [yaml]);
   return (
     <SidePanel title={v.title}>
+      {stored}
       <p className="text-[11px] text-muted-foreground">{v.hint}</p>
       {varsFiles && <p className="text-[11px] text-muted-foreground">{v.varsFiles}</p>}
       {names.length === 0 ? (

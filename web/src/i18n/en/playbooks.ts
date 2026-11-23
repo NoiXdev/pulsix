@@ -1,4 +1,5 @@
 import { enPlaybookDryRun, enPlaybookOutline } from './playbookDryRun.ts';
+import { enPlaybookConflict, enPlaybookRepoText } from './playbookRepoText.ts';
 
 /** Playbooks: the list, the playbook page, the new page and the YAML preview messages. */
 export const enPlaybooks = {
@@ -111,6 +112,8 @@ export const enPlaybooks = {
     },
     outline: enPlaybookOutline,
     dryRun: enPlaybookDryRun,
+    repoText: enPlaybookRepoText,
+    conflict: enPlaybookConflict,
   },
   newPage: {
     title: 'New playbook',
