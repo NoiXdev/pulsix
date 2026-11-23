@@ -23,6 +23,8 @@ export function request(over: Record<string, unknown> = {}) {
     status: 'pending',
     requested_by_user_id: 'u1',
     requested_by_token_id: 'tok2',
+    requested_by_token_name: 'claude-ops',
+    token_state: 'active',
     created_at: '2026-11-16T09:00:00Z',
     expires_at: inMinutes(30),
     ...over,

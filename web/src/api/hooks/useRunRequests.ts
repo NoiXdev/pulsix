@@ -27,17 +27,17 @@ export function useRunRequests(org: string, status?: RunRequestStatus) {
 }
 
 /** usePendingRunRequestCount is the number the navigation shows: the
- * pending requests, polled so a request an assistant makes shows up
- * without a reload. */
+ * pending requests as the server counts them (not the length of a list it
+ * caps), polled so a request an assistant makes shows up without a reload.
+ * Under the run-requests key, so a decision refreshes it with the lists. */
 export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean } = {}) {
   const query = useQuery({
-    queryKey: ['run-requests', org, 'pending'],
-    queryFn: () =>
-      unwrap(api.GET('/api/v1/orgs/{org}/run-requests', { params: { path: { org }, query: { status: 'pending' } } })),
+    queryKey: ['run-requests', org, 'pending-count'],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } })),
     enabled: !!org && (opts.enabled ?? true),
     refetchInterval: PENDING_POLL_MS,
   });
-  return query.data ? (query.data.requests ?? []).length : undefined;
+  return query.data?.count;
 }
 
 /** useRunRequest is one request with its run picture (what the run would use

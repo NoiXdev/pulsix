@@ -32,11 +32,17 @@ import { shortId } from './status.ts';
  * pending — Approve and Reject; the sections show the whole run picture, what
  * the run would use if it were approved now.
  *
- * Approve sends the fingerprint of the picture this page loaded. When the
- * server answers that the picture changed since (a template, host or
- * credential was edited in between), the page reloads it and asks for
- * another look instead of approving anything the person has not seen. After
- * an approval it opens the run the approval started.
+ * Approve sends the fingerprint of the picture this page loaded. The page
+ * remembers the fingerprint the person reviewed (the first one it showed):
+ * when a refetch brings another one (a template, host or credential was
+ * edited in between), or the server answers an approval with "changed",
+ * it shows the changed notice and holds Approve until the person accepts
+ * the new version as reviewed, instead of approving anything they have not
+ * seen. After an approval it opens the run the approval started.
+ *
+ * "Requested by" names the token that asked and, under it, its owner. A
+ * token that can no longer ask for runs (revoked, expired, deleted) gets a
+ * hint, not a block: the approver decides the run themselves.
  */
 export function RunRequestDetailPage() {
   const t = useT();
@@ -52,7 +58,12 @@ export function RunRequestDetailPage() {
   const members = useMembers(org);
   const approve = useApproveRunRequest(org, id);
   const reject = useRejectRunRequest(org, id);
-  const [changed, setChanged] = useState(false);
+  // The fingerprint of the picture the person reviewed: the first one the
+  // page showed, until they accept a newer one. `refusedFor` is the request
+  // whose approval the server refused as changed. Both name their request,
+  // as the page stays mounted when it moves on to another one.
+  const [reviewed, setReviewed] = useState<{ id: string; fingerprint: string }>();
+  const [refusedFor, setRefusedFor] = useState<string>();
   // The deselected direct follow-ups belong to one loaded picture: a new
   // fingerprint (a refetch after a change) starts again from "all checked".
   const [deselection, setDeselection] = useState<{ fingerprint: string; ids: ReadonlySet<string> }>({
@@ -65,6 +76,15 @@ export function RunRequestDetailPage() {
   if (!detail.data) return <QueryLoading />;
 
   const { request, picture, fingerprint } = detail.data;
+  // The first picture shown is the one reviewed (state set during render,
+  // React's way of deriving state from what arrives).
+  const reviewedHere = reviewed?.id === id ? reviewed.fingerprint : undefined;
+  if (reviewedHere === undefined) setReviewed({ id, fingerprint });
+  const changed = refusedFor === id || (reviewedHere !== undefined && reviewedHere !== fingerprint);
+  function acceptNewVersion() {
+    setReviewed({ id, fingerprint });
+    setRefusedFor(undefined);
+  }
   const deselected = deselection.fingerprint === fingerprint ? deselection.ids : new Set<string>();
   const startable = startableFollowUps(picture.follow_ups);
   function toggleFollowUp(templateId: string) {
@@ -75,9 +95,22 @@ export function RunRequestDetailPage() {
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const pending = request.status === 'pending';
   const busy = approve.isPending || reject.isPending || detail.isFetching;
-  const requester =
+  const owner =
     (members.data?.members ?? []).find((m) => m.user_id === request.requested_by_user_id)?.display_name ??
     shortId(request.requested_by_user_id);
+  // The token's name, its owner under it; a token without a name to show
+  // (deleted) leaves the owner alone.
+  const requestedBy = request.requested_by_token_name ? (
+    <span className="flex flex-col gap-0.5">
+      <span className="font-mono">{request.requested_by_token_name}</span>
+      <span className="text-xs text-muted-foreground">{d.tokenOwner(owner)}</span>
+    </span>
+  ) : (
+    owner
+  );
+  // Absent when the server could not read the token: no hint then.
+  const tokenState = request.token_state;
+  const tokenWarning = pending && tokenState && tokenState !== 'active' ? d.tokenState[tokenState] : undefined;
 
   // An approval starts one job per zone involved, all in one run group; the
   // page opens the first of them, or the runs list while none is listed yet.
@@ -100,13 +133,12 @@ export function RunRequestDetailPage() {
         ? startable.filter((f) => !deselected.has(f.template_id)).map((f) => f.template_id)
         : undefined;
       const { request: approved } = await approve.mutateAsync({ fingerprint, followUps });
-      setChanged(false);
       toast.show(d.approved);
       await openRun(approved.run_group_id);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
       if (message.includes(RUN_REQUEST_CHANGED)) {
-        setChanged(true);
+        setRefusedFor(id);
         await detail.refetch();
         return;
       }
@@ -149,7 +181,7 @@ export function RunRequestDetailPage() {
       <SidebarFacts
         items={[
           { label: d.reason, value: request.reason },
-          { label: d.requestedBy, value: requester },
+          { label: d.requestedBy, value: requestedBy },
           { label: d.requestedAt, value: <span className="font-mono">{fmt.dateTime(request.created_at)}</span> },
           pending
             ? {
@@ -164,16 +196,28 @@ export function RunRequestDetailPage() {
               },
         ]}
       />
-      {changed && (
-        <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {d.changed}
+      {tokenWarning && (
+        <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
+          {tokenWarning}
         </p>
+      )}
+      {pending && changed && (
+        <div className="flex flex-col items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+          <p role="alert" className="text-xs text-destructive">
+            {d.changed}
+          </p>
+          {canRun && (
+            <Button type="button" onClick={acceptNewVersion}>
+              {d.reviewNew}
+            </Button>
+          )}
+        </div>
       )}
       {pending ? (
         canRun ? (
           <div className="flex flex-col items-start gap-2">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="primary" disabled={busy} onClick={() => void onApprove()}>
+              <Button type="button" variant="primary" disabled={busy || changed} onClick={() => void onApprove()}>
                 {d.approve}
               </Button>
               <Button type="button" variant="destructive" disabled={busy} onClick={() => void onReject()}>

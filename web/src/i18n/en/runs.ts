@@ -229,6 +229,15 @@ export const enRuns = {
       title: 'Run request',
       reason: 'Reason',
       requestedBy: 'Requested by',
+      /** Under the requesting token's name: the person it belongs to. */
+      tokenOwner: (name: string) => `owned by ${name}`,
+      /** A hint, not a block: a token that can no longer ask for runs (revoked,
+       * switched off with its kind, its owner blocked), expired or deleted. */
+      tokenState: {
+        revoked: 'The token that asked for this run can no longer ask for runs here. Approving still starts the run.',
+        expired: 'The token that asked for this run has expired. Approving still starts the run.',
+        deleted: 'The token that asked for this run no longer exists. Approving still starts the run.',
+      },
       requestedAt: 'Requested',
       expiresAt: 'Expires',
       decidedAt: 'Decided',
@@ -268,6 +277,7 @@ export const enRuns = {
       url: 'URL',
       branch: 'Branch',
       subpath: 'Subpath',
+      gitCredential: 'Git credential',
       targetColumns: {
         host: 'Host',
         address: 'Address',
@@ -296,6 +306,7 @@ export const enRuns = {
       approveFailed: 'Approving the request failed',
       rejectFailed: 'Rejecting the request failed',
       changed: 'This request changed since you opened it. Review it again.',
+      reviewNew: 'Review the new version',
       decided: {
         approved: 'Approved. The run was started.',
         rejected: 'Rejected. The run was not started.',

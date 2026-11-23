@@ -212,21 +212,23 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(screen.queryByRole('group', { name: 'My account' })).not.toBeInTheDocument();
   });
 
-  it('shows the number of pending run requests beside Runs', async () => {
-    let asked: string | null = null;
+  it('shows the number of pending run requests beside Runs, from the count route', async () => {
+    let listed = false;
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OK,
       'GET /api/v1/auth/me': ME_OK,
       'GET /api/v1/orgs': ORGS_OK,
-      'GET /api/v1/orgs/acme/run-requests': (req: { search: URLSearchParams }) => {
-        asked = req.search.get('status');
+      // The count, not the length of a list the server caps.
+      'GET /api/v1/orgs/acme/run-requests/pending-count': { count: 7 },
+      'GET /api/v1/orgs/acme/run-requests': () => {
+        listed = true;
         return { requests: [{ id: 'a' }, { id: 'b' }] };
       },
     });
     renderAt('/o/acme/hosts');
 
-    expect(await screen.findByText('2 pending run requests')).toBeInTheDocument();
-    expect(asked).toBe('pending');
+    expect(await screen.findByText('7 pending run requests')).toBeInTheDocument();
+    expect(listed).toBe(false);
   });
 
   it('shows the manager version from the setup status in the shell', async () => {

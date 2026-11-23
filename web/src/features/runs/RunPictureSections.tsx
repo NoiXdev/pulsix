@@ -80,6 +80,8 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
                   { label: d.url, value: <Mono>{picture.repo.url}</Mono> },
                   { label: d.branch, value: <Mono>{picture.repo.branch}</Mono> },
                   { label: d.subpath, value: <Mono>{picture.repo.subpath}</Mono> },
+                  // The credential the repository is read with is part of the fingerprint, so it is shown too.
+                  ...(picture.repo.git_credential ? [{ label: d.gitCredential, value: <Mono>{picture.repo.git_credential}</Mono> }] : []),
                 ]
               : []),
           ]}

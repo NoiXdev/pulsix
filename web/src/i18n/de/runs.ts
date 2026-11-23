@@ -222,6 +222,12 @@ export const deRuns: Messages['runs'] = {
       title: 'Laufanfrage',
       reason: 'Grund',
       requestedBy: 'Angefragt von',
+      tokenOwner: (name: string) => `gehört ${name}`,
+      tokenState: {
+        revoked: 'Das Token, das diesen Lauf angefragt hat, darf hier keine Läufe mehr anfragen. Eine Freigabe startet den Lauf trotzdem.',
+        expired: 'Das Token, das diesen Lauf angefragt hat, ist abgelaufen. Eine Freigabe startet den Lauf trotzdem.',
+        deleted: 'Das Token, das diesen Lauf angefragt hat, gibt es nicht mehr. Eine Freigabe startet den Lauf trotzdem.',
+      },
       requestedAt: 'Angefragt',
       expiresAt: 'Läuft ab',
       decidedAt: 'Entschieden',
@@ -261,6 +267,7 @@ export const deRuns: Messages['runs'] = {
       url: 'URL',
       branch: 'Branch',
       subpath: 'Unterpfad',
+      gitCredential: 'Git-Zugangsdaten',
       targetColumns: {
         host: 'Host',
         address: 'Adresse',
@@ -289,6 +296,7 @@ export const deRuns: Messages['runs'] = {
       approveFailed: 'Die Anfrage konnte nicht freigegeben werden',
       rejectFailed: 'Die Anfrage konnte nicht abgelehnt werden',
       changed: 'Diese Anfrage hat sich geändert, seit du sie geöffnet hast. Bitte prüfe sie erneut.',
+      reviewNew: 'Neue Fassung ansehen',
       decided: {
         approved: 'Freigegeben. Der Lauf wurde gestartet.',
         rejected: 'Abgelehnt. Der Lauf wurde nicht gestartet.',

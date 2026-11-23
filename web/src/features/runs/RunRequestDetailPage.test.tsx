@@ -36,7 +36,8 @@ describe('RunRequestDetailPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Run request' })).toBeInTheDocument();
     expect(screen.getByText('Roll out the new nginx config')).toBeInTheDocument();
-    expect(await screen.findByText('Tim R.')).toBeInTheDocument();
+    expect(screen.getByText('claude-ops')).toBeInTheDocument();
+    expect(await screen.findByText('owned by Tim R.')).toBeInTheDocument();
 
     const template = screen.getByRole('region', { name: 'Template' });
     expect(within(template).getByText('deploy-nginx')).toBeInTheDocument();
@@ -148,7 +149,10 @@ describe('RunRequestDetailPage', () => {
     expect(await within(screen.getByRole('region', { name: 'Template' })).findByText('deploy-nginx-v2')).toBeInTheDocument();
     expect(loads).toBe(2);
 
-    // The second approval sends the fingerprint of what is shown now.
+    // Approve waits until the person accepts the new version as reviewed;
+    // then the second approval sends the fingerprint of what is shown now.
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Review the new version' }));
     await user.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(sent).toEqual([{ fingerprint: 'fp-old' }, { fingerprint: 'fp-new' }]));
   });
@@ -314,6 +318,7 @@ describe('RunRequestDetailPage', () => {
       expect(await screen.findByText('This request changed since you opened it. Review it again.')).toBeInTheDocument();
       await waitFor(() => expect(loads).toBe(2));
       await waitFor(() => expect(screen.getByRole('checkbox', { name: 'reload-lb' })).toBeChecked());
+      await user.click(screen.getByRole('button', { name: 'Review the new version' }));
       await user.click(screen.getByRole('button', { name: 'Approve' }));
       await waitFor(() => expect(sent).toEqual([{ fingerprint: 'fp-old', follow_ups: ['f2'] }, { fingerprint: 'fp-new' }]));
     });

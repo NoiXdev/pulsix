@@ -53,5 +53,31 @@ describe('RunRequestDetailPage in German', () => {
       await screen.findByText('Diese Anfrage hat sich geändert, seit du sie geöffnet hast. Bitte prüfe sie erneut.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ablehnen' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Freigeben' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Neue Fassung ansehen' }));
+    expect(screen.getByRole('button', { name: 'Freigeben' })).toBeEnabled();
+  });
+
+  it('names the token and its owner and warns about a revoked token in German', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: detail({
+        request: { token_state: 'revoked' },
+        picture: { repo: { id: 'r1', name: 'infra', url: 'u', branch: 'main', subpath: '', git_credential: 'git-deploy' } },
+      }),
+    });
+    renderRoutes(
+      [{ path: '/runs/requests/$id', component: RunRequestDetailPage }],
+      `/o/acme/runs/requests/${RQ}`,
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+      'de',
+    );
+    expect(await screen.findByText('claude-ops')).toBeInTheDocument();
+    expect(await screen.findByText('gehört Tim R.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Das Token, das diesen Lauf angefragt hat, darf hier keine Läufe mehr anfragen. Eine Freigabe startet den Lauf trotzdem.'),
+    ).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Playbook und Repository' })).getByText('Git-Zugangsdaten')).toBeInTheDocument();
   });
 });

@@ -17,7 +17,10 @@ export interface RunRequestColumnsContext {
 /**
  * runRequestColumns is every column the run requests list offers (list id
  * `run-requests`), sorted in the browser. The reason is the name column and
- * its row link opens the request. A pending request keeps its pill and its
+ * its row link opens the request. The link is already named by the reason
+ * (RunRequestsPage's rowLink label), so the cell's text is hidden from
+ * assistive technology: it would otherwise be read again as the link's
+ * description, which is the name cell's full text. A pending request keeps its pill and its
  * expiry countdown in the status column; the list's own order (the pending
  * ones first, soonest to expire on top) is what an unsorted list shows.
  */
@@ -32,7 +35,11 @@ export function runRequestColumns({ t, templateName, dateTime, relative }: RunRe
       sortValue: (q) => q.reason || shortId(q.id),
       required: true,
       defaultVisible: true,
-      render: (q) => <span className="block truncate">{q.reason || shortId(q.id)}</span>,
+      render: (q) => (
+        <span aria-hidden="true" className="block truncate">
+          {q.reason || shortId(q.id)}
+        </span>
+      ),
     },
     {
       id: 'status',

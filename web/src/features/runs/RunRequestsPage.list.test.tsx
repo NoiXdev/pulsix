@@ -16,6 +16,7 @@ function setup(initial = '/o/acme/runs/requests', requests?: unknown[]) {
     'GET /api/v1/auth/me/preferences': PREFS,
     'PUT /api/v1/auth/me/preferences': (req: MockRequest) => req.body,
     'GET /api/v1/orgs/acme/job-templates': { templates: [{ id: 'tpl1', name: 'deploy' }, { id: 'tpl2', name: 'backup' }] },
+    'GET /api/v1/orgs/acme/run-requests/pending-count': { count: 4 },
     'GET /api/v1/orgs/acme/run-requests': {
       requests: requests ?? numbered('ask', 30).map((reason) => request({ id: `id-${reason}`, reason, status: 'approved' })),
     },
@@ -44,6 +45,15 @@ describe('RunRequestsPage list', () => {
     await screen.findByText('1–25 of 30 requests');
     expect(screen.queryAllByRole('button', { name: /^Actions for/ })).toHaveLength(0);
     expect(screen.getByRole('link', { name: 'ask30' })).toHaveAttribute('href', '/o/acme/runs/requests/id-ask30');
+  });
+
+  it('gives the reason once per row: the link names the request, the cell adds no repeat of it', async () => {
+    setup();
+    await screen.findByText('1–25 of 30 requests');
+    const link = screen.getByRole('link', { name: 'ask30' });
+    expect(link).toHaveAccessibleName('ask30');
+    expect(link).toHaveAccessibleDescription('');
+    expect(firstCells()[0]).toBe('ask30');
   });
 
   it('hides a column from the Columns menu', async () => {
@@ -75,6 +85,8 @@ describe('RunRequestsPage list', () => {
       expect(firstCells()).toEqual(['beta']);
       // The server filtered by status, so the unfiltered total is not known here.
       expect(screen.getByText('1 request')).toBeInTheDocument();
+      // The header's pending number comes from the count route instead.
+      expect(await screen.findByText('4 pending')).toBeInTheDocument();
     });
 
     it('asks the server for the chosen status instead of filtering every request in the browser', async () => {

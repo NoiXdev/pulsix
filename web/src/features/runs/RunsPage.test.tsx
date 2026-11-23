@@ -63,10 +63,10 @@ describe('RunsPage', () => {
       'GET /api/v1/auth/me/preferences': PREFS,
       'GET /api/v1/orgs/acme': ORG_VIEWER,
       'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
-      'GET /api/v1/orgs/acme/run-requests': { requests: [{ id: 'a' }] },
+      'GET /api/v1/orgs/acme/run-requests/pending-count': { count: 3 },
     });
     renderPage();
-    const link = await screen.findByRole('link', { name: 'Run requests (1 pending)' });
+    const link = await screen.findByRole('link', { name: 'Run requests (3 pending)' });
     expect(link).toHaveAttribute('href', '/o/acme/runs/requests');
   });
 
