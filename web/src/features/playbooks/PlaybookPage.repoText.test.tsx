@@ -64,6 +64,14 @@ describe('PlaybookPage repository text', () => {
     expect(screen.queryByText(/earlier sync/)).not.toBeInTheDocument();
   });
 
+  it('reads an empty commit as an earlier sync from a server that sends no flag', async () => {
+    mockApi(repoRoutes(content({ commit: '' })));
+    renderAt('/o/acme/playbooks/p2');
+    await findCodeEditor('Playbook YAML');
+    const when = new Date(SYNCED).toLocaleString('en');
+    expect(screen.getByText(`From an earlier sync: the last one, on ${when}, left this playbook unread`)).toBeInTheDocument();
+  });
+
   it('says a flagged text is from an earlier sync even with a commit on record', async () => {
     mockApi(repoRoutes(content({ from_earlier_sync: true })));
     renderAt('/o/acme/playbooks/p2');
@@ -141,6 +149,13 @@ describe('PlaybookPage repository text', () => {
     expect(await within(await note()).findByText('This server does not serve the repository text yet.')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Outline' })).getByText('No outline: this server does not serve the repository text yet.')).toBeInTheDocument();
     expect(screen.queryByText(/has not been synced yet/)).not.toBeInTheDocument();
+  });
+
+  it("does not take the playbook's own 404 for a server without the route", async () => {
+    mockApi(repoRoutes(problem(404, 'not found')));
+    renderAt('/o/acme/playbooks/p2');
+    expect(await within(await note()).findByText('The text could not be read: not found')).toBeInTheDocument();
+    expect(screen.queryByText(/does not serve the repository text/)).not.toBeInTheDocument();
   });
 
   it('speaks German about a server without the route', async () => {

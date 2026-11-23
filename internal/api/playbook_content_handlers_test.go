@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -46,10 +45,16 @@ func TestPlaybookContent(t *testing.T) {
 	base := s.HTTP.URL + "/api/v1/orgs/pbc-org/playbooks/"
 	vc := s.LoginAs(viewer)
 
-	// No sync recorded the repository yet.
+	// No sync recorded the repository yet. The SPA tells this 404 from the
+	// others by its exact sentence (NOT_SYNCED in
+	// web/src/features/playbooks/usePlaybookRepoText.ts).
+	var problem struct {
+		Detail string `json:"detail"`
+	}
 	resp := requestJSON(t, vc, http.MethodGet, base+site+"/content", nil)
-	if b := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(b, "not been synced") {
-		t.Fatalf("before a sync: %d %s, want 404 saying the repository has not been synced", resp.StatusCode, b)
+	decodeInto(t, resp, &problem)
+	if resp.StatusCode != http.StatusNotFound || problem.Detail != "the repository has not been synced yet" {
+		t.Fatalf("before a sync: %d %q, want 404 with the exact not-synced sentence", resp.StatusCode, problem.Detail)
 	}
 
 	synced := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
@@ -103,8 +108,13 @@ func TestPlaybookContent(t *testing.T) {
 	if resp := requestJSON(t, vc, http.MethodGet, base+editor+"/content", nil); resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("editor playbook: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
-	if resp := requestJSON(t, vc, http.MethodGet, base+uuid.Must(uuid.NewV7()).String()+"/content", nil); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("unknown playbook: %d", resp.StatusCode)
+	// An unknown (or deleted) playbook is the plain "not found" the SPA
+	// reads as the playbook gone (PLAYBOOK_GONE beside NOT_SYNCED).
+	problem.Detail = ""
+	resp = requestJSON(t, vc, http.MethodGet, base+uuid.Must(uuid.NewV7()).String()+"/content", nil)
+	decodeInto(t, resp, &problem)
+	if resp.StatusCode != http.StatusNotFound || problem.Detail != "not found" {
+		t.Fatalf("unknown playbook: %d %q", resp.StatusCode, problem.Detail)
 	}
 
 	// Another organization's member reads nothing of it, in their own org

@@ -42,6 +42,9 @@ func registerPlaybookContentRoutes(hapi huma.API, deps Deps) {
 		case errors.Is(err, playbooks.ErrNotRepo):
 			return nil, huma.Error422UnprocessableEntity("an editor playbook's text is in the playbook itself")
 		case errors.Is(err, playbooks.ErrNoRepoText):
+			// The SPA tells this 404 from a server without the route by this
+			// exact sentence (NOT_SYNCED in
+			// web/src/features/playbooks/usePlaybookRepoText.ts); keep both equal.
 			return nil, huma.Error404NotFound("the repository has not been synced yet")
 		case err != nil:
 			return nil, mapPlaybooksErr(ctx, err)
