@@ -539,6 +539,32 @@ knows.
 A downgrade needs the usual restore of a backup from before the upgrade (see
 Downgrading).
 
+The loose ends of dry runs and repository texts (backlog 3.129 and 3.130) add
+no migration and no proto change; what they change at the API:
+- **`If-Match: *` saves unconditionally on the routes where the header is
+  optional** (templates, playbooks, inventory members, tags, SSH settings, …):
+  RFC 9110's "any current revision", the same as no header. An older manager
+  still running during a rolling upgrade parses `*` as a malformed ETag and
+  answers 412, so a client that sends `*` may see a 412 until every manager is
+  updated. The routes that require the header (inventory groups, schedules,
+  alert routes, maintenance windows, …) still refuse `*` with 412, now with a
+  message that says they need the concrete revision ETag.
+- **The outline's OpenAPI component names changed** to `PlaybookOutlineDTO`,
+  `PlaybookOutlinePlayDTO`, `PlaybookOutlineEntryDTO` and
+  `PlaybookOutlineCountsDTO`. The JSON is unchanged; a client generated from the
+  published schema must regenerate to pick up the new names. An outline entry
+  without a usable name (an unnamed block, a keyword-only task, a role without
+  a name, an `import_playbook` without a path) now has `name: ""`, which the SPA
+  shows as a word for its kind; an unnamed block was `"block"` before. Once the
+  tags it emits reach about 1 MiB, entries carry only their own tags and the
+  outline says `truncated: true`.
+- **`GET /api/v1/orgs/{org}/playbooks/{id}/content` gains `from_earlier_sync`**
+  (additive): true when a limit left the playbook unread in the last sync and
+  the text is from an earlier one. The SPA reads the flag, and an empty
+  `commit` when an older manager sends no flag. `left_out: unreadable` now also
+  covers a playbook a limit left unread with no earlier text to keep (it read
+  `not_sent` before).
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
