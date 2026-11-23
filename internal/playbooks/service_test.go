@@ -141,6 +141,10 @@ type fakeRepos struct {
 	// set, is what PlaybookText returns.
 	texts   map[uuid.UUID]map[string]repos.StoredPlaybookText
 	textErr error
+	// records is each repository's sync record (commit and time) that a
+	// path without a row answers with; without an entry the first row's
+	// commit and time stand in.
+	records map[uuid.UUID]repos.StoredPlaybookText
 }
 
 type fakeSources struct {
@@ -167,6 +171,9 @@ func (f *fakeRepos) PlaybookText(_ context.Context, orgID, repoID uuid.UUID, pat
 	}
 	if t, ok := texts[path]; ok {
 		return t, nil
+	}
+	if r, ok := f.records[repoID]; ok {
+		return repos.StoredPlaybookText{Commit: r.Commit, SyncedAt: r.SyncedAt}, nil
 	}
 	for _, t := range texts {
 		return repos.StoredPlaybookText{Commit: t.Commit, SyncedAt: t.SyncedAt}, nil

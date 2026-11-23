@@ -18,6 +18,10 @@ func TestRepoText(t *testing.T) {
 	svc := newService(newFakeStore(), rs)
 	at := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
 	const commit = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+	// The sync record itself: rows can carry another commit (a record
+	// without one below), so the answer for a path without a row must not
+	// depend on which row a map iteration meets first.
+	rs.records = map[uuid.UUID]repos.StoredPlaybookText{repoID: {Commit: commit, SyncedAt: at}}
 	rs.texts[repoID] = map[string]repos.StoredPlaybookText{
 		"site.yml":   {Commit: commit, SyncedAt: at, PlaybookText: repos.PlaybookText{Content: strPtr(validPlaybook)}},
 		"big.yml":    {Commit: commit, SyncedAt: at, PlaybookText: repos.PlaybookText{LeftOut: varsource.TextTooLarge}},
