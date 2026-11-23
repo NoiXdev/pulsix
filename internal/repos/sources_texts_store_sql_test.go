@@ -66,8 +66,12 @@ func TestReplaceVarSourcesStoresThePlaybookTexts(t *testing.T) {
 	if err != nil || !kept.Kept || kept.Content == nil || *kept.Content != "- hosts: kept\n" {
 		t.Fatalf("kept.yml = %+v, %v; want its text, marked kept (the record left it out)", kept, err)
 	}
-	if _, err := store.GetPlaybookText(scoped, org, repoID, "unknown.yml"); !errors.Is(err, repos.ErrNotFound) {
-		t.Fatalf("GetPlaybookText(unknown path) = %v, want ErrNotFound", err)
+	// A path the record has no row for (removed from the repository, or
+	// never reported) answers the record without a text.
+	unknown, err := store.GetPlaybookText(scoped, org, repoID, "unknown.yml")
+	if err != nil || unknown.Content != nil || unknown.LeftOut != "" || unknown.Kept ||
+		unknown.Commit != commitA || !unknown.SyncedAt.Equal(t0) {
+		t.Fatalf("GetPlaybookText(unknown path) = %+v, %v; want the record's commit and time, no text", unknown, err)
 	}
 	// Another organization reads nothing of it.
 	if _, err := store.GetPlaybookText(db.WithOrgScope(ctx, other), other, repoID, "site.yml"); !errors.Is(err, repos.ErrNotFound) {

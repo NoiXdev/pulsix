@@ -72,17 +72,17 @@ func (q *Queries) GetPlaybookVarSource(ctx context.Context, arg GetPlaybookVarSo
 }
 
 const getRepoPlaybookText = `-- name: GetRepoPlaybookText :one
-SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array(p.path))::boolean AS kept,
+SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array($1::text))::boolean AS kept,
        p.content, p.content_left_out
 FROM repo_var_sources r
-JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id
-WHERE r.org_id = $1 AND r.repo_id = $2 AND p.path = $3
+LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = $1
+WHERE r.org_id = $2 AND r.repo_id = $3
 `
 
 type GetRepoPlaybookTextParams struct {
+	Path   string    `json:"path"`
 	OrgID  uuid.UUID `json:"org_id"`
 	RepoID uuid.UUID `json:"repo_id"`
-	Path   string    `json:"path"`
 }
 
 type GetRepoPlaybookTextRow struct {
@@ -94,11 +94,12 @@ type GetRepoPlaybookTextRow struct {
 }
 
 // One playbook path's text with the record it belongs to, in one statement
-// (one snapshot). kept: the record's left_out names the path, so its row
-// is from an earlier read than the record's commit. No row: no sync
-// recorded the repository, or none reported the path.
+// (one snapshot). No record answers no row; a record without a row for the
+// path (the last sync did not report it) answers its commit and time with
+// a null text and reason. kept: the record's left_out names the path, so
+// its row is from an earlier read than the record's commit.
 func (q *Queries) GetRepoPlaybookText(ctx context.Context, arg GetRepoPlaybookTextParams) (GetRepoPlaybookTextRow, error) {
-	row := q.db.QueryRow(ctx, getRepoPlaybookText, arg.OrgID, arg.RepoID, arg.Path)
+	row := q.db.QueryRow(ctx, getRepoPlaybookText, arg.Path, arg.OrgID, arg.RepoID)
 	var i GetRepoPlaybookTextRow
 	err := row.Scan(
 		&i.CommitSha,

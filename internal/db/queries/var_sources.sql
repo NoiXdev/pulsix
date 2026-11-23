@@ -71,11 +71,12 @@ WHERE org_id = @org_id AND repo_id = @repo_id;
 
 -- name: GetRepoPlaybookText :one
 -- One playbook path's text with the record it belongs to, in one statement
--- (one snapshot). kept: the record's left_out names the path, so its row
--- is from an earlier read than the record's commit. No row: no sync
--- recorded the repository, or none reported the path.
-SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array(p.path))::boolean AS kept,
+-- (one snapshot). No record answers no row; a record without a row for the
+-- path (the last sync did not report it) answers its commit and time with
+-- a null text and reason. kept: the record's left_out names the path, so
+-- its row is from an earlier read than the record's commit.
+SELECT r.commit_sha, r.synced_at, (r.left_out @> jsonb_build_array(sqlc.arg(path)::text))::boolean AS kept,
        p.content, p.content_left_out
 FROM repo_var_sources r
-JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id
-WHERE r.org_id = @org_id AND r.repo_id = @repo_id AND p.path = @path;
+LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = sqlc.arg(path)
+WHERE r.org_id = sqlc.arg(org_id) AND r.repo_id = sqlc.arg(repo_id);

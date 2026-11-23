@@ -7312,7 +7312,7 @@ export interface components {
             /** @description The playbook file's text as of the last sync; absent when the sync stored none */
             content?: string;
             /**
-             * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none (not_sent)
+             * @description Why there is no text: the file is over 512 KiB (too_large), the sync's texts were full (budget), it is not UTF-8 text (not_utf8), it could not be read (unreadable), or the last sync sent none or did not report the file (not_sent)
              * @enum {string}
              */
             left_out?: "too_large" | "budget" | "not_utf8" | "unreadable" | "not_sent";

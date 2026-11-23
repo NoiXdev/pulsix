@@ -36,7 +36,8 @@ type StoredPlaybookText struct {
 }
 
 // PlaybookText is the stored text of one playbook path of the repository;
-// ErrNotFound when no sync recorded the repository or reported the path.
+// ErrNotFound when no sync recorded the repository. A path the last sync
+// did not report has no text and no reason.
 func (s *Service) PlaybookText(ctx context.Context, orgID, repoID uuid.UUID, path string) (StoredPlaybookText, error) {
 	return s.store.GetPlaybookText(ctx, orgID, repoID, path)
 }

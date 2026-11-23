@@ -56,7 +56,21 @@ func TestRepoText(t *testing.T) {
 		}
 	}
 
-	if _, err := svc.RepoText(ctx, org, register("unsynced.yml")); !errors.Is(err, playbooks.ErrNoRepoText) {
+	// A synced repository without a row for the path: no text as of
+	// that sync.
+	gone, err := svc.RepoText(ctx, org, register("gone.yml"))
+	if err != nil || gone.Path != "gone.yml" || gone.Content != nil || gone.LeftOut != playbooks.TextNotSent ||
+		gone.Commit != commit || !gone.SyncedAt.Equal(at) {
+		t.Fatalf("RepoText(path without a row) = %+v, %v; want not_sent at the record's commit", gone, err)
+	}
+	// A repository no sync recorded.
+	unsynced := uuid.Must(uuid.NewV7())
+	rs.byID[unsynced] = repos.Repo{ID: unsynced, OrgID: org, Name: "fresh"}
+	fresh, err := svc.CreateRepo(ctx, org, unsynced, "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RepoText(ctx, org, fresh.ID); !errors.Is(err, playbooks.ErrNoRepoText) {
 		t.Fatalf("RepoText(no sync record) = %v, want ErrNoRepoText", err)
 	}
 	editor, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: validPlaybook})

@@ -15,14 +15,14 @@ var (
 	// ErrNotRepo: the operation is for a repo playbook only; an editor
 	// playbook's text is its inline document.
 	ErrNotRepo = errors.New("not a repo playbook")
-	// ErrNoRepoText: no sync recorded the playbook's repository, or none
-	// reported its path.
-	ErrNoRepoText = errors.New("no sync has recorded this playbook")
+	// ErrNoRepoText: no sync recorded the playbook's repository.
+	ErrNoRepoText = errors.New("the repository has not been synced yet")
 )
 
 // TextNotSent is RepoText's LeftOut when the last sync stored no text for
-// the playbook and named no reason: a worker older than the texts, or a
-// row kept from before them. The other reasons are varsource's Text*.
+// the playbook and named no reason: a worker older than the texts, a row
+// kept from before them, or a path the last sync did not report (the file
+// was removed). The other reasons are varsource's Text*.
 const TextNotSent = "not_sent"
 
 // RepoText is a repo playbook's text as of its repository's last sync
@@ -39,7 +39,7 @@ type RepoText struct {
 
 // RepoText is the stored text of a repo playbook: ErrNotFound when the
 // playbook does not exist in the organization, ErrNotRepo for an editor
-// playbook, ErrNoRepoText when no sync recorded its path.
+// playbook, ErrNoRepoText when no sync recorded its repository.
 func (s *Service) RepoText(ctx context.Context, orgID, playbookID uuid.UUID) (RepoText, error) {
 	p, err := s.store.Get(ctx, orgID, playbookID)
 	if err != nil {

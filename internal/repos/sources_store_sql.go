@@ -41,8 +41,8 @@ func (s *SQLStore) LockVarSources(ctx context.Context, orgID, repoID uuid.UUID) 
 
 // ReplaceVarSources implements Store: the repository's record and its
 // playbook rows, each with its text (texts), are replaced in one
-// transaction (a savepoint inside the job finish's own). ErrNotFound when the repository is gone; nothing is
-// written then.
+// transaction (a savepoint inside the job finish's own). ErrNotFound when
+// the repository is gone; nothing is written then.
 func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook, texts map[string]PlaybookText) error {
 	leftOut, err := json.Marshal(nonNil(rec.LeftOut))
 	if err != nil {

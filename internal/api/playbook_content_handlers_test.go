@@ -47,8 +47,8 @@ func TestPlaybookContent(t *testing.T) {
 
 	// No sync recorded the repository yet.
 	resp := requestJSON(t, vc, http.MethodGet, base+site+"/content", nil)
-	if b := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(b, "sync") {
-		t.Fatalf("before a sync: %d %s, want 404 saying no sync recorded it", resp.StatusCode, b)
+	if b := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(b, "not been synced") {
+		t.Fatalf("before a sync: %d %s, want 404 saying the repository has not been synced", resp.StatusCode, b)
 	}
 
 	synced := time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC)
@@ -84,9 +84,14 @@ func TestPlaybookContent(t *testing.T) {
 		}
 	}
 
-	// A path the last sync did not report has no record.
-	if resp := requestJSON(t, vc, http.MethodGet, base+unsynced+"/content", nil); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("unreported path: %d", resp.StatusCode)
+	// A path the last sync did not report (e.g. the file was removed) has
+	// no text as of that sync.
+	var unreported playbookContentBody
+	resp = requestJSON(t, vc, http.MethodGet, base+unsynced+"/content", nil)
+	decodeInto(t, resp, &unreported)
+	if resp.StatusCode != http.StatusOK || unreported.Path != "unsynced.yml" || unreported.Commit != "abc123" ||
+		!unreported.SyncedAt.Equal(synced) || unreported.Content != nil || unreported.LeftOut == nil || *unreported.LeftOut != "not_sent" {
+		t.Fatalf("unreported path: %d %+v, want 200 not_sent", resp.StatusCode, unreported)
 	}
 	// An editor playbook's text is in its own DTO.
 	editor := seedEditorPlaybook(t, s, org, namedPlaybook)

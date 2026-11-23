@@ -231,7 +231,8 @@ type Store interface {
 	// ListPlaybookTexts is every playbook row's text, by path.
 	ListPlaybookTexts(ctx context.Context, orgID, repoID uuid.UUID) (map[string]PlaybookText, error)
 	// GetPlaybookText is one playbook path's text with its record's commit
-	// and time; ErrNotFound without a record or a row for the path.
+	// and time; ErrNotFound without a record, no text and no reason when
+	// the record has no row for the path.
 	GetPlaybookText(ctx context.Context, orgID, repoID uuid.UUID, path string) (StoredPlaybookText, error)
 }
 

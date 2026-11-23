@@ -152,11 +152,19 @@ func (f *fakeRepos) PlaybookText(_ context.Context, orgID, repoID uuid.UUID, pat
 	if f.textErr != nil {
 		return repos.StoredPlaybookText{}, f.textErr
 	}
-	t, ok := f.texts[repoID][path]
+	// Like the store: no record is ErrNotFound, a record without the path
+	// answers the record's commit and time without a text.
+	texts, ok := f.texts[repoID]
 	if !ok || f.byID[repoID].OrgID != orgID {
 		return repos.StoredPlaybookText{}, repos.ErrNotFound
 	}
-	return t, nil
+	if t, ok := texts[path]; ok {
+		return t, nil
+	}
+	for _, t := range texts {
+		return repos.StoredPlaybookText{Commit: t.Commit, SyncedAt: t.SyncedAt}, nil
+	}
+	return repos.StoredPlaybookText{}, nil
 }
 
 func (f *fakeRepos) VarSources(_ context.Context, orgID, repoID uuid.UUID) (repos.SourcesRecord, []varsource.Playbook, bool, error) {

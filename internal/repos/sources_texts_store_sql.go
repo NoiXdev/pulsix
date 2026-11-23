@@ -25,7 +25,8 @@ func (s *SQLStore) ListPlaybookTexts(ctx context.Context, orgID, repoID uuid.UUI
 }
 
 // GetPlaybookText implements Store: one path's text and its record, read
-// in one statement. ErrNotFound without a record or a row for the path.
+// in one statement. ErrNotFound without a record; a record without a row
+// for the path answers no text and no reason.
 func (s *SQLStore) GetPlaybookText(ctx context.Context, orgID, repoID uuid.UUID, path string) (StoredPlaybookText, error) {
 	row, err := s.q.GetRepoPlaybookText(ctx, gen.GetRepoPlaybookTextParams{OrgID: orgID, RepoID: repoID, Path: path})
 	if err != nil {
