@@ -245,9 +245,10 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 }
 
 // approvalSummary is the audit summary of an approval: the template
-// revision and, when the template has follow-ups, the ones that start.
+// revision the person approved and, when the template has follow-ups, the
+// ones that start.
 func approvalSummary(a runrequests.Approved) string {
-	summary := "approved run request (template revision " + strconv.FormatInt(a.Request.TemplateRevision, 10)
+	summary := "approved run request (template revision " + strconv.FormatInt(a.TemplateRevision, 10)
 	if a.FollowUps != nil {
 		if len(a.Started) == 0 {
 			summary += "; no follow-ups"

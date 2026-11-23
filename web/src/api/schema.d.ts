@@ -7220,6 +7220,7 @@ export interface components {
             repo?: components["schemas"]["PictureRepo"];
             retry?: components["schemas"]["PictureRetry"];
             ssh_credential?: string;
+            ssh_credential_id?: string;
             targets: components["schemas"]["PictureHost"][] | null;
             template_id: string;
             template_name: string;
@@ -7244,8 +7245,10 @@ export interface components {
         PictureHost: {
             address: string;
             credential?: string;
+            credential_id?: string;
             id: string;
             jump_host?: string;
+            jump_host_id?: string;
             name: string;
             /** Format: int64 */
             ssh_port?: number;
@@ -7259,6 +7262,8 @@ export interface components {
         };
         PictureRepo: {
             branch: string;
+            git_credential?: string;
+            git_credential_id?: string;
             id: string;
             name: string;
             subpath: string;
@@ -7270,6 +7275,7 @@ export interface components {
         };
         PictureVault: {
             credential: string;
+            credential_id: string;
             label: string;
         };
         PlaybookContentOutputBody: {

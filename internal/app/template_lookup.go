@@ -143,9 +143,21 @@ func (a templateLookup) TemplateExists(ctx context.Context, orgID, id uuid.UUID)
 // value the claim does not know to redact. A dropped value is logged
 // once per lookup.
 func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
+	out, paths := withoutStraySealed(t)
+	if len(paths) > 0 {
+		slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
+			"org", t.OrgID, "template", t.ID, "paths", paths)
+	}
+	return out
+}
+
+// withoutStraySealed is dropStraySealed without the log line: t's values
+// without every top-level value holding a stray sealed secret, and the
+// paths of the strays.
+func withoutStraySealed(t templates.Template) (map[string]any, []string) {
 	stray := schema.StraySealed(t.ExtraVarsSchema.Fields, t.ExtraVars)
 	if len(stray) == 0 {
-		return t.ExtraVars
+		return t.ExtraVars, nil
 	}
 	out := maps.Clone(t.ExtraVars)
 	for _, name := range schema.StrayNames(stray) {
@@ -155,9 +167,7 @@ func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
 	for i, s := range stray {
 		paths[i] = s.Path
 	}
-	slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
-		"org", t.OrgID, "template", t.ID, "paths", paths)
-	return out
+	return out, paths
 }
 
 // openExtraVars reveals the template's sealed extra vars (secret-typed

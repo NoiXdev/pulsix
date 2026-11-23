@@ -695,11 +695,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	accountsSvc := accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader)
 	// The run request resolver (spec 2026-11-16 assistant access) reads the
-	// same services the run paths use.
+	// same services the run paths use. Its vars digest covers the values
+	// the claim sends, secrets included, under a key derived from the
+	// master key (backlog 2.120).
 	assistantSvc := assistant.NewService(assistant.NewSQLStore(appDB))
 	runRequestResolver := runrequests.NewResolver(runrequests.Sources{
 		Templates: templatesSvc, Playbooks: playbooksSvc, Repos: reposSvc, Jobs: jobsSvc,
-		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc, Inventory: renderer,
+		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc,
+		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore,
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,

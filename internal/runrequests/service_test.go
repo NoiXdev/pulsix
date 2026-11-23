@@ -169,6 +169,26 @@ func TestCreateValidatesAndExpiresAfterAnHour(t *testing.T) {
 	}
 }
 
+// TestApproveReportsTheApprovedRevision: the approval names the template
+// revision of the picture it approved, not the one the request was made
+// against.
+func TestApproveReportsTheApprovedRevision(t *testing.T) {
+	w := newWiring()
+	r := w.create(t)
+	w.pics.p.TemplateRevision = 9
+	_, _, fp, err := w.svc.Get(context.Background(), w.org, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.TemplateRevision != 7 || a.TemplateRevision != 9 {
+		t.Fatalf("requested at %d, approved revision %d, want 9", r.TemplateRevision, a.TemplateRevision)
+	}
+}
+
 func TestCreateNeedsAReason(t *testing.T) {
 	w := newWiring()
 	if _, err := w.svc.Create(context.Background(), w.org, runrequests.CreateInput{Kind: runrequests.KindRun, TemplateID: uuid.Must(uuid.NewV7()), RequestedByUser: uuid.Must(uuid.NewV7())}); !errors.Is(err, runrequests.ErrInvalidInput) {
@@ -295,13 +315,14 @@ func TestFingerprintCoversEveryField(t *testing.T) {
 	base := runrequests.Picture{
 		TemplateID: "t", TemplateName: "deploy", TemplateRevision: 1, Limit: "web", OnlyHost: "",
 		Playbook: runrequests.PicturePlaybook{Source: "repo", Path: "site.yml"},
-		Repo:     &runrequests.PictureRepo{Name: "infra", URL: "https://git.example/infra", Branch: "main", Subpath: "ansible"},
+		Repo: &runrequests.PictureRepo{Name: "infra", URL: "https://git.example/infra", Branch: "main", Subpath: "ansible",
+			GitCredentialID: "g1", GitCredential: "git-deploy"},
 		Targets: []runrequests.PictureHost{
-			{ID: "b", Name: "web-2", Address: "10.0.0.2", SSHUser: "root", SSHPort: 22},
-			{ID: "a", Name: "web-1", Address: "10.0.0.1", SSHUser: "root", SSHPort: 22, JumpHost: "bastion"},
+			{ID: "b", Name: "web-2", Address: "10.0.0.2", SSHUser: "root", SSHPort: 22, CredentialID: "c1", Credential: "host-login"},
+			{ID: "a", Name: "web-1", Address: "10.0.0.1", SSHUser: "root", SSHPort: 22, JumpHost: "bastion", JumpHostID: "j1"},
 		},
-		SSHCredential:   "deploy-key",
-		VaultIdentities: []runrequests.PictureVault{{Label: "noidee", Credential: "vault"}},
+		SSHCredential: "deploy-key", SSHCredentialID: "s1",
+		VaultIdentities: []runrequests.PictureVault{{Label: "noidee", CredentialID: "v1", Credential: "vault"}},
 		ExtraVars:       map[string]any{"a": 1},
 		VarsDigest:      "d1",
 	}
@@ -333,11 +354,29 @@ func TestFingerprintCoversEveryField(t *testing.T) {
 			p.Targets = append([]runrequests.PictureHost{}, p.Targets...)
 			p.Targets[0].Address = "10.9.9.9"
 		},
-		"ssh credential": func(p *runrequests.Picture) { p.SSHCredential = "other" },
-		"vault":          func(p *runrequests.Picture) { p.VaultIdentities = nil },
-		"extra vars":     func(p *runrequests.Picture) { p.ExtraVars = map[string]any{"a": 2} },
-		"vars digest":    func(p *runrequests.Picture) { p.VarsDigest = "d2" },
-		"retry":          func(p *runrequests.Picture) { p.Retry = &runrequests.PictureRetry{JobID: "j"} },
+		"ssh credential":    func(p *runrequests.Picture) { p.SSHCredential = "other" },
+		"ssh credential id": func(p *runrequests.Picture) { p.SSHCredentialID = "s2" },
+		"repo git credential id": func(p *runrequests.Picture) {
+			r := *p.Repo
+			r.GitCredentialID = "g2"
+			p.Repo = &r
+		},
+		"repo git credential": func(p *runrequests.Picture) { r := *p.Repo; r.GitCredential = "other"; p.Repo = &r },
+		"target credential id": func(p *runrequests.Picture) {
+			p.Targets = append([]runrequests.PictureHost{}, p.Targets...)
+			p.Targets[0].CredentialID = "c2"
+		},
+		"target jump host id": func(p *runrequests.Picture) {
+			p.Targets = append([]runrequests.PictureHost{}, p.Targets...)
+			p.Targets[1].JumpHostID = "j2"
+		},
+		"vault credential id": func(p *runrequests.Picture) {
+			p.VaultIdentities = []runrequests.PictureVault{{Label: "noidee", CredentialID: "v2", Credential: "vault"}}
+		},
+		"vault":       func(p *runrequests.Picture) { p.VaultIdentities = nil },
+		"extra vars":  func(p *runrequests.Picture) { p.ExtraVars = map[string]any{"a": 2} },
+		"vars digest": func(p *runrequests.Picture) { p.VarsDigest = "d2" },
+		"retry":       func(p *runrequests.Picture) { p.Retry = &runrequests.PictureRetry{JobID: "j"} },
 		"follow-ups added": func(p *runrequests.Picture) {
 			p.FollowUps = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{{TemplateID: "a", TemplateName: "a", TemplateRevision: 1}}}
 		},

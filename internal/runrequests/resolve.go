@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -59,21 +58,33 @@ type (
 		ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
 		ClearUnstarted(ctx context.Context, orgID, groupID uuid.UUID) error
 	}
-	InventorySource interface {
-		Preview(ctx context.Context, orgID uuid.UUID, scope render.Scope) (render.Inventory, error)
+	// RunVarsSource reads the variable values a run would receive, secrets
+	// in the clear. The resolver feeds them only into the keyed vars
+	// digest; they never enter a picture.
+	RunVarsSource interface {
+		// InventoryVars is the targets' rendered inventory, secrets
+		// revealed, as the claim renders it: the document with its group
+		// and membership vars, and how each host is reached.
+		InventoryVars(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (render.Inventory, error)
+		// ExtraVars is the template's extra vars as a run receives them,
+		// secrets opened.
+		ExtraVars(ctx context.Context, orgID, templateID uuid.UUID) (map[string]any, error)
 	}
 )
 
 // Sources is what NewResolver reads from.
 type Sources struct {
-	Templates    TemplateSource
-	Playbooks    PlaybookSource
-	Repos        RepoSource
-	Jobs         JobRunner
-	Hosts        HostSource
-	SSH          SSHSource
-	Credentials  CredentialSource
-	Inventory    InventorySource
+	Templates   TemplateSource
+	Playbooks   PlaybookSource
+	Repos       RepoSource
+	Jobs        JobRunner
+	Hosts       HostSource
+	SSH         SSHSource
+	Credentials CredentialSource
+	Vars        RunVarsSource
+	// VarsKey keys the vars digest (VarsDigestKey): server-side only, so
+	// the digest the browser sees cannot be checked against a guess.
+	VarsKey      []byte
 	Settings     FollowUpSettings
 	FollowUpRuns FollowUpRunSource
 }
@@ -162,7 +173,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		p.OnlyHost = req.HostID.String()
 	}
 	if tmpl.CredentialID != nil {
-		p.SSHCredential = r.credentialName(ctx, orgID, *tmpl.CredentialID)
+		p.SSHCredentialID, p.SSHCredential = tmpl.CredentialID.String(), r.credentialName(ctx, orgID, *tmpl.CredentialID)
 	}
 	var repoVault []repos.VaultIdentity
 	if tmpl.PlaybookID != uuid.Nil {
@@ -184,6 +195,9 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 				return Picture{}, mapNotFound(err)
 			}
 			p.Repo = &PictureRepo{ID: repo.ID.String(), Name: repo.Name, URL: repo.URL, Branch: repo.Branch, Subpath: repo.Subpath}
+			if repo.CredentialID != nil {
+				p.Repo.GitCredentialID, p.Repo.GitCredential = repo.CredentialID.String(), r.credentialName(ctx, orgID, *repo.CredentialID)
+			}
 			repoVault = repo.VaultIdentities
 		}
 	}
@@ -192,7 +206,9 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		templateVault[i] = vc.ToVaultIdentity()
 	}
 	for _, id := range repos.ResolveVaultIdentities(repoVault, templateVault) {
-		p.VaultIdentities = append(p.VaultIdentities, PictureVault{Label: id.Label, Credential: r.credentialName(ctx, orgID, id.CredentialID)})
+		p.VaultIdentities = append(p.VaultIdentities, PictureVault{
+			Label: id.Label, CredentialID: id.CredentialID.String(), Credential: r.credentialName(ctx, orgID, id.CredentialID),
+		})
 	}
 
 	targets, err := r.targets(ctx, orgID, req, &p)
@@ -202,7 +218,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 	if err := r.describeHosts(ctx, orgID, targets, &p); err != nil {
 		return Picture{}, err
 	}
-	digest, err := r.varsDigest(ctx, orgID, targets, tmpl.ExtraVars)
+	digest, err := r.varsDigest(ctx, orgID, tmpl.ID, targets)
 	if err != nil {
 		return Picture{}, err
 	}
@@ -253,9 +269,10 @@ func (r *Resolver) describeHosts(ctx context.Context, orgID uuid.UUID, ids []uui
 		if err == nil {
 			ph.SSHUser, ph.SSHPort = ssh.Username, ssh.Port
 			if ssh.CredentialID != nil {
-				ph.Credential = r.credentialName(ctx, orgID, *ssh.CredentialID)
+				ph.CredentialID, ph.Credential = ssh.CredentialID.String(), r.credentialName(ctx, orgID, *ssh.CredentialID)
 			}
 			if ssh.BastionID != nil {
+				ph.JumpHostID = ssh.BastionID.String()
 				if b, err := r.src.SSH.GetBastion(ctx, orgID, *ssh.BastionID); err == nil {
 					ph.JumpHost = b.Name
 				} else {
@@ -276,30 +293,6 @@ func bastionModeSuffix(ssh sshconf.HostSSH) string {
 		return ""
 	}
 	return " (" + string(ssh.BastionMode) + ")"
-}
-
-// varsDigest hashes the inventory the targets would be rendered with (group
-// and membership vars, parents included) and the template's stored extra
-// vars, so any change to them changes the fingerprint without the page
-// listing them.
-func (r *Resolver) varsDigest(ctx context.Context, orgID uuid.UUID, targets []uuid.UUID, extraVars map[string]any) (string, error) {
-	var inv any
-	if len(targets) > 0 {
-		rendered, err := r.src.Inventory.Preview(ctx, orgID, render.Scope{HostIDs: targets})
-		if err != nil {
-			return "", fmt.Errorf("render target inventory: %w", err)
-		}
-		inv = rendered
-	}
-	doc, err := json.Marshal(struct {
-		Inventory any            `json:"inventory"`
-		ExtraVars map[string]any `json:"extra_vars"`
-	}{inv, extraVars})
-	if err != nil {
-		return "", fmt.Errorf("encode vars digest: %w", err)
-	}
-	sum := sha256.Sum256(doc)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func (r *Resolver) credentialName(ctx context.Context, orgID, id uuid.UUID) string {

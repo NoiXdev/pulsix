@@ -13,8 +13,10 @@ import (
 // Picture is what a run request would use if it were approved now (spec
 // 2026-11-16 assistant access, "Run requests"): the approval page shows it,
 // and the approval's fingerprint covers it. It never carries a secret:
-// credentials appear by name, extra vars with their secrets masked, and the
-// group and membership vars only as VarsDigest.
+// credentials and jump hosts appear by id and name (the name for the page,
+// the id so a swap for another of the same name changes the fingerprint),
+// extra vars with their secrets masked, and the real values of the group,
+// membership and extra vars only as the keyed VarsDigest.
 type Picture struct {
 	TemplateID       string          `json:"template_id"`
 	TemplateName     string          `json:"template_name"`
@@ -25,10 +27,14 @@ type Picture struct {
 	Repo             *PictureRepo    `json:"repo,omitempty"`
 	Targets          []PictureHost   `json:"targets"`
 	SSHCredential    string          `json:"ssh_credential,omitempty"`
+	SSHCredentialID  string          `json:"ssh_credential_id,omitempty"`
 	VaultIdentities  []PictureVault  `json:"vault_identities"`
 	ExtraVars        map[string]any  `json:"extra_vars"`
 	Retry            *PictureRetry   `json:"retry,omitempty"`
-	VarsDigest       string          `json:"vars_digest"`
+	// VarsDigest is the keyed HMAC of the values the run receives (see
+	// Resolver.varsDigest): it changes with any of them, secrets
+	// included, and reveals none.
+	VarsDigest string `json:"vars_digest"`
 	// FollowUps is nil when the request has no direct follow-ups, so the
 	// canonical JSON of such a picture is unchanged.
 	FollowUps *PictureFollowUps `json:"follow_ups,omitempty"`
@@ -68,30 +74,36 @@ type PicturePlaybook struct {
 	InlineDigest string `json:"inline_digest,omitempty"`
 }
 
-// PictureRepo is the repository a repository playbook comes from.
+// PictureRepo is the repository a repository playbook comes from, with the
+// credential its checkout fetches with, if any.
 type PictureRepo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Branch  string `json:"branch"`
-	Subpath string `json:"subpath"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	Branch          string `json:"branch"`
+	Subpath         string `json:"subpath"`
+	GitCredentialID string `json:"git_credential_id,omitempty"`
+	GitCredential   string `json:"git_credential,omitempty"`
 }
 
 // PictureHost is one target host as the run would reach it.
 type PictureHost struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Address    string `json:"address"`
-	SSHUser    string `json:"ssh_user,omitempty"`
-	SSHPort    int    `json:"ssh_port,omitempty"`
-	JumpHost   string `json:"jump_host,omitempty"`
-	Credential string `json:"credential,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Address      string `json:"address"`
+	SSHUser      string `json:"ssh_user,omitempty"`
+	SSHPort      int    `json:"ssh_port,omitempty"`
+	JumpHost     string `json:"jump_host,omitempty"`
+	JumpHostID   string `json:"jump_host_id,omitempty"`
+	Credential   string `json:"credential,omitempty"`
+	CredentialID string `json:"credential_id,omitempty"`
 }
 
-// PictureVault is one vault identity, by label and credential name.
+// PictureVault is one vault identity, by label and credential id and name.
 type PictureVault struct {
-	Label      string `json:"label"`
-	Credential string `json:"credential"`
+	Label        string `json:"label"`
+	CredentialID string `json:"credential_id"`
+	Credential   string `json:"credential"`
 }
 
 // PictureRetry is what a retry request would run again.
@@ -103,13 +115,14 @@ type PictureRetry struct {
 // Fingerprint is the SHA-256 (hex) over the request id and the canonical
 // JSON of p. encoding/json writes struct fields in declaration order and
 // map keys sorted, so the only order left to fix is the slices': targets by
-// id, vault identities by label, failed hosts as given sorted.
+// id, vault identities by label then credential id then name, failed hosts
+// as given sorted.
 func Fingerprint(requestID uuid.UUID, p Picture) string {
 	p.Targets = slices.Clone(p.Targets)
 	slices.SortFunc(p.Targets, func(a, b PictureHost) int { return cmp.Compare(a.ID, b.ID) })
 	p.VaultIdentities = slices.Clone(p.VaultIdentities)
 	slices.SortFunc(p.VaultIdentities, func(a, b PictureVault) int {
-		return cmp.Or(cmp.Compare(a.Label, b.Label), cmp.Compare(a.Credential, b.Credential))
+		return cmp.Or(cmp.Compare(a.Label, b.Label), cmp.Compare(a.CredentialID, b.CredentialID), cmp.Compare(a.Credential, b.Credential))
 	})
 	if p.Retry != nil {
 		r := *p.Retry

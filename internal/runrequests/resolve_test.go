@@ -38,9 +38,15 @@ type (
 		ssh      map[uuid.UUID]sshconf.HostSSH
 		bastions map[uuid.UUID]sshconf.Bastion
 	}
-	inventoryDoc struct {
-		doc map[string]any
-		err error
+	// runVars stands in for the real values a run receives, secrets in
+	// the clear.
+	runVars struct {
+		doc      map[string]any
+		conns    map[string]render.Connection
+		secrets  []string
+		err      error
+		extra    map[string]any
+		extraErr error
 	}
 	targetRunner struct {
 		targets    []uuid.UUID
@@ -105,8 +111,12 @@ func (s sshMap) GetBastion(_ context.Context, _, id uuid.UUID) (sshconf.Bastion,
 	return sshconf.Bastion{}, errors.New("no such bastion")
 }
 
-func (i inventoryDoc) Preview(context.Context, uuid.UUID, render.Scope) (render.Inventory, error) {
-	return render.Inventory{Doc: i.doc}, i.err
+func (v *runVars) InventoryVars(context.Context, uuid.UUID, []uuid.UUID) (render.Inventory, error) {
+	return render.Inventory{Doc: v.doc, Connections: v.conns, Secrets: v.secrets}, v.err
+}
+
+func (v *runVars) ExtraVars(context.Context, uuid.UUID, uuid.UUID) (map[string]any, error) {
+	return v.extra, v.extraErr
 }
 
 func (r *targetRunner) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
@@ -143,7 +153,8 @@ type world struct {
 	creds                credMap
 	hosts                hostList
 	ssh                  sshMap
-	inv                  inventoryDoc
+	inv                  *runVars
+	key                  []byte
 	jobs                 *targetRunner
 	settings             switchable
 	rows                 groupRows
@@ -151,11 +162,12 @@ type world struct {
 	h1, h2, h3, cred     uuid.UUID
 	bastion, lostBastion uuid.UUID
 	repoVault, tmplVault uuid.UUID
+	gitCred              uuid.UUID
 }
 
 func newWorld() *world {
 	w := &world{x: id(), y: id(), pb: id(), repo: id(), h1: id(), h2: id(), h3: id(), cred: id(),
-		bastion: id(), lostBastion: id(), repoVault: id(), tmplVault: id()}
+		bastion: id(), lostBastion: id(), repoVault: id(), tmplVault: id(), gitCred: id()}
 	path := "site.yml"
 	w.tmpls = failingTemplates{fail: map[uuid.UUID]error{}, fakeTemplates: fakeTemplates{
 		w.x: {ID: w.x, Name: "X", Revision: 3, Limit: "web", PlaybookID: w.pb, CredentialID: &w.cred,
@@ -166,8 +178,8 @@ func newWorld() *world {
 	}}
 	w.pbs = playbookMap{w.pb: {ID: w.pb, Source: "repo", Path: &path, RepoID: &w.repo}}
 	w.repos = repoMap{w.repo: {ID: w.repo, Name: "infra", URL: "https://git.example.test/infra.git", Branch: "main", Subpath: "ansible",
-		VaultIdentities: []repos.VaultIdentity{{CredentialID: w.repoVault, Label: "dev"}}}}
-	w.creds = credMap{w.cred: {Name: "host-login"}, w.repoVault: {Name: "dev-vault"}, w.tmplVault: {Name: "prod-vault"}}
+		CredentialID: &w.gitCred, VaultIdentities: []repos.VaultIdentity{{CredentialID: w.repoVault, Label: "dev"}}}}
+	w.creds = credMap{w.cred: {Name: "host-login"}, w.repoVault: {Name: "dev-vault"}, w.tmplVault: {Name: "prod-vault"}, w.gitCred: {Name: "git-deploy"}}
 	w.hosts = hostList{hs: []hosts.Host{{ID: w.h1, Name: "web-1", Address: "10.0.0.1"}, {ID: w.h2, Name: "web-2", Address: "10.0.0.2"},
 		{ID: w.h3, Name: "web-3", Address: "10.0.0.3"}}}
 	w.ssh = sshMap{
@@ -177,7 +189,8 @@ func newWorld() *world {
 		},
 		bastions: map[uuid.UUID]sshconf.Bastion{w.bastion: {Name: "jump-1"}},
 	}
-	w.inv = inventoryDoc{doc: map[string]any{"all": map[string]any{"vars": map[string]any{"env": "prod"}}}}
+	w.inv = &runVars{doc: map[string]any{"all": map[string]any{"vars": map[string]any{"env": "prod"}}}, extra: map[string]any{"tag": "v1"}}
+	w.key = runrequests.VarsDigestKey([32]byte{1, 2, 3})
 	w.jobs = &targetRunner{targets: []uuid.UUID{w.h1, w.h2, w.h3}, retryTmpl: w.x, failed: []uuid.UUID{w.h2}}
 	return w
 }
@@ -185,7 +198,7 @@ func newWorld() *world {
 func (w *world) resolver() *runrequests.Resolver {
 	return runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
-		Credentials: w.creds, Inventory: w.inv, Settings: w.settings, FollowUpRuns: w.rows,
+		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows,
 	})
 }
 
@@ -203,23 +216,25 @@ func TestPictureOfARepoRun(t *testing.T) {
 	p := w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x})
 
 	if p.TemplateID != w.x.String() || p.TemplateName != "X" || p.TemplateRevision != 3 || p.Limit != "web" ||
-		p.SSHCredential != "host-login" || p.ExtraVars["tag"] != "v1" || p.OnlyHost != "" || p.Retry != nil {
+		p.SSHCredential != "host-login" || p.SSHCredentialID != w.cred.String() || p.ExtraVars["tag"] != "v1" || p.OnlyHost != "" || p.Retry != nil {
 		t.Fatalf("template part = %+v", p)
 	}
 	if p.Playbook != (runrequests.PicturePlaybook{ID: w.pb.String(), Source: "repo", Path: "site.yml"}) {
 		t.Fatalf("playbook = %+v", p.Playbook)
 	}
-	if p.Repo == nil || *p.Repo != (runrequests.PictureRepo{ID: w.repo.String(), Name: "infra", URL: "https://git.example.test/infra.git", Branch: "main", Subpath: "ansible"}) {
+	if p.Repo == nil || *p.Repo != (runrequests.PictureRepo{ID: w.repo.String(), Name: "infra", URL: "https://git.example.test/infra.git", Branch: "main", Subpath: "ansible",
+		GitCredentialID: w.gitCred.String(), GitCredential: "git-deploy"}) {
 		t.Fatalf("repo = %+v", p.Repo)
 	}
-	if len(p.VaultIdentities) != 2 || p.VaultIdentities[0] != (runrequests.PictureVault{Label: "dev", Credential: "dev-vault"}) ||
-		p.VaultIdentities[1] != (runrequests.PictureVault{Label: "prod", Credential: "prod-vault"}) {
+	if len(p.VaultIdentities) != 2 || p.VaultIdentities[0] != (runrequests.PictureVault{Label: "dev", CredentialID: w.repoVault.String(), Credential: "dev-vault"}) ||
+		p.VaultIdentities[1] != (runrequests.PictureVault{Label: "prod", CredentialID: w.tmplVault.String(), Credential: "prod-vault"}) {
 		t.Fatalf("vault identities = %+v", p.VaultIdentities)
 	}
 	want := []runrequests.PictureHost{
-		{ID: w.h1.String(), Name: "web-1", Address: "10.0.0.1", SSHUser: "ansible", SSHPort: 22, JumpHost: "jump-1 (inherit)", Credential: "host-login"},
+		{ID: w.h1.String(), Name: "web-1", Address: "10.0.0.1", SSHUser: "ansible", SSHPort: 22, JumpHost: "jump-1 (inherit)", JumpHostID: w.bastion.String(),
+			Credential: "host-login", CredentialID: w.cred.String()},
 		{ID: w.h2.String(), Name: "web-2", Address: "10.0.0.2"},
-		{ID: w.h3.String(), Name: "web-3", Address: "10.0.0.3", SSHUser: "root", SSHPort: 2222, JumpHost: w.lostBastion.String()},
+		{ID: w.h3.String(), Name: "web-3", Address: "10.0.0.3", SSHUser: "root", SSHPort: 2222, JumpHost: w.lostBastion.String(), JumpHostID: w.lostBastion.String()},
 	}
 	if len(p.Targets) != len(want) {
 		t.Fatalf("targets = %+v", p.Targets)
@@ -262,7 +277,7 @@ func TestPictureOfAnInlineRunOnOneHost(t *testing.T) {
 	tmpl.PlaybookID, tmpl.CredentialID = uuid.Nil, &w.repo
 	w.tmpls.fakeTemplates[w.x] = tmpl
 	p = w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x})
-	if p.Playbook != (runrequests.PicturePlaybook{}) || p.SSHCredential != w.repo.String() {
+	if p.Playbook != (runrequests.PicturePlaybook{}) || p.SSHCredential != w.repo.String() || p.SSHCredentialID != w.repo.String() {
 		t.Fatalf("no playbook = %+v, credential %q", p.Playbook, p.SSHCredential)
 	}
 }
@@ -298,9 +313,7 @@ func TestVarsDigestFollowsInventoryAndExtraVars(t *testing.T) {
 	}
 	w.inv.doc = map[string]any{"all": map[string]any{"vars": map[string]any{"env": "staging"}}}
 	changedInv := w.picture(t, req).VarsDigest
-	tmpl := w.tmpls.fakeTemplates[w.x]
-	tmpl.ExtraVars = map[string]any{"tag": "v2"}
-	w.tmpls.fakeTemplates[w.x] = tmpl
+	w.inv.extra = map[string]any{"tag": "v2"}
 	changedVars := w.picture(t, req).VarsDigest
 	if changedInv == base || changedVars == changedInv || changedVars == base {
 		t.Fatalf("digests base %s, inventory %s, vars %s must all differ", base, changedInv, changedVars)
@@ -321,6 +334,8 @@ func TestPictureErrors(t *testing.T) {
 		{"targets fail", func(w *world) { w.jobs.targetsErr = boom }, boom},
 		{"hosts fail", func(w *world) { w.hosts.err = boom }, boom},
 		{"inventory fails", func(w *world) { w.inv.err = boom }, boom},
+		{"extra vars fail", func(w *world) { w.inv.extraErr = boom }, boom},
+		{"no digest key", func(w *world) { w.key = nil }, runrequests.ErrNoVarsKey},
 		{"setting fails", func(w *world) { w.settings.err = boom }, boom},
 		{"follow-up template fails", func(w *world) { w.settings.on = true; w.tmpls.fail[w.y] = boom }, boom},
 	} {

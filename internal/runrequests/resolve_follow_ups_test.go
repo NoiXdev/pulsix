@@ -91,7 +91,7 @@ func newResolverFx(tmpls fakeTemplates, on bool, rows []chain.FollowUp, clearErr
 	fx := &resolverFx{org: id()}
 	fx.jobs = &fakeJobRunner{calls: &fx.calls, group: id()}
 	fx.res = runrequests.NewResolver(runrequests.Sources{
-		Templates: tmpls, Jobs: fx.jobs, Credentials: fakeCreds{},
+		Templates: tmpls, Jobs: fx.jobs, Credentials: fakeCreds{}, Vars: &runVars{}, VarsKey: testVarsKey,
 		Settings: fakeSettings{on}, FollowUpRuns: fakeFollowUpRuns{rows: rows, clearErr: clearErr, calls: &fx.calls},
 	})
 	return fx
@@ -156,7 +156,7 @@ func TestPictureReadsEachFollowUpTemplateOnce(t *testing.T) {
 	fx := &resolverFx{org: id()}
 	fx.jobs = &fakeJobRunner{calls: &fx.calls, group: id()}
 	fx.res = runrequests.NewResolver(runrequests.Sources{
-		Templates: src, Jobs: fx.jobs, Credentials: fakeCreds{},
+		Templates: src, Jobs: fx.jobs, Credentials: fakeCreds{}, Vars: &runVars{}, VarsKey: testVarsKey,
 		Settings: fakeSettings{true}, FollowUpRuns: fakeFollowUpRuns{calls: &fx.calls},
 	})
 

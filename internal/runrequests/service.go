@@ -211,12 +211,16 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]
 }
 
 // Approved is the outcome of an approval: the decided request, the
-// follow-ups block of the picture it approved, and the direct follow-ups
-// the approval started, in start order.
+// template revision and the follow-ups block of the picture it approved,
+// and the direct follow-ups the approval started, in start order. The
+// revision is the approved picture's, which differs from the request's
+// own TemplateRevision when the template changed after the request and
+// the person reviewed the change.
 type Approved struct {
-	Request   Request
-	FollowUps *PictureFollowUps
-	Started   []PictureFollowUp
+	Request          Request
+	TemplateRevision int64
+	FollowUps        *PictureFollowUps
+	Started          []PictureFollowUp
 }
 
 // Approve enqueues what the request asks for, if fingerprint still matches
@@ -274,7 +278,7 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		return Approved{}, err
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.RunGroupID, r.ApprovedFingerprint = StatusApproved, &by, &at, &group, fingerprint
-	return Approved{Request: r, FollowUps: p.FollowUps, Started: started}, nil
+	return Approved{Request: r, TemplateRevision: p.TemplateRevision, FollowUps: p.FollowUps, Started: started}, nil
 }
 
 // ErrChangedAfterApproval fails the claim of an approved run whose run
