@@ -60,7 +60,7 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 	}
 	slices.Sort(names)
 
-	var failed, unreachable, ok, changed, skipped []string
+	var failed, unreachable, ok, changed, skipped hostList
 	counts := make(map[string]hostCounts, len(names))
 	for _, name := range names {
 		s := stats[name]
@@ -76,37 +76,46 @@ func buildStats(stats map[string]hostStat, connections map[string]string) map[st
 		// failed and unreachable lists are independent, a host lands in
 		// each list its counters name.
 		if s.Failed > 0 {
-			failed = appendOnce(failed, idOf(name))
+			failed.add(idOf(name))
 		}
 		if s.Unreachable > 0 {
-			unreachable = appendOnce(unreachable, idOf(name))
+			unreachable.add(idOf(name))
 		}
 		// The ok list carries every host the recap counted, failed or not.
 		if s.Ok > 0 {
-			ok = appendOnce(ok, idOf(name))
+			ok.add(idOf(name))
 		}
 		if s.Changed > 0 {
-			changed = appendOnce(changed, idOf(name))
+			changed.add(idOf(name))
 		}
 		if s.Skipped > 0 {
-			skipped = appendOnce(skipped, idOf(name))
+			skipped.add(idOf(name))
 		}
 	}
 	return map[string]any{
-		statsFailedHosts:      failed,
-		statsUnreachableHosts: unreachable,
-		statsOKHosts:          ok,
-		statsChangedHosts:     changed,
-		statsSkippedHosts:     skipped,
+		statsFailedHosts:      failed.ids,
+		statsUnreachableHosts: unreachable.ids,
+		statsOKHosts:          ok.ids,
+		statsChangedHosts:     changed.ids,
+		statsSkippedHosts:     skipped.ids,
 		statsHostCounts:       counts,
 	}
 }
 
-// appendOnce appends id unless the list already names it: two inventory
-// names can map to one host.
-func appendOnce(list []string, id string) []string {
-	if slices.Contains(list, id) {
-		return list
+// hostList is one of the stats' host lists: ids in the order added, each
+// once (two inventory names can map to one host). ids stays nil while empty.
+type hostList struct {
+	ids  []string
+	seen map[string]bool
+}
+
+func (l *hostList) add(id string) {
+	if l.seen[id] {
+		return
 	}
-	return append(list, id)
+	if l.seen == nil {
+		l.seen = map[string]bool{}
+	}
+	l.seen[id] = true
+	l.ids = append(l.ids, id)
 }
