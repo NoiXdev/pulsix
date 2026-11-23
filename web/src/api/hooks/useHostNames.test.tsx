@@ -55,4 +55,20 @@ describe('useHostNames', () => {
     expect(calls).toHaveLength(5);
     expect(result.current.hosts[499].name).toBe('name-h499');
   });
+
+  it('keeps the ids of a chunk that failed and the names of the others', async () => {
+    const ids = idsOf(150);
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': ({ search }: { search: URLSearchParams }) =>
+        search.getAll('id').includes('h100')
+          ? new Response(JSON.stringify({ detail: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+          : { hosts: search.getAll('id').map((id) => ({ id, name: `name-${id}` })), next_cursor: '' },
+    });
+    const { result } = renderHook(() => useHostNames('acme', ids), { wrapper: wrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.hosts[0].name).toBe('name-h0');
+    expect(result.current.hosts[100].name).toBe('h100');
+    expect(result.current.hosts[149].name).toBe('h149');
+  });
 });

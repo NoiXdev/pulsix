@@ -116,10 +116,12 @@ export function useHost(org: string, id: string) {
 const NAME_CHUNK = 100;
 
 /** useHostNames names several hosts by id: one list request per NAME_CHUNK
- * ids (the id filter answers them all in one page); an id stands in for a host that is not there (deleted, or not of
- * this organization). `loading` is true until the names are in: the ids
- * stand in for them until then, which a caller matching names must not
- * take for the names. */
+ * ids (the id filter answers them all in one page). An id stands in for a
+ * host that is not there (deleted, or not of this organization) and for
+ * every host of a chunk whose request failed; the other chunks keep their
+ * names. `loading` is true until the names are in: the ids stand in for
+ * them until then, which a caller matching names must not take for the
+ * names. */
 export function useHostNames(org: string, ids: readonly string[]) {
   const query = useQuery({
     queryKey: ['host-names', org, ids],
@@ -127,13 +129,14 @@ export function useHostNames(org: string, ids: readonly string[]) {
       const names = new Map<string, string>();
       for (let i = 0; i < ids.length; i += NAME_CHUNK) {
         const chunk = ids.slice(i, i + NAME_CHUNK);
-        const { hosts } = await unwrap(
-          api.GET('/api/v1/orgs/{org}/hosts', {
-            params: { path: { org }, query: { id: chunk } },
-            signal,
-          }),
-        );
-        for (const h of hosts ?? []) names.set(h.id, h.name);
+        try {
+          const { hosts } = await unwrap(
+            api.GET('/api/v1/orgs/{org}/hosts', { params: { path: { org }, query: { id: chunk } }, signal }),
+          );
+          for (const h of hosts ?? []) names.set(h.id, h.name);
+        } catch {
+          signal.throwIfAborted(); // a caller that went away is no failed chunk
+        }
       }
       return names;
     },

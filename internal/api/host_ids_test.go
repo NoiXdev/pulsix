@@ -93,7 +93,7 @@ func TestHostsListByIDsRefusesMoreThanFivehundred(t *testing.T) {
 
 func TestHostsListByIDsRejectsMalformedID(t *testing.T) {
 	f := newHostPageFixture(t, "hostids-bad", 1)
-	if got := f.status(t, "id=not-a-uuid"); got != http.StatusBadRequest && got != http.StatusUnprocessableEntity {
-		t.Fatalf("bad id: status %d, want 400/422", got)
+	if got := f.status(t, "id=not-a-uuid"); got != http.StatusBadRequest {
+		t.Fatalf("bad id: status %d, want 400", got)
 	}
 }

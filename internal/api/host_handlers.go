@@ -456,7 +456,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 }
 
 // parseHostIDs reads the repeated id parameter: a malformed id is 400 like
-// the other filters, more than hosts.MaxListIDs distinct ids is 422.
+// the other filters, more than hosts.MaxListIDs id parameters (repeats counted) is 422.
 func parseHostIDs(raw []string) ([]uuid.UUID, error) {
 	if len(raw) > hosts.MaxListIDs {
 		return nil, huma.Error422UnprocessableEntity(fmt.Sprintf("at most %d ids", hosts.MaxListIDs))

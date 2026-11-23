@@ -157,7 +157,7 @@ func (s *SQLStore) ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter,
 		OrgID: orgID, ZoneID: uuidPtrToPg(f.ZoneID), Managed: f.Managed, Monitored: f.Monitored,
 		Query: nilIfEmpty(f.Query), ActiveRuns: f.ActiveRuns, Ids: nilIfNoIDs(f.IDs),
 		CursorName: cursorNameToPg(cursor, cursorName), CursorID: cursorIDToPg(cursor, cursorID),
-		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.ListHosts before it ever reaches here
+		RowLimit: int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit (MaxListIDs with an id filter) by Service.ListHosts before it ever reaches here
 	})
 	if err != nil {
 		return nil, "", err
