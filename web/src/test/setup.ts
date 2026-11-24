@@ -1,6 +1,8 @@
 import { afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { fetchMock } from './fetchMock.ts';
+// Import-free on purpose (no src/api/client.ts behind it), so it is safe above the fetch mock.
+import { resetPendingCountRouteMemory } from '../api/hooks/countRouteMemory.ts';
 // A fourth browser API jsdom does not ship, alongside the three at the
 // bottom of this file: ResizeObserver, which ui/MetricChart.tsx uses to
 // follow its container's width (backlog 3.26). Without a constructor the
@@ -124,6 +126,9 @@ window.addEventListener(
 // wrong one, for a reason that test has no way to see.
 afterEach(() => {
   openModalDialogs.length = 0;
+  // The run request count route's missing-route memory is module state that
+  // would otherwise leak from one test into the next.
+  resetPendingCountRouteMemory();
 });
 
 // ---------------------------------------------------------------------------

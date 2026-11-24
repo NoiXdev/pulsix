@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cancelHostRows, hasFailedHosts, hostResultRows, isCancellable, kindLabel, shortId, statusTone, zoneSlug } from './status.ts';
+import { cancelHostRows, hasFailedHosts, hostResultRows, isCancellable, kindLabel, shortId, statusLabel, statusTone, zoneSlug } from './status.ts';
 import { en } from '../../i18n/en/index.ts';
 
 describe('statusTone', () => {
@@ -12,6 +12,23 @@ describe('statusTone', () => {
     expect(statusTone('queued')).toBe('unknown');
     expect(statusTone('claimed')).toBe('unknown');
     expect(statusTone('cancelled')).toBe('unknown');
+  });
+});
+
+describe('a withdrawn job', () => {
+  it('reads neutral only while its status is error', () => {
+    expect(statusTone('error', true)).toBe('unknown');
+    expect(statusLabel('error', en, true)).toBe(en.runs.withdrawnAtClaim);
+  });
+
+  it('leaves a non-error status alone', () => {
+    expect(statusTone('succeeded', true)).toBe('ok');
+    expect(statusLabel('succeeded', en, true)).toBe('succeeded');
+  });
+
+  it('leaves an ordinary error sibling reading error', () => {
+    expect(statusTone('error', false)).toBe('crit');
+    expect(statusLabel('error', en, false)).toBe('error');
   });
 });
 

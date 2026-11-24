@@ -47,7 +47,7 @@ export function PlaybookLatestRuns({ org, playbookId, templates, onShowAll }: { 
                 params={{ org, id: job.id }}
                 className="flex min-w-0 items-center gap-2 rounded text-xs hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
-                <Pill tone={statusTone(job.status)}>{statusLabel(job.status, t)}</Pill>
+                <Pill tone={statusTone(job.status, job.withdrawn_at_claim)}>{statusLabel(job.status, t, job.withdrawn_at_claim)}</Pill>
                 <span className="min-w-0 flex-1 truncate">{templateName(job.template_id)}</span>
                 <span className="shrink-0 text-muted-foreground">{fmt.relative(job.created_at)}</span>
               </Link>

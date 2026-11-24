@@ -10,7 +10,7 @@ const ZONE = '0197c0b1-0000-7000-8000-000000000002';
 
 const job = {
   id: ID, zone_id: ZONE, kind: 'run', status: 'error', template: { id: 't1', name: 'deploy-site' },
-  run_group_id: 'g1', trigger: 'manual', hosts: [], stats: {}, error: 'run request approval withdrawn',
+  run_group_id: 'g1', trigger: 'manual', hosts: [], stats: {}, error: "refused at claim: the run's request is not approved",
   created_at: '2026-09-15T08:00:00Z', withdrawn_at_claim: true,
   group: [{ id: SIBLING, zone_id: ZONE, status: 'error', withdrawn_at_claim: true }],
 };
@@ -33,7 +33,7 @@ describe('a job withdrawn at its claim', () => {
     const sibling = screen.getByRole('link', { name: SIBLING.slice(0, 8) });
     expect(within(sibling).getByText('Not run — approval withdrawn')).toBeInTheDocument();
     expect(screen.queryByText('error')).not.toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('run request approval withdrawn');
+    expect(screen.getByRole('alert')).toHaveTextContent("refused at claim: the run's request is not approved");
   });
 
   it('reads in German too', async () => {

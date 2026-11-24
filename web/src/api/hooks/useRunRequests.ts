@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, unwrap } from '../client.ts';
 import type { components } from '../schema.d.ts';
+import { countRouteMemory } from './countRouteMemory.ts';
 
 export type RunRequest = components['schemas']['RunRequestDTO'];
 export type RunRequestStatus = RunRequest['status'];
@@ -26,19 +27,9 @@ export function useRunRequests(org: string, status?: RunRequestStatus) {
   });
 }
 
-/** How long a 404 from the count route is remembered before it is asked
+/** How long a missing count route is remembered before it is asked
  * again (a manager upgraded in the meantime then gets its exact count). */
 export const COUNT_ROUTE_RETRY_MS = 10 * 60_000;
-
-// When each org's count route last answered 404, in epoch ms. Module state
-// on purpose: it must outlive the query's cache entry, which a decision
-// invalidates; tests clear it with resetPendingCountRouteMemory.
-const countRouteMissing = new Map<string, number>();
-
-/** resetPendingCountRouteMemory forgets every remembered 404. For tests. */
-export function resetPendingCountRouteMemory() {
-  countRouteMissing.clear();
-}
 
 /** countPendingList counts the pending list instead, for a manager without
  * the count route. An older manager filters that list in memory after its
@@ -58,18 +49,20 @@ export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean
   const query = useQuery({
     queryKey: ['run-requests', org, 'pending-count'],
     queryFn: async () => {
-      const missingSince = countRouteMissing.get(org);
+      const missingSince = countRouteMemory.get(org);
       if (missingSince !== undefined && Date.now() - missingSince < COUNT_ROUTE_RETRY_MS) return countPendingList(org);
       try {
         const result = await unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } }));
-        countRouteMissing.delete(org);
+        countRouteMemory.delete(org);
         return result;
       } catch (err) {
-        if (!(err instanceof ApiError) || err.status !== 404) throw err;
-        // A manager from before the count route: remember the 404 for a
-        // while so the polls go straight to the list instead of asking a
-        // route that is not there every 30 seconds.
-        countRouteMissing.set(org, Date.now());
+        if (!(err instanceof ApiError) || (err.status !== 404 && err.status !== 400)) throw err;
+        // A manager from before the count route: 404 where the route is
+        // unknown, 400 on the released rc.3 to rc.5 managers, where the path
+        // lands on /run-requests/{id} and fails its UUID parsing. Remember
+        // it for a while so the polls go straight to the list instead of
+        // asking a route that is not there every 30 seconds.
+        countRouteMemory.set(org, Date.now());
         return countPendingList(org);
       }
     },
