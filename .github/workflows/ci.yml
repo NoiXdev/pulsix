@@ -68,6 +68,29 @@ jobs:
         # the version developers run locally — a linter that passes on a
         # laptop and fails in CI is worse than one that is merely strict.
         with: { version: v2.15.0 }
+      # Backlog 3.68: ansible-core is pinned here instead of taken from the
+      # runner image. ubuntu-latest (26.04) ships 2.21.6, whose galaxy
+      # refuses role names that need escaping, so the traversal control in
+      # internal/worker/runner (TestTraversalFixturesEscapeWithoutIsolation
+      # InRealAnsible) skipped here while it ran against 2.21.4 locally and
+      # in e2e-ansible: a green run meant something different in each place.
+      # 2.21.4 is the pin deploy/worker/Dockerfile and e2e-ansible use; keep
+      # the three in lockstep. The tests in this job that call the real
+      # tools are in internal/worker/runner (requirements_real_test.go,
+      # requirements_roles_test.go, unsafe_test.go, role_search_test.go:
+      # ansible-playbook and ansible-galaxy) and skip when they are absent
+      # (PULSIX_E2E_REAL_ANSIBLE=1 would make that a failure; this job does
+      # not set it, so a broken install here would skip silently, hence the
+      # version check below). pip installs into the setup-python
+      # interpreter's own site-packages, not a user site, so the HOME the
+      # worker points galaxy at cannot hide it (see e2e-ansible).
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with: { python-version: "3.13" }
+      - name: Pin ansible-core
+        run: |
+          python -m pip install --no-cache-dir "ansible-core==2.21.4"
+          ansible-playbook --version | head -n 1 | grep -F "core 2.21.4"
+          ansible-galaxy --version | head -n 1 | grep -F "core 2.21.4"
       # The gate runs the race+coverage suite in the package groups
       # scripts/test-groups.sh defines — internal/api, internal/e2e and
       # everything else, each with its own timeout (backlog 2.83 and

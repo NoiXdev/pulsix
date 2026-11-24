@@ -243,9 +243,10 @@ func TestTraversalFixturesEscapeWithoutIsolationInRealAnsible(t *testing.T) {
 		_, _, lines, err := h.ensure(t)
 		if err != nil && strings.Contains(err.Error(), galaxyRefusesEscapingRole) {
 			// A newer ansible-galaxy refuses this dependency name itself:
-			// 2.21.6 (the go job's runner image) does, while 2.21.4 (the
-			// worker image's pin, which e2e-ansible installs) and 2.21.5
-			// install it outside the roles directory. Such a galaxy leaves
+			// 2.21.6 (the runner image's own, which the go job no longer
+			// uses since backlog 3.68) does, while 2.21.4 (the worker
+			// image's pin, which the go job and e2e-ansible install) and
+			// 2.21.5 install it outside the roles directory. Such a galaxy leaves
 			// the fixture nothing to escape through, so this control has
 			// nothing to show; it must still not have written anything, and
 			// the run must still have been unisolated. Where the worker
