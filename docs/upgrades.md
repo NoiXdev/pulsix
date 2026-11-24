@@ -704,6 +704,18 @@ targets no longer make another's checks report the manager too busy.
 
 ## Behaviour changes to check after an upgrade
 
+- **Escalation steps wait after every maintenance window or silence that covered the
+  alert (backlog 4.41, no migration):** the escalation follower used to look for
+  covering windows at two sampled instants, so a window or silence that opened and
+  closed between two follower ticks went unseen and the next step fired on its old
+  schedule. It now reads every window stretch that ended within the next step's delay
+  (only for a chain whose step is otherwise due) and gives the step its full delay
+  again from that end, as design decision 5 always intended. A stretch counts only for
+  the time after the window was created, so a window entered with past times holds
+  nothing back. To check after the upgrade: a recurring window or silence whose
+  stretches come back more often than a step's delay keeps that step from firing for
+  as long as it recurs — look for frequent short silences on hosts whose routes have
+  long-delay steps. Alerts on hosts without windows or silences are unaffected.
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
   migrations 00113 and 00114):** off by default, so nothing changes unless it is set (`1`
   or `true`; any value `strconv.ParseBool` refuses stops the start). When on,
