@@ -1,6 +1,11 @@
 package app
 
-import "time"
+import (
+	"time"
+
+	"github.com/noixdev/pulsix/internal/config"
+	"github.com/noixdev/pulsix/internal/probe"
+)
 
 // buildOptions are test seams for Build; production passes none.
 type buildOptions struct {
@@ -22,6 +27,15 @@ type buildOptions struct {
 	// chain.DefaultTick); a test seam so an end-to-end test sees a chain
 	// continue without waiting seconds.
 	chainTick time.Duration
+	// probeGuard replaces the synthetic-check probe runner's dial guard
+	// (nil keeps the production guard, probeGuardFor); probeTick and
+	// probeRefresh override its tick and refresh (0 keeps
+	// probes.DefaultTick and probes.DefaultRefresh). Test seams so an
+	// end-to-end test can probe a listener of its own on loopback
+	// without waiting for the production pace.
+	probeGuard   *probe.Guard
+	probeTick    time.Duration
+	probeRefresh time.Duration
 }
 
 // Option customizes Build.
@@ -55,4 +69,39 @@ func WithRetentionPurgeInterval(d time.Duration) Option {
 // production passes no option and keeps the 5 s default.
 func WithChainTick(d time.Duration) Option {
 	return func(o *buildOptions) { o.chainTick = d }
+}
+
+// WithProbeGuard replaces the synthetic-check probe runner's dial guard —
+// a TEST SEAM ONLY. The production guard is an SSRF control: it keeps
+// the manager's probes off loopback, link-local and cloud metadata
+// addresses and the operator's PULSIX_PROBE_DENY_CIDRS. Passing a weaker
+// guard (probe.NewGuardForTest) lets probes reach those addresses, so
+// cmd/manager never passes this option; only tests that probe their own
+// loopback listeners do.
+func WithProbeGuard(g *probe.Guard) Option {
+	return func(o *buildOptions) { o.probeGuard = g }
+}
+
+// probeGuardFor is the probe runner's dial guard: the one WithProbeGuard
+// injected, else the production guard — the webhook egress policy's
+// refused ranges seen through cfg's NAT64 prefixes, plus
+// PULSIX_PROBE_DENY_CIDRS.
+func (o buildOptions) probeGuardFor(cfg config.Config) *probe.Guard {
+	if o.probeGuard != nil {
+		return o.probeGuard
+	}
+	return probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes)
+}
+
+// WithProbeTick overrides how often the probe runner looks for due checks
+// — a test seam; production passes no option and keeps probes.DefaultTick.
+func WithProbeTick(d time.Duration) Option {
+	return func(o *buildOptions) { o.probeTick = d }
+}
+
+// WithProbeRefresh overrides how often the probe runner re-resolves the
+// organizations' synthetic checks and host addresses — a test seam;
+// production passes no option and keeps probes.DefaultRefresh.
+func WithProbeRefresh(d time.Duration) Option {
+	return func(o *buildOptions) { o.probeRefresh = d }
 }

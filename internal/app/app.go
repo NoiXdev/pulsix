@@ -56,7 +56,6 @@ import (
 	"github.com/noixdev/pulsix/internal/personaltokens"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/preferences"
-	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -890,7 +889,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// results through checksSvc too. Every dial goes through the guard: the
 	// webhook egress policy's refused ranges (loopback, link-local, cloud
 	// metadata; seen through the operator's NAT64 prefixes) plus
-	// PULSIX_PROBE_DENY_CIDRS. A check whose plugin takes a secret (snmp,
+	// PULSIX_PROBE_DENY_CIDRS (only a test replaces it, WithProbeGuard;
+	// cmd/manager never does). A check whose plugin takes a secret (snmp,
 	// http) gets its fields from the organization's secret store.
 	// A check naming vantage groups (backlog 3.13a) is also probed by
 	// online, probe-capable agents of those groups (agentsSvc, groups
@@ -900,9 +900,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	probesStop := startLoop(probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
 		Locker:  schedule.NewAdvisoryLocker(lockDB.Pool(), probes.AdvisoryKeyProbes),
-		Guard:   probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
+		Guard:   o.probeGuardFor(cfg),
 		Secrets: orgSecretsSvc,
 		Clock:   time.Now, Log: slog.Default(),
+		Tick: o.probeTick, Refresh: o.probeRefresh,
 		Agents: agentsSvc, Groups: checksSvc, Vantages: probes.NewSQLStore(appDB),
 	}).Run)
 
