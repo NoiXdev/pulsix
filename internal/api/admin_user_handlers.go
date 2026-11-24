@@ -59,8 +59,9 @@ type adminUserDetailDTO struct {
 	TempPasswordExpiresAt *time.Time           `json:"temp_password_expires_at" nullable:"true"`
 	Memberships           []adminMembershipDTO `json:"memberships"`
 	Factors               adminFactorsDTO      `json:"factors"`
-	// ActiveSessions counts the signed-in sessions: complete, unrevoked
-	// and unexpired.
+	// ActiveSessions counts the signed-in sessions: complete, unrevoked and
+	// unexpired. Pending sessions and password-only sessions that a second
+	// factor has superseded (PULSIX_MFA_OPTIONAL) are excluded.
 	ActiveSessions int `json:"active_sessions"`
 	// InvitePending is true while the invitation that created the account
 	// was never accepted, a deactivated account included (whose state is

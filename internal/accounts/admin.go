@@ -66,7 +66,9 @@ type AccountDetailRecord struct {
 	CreatedAt             time.Time
 	TempPasswordExpiresAt *time.Time
 	Factors               Factors
-	// ActiveSessions counts complete, unrevoked, unexpired sessions.
+	// ActiveSessions counts complete, unrevoked, unexpired sessions; pending
+	// ones and password-only ones that a second factor has superseded
+	// (PULSIX_MFA_OPTIONAL) are excluded.
 	ActiveSessions int
 }
 

@@ -250,11 +250,24 @@ func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bo
 // upgraded by the victim's own second factor and stayed usable by the
 // planter. The caller must send the new value as the session cookie.
 func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, error) {
+	return s.markComplete(ctx, id, true)
+}
+
+// MarkEnrolmentComplete is MarkMFAComplete for finishing the enrolment of a
+// factor: the session is completed and its secret replaced, but a
+// password-only session that the new factor supersedes does not stamp
+// users.last_sign_in_at, since enrolling is no sign-in (backlog 3.113). A
+// pending session still stamps, as it completes the sign-in.
+func (s *Sessions) MarkEnrolmentComplete(ctx context.Context, id uuid.UUID) (string, error) {
+	return s.markComplete(ctx, id, false)
+}
+
+func (s *Sessions) markComplete(ctx context.Context, id uuid.UUID, stampSuperseded bool) (string, error) {
 	secret, sum, err := newSessionSecret()
 	if err != nil {
 		return "", err
 	}
-	n, err := s.q.MarkSessionMFAComplete(ctx, gen.MarkSessionMFACompleteParams{ID: id, SecretHash: sum})
+	n, err := s.q.MarkSessionMFAComplete(ctx, gen.MarkSessionMFACompleteParams{ID: id, SecretHash: sum, StampSuperseded: stampSuperseded})
 	if err != nil {
 		return "", err
 	}

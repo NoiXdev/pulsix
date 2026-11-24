@@ -141,3 +141,29 @@ func openPasswordOnly(w *resetWorld, uid uuid.UUID) (uuid.UUID, error) {
 	id, _, err := w.sessions.CreatePasswordOnly(ctx, uid)
 	return id, err
 }
+
+// Enrolling an account's first factor from a password-only session marks the
+// session complete but is no sign-in: the password sign-in already stamped
+// last_sign_in_at when the session was opened (backlog 3.113).
+func TestConfirmTOTPFromAPasswordOnlySessionDoesNotStamp(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "enrol-nostamp@example.test")
+	id, cookie, err := w.sessions.CreatePasswordOnly(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Second)
+	w.setLastSignIn(t, uid, old)
+	if _, newCookie, _, err := w.enrol.ConfirmTOTP(ctx, uid, id, enrol(t, w.totp, w.clock, uid)); err != nil {
+		t.Fatal(err)
+	} else if newCookie == "" || newCookie == cookie {
+		t.Fatalf("cookie = %q, want a replaced one", newCookie)
+	}
+	got := w.lastSignIn(t, uid)
+	if got == nil || !got.Equal(old) {
+		t.Fatalf("last_sign_in_at = %v after enrolling, want unchanged %v", got, old)
+	}
+	if n := w.activeSessions(t, uid); n != 1 {
+		t.Fatalf("active_sessions = %d, want 1: the enrolling session is complete", n)
+	}
+}

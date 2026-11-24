@@ -89,7 +89,7 @@ func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID
 		if err != nil {
 			return err
 		}
-		if cookie, err = e.sessions.MarkMFAComplete(ctx, sessionID); err != nil {
+		if cookie, err = e.sessions.MarkEnrolmentComplete(ctx, sessionID); err != nil {
 			return fmt.Errorf("complete the session after confirming TOTP: %w", err)
 		}
 		tokensRevoked, err = e.revokeOnFirstFactor(ctx, userID, first, sess.passwordOnly)
@@ -236,7 +236,7 @@ func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID u
 		if p.MFAComplete && !sess.passwordOnly {
 			return nil
 		}
-		if cookie, err = e.sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
+		if cookie, err = e.sessions.MarkEnrolmentComplete(ctx, p.SessionID); err != nil {
 			return sessionEnded("finish passkey registration", err)
 		}
 		return nil
