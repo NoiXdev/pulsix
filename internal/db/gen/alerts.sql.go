@@ -972,13 +972,14 @@ WHERE w.org_id = $1
   AND (w.target_kind = 'org'
        OR (w.target_kind = 'host' AND w.host_id = $2)
        OR (w.target_kind = 'inventory_group' AND w.group_id IN (SELECT id FROM ancestors)))
-  AND (w.cron IS NOT NULL OR (w.starts_at <= $3::timestamptz AND w.ends_at > $3::timestamptz))
+  AND (w.cron IS NOT NULL OR (w.starts_at <= $3::timestamptz AND w.ends_at > $4::timestamptz))
 `
 
 type ListMaintenanceWindowsForHostParams struct {
 	OrgID  uuid.UUID   `json:"org_id"`
 	HostID pgtype.UUID `json:"host_id"`
-	Now    time.Time   `json:"now"`
+	ToAt   time.Time   `json:"to_at"`
+	FromAt time.Time   `json:"from_at"`
 }
 
 // Store.WindowsForHost's own candidate set: every maintenance window
@@ -996,7 +997,12 @@ type ListMaintenanceWindowsForHostParams struct {
 // organization has ever created (most of them long expired) was pure
 // waste on the feature's main read path; occurrenceAt's own one-off
 // branch would have excluded them anyway, so filtering here changes no
-// result, only how much gets shipped out of Postgres to do it. Monitoring-
+// result, only how much gets shipped out of Postgres to do it. The filter
+// takes a range, [@from_at, @to_at], because the escalation pass asks
+// which windows covered a host at any instant since a chain's anchor
+// (backlog 4.41, SQLStore.WindowsForHostBetween); WindowsForHost passes
+// the same instant for both, which is exactly the old point filter, and
+// the Go side trims a window starting at @to_at itself. Monitoring-
 // group targets are deliberately not resolved here, the same gap
 // internal/maintenance.Service's own HostsInMaintenance leaves for the
 // same target kind today.
@@ -1013,7 +1019,12 @@ type ListMaintenanceWindowsForHostParams struct {
 // apart; that is the opposite of HostsInMaintenance, which filters
 // silence out.
 func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMaintenanceWindowsForHostParams) ([]MaintenanceWindow, error) {
-	rows, err := q.db.Query(ctx, listMaintenanceWindowsForHost, arg.OrgID, arg.HostID, arg.Now)
+	rows, err := q.db.Query(ctx, listMaintenanceWindowsForHost,
+		arg.OrgID,
+		arg.HostID,
+		arg.ToAt,
+		arg.FromAt,
+	)
 	if err != nil {
 		return nil, err
 	}

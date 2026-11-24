@@ -177,85 +177,84 @@ func (f *Follower) dueStep(ctx context.Context, res *resolution, orgID uuid.UUID
 		return false, Step{}, alerts.AlertWithHost{}, nil
 	}
 
-	cs := c.State
-	// The sixth anchor (decision 5), which ChainsNeedingAttentionBase's own
-	// doc comment leaves to the follower on purpose: whether a maintenance
-	// occurrence covered this alert is a fact about cron expressions
-	// evaluated in Go (internal/maintenance), not a column SQL can read.
-	// If one already covered the alert somewhere between the chain's own
-	// anchor and the moment its next step would naively come due, and has
-	// since ended, that step's delay counts from the occurrence's end, not
-	// from the stale anchor — the same "full delay from the moment it
-	// became newly urgent again" rule the other five anchors already give.
-	//
-	// This is the resume path for TWO of alerts.Mute's three reasons, not
-	// one: alerts.Mute's own windows argument carries both a maintenance
-	// window AND an operator silence as maintenance.Occurrence values,
-	// distinguished only by Reason — WindowsForHost returns both, and this
-	// loop folds in whichever one it finds with no need to filter by
-	// Reason. The snooze reason needs no fold here at all: its own end is
-	// already the plain snoozed_until column ChainsNeedingAttentionBase
-	// reads directly (anchor 2, the query's own doc comment).
-	//
-	// Sampled at two instants, not at `now`: WindowsForHost only answers
-	// "what covers this instant", so by the time an occurrence is no
-	// longer active AT now there is nothing left in its answer to read an
-	// End from.
-	//
-	//   - the anchor itself: catches an occurrence that already covered
-	//     the alert there and has since ended — a mute that started at or
-	//     before the previous step's own firing.
-	//   - the anchor plus the next step's OWN delay — the instant that
-	//     step would have come due with no mute in the picture at all:
-	//     catches an occurrence that started after the anchor but was
-	//     already covering the alert by the time it would otherwise have
-	//     fired, which the mute check immediately above has been holding
-	//     on every tick since, exactly the ordinary "it came due while
-	//     muted" shape decision 4 describes.
-	//
-	// What this still does NOT find is an occurrence that starts AFTER
-	// both of those instants and has already ended by `now` — one that
-	// began and ended entirely inside the gap between this chain's anchor
-	// and whatever it would naively be due at, without ever covering
-	// either sampled point. WindowsForHost's own shape (active-at-an-
-	// instant, not active-over-a-range) has no way to see one, and fixing
-	// that fully needs an interval query this pass's own files do not
-	// have. Accepted as shippable: ticks run every DefaultFollowInterval,
-	// occurrences run minutes to hours, and the one failure direction left
-	// is "fires a little early", never "never fires at all".
-	anchor := cs.LastFiredAt
-	if cs.LastUrgentAt.After(anchor) {
-		anchor = cs.LastUrgentAt
-	}
-	samples := []time.Time{anchor}
-	if d, ok := stepDelay(cs.Steps, cs.FiredUpTo+1); ok {
-		samples = append(samples, anchor.Add(d))
-	}
-	for _, at := range samples {
-		if at.IsZero() || !at.Before(now) {
-			continue
-		}
-		atSample, err := f.mutes.WindowsForHost(ctx, orgID, alert.Subject.HostID, at)
-		if err != nil {
-			return false, Step{}, alerts.AlertWithHost{}, fmt.Errorf(
-				"windows for host %s at %s: %w", alert.Subject.HostID, at, err)
-		}
-		for _, w := range atSample {
-			if w.End.After(cs.LastUrgentAt) && !w.End.After(now) {
-				cs.LastUrgentAt = w.End
-			}
-		}
+	cs, err := f.foldMaintenanceAnchor(ctx, orgID, alert.Subject.HostID, c.State, now)
+	if err != nil {
+		return false, Step{}, alerts.AlertWithHost{}, err
 	}
 
 	step, ok := DueStep(cs, now)
 	return ok, step, alert, nil
 }
 
+// foldMaintenanceAnchor is the sixth anchor (decision 5), which
+// ChainsNeedingAttentionBase's own doc comment leaves to the follower on
+// purpose: whether a maintenance occurrence covered this alert is a fact
+// about cron expressions evaluated in Go (internal/maintenance), not a
+// column SQL can read. If one covered the alert at any instant since the
+// chain's own anchor and has since ended, the next step's delay counts
+// from the occurrence's end, not from the stale anchor — the same "full
+// delay from the moment it became newly urgent again" rule the other
+// anchors already give. It returns cs with LastUrgentAt moved to the
+// latest such end, or cs unchanged.
+//
+// This is the resume path for TWO of alerts.Mute's three reasons, not
+// one: WindowsForHostBetween returns both maintenance windows AND operator
+// silences as maintenance.Occurrence values, distinguished only by
+// Reason, and this fold takes whichever it finds. The snooze reason needs
+// no fold here at all: its own end is already the plain snoozed_until
+// column ChainsNeedingAttentionBase reads directly.
+//
+// Over an interval, not at sampled instants (backlog 4.41). The fold used
+// to ask "what covers this instant" at the anchor and at anchor+delay,
+// and so never saw an occurrence that opened and closed strictly between
+// two ticks without covering either instant; the rung then fired early.
+// Nothing records the previous tick — Run's ticker keeps no state, Tick
+// takes only `now`, and nothing in the schema stores a per-organization
+// tick time — and nothing needs to: the chain's own anchor (the previous
+// rung's fired_at, or the latest urgent event or snooze end, all already
+// stored) is no later than any previous tick that could matter, so
+// [anchor, now] contains every gap between ticks since then. The fold is
+// also stateless this way: a window between ticks T1 and T2 still holds
+// the rung at T3, which a fold over [T2, T3] alone would not.
+//
+// The range starts at max(anchor, now - delay), not at the anchor itself.
+// An occurrence ending at or before now - delay cannot change DueStep's
+// answer (its end plus the delay has already passed, exactly like the
+// anchor's own), so this bounds the walk by one rung's delay however long
+// a chain has been paused, without changing any outcome.
+func (f *Follower) foldMaintenanceAnchor(ctx context.Context, orgID, hostID uuid.UUID, cs ChainState, now time.Time) (ChainState, error) {
+	d, ok := stepDelay(cs.Steps, cs.FiredUpTo+1)
+	if !ok {
+		return cs, nil // DueStep refuses a missing rung on its own
+	}
+	from := cs.LastFiredAt
+	if cs.LastUrgentAt.After(from) {
+		from = cs.LastUrgentAt
+	}
+	if lo := now.Add(-d); lo.After(from) {
+		from = lo
+	}
+	if !from.Before(now) {
+		return cs, nil
+	}
+	covered, err := f.mutes.WindowsForHostBetween(ctx, orgID, hostID, from, now)
+	if err != nil {
+		return cs, fmt.Errorf("windows for host %s between %s and %s: %w", hostID, from, now, err)
+	}
+	for _, w := range covered {
+		// End after now is an occurrence still running, which the mute
+		// gate in dueStep would already have held; it is no anchor yet.
+		if w.End.After(cs.LastUrgentAt) && !w.End.After(now) {
+			cs.LastUrgentAt = w.End
+		}
+	}
+	return cs, nil
+}
+
 // stepDelay finds position's own Delay in steps — the next unfired rung's
-// delay, used only to pick the fold's second sample instant above (the
-// moment that rung would naively come due with no mute in the picture at
-// all). false when no step at that position exists, which DueStep itself
-// will also find and refuse to answer for.
+// delay, which bounds the maintenance fold's range above. false when no
+// step at that position exists, which DueStep itself will also find and
+// refuse to answer for.
 func stepDelay(steps []Step, position int) (time.Duration, bool) {
 	for _, s := range steps {
 		if s.Position == position {

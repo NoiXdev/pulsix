@@ -312,7 +312,7 @@ func missingRecurringField(r gen.MaintenanceWindow) string {
 // WindowsForHost implements Store.
 func (s *SQLStore) WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error) {
 	rows, err := gen.New(s.d).ListMaintenanceWindowsForHost(ctx, gen.ListMaintenanceWindowsForHostParams{
-		OrgID: orgID, HostID: db.NullUUID(&hostID), Now: now,
+		OrgID: orgID, HostID: db.NullUUID(&hostID), FromAt: now, ToAt: now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list maintenance windows for host: %w", err)

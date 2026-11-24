@@ -101,6 +101,10 @@ type RotationReader interface {
 type muteSource interface {
 	GetAlert(ctx context.Context, orgID, id uuid.UUID) (alerts.AlertWithHost, error)
 	WindowsForHost(ctx context.Context, orgID, hostID uuid.UUID, now time.Time) ([]maintenance.Occurrence, error)
+	// WindowsForHostBetween is the escalation pass's range form: every
+	// stretch that covered the host at any instant of [from, to), ended
+	// or not (backlog 4.41, follow_escalate.go's dueStep).
+	WindowsForHostBetween(ctx context.Context, orgID, hostID uuid.UUID, from, to time.Time) ([]maintenance.Occurrence, error)
 }
 
 // Follower is the ticker. One per manager; the per-organization advisory
