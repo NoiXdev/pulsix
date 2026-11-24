@@ -223,6 +223,12 @@ func TestPatchTokenValidation(t *testing.T) {
 	apiID := mkToken(t, s, c, "patch-val-org", map[string]any{"name": "ci", "role": "viewer"})
 	asstID := mkToken(t, s, c, "patch-val-org", map[string]any{"name": "asst", "role": "operator", "kind": "assistant", "areas": []string{"inventory.read"}})
 	viewerID := mkToken(t, s, c, "patch-val-org", map[string]any{"name": "vasst", "role": "viewer", "kind": "assistant", "areas": []string{"inventory.read"}})
+	// The body is validated before the token is looked up (spec rule order):
+	// an expired token with invalid areas answers 422, not 409.
+	expiredID := mkToken(t, s, c, "patch-val-org", map[string]any{"name": "xasst", "role": "operator", "kind": "assistant", "areas": []string{"inventory.read"}})
+	if _, err := s.DB.Pool().Exec(context.Background(), `UPDATE api_tokens SET expires_at = now() - interval '1 hour' WHERE id = $1`, expiredID); err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		name string
@@ -239,6 +245,8 @@ func TestPatchTokenValidation(t *testing.T) {
 		{"duplicate area", asstID, map[string]any{"areas": []string{"inventory.read", "inventory.read"}}, "listed twice"},
 		{"area above the role", viewerID, map[string]any{"areas": []string{"inventory.write"}}, "needs more than"},
 		{"empty name", apiID, map[string]any{"name": ""}, "name"},
+		{"whitespace-only name", apiID, map[string]any{"name": "  \t "}, "name"},
+		{"expired token with invalid areas", expiredID, map[string]any{"areas": []string{"everything"}}, "unknown area"},
 	}
 	for _, tc := range cases {
 		resp := patchToken(t, s, c, "patch-val-org", tc.id, tc.body)

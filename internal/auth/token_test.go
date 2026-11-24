@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -518,9 +520,23 @@ func TestTokensUpdate(t *testing.T) {
 			wantErr: auth.ErrNotFound, wantNoOp: true},
 		{name: "other org", kind: auth.TokenKindAPI, otherOrg: true, change: auth.TokenChange{Name: str("x")},
 			wantErr: auth.ErrNotFound, wantNoOp: true},
-		{name: "unchanged value still writes", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("orig")},
+		{name: "empty name", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str("")},
+			wantErr: auth.ErrInvalidInput, wantMsg: "name", wantNoOp: true},
+		{name: "whitespace-only name", kind: auth.TokenKindAPI, change: auth.TokenChange{Name: str(" \t\n ")},
+			wantErr: auth.ErrInvalidInput, wantMsg: "name", wantNoOp: true},
+		{name: "unchanged values still write and change nothing", kind: auth.TokenKindAssistant, expires: &future,
+			change: auth.TokenChange{Name: str("orig"), Areas: areas("inventory"), Expiry: auth.ExpirySet, ExpiresAt: &future},
 			check: func(t *testing.T, b, a auth.Token) {
 				if b.Name != a.Name || b.Name != "orig" {
+					t.Fatalf("name before=%q after=%q", b.Name, a.Name)
+				}
+				if !slices.Equal(b.Areas, a.Areas) || !slices.Equal(a.Areas, []string{"inventory"}) {
+					t.Fatalf("areas before=%v after=%v", b.Areas, a.Areas)
+				}
+				if b.ExpiresAt == nil || a.ExpiresAt == nil || !b.ExpiresAt.Equal(*a.ExpiresAt) || !a.ExpiresAt.Equal(future) {
+					t.Fatalf("expiry before=%v after=%v", b.ExpiresAt, a.ExpiresAt)
+				}
+				if !reflect.DeepEqual(b, a) {
 					t.Fatalf("before=%+v after=%+v", b, a)
 				}
 			}},
@@ -565,6 +581,62 @@ func TestTokensUpdate(t *testing.T) {
 				t.Fatalf("store.Update called %d times, want 1", store.updated)
 			}
 			tc.check(t, before, after)
+		})
+	}
+}
+
+// racingTokenStore wraps a store and runs race once, between the service's
+// read of the token and its conditional update.
+type racingTokenStore struct {
+	*memTokenStore
+	race func()
+}
+
+func (r *racingTokenStore) Update(ctx context.Context, orgID, id uuid.UUID, name string, areas []string, expiresAt *time.Time, now time.Time) (auth.Token, error) {
+	if r.race != nil {
+		r.race()
+		r.race = nil
+	}
+	return r.memTokenStore.Update(ctx, orgID, id, name, areas, expiresAt, now)
+}
+
+// A token that expires after the read and before the conditional update is
+// an expired token (409), not a missing one; a token revoked in that window
+// stays not found.
+func TestTokensUpdateRaceTellsExpiredFromGone(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	later := now.Add(time.Minute)
+	for _, tc := range []struct {
+		name string
+		race func(m *memTokenStore, id uuid.UUID)
+		want error
+	}{
+		{"expires", func(m *memTokenStore, id uuid.UUID) {
+			for h, tok := range m.byHash {
+				if tok.ID == id {
+					past := now.Add(-time.Second)
+					tok.ExpiresAt = &past
+					m.byHash[h] = tok
+				}
+			}
+		}, auth.ErrTokenExpired},
+		{"revoked", func(m *memTokenStore, id uuid.UUID) { m.revoke[id] = true }, auth.ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := newMemTokenStore()
+			org := uuid.Must(uuid.NewV7())
+			tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "orig",
+				Role: "operator", Kind: auth.TokenKindAPI, ExpiresAt: &later}
+			if err := mem.Insert(context.Background(), tok, []byte("race")); err != nil {
+				t.Fatal(err)
+			}
+			store := &racingTokenStore{memTokenStore: mem, race: func() { tc.race(mem, tok.ID) }}
+			tk := auth.NewTokens(store, func() time.Time { return now })
+			name := "x"
+			_, _, err := tk.Update(context.Background(), org, tok.ID, auth.TokenChange{Name: &name})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
 		})
 	}
 }

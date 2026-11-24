@@ -475,6 +475,14 @@ func TestSQLTokenStoreUsableAppliesTheResolveFilter(t *testing.T) {
 // store, the token and the org it lives in.
 func seedUpdatableToken(t *testing.T, slug string, expires *time.Time) (*auth.SQLTokenStore, auth.Token, uuid.UUID) {
 	t.Helper()
+	store, tok, org, _ := seedUpdatableTokenDB(t, slug, expires)
+	return store, tok, org
+}
+
+// seedUpdatableTokenDB is seedUpdatableToken that also returns the queries
+// of the database it seeded, for a test that needs more rows in it.
+func seedUpdatableTokenDB(t *testing.T, slug string, expires *time.Time) (*auth.SQLTokenStore, auth.Token, uuid.UUID, *gen.Queries) {
+	t.Helper()
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	uid := seedUser(t, q, slug+"@example.test")
@@ -485,7 +493,7 @@ func seedUpdatableToken(t *testing.T, slug string, expires *time.Time) (*auth.SQ
 	if err := store.Insert(context.Background(), tok, hashOf(slug)); err != nil {
 		t.Fatal(err)
 	}
-	return store, tok, org
+	return store, tok, org, q
 }
 
 func TestSQLTokenStoreUpdateRoundTrip(t *testing.T) {
@@ -521,9 +529,11 @@ func TestSQLTokenStoreUpdateRoundTrip(t *testing.T) {
 }
 
 func TestSQLTokenStoreUpdateScopedToOrg(t *testing.T) {
-	store, tok, org := seedUpdatableToken(t, "upd-scope", nil)
+	store, tok, org, q := seedUpdatableTokenDB(t, "upd-scope", nil)
 	ctx := context.Background()
-	other := uuid.Must(uuid.NewV7())
+	// A real second organization, so the scope check meets a row that
+	// exists in another org rather than an id that exists nowhere.
+	other := seedOrg(t, q, "upd-scope-other")
 	if _, err := store.Update(ctx, other, tok.ID, "x", []string{"inventory"}, nil, time.Now()); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("Update through another org err = %v, want ErrNotFound", err)
 	}

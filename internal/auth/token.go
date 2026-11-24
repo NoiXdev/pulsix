@@ -93,6 +93,7 @@ var (
 	ErrAreasOnAPIToken = fmt.Errorf("%w: only assistant tokens have areas", ErrInvalidInput)
 	ErrNoAreas         = fmt.Errorf("%w: an assistant token needs at least one area", ErrInvalidInput)
 	ErrExpiryInPast    = fmt.Errorf("%w: the expiry must be in the future", ErrInvalidInput)
+	ErrEmptyName       = fmt.Errorf("%w: the name must not be empty", ErrInvalidInput)
 )
 
 // TokenStore persists API tokens. It mirrors Store and TOTPStore's seam:
@@ -317,6 +318,9 @@ func (t *Tokens) Update(ctx context.Context, orgID, id uuid.UUID, ch TokenChange
 	if ch.Name == nil && ch.Areas == nil && ch.Expiry == ExpiryKeep {
 		return Token{}, Token{}, ErrNoChange
 	}
+	if ch.Name != nil && strings.TrimSpace(*ch.Name) == "" {
+		return Token{}, Token{}, ErrEmptyName
+	}
 	if ch.Areas != nil {
 		if before.Kind != TokenKindAssistant {
 			return Token{}, Token{}, ErrAreasOnAPIToken
@@ -351,8 +355,29 @@ func (t *Tokens) Update(ctx context.Context, orgID, id uuid.UUID, ch TokenChange
 		expiresAt = nil
 	}
 	after, err = t.store.Update(ctx, orgID, id, name, areas, expiresAt, now)
+	if errors.Is(err, ErrNotFound) {
+		return Token{}, Token{}, t.whyNotUpdated(ctx, orgID, id, err)
+	}
 	if err != nil {
 		return Token{}, Token{}, err
 	}
 	return before, after, nil
+}
+
+// whyNotUpdated tells a token that is gone (revoked, or never there) from
+// one that expired between Update's read and its conditional write, which
+// is an expired token like any other (ErrTokenExpired) and not a missing
+// one. notFound is the store's answer, kept when the token is gone.
+func (t *Tokens) whyNotUpdated(ctx context.Context, orgID, id uuid.UUID, notFound error) error {
+	cur, err := t.store.Get(ctx, orgID, id)
+	if errors.Is(err, ErrNotFound) {
+		return notFound
+	}
+	if err != nil {
+		return err
+	}
+	if cur.ExpiresAt != nil && !cur.ExpiresAt.After(t.now()) {
+		return ErrTokenExpired
+	}
+	return notFound
 }
