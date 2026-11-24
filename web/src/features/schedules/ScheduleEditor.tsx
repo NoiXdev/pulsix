@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { TimeField } from '../../ui/TimeField.tsx';
 import { Label } from '../../ui/label.tsx';
-import { CodeEditor } from '../../ui/code-editor.tsx';
+import { CodeEditor, type CodeEditorHandle } from '../../ui/code-editor.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -72,6 +72,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
   const runNow = useRunScheduleNow(org);
 
   const [name, setName] = useState(initial?.name ?? '');
+  const varsEditor = useRef<CodeEditorHandle>(null);
   const [templateId, setTemplateId] = useState(initial?.template_id ?? defaultTemplate ?? templates[0]?.id ?? '');
   const [timezone, setTimezone] = useState(initial?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [mode, setMode] = useState<'cron' | 'simple'>(initial ? (initial.mode as 'cron' | 'simple') : 'simple');
@@ -299,8 +300,9 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       />
       <Label htmlFor="sched-limit">{m.limit}</Label>
       <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={m.limitPlaceholder} disabled={!canWrite} />
-      <Label id="sched-vars-label">{m.extraVars}</Label>
+      <Label id="sched-vars-label" onClick={() => varsEditor.current?.focus()}>{m.extraVars}</Label>
       <CodeEditor
+        ref={varsEditor}
         labelledBy="sched-vars-label"
         language="json"
         minHeight="5rem"

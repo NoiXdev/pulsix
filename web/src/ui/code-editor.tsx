@@ -15,6 +15,9 @@ export interface CodeDiagnostic {
 
 /** What a caller can do to the editor from outside (through `ref`). */
 export interface CodeEditorHandle {
+  /** Puts the focus in the editor (a visible label's click calls it: the
+   * editor's text is not a form control, so `<label for>` cannot reach it). */
+  focus(): void;
   /** Moves the cursor to the start of a 1-based line (past the end: the
    * last line), scrolls it into view and focuses the editor. */
   revealLine(line: number): void;
@@ -31,10 +34,9 @@ interface CodeEditorBaseProps {
   /** Further descriptions of the text (a field's hint), by element id. */
   describedBy?: string;
   placeholder?: string;
-  /** Refuses an edit that would make the text longer (characters, a line
-   * break counting one). Unlike a textarea's maxLength it refuses the whole
-   * edit — an oversize paste is rejected, not truncated. (The stand-in
-   * textarea truncates.) */
+  /** Limits the text's length (characters, a line break counting one). As
+   * with a textarea's maxLength an oversize paste or insert is truncated to
+   * the room left, not refused; the stand-in textarea does the same. */
   maxLength?: number;
   diagnostics?: readonly CodeDiagnostic[];
   /** A fixed height (any CSS length); the text scrolls inside it. */
@@ -81,6 +83,10 @@ export function CodeEditor({ ref, ...props }: CodeEditorProps) {
   useImperativeHandle(
     ref,
     () => ({
+      focus() {
+        if (editor.current) return editor.current.focus();
+        plain.current?.focus();
+      },
       revealLine(line: number) {
         if (editor.current) return editor.current.revealLine(line);
         const area = plain.current;

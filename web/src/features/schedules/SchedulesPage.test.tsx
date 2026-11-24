@@ -248,4 +248,21 @@ describe('SchedulesPage', () => {
     await user.click(within(panel).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put).toMatchObject({ extra_vars: { release: 'v1.2', reboot: true } }));
   });
+
+  it('focuses the extra vars editor when its visible label is clicked', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
+      'GET /api/v1/orgs/acme/schedules/s1': { schedule: schedule({ extra_vars: { release: 'v1.1' } }) },
+      'GET /api/v1/orgs/acme/schedules/s1/runs': { runs: [] },
+      'POST /api/v1/orgs/acme/schedules/preview': { cron: '0 3 * * 2,4', description: '', next: [] },
+    });
+    renderPage('/o/acme/schedules?id=s1');
+    const panel = await screen.findByRole('region', { name: 'Schedule editor' });
+    const vars = await findCodeEditor('Extra vars', within(panel));
+    expect(vars).not.toHaveFocus();
+    await user.click(within(panel).getByText('Extra vars', { selector: 'label' }));
+    await waitFor(() => expect(vars).toHaveFocus());
+  });
 });

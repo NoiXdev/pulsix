@@ -55,6 +55,26 @@ describe('GroupDetailPage drafts', () => {
     expect(within(fieldsDialog()).getByText('Unsaved changes')).toBeInTheDocument();
   });
 
+  it('asks on every Escape keydown and never sends the dialog a close request while it has edits', async () => {
+    const user = userEvent.setup();
+    mockApi(routes('admin'));
+    renderAt('/o/acme/groups/g1');
+    await openFields(user);
+    await addField(user);
+    const dialog = fieldsDialog();
+    const cancels = vi.fn();
+    dialog.addEventListener('cancel', cancels);
+    for (let i = 0; i < 3; i++) {
+      await user.keyboard('{Escape}');
+      await screen.findByRole('dialog', { name: 'Discard changes?' });
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument());
+      expect(fieldsDialog()).toBeInTheDocument();
+    }
+    expect(cancels).not.toHaveBeenCalled();
+    expect(within(fieldsDialog()).getByText('Unsaved changes')).toBeInTheDocument();
+  });
+
   it('closes unedited fields at once, on Cancel and on Escape', async () => {
     const user = userEvent.setup();
     mockApi(routes('admin'));

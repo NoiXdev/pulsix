@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
-import { Annotation, Compartment, EditorState, Transaction, type Extension } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, Transaction, type ChangeSpec, type Extension, type TransactionSpec } from '@codemirror/state';
 import {
   EditorView,
   drawSelection,
@@ -19,7 +19,7 @@ import { editorHighlighting, editorTheme } from './theme.ts';
 import type { CodeDiagnostic, CodeEditorHandle, CodeEditorLanguage } from '../code-editor.tsx';
 
 export interface CodeMirrorEditorProps {
-  /** Receives revealLine (ui/code-editor.tsx's CodeEditorHandle). */
+  /** Receives focus and revealLine (ui/code-editor.tsx's CodeEditorHandle). */
   handle?: Ref<CodeEditorHandle>;
   value: string;
   onChange?: (value: string) => void;
@@ -68,6 +68,35 @@ const ESCAPE_WINDOW_MS = 2000;
 /** How many reported texts may wait for their echo (see `unechoed`). */
 const MAX_UNECHOED = 16;
 
+/** Cuts an edit that would make the text longer than `max` down to the room
+ * left, as a textarea does with a paste: the inserted text is trimmed (in
+ * order, over all of the transaction's changes) and the rest of the edit,
+ * deletions included, goes through. Edits that do not grow the text, and
+ * the caller's own value, are left alone. */
+function truncateToRoom(tr: Transaction, max: number): Transaction | TransactionSpec {
+  if (!tr.docChanged || tr.annotation(fromProps)) return tr;
+  if (tr.newDoc.length <= max || tr.newDoc.length <= tr.startState.doc.length) return tr;
+  let room = max - tr.startState.doc.length;
+  tr.changes.iterChanges((fromA, toA) => {
+    room += toA - fromA;
+  });
+  const changes: ChangeSpec[] = [];
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    let text = inserted.toString();
+    if (text.length > room) {
+      let cut = Math.max(room, 0);
+      // Never split a surrogate pair.
+      const code = text.charCodeAt(cut - 1);
+      if (cut > 0 && code >= 0xd800 && code <= 0xdbff) cut--;
+      text = text.slice(0, cut);
+    }
+    room -= text.length;
+    if (fromA !== toA || text) changes.push({ from: fromA, to: toA, insert: text });
+  });
+  if (changes.length === 0) return {};
+  return { changes, userEvent: tr.annotation(Transaction.userEvent), scrollIntoView: true };
+}
+
 function languageOf(language: CodeEditorLanguage): Extension {
   if (language === 'yaml') return yaml();
   if (language === 'json') return json();
@@ -105,9 +134,7 @@ function dynamicExtensions(p: Omit<CodeMirrorEditorProps, 'value' | 'onChange' |
     p.placeholder ? placeholderText(p.placeholder) : [],
     max === undefined
       ? []
-      : EditorState.transactionFilter.of((tr) =>
-          tr.docChanged && !tr.annotation(fromProps) && tr.newDoc.length > max && tr.newDoc.length > tr.startState.doc.length ? [] : tr,
-        ),
+      : EditorState.transactionFilter.of((tr) => truncateToRoom(tr, max)),
   ];
 }
 
@@ -215,6 +242,9 @@ export default function CodeMirrorEditor(props: CodeMirrorEditorProps) {
   useImperativeHandle(
     props.handle,
     () => ({
+      focus() {
+        view.current?.focus();
+      },
       revealLine(line: number) {
         const v = view.current;
         if (!v) return;

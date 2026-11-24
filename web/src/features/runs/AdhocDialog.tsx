@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Label } from '../../ui/label.tsx';
-import { CodeEditor } from '../../ui/code-editor.tsx';
+import { CodeEditor, type CodeEditorHandle } from '../../ui/code-editor.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useRunAdhocCommand } from '../../api/hooks/useJobs.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -39,6 +39,7 @@ export function AdhocDialog({
   const runAdhoc = useRunAdhocCommand(org);
   const [selected, setSelected] = useState<readonly string[]>(initialHostIds ?? []);
   const [argv, setArgv] = useState('');
+  const argvEditor = useRef<CodeEditorHandle>(null);
   const [error, setError] = useState<string | null>(null);
 
   function toggle(id: string) {
@@ -76,8 +77,9 @@ export function AdhocDialog({
         </p>
         <HostChecklist org={org} id="adhoc-search" label={t.runs.adhoc.hosts} selected={selected} onToggle={toggle} />
         <div className="flex flex-col gap-1">
-          <Label id="adhoc-argv-label">{t.runs.adhoc.command}</Label>
+          <Label id="adhoc-argv-label" onClick={() => argvEditor.current?.focus()}>{t.runs.adhoc.command}</Label>
           <CodeEditor
+            ref={argvEditor}
             labelledBy="adhoc-argv-label"
             language="text"
             maxLength={MAX_ARGV}

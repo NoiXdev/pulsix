@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent, { type UserEvent } from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router';
@@ -239,5 +239,16 @@ describe('AdhocDialog', () => {
     release();
     expect(await within(dialog).findByRole('checkbox', { name: 'db-01' })).toBeInTheDocument();
     expect(within(dialog).queryByRole('checkbox', { name: 'web-01' })).not.toBeInTheDocument();
+  });
+
+  it('focuses the command editor when its visible label is clicked', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/hosts': { hosts: [], next_cursor: '' } });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    const editor = await findCodeEditor('Command', within(dialog));
+    expect(editor).not.toHaveFocus();
+    await user.click(within(dialog).getByText('Command', { selector: 'label' }));
+    await waitFor(() => expect(editor).toHaveFocus());
   });
 });

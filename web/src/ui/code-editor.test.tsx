@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CodeEditor, type CodeEditorHandle } from './code-editor.tsx';
+import { EditorView } from '@codemirror/view';
 import { codeOf, cursorLineOf, findCodeEditor, replaceCode } from '../test/codeEditor.ts';
 
 function Controlled({ initial = '', onValue, maxLength, autoFocus }: { initial?: string; onValue?: (v: string) => void; maxLength?: number; autoFocus?: boolean }) {
@@ -124,15 +125,29 @@ describe('CodeEditor', () => {
     expect(fireEvent.keyDown(editor, { key: 'Escape', keyCode: 27 })).toBe(true);
   });
 
-  it('refuses an edit that would make the text longer than maxLength', async () => {
+  it('truncates an edit that would make the text longer than maxLength, like a textarea', async () => {
     const onValue = vi.fn();
     render(<Controlled initial="abc" maxLength={5} onValue={onValue} />);
     const editor = await findCodeEditor('Playbook YAML');
     replaceCode(editor, 'abcdef');
-    expect(codeOf(editor)).toBe('abc');
-    expect(onValue).not.toHaveBeenCalled();
-    replaceCode(editor, 'abcde');
+    expect(codeOf(editor)).toBe('abcde');
     expect(onValue).toHaveBeenLastCalledWith('abcde');
+    replaceCode(editor, 'abcde');
+    expect(codeOf(editor)).toBe('abcde');
+  });
+
+  it('truncates an oversize paste at the cursor to the room left', async () => {
+    const onValue = vi.fn();
+    render(<Controlled initial="abcd" maxLength={6} onValue={onValue} />);
+    const editor = await findCodeEditor('Playbook YAML');
+    const view = EditorView.findFromDOM(editor)!;
+    view.dispatch({ changes: { from: 2, insert: 'XYZW' }, userEvent: 'input.paste' });
+    expect(codeOf(editor)).toBe('abXYcd');
+    // No room at all: the insert is dropped, a delete still goes through.
+    view.dispatch({ changes: { from: 0, insert: 'Q' }, userEvent: 'input.paste' });
+    expect(codeOf(editor)).toBe('abXYcd');
+    view.dispatch({ changes: { from: 0, to: 2 }, userEvent: 'delete' });
+    expect(codeOf(editor)).toBe('XYcd');
   });
 
   it('marks the line a diagnostic names, and clears the mark once it is gone', async () => {
@@ -199,6 +214,15 @@ describe('CodeEditor', () => {
     // A line past the end goes to the last one.
     act(() => ref.current?.revealLine(99));
     expect(cursorLineOf(editor)).toBe(4);
+  });
+
+  it('focuses the editor on focus()', async () => {
+    const ref = createRef<CodeEditorHandle>();
+    render(<CodeEditor ref={ref} label="Code" language="yaml" value="- hosts: all" onChange={() => {}} />);
+    const editor = await findCodeEditor('Code');
+    expect(editor).not.toHaveFocus();
+    act(() => ref.current?.focus());
+    await waitFor(() => expect(editor).toHaveFocus());
   });
 
   it('takes the focus on request, once loaded', async () => {
