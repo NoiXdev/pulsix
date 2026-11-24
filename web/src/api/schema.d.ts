@@ -4140,8 +4140,8 @@ export interface components {
             readonly $schema?: string;
             /** @description Whether an approved run request also starts the template's follow-ups; omitted keeps it */
             approved_runs_start_follow_ups?: boolean;
-            /** @description Whether assistant tokens of this organization may use the assistant endpoint */
-            assistant_enabled: boolean;
+            /** @description Whether assistant tokens of this organization may use the assistant endpoint; omitted keeps it */
+            assistant_enabled?: boolean;
         };
         BackupItem: {
             /**

@@ -5,17 +5,22 @@
 -- The stored switch; the caller turns pgx.ErrNoRows (no row) into off.
 SELECT enabled FROM org_assistant_settings WHERE org_id = $1;
 
--- name: UpsertOrgAssistantEnabled :exec
-INSERT INTO org_assistant_settings (org_id, enabled)
-VALUES ($1, $2)
-ON CONFLICT (org_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now();
-
 -- name: GetOrgAssistantStartsFollowUps :one
 -- Whether an approved run request starts the template's follow-ups; the caller
 -- turns pgx.ErrNoRows (no row) into off.
 SELECT approved_runs_start_follow_ups FROM org_assistant_settings WHERE org_id = $1;
 
--- name: UpsertOrgAssistantStartsFollowUps :exec
-INSERT INTO org_assistant_settings (org_id, approved_runs_start_follow_ups)
-VALUES ($1, $2)
-ON CONFLICT (org_id) DO UPDATE SET approved_runs_start_follow_ups = EXCLUDED.approved_runs_start_follow_ups, updated_at = now();
+-- name: EnsureOrgAssistantSettings :exec
+-- Creates the organization's row with the defaults (both off, what an absent
+-- row reads as) when it has none, so the update has a row to lock.
+INSERT INTO org_assistant_settings (org_id) VALUES ($1)
+ON CONFLICT (org_id) DO NOTHING;
+
+-- name: LockOrgAssistantSettings :one
+-- The stored settings, locked until the update's transaction ends.
+SELECT enabled, approved_runs_start_follow_ups FROM org_assistant_settings WHERE org_id = $1 FOR UPDATE;
+
+-- name: UpdateOrgAssistantSettings :exec
+UPDATE org_assistant_settings
+SET enabled = $2, approved_runs_start_follow_ups = $3, updated_at = now()
+WHERE org_id = $1;

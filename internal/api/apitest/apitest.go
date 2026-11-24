@@ -1142,7 +1142,7 @@ func (s *Server) OrgWithAssistantToken(t *testing.T, role tenancy.Role, areas ..
 // directly through Deps.Assistant. OrgWithAssistantToken turns it on.
 func (s *Server) SetAssistantEnabled(t *testing.T, org uuid.UUID, enabled bool) {
 	t.Helper()
-	if err := s.Deps.Assistant.SetEnabled(db.WithOrgScope(context.Background(), org), org, enabled); err != nil {
+	if _, _, err := s.Deps.Assistant.Update(db.WithOrgScope(context.Background(), org), org, assistant.Change{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
 }

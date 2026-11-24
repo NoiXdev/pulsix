@@ -11,6 +11,18 @@ import (
 	"github.com/google/uuid"
 )
 
+const ensureOrgAssistantSettings = `-- name: EnsureOrgAssistantSettings :exec
+INSERT INTO org_assistant_settings (org_id) VALUES ($1)
+ON CONFLICT (org_id) DO NOTHING
+`
+
+// Creates the organization's row with the defaults (both off, what an absent
+// row reads as) when it has none, so the update has a row to lock.
+func (q *Queries) EnsureOrgAssistantSettings(ctx context.Context, orgID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, ensureOrgAssistantSettings, orgID)
+	return err
+}
+
 const getOrgAssistantEnabled = `-- name: GetOrgAssistantEnabled :one
 
 SELECT enabled FROM org_assistant_settings WHERE org_id = $1
@@ -39,34 +51,36 @@ func (q *Queries) GetOrgAssistantStartsFollowUps(ctx context.Context, orgID uuid
 	return approved_runs_start_follow_ups, err
 }
 
-const upsertOrgAssistantEnabled = `-- name: UpsertOrgAssistantEnabled :exec
-INSERT INTO org_assistant_settings (org_id, enabled)
-VALUES ($1, $2)
-ON CONFLICT (org_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()
+const lockOrgAssistantSettings = `-- name: LockOrgAssistantSettings :one
+SELECT enabled, approved_runs_start_follow_ups FROM org_assistant_settings WHERE org_id = $1 FOR UPDATE
 `
 
-type UpsertOrgAssistantEnabledParams struct {
-	OrgID   uuid.UUID `json:"org_id"`
-	Enabled bool      `json:"enabled"`
+type LockOrgAssistantSettingsRow struct {
+	Enabled                    bool `json:"enabled"`
+	ApprovedRunsStartFollowUps bool `json:"approved_runs_start_follow_ups"`
 }
 
-func (q *Queries) UpsertOrgAssistantEnabled(ctx context.Context, arg UpsertOrgAssistantEnabledParams) error {
-	_, err := q.db.Exec(ctx, upsertOrgAssistantEnabled, arg.OrgID, arg.Enabled)
-	return err
+// The stored settings, locked until the update's transaction ends.
+func (q *Queries) LockOrgAssistantSettings(ctx context.Context, orgID uuid.UUID) (LockOrgAssistantSettingsRow, error) {
+	row := q.db.QueryRow(ctx, lockOrgAssistantSettings, orgID)
+	var i LockOrgAssistantSettingsRow
+	err := row.Scan(&i.Enabled, &i.ApprovedRunsStartFollowUps)
+	return i, err
 }
 
-const upsertOrgAssistantStartsFollowUps = `-- name: UpsertOrgAssistantStartsFollowUps :exec
-INSERT INTO org_assistant_settings (org_id, approved_runs_start_follow_ups)
-VALUES ($1, $2)
-ON CONFLICT (org_id) DO UPDATE SET approved_runs_start_follow_ups = EXCLUDED.approved_runs_start_follow_ups, updated_at = now()
+const updateOrgAssistantSettings = `-- name: UpdateOrgAssistantSettings :exec
+UPDATE org_assistant_settings
+SET enabled = $2, approved_runs_start_follow_ups = $3, updated_at = now()
+WHERE org_id = $1
 `
 
-type UpsertOrgAssistantStartsFollowUpsParams struct {
+type UpdateOrgAssistantSettingsParams struct {
 	OrgID                      uuid.UUID `json:"org_id"`
+	Enabled                    bool      `json:"enabled"`
 	ApprovedRunsStartFollowUps bool      `json:"approved_runs_start_follow_ups"`
 }
 
-func (q *Queries) UpsertOrgAssistantStartsFollowUps(ctx context.Context, arg UpsertOrgAssistantStartsFollowUpsParams) error {
-	_, err := q.db.Exec(ctx, upsertOrgAssistantStartsFollowUps, arg.OrgID, arg.ApprovedRunsStartFollowUps)
+func (q *Queries) UpdateOrgAssistantSettings(ctx context.Context, arg UpdateOrgAssistantSettingsParams) error {
+	_, err := q.db.Exec(ctx, updateOrgAssistantSettings, arg.OrgID, arg.Enabled, arg.ApprovedRunsStartFollowUps)
 	return err
 }

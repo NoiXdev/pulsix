@@ -5,21 +5,24 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistant"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // AssistantSettings is the switch service the routes and requireOrg use.
 type AssistantSettings interface {
 	Enabled(ctx context.Context, orgID uuid.UUID) (bool, error)
-	SetEnabled(ctx context.Context, orgID uuid.UUID, enabled bool) error
 	StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error)
-	SetStartsFollowUps(ctx context.Context, orgID uuid.UUID, on bool) error
+	// Update changes the given fields in one transaction and reports the
+	// settings before and after (assistant.ErrNothingToChange for none).
+	Update(ctx context.Context, orgID uuid.UUID, c assistant.Change) (before, after assistant.Settings, err error)
 }
 
 type assistantSettingsDTO struct {
@@ -27,10 +30,11 @@ type assistantSettingsDTO struct {
 	ApprovedRunsStartFollowUps bool `json:"approved_runs_start_follow_ups" doc:"Whether an approved run request also starts the template's follow-ups"`
 }
 
-// assistantSettingsUpdate is the PUT body: the follow-up field is optional so
-// a client that only knows the switch keeps the stored choice.
+// assistantSettingsUpdate is the PUT body: each field is optional and an
+// omitted one keeps the stored value, so two clients changing one field
+// each never undo each other. At least one must be given.
 type assistantSettingsUpdate struct {
-	AssistantEnabled           bool  `json:"assistant_enabled" doc:"Whether assistant tokens of this organization may use the assistant endpoint"`
+	AssistantEnabled           *bool `json:"assistant_enabled,omitempty" doc:"Whether assistant tokens of this organization may use the assistant endpoint; omitted keeps it"`
 	ApprovedRunsStartFollowUps *bool `json:"approved_runs_start_follow_ups,omitempty" doc:"Whether an approved run request also starts the template's follow-ups; omitted keeps it"`
 }
 
@@ -65,45 +69,49 @@ func registerAssistantSettingsRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		wasOn, err := deps.Assistant.Enabled(ctx, scope.OrgID)
+		before, after, err := deps.Assistant.Update(ctx, scope.OrgID, assistant.Change{
+			Enabled: in.Body.AssistantEnabled, StartsFollowUps: in.Body.ApprovedRunsStartFollowUps,
+		})
+		if errors.Is(err, assistant.ErrNothingToChange) {
+			return nil, huma.Error422UnprocessableEntity(err.Error())
+		}
 		if err != nil {
-			slog.ErrorContext(ctx, "read assistant switch", "err", err)
+			slog.ErrorContext(ctx, "store assistant settings", "err", err)
 			return nil, huma.Error500InternalServerError("internal error")
 		}
-		wasFollowUps, err := deps.Assistant.StartsFollowUps(ctx, scope.OrgID)
-		if err != nil {
-			slog.ErrorContext(ctx, "read follow-up setting", "err", err)
-			return nil, huma.Error500InternalServerError("internal error")
-		}
-		if err := deps.Assistant.SetEnabled(ctx, scope.OrgID, in.Body.AssistantEnabled); err != nil {
-			slog.ErrorContext(ctx, "store assistant switch", "err", err)
-			return nil, huma.Error500InternalServerError("internal error")
-		}
-		var parts []string
-		if in.Body.AssistantEnabled != wasOn {
-			parts = append(parts, assistantSwitchSummary(in.Body.AssistantEnabled))
-		}
-		if in.Body.ApprovedRunsStartFollowUps != nil {
-			on := *in.Body.ApprovedRunsStartFollowUps
-			if err := deps.Assistant.SetStartsFollowUps(ctx, scope.OrgID, on); err != nil {
-				slog.ErrorContext(ctx, "store follow-up setting", "err", err)
-				return nil, huma.Error500InternalServerError("internal error")
-			}
-			if on != wasFollowUps {
-				if on {
-					parts = append(parts, "approved run requests start follow-ups")
-				} else {
-					parts = append(parts, "approved run requests start no follow-ups")
-				}
-			}
-		}
-		summary := strings.Join(parts, "; ")
-		if summary == "" {
-			summary = assistantSwitchSummary(in.Body.AssistantEnabled)
-		}
-		setAuditObject(ctx, "", summary)
-		return readAssistantSettings(ctx, deps, scope.OrgID)
+		setAuditObject(ctx, "", assistantSettingsSummary(before, after, in.Body.AssistantEnabled != nil))
+		out := &assistantSettingsOutput{}
+		out.Body.Settings = assistantSettingsDTO{AssistantEnabled: after.Enabled, ApprovedRunsStartFollowUps: after.StartsFollowUps}
+		return out, nil
 	}, withAudit("updateAssistantSettings", "org_settings"))
+}
+
+// assistantSettingsSummary names what an update changed, access first. With
+// nothing changed it names the requested state: the access switch when the
+// request gave it, the follow-up setting otherwise.
+func assistantSettingsSummary(before, after assistant.Settings, accessGiven bool) string {
+	var parts []string
+	if after.Enabled != before.Enabled {
+		parts = append(parts, assistantSwitchSummary(after.Enabled))
+	}
+	if after.StartsFollowUps != before.StartsFollowUps {
+		parts = append(parts, followUpsSummary(after.StartsFollowUps))
+	}
+	switch {
+	case len(parts) > 0:
+		return strings.Join(parts, "; ")
+	case accessGiven:
+		return assistantSwitchSummary(after.Enabled)
+	default:
+		return followUpsSummary(after.StartsFollowUps)
+	}
+}
+
+func followUpsSummary(on bool) string {
+	if on {
+		return "approved run requests start follow-ups"
+	}
+	return "approved run requests start no follow-ups"
 }
 
 func assistantSwitchSummary(on bool) string {
