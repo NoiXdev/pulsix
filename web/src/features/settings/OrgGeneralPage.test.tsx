@@ -6,9 +6,10 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { OrgGeneralPage } from './OrgGeneralPage.tsx';
 
-function renderPage() {
+function renderPage(locale?: 'de') {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const generalRoute = createRoute({
@@ -20,15 +21,16 @@ function renderPage() {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([generalRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/settings/general'] }),
   });
-  render(
+  const tree = (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ToastProvider>
         <ConfirmProvider>
           <RouterProvider router={router} />
         </ConfirmProvider>
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  render(locale ? <I18nProvider locale={locale}>{tree}</I18nProvider> : tree);
 }
 
 const org = (role: string, name = 'Acme Hosting') => ({
@@ -443,8 +445,8 @@ describe('OrgGeneralPage', () => {
         }),
         'PUT /api/v1/orgs/acme/settings/assistant': (req: MockRequest) => {
           onPut?.(req);
-          const body = req.body as { assistant_enabled: boolean; approved_runs_start_follow_ups?: boolean };
-          current = body.assistant_enabled;
+          const body = req.body as { assistant_enabled?: boolean; approved_runs_start_follow_ups?: boolean };
+          current = body.assistant_enabled ?? current;
           followUps = body.approved_runs_start_follow_ups ?? followUps;
           return { settings: { assistant_enabled: current, approved_runs_start_follow_ups: followUps } };
         },
@@ -465,7 +467,7 @@ describe('OrgGeneralPage', () => {
       await waitFor(() => expect(screen.getByRole('switch', { name: 'Assistant access' })).toHaveAttribute('aria-checked', 'true'));
     });
 
-    it('switches follow-ups for approved runs, keeping the access value', async () => {
+    it('switches follow-ups for approved runs, sending only that field', async () => {
       const user = userEvent.setup();
       const puts: unknown[] = [];
       mockApi(routes('admin', true, (req) => puts.push(req.body)));
@@ -475,10 +477,31 @@ describe('OrgGeneralPage', () => {
       expect(toggle).toHaveAttribute('aria-checked', 'false');
       expect(screen.getByText(/When on, the approval page shows the template's follow-ups/)).toBeInTheDocument();
       await user.click(toggle);
-      await waitFor(() => expect(puts).toEqual([{ assistant_enabled: true, approved_runs_start_follow_ups: true }]));
+      await waitFor(() => expect(puts).toEqual([{ approved_runs_start_follow_ups: true }]));
       await waitFor(() =>
         expect(screen.getByRole('switch', { name: 'Approved runs start follow-ups' })).toHaveAttribute('aria-checked', 'true'),
       );
+    });
+
+    it('keeps the follow-up switch disabled while access is off, sending nothing', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', false, (req) => puts.push(req.body)));
+      renderPage();
+      const access = await screen.findByRole('switch', { name: 'Assistant access' });
+      await waitFor(() => expect(access).toBeEnabled());
+      const toggle = screen.getByRole('switch', { name: 'Approved runs start follow-ups' });
+      expect(toggle).toBeDisabled();
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await user.click(toggle);
+      expect(puts).toEqual([]);
+    });
+
+    it('shows the follow-up setting in German', async () => {
+      mockApi(routes('admin', true));
+      renderPage('de');
+      const toggle = await screen.findByRole('switch', { name: 'Freigegebene Läufe starten Folgeläufe' });
+      expect(toggle).toHaveAccessibleDescription(/^Eingeschaltet zeigt die Freigabeseite die Folgeläufe/);
     });
 
     it('is read-only below admin', async () => {

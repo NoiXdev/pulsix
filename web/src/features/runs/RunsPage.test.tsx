@@ -70,6 +70,18 @@ describe('RunsPage', () => {
     expect(link).toHaveAttribute('href', '/o/acme/runs/requests');
   });
 
+  it('links to the run requests without a count while none is pending', async () => {
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_VIEWER,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '', total: 0 },
+      'GET /api/v1/orgs/acme/run-requests/pending-count': { count: 0 },
+    });
+    renderPage();
+    expect(await screen.findByRole('link', { name: 'Run requests' })).toHaveAttribute('href', '/o/acme/runs/requests');
+    expect(screen.queryByRole('link', { name: /pending\)/ })).not.toBeInTheDocument();
+  });
+
   it('lists runs with kind, status colours, template, zone and trigger', async () => {
     mockApi({
       'GET /api/v1/auth/me/preferences': PREFS,

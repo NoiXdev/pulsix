@@ -33,7 +33,7 @@ export function AssistantRows({ org, canWrite }: { org: string; canWrite: boolea
 
   async function onToggleFollowUps(next: boolean) {
     try {
-      await update.mutateAsync({ assistant_enabled: enabled, approved_runs_start_follow_ups: next });
+      await update.mutateAsync({ approved_runs_start_follow_ups: next });
       toast.show(next ? a.followUpsOn : a.followUpsOff);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : a.followUpsSaveFailed, 'destructive');

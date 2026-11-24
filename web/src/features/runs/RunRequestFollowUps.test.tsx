@@ -5,9 +5,9 @@ import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { RunRequestFollowUps } from './RunRequestFollowUps.tsx';
 import { startableFollowUps, type PictureFollowUps } from './followUps.ts';
 
-function show(followUps: PictureFollowUps, deselected: string[] = [], onToggle = vi.fn(), disabled = false) {
+function show(followUps: PictureFollowUps, deselected: string[] = [], onToggle = vi.fn(), disabled = false, locale: 'en' | 'de' = 'en') {
   render(
-    <I18nProvider locale="en">
+    <I18nProvider locale={locale}>
       <RunRequestFollowUps followUps={followUps} deselected={new Set(deselected)} onToggle={onToggle} disabled={disabled} />
     </I18nProvider>,
   );
@@ -32,6 +32,13 @@ const TREE: PictureFollowUps = {
 };
 
 describe('RunRequestFollowUps', () => {
+  it('names the too_deep and deleted stops in German', () => {
+    show(TREE, [], vi.fn(), false, 'de');
+    expect(screen.getByText(/Kette zu lang/)).toBeInTheDocument();
+    expect(screen.getByText(/Vorlage gelöscht/)).toBeInTheDocument();
+    expect(screen.getAllByText(/schon in dieser Kette/)).toHaveLength(2);
+  });
+
   it('names the follow-ups without checkboxes when approvals start none', () => {
     show({ start: false, templates: [{ template_id: 'f1', template_name: 'reload-lb' }] });
     expect(
