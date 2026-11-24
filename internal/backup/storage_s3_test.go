@@ -21,6 +21,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/noixdev/pulsix/internal/backup"
+	"github.com/noixdev/pulsix/internal/containertest"
 )
 
 // MinIO no longer publishes minio/minio to Docker Hub; this is the last
@@ -44,10 +45,11 @@ var (
 // startMinIO runs one MinIO container of its own per test binary, never
 // stopped explicitly: like testdb's database, it lives until testcontainers'
 // reaper removes it when the process exits. It returns an S3Config for a
-// freshly created bucket, and skips when Docker is not available.
+// freshly created bucket. Without a Linux-container Docker it skips, or fails
+// when PULSIX_TEST_REQUIRE_DOCKER=1 (Linux CI), see containertest.
 func startMinIO(t *testing.T) backup.S3Config {
 	t.Helper()
-	testcontainers.SkipIfProviderIsNotHealthy(t)
+	containertest.RequireLinuxDocker(t)
 	ctx := context.Background()
 
 	minioOnce.Do(func() {
