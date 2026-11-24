@@ -678,6 +678,14 @@ empty or blank name answers `422` (a blank name was stored before). The pending
 badge on a new SPA treats an older manager's `400` or `404` on the count route
 alike and remembers it for ten minutes instead of asking on every poll.
 
+Backlog 3.117 and 3.118 add no migration, table, backup or proto change.
+Forgetting an item or a metric now also removes its per-vantage probe rows, so
+the vantage breakdown stops listing it. An agent that comes back after a gap and
+replays its buffered results no longer has its metrics judged vanished while the
+replay is in flight (for at most 15 minutes after it reconnects, ended by its
+first live reading): alerts that used to close as `stale` and reopen with the
+next replay chunk, with two extra notifications, now stay as they are.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
