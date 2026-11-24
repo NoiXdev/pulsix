@@ -20,11 +20,12 @@ import (
 
 // allAreas is every area an operator-capped assistant token can hold, each
 // once: a write area includes its read area, so the read areas of inventory,
-// repos, templates and jobs are not listed next to their write areas.
+// repos, templates and jobs are not listed next to their write areas, and
+// alerts.handle includes monitoring.read.
 var allAreas = []tenancy.Area{
 	tenancy.AreaInventoryWrite, tenancy.AreaReposWrite, tenancy.AreaTemplatesWrite,
 	tenancy.AreaCredentialsNames, tenancy.AreaJobsRequest,
-	tenancy.AreaMonitoringRead, tenancy.AreaAlertsHandle, tenancy.AreaActivityRead,
+	tenancy.AreaAlertsHandle, tenancy.AreaActivityRead,
 }
 
 // orgFixture is one organization with a host, a group, a repository, an

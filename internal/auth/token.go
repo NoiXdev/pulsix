@@ -365,9 +365,12 @@ func (t *Tokens) Update(ctx context.Context, orgID, id uuid.UUID, ch TokenChange
 }
 
 // whyNotUpdated tells a token that is gone (revoked, or never there) from
-// one that expired between Update's read and its conditional write, which
-// is an expired token like any other (ErrTokenExpired) and not a missing
-// one. notFound is the store's answer, kept when the token is gone.
+// one whose expiry a concurrent edit moved into the past. Update's read and
+// its conditional write use the same instant, so a token that merely runs
+// out in between is still edited; only a live row that is expired by now was
+// changed by another edit, and that is an expired token like any other
+// (ErrTokenExpired), not a missing one. notFound is the store's answer, kept
+// when the token is gone.
 func (t *Tokens) whyNotUpdated(ctx context.Context, orgID, id uuid.UUID, notFound error) error {
 	cur, err := t.store.Get(ctx, orgID, id)
 	if errors.Is(err, ErrNotFound) {

@@ -39,7 +39,11 @@ const mcpCallTimeout = 60 * time.Second
 // connect opens an MCP client session at /api/mcp with token as bearer.
 func (a *assistantSuite) connect(token string) (*sdk.ClientSession, error) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "pulsix-e2e", Version: "1"}, nil)
-	return client.Connect(a.ctx, &sdk.StreamableClientTransport{
+	// The deadline covers the initialize handshake only: the session's own
+	// context is detached from Connect's, so long streams stay uncut.
+	ctx, cancel := context.WithTimeout(a.ctx, mcpCallTimeout)
+	defer cancel()
+	return client.Connect(ctx, &sdk.StreamableClientTransport{
 		Endpoint:   a.s.api.base + "/api/mcp",
 		HTTPClient: &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}},
 		MaxRetries: -1,

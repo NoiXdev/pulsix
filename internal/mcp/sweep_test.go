@@ -112,8 +112,8 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 	if err := json.Unmarshal(f.ownerJSON(t, http.MethodPost, "/monitoring-groups", map[string]any{"name": "sweep-tier", "selector": "role=web"}), &grp); err != nil {
 		t.Fatal(err)
 	}
-	// The template carries its secrets before the schedule is created, so the
-	// schedule is the one the sweep reads them through.
+	// The template carries its secrets before the schedule is created, the
+	// order a real org has them in. Nothing asserts the order.
 	cur, err := f.s.Deps.Templates.Get(f.scoped, f.org, f.template)
 	if err != nil {
 		t.Fatal(err)
