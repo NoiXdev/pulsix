@@ -181,15 +181,19 @@ type ClaimGuard interface {
 }
 
 // claimRefusedPrefix starts the error text of a job the claim guard
-// refused, and only the guard's path writes it. Such a job ran nothing on
-// any host, so a replay of its run group (reserveRunGroup) does not count
-// it as covering its zone: re-approving a request whose first enqueue
-// failed partway enqueues the refused zone again (backlog 2.126).
+// refused, and only the guard's path writes it. Refused on its first claim,
+// such a job ran nothing on any host, so a replay of its run group
+// (reserveRunGroup) does not count it as covering its zone: re-approving a
+// request whose first enqueue failed partway enqueues the refused zone
+// again (backlog 2.126).
 const claimRefusedPrefix = "refused at claim: "
 
-// claimRefused reports whether j is a job the claim guard refused.
+// claimRefused reports whether j is a job the claim guard refused on its
+// first and only claim. A job refused on a later claim was claimed before
+// (by a worker since lost, before the request went back to pending) and
+// may have run the play then, so it still counts as having run.
 func claimRefused(j Job) bool {
-	return j.Status == StatusError && strings.HasPrefix(j.Error, claimRefusedPrefix)
+	return j.Status == StatusError && j.Attempts == 1 && strings.HasPrefix(j.Error, claimRefusedPrefix)
 }
 
 // SetClaimGuard injects the claim guard of run jobs (see the claimGuard

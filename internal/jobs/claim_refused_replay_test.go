@@ -2,6 +2,7 @@ package jobs_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,8 +20,8 @@ const refusedAtClaim = "refused at claim: the run's request is not approved"
 // back to pending, and the claim guard refused zone 1's job. A job the
 // guard refused ran nothing anywhere, so the replay under the same key must
 // enqueue zone 1 again (and zone 2) and leave the refused job out of the
-// run; a replayed job that got past the guard still covers its zone, so
-// nothing runs twice.
+// run; a replayed job that got past the guard, or was claimed before the
+// claim that refused it, still covers its zone, so nothing runs twice.
 func TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim(t *testing.T) {
 	started := time.Now().UTC().Truncate(time.Microsecond)
 	cases := []struct {
@@ -29,8 +30,13 @@ func TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim(t *testing.T) {
 		refill bool
 	}{
 		{"refused at claim", func(j *jobs.Job) {
-			j.Status, j.Error, j.StartedAt, j.FinishedAt = jobs.StatusError, refusedAtClaim, &started, &started
+			j.Status, j.Error, j.Attempts, j.StartedAt, j.FinishedAt = jobs.StatusError, refusedAtClaim, 1, &started, &started
 		}, true},
+		// Claimed before the revert, its worker lost, requeued and refused
+		// on the next claim: the first claim may have run the play.
+		{"refused on a later claim", func(j *jobs.Job) {
+			j.Status, j.Error, j.Attempts, j.StartedAt, j.FinishedAt = jobs.StatusError, refusedAtClaim, 2, &started, &started
+		}, false},
 		{"still queued", func(*jobs.Job) {}, false},
 		{"running", func(j *jobs.Job) { j.Status, j.StartedAt = jobs.StatusRunning, &started }, false},
 		{"failed after it started", func(j *jobs.Job) {
@@ -103,5 +109,46 @@ func TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim(t *testing.T) {
 				t.Fatalf("replayed job reused = %v, stored jobs = %d; want zone 1 covered by its first job (2)", reused, len(store.jobs))
 			}
 		})
+	}
+}
+
+// TestEnqueueRunWithReplayOfOnlyRefusedJobsFailsWhenTheScopeIsGone: every
+// job the first attempt created was refused at claim, and the scope no
+// longer resolves when the request is approved again. The replay has
+// nothing that ran to fall back on, so the scope's error is returned (the
+// approval fails and the request stays pending), not the refused jobs as
+// if the run had been enqueued.
+func TestEnqueueRunWithReplayOfOnlyRefusedJobsFailsWhenTheScopeIsGone(t *testing.T) {
+	store := newFakeStore()
+	org, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	tmpl := &fakeTemplates{byID: map[uuid.UUID]jobs.TemplateRow{
+		templateID: {ID: templateID, OrgID: org, Scope: json.RawMessage(`{"group_id":null,"host_ids":[]}`)},
+	}}
+	zone1, zone2 := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	res := &fakeResolver{targets: []jobs.ZoneTargets{
+		{ZoneID: zone1, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+		{ZoneID: zone2, HostIDs: []uuid.UUID{uuid.Must(uuid.NewV7())}},
+	}}
+	svc := newService(store, &fakeQueue{}, tmpl, res, &fakeHosts{})
+	actor, group := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	req := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, IdempotencyKey: "run-request:" + group.String(), RunGroupID: group}
+
+	store.failCreateForZone = zone2
+	if _, err := svc.EnqueueRunWith(ctx, org, templateID, req); err == nil {
+		t.Fatal("first attempt: want the simulated zone 2 failure, got nil")
+	}
+	for id, s := range store.jobs {
+		s.j.Status, s.j.Error, s.j.Attempts = jobs.StatusError, refusedAtClaim, 1
+		store.jobs[id] = s
+	}
+
+	store.failCreateForZone = uuid.Nil
+	res.err = jobs.ErrEmptyScope
+	created, err := svc.EnqueueRunWith(ctx, org, templateID, req)
+	if !errors.Is(err, jobs.ErrEmptyScope) || len(created) != 0 {
+		t.Fatalf("replay = %d jobs, %v; want ErrEmptyScope and no jobs", len(created), err)
+	}
+	if len(store.jobs) != 1 {
+		t.Fatalf("stored jobs = %d, want the refused one only", len(store.jobs))
 	}
 }

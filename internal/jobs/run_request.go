@@ -227,8 +227,8 @@ func (s *Service) reserveRunGroup(ctx context.Context, orgID uuid.UUID, key stri
 	// existing job at all" would silently leave the second case's
 	// un-enqueued zones un-enqueued forever.
 	//
-	// A job the claim guard refused (claimRefused) is left out: it ran
-	// nothing on any host, so its zone gets a new job. That is a request
+	// A job the claim guard refused on its first claim (claimRefused) is
+	// left out: it ran nothing on any host, so its zone gets a new job. That is a request
 	// approved again after its first enqueue failed partway: the job the
 	// first attempt did create was claimed while the request was pending
 	// again and refused. Every other job still covers its zone — queued,
