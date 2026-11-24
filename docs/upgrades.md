@@ -595,7 +595,8 @@ backup change and no proto change; workers and agents are not affected. What the
   409 "changed". All managers already share the master key.
 - **New route `GET /api/v1/orgs/{org}/run-requests/pending-count`** (`{count}`,
   the list's permission). A new SPA that reaches an older manager gets 404 there:
-  the navigation badge then counts the pending list instead (backlog 2.126),
+  the navigation badge, the Runs page and the run request list's pending count
+  then count the pending list instead (backlog 2.126),
   which an older manager caps at 500 rows before filtering, so the number can
   run low until the request lands on an upgraded manager. An old SPA on a new
   manager works fully. `?status=pending` (and
@@ -618,8 +619,9 @@ backup change and no proto change; workers and agents are not affected. What the
 The 2.120 review's deferred loose ends (2.126) ship in the same release and add
 no migration, table, backup or proto change either:
 - **The fingerprint changes once more for a build that ran 2.120 alone** (a
-  local or pre-release build): the picture's targets are now the template's
-  hosts under its limit, and gathered host facts are left out of the vars
+  local or pre-release build): the picture's targets are now the hosts of the
+  zones the template's limit keeps (each such zone's full host list, which the
+  claim renders; the limit then decides which of them the play runs on), and gathered host facts are left out of the vars
   digest, so a facts refresh between approval and claim no longer fails an
   approved run. From a release before 2.120 this is the same one-time change
   described above.
@@ -630,7 +632,9 @@ no migration, table, backup or proto change either:
   may have run is never repeated). A job refused before the upgrade carries the
   old text, so its zone is not refilled; ask for the run again.
 - **The cap of 20 pending requests per token is exact** under concurrent
-  creates (a transaction-scoped advisory lock per token).
+  creates (a transaction-scoped advisory lock per token). A request put back to
+  pending after a failed enqueue is not counted against it again, so a token can
+  briefly hold 21.
 - **A run opens only the inventory secrets it carries.** A value that cannot be
   decrypted in a group or membership outside the run's hosts no longer fails
   the run, its detail or its approval; a sealed value under a field that is no
