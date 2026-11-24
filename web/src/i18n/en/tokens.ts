@@ -102,12 +102,15 @@ export const enTokens = {
       jobs: 'Jobs',
       monitoring: 'Monitoring & alerts',
     },
-    /** One line under each area's label: what the area lets the assistant do. */
+    /** One line under each area's label: what the area lets the assistant do.
+     * Source of truth: the tool definitions in internal/mcp/tools_*.go and the
+     * areas in internal/tenancy/areas.go. The assistant deletes nothing but a
+     * group membership and writes no schedule. */
     descriptions: {
-      inventory: 'Read hosts, groups and variables; with write, also change them and their tags, and test the connection to a host.',
-      repos: 'Read repositories and playbooks; with write, also add, change and remove them.',
-      templates: 'Read job templates and schedules; with write, also add, change and remove them.',
-      jobs: 'Read runs and their output; with request, also ask for a run, which a person still has to approve.',
+      inventory: 'Read hosts, groups and variables; with write, also create and change hosts, groups, their variables, tags and memberships, and test a host\'s connection.',
+      repos: 'Read repositories and playbooks; with write, also add and change them, sync repositories and register playbooks.',
+      templates: 'Read job templates, schedules and the calendar; with write, also create and change job templates.',
+      jobs: 'Read runs and their output; with request, also ask for runs and retries, which a person still has to approve, and cancel runs its own requests started.',
       monitoring: 'Read agents, checks, metrics, alert rules, alerts and maintenance windows; with handle alerts, also acknowledge and snooze alerts.',
       credentials: 'Lets the assistant see which credentials exist, never their contents.',
       activity: 'Lets the assistant read the organization\'s activity log.',

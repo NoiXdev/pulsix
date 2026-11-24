@@ -28,7 +28,7 @@ export function AreaGrid({
   const held = new Set(value);
   const anyDisabled = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA].some((area) => !areaAllowed(role, area));
 
-  function box(area: Area, label: string) {
+  function box(area: Area, label: string, descId: string) {
     const allowed = areaAllowed(role, area);
     return (
       <input
@@ -36,7 +36,7 @@ export function AreaGrid({
         aria-label={label}
         checked={held.has(area) && allowed}
         disabled={!allowed}
-        aria-describedby={allowed ? undefined : 'token_areas_role_hint'}
+        aria-describedby={allowed ? descId : `${descId} token_areas_role_hint`}
         onChange={(e) => onChange(toggleArea(value, area, e.target.checked))}
       />
     );
@@ -61,19 +61,21 @@ export function AreaGrid({
               <tr key={row.key} className="border-b border-border last:border-b-0">
                 <td className={CELL}>
                   {name}
-                  <span className="block text-[11px] font-normal text-muted-foreground">{a.descriptions[row.key]}</span>
+                  <span id={`token_area_${row.key}`} className="block text-[11px] font-normal text-muted-foreground">
+                    {a.descriptions[row.key]}
+                  </span>
                 </td>
-                <td className={`${CELL} text-center`}>{box(row.read, a.cell(name, a.read))}</td>
+                <td className={`${CELL} text-center`}>{box(row.read, a.cell(name, a.read), `token_area_${row.key}`)}</td>
                 <td className={`${CELL} text-center`}>
                   {row.key === 'jobs' ? (
                     <label className="inline-flex items-center gap-1.5">
-                      {box(row.write, a.cell(name, second))}
+                      {box(row.write, a.cell(name, second), `token_area_${row.key}`)}
                       <span aria-hidden="true" className="text-[11px] text-muted-foreground">
                         {a.request}
                       </span>
                     </label>
                   ) : (
-                    box(row.write, a.cell(name, second))
+                    box(row.write, a.cell(name, second), `token_area_${row.key}`)
                   )}
                 </td>
               </tr>
@@ -82,17 +84,17 @@ export function AreaGrid({
         </tbody>
       </table>
       <label className="flex items-center gap-2 text-xs">
-        {box(CREDENTIALS_AREA, a.credentials)}
+        {box(CREDENTIALS_AREA, a.credentials, 'token_area_credentials')}
         <span>
           <span aria-hidden="true">{a.credentials}</span>
-          <span className="block text-[11px] text-muted-foreground">{a.descriptions.credentials}</span>
+          <span id="token_area_credentials" className="block text-[11px] text-muted-foreground">{a.descriptions.credentials}</span>
         </span>
       </label>
       <label className="flex items-center gap-2 text-xs">
-        {box(ACTIVITY_AREA, a.activity)}
+        {box(ACTIVITY_AREA, a.activity, 'token_area_activity')}
         <span>
           <span aria-hidden="true">{a.activity}</span>
-          <span className="block text-[11px] text-muted-foreground">{a.descriptions.activity}</span>
+          <span id="token_area_activity" className="block text-[11px] text-muted-foreground">{a.descriptions.activity}</span>
         </span>
       </label>
       <span id="token_areas_hint" className="text-[11px] text-muted-foreground">

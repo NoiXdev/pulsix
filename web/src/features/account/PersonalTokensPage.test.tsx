@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
-import { chooseRowAction, firstCells, numbered, openRow, sortBy } from '../../test/wholeList.ts';
+import { chooseRowAction, firstCells, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { PersonalTokensPage } from './PersonalTokensPage.tsx';
 import { validatePersonalTokensSearch } from './personalTokensSearch.ts';
 
@@ -271,6 +271,16 @@ describe('PersonalTokensPage', () => {
     expect(screen.queryByRole('button', { name: 'old' })).not.toBeInTheDocument();
     await openRow(user, 'laptop');
     expect(await screen.findByRole('dialog', { name: 'Edit token laptop' })).toBeInTheDocument();
+  });
+
+  it('explains the disabled Edit of an expired token', async () => {
+    const user = userEvent.setup();
+    setup({ tokens: [token('old', { expires_at: '2020-01-01T00:00:00Z' })] });
+    await screen.findByText('1–1 of 1 token');
+    await openRowMenu(user, 'old');
+    const item = await screen.findByRole('menuitem', { name: 'Edit' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveAccessibleDescription("Expired tokens can't be edited");
   });
 
   it('revokes after a confirmation', async () => {
