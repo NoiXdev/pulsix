@@ -14,8 +14,8 @@
 # daemon. It installs three times, a fresh install, an upgrade over the
 # running agent and an upgrade with no token over a planted identity (which
 # must ask for none and leave the token out of agent.env, backlog 3.60),
-# and checks the daemon, the file protection and the log after each. Then it removes the agent with the installer's own
-# --uninstall and checks that daemon, plist, binary, logs and data
+# and checks the daemon, the file protection and the log after each. Then
+# it removes the agent with the installer's own --uninstall and checks that daemon, plist, binary, logs and data
 # directory are gone, and runs the uninstall again, which finds nothing
 # and still succeeds. The cleanup trap removes the agent by hand as a
 # fallback, whatever step failed.

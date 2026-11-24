@@ -194,10 +194,10 @@ function Read-TokenFile([string]$Path) {
 	return [string]$line
 }
 
-# Test-IdentityPresent says whether $Dir holds the agent's identity, which
-# is exactly what the agent needs to start without enrolling: the
-# certificate, its key and the CA chain it dials with (agent.crt, agent.key,
-# agent.ca.pem; internal/agent/config.go), each a non-empty regular file.
+# Test-IdentityPresent says whether $Dir holds the agent's identity: the
+# certificate and its key (agent.crt, agent.key), which let the agent skip
+# enrolling, and the CA chain it needs to connect (agent.ca.pem;
+# internal/agent/config.go), each a non-empty regular file.
 # agent.json only carries bookkeeping and is not required. Anything less
 # counts as no identity, so the token is asked for as before.
 function Test-IdentityPresent([string]$Dir) {
@@ -570,7 +570,7 @@ if ($TokenFile) {
 } elseif (-not $Token) {
 	if (Test-IdentityPresent $DataDir) {
 		$reuseIdentity = $true
-		Write-Host "pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed"
+		Write-Host "pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with -Token or -TokenFile)"
 	} else {
 		$Token = Read-TokenHidden
 	}

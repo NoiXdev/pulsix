@@ -392,10 +392,11 @@ function Assert-EnvToken([bool]$Want) {
 
 # Set-PlantedIdentity puts an identity into the data directory the way an
 # enrollment would leave it (backlog 3.60): a self-signed certificate with
-# the org URI SAN the agent insists on, its key (PKCS#8) and the
+# the org URI SAN the agent insists on, its key (SEC1, the format the agent itself writes and parses even
+# while it still enrolls) and the
 # certificate again as the CA chain. The manager at 127.0.0.1:1 never
 # answers, so no enrollment can happen here; the agent only needs the
-# files to load. PowerShell 7 only (ExportPkcs8PrivateKey), which is what
+# files to load. PowerShell 7 only (ExportECPrivateKey), which is what
 # runs this script.
 function Set-PlantedIdentity {
 	$ecdsa = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromFriendlyName('nistP256'))
@@ -405,7 +406,7 @@ function Set-PlantedIdentity {
 	$request.CertificateExtensions.Add($san.Build())
 	$cert = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(3650))
 	$certPem = "-----BEGIN CERTIFICATE-----`n" + ([Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks') -replace "`r`n", "`n") + "`n-----END CERTIFICATE-----`n"
-	$keyPem = "-----BEGIN PRIVATE KEY-----`n" + ([Convert]::ToBase64String($ecdsa.ExportPkcs8PrivateKey(), 'InsertLineBreaks') -replace "`r`n", "`n") + "`n-----END PRIVATE KEY-----`n"
+	$keyPem = "-----BEGIN EC PRIVATE KEY-----`n" + ([Convert]::ToBase64String($ecdsa.ExportECPrivateKey(), 'InsertLineBreaks') -replace "`r`n", "`n") + "`n-----END EC PRIVATE KEY-----`n"
 	$utf8 = New-Object Text.UTF8Encoding $false
 	[IO.File]::WriteAllText((Join-Path $DataDir 'agent.crt'), $certPem, $utf8)
 	[IO.File]::WriteAllText((Join-Path $DataDir 'agent.key'), $keyPem, $utf8)

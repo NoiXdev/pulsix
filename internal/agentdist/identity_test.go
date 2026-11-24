@@ -139,7 +139,8 @@ func TestInstallScriptTokenIsOptionalOverAnIdentity(t *testing.T) {
 	out := renderReal(t)
 	for _, want := range []string{
 		`PULSIX_REUSE_IDENTITY=""`,
-		"pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed",
+		`if has_identity "$DATA_DIR"; then`,
+		"pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with --token or --token-file)",
 		`if [ -z "$PULSIX_REUSE_IDENTITY" ]; then
 	[ -n "$PULSIX_TOKEN" ] || die "no enrollment token given"
 fi`,
@@ -175,7 +176,8 @@ func TestInstallPs1TokenIsOptionalOverAnIdentity(t *testing.T) {
 	for _, want := range []string{
 		"function Test-IdentityPresent([string]$Dir) {",
 		"$reuseIdentity = $false",
-		"pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed",
+		"if (Test-IdentityPresent $DataDir) {",
+		"pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with -Token or -TokenFile)",
 		"if ((-not $reuseIdentity) -and (-not $Token)) {\n\tStop-Install 'no enrollment token given'",
 		"$lines = @(\"PULSIX_MANAGER_ADDR=$Manager\")\n\tif (-not $reuseIdentity) {\n\t\t$lines += \"PULSIX_ENROLL_TOKEN=$Token\"\n\t}",
 	} {
