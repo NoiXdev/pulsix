@@ -117,5 +117,7 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 
 // idempotencyKey is the key an approval enqueues with, a run or a retry
 // alike, so approving a request again after a failed enqueue replays what
-// the first attempt created instead of enqueueing it twice.
+// the first attempt created instead of enqueueing it twice. A job of that
+// attempt the claim guard refused in between (the request was pending
+// again) ran nothing, and the replay enqueues its zone anew.
 func idempotencyKey(id uuid.UUID) string { return "run-request:" + id.String() }

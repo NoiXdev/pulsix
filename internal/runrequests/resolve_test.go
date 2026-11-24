@@ -50,13 +50,16 @@ type (
 		extraErr error
 	}
 	targetRunner struct {
-		targets    []uuid.UUID
-		targetsErr error
-		retryTmpl  uuid.UUID
-		failed     []uuid.UUID
-		retryErr   error
-		checkErr   error
-		checked    []*uuid.UUID
+		// targets is what the template's scope selects under its limit
+		// (LimitedRunTargets); limitedCalls counts the questions.
+		targets      []uuid.UUID
+		targetsErr   error
+		limitedCalls int
+		retryTmpl    uuid.UUID
+		failed       []uuid.UUID
+		retryErr     error
+		checkErr     error
+		checked      []*uuid.UUID
 	}
 	switchable struct {
 		on  bool
@@ -122,7 +125,8 @@ func (v *runVars) ExtraVars(context.Context, uuid.UUID, uuid.UUID) (map[string]a
 	return v.extra, v.extraErr
 }
 
-func (r *targetRunner) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+func (r *targetRunner) LimitedRunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	r.limitedCalls++
 	return r.targets, r.targetsErr
 }
 

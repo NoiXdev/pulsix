@@ -33,7 +33,9 @@ type (
 		Get(ctx context.Context, orgID, id uuid.UUID) (repos.Repo, error)
 	}
 	JobRunner interface {
-		RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
+		// LimitedRunTargets is the template's scope under its own limit,
+		// what the run is enqueued for; empty when the limit leaves nothing.
+		LimitedRunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error)
 		CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
@@ -250,7 +252,7 @@ func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, p 
 	case req.HostID != nil:
 		return []uuid.UUID{*req.HostID}, nil
 	default:
-		ids, err := r.src.Jobs.RunTargets(ctx, orgID, req.TemplateID)
+		ids, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, req.TemplateID)
 		if err != nil {
 			return nil, mapNotFound(err)
 		}

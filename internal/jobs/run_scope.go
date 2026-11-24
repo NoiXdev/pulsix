@@ -91,9 +91,22 @@ func (s *Service) CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID
 
 // RunTargets resolves the template's scope into the managed host ids a
 // run started now would target (every zone together), before the
-// changed-host-key exclusion. The maintenance guard asks it which hosts a
-// scheduled run would touch.
+// changed-host-key exclusion and without the template's limit. The
+// maintenance guard asks it which hosts a scheduled run could touch, and
+// relies on the limit being left out.
 func (s *Service) RunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error) {
+	return s.runTargets(ctx, orgID, templateID, false)
+}
+
+// LimitedRunTargets is RunTargets under the template's own limit: the hosts
+// of the zones the limit keeps, which is what a manual run started now gets
+// enqueued for (CheckRunScope's resolution). A scope the limit empties is
+// an empty list, not ErrEmptyScope. A run request's picture shows these.
+func (s *Service) LimitedRunTargets(ctx context.Context, orgID, templateID uuid.UUID) ([]uuid.UUID, error) {
+	return s.runTargets(ctx, orgID, templateID, true)
+}
+
+func (s *Service) runTargets(ctx context.Context, orgID, templateID uuid.UUID, limited bool) ([]uuid.UUID, error) {
 	tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
 	if err != nil {
 		return nil, err
@@ -102,11 +115,18 @@ func (s *Service) RunTargets(ctx context.Context, orgID, templateID uuid.UUID) (
 	if err != nil {
 		return nil, err
 	}
-	targets, err := s.resolver.Resolve(ctx, orgID, scope, "")
+	limit := ""
+	if limited {
+		limit = effectiveLimit(tmpl.Limit, nil)
+	}
+	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
+	if limited && errors.Is(err, ErrEmptyScope) {
+		return []uuid.UUID{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	var out []uuid.UUID
+	out := []uuid.UUID{}
 	for _, t := range targets {
 		out = append(out, t.HostIDs...)
 	}

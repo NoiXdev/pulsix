@@ -173,11 +173,23 @@ func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 
 // ClaimGuard is checked at the claim of every run job, after the claim
 // committed and before the payload is built. An error fails the job with
-// the error as its reason, and the claim reports an empty queue, as a
-// payload that cannot be built does. It is a port because the guard's
-// owner (internal/runrequests) imports this package.
+// claimRefusedPrefix and the error as its reason, and the claim reports an
+// empty queue, as a payload that cannot be built does. It is a port
+// because the guard's owner (internal/runrequests) imports this package.
 type ClaimGuard interface {
 	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error
+}
+
+// claimRefusedPrefix starts the error text of a job the claim guard
+// refused, and only the guard's path writes it. Such a job ran nothing on
+// any host, so a replay of its run group (reserveRunGroup) does not count
+// it as covering its zone: re-approving a request whose first enqueue
+// failed partway enqueues the refused zone again (backlog 2.126).
+const claimRefusedPrefix = "refused at claim: "
+
+// claimRefused reports whether j is a job the claim guard refused.
+func claimRefused(j Job) bool {
+	return j.Status == StatusError && strings.HasPrefix(j.Error, claimRefusedPrefix)
 }
 
 // SetClaimGuard injects the claim guard of run jobs (see the claimGuard
@@ -294,7 +306,7 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	claim := &Claim{Token: ""}
 	if job.Kind == KindRun && q.claimGuard != nil {
 		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID); err != nil {
-			if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
+			if failErr := q.failJob(ctx, job.ID, fmt.Errorf("%s%w", claimRefusedPrefix, err)); failErr != nil {
 				return nil, fmt.Errorf("fail guarded job %s (guard: %v): %w", job.ID, err, failErr)
 			}
 			return nil, nil

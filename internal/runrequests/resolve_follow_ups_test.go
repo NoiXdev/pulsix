@@ -55,7 +55,7 @@ type fakeJobRunner struct {
 	retryCalled bool
 }
 
-func (f *fakeJobRunner) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+func (f *fakeJobRunner) LimitedRunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
 
