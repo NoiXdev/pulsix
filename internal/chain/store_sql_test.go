@@ -85,6 +85,16 @@ func (e *env) job(group uuid.UUID, status string, hosts []uuid.UUID, stats map[s
 	}
 }
 
+// withdrawnJob inserts one run job of group the claim guard refused at its
+// first claim because its approval was withdrawn.
+func (e *env) withdrawnJob(group uuid.UUID) {
+	e.t.Helper()
+	if _, err := e.d.Pool().Exec(ctx, `INSERT INTO jobs (id, org_id, zone_id, kind, host_ids, status, attempts, error, run_group_id)
+		VALUES ($1,$2,$3,'run','{}','error',1,$4,$5)`, newID(), e.org, e.zone, jobs.WithdrawnAtClaimError, group); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 func (e *env) plan(group, tmpl uuid.UUID, override *[]uuid.UUID) {
 	e.t.Helper()
 	c := jobs.ChainContext{RootTrigger: "manual", Depth: 1, Path: []uuid.UUID{tmpl}}

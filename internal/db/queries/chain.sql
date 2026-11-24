@@ -145,12 +145,17 @@ LIMIT @lim;
 
 -- name: RunGroupOutcome :one
 -- The verdict of a finished run group, for the sweep: the job count, how many
--- failed or errored and how many were cancelled.
+-- failed or errored and how many were cancelled. A job withdrawn at claim
+-- (internal/jobs/claim_withdrawn.go; withdrawn_error is
+-- jobs.WithdrawnAtClaimError) is left out as the finish report leaves it
+-- out: it ran nothing for an approval that no longer stands. A group of only
+-- such jobs counts zero jobs, so its follow-ups are skipped as never started.
 SELECT count(*) AS jobs,
        count(*) FILTER (WHERE status IN ('failed', 'error')) AS failed_or_error,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled
 FROM jobs
-WHERE org_id = @org_id AND run_group_id = @run_group_id AND kind = 'run';
+WHERE org_id = @org_id AND run_group_id = @run_group_id AND kind = 'run'
+  AND NOT (status = 'error' AND attempts = 1 AND error = sqlc.arg(withdrawn_error)::text);
 
 -- name: MarkFollowUpStarted :execrows
 UPDATE run_follow_ups

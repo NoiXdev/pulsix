@@ -2,7 +2,7 @@ package jobs_test
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -26,10 +26,10 @@ func (g *refuseGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID) error
 }
 
 // TestQueueClaimGuardRefusalMarksTheJob: a run job the claim guard refuses
-// fails with the guard's reason behind the fixed refused-at-claim prefix,
-// the mark a replay of its run group reads to enqueue its zone again; the
-// claim answers empty. A job failed for any other reason at claim (here an
-// unbuildable payload) does not carry the mark.
+// as withdrawn fails with the fixed text jobs.WithdrawnAtClaimError, the
+// mark a replay of its run group and the group's outcome read; the claim
+// answers empty. A job failed for any other reason at claim (here an
+// unbuildable payload) does not carry the refusal's prefix.
 func TestQueueClaimGuardRefusalMarksTheJob(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, gen.New(d.Pool()), "jobs-claim-guard-refusal")
@@ -54,7 +54,7 @@ func TestQueueClaimGuardRefusalMarksTheJob(t *testing.T) {
 	}
 
 	queue := newTestQueue(d)
-	guard := &refuseGuard{reason: errors.New("the run's request is not approved")}
+	guard := &refuseGuard{reason: fmt.Errorf("look up the run: %w", jobs.ErrApprovalWithdrawn)}
 	queue.SetClaimGuard(guard)
 	refused := enqueue(t)
 	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone}, "v1")

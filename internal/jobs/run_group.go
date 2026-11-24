@@ -119,10 +119,18 @@ func (q *SQLQueue) SetRunGroupSink(sink RunGroupSink) { q.runGroups = sink }
 // on status: a job that marked itself failed but died before writing a
 // recap has reached no per-host verdict either, and status alone would
 // read it as one.
-const runGroupQuery = `
+//
+// g leaves out every job withdrawn at claim ($3 is WithdrawnAtClaimError,
+// see claim_withdrawn.go): it ran nothing for an approval that no longer
+// stands, so it is neither counted nor the group's first job. A group of
+// only such jobs reads as empty — total 0, not done — and a re-approval's
+// refill finishes it. Every column must therefore scan from an empty g:
+// the counts and sums are COALESCEd, trigger too, the rest scan into
+// pointers.
+var runGroupQuery = `
 WITH g AS (
   SELECT id, status, host_ids, started_at, finished_at, created_at, template_id, trigger, trigger_ref, stats, hosts_excluded, check_mode
-  FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'run'
+  FROM jobs WHERE org_id = $1 AND run_group_id = $2 AND kind = 'run' AND NOT ` + withdrawnAtClaimSQL(3) + `
 ),
 lists AS (
   SELECT
@@ -151,7 +159,7 @@ SELECT
   (SELECT max(finished_at) FROM g),
   (SELECT id FROM g ORDER BY created_at, id LIMIT 1),
   (SELECT template_id FROM g LIMIT 1),
-  (SELECT trigger FROM g LIMIT 1),
+  COALESCE((SELECT trigger FROM g LIMIT 1), ''),
   (SELECT trigger_ref FROM g LIMIT 1),
   (SELECT COALESCE(bool_or(check_mode), false) FROM g)`
 
@@ -245,14 +253,16 @@ func (q *SQLQueue) claimFinishedRunGroup(ctx context.Context, orgID, groupID uui
 func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, orgID, groupID uuid.UUID) (RunGroupResult, bool, error) {
 	var total, terminal, failed, cancelled int
 	var first *uuid.UUID
-	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID).Scan(
+	if err := q.db.QueryRow(ctx, runGroupQuery, orgID, groupID, WithdrawnAtClaimError).Scan(
 		&total, &terminal, &failed, &cancelled, &r.Hosts, &r.HostsChanged, &r.HostsFailed, &r.HostsNoResult,
 		&r.HostsExcluded, &r.StartedAt, &r.FinishedAt, &first, &r.TemplateID, &r.Trigger, &r.TriggerRef, &r.CheckMode,
 	); err != nil {
 		return r, false, fmt.Errorf("read group: %w", err)
 	}
 	if total == 0 || terminal < total || first == nil {
-		return r, false, nil // the group is not done yet
+		// Not done yet — or nothing but jobs withdrawn at claim, which a
+		// re-approval may still refill.
+		return r, false, nil
 	}
 	r.Jobs, r.FirstJobID = total, *first
 	won, err := q.claimRunGroupReport(ctx, r.FirstJobID)
@@ -275,12 +285,18 @@ func (q *SQLQueue) readAndClaimRunGroup(ctx context.Context, r RunGroupResult, o
 
 // claimRunGroupReport is the group's exactly-once guard: an ordinary
 // UPDATE that flips run_group_reported from false to true on the group's
-// first job (its stable anchor row — the set of jobs in a group, and so
-// which one is oldest, never changes after enqueue), reporting whether
-// THIS call is the one that flipped it. Postgres serializes two
-// concurrent UPDATEs of the same row on its own row lock, so at most one
-// caller ever wins, independently of the advisory lock recordRunGroup's
-// callers may or may not hold (migration 00031_run_group_reported.sql).
+// first job (its stable anchor row), reporting whether THIS call is the one
+// that flipped it. Postgres serializes two concurrent UPDATEs of the same
+// row on its own row lock, so at most one caller ever wins, independently
+// of the advisory lock recordRunGroup's callers may or may not hold
+// (migration 00031_run_group_reported.sql).
+//
+// The anchor is stable because a group gains jobs only while it is
+// unfinished: a replay of its idempotency key adds a job only for a zone no
+// counted job covers, and the one kind of job the replay does not count —
+// withdrawn at claim — runGroupQuery does not count either. A group of only
+// those is not finished and has no anchor yet; its refill supplies the
+// first (backlog 2.126, final review Important 1).
 func (q *SQLQueue) claimRunGroupReport(ctx context.Context, firstJobID uuid.UUID) (bool, error) {
 	tag, err := q.db.Exec(ctx, `UPDATE jobs SET run_group_reported = true WHERE id = $1 AND run_group_reported = false`, firstJobID)
 	if err != nil {
@@ -380,7 +396,7 @@ func (q *SQLQueue) SweepUnreportedRunGroups(ctx context.Context, since time.Time
 		return 0, nil
 	}
 	rows, err := gen.New(q.db.Pool()).ListUnreportedFinishedRunGroups(ctx, gen.ListUnreportedFinishedRunGroupsParams{
-		Since: since, Lim: int32(limit), //nolint:gosec // a caller-set batch size
+		WithdrawnError: WithdrawnAtClaimError, Since: since, Lim: int32(limit), //nolint:gosec // a caller-set batch size
 	})
 	if err != nil {
 		return 0, fmt.Errorf("list unreported run groups: %w", err)

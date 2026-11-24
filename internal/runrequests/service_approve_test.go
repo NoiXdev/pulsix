@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/runrequests"
 )
 
@@ -140,15 +141,26 @@ func TestCheckRunClaim(t *testing.T) {
 		t.Fatalf("an unchanged approved run = %v", err)
 	}
 	w.pics.p.Limit = "web-*"
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
-		t.Fatalf("a changed approved run = %v, want ErrChangedAfterApproval", err)
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+		t.Fatalf("a changed approved run = %v, want ErrChangedAfterApproval and not a withdrawn approval", err)
 	}
 	if err := w.store.RevertToPending(ctx, w.org, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	w.pics.p.Limit = "web"
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); err == nil {
-		t.Fatal("a reverted request's job passed the claim check")
+	// The queue leaves a job refused this way out of its run group's
+	// outcome (jobs.WithdrawnAtClaimError), and only this way.
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, jobs.ErrApprovalWithdrawn) {
+		t.Fatalf("a reverted request's job = %v, want jobs.ErrApprovalWithdrawn", err)
+	}
+	// Approved without a recorded fingerprint: the approval stands, so its
+	// refused job is an errored run, not a withdrawn one.
+	legacy := w.create(t)
+	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, ""); err != nil || !ok {
+		t.Fatalf("decide = %v, %v", ok, err)
+	}
+	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+		t.Fatalf("an approval without a fingerprint = %v, want a refusal that is not a withdrawn approval", err)
 	}
 
 	// Approved in mode A: a follow-up's revision moving, or the setting

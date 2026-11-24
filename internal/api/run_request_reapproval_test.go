@@ -157,3 +157,86 @@ func TestRunRequestPictureTargetsFollowTheTemplateLimit(t *testing.T) {
 		t.Fatal("the picture names the host the limit leaves out")
 	}
 }
+
+// TestRunRequestReapprovalOfARefusedRunFinishesWithTheRefill is backlog
+// 2.126's final review, Important 1: the first approval plans a follow-up,
+// enqueues zone A's job and fails before zone B's; the claim guard then
+// refuses A's job as withdrawn. That job is no part of the run's outcome,
+// so once the re-approval's refill of A and B succeeds the run group
+// reports success once — its follow-up starts on both hosts — and its
+// summary is the refill's outcome, not the withdrawn job's error.
+func TestRunRequestReapprovalOfARefusedRunFinishesWithTheRefill(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-refill-finish")
+	fu := f.withFollowUp(t, "listmonk")
+	f.setFollowUpsStart(t, true)
+	f.targetBothHosts(t)
+	created := f.request(t, map[string]any{"reason": "x"})
+	group := uuid.MustParse(created.Request.ID)
+
+	lift := refuseJobInserts(t, f.zoneB)
+	resp := f.approve(t, f.adminC, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint)
+	if body := mustReadBody(t, resp); resp.StatusCode == http.StatusOK {
+		t.Fatalf("approve with zone B's insert failing succeeded: %s", body)
+	}
+	lift()
+	withdrawn := f.groupJobs(t, created.Request.ID)
+	if len(withdrawn) != 1 {
+		t.Fatalf("jobs after the interrupted enqueue = %d, want zone A's only", len(withdrawn))
+	}
+	if c, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{f.zoneA, f.zoneB}, "v1"); err != nil || c != nil {
+		t.Fatalf("claim of the pending request's job = %v, %v; want refused", c, err)
+	}
+
+	resp = f.approve(t, f.adminC, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("re-approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, created.Request.ID); rows[fu.String()] != "pending" {
+		t.Fatalf("follow-ups after the re-approval = %v, want listmonk pending", rows)
+	}
+	hostOf := map[uuid.UUID]uuid.UUID{f.zoneA: f.hostA, f.zoneB: f.hostB}
+	var refill []uuid.UUID
+	for range 2 {
+		c, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{f.zoneA, f.zoneB}, "v1")
+		if err != nil || c == nil {
+			t.Fatalf("claim of the re-approved run = %v, %v", c, err)
+		}
+		id := uuid.MustParse(c.Job.GetId())
+		j, err := f.s.Deps.Jobs.Get(f.scoped, f.orgID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.s.Queue.Finish(context.Background(), id, jobs.StatusSucceeded,
+			map[string]any{"ok_hosts": []string{hostOf[j.ZoneID].String()}}, ""); err != nil {
+			t.Fatal(err)
+		}
+		refill = append(refill, id)
+	}
+
+	sums, err := f.s.Deps.Jobs.GroupSummaries(f.scoped, f.orgID, []uuid.UUID{group})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sums[group]; sum.Status != jobs.StatusSucceeded || sum.FirstJobID == withdrawn[0].ID {
+		t.Fatalf("run summary = %+v, want succeeded and not anchored on the withdrawn job %s", sum, withdrawn[0].ID)
+	}
+	var reported int
+	if err := f.s.DB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM jobs WHERE run_group_id = $1 AND run_group_reported AND id = ANY($2)`, group, refill).Scan(&reported); err != nil {
+		t.Fatal(err)
+	}
+	if reported != 1 {
+		t.Fatalf("finish reports claimed on the refilled jobs = %d, want 1", reported)
+	}
+
+	if err := f.s.ChainStarter.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fus := f.chainDetail(t, refill[0].String()).Job.Chain.FollowUps
+	if len(fus) != 1 || fus[0].TemplateID != fu.String() || fus[0].State != "started" || len(fus[0].Hosts) != 2 {
+		t.Fatalf("follow-ups after the refill succeeded = %+v, want listmonk started on both hosts", fus)
+	}
+	if p := f.chainDetail(t, fus[0].ChildFirstJobID).Job.Chain.Parent; p == nil || p.FirstJobID == withdrawn[0].ID.String() {
+		t.Fatalf("the follow-up's parent = %+v, want a refilled job, not the withdrawn %s", p, withdrawn[0].ID)
+	}
+}

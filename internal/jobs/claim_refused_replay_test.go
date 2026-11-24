@@ -11,17 +11,18 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 )
 
-// refusedAtClaim is the error text the queue's claim guard path writes
-// (claimRefusedPrefix plus the guard's reason).
-const refusedAtClaim = "refused at claim: the run's request is not approved"
+// refusedAtClaim is the error text the queue's claim guard path writes for
+// a withdrawn approval.
+const refusedAtClaim = jobs.WithdrawnAtClaimError
 
 // TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim: an approval's first
 // enqueue created zone 1's job and failed before zone 2's, the request went
-// back to pending, and the claim guard refused zone 1's job. A job the
-// guard refused ran nothing anywhere, so the replay under the same key must
-// enqueue zone 1 again (and zone 2) and leave the refused job out of the
-// run; a replayed job that got past the guard, or was claimed before the
-// claim that refused it, still covers its zone, so nothing runs twice.
+// back to pending, and the claim guard refused zone 1's job as withdrawn. A
+// job refused that way ran nothing anywhere, so the replay under the same
+// key must enqueue zone 1 again (and zone 2) and leave the refused job out
+// of the run; a replayed job that got past the guard, was claimed before
+// the claim that refused it, or was refused for another reason still covers
+// its zone, so nothing runs twice.
 func TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim(t *testing.T) {
 	started := time.Now().UTC().Truncate(time.Microsecond)
 	cases := []struct {
@@ -36,6 +37,11 @@ func TestEnqueueRunWithReplayRefillsAZoneRefusedAtClaim(t *testing.T) {
 		// on the next claim: the first claim may have run the play.
 		{"refused on a later claim", func(j *jobs.Job) {
 			j.Status, j.Error, j.Attempts, j.StartedAt, j.FinishedAt = jobs.StatusError, refusedAtClaim, 2, &started, &started
+		}, false},
+		// An approval that still stood when its run's picture changed: an
+		// errored run its group's outcome counts, so it keeps its zone.
+		{"refused at claim for another reason", func(j *jobs.Job) {
+			j.Status, j.Error, j.Attempts = jobs.StatusError, "refused at claim: what the run uses changed after it was approved; ask for the run again", 1
 		}, false},
 		{"still queued", func(*jobs.Job) {}, false},
 		{"running", func(j *jobs.Job) { j.Status, j.StartedAt = jobs.StatusRunning, &started }, false},

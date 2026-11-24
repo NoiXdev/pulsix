@@ -569,9 +569,17 @@ WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
 -- long outage: a notification about a run from last month is noise, not
 -- news. finished_at can be NULL on a job cancelled before it ever
 -- started, so the age is taken from created_at where it is.
+--
+-- A job withdrawn at claim (internal/jobs/claim_withdrawn.go;
+-- withdrawn_error is jobs.WithdrawnAtClaimError) is not part of its
+-- group's outcome, so it is left out here too: a group of only such jobs is
+-- not finished and is never listed. Listing it would not report it (the
+-- group read finds nothing to report) but would put it back at the head of
+-- every batch, crowding out the groups whose report really was lost.
 SELECT org_id, run_group_id
 FROM jobs
 WHERE kind = 'run'
+  AND NOT (status = 'error' AND attempts = 1 AND error = sqlc.arg(withdrawn_error)::text)
 GROUP BY org_id, run_group_id
 HAVING bool_and(status IN ('succeeded', 'failed', 'cancelled', 'error'))
    AND NOT bool_or(run_group_reported)

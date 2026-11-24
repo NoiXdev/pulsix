@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // pgCode returns the SQLSTATE of a Postgres error, or "".
@@ -266,7 +267,7 @@ func TestFollowUpLifecycleQueries(t *testing.T) {
 	if stale, err = q.ListStalePendingFollowUps(ctx, gen.ListStalePendingFollowUpsParams{Before: now, Lim: 10}); err != nil || len(stale) != 2 {
 		t.Fatalf("stale after finish = %+v, %v", stale, err)
 	}
-	out, err := q.RunGroupOutcome(ctx, gen.RunGroupOutcomeParams{OrgID: org, RunGroupID: group})
+	out, err := q.RunGroupOutcome(ctx, gen.RunGroupOutcomeParams{OrgID: org, RunGroupID: group, WithdrawnError: jobs.WithdrawnAtClaimError})
 	if err != nil || out.Jobs != 1 || out.FailedOrError != 1 || out.Cancelled != 0 {
 		t.Fatalf("RunGroupOutcome = %+v, %v", out, err)
 	}

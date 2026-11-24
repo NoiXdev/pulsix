@@ -267,8 +267,10 @@ func (s *SQLStore) HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUI
 }
 
 // groupSummaryQuery aggregates run groups; raw SQL because the
-// aggregates' NULLs (a group that never started) scan into pointers.
-const groupSummaryQuery = `
+// aggregates' NULLs (a group that never started) scan into pointers. A job
+// withdrawn at claim ($3, claim_withdrawn.go) is left out like the finish
+// report leaves it out, so a group of only such jobs has no summary.
+var groupSummaryQuery = `
 SELECT run_group_id,
   (array_agg(id ORDER BY created_at, id))[1],
   count(*),
@@ -278,11 +280,11 @@ SELECT run_group_id,
   count(*) FILTER (WHERE status = 'cancelled'),
   min(started_at), max(finished_at)
 FROM jobs
-WHERE org_id = $1 AND kind = 'run' AND run_group_id = ANY($2::uuid[])
+WHERE org_id = $1 AND kind = 'run' AND run_group_id = ANY($2::uuid[]) AND NOT ` + withdrawnAtClaimSQL(3) + `
 GROUP BY run_group_id`
 
 func (s *SQLStore) GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
-	rows, err := s.d.Query(ctx, groupSummaryQuery, orgID, groupIDs)
+	rows, err := s.d.Query(ctx, groupSummaryQuery, orgID, groupIDs, WithdrawnAtClaimError)
 	if err != nil {
 		return nil, fmt.Errorf("summarise run groups: %w", err)
 	}

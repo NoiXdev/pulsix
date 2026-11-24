@@ -7,6 +7,8 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // Approved is the outcome of an approval: the decided request, the
@@ -85,8 +87,17 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 var ErrChangedAfterApproval = errors.New("what the run uses changed after it was approved; ask for the run again")
 
 // errRequestNotApproved fails the claim of a job whose run group belongs
-// to a request that is not approved (a failed enqueue put it back).
-var errRequestNotApproved = errors.New("the run's request is not approved")
+// to a request that is not approved (a failed enqueue put it back). It is
+// the queue's jobs.ErrApprovalWithdrawn: a job refused with it ran nothing
+// for an approval that no longer stands, so a re-approval enqueues its
+// zone again and its run group's outcome leaves it out.
+var errRequestNotApproved = jobs.ErrApprovalWithdrawn
+
+// errNoApprovedPicture fails the claim of a run approved without a
+// recorded fingerprint (an approval older than the fingerprint column):
+// there is nothing to check the run against. Unlike errRequestNotApproved
+// the approval stands, so the refused job counts as an errored run.
+var errNoApprovedPicture = errors.New("the run's approval recorded no run picture; ask for the run again")
 
 // CheckRunClaim is the claim guard of approved runs (jobs.ClaimGuard): a
 // run group that belongs to no request passes; one that belongs to a
@@ -102,8 +113,11 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	if err != nil {
 		return fmt.Errorf("look up the run's request: %w", err)
 	}
-	if r.Status != StatusApproved || r.ApprovedFingerprint == "" {
+	if r.Status != StatusApproved {
 		return errRequestNotApproved
+	}
+	if r.ApprovedFingerprint == "" {
+		return errNoApprovedPicture
 	}
 	p, err := s.pictures.Picture(ctx, orgID, r)
 	if err != nil {

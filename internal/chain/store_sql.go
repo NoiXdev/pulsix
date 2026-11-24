@@ -205,11 +205,16 @@ func sweepGroup(ctx context.Context, tx pgx.Tx, k groupKey, now time.Time) error
 	}
 	q := gen.New(sp)
 	err = func() error {
-		out, err := q.RunGroupOutcome(ctx, gen.RunGroupOutcomeParams{OrgID: k.org, RunGroupID: k.group})
+		out, err := q.RunGroupOutcome(ctx, gen.RunGroupOutcomeParams{
+			OrgID: k.org, RunGroupID: k.group, WithdrawnError: jobs.WithdrawnAtClaimError,
+		})
 		if err != nil {
 			return fmt.Errorf("read run group outcome: %w", err)
 		}
 		if out.Jobs == 0 {
+			// No job at all, or only jobs withdrawn at claim: the request
+			// whose approval created them was not approved again (yet). A
+			// later re-approval clears these skipped rows and plans its own.
 			return resolvePending(ctx, q, k.org, k.group, StateSkipped, ReasonRunNotStart, []uuid.UUID{}, now)
 		}
 		// The same verdict as jobs.RunGroupResult.Status.

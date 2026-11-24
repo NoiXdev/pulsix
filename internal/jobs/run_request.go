@@ -227,19 +227,22 @@ func (s *Service) reserveRunGroup(ctx context.Context, orgID uuid.UUID, key stri
 	// existing job at all" would silently leave the second case's
 	// un-enqueued zones un-enqueued forever.
 	//
-	// A job the claim guard refused on its first claim (claimRefused) is
-	// left out: it ran nothing on any host, so its zone gets a new job. That is a request
-	// approved again after its first enqueue failed partway: the job the
-	// first attempt did create was claimed while the request was pending
-	// again and refused. Every other job still covers its zone — queued,
-	// running, finished or failed after it started — so nothing runs twice.
+	// A job refused at its first claim because its approval was withdrawn
+	// (withdrawnAtClaim, claim_withdrawn.go) is left out: it ran nothing on
+	// any host, so its zone gets a new job. That is a request approved
+	// again after its first enqueue failed partway: the job the first
+	// attempt did create was claimed while the request was pending again
+	// and refused. Every other job still covers its zone — queued,
+	// running, finished, failed after it started, or refused for another
+	// reason (an errored run the group's outcome counts) — so nothing runs
+	// twice and nothing the outcome counts is replaced.
 	existing, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &claimed}, "", replayListLimit)
 	if err != nil {
 		return uuid.Nil, nil, fmt.Errorf("list reserved run group: %w", err)
 	}
 	covering := existing[:0:0]
 	for _, j := range existing {
-		if !claimRefused(j) {
+		if !withdrawnAtClaim(j) {
 			covering = append(covering, j)
 		}
 	}

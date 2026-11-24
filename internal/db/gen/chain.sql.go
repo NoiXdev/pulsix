@@ -686,11 +686,13 @@ SELECT count(*) AS jobs,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled
 FROM jobs
 WHERE org_id = $1 AND run_group_id = $2 AND kind = 'run'
+  AND NOT (status = 'error' AND attempts = 1 AND error = $3::text)
 `
 
 type RunGroupOutcomeParams struct {
-	OrgID      uuid.UUID `json:"org_id"`
-	RunGroupID uuid.UUID `json:"run_group_id"`
+	OrgID          uuid.UUID `json:"org_id"`
+	RunGroupID     uuid.UUID `json:"run_group_id"`
+	WithdrawnError string    `json:"withdrawn_error"`
 }
 
 type RunGroupOutcomeRow struct {
@@ -700,9 +702,13 @@ type RunGroupOutcomeRow struct {
 }
 
 // The verdict of a finished run group, for the sweep: the job count, how many
-// failed or errored and how many were cancelled.
+// failed or errored and how many were cancelled. A job withdrawn at claim
+// (internal/jobs/claim_withdrawn.go; withdrawn_error is
+// jobs.WithdrawnAtClaimError) is left out as the finish report leaves it
+// out: it ran nothing for an approval that no longer stands. A group of only
+// such jobs counts zero jobs, so its follow-ups are skipped as never started.
 func (q *Queries) RunGroupOutcome(ctx context.Context, arg RunGroupOutcomeParams) (RunGroupOutcomeRow, error) {
-	row := q.db.QueryRow(ctx, runGroupOutcome, arg.OrgID, arg.RunGroupID)
+	row := q.db.QueryRow(ctx, runGroupOutcome, arg.OrgID, arg.RunGroupID, arg.WithdrawnError)
 	var i RunGroupOutcomeRow
 	err := row.Scan(&i.Jobs, &i.FailedOrError, &i.Cancelled)
 	return i, err

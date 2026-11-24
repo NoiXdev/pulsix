@@ -122,6 +122,32 @@ func TestSweepResolvesFinishedGroupsLikeTheSink(t *testing.T) {
 	}
 }
 
+// TestSweepLeavesOutJobsWithdrawnAtClaim: a job refused at its first claim
+// because its approval was withdrawn ran nothing and is no part of its
+// group's outcome (internal/jobs/claim_withdrawn.go). A group of only such
+// jobs never started; one whose zones a re-approval refilled has the
+// refill's outcome, not the withdrawn job's error.
+func TestSweepLeavesOutJobsWithdrawnAtClaim(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	onlyWithdrawn, refilled, h1 := newID(), newID(), newID()
+	for _, g := range []uuid.UUID{onlyWithdrawn, refilled} {
+		e.plan(g, a, nil)
+		e.withdrawnJob(g)
+	}
+	e.job(refilled, "succeeded", []uuid.UUID{h1}, map[string][]uuid.UUID{"ok_hosts": {h1}})
+	if n, err := e.store.SweepStale(ctx, time.Now().Add(2*time.Minute), 50); err != nil || n != 2 {
+		t.Fatalf("sweep = %d, %v", n, err)
+	}
+	if r := e.rows(onlyWithdrawn)[0]; r.State != chain.StateSkipped || r.Reason != "the run did not start" {
+		t.Fatalf("only-withdrawn row = %+v, want skipped as never started", r)
+	}
+	if r := e.rows(refilled)[0]; r.State != chain.StateDue || !slices.Equal(r.HostIDs, []uuid.UUID{h1}) {
+		t.Fatalf("refilled row = %+v, want due on the refill's host", r)
+	}
+}
+
 func TestSweepIgnoresActiveGroupAndFreshRows(t *testing.T) {
 	e := newEnv(t)
 	b := e.template("b")
