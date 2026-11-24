@@ -555,7 +555,7 @@ ORDER BY at, from_state, to_state;
 -- result, only how much gets shipped out of Postgres to do it. The filter
 -- takes a range, [@from_at, @to_at], because the escalation pass asks
 -- which windows covered a host at any instant since a chain's anchor
--- (backlog 4.41, SQLStore.WindowsForHostBetween); WindowsForHost passes
+-- (backlog 4.41, SQLStore.LatestCoverageEnd); WindowsForHost passes
 -- the same instant for both, which is exactly the old point filter, and
 -- the Go side trims a window starting at @to_at itself. Monitoring-
 -- group targets are deliberately not resolved here, the same gap

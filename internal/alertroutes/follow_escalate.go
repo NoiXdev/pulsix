@@ -198,11 +198,11 @@ func (f *Follower) dueStep(ctx context.Context, res *resolution, orgID uuid.UUID
 // latest such end, or cs unchanged.
 //
 // This is the resume path for TWO of alerts.Mute's three reasons, not
-// one: WindowsForHostBetween returns both maintenance windows AND operator
-// silences as maintenance.Occurrence values, distinguished only by
-// Reason, and this fold takes whichever it finds. The snooze reason needs
-// no fold here at all: its own end is already the plain snoozed_until
-// column ChainsNeedingAttentionBase reads directly.
+// one: LatestCoverageEnd reads maintenance windows AND operator silences
+// alike, since both are the same maintenance_windows rows distinguished
+// only by reason. The snooze reason needs no fold here at all: its own
+// end is already the plain snoozed_until column ChainsNeedingAttentionBase
+// reads directly.
 //
 // Over an interval, not at sampled instants (backlog 4.41). The fold used
 // to ask "what covers this instant" at the anchor and at anchor+delay,
@@ -217,51 +217,30 @@ func (f *Follower) dueStep(ctx context.Context, res *resolution, orgID uuid.UUID
 // also stateless this way: a window between ticks T1 and T2 still holds
 // the rung at T3, which a fold over [T2, T3] alone would not.
 //
-// The range starts at max(anchor, now - delay), not at the anchor itself.
-// An occurrence ending at or before now - delay cannot change DueStep's
-// answer (its end plus the delay has already passed, exactly like the
-// anchor's own), so this bounds the walk by one rung's delay however long
-// a chain has been paused, without changing any outcome.
+// Only a chain that is already due by its plain anchor is folded at all.
+// The fold can only move the anchor later, so it can turn "due" into "not
+// yet" but never the reverse: a chain that is not due pays no read. For a
+// due chain, now - delay is at or after the plain anchor, and the read
+// covers exactly (now - delay, now]: an occurrence ending at or before
+// now - delay leaves end + delay <= now, so it could not hold the rung
+// either. The walk is therefore one rung's delay long, and only on the
+// ticks between a rung coming naively due and actually firing.
 func (f *Follower) foldMaintenanceAnchor(ctx context.Context, orgID, hostID uuid.UUID, cs ChainState, now time.Time) (ChainState, error) {
-	d, ok := stepDelay(cs.Steps, cs.FiredUpTo+1)
-	if !ok {
-		return cs, nil // DueStep refuses a missing rung on its own
-	}
-	from := cs.LastFiredAt
-	if cs.LastUrgentAt.After(from) {
-		from = cs.LastUrgentAt
-	}
-	if lo := now.Add(-d); lo.After(from) {
-		from = lo
-	}
-	if !from.Before(now) {
+	step, due := DueStep(cs, now)
+	if !due {
 		return cs, nil
 	}
-	covered, err := f.mutes.WindowsForHostBetween(ctx, orgID, hostID, from, now)
+	from := now.Add(-step.Delay)
+	end, ok, err := f.mutes.LatestCoverageEnd(ctx, orgID, hostID, from, now)
 	if err != nil {
-		return cs, fmt.Errorf("windows for host %s between %s and %s: %w", hostID, from, now, err)
+		return cs, fmt.Errorf("maintenance coverage for host %s between %s and %s: %w", hostID, from, now, err)
 	}
-	for _, w := range covered {
-		// End after now is an occurrence still running, which the mute
-		// gate in dueStep would already have held; it is no anchor yet.
-		if w.End.After(cs.LastUrgentAt) && !w.End.After(now) {
-			cs.LastUrgentAt = w.End
-		}
+	// An end exactly at now counts: the window no longer mutes at its own
+	// end instant (half-open), but that end is the anchor all the same.
+	if ok && end.After(cs.LastUrgentAt) {
+		cs.LastUrgentAt = end
 	}
 	return cs, nil
-}
-
-// stepDelay finds position's own Delay in steps — the next unfired rung's
-// delay, which bounds the maintenance fold's range above. false when no
-// step at that position exists, which DueStep itself will also find and
-// refuse to answer for.
-func stepDelay(steps []Step, position int) (time.Duration, bool) {
-	for _, s := range steps {
-		if s.Position == position {
-			return s.Delay, true
-		}
-	}
-	return 0, false
 }
 
 // acknowledged is the same live comparison the alert list's own filter

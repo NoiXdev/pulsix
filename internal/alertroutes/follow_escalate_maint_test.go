@@ -151,10 +151,12 @@ func TestAWindowOutsideTheChainsIntervalChangesNothing(t *testing.T) {
 	}
 }
 
-// TestAWindowLongBeforeNowNoLongerHoldsTheRung: a window inside the
-// interval whose end plus the rung's delay has already passed delays
-// nothing any more — the rung is due the first tick after end+5m.
-func TestAWindowLongBeforeNowNoLongerHoldsTheRung(t *testing.T) {
+// TestTheRangeLowerBoundStillSeesAWindowEndingAfterIt pins the fold's
+// lower bound, now - delay (review Minor 2). At t0+6m the range is
+// [t0+1m, t0+6m], later than the anchor t0, and a window ending at t0+2m
+// inside it must still hold the rung until t0+7m; a bound any tighter
+// would fire it here. At t0+7m, end+5m exactly, it fires.
+func TestTheRangeLowerBoundStillSeesAWindowEndingAfterIt(t *testing.T) {
 	env := newFollowEnv(t)
 	t0 := escalationTimeline
 	env.clock.set(t0)
@@ -163,9 +165,65 @@ func TestAWindowLongBeforeNowNoLongerHoldsTheRung(t *testing.T) {
 		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
 	})
 	env.tickAt(t0)
-	env.maintenanceWindow(env.host, t0.Add(time.Minute), t0.Add(2*time.Minute))
+	env.maintenanceWindow(env.host, t0.Add(30*time.Second), t0.Add(2*time.Minute)) // straddles t0+1m
+	env.tickAt(t0.Add(6 * time.Minute))
+	if n := env.deliveriesTo(route, 1); n != 0 {
+		t.Fatalf("rung 1 fired %d time(s) at t0+6m; the window ending at t0+2m holds it until t0+7m", n)
+	}
 	env.tickAt(t0.Add(7 * time.Minute)) // end+5m exactly
 	if n := env.deliveriesTo(route, 1); n != 1 {
 		t.Fatalf("rung 1 fired %d time(s) at end+5m, want 1", n)
+	}
+}
+
+// TestTheLatestOfSeveralWindowsWins: two windows in the gap, the later-
+// ending one created first (review Minor 3). The rung is due at the latest
+// end plus its delay, t0+9m, not at the earlier one's t0+7m.
+func TestTheLatestOfSeveralWindowsWins(t *testing.T) {
+	env := newFollowEnv(t)
+	t0 := escalationTimeline
+	env.clock.set(t0)
+	env.openCritAlert()
+	route := env.routeWithSteps([]alertroutes.Step{
+		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
+	})
+	env.tickAt(t0)
+	env.maintenanceWindow(env.host, t0.Add(3*time.Minute), t0.Add(4*time.Minute))
+	env.maintenanceWindow(env.host, t0.Add(1*time.Minute), t0.Add(2*time.Minute))
+	for _, at := range []time.Duration{5 * time.Minute, 8 * time.Minute} {
+		env.tickAt(t0.Add(at))
+		if n := env.deliveriesTo(route, 1); n != 0 {
+			t.Fatalf("rung 1 fired %d time(s) at t0+%s; the later window ending at t0+4m holds it until t0+9m", n, at)
+		}
+	}
+	env.tickAt(t0.Add(9 * time.Minute))
+	if n := env.deliveriesTo(route, 1); n != 1 {
+		t.Fatalf("rung 1 fired %d time(s) at t0+9m, want 1", n)
+	}
+}
+
+// TestAWindowEndingExactlyAtATickHoldsTheRung is the one boundary where
+// the mute gate and the fold use different predicates (review Minor 4): a
+// window is half-open, so at its end instant it no longer mutes, but that
+// end is the anchor and the rung waits a full delay from it.
+func TestAWindowEndingExactlyAtATickHoldsTheRung(t *testing.T) {
+	env := newFollowEnv(t)
+	t0 := escalationTimeline
+	env.clock.set(t0)
+	env.openCritAlert()
+	route := env.routeWithSteps([]alertroutes.Step{
+		{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
+	})
+	env.tickAt(t0)
+	env.maintenanceWindow(env.host, t0.Add(3*time.Minute), t0.Add(6*time.Minute))
+	for _, at := range []time.Duration{5 * time.Minute, 6 * time.Minute, 10 * time.Minute} {
+		env.tickAt(t0.Add(at))
+		if n := env.deliveriesTo(route, 1); n != 0 {
+			t.Fatalf("rung 1 fired %d time(s) at t0+%s; the window ending at t0+6m holds it until t0+11m", n, at)
+		}
+	}
+	env.tickAt(t0.Add(11 * time.Minute))
+	if n := env.deliveriesTo(route, 1); n != 1 {
+		t.Fatalf("rung 1 fired %d time(s) at t0+11m, want 1", n)
 	}
 }
