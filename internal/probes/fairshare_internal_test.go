@@ -106,6 +106,11 @@ func TestOrgCannotStarveAnother(t *testing.T) {
 	if !started() {
 		t.Fatal("org B was not probed at t=0")
 	}
+	// B's probe answered but still holds its slot until its goroutine
+	// records and returns; no Run loop turns that completion into a launch
+	// round here, so wait for the slot to free before the ticks below
+	// (otherwise they all see a full runner and A never gets slot 32).
+	waitFor(t, func() bool { return h.inFlightOf(orgB) == 0 })
 	// B has nothing due until t=60 s, so A may use every slot meanwhile.
 	for at := 5 * time.Second; at < time.Minute; at += 5 * time.Second {
 		h.clock.Set(t0.Add(at))
@@ -116,21 +121,37 @@ func TestOrgCannotStarveAnother(t *testing.T) {
 	}
 	h.clock.Set(t0.Add(time.Minute))
 	h.r.tick(ctx) // B is due; no slot is free
-	aBefore := sp.count("a")
 
-	// One of A's probes ends; its completion launches again.
+	// One of A's probes ends; its completion launches again. launchDue
+	// marks a slot in flight before its goroutine runs, so A's in-flight
+	// count right after the round says whether A took the freed slot,
+	// whether or not the goroutines started so far have reached the probe
+	// yet (counting probe calls raced them, backlog 3.65).
 	sp.release <- struct{}{}
 	waitFor(t, func() bool { return h.running() == DefaultMaxConcurrent-1 })
 	h.r.launchFreed(ctx)
+	if n := h.inFlightOf(h.org); n != DefaultMaxConcurrent-1 {
+		t.Fatalf("A started %d more probes into the freed slot while B waited", n-(DefaultMaxConcurrent-1))
+	}
 	if !started() {
 		t.Fatal("org B was not probed when a slot freed while A's probes hung")
-	}
-	if n := sp.count("a"); n != aBefore {
-		t.Fatalf("A started %d more probes into the freed slot while B waited", n-aBefore)
 	}
 	if n := sp.count("b"); n != 2 {
 		t.Fatalf("org B was probed %d times, want twice", n)
 	}
+}
+
+// inFlightOf counts org's probes in flight.
+func (h *harness) inFlightOf(org uuid.UUID) int {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	n := 0
+	for _, o := range h.r.inFlight {
+		if o == org {
+			n++
+		}
+	}
+	return n
 }
 
 // waitFor polls cond for up to 5 s.
