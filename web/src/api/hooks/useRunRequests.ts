@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, unwrap } from '../client.ts';
+import { api, ApiError, unwrap } from '../client.ts';
 import type { components } from '../schema.d.ts';
 
 export type RunRequest = components['schemas']['RunRequestDTO'];
@@ -33,7 +33,22 @@ export function useRunRequests(org: string, status?: RunRequestStatus) {
 export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean } = {}) {
   const query = useQuery({
     queryKey: ['run-requests', org, 'pending-count'],
-    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } })),
+    queryFn: async () => {
+      try {
+        return await unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } }));
+      } catch (err) {
+        if (!(err instanceof ApiError) || err.status !== 404) throw err;
+        // A manager from before the count route: count the pending list
+        // instead. Inside the queryFn, so the 404 is cached with the query
+        // and the count route is not asked again on every render. An older
+        // manager filters that list in memory after its 500-row cap, so the
+        // number can undercount.
+        const { requests } = await unwrap(
+          api.GET('/api/v1/orgs/{org}/run-requests', { params: { path: { org }, query: { status: 'pending' } } }),
+        );
+        return { count: requests?.length ?? 0 };
+      }
+    },
     enabled: !!org && (opts.enabled ?? true),
     refetchInterval: PENDING_POLL_MS,
   });

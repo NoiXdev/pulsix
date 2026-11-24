@@ -231,6 +231,50 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(listed).toBe(false);
   });
 
+  it('falls back to the length of the pending list when the manager has no count route', async () => {
+    let counted = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/orgs/acme/run-requests/pending-count': () => {
+        counted += 1;
+        return new Response(JSON.stringify({ detail: 'not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      },
+      'GET /api/v1/orgs/acme/run-requests': (req: { search: URLSearchParams }) => {
+        expect(req.search.get('status')).toBe('pending');
+        return { requests: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] };
+      },
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByText('3 pending run requests')).toBeInTheDocument();
+    expect(counted).toBe(1);
+  });
+
+  it('shows no badge when the count route fails with anything but 404', async () => {
+    let listed = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/orgs/acme/run-requests/pending-count': () =>
+        new Response(JSON.stringify({ detail: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } }),
+      'GET /api/v1/orgs/acme/run-requests': () => {
+        listed = true;
+        return { requests: [{ id: 'a' }] };
+      },
+    });
+    renderAt('/o/acme/hosts');
+
+    await screen.findByText('HOSTS PAGE');
+    await waitFor(() => expect(screen.queryByText(/pending run request/)).not.toBeInTheDocument());
+    expect(listed).toBe(false);
+  });
+
   it('shows the manager version from the setup status in the shell', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OK,
