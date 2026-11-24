@@ -100,6 +100,16 @@ export const enTokens = {
       jobs: 'Jobs',
       monitoring: 'Monitoring & alerts',
     },
+    /** One line under each area's label: what the area lets the assistant do. */
+    descriptions: {
+      inventory: 'Read hosts, groups and variables; with write, also change them and their tags, and test the connection to a host.',
+      repos: 'Read repositories and playbooks; with write, also add, change and remove them.',
+      templates: 'Read job templates and schedules; with write, also add, change and remove them.',
+      jobs: 'Read runs and their output; with request, also ask for a run, which a person still has to approve.',
+      monitoring: 'Read agents, checks, metrics, alert rules, alerts and maintenance windows; with handle alerts, also acknowledge and snooze alerts.',
+      credentials: 'Lets the assistant see which credentials exist, never their contents.',
+      activity: 'Lets the assistant read the organization\'s activity log.',
+    },
     credentials: 'Credentials: names only',
     activity: 'Activity log: read',
     /** The accessible name of one checkbox in the grid. */

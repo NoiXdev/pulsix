@@ -188,9 +188,7 @@ export function TokensPage() {
       >
         {justCreated ? (
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-muted-foreground">
-              {t.tokens.shownOnce}
-            </p>
+            <p className="text-xs text-muted-foreground">{t.tokens.shownOnce}</p>
             <code className="break-all rounded-md border border-border bg-background p-3 font-mono text-xs">
               {justCreated}
             </code>
@@ -272,9 +270,7 @@ export function TokensPage() {
                   />
                 )}
               />
-              <span className="text-[11px] text-muted-foreground">
-                {t.tokens.roleHint}
-              </span>
+              <span className="text-[11px] text-muted-foreground">{t.tokens.roleHint}</span>
             </div>
             {kind === 'assistant' && (
               <Controller

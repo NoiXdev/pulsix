@@ -6,10 +6,11 @@ const CELL = 'px-3 py-1.5';
 
 /**
  * AreaGrid is the assistant token's area choice: one row per subject with a
- * read and a write checkbox (for Jobs the second one requests runs, for Monitoring it handles alerts), and the
- * credential names on their own. Ticking write ticks read, unticking read
- * unticks write; an area the chosen role cannot cover is disabled, and a
- * line under the grid says why.
+ * read and a write checkbox (for Jobs the second one requests runs, for
+ * Monitoring it handles alerts), and the credential names and the activity
+ * log on their own. Each area has a one-line description under its label.
+ * Ticking write ticks read, unticking read unticks write; an area the chosen
+ * role cannot cover is disabled, and a line under the grid says why.
  */
 export function AreaGrid({
   role,
@@ -58,7 +59,10 @@ export function AreaGrid({
             const second = row.key === 'jobs' ? a.request : row.key === 'monitoring' ? a.handle : a.write;
             return (
               <tr key={row.key} className="border-b border-border last:border-b-0">
-                <td className={CELL}>{name}</td>
+                <td className={CELL}>
+                  {name}
+                  <span className="block text-[11px] font-normal text-muted-foreground">{a.descriptions[row.key]}</span>
+                </td>
                 <td className={`${CELL} text-center`}>{box(row.read, a.cell(name, a.read))}</td>
                 <td className={`${CELL} text-center`}>
                   {row.key === 'jobs' ? (
@@ -79,11 +83,17 @@ export function AreaGrid({
       </table>
       <label className="flex items-center gap-2 text-xs">
         {box(CREDENTIALS_AREA, a.credentials)}
-        <span aria-hidden="true">{a.credentials}</span>
+        <span>
+          <span aria-hidden="true">{a.credentials}</span>
+          <span className="block text-[11px] text-muted-foreground">{a.descriptions.credentials}</span>
+        </span>
       </label>
       <label className="flex items-center gap-2 text-xs">
         {box(ACTIVITY_AREA, a.activity)}
-        <span aria-hidden="true">{a.activity}</span>
+        <span>
+          <span aria-hidden="true">{a.activity}</span>
+          <span className="block text-[11px] text-muted-foreground">{a.descriptions.activity}</span>
+        </span>
       </label>
       <span id="token_areas_hint" className="text-[11px] text-muted-foreground">
         {a.writeHint}
