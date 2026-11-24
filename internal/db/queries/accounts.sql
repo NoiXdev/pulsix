@@ -119,7 +119,10 @@ SELECT
   EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL) AS totp,
   (SELECT count(*) FROM passkeys p WHERE p.user_id = u.id) AS passkeys,
   (SELECT count(*) FROM recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL) AS recovery_codes_left,
-  (SELECT count(*) FROM sessions s WHERE s.user_id = u.id AND s.mfa_complete AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+  (SELECT count(*) FROM sessions s WHERE s.user_id = u.id AND s.mfa_complete AND s.revoked_at IS NULL AND s.expires_at > now()
+     AND NOT (s.password_only AND (
+       EXISTS (SELECT 1 FROM totp_secrets st WHERE st.user_id = s.user_id AND st.confirmed_at IS NOT NULL)
+       OR EXISTS (SELECT 1 FROM passkeys sp WHERE sp.user_id = s.user_id)))) AS active_sessions,
   (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
 FROM users u
 WHERE u.id = $1;

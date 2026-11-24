@@ -78,6 +78,9 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- through the CTE so the lock is taken first; left to itself the update ran
 -- first, and the CTE's FOR UPDATE then skipped a row this statement had
 -- already changed and read nothing at all.
+-- A password-only session that a factor has superseded (GetSession's
+-- password_superseded, PULSIX_MFA_OPTIONAL) reads as not yet complete here:
+-- proving the factor completes the sign-in, so it stamps (backlog 3.113).
 -- A revoked or expired session matches nothing (backlog 7.109): an
 -- administrator's second-factor reset revokes every session of the account,
 -- and a request that resolved its session before the reset must not be able
@@ -85,7 +88,11 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- revocation that commits while this statement waits for the row lock is
 -- seen: the row is re-read and no longer qualifies.
 WITH previous AS (
-    SELECT s.id, s.user_id, s.mfa_complete FROM sessions s
+    SELECT s.id, s.user_id,
+        (s.mfa_complete AND NOT (s.password_only AND (
+            EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = s.user_id AND t.confirmed_at IS NOT NULL)
+            OR EXISTS (SELECT 1 FROM passkeys pk WHERE pk.user_id = s.user_id)))) AS mfa_complete
+    FROM sessions s
     WHERE s.id = sqlc.arg(id) AND s.revoked_at IS NULL AND s.expires_at > now()
     FOR UPDATE
 ), stamp AS (
