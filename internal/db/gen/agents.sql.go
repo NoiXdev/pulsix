@@ -635,10 +635,11 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => GREATEST($7::double precision,
-          $8::double precision * COALESCE(heartbeat_interval_s, 0)))
+      OR last_seen < now() - make_interval(secs => LEAST($7::double precision,
+          GREATEST($8::double precision,
+            $9::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
-WHERE cert_serial = $9
+WHERE cert_serial = $10
 `
 
 type RecordAgentHeartbeatParams struct {
@@ -648,6 +649,7 @@ type RecordAgentHeartbeatParams struct {
 	LocalChecks               []byte   `json:"local_checks"`
 	LocalCheckProblems        []string `json:"local_check_problems"`
 	ReconnectGapSeconds       float64  `json:"reconnect_gap_seconds"`
+	BufferWindowSeconds       float64  `json:"buffer_window_seconds"`
 	OnlineWindowFloorSeconds  float64  `json:"online_window_floor_seconds"`
 	HeartbeatsPerOnlineWindow float64  `json:"heartbeats_per_online_window"`
 	Serial                    string   `json:"serial"`
@@ -668,6 +670,7 @@ func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeart
 		arg.LocalChecks,
 		arg.LocalCheckProblems,
 		arg.ReconnectGapSeconds,
+		arg.BufferWindowSeconds,
 		arg.OnlineWindowFloorSeconds,
 		arg.HeartbeatsPerOnlineWindow,
 		arg.Serial,
@@ -736,15 +739,17 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => GREATEST($3::double precision,
-          $4::double precision * COALESCE(heartbeat_interval_s, 0)))
+      OR last_seen < now() - make_interval(secs => LEAST($3::double precision,
+          GREATEST($4::double precision,
+            $5::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
-WHERE cert_serial = $5
+WHERE cert_serial = $6
 `
 
 type TouchAgentBySerialParams struct {
 	Version                   string  `json:"version"`
 	ReconnectGapSeconds       float64 `json:"reconnect_gap_seconds"`
+	BufferWindowSeconds       float64 `json:"buffer_window_seconds"`
 	OnlineWindowFloorSeconds  float64 `json:"online_window_floor_seconds"`
 	HeartbeatsPerOnlineWindow float64 `json:"heartbeats_per_online_window"`
 	Serial                    string  `json:"serial"`
@@ -774,11 +779,16 @@ type TouchAgentBySerialParams struct {
 // backlog 3.58): heartbeats_per_online_window of the agent's reported
 // heartbeat interval (heartbeat_interval_s, 00119), never less than
 // online_window_floor_seconds, which is the whole window when the agent
-// never reported its interval.
+// never reported its interval. The gap that restarts the period is also
+// capped at buffer_window_seconds (agents.DisconnectBufferWindow): after
+// a gap the agent's disconnect buffer could not hold, its replay has lost
+// the head of the gap, and the replay hold (backlog 3.118) only arms on a
+// new period. The online verdict keeps the full window.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
 	_, err := q.db.Exec(ctx, touchAgentBySerial,
 		arg.Version,
 		arg.ReconnectGapSeconds,
+		arg.BufferWindowSeconds,
 		arg.OnlineWindowFloorSeconds,
 		arg.HeartbeatsPerOnlineWindow,
 		arg.Serial,

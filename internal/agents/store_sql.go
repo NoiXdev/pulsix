@@ -242,11 +242,13 @@ const reconnectGap = 24 * time.Hour
 // Touch writes last_seen and version, the connection start (reconnectGap)
 // and the online period's start (backlog 3.57), which a gap longer than
 // the agent's own online window (OnlineWindow, computed per row from its
-// stored heartbeat interval) restarts.
+// stored heartbeat interval) or than DisconnectBufferWindow, whichever is
+// shorter, restarts.
 func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
 		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
+		BufferWindowSeconds: DisconnectBufferWindow.Seconds(),
 	})
 }
 
@@ -259,6 +261,7 @@ func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secret
 	p := gen.RecordAgentHeartbeatParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
 		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
+		BufferWindowSeconds: DisconnectBufferWindow.Seconds(),
 	}
 	if secrets.Known {
 		names := secrets.Names

@@ -119,7 +119,11 @@ RETURNING *;
 -- backlog 3.58): heartbeats_per_online_window of the agent's reported
 -- heartbeat interval (heartbeat_interval_s, 00119), never less than
 -- online_window_floor_seconds, which is the whole window when the agent
--- never reported its interval.
+-- never reported its interval. The gap that restarts the period is also
+-- capped at buffer_window_seconds (agents.DisconnectBufferWindow): after
+-- a gap the agent's disconnect buffer could not hold, its replay has lost
+-- the head of the gap, and the replay hold (backlog 3.118) only arms on a
+-- new period. The online verdict keeps the full window.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   connected_since = CASE
     WHEN connected_since IS NULL
@@ -128,8 +132,9 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
-          sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0)))
+      OR last_seen < now() - make_interval(secs => LEAST(sqlc.arg(buffer_window_seconds)::double precision,
+          GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
+            sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
@@ -154,8 +159,9 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
-          sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0)))
+      OR last_seen < now() - make_interval(secs => LEAST(sqlc.arg(buffer_window_seconds)::double precision,
+          GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
+            sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 

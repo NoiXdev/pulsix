@@ -31,7 +31,8 @@ type HostPresence struct {
 	AgentLastSeen time.Time
 	// AgentOnlineSince is when the agent's current online period began
 	// (host_agents.online_since, 00092: reset by the first touch after a
-	// gap longer than the agent's online window), or zero when unknown. It is not
+	// gap longer than the agent's online window or its disconnect buffer
+	// window, whichever is shorter), or zero when unknown. It is not
 	// connected_since (00088), which spans gaps of up to 24 hours — a
 	// notebook shut down overnight keeps that one, and its 1-hour checks
 	// would read unknown every morning.

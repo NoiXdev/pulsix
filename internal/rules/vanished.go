@@ -86,12 +86,14 @@ func (n ItemNewest) Vanished(t Tuple, at time.Time, interval time.Duration) bool
 //
 // since is the start of the agent's current online period
 // (HostPresence.AgentOnlineSince): the first touch after a gap longer than
-// the agent's online window (agents.OnlineWindow) restarts it, and the
-// stream's own opening touch comes before the replay. agentNewest is the
-// host's newest reading of a check its agent runs, an error included (zero
-// when there is none): because nothing live goes out before the replay is
-// through, the first such reading taken at or after since ends the replay
-// for the whole host — every item, including one that never reports again.
+// the agent's online window (agents.OnlineWindow) or its disconnect buffer
+// window (agents.DisconnectBufferWindow), whichever is shorter, restarts
+// it, and the stream's own opening touch comes before the replay.
+// agentNewest is the host's newest reading of a check its agent runs, an
+// error included (zero when there is none): because nothing live goes out
+// before the replay is through, the first such reading taken at or after
+// since ends the replay for the whole host — every item, including one
+// that never reports again.
 //
 // The hold also ends replayHoldCap after since, whatever arrived: a
 // connected agent that reports nothing live, or one whose clock runs

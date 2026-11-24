@@ -20,21 +20,32 @@ const (
 	OnlineWindowFloor         = HeartbeatsPerOnlineWindow * HeartbeatInterval
 )
 
-// The agent's own bounds on PULSIX_HEARTBEAT_INTERVAL (internal/agent's
-// config): a report outside them is not something a real agent sends.
+// MinReportedHeartbeatInterval and MaxReportedHeartbeatInterval are the
+// agent's own bounds on PULSIX_HEARTBEAT_INTERVAL (internal/agent's
+// config, which a test there ties to these): a report outside them is not
+// something a real agent sends.
 const (
-	minReportedHeartbeatInterval = 5 * time.Second
-	maxReportedHeartbeatInterval = 10 * time.Minute
+	MinReportedHeartbeatInterval = 5 * time.Second
+	MaxReportedHeartbeatInterval = 10 * time.Minute
 )
+
+// DisconnectBufferWindow is how much the agent buffers while it is
+// disconnected (internal/agent's bufferWindow, which a test there ties to
+// this). A gap longer than it always starts a new online period, however
+// long the agent's online window is: the agent's replay has lost the head
+// of such a gap, which is what the replay hold (backlog 3.118, rules'
+// HostReplaying) exists for, and the hold only arms on a new period. The
+// online verdict itself keeps the agent's full window.
+const DisconnectBufferWindow = 15 * time.Minute
 
 // OnlineWindow is how long after its last contact an agent still counts
 // as online (backlog 3.58): HeartbeatsPerOnlineWindow of its reported
 // heartbeat interval, never less than OnlineWindowFloor; nil (never
 // reported) is the floor. The SQL that judges online on its own — the
-// online period's start in Touch and Heartbeat, the rule evaluation's
-// presence read — computes the same window per row from
-// host_agents.heartbeat_interval_s with these two constants as its
-// parameters.
+// online period's start in Touch and Heartbeat (which also caps the gap at
+// DisconnectBufferWindow), the rule evaluation's presence read — computes
+// the same window per row from host_agents.heartbeat_interval_s with these
+// two constants as its parameters.
 func OnlineWindow(interval *time.Duration) time.Duration {
 	if interval == nil {
 		return OnlineWindowFloor
@@ -59,7 +70,7 @@ func isOnline(lastSeen *time.Time, interval *time.Duration, now time.Time) bool 
 func (s *Service) RecordHeartbeatInterval(ctx context.Context, serial string, seconds int32) error {
 	var interval *time.Duration
 	if seconds > 0 {
-		d := min(max(time.Duration(seconds)*time.Second, minReportedHeartbeatInterval), maxReportedHeartbeatInterval)
+		d := min(max(time.Duration(seconds)*time.Second, MinReportedHeartbeatInterval), MaxReportedHeartbeatInterval)
 		interval = &d
 	}
 	return s.store.RecordHeartbeatInterval(ctx, serial, interval)

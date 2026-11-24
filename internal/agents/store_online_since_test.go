@@ -6,6 +6,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/rules"
 )
 
 // TestOnlineSinceTracksTheOnlinePeriod walks one agent through the start
@@ -248,5 +249,87 @@ func TestOnlineWindowFollowsTheAgentsHeartbeatInterval(t *testing.T) {
 	}
 	if o := onlineSince(); o.Equal(start) {
 		t.Fatal("touch 100 s after the last one without an interval: online_since kept, want a new period")
+	}
+}
+
+// TestOnlinePeriodRestartsWithinTheBufferWindow (backlog 3.58, review I1):
+// an agent whose online window is longer than its disconnect buffer
+// (agents.DisconnectBufferWindow, 15 min) still starts a new online period
+// after a gap the buffer could not hold — its replay has lost the head of
+// the gap, so the 3.118 replay hold must arm. The online verdict keeps the
+// agent's full window. A 600 s agent (a 30 min window) keeps its period
+// across a 10 min gap and starts a new one after 20 min, by touch and by
+// heartbeat alike; a default agent is unchanged (TestOnlineSinceTracksTheOnlinePeriod).
+func TestOnlinePeriodRestartsWithinTheBufferWindow(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-online-buffer")
+	h := createHost(t, d, org, zone, "nb-3")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-c", "v1", "9601")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecordHeartbeatInterval(ctx, "9601", 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Touch(ctx, "9601", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	// rewind moves last_seen back by seenAgo and online_since an hour; it
+	// returns both as stored.
+	rewind := func(seenAgo time.Duration) (seen, online time.Time) {
+		t.Helper()
+		if err := d.Pool().QueryRow(ctx, `
+			UPDATE host_agents SET last_seen = now() - make_interval(secs => $2::float8),
+			  online_since = now() - interval '1 hour'
+			WHERE host_id = $1 RETURNING last_seen, online_since`, h.ID, seenAgo.Seconds()).Scan(&seen, &online); err != nil {
+			t.Fatal(err)
+		}
+		return seen, online
+	}
+	onlineSince := func() time.Time {
+		t.Helper()
+		var o time.Time
+		if err := d.Pool().QueryRow(ctx, `SELECT online_since FROM host_agents WHERE host_id = $1`, h.ID).Scan(&o); err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	scoped := db.WithOrgScope(ctx, org)
+	for _, write := range []struct {
+		name string
+		do   func() error
+	}{
+		{"touch", func() error { return svc.Touch(ctx, "9601", "v1") }},
+		{"heartbeat", func() error {
+			return svc.Heartbeat(ctx, "9601", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"})
+		}},
+	} {
+		_, start := rewind(10 * time.Minute)
+		if v, err := svc.ViewByHost(scoped, org, h.ID); err != nil || !v.Online {
+			t.Fatalf("10 min after the last contact of a 600 s agent: online = %v, %v; want online", v.Online, err)
+		}
+		if err := write.do(); err != nil {
+			t.Fatal(err)
+		}
+		if o := onlineSince(); !o.Equal(start) {
+			t.Fatalf("%s 10 min after the last one, 600 s interval: online_since = %v, want it kept at %v", write.name, o, start)
+		}
+
+		lastReading, start := rewind(20 * time.Minute)
+		if v, err := svc.ViewByHost(scoped, org, h.ID); err != nil || !v.Online {
+			t.Fatalf("20 min after the last contact of a 600 s agent: online = %v, %v; want online (the verdict keeps the 30 min window)",
+				v.Online, err)
+		}
+		if err := write.do(); err != nil {
+			t.Fatal(err)
+		}
+		since := onlineSince()
+		if since.Equal(start) || !since.After(lastReading) {
+			t.Fatalf("%s 20 min after the last one, 600 s interval: online_since = %v, want a new period after %v",
+				write.name, since, lastReading)
+		}
+		// The new period is what arms the replay hold: the host's newest
+		// reading predates it until the replay is through.
+		if !rules.HostReplaying(since, lastReading, since.Add(time.Second)) {
+			t.Fatalf("%s after a 20 min gap: the replay hold is off, want it armed", write.name)
+		}
 	}
 }
