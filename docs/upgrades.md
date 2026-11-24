@@ -661,6 +661,13 @@ proto change:
   an internal error instead of silently starting fewer follow-ups. Ids are
   always written by the manager, so this guards against corruption only.
 
+The token edit loose ends (2.125) add no migration, table, backup or proto
+change. Two answers of the token edit change for API clients: a token that
+expires between the server's read and its write now answers `409` like any
+expired token (it answered `404`), and a name of only spaces is refused with
+`422` (it was stored). The SPA shows why an expired token's *Edit* is disabled
+and describes each assistant area under its name.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
