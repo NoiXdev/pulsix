@@ -84,8 +84,10 @@ func withoutFacts(doc map[string]any) map[string]any {
 // varsDigest is the HMAC-SHA256, under the server-side VarsKey, of the
 // values the run would receive: the targets' rendered inventory (group and
 // membership vars, parents included, secrets revealed, and each host's
-// connection) and the template's extra vars (secrets opened). Any change
-// to a value changes it, a secret included, while the digest the browser
+// connection) and the template's extra vars (secrets opened). Gathered
+// host facts (pulsix_facts) are left out, see withoutFacts: a machine
+// refreshes them, no person sets or reviews them. Any change to any other
+// value changes it, a secret included, while the digest the browser
 // sees cannot be tested against a guessed secret without the key. The
 // request id is part of the input, so the digest of one request cannot be
 // compared with another's over the same values (a guess planted on a copy

@@ -36,7 +36,10 @@ func (m *memStore) Insert(_ context.Context, r runrequests.Request) error {
 }
 
 func (m *memStore) InsertCapped(ctx context.Context, r runrequests.Request, limit int, now time.Time) error {
-	n, _ := m.CountPending(ctx, r.OrgID, r.RequestedByToken, now)
+	n, err := m.CountPending(ctx, r.OrgID, r.RequestedByToken, now)
+	if err != nil {
+		return err
+	}
 	if n >= limit {
 		return runrequests.ErrTooManyPending
 	}

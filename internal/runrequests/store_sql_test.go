@@ -376,4 +376,9 @@ func TestSQLStoreInsertCappedIsExact(t *testing.T) {
 	if err := store.InsertCapped(f.ctx, mk(&other), runrequests.MaxPendingPerToken, now); err != nil {
 		t.Fatalf("another token: %v", err)
 	}
+	for i := range runrequests.MaxPendingPerToken + 1 {
+		if err := store.InsertCapped(f.ctx, mk(nil), runrequests.MaxPendingPerToken, now); err != nil {
+			t.Fatalf("without a token, request %d: %v", i+1, err)
+		}
+	}
 }
