@@ -24,6 +24,11 @@ import (
 // MaskedSecret replaces every secret value in a preview.
 const MaskedSecret = "********"
 
+// FactsKey is the host var a host's gathered facts are rendered under. The
+// run request vars digest (internal/runrequests) strips exactly this key,
+// so it must stay the one name the renderer uses.
+const FactsKey = "pulsix_facts"
+
 // Where a host's jump host came from. A group source reads "group:<name>".
 const (
 	SourceHost = "host"
@@ -280,7 +285,7 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 		}
 	}
 	if len(h.Facts) > 0 {
-		vars["pulsix_facts"] = inertFacts(h.Facts)
+		vars[FactsKey] = inertFacts(h.Facts)
 	}
 	return vars, conn, nil
 }

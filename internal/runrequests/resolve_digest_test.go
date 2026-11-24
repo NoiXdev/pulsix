@@ -205,3 +205,39 @@ func TestVarsDigestIgnoresGatheredFacts(t *testing.T) {
 		t.Fatal("a var change left the vars digest unchanged")
 	}
 }
+
+// TestVarsDigestIgnoresRenderedFacts feeds the digest a document the real
+// renderer made, so a renamed or moved facts key cannot silently put the
+// facts back into the digest: a facts refresh leaves it unchanged, the
+// facts are in the rendered document under render.FactsKey, and a real
+// host var (the address) still moves the digest.
+func TestVarsDigestIgnoresRenderedFacts(t *testing.T) {
+	w := newWorld()
+	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x}
+	host, zone := id(), id()
+	renderWith := func(kernel, address string) {
+		t.Helper()
+		inv, err := render.Render(render.Input{
+			Hosts: []render.Host{{ID: host, ZoneID: zone, Name: "web-1", Address: address, Managed: true, Facts: map[string]any{"kernel": kernel}}},
+			Scope: render.Scope{HostIDs: []uuid.UUID{host}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hv := inv.Doc["_meta"].(map[string]any)["hostvars"].(map[string]any)["web-1"].(map[string]any)
+		if _, ok := hv[render.FactsKey]; !ok {
+			t.Fatalf("the rendered host vars carry no %q: %v", render.FactsKey, hv)
+		}
+		w.inv.doc = inv.Doc
+	}
+	renderWith("6.1", "10.0.0.1")
+	before := w.picture(t, req).VarsDigest
+	renderWith("6.8", "10.0.0.1")
+	if after := w.picture(t, req).VarsDigest; after != before {
+		t.Fatal("a facts refresh in a rendered document changed the vars digest")
+	}
+	renderWith("6.8", "10.0.0.2")
+	if after := w.picture(t, req).VarsDigest; after == before {
+		t.Fatal("an address change left the vars digest unchanged")
+	}
+}

@@ -37,9 +37,6 @@ func VarsDigestKey(masterKey [32]byte) []byte {
 	return key
 }
 
-// factsKey is the hostvar the renderer files a host's gathered facts under.
-const factsKey = "pulsix_facts"
-
 // withoutFacts returns doc with every host's gathered facts removed, on a
 // copy of the parts it changes: facts are gathered by the machine, not set
 // or reviewed by a person, so a refresh between approval and claim must not
@@ -62,7 +59,7 @@ func withoutFacts(doc map[string]any) map[string]any {
 		}
 		cp := make(map[string]any, len(vars))
 		for k, val := range vars {
-			if k != factsKey {
+			if k != render.FactsKey {
 				cp[k] = val
 			}
 		}
@@ -85,7 +82,7 @@ func withoutFacts(doc map[string]any) map[string]any {
 // values the run would receive: the targets' rendered inventory (group and
 // membership vars, parents included, secrets revealed, and each host's
 // connection) and the template's extra vars (secrets opened). Gathered
-// host facts (pulsix_facts) are left out, see withoutFacts: a machine
+// host facts (render.FactsKey) are left out, see withoutFacts: a machine
 // refreshes them, no person sets or reviews them. Any change to any other
 // value changes it, a secret included, while the digest the browser
 // sees cannot be tested against a guessed secret without the key. The
