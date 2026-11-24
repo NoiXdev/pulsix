@@ -668,6 +668,15 @@ like any expired token (it answered `404`), and a name of only spaces is refused
 `422` (it was stored). The SPA shows why an expired token's *Edit* is disabled
 and describes each assistant area under its name.
 
+Small loose ends (2.127 (2)(4), 2.129) add no migration, table, backup or proto
+change. Job responses gain a read-only `withdrawn_at_claim` boolean (true for a
+job refused at its first claim because its run request's approval was
+withdrawn; such a job ran nothing, and the SPA shows it as "Not run — approval
+withdrawn"); older clients ignore it. Creating an organization token with an
+empty or blank name answers `422` (a blank name was stored before). The pending
+badge on a new SPA remembers an older manager's missing count route for ten
+minutes instead of asking it on every poll.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
