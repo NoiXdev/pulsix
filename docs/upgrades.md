@@ -594,7 +594,8 @@ backup change and no proto change; workers and agents are not affected. What the
   its claim, and a detail and an approval served by different versions answer
   409 "changed". All managers already share the master key.
 - **New route `GET /api/v1/orgs/{org}/run-requests/pending-count`** (`{count}`,
-  the list's permission). A new SPA that reaches an older manager gets 404 there:
+  the list's permission). A new SPA that reaches an older manager gets 400 there
+  (rc.3 to rc.5 read `pending-count` as a request id) or 404 (earlier ones):
   the navigation badge, the Runs page and the run request list's pending count
   then count the pending list instead (backlog 2.126),
   which an older manager caps at 500 rows before filtering, so the number can
@@ -674,8 +675,8 @@ job refused at its first claim because its run request's approval was
 withdrawn; such a job ran nothing, and the SPA shows it as "Not run — approval
 withdrawn"); older clients ignore it. Creating an organization token with an
 empty or blank name answers `422` (a blank name was stored before). The pending
-badge on a new SPA remembers an older manager's missing count route for ten
-minutes instead of asking it on every poll.
+badge on a new SPA treats an older manager's `400` or `404` on the count route
+alike and remembers it for ten minutes instead of asking on every poll.
 
 ## Behaviour changes to check after an upgrade
 
