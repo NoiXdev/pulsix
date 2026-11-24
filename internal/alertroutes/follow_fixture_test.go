@@ -249,7 +249,9 @@ func (e *followEnv) openAlert(severity rules.State) uuid.UUID {
 }
 
 // maintenanceWindow puts the fixture's host into a one-off maintenance
-// window covering [start, end).
+// window covering [start, end), created at the fixture clock's now — the
+// escalation fold ignores a stretch that ended before its window existed
+// (backlog 4.41), so the creation instant is part of the fixture.
 func (e *followEnv) maintenanceWindow(host uuid.UUID, start, end time.Time) uuid.UUID {
 	e.t.Helper()
 	return e.windowWithReason(host, start, end, "maintenance")
@@ -271,9 +273,9 @@ func (e *followEnv) windowWithReason(host uuid.UUID, start, end time.Time, reaso
 	e.seq++
 	id := uuid.Must(uuid.NewV7())
 	if _, err := e.d.Pool().Exec(context.Background(), `
-		INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, starts_at, ends_at, reason)
-		VALUES ($1, $2, $3, 'host', $4, $5, $6, $7)`,
-		id, e.org, fmt.Sprintf("window-%d", e.seq), host, start, end, reason); err != nil {
+		INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, starts_at, ends_at, reason, created_at, updated_at)
+		VALUES ($1, $2, $3, 'host', $4, $5, $6, $7, $8, $8)`,
+		id, e.org, fmt.Sprintf("window-%d", e.seq), host, start, end, reason, e.clock.Now()); err != nil {
 		e.t.Fatalf("create %s window: %v", reason, err)
 	}
 	return id

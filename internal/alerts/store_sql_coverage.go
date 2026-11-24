@@ -32,6 +32,16 @@ const stretchPage = 64
 // no stretch ended in that range. A stretch still running at to has not
 // ended and does not count; one ending exactly at to does.
 //
+// Nor does a stretch that ended at or before its window's own created_at
+// (final review of backlog 4.41, Important 1). The question is "when did a
+// mute last lift", and a stretch that was over before anyone entered its
+// window never muted anything: a one-off window recorded after the fact
+// with past times, or a new recurring window whose stretch today already
+// passed. A window created mid-stretch muted the rest of it, so its end
+// still counts. Edits are not covered the same way — updated_at says when
+// a row last changed, not what it said before — so a window shortened or
+// moved after the fact is read as it stands today.
+//
 // Only the latest end is kept, never the stretches themselves: a dense
 // recurring window has thousands of stretches in a long range, and the
 // escalation anchor needs one instant. The walk is still proportional to
@@ -63,7 +73,7 @@ func (s *SQLStore) LatestCoverageEnd(ctx context.Context, orgID, hostID uuid.UUI
 }
 
 // latestEndBetween is LatestCoverageEnd for one row: the latest end in
-// (from, to] of r's stretches, paging through maintenance.Occurrences
+// (from, to] of r's stretches that ended after r was created, paging through maintenance.Occurrences
 // until it reports no truncation. Each page restarts at the last
 // stretch's end: every stretch of one window has the same duration, so
 // the next one Occurrences finds from there is the first that started
@@ -82,8 +92,10 @@ func latestEndBetween(r gen.MaintenanceWindow, from, to time.Time) (time.Time, b
 		}
 		for _, o := range page {
 			// Occurrences returns stretches overlapping [from, to), so
-			// every End is after from; one past to is still running.
-			if !o.End.After(to) && (!found || o.End.After(latest)) {
+			// every End is after from; one past to is still running, and
+			// one at or before created_at was over before the window
+			// existed.
+			if !o.End.After(to) && o.End.After(r.CreatedAt) && (!found || o.End.After(latest)) {
 				latest, found = o.End, true
 			}
 		}

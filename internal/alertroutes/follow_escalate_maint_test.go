@@ -34,15 +34,16 @@ func (e *followEnv) tickAt(at time.Time) {
 }
 
 // recurringMaintenanceWindow puts the fixture's host into a recurring
-// maintenance window: cron in UTC, each stretch lasting duration.
+// maintenance window: cron in UTC, each stretch lasting duration, created
+// at the fixture clock's now.
 func (e *followEnv) recurringMaintenanceWindow(cron string, duration time.Duration) uuid.UUID {
 	e.t.Helper()
 	e.seq++
 	id := uuid.Must(uuid.NewV7())
 	if _, err := e.d.Pool().Exec(context.Background(), `
-		INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, cron, duration_seconds, timezone, reason)
-		VALUES ($1, $2, $3, 'host', $4, $5, $6, 'UTC', 'maintenance')`,
-		id, e.org, fmt.Sprintf("window-%d", e.seq), e.host, cron, int(duration/time.Second)); err != nil {
+		INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, cron, duration_seconds, timezone, reason, created_at, updated_at)
+		VALUES ($1, $2, $3, 'host', $4, $5, $6, 'UTC', 'maintenance', $7, $7)`,
+		id, e.org, fmt.Sprintf("window-%d", e.seq), e.host, cron, int(duration/time.Second), e.clock.Now()); err != nil {
 		e.t.Fatalf("create recurring maintenance window: %v", err)
 	}
 	return id
@@ -225,5 +226,42 @@ func TestAWindowEndingExactlyAtATickHoldsTheRung(t *testing.T) {
 	env.tickAt(t0.Add(11 * time.Minute))
 	if n := env.deliveriesTo(route, 1); n != 1 {
 		t.Fatalf("rung 1 fired %d time(s) at t0+11m, want 1", n)
+	}
+}
+
+// TestAWindowEnteredAfterTheFactHoldsNothing is the final review's
+// Important 1: a stretch that was already over when its window was
+// created never muted anything, so it must not restart the rung's delay —
+// neither a one-off window entered with past times (recording a reboot
+// after it happened) nor a new recurring window whose stretch today has
+// already passed. Both are created at t0+4m; the rung fires at base+5m.
+func TestAWindowEnteredAfterTheFactHoldsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		window func(env *followEnv, t0 time.Time)
+	}{
+		{"back-dated one-off", func(env *followEnv, t0 time.Time) {
+			env.maintenanceWindow(env.host, t0.Add(time.Minute), t0.Add(2*time.Minute))
+		}},
+		{"new recurring, today's stretch over", func(env *followEnv, _ time.Time) {
+			env.recurringMaintenanceWindow("2 10 * * *", time.Minute) // [10:02, 10:03) daily
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newFollowEnv(t)
+			t0 := escalationTimeline
+			env.clock.set(t0)
+			env.openCritAlert()
+			route := env.routeWithSteps([]alertroutes.Step{
+				{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{env.channel}},
+			})
+			env.tickAt(t0)
+			env.clock.set(t0.Add(4 * time.Minute))
+			tc.window(env, t0) // created at t0+4m, after the stretch ended
+			env.tickAt(t0.Add(5 * time.Minute))
+			if n := env.deliveriesTo(route, 1); n != 1 {
+				t.Fatalf("rung 1 fired %d time(s) at base+5m, want 1 — the window was created after its stretch ended", n)
+			}
+		})
 	}
 }

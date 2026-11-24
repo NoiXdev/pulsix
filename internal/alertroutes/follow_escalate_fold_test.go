@@ -39,7 +39,7 @@ func (f *fakeCoverage) LatestCoverageEnd(_ context.Context, _, _ uuid.UUID, from
 // TestFoldMaintenanceAnchor is the fold's own contract (backlog 4.41,
 // review Important 1): a chain not yet due by its plain anchor costs no
 // coverage read at all, since the fold can only move the anchor later; a
-// naively due chain reads exactly [now - delay, now]; and only an end
+// naively due chain reads exactly (now - delay, now]; and only an end
 // later than the current LastUrgentAt moves it.
 func TestFoldMaintenanceAnchor(t *testing.T) {
 	t.Parallel()

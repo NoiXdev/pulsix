@@ -223,8 +223,22 @@ func (f *Follower) dueStep(ctx context.Context, res *resolution, orgID uuid.UUID
 // due chain, now - delay is at or after the plain anchor, and the read
 // covers exactly (now - delay, now]: an occurrence ending at or before
 // now - delay leaves end + delay <= now, so it could not hold the rung
-// either. The walk is therefore one rung's delay long, and only on the
-// ticks between a rung coming naively due and actually firing.
+// either. The walk is therefore one rung's delay long, and it runs on
+// every tick for as long as the chain stays naively due: from the tick a
+// rung first comes due until it fires — and, for a chain a recurring
+// window keeps holding (below), on every tick while that window recurs.
+//
+// A recurring window whose stretches repeat more often than a rung's
+// delay therefore holds that rung for as long as the window keeps
+// recurring: every stretch end restarts the full delay, which is decision
+// 5's rule ("a step gets its full delay after the last thing that made
+// this alert newly urgent") applied to each stretch. A host under a
+// */15 one-minute silence never reaches a 30-minute rung, and a nightly
+// two-hour window holds a 24-hour rung indefinitely. Confirmed as
+// intended (final review of backlog 4.41, Important 2).
+//
+// A stretch that ended before its window was created is no mute at all
+// and holds nothing (LatestCoverageEnd's own doc comment).
 func (f *Follower) foldMaintenanceAnchor(ctx context.Context, orgID, hostID uuid.UUID, cs ChainState, now time.Time) (ChainState, error) {
 	step, due := DueStep(cs, now)
 	if !due {
