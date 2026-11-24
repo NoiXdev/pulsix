@@ -187,13 +187,15 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 		return err
 	}
 
-	// Replay whatever the disconnect buffer accumulated, in order, with
-	// its original timestamps, before this session starts routing newly
+	// Replay whatever the disconnect buffers accumulated, in order, with
+	// their original timestamps, before this session starts routing newly
 	// collected results — the whole point of buffering ("Sample
-	// delivery"). This also makes sender the scheduler's live
-	// destination; both happen under one lock so no result produced
-	// during the replay can slip into the buffer and sit there
-	// undelivered until the NEXT reconnect (see activateSender).
+	// delivery"). This also makes sender the live destination of check
+	// and probe results; the drain, the replay and the install happen
+	// under routeMu, the lock under which the sinks decide to buffer and
+	// buffer, so no result can land in a drained ring and sit there
+	// undelivered until the NEXT reconnect (activateSender,
+	// routeResults).
 	if err := l.activateSender(sender); err != nil {
 		cancel()
 		l.drainRecv(recvErr)
@@ -340,14 +342,15 @@ func (l *Loop) sendHeartbeat(sender *streamSender) error {
 	}})
 }
 
-// activateSender drains the disconnect buffer and replays it over sender
-// before making sender the scheduler's live destination — both under
-// routeMu, so a result produced by a scheduler goroutine between the
-// drain and the activation cannot be added to the (by-then-empty) buffer
-// and left there undelivered until the next reconnect: handleResults
-// blocks on the same lock and only ever observes the fully-settled
-// state, either "buffer, no sender yet" or "sender is live," never a
-// state in between.
+// activateSender drains the disconnect buffer and the probe ring and
+// replays them over sender before making sender the live destination of
+// both sinks — all under routeMu. That is only half of what keeps a
+// result from being left in a ring the activation already drained, with
+// a live sender in front of it until the next reconnect: the other half
+// is routeResults deciding to buffer and buffering under the same lock
+// (backlog 3.80). Together, every result is either in a ring before the
+// drain, and replayed here, or routed after the install, and sent live.
+// A sink that routes while this runs waits on the lock for the replay.
 func (l *Loop) activateSender(sender *streamSender) error {
 	l.routeMu.Lock()
 	defer l.routeMu.Unlock()
@@ -377,6 +380,9 @@ func (l *Loop) activateSender(sender *streamSender) error {
 	if err := l.replayProbeResults(sender); err != nil {
 		return fmt.Errorf("replay buffered probe results: %w", err)
 	}
+	if l.beforeInstall != nil {
+		l.beforeInstall()
+	}
 	l.sender = sender
 	return nil
 }
@@ -398,34 +404,21 @@ func (l *Loop) deactivateSender(sender *streamSender) {
 
 // handleResults is the scheduler's sink: it routes one completed check's
 // results to the current session's sender, or, when no stream is up (or
-// the send just failed), to the disconnect buffer. This is the one
-// function called from the scheduler's own per-check goroutines, never
-// from the session's main select loop.
+// the send just failed and no newer stream is live), to the disconnect
+// buffer (routeResults). This is the one function called from the
+// scheduler's own per-check goroutines, never from the session's main
+// select loop.
 func (l *Loop) handleResults(results []checks.Result) {
 	results = l.validUTF8Results(results)
 	if len(results) == 0 {
 		return
 	}
-	l.routeMu.Lock()
-	sender := l.sender
-	l.routeMu.Unlock()
-	if sender != nil {
-		sent, err := sender.sendResultsChunked(results)
-		if err == nil {
-			return
+	routeResults(l, "check results", results, (*streamSender).sendResultsChunked, func(rest []checks.Result) {
+		if dropped := l.buffer.Add(rest); dropped > 0 {
+			l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",
+				"dropped", dropped)
 		}
-		// The send failed partway — the session's own recv/send paths
-		// will notice the dead stream independently and reconnect. Only
-		// the results that did NOT go out fall back to the buffer:
-		// re-buffering a delivered chunk would write those samples twice,
-		// and re-buffering one that cannot be encoded would only fail the
-		// next reconnect's replay on it (unsentAfter).
-		results = unsentAfter(l.log, "check results", results, sent, err)
-	}
-	if dropped := l.buffer.Add(results); dropped > 0 {
-		l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",
-			"dropped", dropped)
-	}
+	})
 }
 
 // unsentAfter returns what of results goes back to the disconnect buffer

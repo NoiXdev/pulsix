@@ -72,27 +72,20 @@ func (l *Loop) applyProbeConfig(pc *agentpb.ProbeConfig) {
 
 // handleProbeResults is the probe runner's sink, handleResults' twin: one
 // round's results to the current session's sender, or to the probe ring
-// when no stream is up (or the send just failed). It runs on the runner's
-// probe goroutines.
+// when no stream is up (or the send just failed and no newer stream is
+// live), by the same routeResults. It runs on the runner's probe
+// goroutines.
 func (l *Loop) handleProbeResults(results []probes.Result) {
 	results = l.validUTF8ProbeResults(results)
 	if len(results) == 0 {
 		return
 	}
-	l.routeMu.Lock()
-	sender := l.sender
-	l.routeMu.Unlock()
-	if sender != nil {
-		sent, err := sender.sendProbeResultsChunked(results)
-		if err == nil {
-			return
+	routeResults(l, "probe results", results, (*streamSender).sendProbeResultsChunked, func(rest []probes.Result) {
+		if dropped := l.probeBuffer.Add(rest); dropped > 0 {
+			l.log.Warn("probe result buffer overflowed while disconnected; oldest samples dropped",
+				"dropped", dropped)
 		}
-		results = unsentAfter(l.log, "probe results", results, sent, err)
-	}
-	if dropped := l.probeBuffer.Add(results); dropped > 0 {
-		l.log.Warn("probe result buffer overflowed while disconnected; oldest samples dropped",
-			"dropped", dropped)
-	}
+	})
 }
 
 // replayProbeResults drains the probe ring over sender — activateSender's

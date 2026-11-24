@@ -165,10 +165,19 @@ type Loop struct {
 	shadowed []string
 
 	// routeMu guards sender: which stream session, if any, currently
-	// receives the scheduler's results. See handleResults, activateSender
-	// and deactivateSender in session.go.
+	// receives check and probe results. A sink's buffer write happens
+	// under it too, so it cannot land in a ring activateSender has drained
+	// (backlog 3.80). See routeResults (route.go), activateSender and
+	// deactivateSender (session.go).
 	routeMu sync.Mutex
 	sender  *streamSender
+	// afterRoute and beforeInstall are test seams, nil in production
+	// (route_test.go). afterRoute runs on a result sink's goroutine once
+	// routeMu is released with the batch routed; beforeInstall runs in
+	// activateSender after both replays, just before the sender goes
+	// live, with routeMu held.
+	afterRoute    func()
+	beforeInstall func()
 
 	// utf8Warn rate-limits handleResults' warning about dropped results.
 	utf8Warn invalidUTF8Warner
