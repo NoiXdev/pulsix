@@ -50,13 +50,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	if fingerprint != current {
 		return Approved{}, ErrChanged
 	}
-	started, err := selectFollowUps(p.FollowUps, followUps)
+	started, list, err := selectFollowUps(p.FollowUps, followUps)
 	if err != nil {
 		return Approved{}, err
-	}
-	list := make([]uuid.UUID, len(started))
-	for i, n := range started {
-		list[i] = uuid.MustParse(n.TemplateID)
 	}
 	at := s.now()
 	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint)

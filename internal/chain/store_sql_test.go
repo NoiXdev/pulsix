@@ -3,7 +3,9 @@ package chain_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,5 +328,21 @@ func TestParentOf(t *testing.T) {
 	p, err := e.store.ParentOf(e.scoped, e.org, group, b)
 	if err != nil || p == nil || p.ParentGroupID != group || p.TemplateName != "b" || p.ChildFirstJobID == nil {
 		t.Fatalf("parent = %+v, %v", p, err)
+	}
+}
+
+// TestListForGroupReturnsQueryErrors: a failing query surfaces wrapped,
+// never as an empty list of follow-ups.
+func TestListForGroupReturnsQueryErrors(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	group := newID()
+	e.plan(group, a, nil)
+	cancelled, cancel := context.WithCancel(e.scoped)
+	cancel()
+	got, err := e.store.ListForGroup(cancelled, e.org, group)
+	if err == nil || got != nil || !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "list follow-ups") {
+		t.Fatalf("ListForGroup on a cancelled context = %v, %v; want the wrapped error", got, err)
 	}
 }

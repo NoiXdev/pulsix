@@ -53,6 +53,8 @@ type fakeJobRunner struct {
 	retryList   *[]uuid.UUID
 	retryKey    string
 	retryCalled bool
+	// targetCalls counts RetryTargets.
+	targetCalls int
 }
 
 func (f *fakeJobRunner) LimitedRunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
@@ -64,6 +66,7 @@ func (f *fakeJobRunner) CheckRunScope(context.Context, uuid.UUID, uuid.UUID, *uu
 }
 
 func (f *fakeJobRunner) RetryTargets(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error) {
+	f.targetCalls++
 	return uuid.Nil, f.group, nil, f.retryErr
 }
 
@@ -218,6 +221,10 @@ func TestPictureFollowUpsOfARetry(t *testing.T) {
 	if got := p.FollowUps.Templates[2]; got.TemplateID != z.String() || got.Stop != runrequests.StopTooDeep {
 		t.Fatalf("third: %+v", got)
 	}
+	// The targets and the follow-up roots come from one retry lookup.
+	if fx.jobs.targetCalls != 1 {
+		t.Fatalf("RetryTargets called %d times for one picture, want 1", fx.jobs.targetCalls)
+	}
 
 	fx = newResolverFx(tmpls, true, rows, nil)
 	fx.jobs.retryErr = errors.New("nothing to retry")
@@ -227,6 +234,9 @@ func TestPictureFollowUpsOfARetry(t *testing.T) {
 	}
 	if p.FollowUps != nil {
 		t.Fatalf("retry targets error: %+v", p.FollowUps)
+	}
+	if fx.jobs.targetCalls != 1 {
+		t.Fatalf("RetryTargets called %d times for one failing picture, want 1", fx.jobs.targetCalls)
 	}
 }
 

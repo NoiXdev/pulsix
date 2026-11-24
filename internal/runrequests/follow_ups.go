@@ -130,66 +130,70 @@ func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int,
 
 // Startable is the direct follow-ups an approval can start: those without a
 // Stop, in order. None when the setting is off or the tree was truncated.
-func (f *PictureFollowUps) Startable() []uuid.UUID {
+// The picture writes every id from a uuid.UUID, so one that does not parse
+// is a fault and an error, never a follow-up quietly left out.
+func (f *PictureFollowUps) Startable() ([]uuid.UUID, error) {
+	_, ids, err := f.startable()
+	return ids, err
+}
+
+// startable is Startable with the nodes beside their parsed ids.
+func (f *PictureFollowUps) startable() ([]PictureFollowUp, []uuid.UUID, error) {
 	if f == nil || !f.Start || f.Truncated {
-		return nil
+		return nil, nil, nil
 	}
+	var nodes []PictureFollowUp
 	var ids []uuid.UUID
 	for _, t := range f.Templates {
+		id, err := uuid.Parse(t.TemplateID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("follow-up template id %q in the run picture: %w", t.TemplateID, err)
+		}
 		if t.Stop != "" {
 			continue
 		}
-		if id, err := uuid.Parse(t.TemplateID); err == nil {
-			ids = append(ids, id)
-		}
+		nodes, ids = append(nodes, t), append(ids, id)
 	}
-	return ids
+	return nodes, ids, nil
 }
 
 // selectFollowUps resolves an approval's selection against the picture's
-// follow-ups block f into the direct follow-ups to start, in picture order
-// and never nil. A nil selection is the default: every startable one when
-// the setting is on and the tree is complete, none otherwise. A given
-// selection must name startable ones only; with the setting off, no
-// follow-ups or a truncated tree, only an empty one is accepted.
-func selectFollowUps(f *PictureFollowUps, selection *[]uuid.UUID) ([]PictureFollowUp, error) {
-	out := []PictureFollowUp{}
+// follow-ups block f into the direct follow-ups to start and their parsed
+// ids, in picture order and never nil. A nil selection is the default:
+// every startable one when the setting is on and the tree is complete, none
+// otherwise. A given selection must name startable ones only; with the
+// setting off, no follow-ups or a truncated tree, only an empty one is
+// accepted. An id in f that does not parse is an error (see Startable).
+func selectFollowUps(f *PictureFollowUps, selection *[]uuid.UUID) ([]PictureFollowUp, []uuid.UUID, error) {
+	out, outIDs := []PictureFollowUp{}, []uuid.UUID{}
 	given := selection != nil && len(*selection) > 0
 	switch {
 	case f != nil && !f.Start:
 		if given {
-			return nil, fmt.Errorf("%w: approved run requests start no follow-ups in this organization", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: approved run requests start no follow-ups in this organization", ErrInvalidInput)
 		}
-		return out, nil
+		return out, outIDs, nil
 	case f != nil && f.Truncated:
 		if given {
-			return nil, fmt.Errorf("%w: too many follow-ups to show; approve without follow-ups or start them by hand", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: too many follow-ups to show; approve without follow-ups or start them by hand", ErrInvalidInput)
 		}
-		return out, nil
+		return out, outIDs, nil
 	}
-	startable := f.Startable()
+	nodes, ids, err := f.startable()
+	if err != nil {
+		return nil, nil, err
+	}
 	if selection != nil {
 		for _, id := range *selection {
-			if !slices.Contains(startable, id) {
-				return nil, fmt.Errorf("%w: follow-up %s is not one this request would start", ErrInvalidInput, id)
+			if !slices.Contains(ids, id) {
+				return nil, nil, fmt.Errorf("%w: follow-up %s is not one this request would start", ErrInvalidInput, id)
 			}
 		}
 	}
-	for _, t := range f.templates() {
-		id, err := uuid.Parse(t.TemplateID)
-		if err != nil || !slices.Contains(startable, id) {
-			continue
-		}
+	for i, id := range ids {
 		if selection == nil || slices.Contains(*selection, id) {
-			out = append(out, t)
+			out, outIDs = append(out, nodes[i]), append(outIDs, id)
 		}
 	}
-	return out, nil
-}
-
-func (f *PictureFollowUps) templates() []PictureFollowUp {
-	if f == nil {
-		return nil
-	}
-	return f.Templates
+	return out, outIDs, nil
 }

@@ -18,11 +18,11 @@ func nonNil(ids []uuid.UUID) []uuid.UUID {
 }
 
 // followUps builds the picture's follow-up tree: a run's roots are its
-// template's follow-ups, a retry's are the rows its run group holds, in
-// every state, since the retry copies them all as fresh pending rows
-// (CopyRunFollowUps); they keep their depth and path.
-func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, req Request, tmpl templates.Template) (*PictureFollowUps, error) {
-	roots, err := r.followUpRoots(ctx, orgID, req, tmpl)
+// template's follow-ups, a retry's (retry not nil) are the rows its run
+// group holds, in every state, since the retry copies them all as fresh
+// pending rows (CopyRunFollowUps); they keep their depth and path.
+func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup) (*PictureFollowUps, error) {
+	roots, err := r.followUpRoots(ctx, orgID, tmpl, retry)
 	if err != nil || len(roots) == 0 {
 		return nil, err
 	}
@@ -33,8 +33,8 @@ func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, req Request, 
 	return BuildFollowUps(ctx, start, roots, r.followUpLookup(orgID))
 }
 
-func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, req Request, tmpl templates.Template) ([]FollowUpRoot, error) {
-	if req.Kind != KindRetryFailed || req.JobID == nil {
+func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup) ([]FollowUpRoot, error) {
+	if retry == nil {
 		roots := make([]FollowUpRoot, len(tmpl.FollowUps))
 		for i, f := range tmpl.FollowUps {
 			roots[i] = FollowUpRoot{TemplateID: f.TemplateID, Name: f.Name, Depth: 1, Path: []uuid.UUID{tmpl.ID}}
@@ -42,11 +42,10 @@ func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, req Reque
 		return roots, nil
 	}
 	// A retry that can no longer run shows no follow-ups either.
-	_, group, _, err := r.src.Jobs.RetryTargets(ctx, orgID, *req.JobID)
-	if err != nil {
+	if retry.err != nil {
 		return nil, nil
 	}
-	rows, err := r.src.FollowUpRuns.ListForGroup(ctx, orgID, group)
+	rows, err := r.src.FollowUpRuns.ListForGroup(ctx, orgID, retry.group)
 	if err != nil {
 		return nil, fmt.Errorf("list follow-ups of the run group: %w", err)
 	}

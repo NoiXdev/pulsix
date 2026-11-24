@@ -216,7 +216,8 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		})
 	}
 
-	targets, err := r.targets(ctx, orgID, req, &p)
+	retry := r.retryOf(ctx, orgID, req)
+	targets, err := r.targets(ctx, orgID, req, retry, &p)
 	if err != nil {
 		return Picture{}, err
 	}
@@ -228,27 +229,46 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		return Picture{}, err
 	}
 	p.VarsDigest = digest
-	if p.FollowUps, err = r.followUps(ctx, orgID, req, tmpl); err != nil {
+	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry); err != nil {
 		return Picture{}, err
 	}
 	return p, nil
 }
 
-func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, p *Picture) ([]uuid.UUID, error) {
+// retryLookup is what one RetryTargets call told a retry's picture: the
+// run group the retry copies its follow-ups from and the failed hosts it
+// targets, or the error that says it can no longer run.
+type retryLookup struct {
+	jobID  uuid.UUID
+	group  uuid.UUID
+	failed []uuid.UUID
+	err    error
+}
+
+// retryOf looks a retry request's job up once per picture, for both its
+// targets and its follow-up roots; nil for a request that is no retry.
+func (r *Resolver) retryOf(ctx context.Context, orgID uuid.UUID, req Request) *retryLookup {
+	if req.Kind != KindRetryFailed || req.JobID == nil {
+		return nil
+	}
+	_, group, failed, err := r.src.Jobs.RetryTargets(ctx, orgID, *req.JobID)
+	return &retryLookup{jobID: *req.JobID, group: group, failed: failed, err: err}
+}
+
+func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, retry *retryLookup, p *Picture) ([]uuid.UUID, error) {
 	switch {
-	case req.Kind == KindRetryFailed && req.JobID != nil:
-		_, _, failed, err := r.src.Jobs.RetryTargets(ctx, orgID, *req.JobID)
-		if err != nil {
+	case retry != nil:
+		if retry.err != nil {
 			// A retry that can no longer run still shows; approving it fails
 			// in the retry path itself.
-			p.Retry = &PictureRetry{JobID: req.JobID.String(), FailedHosts: []string{}}
+			p.Retry = &PictureRetry{JobID: retry.jobID.String(), FailedHosts: []string{}}
 			return nil, nil
 		}
-		p.Retry = &PictureRetry{JobID: req.JobID.String()}
-		for _, id := range failed {
+		p.Retry = &PictureRetry{JobID: retry.jobID.String()}
+		for _, id := range retry.failed {
 			p.Retry.FailedHosts = append(p.Retry.FailedHosts, id.String())
 		}
-		return failed, nil
+		return retry.failed, nil
 	case req.HostID != nil:
 		return []uuid.UUID{*req.HostID}, nil
 	default:
