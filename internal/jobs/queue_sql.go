@@ -177,7 +177,8 @@ func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 // empty queue, as a payload that cannot be built does. It is a port
 // because the guard's owner (internal/runrequests) imports this package.
 // A guard refuses with ErrApprovalWithdrawn when the run's approval was
-// withdrawn (claim_withdrawn.go).
+// withdrawn (claim_withdrawn.go); that refusal is always written as the
+// fixed WithdrawnAtClaimError, which starts with the same prefix.
 type ClaimGuard interface {
 	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error
 }
