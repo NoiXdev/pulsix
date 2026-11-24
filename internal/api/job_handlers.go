@@ -50,6 +50,8 @@ type jobDTO struct {
 	CheckMode  bool       `json:"check_mode" doc:"A dry run: the play ran in check mode"`
 	DryRun     *dryRunDTO `json:"dry_run,omitempty" doc:"A dry run's options; absent for every other job"`
 	CreatedAt  time.Time  `json:"created_at"`
+
+	WithdrawnAtClaim bool `json:"withdrawn_at_claim" doc:"The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error"`
 }
 
 func toJobDTO(j jobs.Job) jobDTO {
@@ -57,6 +59,7 @@ func toJobDTO(j jobs.Job) jobDTO {
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(),
 		Trigger: j.Trigger, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun), CreatedAt: j.CreatedAt,
+		WithdrawnAtClaim: j.WithdrawnAtClaim(),
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()
@@ -81,6 +84,8 @@ type jobGroupMemberDTO struct {
 	ID     string `json:"id"`
 	ZoneID string `json:"zone_id"`
 	Status string `json:"status" enum:"queued,claimed,running,cancelling,succeeded,failed,cancelled,error"`
+
+	WithdrawnAtClaim bool `json:"withdrawn_at_claim" doc:"The sibling was refused at its first claim because its run's approval was withdrawn"`
 }
 
 // jobDetailDTO is the run view's own record: the job plus everything the
@@ -105,10 +110,12 @@ type jobDetailDTO struct {
 	Hosts      []string               `json:"hosts" doc:"The job's target host ids"`
 	Stats      map[string]any         `json:"stats"`
 	Error      string                 `json:"error,omitempty"`
-	Attempts   int                    `json:"attempts" doc:"How often the job was claimed; a requeued job's events carry their attempt"`
-	StartedAt  *time.Time             `json:"started_at,omitempty"`
-	FinishedAt *time.Time             `json:"finished_at,omitempty"`
-	CreatedAt  time.Time              `json:"created_at"`
+
+	WithdrawnAtClaim bool       `json:"withdrawn_at_claim" doc:"The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error"`
+	Attempts         int        `json:"attempts" doc:"How often the job was claimed; a requeued job's events carry their attempt"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 	// Group lists the sibling jobs of the same run group (id/zone/status),
 	// so the UI can show a grouped run.
 	Group []jobGroupMemberDTO `json:"group"`
@@ -158,6 +165,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
 		CancelStopsPlay: j.CancelStopsPlay, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun),
+		WithdrawnAtClaim: j.WithdrawnAtClaim(),
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()
@@ -183,7 +191,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		if g.ID == j.ID {
 			continue // the detail's own job is not its own sibling
 		}
-		out.Group = append(out.Group, jobGroupMemberDTO{ID: g.ID.String(), ZoneID: g.ZoneID.String(), Status: string(g.Status)})
+		out.Group = append(out.Group, jobGroupMemberDTO{ID: g.ID.String(), ZoneID: g.ZoneID.String(), Status: string(g.Status), WithdrawnAtClaim: g.WithdrawnAtClaim()})
 	}
 	return out
 }

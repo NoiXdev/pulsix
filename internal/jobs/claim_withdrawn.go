@@ -58,6 +58,11 @@ func withdrawnAtClaim(j Job) bool {
 	return j.Status == StatusError && j.Attempts == 1 && j.Error == WithdrawnAtClaimError
 }
 
+// WithdrawnAtClaim reports whether the job is one refused at its first
+// claim because its approval was withdrawn (see withdrawnAtClaim). The API
+// exposes it so a client can tell such a job from an ordinary error.
+func (j Job) WithdrawnAtClaim() bool { return withdrawnAtClaim(j) }
+
 // withdrawnAtClaimSQL is withdrawnAtClaim as a SQL condition over a jobs
 // row, the error text bound as parameter n. The sqlc queries spell the same
 // condition with a named parameter; TestWithdrawnAtClaimSQLMatchesGo pins

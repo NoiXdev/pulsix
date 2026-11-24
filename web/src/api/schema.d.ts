@@ -5963,6 +5963,8 @@ export interface components {
             trigger: "manual" | "schedule" | "webhook" | "system" | "chain";
             /** @description The schedule or webhook trigger that started the job */
             trigger_ref?: string;
+            /** @description The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error */
+            withdrawn_at_claim: boolean;
             zone_id: string;
         };
         JobDetailDTO: {
@@ -6006,6 +6008,8 @@ export interface components {
             vault_identities: components["schemas"]["JobVaultIdentityDTO"][] | null;
             /** @enum {string} */
             vault_identities_source: "recorded" | "computed";
+            /** @description The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error */
+            withdrawn_at_claim: boolean;
             worker_name?: string;
             zone_id: string;
         };
@@ -6052,6 +6056,8 @@ export interface components {
             id: string;
             /** @enum {string} */
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
+            /** @description The sibling was refused at its first claim because its run's approval was withdrawn */
+            withdrawn_at_claim: boolean;
             zone_id: string;
         };
         JobListOutputBody: {
