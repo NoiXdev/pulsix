@@ -686,6 +686,21 @@ replay is in flight (for at most 15 minutes after it reconnects, ended by its
 first live reading): alerts that used to close as `stale` and reopen with the
 next replay chunk, with two extra notifications, now stay as they are.
 
+Backlog 3.58, 3.67 and 3.71: migration 00119 adds the nullable column
+`host_agents.heartbeat_interval_s` (additive; a backup carries it), and the
+agent proto gains the additive field `Facts.heartbeat_interval_seconds`. An
+agent now counts as online for three of its own heartbeat intervals after its
+last contact, at least 90 s (`agents.OnlineWindow`); the agents list, the
+online period start the replay hold reads, and the rule evaluation's presence
+and unknown grace all use it. Version skew: an older agent sends no interval,
+so its window stays 90 s exactly as before; an older manager ignores the field
+and keeps the fixed 90 s, so during a rolling upgrade it can still show a
+rarely reporting agent offline between contacts. The first touch after an
+agent restarts with a different interval still uses the stored one; the facts
+that follow store the new one. The JSON stage of `http` checks now hands its
+slots to organizations fairly (backlog 3.71), so one organization's slow JSON
+targets no longer make another's checks report the manager too busy.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
