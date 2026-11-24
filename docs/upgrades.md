@@ -646,6 +646,20 @@ no migration, table, backup or proto change either:
   the run, its detail or its approval; a sealed value under a field that is no
   longer secret still blocks everything, anywhere in the organization.
 
+The approved-run follow-up loose ends (2.123) add no migration, table, backup or
+proto change:
+- **`PUT /api/v1/orgs/{org}/settings/assistant` takes either field on its own.**
+  `assistant_enabled` and `approved_runs_start_follow_ups` are both optional; a
+  field left out keeps its stored value, and a body with neither answers `422`.
+  The update reads and writes both in one locked transaction, so two admins
+  changing different settings at once both keep their change. An older SPA,
+  which always sends `assistant_enabled`, keeps working; a new SPA on an older
+  manager would be refused with `422` on the follow-ups switch alone (the field
+  is required there) until the request reaches an upgraded manager.
+- **A run request whose follow-up ids cannot be read fails its approval** with
+  an internal error instead of silently starting fewer follow-ups. Ids are
+  always written by the manager, so this guards against corruption only.
+
 ## Behaviour changes to check after an upgrade
 
 - **Optional second factor for demo instances (`PULSIX_MFA_OPTIONAL`,
