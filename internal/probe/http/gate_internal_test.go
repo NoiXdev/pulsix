@@ -11,6 +11,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/probe"
 )
 
@@ -91,7 +93,7 @@ func TestJSONGateCapacity(t *testing.T) {
 		t.Fatalf("DefaultJSONStages() = %d, want %d", got, want)
 	}
 	for n, want := range map[int]int{-1: 1, 0: 1, 1: 1, 2: 2} {
-		if got := cap(NewJSONGate(n).slots); got != want {
+		if got := NewJSONGate(n).capacity; got != want {
 			t.Errorf("NewJSONGate(%d) holds %d, want %d", n, got, want)
 		}
 	}
@@ -234,4 +236,115 @@ func TestJSONStageOfAnEndedProbeDoesNotDecode(t *testing.T) {
 	gate := NewJSONGate(1)
 	obs = jsonObservations(ctx, gate, entriesOf(t, "a=$.a"), []byte(`{"a":1}`), false, false)
 	wantItems(t, obs, "!"+errOutOfTime)
+}
+
+// queueStage queues one stage of org on gate, once the previous call has
+// settled (synctest.Wait), and reports its org on started when its read runs.
+// The read blocks until release is closed.
+func queueStage(gate *JSONGate, org uuid.UUID, started chan<- uuid.UUID, release <-chan struct{}) {
+	go gate.stage(probe.WithOrg(context.Background(), org), nil, func() []probe.Observation {
+		started <- org
+		<-release
+		return nil
+	})
+	synctest.Wait()
+}
+
+// TestJSONGateSharesFairlyBetweenOrganizations: when the gate is full, the
+// next free slot goes to the waiting organization with the fewest slots in
+// use, not to the longest-waiting stage. One organization with many
+// stages queued ahead cannot keep another's single stage waiting past one
+// slot turnover, at either capacity.
+func TestJSONGateSharesFairlyBetweenOrganizations(t *testing.T) {
+	orgA, orgB := uuid.MustParse("00000000-0000-0000-0000-00000000000a"), uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+	for _, capacity := range []int{1, 2} {
+		synctest.Test(t, func(t *testing.T) {
+			gate := NewJSONGate(capacity)
+			started := make(chan uuid.UUID, 16)
+			releases := make([]chan struct{}, 0, 8)
+			next := func(org uuid.UUID) {
+				c := make(chan struct{})
+				releases = append(releases, c)
+				queueStage(gate, org, started, c)
+			}
+			// A fills the gate, queues four more stages; B queues last.
+			for range capacity {
+				next(orgA)
+			}
+			for range 4 {
+				next(orgA)
+			}
+			next(orgB)
+			for range capacity {
+				<-started // A's running stages
+			}
+			// One turnover: A's first stage ends.
+			close(releases[0])
+			synctest.Wait()
+			if got := <-started; got != orgB {
+				t.Fatalf("capacity %d: the freed slot went to %v, want the waiting org with the fewest slots in use (B)", capacity, got)
+			}
+			// B's one stage ends: A, which waited since before, goes next.
+			close(releases[len(releases)-1])
+			synctest.Wait()
+			if got := <-started; got != orgA {
+				t.Fatalf("capacity %d: after B's turn the slot went to %v, want A", capacity, got)
+			}
+			for _, c := range releases[:len(releases)-1] {
+				select {
+				case <-c:
+				default:
+					close(c)
+				}
+			}
+			synctest.Wait()
+		})
+	}
+}
+
+// TestJSONGateIsFirstInFirstOutWithinAnOrganization: one organization's
+// stages take slots in the order they queued.
+func TestJSONGateIsFirstInFirstOutWithinAnOrganization(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gate := NewJSONGate(1)
+		org := uuid.New()
+		order := make(chan int, 4)
+		hold := make(chan struct{})
+		go gate.stage(probe.WithOrg(context.Background(), org), nil, func() []probe.Observation { <-hold; return nil })
+		synctest.Wait()
+		for i := range 3 {
+			go gate.stage(probe.WithOrg(context.Background(), org), nil, func() []probe.Observation { order <- i; return nil })
+			synctest.Wait()
+		}
+		close(hold)
+		synctest.Wait()
+		for want := range 3 {
+			if got := <-order; got != want {
+				t.Fatalf("stage %d ran at position %d", got, want)
+			}
+		}
+	})
+}
+
+// TestJSONGateGivesUpAWaiterWhoseDeadlinePassed: a stage that gave up
+// leaves the queue and takes no later slot, and no slot is lost.
+func TestJSONGateGivesUpAWaiterWhoseDeadlinePassed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gate := NewJSONGate(1)
+		hold := make(chan struct{})
+		go gate.stage(context.Background(), nil, func() []probe.Observation { <-hold; return nil })
+		synctest.Wait()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if obs := gate.stage(ctx, []jsonEntry{{name: "a"}}, func() []probe.Observation { t.Error("ran"); return nil }); obs[0].Err != errTooBusy {
+			t.Fatalf("got %+v, want too busy", obs)
+		}
+		close(hold)
+		synctest.Wait()
+		leave, ok := gate.enter(context.Background())
+		if !ok {
+			t.Fatal("the gate lost a slot")
+		}
+		leave()
+	})
 }

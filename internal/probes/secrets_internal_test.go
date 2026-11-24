@@ -349,3 +349,16 @@ func TestUnavailableSecretOfAnHTTPCheck(t *testing.T) {
 		})
 	}
 }
+
+// TestProbeKnowsItsOrganization: the probe's context says which
+// organization it runs for, so shared resources inside a probe (the http
+// JSON gate) can share fairly between organizations.
+func TestProbeKnowsItsOrganization(t *testing.T) {
+	h := newHarness(t, nil)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", time.Minute))
+	h.tickAt(0)
+	if c := h.probe.Calls(); len(c) != 1 || c[0].org != h.org {
+		t.Fatalf("calls = %+v, want one for organization %v", c, h.org)
+	}
+}

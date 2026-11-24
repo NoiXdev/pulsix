@@ -189,6 +189,7 @@ type probeCall struct {
 	secret               map[string]string
 	deadline             time.Time
 	hasDeadline          bool
+	org                  uuid.UUID // probe.OrgFrom of the probe's ctx
 }
 
 // fakeProbe counts calls and in-flight probes; block, when set, holds every
@@ -207,7 +208,7 @@ func (p *fakeProbe) Run(ctx context.Context, plugin string, params map[string]an
 	dl, ok := ctx.Deadline()
 	p.mu.Lock()
 	p.calls = append(p.calls, probeCall{
-		key: key, plugin: plugin, address: address, params: params, secret: secret, deadline: dl, hasDeadline: ok,
+		key: key, plugin: plugin, address: address, params: params, secret: secret, deadline: dl, hasDeadline: ok, org: probe.OrgFrom(ctx),
 	})
 	p.inFlight++
 	if p.inFlight > p.maxSeen {

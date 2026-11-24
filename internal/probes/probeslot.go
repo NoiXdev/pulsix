@@ -45,6 +45,9 @@ func (r *Runner) probeSlot(ctx context.Context, s slot, t target, p Poller) {
 func (r *Runner) runProbe(ctx context.Context, s slot, t target, p Poller) []probe.Observation {
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout(t.check.Interval))
 	defer cancel()
+	// The organization travels in the context: shared gates inside a probe
+	// (the http probe's JSON stage) are fair between organizations.
+	pctx = probe.WithOrg(pctx, t.org)
 	secret, failed := r.secretFor(pctx, s, t)
 	if failed != nil {
 		return failed
