@@ -28,14 +28,10 @@ import (
 // update and its matching event (where one exists) must commit or roll
 // back together, never partially.
 //
-// "Of its own" is true of every caller today but is not an unconditional
-// property of db.DB.Begin: inside WithReadTx that helper hands back the
-// SHARED transaction, so the Commit below would end the outer read
-// transaction early for every other store still reading through it
-// (db/scope.go says so itself). Unreachable at present — WithReadTx has
-// one user, the inventory renderer, which never writes an alert — but
-// stated here rather than left as a claim that happens to hold (backlog
-// 4.38).
+// Inside WithWriteTx or WithReadTx db.DB.Begin returns a savepoint of the
+// caller's transaction, so the Commit below only releases it and never ends
+// the outer one. WithReadTx's transaction is READ ONLY, so an alert write
+// there fails with Postgres' read-only error (backlog 4.38).
 //
 // It opens that transaction through db.DB.Begin, not the bare pool, so it
 // is bound to the request's own organization scope and row-level security

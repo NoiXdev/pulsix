@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -470,42 +471,75 @@ func TestWithReadTxRollsBackOnCallbackError(t *testing.T) {
 	}
 }
 
-// TestWithReadTxBeginReturnsTheSharedTransaction covers Begin's readTx
-// branch (internal/db/scope.go): a store that calls d.Begin(ctx) while ctx
-// is bound by WithReadTx gets back the very same transaction, not a new
-// one — committing it through that handle ends WithReadTx's transaction
-// for every other store still reading through the same ctx, which is
-// exactly what the doc comment on that branch warns about and this proves.
-func TestWithReadTxBeginReturnsTheSharedTransaction(t *testing.T) {
+// TestWithReadTxBeginReturnsASavepoint pins Begin's read branch
+// (internal/db/scope.go, backlog 4.38): a store's own transaction inside
+// WithReadTx is a savepoint, so committing or rolling it back ends only the
+// savepoint and the outer read transaction stays usable for further reads.
+func TestWithReadTxBeginReturnsASavepoint(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(context.Context, pgx.Tx) error
+	}{
+		{"commit", func(ctx context.Context, tx pgx.Tx) error { return tx.Commit(ctx) }},
+		{"rollback", func(ctx context.Context, tx pgx.Tx) error { return tx.Rollback(ctx) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testdb.Open(t)
+			orgA, _ := seedTwoOrgs(t, d)
+			ctx := context.Background()
+
+			err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
+				tx, err := d.Begin(ctx)
+				if err != nil {
+					return err
+				}
+				var n int
+				if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&n); err != nil {
+					return err
+				}
+				if err := tc.end(ctx, tx); err != nil {
+					return err
+				}
+				// The outer read transaction must still be open.
+				if _, err := d.Exec(ctx, `SELECT 1`); err != nil {
+					return fmt.Errorf("outer read after nested %s: %w", tc.name, err)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("WithReadTx: %v", err)
+			}
+		})
+	}
+}
+
+// TestWithReadTxBeginSavepointRejectsWrites documents that the read
+// transaction is READ ONLY: a write inside the nested savepoint fails with
+// Postgres' read-only error, and the outer transaction survives rolling the
+// savepoint back.
+func TestWithReadTxBeginSavepointRejectsWrites(t *testing.T) {
 	d := testdb.Open(t)
 	orgA, _ := seedTwoOrgs(t, d)
 	ctx := context.Background()
-	var execErr error
 
-	// WithReadTx itself ends up returning an error here too: its own
-	// final tx.Commit(ctx) runs against the same transaction the callback
-	// already committed and closed, exactly the hazard the doc comment on
-	// Begin's readTx branch describes — this is the proof, not an
-	// incidental test failure to work around.
 	err := d.WithReadTx(ctx, orgA, func(ctx context.Context) error {
 		tx, err := d.Begin(ctx)
 		if err != nil {
 			return err
 		}
-		if err := tx.Commit(ctx); err != nil {
+		_, werr := tx.Exec(ctx, `UPDATE zones SET name = 'x' WHERE false`)
+		var pgErr *pgconn.PgError
+		if !errors.As(werr, &pgErr) || pgErr.Code != "25006" {
+			return fmt.Errorf("write in savepoint error = %v, want SQLSTATE 25006 (read_only_sql_transaction)", werr)
+		}
+		if err := tx.Rollback(ctx); err != nil {
 			return err
 		}
-		// The shared transaction is now closed; a further statement
-		// through the same bound ctx must fail, not silently open a new
-		// transaction of its own.
-		_, execErr = d.Exec(ctx, `SELECT 1`)
-		return nil
+		_, err = d.Exec(ctx, `SELECT 1`)
+		return err
 	})
-	if execErr == nil {
-		t.Fatal("Exec succeeded after Begin's returned transaction was committed out from under it")
-	}
-	if err == nil {
-		t.Fatal("WithReadTx succeeded even though its transaction was already closed by the time its own Commit ran")
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -46,8 +46,8 @@ func OrgScope(ctx context.Context) (uuid.UUID, bool) {
 type boundTxKey struct{}
 
 // boundTx is one transaction bound to a context; write distinguishes
-// WithWriteTx's read-write transaction (where Begin and WithOrg nest as
-// savepoints) from WithReadTx's shared read-only one.
+// WithWriteTx's read-write transaction (where WithOrg nests as a savepoint)
+// from WithReadTx's read-only one; Begin nests as a savepoint in both.
 type boundTx struct {
 	tx    pgx.Tx
 	write bool
@@ -274,23 +274,19 @@ func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 
 // Begin starts a transaction for a store that needs several statements to
 // commit together. When ctx carries an org scope, the transaction is bound
-// to that organization before it is handed back.
+// to that organization before it is handed back. Inside WithWriteTx or
+// WithReadTx it returns a savepoint of the outer transaction instead (see
+// below); in a WithReadTx that transaction is READ ONLY, so a write through
+// it fails with SQLSTATE 25006.
 func (d *DB) Begin(ctx context.Context) (pgx.Tx, error) {
 	if b, ok := txOf(ctx); ok {
-		if b.write {
-			// Inside WithWriteTx a store's own transaction is a savepoint:
-			// its Commit releases the savepoint, its Rollback undoes only
-			// its own statements, and the outer transaction decides what
-			// persists.
-			return b.tx.Begin(ctx)
-		}
-		// No production caller does this today (the renderer's read path
-		// never opens its own nested transaction) — TestWithReadTxBeginReturns
-		// TheSharedTransaction (scope_test.go) is what exercises this branch.
-		// A future caller gets the SAME shared transaction, not a new one —
-		// committing or rolling it back ends WithReadTx's transaction early
-		// for every other store still reading through it.
-		return b.tx, nil
+		// Inside WithWriteTx or WithReadTx a store's own transaction is a
+		// savepoint: its Commit releases the savepoint, its Rollback undoes
+		// only its own statements, and the outer transaction is never ended
+		// early (backlog 4.38). The outer decides what persists. WithReadTx's
+		// transaction is READ ONLY, so a write inside such a savepoint fails
+		// with Postgres' read_only_sql_transaction error (SQLSTATE 25006).
+		return b.tx.Begin(ctx)
 	}
 	orgID, ok := OrgScope(ctx)
 	if !ok {
