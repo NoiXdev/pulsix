@@ -3,6 +3,7 @@ package testdb
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 )
@@ -24,20 +25,29 @@ func TestStartWithRetryRetriesReaperRemoving(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success on the third attempt, got %v", err)
 	}
-	if calls != 3 || len(sleeps) != 2 || logs != 2 {
-		t.Errorf("calls=%d sleeps=%d logs=%d, want 3, 2, 2", calls, len(sleeps), logs)
+	if calls != 3 || logs != 2 {
+		t.Errorf("calls=%d logs=%d, want 3, 2", calls, logs)
+	}
+	// The backoff grows: 2 s after the first attempt, 4 s after the second.
+	if want := []time.Duration{2 * time.Second, 4 * time.Second}; !slices.Equal(sleeps, want) {
+		t.Errorf("sleeps = %v, want %v", sleeps, want)
 	}
 }
 
 func TestStartWithRetryGivesUpAfterThreeAttempts(t *testing.T) {
 	calls := 0
+	var sleeps []time.Duration
 	err := startWithRetry(func() error { calls++; return errReaper },
-		func(time.Duration) {}, func(string, ...any) {})
-	if !errors.Is(err, errReaper) && err == nil {
-		t.Fatal("expected the reaper error after exhausting attempts")
+		func(d time.Duration) { sleeps = append(sleeps, d) }, func(string, ...any) {})
+	if !errors.Is(err, errReaper) {
+		t.Fatalf("err = %v, want the reaper error after exhausting attempts", err)
 	}
 	if calls != 3 {
 		t.Errorf("calls=%d, want 3", calls)
+	}
+	// No sleep after the last attempt: the error is returned at once.
+	if want := []time.Duration{2 * time.Second, 4 * time.Second}; !slices.Equal(sleeps, want) {
+		t.Errorf("sleeps = %v, want %v", sleeps, want)
 	}
 }
 

@@ -140,11 +140,11 @@ func TestASplitReplayClosesNoAlertAsStale(t *testing.T) {
 	}
 }
 
-// TestTheReplayGuardEndsWithTheItemsFirstLiveReading: once the item reports
-// a reading of the agent's online period, the replay is over (the agent
-// sends nothing live before its buffer is through) and a metric that
-// really stopped is judged vanished as always.
-func TestTheReplayGuardEndsWithTheItemsFirstLiveReading(t *testing.T) {
+// TestTheReplayHoldEndsWithTheHostsFirstLiveReading: once the host's agent
+// reports a reading of its online period — here the web item's own — the
+// replay is over (the agent sends nothing live before its buffer is
+// through) and a metric that really stopped is judged vanished as always.
+func TestTheReplayHoldEndsWithTheHostsFirstLiveReading(t *testing.T) {
 	f := newReplayFixture(t, "replay-done", "2 minutes")
 	now := f.since.Add(2 * time.Minute)
 	f.storeTuple(f.up, f.since.Add(90*time.Second))
@@ -224,5 +224,31 @@ func TestAManagerProbeReadingDoesNotEndTheReplay(t *testing.T) {
 	}
 	if judged(got, f.dns) {
 		t.Fatalf("states = %+v, want http.dns_ms held, not judged", got.States)
+	}
+}
+
+// TestAManagerProbeTupleIsNeverHeld: a check the manager probes never comes
+// in the agent's replay, so a metric of it that vanished is judged vanished
+// during the replay too — reported unmeasured, its alert closed as stale —
+// while the agent's own trailing metric next to it is held.
+func TestAManagerProbeTupleIsNeverHeld(t *testing.T) {
+	f := newReplayFixture(t, "replay-probe-vanished", "20 seconds")
+	now := f.since.Add(5 * time.Second)
+	f.storeTuple(f.up, f.since.Add(-15*time.Minute))
+	f.storeTuple(f.dns, f.since.Add(-40*time.Minute))
+	probeUp := rules.Tuple{CheckKey: "ping", Metric: "http.up"}
+	probeDNS := rules.Tuple{CheckKey: "ping", Metric: "http.dns_ms"}
+	// The probe's own readings are from before the online period too, so
+	// they cannot end the replay even were they counted.
+	f.storeTuple(probeUp, f.since.Add(-10*time.Second))
+	f.storeTuple(probeDNS, f.since.Add(-40*time.Minute))
+	insertCheckState(t, f.d, f.org, f.host, stateRow{tuple: probeDNS, state: rules.StateCrit, since: f.since.Add(-2 * time.Hour), evaluatedAt: f.since.Add(-40 * time.Minute)})
+
+	got := f.tick(t, now)
+	if len(got.Unmeasured) != 1 || got.Unmeasured[0] != probeDNS {
+		t.Fatalf("unmeasured = %+v, want only the probe's %+v", got.Unmeasured, probeDNS)
+	}
+	if judged(got, f.dns) {
+		t.Fatalf("states = %+v, want the agent's http.dns_ms held", got.States)
 	}
 }

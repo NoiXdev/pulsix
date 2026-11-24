@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
@@ -39,13 +41,9 @@ func TestForgetsRemoveTheTuplesVantageRows(t *testing.T) {
 	}
 	loadHost(t, d, org, host)
 
-	has := func(h interface{ String() string }, item, metric string) int {
+	has := func(id uuid.UUID, item, metric string) int {
 		t.Helper()
 		n := 0
-		id := host
-		if h.String() == other.String() {
-			id = other
-		}
 		rows, err := ps.VantageCurrent(scoped, org, id, "http")
 		if err != nil {
 			t.Fatal(err)
@@ -68,7 +66,7 @@ func TestForgetsRemoveTheTuplesVantageRows(t *testing.T) {
 		t.Errorf("forgotten metric keeps %d vantage rows", n)
 	}
 	for name, c := range map[string]struct {
-		h            interface{ String() string }
+		h            uuid.UUID
 		item, metric string
 	}{
 		"sibling metric":         {host, "api", "tls_ms"},
