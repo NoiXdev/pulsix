@@ -1420,6 +1420,19 @@ agent probably cannot read its network interfaces under systemd, so IP facts and
 network check fail), and the re-run now restarts the agent onto the new binary. An
 agent that is not re-run keeps working as before.
 
+Backlog 3.60 changes the two installers again, still with no migration and no manager
+change beyond the scripts it serves. A re-run on a host whose data folder already holds
+the agent's identity (`agent.crt`, `agent.key` and `agent.ca.pem`, each a non-empty
+regular file) no longer asks for an enrollment token and no longer stops without one; it
+prints that it reuses the identity and writes the env file without
+`PULSIX_ENROLL_TOKEN`. A token given with `--token`/`--token-file` (`-Token`/`-TokenFile`)
+is written as before. Automation that passes a token on every upgrade keeps working; it
+may drop the token, but then an upgrade no longer heals an agent whose certificate has
+expired (the old flow enrolled it again with the token it was given). An expired
+certificate needs a re-run with a new token; a revoked agent keeps a locally valid
+certificate and never uses a token, so it needs an uninstall without `--keep-data` and
+a fresh install, as before.
+
 ## Downgrading
 
 There is none in place. A newer schema is refused (above), and migrations do
