@@ -4,6 +4,8 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -140,10 +142,20 @@ func (a *assistantSuite) refusals() {
 
 	// --- A secret value other than keep -----------------------------------
 	// ({"$secret":"set"}, the read-back form, counts as keep by design.)
+	groupURL := prefix + "/inventory/groups/" + a.seeded.secretGroupID
+	var before json.RawMessage
+	s.get(groupURL, &before)
 	for _, v := range []any{"e2e-asst-plain-value", map[string]any{"$secret": "e2e-asst-plain-value"}} {
 		args := map[string]any{"group_id": a.seeded.secretGroupID, "vars": map[string]any{"db_password": v}}
 		text, isErr := a.call(cs, "set_group_vars", args)
 		s.expectToolRefusal(fmt.Sprintf("set_group_vars with db_password %v", v), text, isErr, secretsByAPerson)
+	}
+	// The refusals changed nothing: the group, revision and masked vars
+	// included, reads exactly as before.
+	var after json.RawMessage
+	s.get(groupURL, &after)
+	if !bytes.Equal(before, after) {
+		s.t.Errorf("the refused set_group_vars changed the group\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 

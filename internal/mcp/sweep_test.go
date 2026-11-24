@@ -112,16 +112,8 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 	if err := json.Unmarshal(f.ownerJSON(t, http.MethodPost, "/monitoring-groups", map[string]any{"name": "sweep-tier", "selector": "role=web"}), &grp); err != nil {
 		t.Fatal(err)
 	}
-	scheduleID := f.seedSchedule(t)
-	curRepo, err := f.s.Deps.Repos.Get(f.scoped, f.org, f.repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.s.Deps.Repos.Update(f.scoped, f.org, f.repo, repos.UpdateInput{
-		Name: curRepo.Name, URL: curRepo.URL, Branch: curRepo.Branch, Subpath: curRepo.Subpath, CredentialID: &gitTok.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// The template carries its secrets before the schedule is created, so the
+	// schedule is the one the sweep reads them through.
 	cur, err := f.s.Deps.Templates.Get(f.scoped, f.org, f.template)
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +127,17 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	scheduleID := f.seedSchedule(t)
+	curRepo, err := f.s.Deps.Repos.Get(f.scoped, f.org, f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Deps.Repos.Update(f.scoped, f.org, f.repo, repos.UpdateInput{
+		Name: curRepo.Name, URL: curRepo.URL, Branch: curRepo.Branch, Subpath: curRepo.Subpath, CredentialID: &gitTok.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failed := f.startFailedJob(t)
 	job := f.startJob(t, []jobs.Event{{Seq: 1, Host: "web-1", Task: "t", State: "ok", Payload: payload("hello")}})
 
 	cs := mustConnect(t, f.s, f.token)
@@ -174,7 +177,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"update_repo":         {"repo_id": f.repo.String(), "fields": map[string]any{"branch": "main"}},
 		"update_job_template": {"template_id": f.template.String(), "fields": map[string]any{"limit": "web-1"}},
 		"add_group_member":    {"group_id": f.group.String(), "host_id": f.host.String()},
-		"request_retry":       {"job_id": job.String(), "reason": "sweep"},
+		"request_retry":       {"job_id": failed.String(), "reason": "sweep"},
 		"set_host_tags":       {"host_id": f.host.String(), "tags": []map[string]any{{"key": "env", "value": "prod"}}},
 		"snooze_alert":        {"alert_id": alert.String(), "until": now.Add(time.Hour).Format(time.RFC3339)},
 		"get_calendar":        {"from": now.Format(time.RFC3339), "to": now.Add(24 * time.Hour).Format(time.RFC3339)},
@@ -182,11 +185,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"get_host_metrics":    {"host_id": f.host.String(), "check": "cpu", "metric": "usage_percent", "range": "1h"},
 	}
 	// Every swept tool must succeed with the seeded arguments, so an erroring
-	// tool cannot pass for "no secret in the output". Exceptions are named
-	// here with the reason.
-	mayFail := map[string]string{
-		"request_retry": "the seeded job is still running and a retry needs a finished one; the refusal names no secret",
-	}
+	// tool cannot pass for "no secret in the output".
 	names := toolNames(t, cs)
 	props := toolProperties(t, cs)
 	sorted := make([]string, 0, len(names))
@@ -221,7 +220,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 			a = argsFor(props[name], ids)
 		}
 		text, isErr := call(t, cs, name, a)
-		if _, exempt := mayFail[name]; isErr && !exempt {
+		if isErr {
 			t.Errorf("%s failed with the seeded arguments: %s", name, text)
 		}
 		called++
@@ -254,10 +253,14 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 			t.Errorf("%s output does not mention %s (%q), so its marker is not exercised:\n%s", r.tool, r.what, r.want, outputs[r.tool])
 		}
 	}
-	for name := range mayFail {
-		if !swept[name] {
-			t.Errorf("exempt tool %s was not swept", name)
-		}
+	// request_retry succeeded for the failed run seeded above and answered
+	// with a pending request, not a refusal that happens to be clean.
+	var retry struct {
+		RequestID string `json:"request_id"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(outputs["request_retry"]), &retry); err != nil || retry.RequestID == "" || retry.Status != "pending" {
+		t.Errorf("request_retry output = %q (%v), want a pending request", outputs["request_retry"], err)
 	}
 	if called < 40 {
 		t.Fatalf("only %d tools swept", called)

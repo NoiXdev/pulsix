@@ -38,6 +38,19 @@ func (f orgFixture) startJob(t *testing.T, events []jobs.Event) uuid.UUID {
 	return id
 }
 
+// startFailedJob runs the template's job to a failed end that names the
+// fixture's host as the failed one, so a retry of it is requestable.
+func (f orgFixture) startFailedJob(t *testing.T) uuid.UUID {
+	t.Helper()
+	id := f.startJob(t, nil)
+	if err := f.s.Queue.Finish(context.Background(), id, jobs.StatusFailed, map[string]any{
+		jobs.StatsFailedHosts: []any{f.host.String()}, jobs.StatsUnreachableHosts: []any{},
+	}, "playbook failed"); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func payload(text string) json.RawMessage {
 	b, _ := json.Marshal(map[string]any{"text": text})
 	return b

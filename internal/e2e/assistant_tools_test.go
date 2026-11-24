@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -335,7 +336,7 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 		"list_monitoring_groups": {"asst-tier"}, "get_monitoring_group": {"asst-tier"}, "get_alert_rule": {ids["rule_id"].(string)},
 		"list_alerts": {a.seeded.alertID}, "get_alert": {a.seeded.alertID, "acknowledged", "snoozed"},
 		"list_maintenance_windows": {"asst window"}, "get_maintenance_window": {"asst window"}, "list_activity": {"turned assistant access on"},
-		"get_host_metrics": {"12.5"}, "get_host_effective_rules": {"asst-host-cpu"}, "list_schedule_runs": {a.seeded.scheduledGroup},
+		"get_host_metrics": {cpuMetric}, "get_host_effective_rules": {"asst-host-cpu"}, "list_schedule_runs": {a.seeded.scheduledGroup},
 		"get_job_log": {"connection_test"},
 	}
 	props := a.toolProperties(cs)
@@ -357,6 +358,9 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 			s.t.Errorf("%s(%v) failed: %s", name, args, text)
 			continue
 		}
+		if name == "get_host_metrics" {
+			a.expectCPUSample(text)
+		}
 		wants, ok := shows[name]
 		if !ok {
 			s.t.Errorf("%s has no content check in shows:\n%s", name, text)
@@ -372,6 +376,28 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 	// objects, into the recorded outputs the secret sweep reads.
 	if text, isErr := a.record(cs, "list_activity", map[string]any{"limit": 100}); isErr {
 		s.t.Errorf("unfiltered list_activity failed: %s", text)
+	}
+}
+
+// expectCPUSample checks get_host_metrics' output for exactly the one cpu
+// sample the seed recorded, by its parsed value, so 112.5 or 12.55 do not
+// pass for 12.5.
+func (a *assistantSuite) expectCPUSample(text string) {
+	s := a.s
+	s.t.Helper()
+	var out struct {
+		Check  string `json:"check"`
+		Metric string `json:"metric"`
+		Points []struct {
+			Value float64 `json:"value"`
+		} `json:"points"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		s.t.Errorf("get_host_metrics: decode %q: %v", text, err)
+		return
+	}
+	if out.Check != "cpu" || out.Metric != cpuMetric || len(out.Points) != 1 || out.Points[0].Value != 12.5 {
+		s.t.Errorf("get_host_metrics = %+v, want the one recorded cpu/%s sample of 12.5", out, cpuMetric)
 	}
 }
 

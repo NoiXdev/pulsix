@@ -28,6 +28,11 @@ func (a *assistantSuite) runRequest() {
 	cs := a.mustConnect(a.allToken)
 
 	// --- A: requested, approved by the owner, run; B follows --------------
+	// The seed's scheduled run of A left a copy of the key already; remove it
+	// so the file read below is the one this run wrote.
+	if err := os.Remove(a.seeded.usedKeyPath); err != nil {
+		s.t.Fatalf("remove the seed run's key copy: %v", err)
+	}
 	var req requestedRun
 	a.recordOK(cs, "request_run", map[string]any{"template_id": a.seeded.templateA, "reason": "e2e run request"}, &req)
 	if want := s.api.base + "/o/" + s.org + "/runs/requests/" + req.RequestID; req.Status != "pending" || req.ApprovalURL != want {

@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -119,11 +120,30 @@ func TestSetHostTags(t *testing.T) {
 	f := newOrgFixture(t)
 	cs := mustConnect(t, f.s, f.token)
 	h := map[string]any{"host_id": f.host.String()}
+	// A collector-set (fact) tag, which the tool must never touch.
+	if _, err := f.s.DB.Pool().Exec(context.Background(),
+		`INSERT INTO host_tags (host_id, org_id, key, value, source) VALUES ($1, $2, 'os', 'debian', 'fact')`, f.host, f.org); err != nil {
+		t.Fatal(err)
+	}
+	factTagStays := func(when string) {
+		t.Helper()
+		tags, err := f.s.Deps.Hosts.ListTags(f.scoped, f.org, f.host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tag := range tags {
+			if tag.Key == "os" && tag.Value == "debian" && tag.Source == hosts.TagSourceFact {
+				return
+			}
+		}
+		t.Errorf("the collector-set tag os=debian is gone %s: %+v", when, tags)
+	}
 	callOK(t, cs, "set_host_tags", map[string]any{"host_id": f.host.String(), "tags": []map[string]any{{"key": "env", "value": "prod"}, {"key": "role", "value": "web"}}}, nil)
 	text := callOK(t, cs, "get_host", h, nil)
 	if !strings.Contains(text, "env") || !strings.Contains(text, "prod") || !strings.Contains(text, "role") {
 		t.Fatalf("get_host lacks the tags:\n%s", text)
 	}
+	factTagStays("after the first set")
 	// The set replaces the manual tags.
 	callOK(t, cs, "set_host_tags", map[string]any{"host_id": f.host.String(), "tags": []map[string]any{{"key": "env", "value": "dev"}}}, nil)
 	text = callOK(t, cs, "get_host", h, nil)
@@ -139,6 +159,7 @@ func TestSetHostTags(t *testing.T) {
 	if text = callOK(t, cs, "get_host", h, nil); strings.Contains(text, `"env"`) {
 		t.Fatalf("empty set did not clear:\n%s", text)
 	}
+	factTagStays("after the empty set")
 }
 
 func TestStartConnectionTest(t *testing.T) {

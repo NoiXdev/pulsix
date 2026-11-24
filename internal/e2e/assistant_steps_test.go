@@ -10,6 +10,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,19 +37,19 @@ const (
 var (
 	inventoryReadTools = []string{"get_organization", "list_hosts", "get_host", "list_groups", "get_group",
 		"preview_inventory", "list_zones", "get_connection_test"}
-	inventoryWriteTools = append(clone(inventoryReadTools), "create_host", "update_host", "set_host_ssh",
+	inventoryWriteTools = append(slices.Clone(inventoryReadTools), "create_host", "update_host", "set_host_ssh",
 		"create_group", "update_group", "set_group_schema", "set_group_vars", "add_group_member",
 		"remove_group_member", "set_host_tags", "start_connection_test")
 	reposReadTools      = []string{"list_repos", "get_repo", "list_repo_files", "list_playbooks", "get_playbook"}
-	reposWriteTools     = append(clone(reposReadTools), "create_repo", "update_repo", "sync_repo", "create_playbook")
+	reposWriteTools     = append(slices.Clone(reposReadTools), "create_repo", "update_repo", "sync_repo", "create_playbook")
 	templatesReadTools  = []string{"list_job_templates", "get_job_template", "list_schedules", "get_schedule", "list_schedule_runs", "get_calendar"}
-	templatesWriteTools = append(clone(templatesReadTools), "create_job_template", "update_job_template")
+	templatesWriteTools = append(slices.Clone(templatesReadTools), "create_job_template", "update_job_template")
 	jobsReadTools       = []string{"list_jobs", "get_job", "get_job_log", "list_run_requests", "get_run_request"}
-	jobsRequestTools    = append(clone(jobsReadTools), "request_run", "request_retry", "cancel_job")
+	jobsRequestTools    = append(slices.Clone(jobsReadTools), "request_run", "request_retry", "cancel_job")
 	monitoringReadTools = []string{"list_agents", "get_host_agent", "list_checks", "get_check", "list_host_checks",
 		"get_host_metrics", "list_monitoring_groups", "get_monitoring_group", "list_alert_rules", "get_alert_rule",
 		"get_host_effective_rules", "list_alerts", "get_alert", "list_maintenance_windows", "get_maintenance_window"}
-	alertsHandleTools = append(clone(monitoringReadTools), "acknowledge_alert", "unacknowledge_alert", "snooze_alert", "unsnooze_alert")
+	alertsHandleTools = append(slices.Clone(monitoringReadTools), "acknowledge_alert", "unacknowledge_alert", "snooze_alert", "unsnooze_alert")
 )
 
 // expectedTools is what tools/list shows a token holding exactly one area.
@@ -69,8 +70,6 @@ var expectedTools = map[tenancy.Area][]string{
 	tenancy.AreaAlertsHandle:     alertsHandleTools,
 	tenancy.AreaActivityRead:     {"list_activity"},
 }
-
-func clone(s []string) []string { return append([]string(nil), s...) }
 
 // assistantSeed holds the ids the seed created.
 type assistantSeed struct {

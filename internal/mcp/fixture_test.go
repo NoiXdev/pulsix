@@ -18,12 +18,13 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
-// allAreas is every area an operator-capped assistant token can hold.
+// allAreas is every area an operator-capped assistant token can hold, each
+// once: a write area includes its read area, so the read areas of inventory,
+// repos, templates and jobs are not listed next to their write areas.
 var allAreas = []tenancy.Area{
 	tenancy.AreaInventoryWrite, tenancy.AreaReposWrite, tenancy.AreaTemplatesWrite,
 	tenancy.AreaCredentialsNames, tenancy.AreaJobsRequest,
 	tenancy.AreaMonitoringRead, tenancy.AreaAlertsHandle, tenancy.AreaActivityRead,
-	tenancy.AreaTemplatesRead,
 }
 
 // orgFixture is one organization with a host, a group, a repository, an

@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,12 +31,17 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.base.RoundTrip(r)
 }
 
+// mcpCallTimeout bounds one MCP request. It is a per-call context deadline,
+// not an http.Client.Timeout: that one also covers reading the response
+// body, so it would cut a long stream.
+const mcpCallTimeout = 60 * time.Second
+
 // connect opens an MCP client session at /api/mcp with token as bearer.
 func (a *assistantSuite) connect(token string) (*sdk.ClientSession, error) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "pulsix-e2e", Version: "1"}, nil)
 	return client.Connect(a.ctx, &sdk.StreamableClientTransport{
 		Endpoint:   a.s.api.base + "/api/mcp",
-		HTTPClient: &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}, Timeout: 60 * time.Second},
+		HTTPClient: &http.Client{Transport: bearerTransport{token: token, base: http.DefaultTransport}},
 		MaxRetries: -1,
 	}, nil)
 }
@@ -54,8 +60,10 @@ func (a *assistantSuite) mustConnect(token string) *sdk.ClientSession {
 // listTools returns the names tools/list shows on the session, in order.
 func (a *assistantSuite) listTools(cs *sdk.ClientSession) []string {
 	a.s.t.Helper()
+	ctx, cancel := context.WithTimeout(a.ctx, mcpCallTimeout)
+	defer cancel()
 	var out []string
-	for tl, err := range cs.Tools(a.ctx, nil) {
+	for tl, err := range cs.Tools(ctx, nil) {
 		if err != nil {
 			a.s.t.Fatalf("tools/list: %v", err)
 		}
@@ -68,8 +76,10 @@ func (a *assistantSuite) listTools(cs *sdk.ClientSession) []string {
 // schema declares; the schemas refuse any other property.
 func (a *assistantSuite) toolProperties(cs *sdk.ClientSession) map[string]map[string]bool {
 	a.s.t.Helper()
+	ctx, cancel := context.WithTimeout(a.ctx, mcpCallTimeout)
+	defer cancel()
 	out := map[string]map[string]bool{}
-	for tl, err := range cs.Tools(a.ctx, nil) {
+	for tl, err := range cs.Tools(ctx, nil) {
 		if err != nil {
 			a.s.t.Fatalf("tools/list: %v", err)
 		}
@@ -97,7 +107,9 @@ func (a *assistantSuite) toolProperties(cs *sdk.ClientSession) map[string]map[st
 // It does not record the call.
 func (a *assistantSuite) call(cs *sdk.ClientSession, name string, args any) (string, bool) {
 	a.s.t.Helper()
-	res, err := cs.CallTool(a.ctx, &sdk.CallToolParams{Name: name, Arguments: args})
+	ctx, cancel := context.WithTimeout(a.ctx, mcpCallTimeout)
+	defer cancel()
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
 		return err.Error(), true
 	}

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -119,6 +122,18 @@ func TestMonitoringReadTools(t *testing.T) {
 		grpID = grp.Group.ID
 	}
 
+	obsAt := time.Now()
+	v := 12.5
+	if _, err := f.s.Checks.RecordObservations(f.scoped, f.org, []checks.Observation{{HostID: f.host, CheckKey: "cpu", Metric: "usage_percent", At: obsAt.Add(-time.Minute), Value: &v}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Deps.Agents.Register(f.scoped, agents.Registration{
+		OrgID: f.org, HostID: f.host, AgentName: "web-1", Version: "v1.2.3", Serial: "serial-monitoring",
+		NotBefore: obsAt.Add(-time.Hour), NotAfter: obsAt.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	cs := mustConnect(t, f.s, f.token)
 	var checks struct {
 		Checks []struct {
@@ -170,12 +185,29 @@ func TestMonitoringReadTools(t *testing.T) {
 		t.Errorf("state=closed still lists the open alert:\n%s", text)
 	}
 	// get_host_metrics passes its query through: the route answers for the
-	// named check and metric, which a host without samples does not have.
-	if text, isErr := call(t, cs, "get_host_metrics", map[string]any{"host_id": host, "check": "cpu", "metric": "usage_pct", "range": "1h"}); !isErr || !strings.Contains(text, `"usage_pct"`) {
-		t.Errorf("get_host_metrics: %q (error %v)", text, isErr)
+	// named check and metric with the sample the fixture recorded.
+	var metrics struct {
+		Check  string `json:"check"`
+		Metric string `json:"metric"`
+		Points []struct {
+			Value float64 `json:"value"`
+		} `json:"points"`
 	}
-	// get_host_agent: a host without an agent is a clean tool error or a body, never a crash.
-	call(t, cs, "get_host_agent", map[string]any{"host_id": host})
+	callOK(t, cs, "get_host_metrics", map[string]any{"host_id": host, "check": "cpu", "metric": "usage_percent", "range": "1h"}, &metrics)
+	if metrics.Check != "cpu" || metrics.Metric != "usage_percent" || len(metrics.Points) != 1 || metrics.Points[0].Value != 12.5 {
+		t.Errorf("get_host_metrics = %+v, want the one recorded cpu/usage_percent sample of 12.5", metrics)
+	}
+	var agent struct {
+		Agent struct {
+			HostID    string `json:"host_id"`
+			AgentName string `json:"agent_name"`
+			Version   string `json:"version"`
+		} `json:"agent"`
+	}
+	callOK(t, cs, "get_host_agent", map[string]any{"host_id": host}, &agent)
+	if agent.Agent.HostID != host || agent.Agent.AgentName != "web-1" || agent.Agent.Version != "v1.2.3" {
+		t.Errorf("get_host_agent = %+v, want the registered web-1 agent v1.2.3 of host %s", agent.Agent, host)
+	}
 }
 
 func TestAlertHandlingTools(t *testing.T) {
@@ -227,21 +259,30 @@ func TestAlertHandlingTools(t *testing.T) {
 
 	var act struct {
 		Items []struct {
-			Action    string `json:"action"`
-			TokenName string `json:"token_name"`
+			Action     string `json:"action"`
+			ObjectType string `json:"object_type"`
+			ObjectID   string `json:"object_id"`
+			TokenName  string `json:"token_name"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(f.ownerJSON(t, http.MethodGet, "/activity?limit=100", nil), &act); err != nil {
 		t.Fatal(err)
 	}
-	seen := 0
+	// Newest first: the entries the token's calls wrote, one per successful
+	// call and none for the refused snooze.
+	type entry struct{ action, objectType, objectID string }
+	var got []entry
 	for _, it := range act.Items {
-		if strings.Contains(strings.ToLower(it.Action), "alert") && it.TokenName == "assistant" {
-			seen++
+		if it.TokenName == "assistant" {
+			got = append(got, entry{it.Action, it.ObjectType, it.ObjectID})
 		}
 	}
-	if seen < 4 {
-		t.Errorf("activity holds %d alert entries with the token's name, want 4: %+v", seen, act.Items)
+	want := []entry{
+		{"DELETE unsnoozeAlert", "alert", alert}, {"POST snoozeAlert", "alert", alert},
+		{"DELETE unacknowledgeAlert", "alert", alert}, {"POST acknowledgeAlert", "alert", alert},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("activity entries of the token = %+v, want %+v", got, want)
 	}
 }
 
