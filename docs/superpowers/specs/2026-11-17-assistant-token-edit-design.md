@@ -113,15 +113,22 @@ Playwright spec for the edit dialog — more GUI confidence, slower, another sta
 
 The response is the token's metadata (`tokenDTO`, never a secret).
 
-Rules, in this order:
+Rules, in this order. The handler validates the request body (the
+`expires_at` / `never_expires` exclusion, the areas' shape and their fit to
+the role) before it looks the token up, so an expired token with invalid areas
+answers 422, not 409; the service then applies rules 2 to 5 in its own order:
 
 1. `requireInteractiveSession`, then `requireOrg(…, PermTokensManage)` — owner or
    admin, signed-in browser session, MFA complete. A bearer request gets 403
    whatever its scope, exactly like create.
 2. Unknown id, another org's token, or a revoked token: 404.
 3. An expired token: 409 ("an expired token cannot be changed; create a new
-   one").
-4. An empty body: 422 ("nothing to change").
+   one"). A token that expires between the service's read and its conditional
+   update answers 409 as well: after a zero-row update the service re-reads the
+   row to tell an expired token from a gone one (revoked: 404).
+4. An empty body: 422 ("nothing to change"). An empty or whitespace-only
+   `name` is 422 too; the service refuses it itself (`ErrEmptyName`), the
+   handler's `minLength` is only the first line.
 5. `expires_at` together with `never_expires: true`: 422. `expires_at` not after
    now: 422. `never_expires: false` on its own means nothing and is refused as
    "nothing to change" when no other field is given.
@@ -149,7 +156,8 @@ re-applying it, and both entries show what happened). *(Builder's call, see
   (`keep`, `set(t)` or `clear`). The service applies the shape rules that need
   no HTTP (kind vs areas, expiry in the future against the injected clock,
   nothing to change) and returns sentinel errors (`ErrNotFound`,
-  `ErrTokenExpired`, `ErrNoChange`, `ErrAreasOnAPIToken`, `ErrExpiryInPast`)
+  `ErrTokenExpired`, `ErrNoChange`, `ErrAreasOnAPIToken`, `ErrExpiryInPast`,
+  `ErrEmptyName`)
   that the handler maps. Area validity against the role stays in the handler's
   `validateTokenAreas`, since it needs the editor's scope (or moves to a
   shared helper — builder's call).
@@ -169,7 +177,10 @@ each changed field with its old and new value, for example:
 
 `changed assistant token claude-laptop: areas inventory.read, repos.read → inventory.read, inventory.write, repos.read; expiry 2026-12-01 → never`
 
-`changed API token ci: name ci-old → ci; expiry never → 2027-01-01`
+`changed API token ci-old: name ci-old → ci; expiry never → 2027-01-01`
+
+The head names the token by its name before the edit, so a rename shows both
+the old and the new name; an edit without a rename names the token once.
 
 Expiries are written as UTC RFC 3339 dates (date only when the time is
 midnight UTC — builder's call on the exact format; it must be stable for
