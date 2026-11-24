@@ -77,6 +77,14 @@ type agentDTO struct {
 // webhook receiver).
 func wireAgentManager(t *testing.T, ctx context.Context, notifyAllow ...netip.Prefix) agentWorld {
 	t.Helper()
+	return wireAgentManagerWith(t, ctx, nil, notifyAllow...)
+}
+
+// wireAgentManagerWith is wireAgentManager with app.Build's test seams
+// (opts): the synthetic-check gate (synthetic_test.go) passes the probe
+// runner's loopback guard and a faster tick and refresh.
+func wireAgentManagerWith(t *testing.T, ctx context.Context, opts []app.Option, notifyAllow ...netip.Prefix) agentWorld {
+	t.Helper()
 
 	httpLis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -102,7 +110,7 @@ func wireAgentManager(t *testing.T, ctx context.Context, notifyAllow ...netip.Pr
 		Version:          "e2e",
 		NotifyAllowCIDRs: notifyAllow,
 	}
-	a, err := app.Build(ctx, cfg)
+	a, err := app.Build(ctx, cfg, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
