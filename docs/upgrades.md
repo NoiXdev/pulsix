@@ -692,7 +692,8 @@ agent proto gains the additive field `Facts.heartbeat_interval_seconds`. An
 agent now counts as online for three of its own heartbeat intervals after its
 last contact, at least 90 s (`agents.OnlineWindow`); the agents list, the
 online period start the replay hold reads, and the rule evaluation's presence
-and unknown grace all use it. Version skew: an older agent sends no interval,
+and unknown grace all use it; the online period restarts after a gap longer
+than that window or the agent's 15 min disconnect buffer, whichever is shorter. Version skew: an older agent sends no interval,
 so its window stays 90 s exactly as before; an older manager ignores the field
 and keeps the fixed 90 s, so during a rolling upgrade it can still show a
 rarely reporting agent offline between contacts. The first touch after an
