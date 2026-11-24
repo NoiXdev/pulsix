@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	neturl "net/url"
 	"sync"
 	"testing"
@@ -34,9 +35,14 @@ var (
 
 func start() {
 	ctx := context.Background()
-	c, err := postgres.Run(ctx, "timescale/timescaledb:2.30.0-pg18",
-		postgres.WithDatabase("pulsix"), postgres.WithUsername("pulsix"), postgres.WithPassword("pulsix"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)))
+	var c *postgres.PostgresContainer
+	err := startWithRetry(func() error {
+		var runErr error
+		c, runErr = postgres.Run(ctx, "timescale/timescaledb:2.30.0-pg18",
+			postgres.WithDatabase("pulsix"), postgres.WithUsername("pulsix"), postgres.WithPassword("pulsix"),
+			testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)))
+		return runErr
+	}, time.Sleep, log.Printf)
 	if err != nil {
 		errC = err
 		return
