@@ -169,3 +169,47 @@ func TestItemNewestVanished(t *testing.T) {
 		})
 	}
 }
+
+// TestItemNewestReplaying (backlog 3.118): an item is replaying while its
+// newest error-free reading predates the start of the agent's current
+// online period — every reading of it the manager holds was collected
+// before the agent came back, so the rest of that collection may still be
+// in flight in a later chunk of the replay. Its own first reading of the
+// period ends it. A host without a known online period (no agent, or an
+// unknown start) never replays, and an item with nothing but errors has no
+// newest reading to judge.
+func TestItemNewestReplaying(t *testing.T) {
+	since := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	up := rules.Tuple{CheckKey: "web", Metric: "http.up"}
+	dns := rules.Tuple{CheckKey: "web", Metric: "http.dns_ms"}
+	disk := rules.Tuple{CheckKey: "disk", Item: "/", Metric: "disk.used_pct"}
+	for _, tc := range []struct {
+		name   string
+		newest time.Time
+		errs   bool
+		since  time.Time
+		judge  rules.Tuple
+		want   bool
+	}{
+		{name: "newest reading collected before the agent came back", newest: since.Add(-15 * time.Minute), since: since, judge: dns, want: true},
+		{name: "a sibling metric shares its item's verdict", newest: since.Add(-15 * time.Minute), since: since, judge: up, want: true},
+		{name: "a reading taken as the period began ends it", newest: since, since: since, judge: dns, want: false},
+		{name: "a live reading of the period ends it", newest: since.Add(time.Second), since: since, judge: dns, want: false},
+		{name: "no known online period", newest: since.Add(-15 * time.Minute), judge: dns, want: false},
+		{name: "an item with nothing but errors", newest: since.Add(-15 * time.Minute), errs: true, since: since, judge: dns, want: false},
+		{name: "another item's readings have no say", newest: since.Add(-15 * time.Minute), since: since, judge: disk, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := rules.ItemNewest{}
+			errText := ""
+			if tc.errs {
+				errText = "connection refused"
+			}
+			n.Observe(up, tc.newest, errText)
+			n.Observe(dns, tc.newest.Add(-30*time.Minute), errText)
+			if got := n.Replaying(tc.judge, tc.since); got != tc.want {
+				t.Fatalf("Replaying(%+v, %v) = %v, want %v", tc.judge, tc.since, got, tc.want)
+			}
+		})
+	}
+}

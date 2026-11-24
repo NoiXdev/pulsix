@@ -37,7 +37,10 @@ import "time"
 // It is the one implementation of the rule: rule loading (EvalSQLStore's
 // Load, through ItemNewest) takes a vanished tuple out of the evaluation
 // the way it takes out an item its check no longer asks for, and the host
-// page (GET /hosts/{id}/checks) reports it as `vanished`.
+// page (GET /hosts/{id}/checks) reports it as `vanished`. Rule loading
+// alone holds the verdict while the item may be mid-replay
+// (ItemNewest.Replaying, withoutVanished): that hold exists to keep alerts
+// from closing and reopening, and the page has no alert to protect.
 func Vanished(at, itemNewest time.Time, interval time.Duration) bool {
 	return interval > 0 && itemNewest.Sub(at) > vanishedFactor*interval
 }
@@ -71,4 +74,68 @@ func (n ItemNewest) Observe(t Tuple, at time.Time, errText string) {
 func (n ItemNewest) Vanished(t Tuple, at time.Time, interval time.Duration) bool {
 	newest, ok := n[itemKeyOf(t)]
 	return ok && Vanished(at, newest, interval)
+}
+
+// Replaying reports whether t's item may still be in the middle of a replay
+// (backlog 3.118): its newest error-free reading predates since, the start
+// of the host's agent's current online period (HostPresence.
+// AgentOnlineSince). An agent back from a gap replays its buffer before it
+// sends anything live, in chunks of 200 results, and one collection of an
+// item can be split across two chunks. Until the item's first reading of
+// the online period arrives, every reading of it the manager holds was
+// collected before the agent came back, so the rest of that collection may
+// still be in flight — and a metric that trails a sibling from the first
+// chunk is not evidence that it vanished.
+//
+// The online period's start is what the server already records for this:
+// the first touch after a gap longer than the agents list's online window
+// (agents.StaleAfter) restarts it, and the stream's own opening touch comes
+// before the replay. The comparison crosses the agent's clock and the
+// database's, like staleness does: an agent clock running behind keeps an
+// item replaying until its readings pass the period's start, one running
+// ahead by more than the ingest's two-minute plausibility bound has its
+// readings refused anyway.
+//
+// A zero since (no agent, or an unknown start) never replays; neither does
+// an item never observed without an error, which has no newest reading.
+func (n ItemNewest) Replaying(t Tuple, since time.Time) bool {
+	if since.IsZero() {
+		return false
+	}
+	newest, ok := n[itemKeyOf(t)]
+	return ok && newest.Before(since)
+}
+
+// withoutVanished applies the vanished rule (backlog 3.88) to tuples, in
+// place. A vanished tuple — its item reported again since, but not this
+// metric, for more than three intervals — leaves the evaluation like an
+// item its check no longer asks for: interval zero, so no state, no part in
+// the roll-up, and Evaluate reports it as unmeasured, which closes its open
+// alerts as stale.
+//
+// A tuple that would vanish while its item is replaying (backlog 3.118,
+// ItemNewest.Replaying: the item has not reported since the agent's online
+// period began at onlineSince) is held instead: left out of the snapshot
+// altogether, so nothing judges it, nothing reports it unmeasured, its
+// stored state and any alert on it stay exactly as they are, and it has no
+// part in the roll-up or its siblings' inputs for this pass. That is the
+// difference from simply not vanishing it: judged, a client's metric that
+// had vanished before the gap would be measured from the online period's
+// start (staleAt) and so read its frozen value as fresh — a crit reopening
+// for the length of the replay. The item's first reading of the period
+// ends the hold and the tuple is judged, vanished or not, as always.
+// Tuples the rule leaves alone are untouched; the result shares tuples'
+// backing array.
+func withoutVanished(tuples []TupleSnapshot, newest ItemNewest, onlineSince time.Time) []TupleSnapshot {
+	kept := tuples[:0]
+	for _, ts := range tuples {
+		if newest.Vanished(ts.Tuple, ts.At, ts.Interval) {
+			if newest.Replaying(ts.Tuple, onlineSince) {
+				continue
+			}
+			ts.Interval = 0
+		}
+		kept = append(kept, ts)
+	}
+	return kept
 }

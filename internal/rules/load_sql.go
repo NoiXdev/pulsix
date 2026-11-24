@@ -142,15 +142,13 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 			newest.Observe(t, r.At, tuples[i].Err)
 		}
 	}
-	// A vanished tuple (backlog 3.88) — its item reported again since, but
-	// not this metric, for more than three intervals — takes the same path
-	// out: no state, no part in the roll-up, and Evaluate reports it as
-	// unmeasured, which closes its open alerts as stale.
-	for i := range tuples {
-		if newest.Vanished(tuples[i].Tuple, tuples[i].At, tuples[i].Interval) {
-			tuples[i].Interval = 0
-		}
+	// Presence is read here, ahead of the rest, because the vanished rule
+	// needs the agent's online period: a replay holds it (withoutVanished).
+	presence, err := s.presence(ctx, q, d)
+	if err != nil {
+		return HostLoad{}, err
 	}
+	tuples = withoutVanished(tuples, newest, presence.AgentOnlineSince)
 
 	// Discovery and decision resolution (v0.3b-3 design, "Discovery and
 	// evaluation"): item names fall out of the tuples just read, so this
@@ -211,11 +209,6 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 	}
 
 	previousHost, err := s.previousHost(ctx, q, d)
-	if err != nil {
-		return HostLoad{}, err
-	}
-
-	presence, err := s.presence(ctx, q, d)
 	if err != nil {
 		return HostLoad{}, err
 	}
