@@ -417,6 +417,19 @@ func TestTokenCreatePropagatesInsertError(t *testing.T) {
 	}
 }
 
+// TestTokenCreateRefusesBlankName asserts create refuses an empty or
+// whitespace-only name with ErrEmptyName, as the edit does, and stores nothing.
+func TestTokenCreateRefusesBlankName(t *testing.T) {
+	for _, name := range []string{"", "  \t "} {
+		store := newMemTokenStore()
+		tk := auth.NewTokens(store, time.Now)
+		plain, _, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), name, "viewer", nil)
+		if !errors.Is(err, auth.ErrEmptyName) || plain != "" || len(store.byHash) != 0 {
+			t.Fatalf("Create(%q) = (%q, %v), stored %d", name, plain, err, len(store.byHash))
+		}
+	}
+}
+
 // TestTokenListRevokePropagateStoreErrors covers List and Revoke's own
 // pass-through of a store failure.
 func TestTokenListRevokePropagateStoreErrors(t *testing.T) {

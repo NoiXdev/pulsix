@@ -197,6 +197,9 @@ func (t *Tokens) Create(ctx context.Context, userID, orgID uuid.UUID, name, role
 // areas and an api token with any; callers validate earlier for a better
 // error.
 func (t *Tokens) CreateWith(ctx context.Context, userID, orgID uuid.UUID, in NewToken) (string, Token, error) {
+	if strings.TrimSpace(in.Name) == "" {
+		return "", Token{}, ErrEmptyName
+	}
 	kind := in.Kind
 	if kind == "" {
 		kind = TokenKindAPI

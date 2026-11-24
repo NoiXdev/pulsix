@@ -358,3 +358,19 @@ func TestPatchTokenAreasOrderDoesNotMatter(t *testing.T) {
 		t.Fatalf("summary = %q, want %q (no areas part)", summary, want)
 	}
 }
+
+func TestCreateTokenBlankNameIs422(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("create-blank@example.test", "correct horse battery")
+	s.SeedOrg("create-blank-org", owner)
+	c := s.LoginAs(owner)
+	for _, name := range []string{"", "  \t "} {
+		resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs/create-blank-org/tokens", map[string]any{"name": name, "role": "viewer"})
+		if body := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("name %q: %d %s, want 422", name, resp.StatusCode, body)
+		}
+	}
+	if got := listTokens(t, s, c, "create-blank-org"); len(got) != 0 {
+		t.Errorf("tokens stored: %+v", got)
+	}
+}
