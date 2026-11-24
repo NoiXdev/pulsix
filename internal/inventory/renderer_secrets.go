@@ -74,7 +74,8 @@ func mask(rows []varRow) error {
 // Then it opens the sealed values of secret fields, but only in the rows
 // render.Carries names: the groups and memberships whose vars the rendered
 // document carries. A run for one host does not decrypt the rest of the
-// organization. render.Carries makes the very selection render.Render
+// organization, so a value that cannot be decrypted outside its scope no
+// longer fails it (backlog 2.126; the stray check above still does). render.Carries makes the very selection render.Render
 // makes, from the same render.Input, so the narrowing happens inside the
 // one read transaction (backlog 2.16). A row it misses would lose its
 // secrets silently — render.Render's schema.Resolve drops a value still
