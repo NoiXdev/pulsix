@@ -570,7 +570,7 @@ if ($TokenFile) {
 } elseif (-not $Token) {
 	if (Test-IdentityPresent $DataDir) {
 		$reuseIdentity = $true
-		Write-Host "pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with -Token or -TokenFile)"
+		Write-Host "pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if the agent cannot connect because this identity has expired, run the installer again with -Token or -TokenFile)"
 	} else {
 		$Token = Read-TokenHidden
 	}
@@ -765,4 +765,8 @@ try {
 }
 
 Write-Host "pulsix-agent: installed and started ($ServiceName)"
-Write-Host "pulsix-agent: identity lives in $DataDir; the enrollment token is spent on first start"
+if ($reuseIdentity) {
+	Write-Host "pulsix-agent: identity lives in $DataDir (reused)"
+} else {
+	Write-Host "pulsix-agent: identity lives in $DataDir; the enrollment token is spent on first start"
+}

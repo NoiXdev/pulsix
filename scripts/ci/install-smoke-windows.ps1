@@ -392,8 +392,8 @@ function Assert-EnvToken([bool]$Want) {
 
 # Set-PlantedIdentity puts an identity into the data directory the way an
 # enrollment would leave it (backlog 3.60): a self-signed certificate with
-# the org URI SAN the agent insists on, its key (SEC1, the format the agent itself writes and parses even
-# while it still enrolls) and the
+# the org URI SAN the agent insists on, its key (SEC1, the format the
+# agent itself writes and parses even while it still enrolls) and the
 # certificate again as the CA chain. The manager at 127.0.0.1:1 never
 # answers, so no enrollment can happen here; the agent only needs the
 # files to load. PowerShell 7 only (ExportECPrivateKey), which is what

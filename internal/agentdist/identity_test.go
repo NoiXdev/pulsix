@@ -140,7 +140,7 @@ func TestInstallScriptTokenIsOptionalOverAnIdentity(t *testing.T) {
 	for _, want := range []string{
 		`PULSIX_REUSE_IDENTITY=""`,
 		`if has_identity "$DATA_DIR"; then`,
-		"pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with --token or --token-file)",
+		"pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed (if the agent cannot connect because this identity has expired, run the installer again with --token or --token-file)",
 		`if [ -z "$PULSIX_REUSE_IDENTITY" ]; then
 	[ -n "$PULSIX_TOKEN" ] || die "no enrollment token given"
 fi`,
@@ -177,7 +177,7 @@ func TestInstallPs1TokenIsOptionalOverAnIdentity(t *testing.T) {
 		"function Test-IdentityPresent([string]$Dir) {",
 		"$reuseIdentity = $false",
 		"if (Test-IdentityPresent $DataDir) {",
-		"pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with -Token or -TokenFile)",
+		"pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed (if the agent cannot connect because this identity has expired, run the installer again with -Token or -TokenFile)",
 		"if ((-not $reuseIdentity) -and (-not $Token)) {\n\tStop-Install 'no enrollment token given'",
 		"$lines = @(\"PULSIX_MANAGER_ADDR=$Manager\")\n\tif (-not $reuseIdentity) {\n\t\t$lines += \"PULSIX_ENROLL_TOKEN=$Token\"\n\t}",
 	} {
@@ -197,5 +197,26 @@ func TestInstallPs1TokenIsOptionalOverAnIdentity(t *testing.T) {
 	}
 	if !strings.Contains(section, "} elseif (-not $Token) {\n\tif (Test-IdentityPresent $DataDir) {") {
 		t.Error("only a missing -Token may fall back to the identity")
+	}
+}
+
+// In reuse mode the closing lines must not talk about a token that was not
+// written (backlog 3.60); the token path keeps its line.
+func TestInstallersClosingLineMatchesTheMode(t *testing.T) {
+	sh := renderReal(t)
+	if got := strings.Count(sh, "(reused)\""); got != 2 {
+		t.Errorf("install.sh prints the reused closing line %d times, want 2 (Linux and macOS)", got)
+	}
+	if got := strings.Count(sh, "the enrollment token is spent on first start"); got != 2 {
+		t.Errorf("install.sh keeps the token closing line %d times, want 2", got)
+	}
+	ps := string(PowerShellInstallScript())
+	for _, want := range []string{
+		"if ($reuseIdentity) {\n\tWrite-Host \"pulsix-agent: identity lives in $DataDir (reused)\"",
+		"the enrollment token is spent on first start",
+	} {
+		if !strings.Contains(ps, want) {
+			t.Errorf("install.ps1 must contain %q", want)
+		}
 	}
 }

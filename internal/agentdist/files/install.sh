@@ -306,7 +306,7 @@ if [ -n "$PULSIX_TOKEN_FILE" ]; then
 elif [ -z "$PULSIX_TOKEN" ]; then
 	if has_identity "$DATA_DIR"; then
 		PULSIX_REUSE_IDENTITY=1
-		echo "pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed (if it turns out to be expired or invalid, run the installer again with --token or --token-file)"
+		echo "pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed (if the agent cannot connect because this identity has expired, run the installer again with --token or --token-file)"
 	else
 		PULSIX_TOKEN="$(read_token_tty)"
 	fi
@@ -400,7 +400,11 @@ PULSIX_UNIT_EOF
 	systemctl restart "$SERVICE_NAME"
 
 	echo "pulsix-agent: installed and started ($SERVICE_NAME)"
-	echo "pulsix-agent: identity lives in /etc/pulsix — the enrollment token is spent on first start"
+	if [ -n "$PULSIX_REUSE_IDENTITY" ]; then
+		echo "pulsix-agent: identity lives in /etc/pulsix (reused)"
+	else
+		echo "pulsix-agent: identity lives in /etc/pulsix — the enrollment token is spent on first start"
+	fi
 	;;
 Darwin)
 	# launchd has no EnvironmentFile: the agent reads the env file itself
@@ -428,6 +432,10 @@ PULSIX_PLIST_EOF
 	launchctl bootstrap system "$PLIST_PATH" || die "launchctl bootstrap failed; check 'launchctl print system/$LAUNCHD_LABEL' and $LOG_DIR/agent.log"
 
 	echo "pulsix-agent: installed and started ($LAUNCHD_LABEL)"
-	echo "pulsix-agent: identity lives in $DATA_DIR — the enrollment token is spent on first start"
+	if [ -n "$PULSIX_REUSE_IDENTITY" ]; then
+		echo "pulsix-agent: identity lives in $DATA_DIR (reused)"
+	else
+		echo "pulsix-agent: identity lives in $DATA_DIR — the enrollment token is spent on first start"
+	fi
 	;;
 esac
