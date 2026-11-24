@@ -30,12 +30,19 @@ type checkResolver interface {
 type rulesHostChecks struct{ checks checkResolver }
 
 // newEvalStore is the evaluator's store as Build wires it: the agents
-// list's own online window (agents.StaleAfter) is what decides whether a
-// client host's agent is off and the host frozen (backlog 3.57).
-// internal/rules never imports internal/agents, so this is the one place
-// the two meet; TestEvalStoreJudgesAgentsOnlineLikeTheAgentsList pins it.
+// list's own online window (agents.OnlineWindow, per agent from its
+// reported heartbeat interval, backlog 3.58) is what decides whether a
+// client host's agent is off and the host frozen (backlog 3.57), and how
+// long its unknown roll-up waits. internal/rules never imports
+// internal/agents, so this is the one place the two meet;
+// TestEvalStoreJudgesAgentsOnlineLikeTheAgentsList pins it.
 func newEvalStore(d *db.DB, hc rules.HostChecks, it rules.ItemStore) *rules.EvalSQLStore {
-	return rules.NewEvalSQLStore(d, hc, it, agents.StaleAfter, slog.Default())
+	return rules.NewEvalSQLStore(d, hc, it, rulesAgentWindow(), slog.Default())
+}
+
+// rulesAgentWindow is agents.OnlineWindow's rule in internal/rules' terms.
+func rulesAgentWindow() rules.AgentOnlineWindow {
+	return rules.AgentOnlineWindow{Floor: agents.OnlineWindowFloor, HeartbeatsPerWindow: agents.HeartbeatsPerOnlineWindow}
 }
 
 // NewRulesHostChecks wires the adapter Build uses.

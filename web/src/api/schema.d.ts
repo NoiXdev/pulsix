@@ -3726,7 +3726,7 @@ export interface components {
             /** @description The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown */
             secrets_state: string | null;
             /**
-             * @description online = a heartbeat within three heartbeat intervals
+             * @description online = a heartbeat within three of the agent's own heartbeat intervals, and never less than 90 seconds
              * @enum {string}
              */
             status: "online" | "offline";

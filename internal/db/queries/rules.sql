@@ -244,10 +244,14 @@ SELECT facts FROM hosts WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(host_i
 -- name: GetHostPresence :one
 -- Backlog 3.57: the host's kind and its agent's presence, once per host per
 -- evaluation (rules.HostPresence). agent_online is the agents list's own
--- verdict (agents.isOnline: last_seen within agents.StaleAfter, which the
--- caller passes as online_window_seconds), taken against this
--- transaction's now() — the clock that wrote last_seen. A NULL last_seen
--- is not online. agent_last_contact is last_seen, or the registration
+-- verdict (agents.isOnline: last_seen within the agent's online window),
+-- taken against this transaction's now() — the clock that wrote
+-- last_seen. A NULL last_seen is not online. The window is the agent's
+-- own (agents.OnlineWindow, backlog 3.58): heartbeats_per_online_window of
+-- its reported heartbeat interval (heartbeat_interval_s, 00119), never
+-- less than online_window_floor_seconds, which is the whole window when
+-- the agent never reported its interval; agent_online_window_seconds
+-- returns it (the floor for a host without an agent). agent_last_contact is last_seen, or the registration
 -- (created_at, which UpsertHostAgent sets) when the agent has not touched
 -- since. agent_online_since is the start of the agent's current online
 -- period (00092). 'epoch' stands in for "no agent" and "online start
@@ -256,11 +260,16 @@ SELECT facts FROM hosts WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(host_i
 -- unknown.
 SELECT h.kind,
   (a.host_id IS NOT NULL)::boolean AS has_agent,
-  COALESCE(a.last_seen > now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision), false)::boolean AS agent_online,
+  COALESCE(a.last_seen > now() - make_interval(secs => w.seconds), false)::boolean AS agent_online,
   COALESCE(a.last_seen, a.created_at, 'epoch')::timestamptz AS agent_last_contact,
-  COALESCE(a.online_since, 'epoch')::timestamptz AS agent_online_since
+  COALESCE(a.online_since, 'epoch')::timestamptz AS agent_online_since,
+  w.seconds::double precision AS agent_online_window_seconds
 FROM hosts h
 LEFT JOIN host_agents a ON a.org_id = h.org_id AND a.host_id = h.id
+CROSS JOIN LATERAL (
+  SELECT GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
+    sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(a.heartbeat_interval_s, 0)) AS seconds
+) w
 WHERE h.org_id = sqlc.arg(org_id) AND h.id = sqlc.arg(host_id);
 
 -- name: GetCheckHostState :one

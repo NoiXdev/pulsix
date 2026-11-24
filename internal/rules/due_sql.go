@@ -67,10 +67,11 @@ type EvalSQLStore struct {
 	checks HostChecks
 	items  ItemStore
 	log    *slog.Logger
-	// agentWindow is how recent an agent's last_seen must be for it to be
-	// online (agents.StaleAfter, passed in by internal/app, which this
-	// package never imports; a test there pins the two together).
-	agentWindow time.Duration
+	// agentWindow sizes how recent an agent's last_seen must be for it to
+	// be online (agents.OnlineWindow's two constants, passed in by
+	// internal/app, which this package never imports; a test there pins
+	// the two together).
+	agentWindow AgentOnlineWindow
 
 	hostDeadline time.Duration
 }
@@ -87,17 +88,20 @@ type EvalSQLStore struct {
 // here, at the one moment a programmer can still see the call site that
 // made it.
 //
-// agentWindow is the agents list's online window (agents.StaleAfter): an
-// agent whose last_seen is older is offline, which freezes a client host
-// (HostPresence). It is refused when not positive for the same reason as
-// a nil items: a zero window reads every agent as offline and freezes
-// every client for ever, with nothing in the logs to say why.
-func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, agentWindow time.Duration, log *slog.Logger) *EvalSQLStore {
+// agentWindow is the agents list's online window rule (agents.OnlineWindow):
+// an agent whose last_seen is older than its window is offline, which
+// freezes a client host (HostPresence). It is refused unless both its
+// floor and its heartbeats per window are positive, for the same reason
+// as a nil items: a zero floor reads every agent that never reported its
+// interval as offline and freezes its client for ever, and zero
+// heartbeats ignore every reported interval, with nothing in the logs to
+// say why.
+func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, agentWindow AgentOnlineWindow, log *slog.Logger) *EvalSQLStore {
 	if items == nil {
 		panic("rules.NewEvalSQLStore: items must not be nil")
 	}
-	if agentWindow <= 0 {
-		panic("rules.NewEvalSQLStore: the agent online window must be positive")
+	if agentWindow.Floor <= 0 || agentWindow.HeartbeatsPerWindow <= 0 {
+		panic("rules.NewEvalSQLStore: the agent online window's floor and heartbeats per window must be positive")
 	}
 	if log == nil {
 		log = slog.Default()

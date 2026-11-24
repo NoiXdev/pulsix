@@ -461,6 +461,7 @@ type HostAgent struct {
 	LocalChecks        []byte             `json:"local_checks"`
 	LocalCheckProblems []string           `json:"local_check_problems"`
 	ProbesSupported    bool               `json:"probes_supported"`
+	HeartbeatIntervalS *int32             `json:"heartbeat_interval_s"`
 }
 
 type HostConnectionTest struct {

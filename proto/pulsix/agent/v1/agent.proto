@@ -85,6 +85,12 @@ message LocalCheck {
 
 message Facts {
   map<string, string> values = 1;
+  // The agent's effective heartbeat interval in seconds
+  // (PULSIX_HEARTBEAT_INTERVAL). It rides the facts because they are the
+  // first message of every stream; the manager sizes the agent's online
+  // window from it (three intervals, at least 90 s). 0 from an agent older
+  // than the field, which keeps the 90 s window.
+  int32 heartbeat_interval_seconds = 2;
 }
 
 message CheckResults {

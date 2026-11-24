@@ -137,6 +137,9 @@ type fakeAgentStore struct {
 
 	probesSupported    []probesSupportedCall // per SetProbesSupported call
 	probesSupportedErr error
+
+	intervals   []intervalCall // per RecordHeartbeatInterval call
+	intervalErr error
 }
 
 func newFakeAgentStore() *fakeAgentStore {
@@ -1059,4 +1062,24 @@ func (f *fakeAgentStore) probesSupportedCalls() []probesSupportedCall {
 
 func (f *fakeAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
 	return nil, nil
+}
+
+// intervalCall is one RecordHeartbeatInterval call: the serial and the
+// stored interval (nil: not reported).
+type intervalCall struct {
+	serial   string
+	interval *time.Duration
+}
+
+func (f *fakeAgentStore) RecordHeartbeatInterval(_ context.Context, serial string, interval *time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.intervals = append(f.intervals, intervalCall{serial, interval})
+	return f.intervalErr
+}
+
+func (f *fakeAgentStore) intervalCalls() []intervalCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.intervals)
 }

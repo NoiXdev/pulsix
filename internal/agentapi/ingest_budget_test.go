@@ -106,7 +106,7 @@ func TestAReplayBeyondTheBurstIsPacedAndStoredInFull(t *testing.T) {
 		t.Fatalf("replay finished after %s of clock, want at least %s", elapsed, want-time.Second)
 	}
 	// Pacing outlasts a heartbeat interval several times over; last_seen
-	// must keep moving or the agent is shown offline (agents.StaleAfter).
+	// must keep moving or the agent is shown offline (agents.OnlineWindow).
 	if got := len(h.store.touches()) - touchesBefore; got < int(want/(30*time.Second)) {
 		t.Fatalf("last_seen refreshed %d times during %s of pacing, want one per 30 s", got, want)
 	}

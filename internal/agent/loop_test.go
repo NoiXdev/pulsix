@@ -298,6 +298,11 @@ func TestLoopEnrollsAndStreams(t *testing.T) {
 	if got := factsMsg.GetFacts().GetValues()["os"]; got != "linux" {
 		t.Errorf("facts os = %q, want linux", got)
 	}
+	// The facts open the stream, so they carry the heartbeat interval the
+	// manager sizes this agent's online window from (backlog 3.58).
+	if got := factsMsg.GetFacts().GetHeartbeatIntervalSeconds(); got != 60 {
+		t.Errorf("facts heartbeat interval = %d s, want 60 (the configured minute)", got)
+	}
 
 	// Heartbeat cadence: the first ticker is the heartbeat's, the second
 	// the facts', the third the config re-assert's.

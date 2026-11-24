@@ -693,8 +693,8 @@ func TestListViewMarksStaleAgents(t *testing.T) {
 		name string
 		seen *time.Time
 	}{
-		{fresh, "fresh", ptrTime(now.Add(-agents.StaleAfter + time.Second))},
-		{stale, "stale", ptrTime(now.Add(-agents.StaleAfter - time.Second))},
+		{fresh, "fresh", ptrTime(now.Add(-agents.OnlineWindowFloor + time.Second))},
+		{stale, "stale", ptrTime(now.Add(-agents.OnlineWindowFloor - time.Second))},
 		{silent, "silent", nil},
 	} {
 		if err := svc.Register(ctx, reg(org, tc.host, tc.name, "v1", "serial-"+tc.name)); err != nil {
@@ -1091,6 +1091,29 @@ func TestCreateTokenValidatesTheNameHint(t *testing.T) {
 }
 
 func (f *fakeStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+
+func (f *fakeStore) RecordHeartbeatInterval(_ context.Context, serial string, interval *time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.agentsR {
+		if f.agentsR[i].CertSerial == serial {
+			f.agentsR[i].HeartbeatInterval = interval
+		}
+	}
+	return nil
+}
+
+// heartbeatInterval is the stored heartbeat interval of host's agent.
+func (f *fakeStore) heartbeatInterval(hostID uuid.UUID) *time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.agentsR {
+		if a.HostID == hostID {
+			return a.HeartbeatInterval
+		}
+	}
+	return nil
+}
 func (f *fakeStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
 	return nil, nil
 }

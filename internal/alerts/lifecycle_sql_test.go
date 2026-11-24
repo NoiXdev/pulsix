@@ -97,7 +97,7 @@ func newLifecycleRig(t *testing.T) *lifecycleRig {
 	}
 	clock := func() time.Time { return r.now }
 	r.ticker = rules.NewTicker(
-		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), itemsStore, agents.StaleAfter, quiet),
+		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), itemsStore, rules.AgentOnlineWindow{Floor: agents.OnlineWindowFloor, HeartbeatsPerWindow: agents.HeartbeatsPerOnlineWindow}, quiet),
 		alerts.NewService(alerts.NewSQLStore(d), clock),
 		rules.WithTickerClock(clock),
 		rules.WithTickerLogger(quiet),

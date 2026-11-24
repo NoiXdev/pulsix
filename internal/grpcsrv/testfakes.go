@@ -687,6 +687,9 @@ func (h *harness) dial(cfg *tls.Config) *grpc.ClientConn {
 }
 
 func (f *fakeAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+func (f *fakeAgentStore) RecordHeartbeatInterval(context.Context, string, *time.Duration) error {
+	return nil
+}
 func (f *fakeAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
 	return nil, nil
 }

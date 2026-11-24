@@ -5,17 +5,19 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/db"
 )
 
 // TestOnlineSinceTracksTheOnlinePeriod walks one agent through the start
 // of its current online period (host_agents.online_since, backlog 3.57),
 // which a client host's staleness is measured from: NULL after
 // enrollment, set by the first touch, kept by every touch or heartbeat
-// that follows the previous one within agents.StaleAfter (the agents
-// list's online window), set again after a longer gap — an overnight
-// power-off starts a new period, unlike connected_since — set by the
-// first touch after the upgrade, and NULL after a registration (renewal or
-// re-enrollment) until the first touch under the new serial sets it.
+// that follows the previous one within the agents list's online window
+// (agents.OnlineWindow: 90 s for an agent that never reported its
+// interval), set again after a longer gap — an overnight power-off starts
+// a new period, unlike connected_since — set by the first touch after the
+// upgrade, and NULL after a registration (renewal or re-enrollment) until
+// the first touch under the new serial sets it.
 func TestOnlineSinceTracksTheOnlinePeriod(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-online-since")
 	h := createHost(t, d, org, zone, "nb-1")
@@ -74,8 +76,8 @@ func TestOnlineSinceTracksTheOnlinePeriod(t *testing.T) {
 			t.Fatalf("%s: online_since = %v, want it kept at %v", step, o, want)
 		}
 	}
-	within := agents.StaleAfter - 10*time.Second
-	beyond := agents.StaleAfter + 10*time.Second
+	within := agents.OnlineWindowFloor - 10*time.Second
+	beyond := agents.OnlineWindowFloor + 10*time.Second
 
 	if o, _, _ := read(); o != nil {
 		t.Fatalf("enrolled, never seen: online_since = %v, want NULL", o)
@@ -126,4 +128,125 @@ func TestOnlineSinceTracksTheOnlinePeriod(t *testing.T) {
 	}
 	touch("9402")
 	startsNow("first touch after a renewal")
+}
+
+// TestOnlineWindowFollowsTheAgentsHeartbeatInterval (backlog 3.58): the
+// stored interval (host_agents.heartbeat_interval_s) widens the online
+// window in SQL exactly as agents.OnlineWindow does in Go. An agent that
+// reports 120 s keeps its online period across a 300 s gap and starts a
+// new one after 370 s; the Agents page and the probe candidates read it
+// online 300 s after its last contact. Reporting nothing again (a
+// downgrade to an agent older than the field) stores NULL, which is the
+// 90 s window again.
+func TestOnlineWindowFollowsTheAgentsHeartbeatInterval(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-online-window")
+	h := createHost(t, d, org, zone, "nb-2")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-b", "v1", "9501")); err != nil {
+		t.Fatal(err)
+	}
+	stored := func() *int32 {
+		t.Helper()
+		var s *int32
+		if err := d.Pool().QueryRow(ctx,
+			`SELECT heartbeat_interval_s FROM host_agents WHERE host_id = $1`, h.ID).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if s := stored(); s != nil {
+		t.Fatalf("enrolled: heartbeat_interval_s = %v, want NULL", *s)
+	}
+	if err := svc.RecordHeartbeatInterval(ctx, "9501", 120); err != nil {
+		t.Fatal(err)
+	}
+	if s := stored(); s == nil || *s != 120 {
+		t.Fatalf("after reporting 120 s: heartbeat_interval_s = %v, want 120", s)
+	}
+	if err := svc.Touch(ctx, "9501", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	// rewind moves last_seen back by seenAgo and online_since an hour.
+	rewind := func(seenAgo time.Duration) time.Time {
+		t.Helper()
+		var online time.Time
+		if err := d.Pool().QueryRow(ctx, `
+			UPDATE host_agents SET last_seen = now() - make_interval(secs => $2::float8),
+			  online_since = now() - interval '1 hour'
+			WHERE host_id = $1 RETURNING online_since`, h.ID, seenAgo.Seconds()).Scan(&online); err != nil {
+			t.Fatal(err)
+		}
+		return online
+	}
+	onlineSince := func() time.Time {
+		t.Helper()
+		var o time.Time
+		if err := d.Pool().QueryRow(ctx, `SELECT online_since FROM host_agents WHERE host_id = $1`, h.ID).Scan(&o); err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+
+	rewind(300 * time.Second)
+	scoped := db.WithOrgScope(ctx, org)
+	v, err := svc.ViewByHost(scoped, org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Online || v.HeartbeatInterval == nil || *v.HeartbeatInterval != 2*time.Minute {
+		t.Fatalf("300 s after the last contact of a 120 s agent: online = %v, interval = %v; want online, 2m",
+			v.Online, v.HeartbeatInterval)
+	}
+	if err := svc.SetProbesSupported(ctx, h.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := svc.OnlineProbeAgents(scoped, org); err != nil || len(ids) != 1 || ids[0] != h.ID {
+		t.Fatalf("probe candidates 300 s after the last contact = %v, %v; want the 120 s agent", ids, err)
+	}
+
+	start := rewind(300 * time.Second)
+	if err := svc.Touch(ctx, "9501", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if o := onlineSince(); !o.Equal(start) {
+		t.Fatalf("touch 300 s after the last one, 120 s interval: online_since = %v, want it kept at %v", o, start)
+	}
+	start = rewind(300 * time.Second)
+	if err := svc.Heartbeat(ctx, "9501", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if o := onlineSince(); !o.Equal(start) {
+		t.Fatalf("heartbeat 300 s after the last one, 120 s interval: online_since = %v, want it kept at %v", o, start)
+	}
+
+	start = rewind(370 * time.Second)
+	if v, err := svc.ViewByHost(scoped, org, h.ID); err != nil || v.Online {
+		t.Fatalf("370 s after the last contact of a 120 s agent: online = %v, %v; want offline", v.Online, err)
+	}
+	if ids, err := svc.OnlineProbeAgents(scoped, org); err != nil || len(ids) != 0 {
+		t.Fatalf("probe candidates 370 s after the last contact = %v, %v; want none", ids, err)
+	}
+	if err := svc.Touch(ctx, "9501", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if o := onlineSince(); o.Equal(start) {
+		t.Fatal("touch 370 s after the last one, 120 s interval: online_since kept, want a new period")
+	}
+
+	// A downgrade: the agent reports nothing, the window is 90 s again.
+	if err := svc.RecordHeartbeatInterval(ctx, "9501", 0); err != nil {
+		t.Fatal(err)
+	}
+	if s := stored(); s != nil {
+		t.Fatalf("after reporting nothing: heartbeat_interval_s = %v, want NULL", *s)
+	}
+	start = rewind(100 * time.Second)
+	if v, err := svc.ViewByHost(scoped, org, h.ID); err != nil || v.Online {
+		t.Fatalf("100 s after the last contact without an interval: online = %v, %v; want offline", v.Online, err)
+	}
+	if err := svc.Touch(ctx, "9501", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if o := onlineSince(); o.Equal(start) {
+		t.Fatal("touch 100 s after the last one without an interval: online_since kept, want a new period")
+	}
 }

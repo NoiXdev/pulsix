@@ -240,23 +240,25 @@ func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
 const reconnectGap = 24 * time.Hour
 
 // Touch writes last_seen and version, the connection start (reconnectGap)
-// and the online period's start (StaleAfter, backlog 3.57).
+// and the online period's start (backlog 3.57), which a gap longer than
+// the agent's own online window (OnlineWindow, computed per row from its
+// stored heartbeat interval) restarts.
 func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
-		OnlineWindowSeconds: StaleAfter.Seconds(),
+		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
 	})
 }
 
 // Heartbeat writes last_seen, version, the secrets report, the local
 // checks report, the connection start (Touch's rule, reconnectGap) and the
-// online period's start (Touch's rule, StaleAfter) in one statement. An
+// online period's start (Touch's rule, OnlineWindow) in one statement. An
 // unknown report writes NULL to its columns; a known one writes its names,
 // checks and problems as (possibly empty, never NULL) arrays.
 func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport) error {
 	p := gen.RecordAgentHeartbeatParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
-		OnlineWindowSeconds: StaleAfter.Seconds(),
+		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
 	}
 	if secrets.Known {
 		names := secrets.Names
@@ -318,6 +320,7 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 	a := Agent{
 		HostID: h.HostID, OrgID: h.OrgID, AgentName: h.AgentName, CertSerial: h.CertSerial,
 		LastSeen: db.TimePtr(h.LastSeen), Version: h.Version, CreatedAt: h.CreatedAt, HostName: hostName,
+		HeartbeatInterval: intervalOf(h.HeartbeatIntervalS),
 	}
 	if certNotAfter.Valid {
 		t := certNotAfter.Time

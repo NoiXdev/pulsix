@@ -19,9 +19,10 @@ type HostPresence struct {
 	// HasAgent reports whether the host has an agent (a host_agents row).
 	HasAgent bool
 	// AgentOnline is the agents list's own verdict (agents.isOnline):
-	// last_seen within agents.StaleAfter. An agent that never touched
-	// (last_seen NULL) is not online. The store computes it with the
-	// window it was built with (NewEvalSQLStore).
+	// last_seen within the agent's online window (OnlineWindow). An agent
+	// that never touched (last_seen NULL) is not online. The store
+	// computes it with the window rule it was built with
+	// (NewEvalSQLStore).
 	AgentOnline bool
 	// AgentLastSeen is the agent's last contact: last_seen, or — when it
 	// has not touched since its registration (last_seen NULL after an
@@ -30,7 +31,7 @@ type HostPresence struct {
 	AgentLastSeen time.Time
 	// AgentOnlineSince is when the agent's current online period began
 	// (host_agents.online_since, 00092: reset by the first touch after a
-	// gap longer than agents.StaleAfter), or zero when unknown. It is not
+	// gap longer than the agent's online window), or zero when unknown. It is not
 	// connected_since (00088), which spans gaps of up to 24 hours — a
 	// notebook shut down overnight keeps that one, and its 1-hour checks
 	// would read unknown every morning.
@@ -40,11 +41,23 @@ type HostPresence struct {
 	// means the warning is off. Load fills it for a client with an agent
 	// only; nothing else reads it.
 	AbsentAfter time.Duration
-	// OnlineWindow is the agents list's online window (agents.StaleAfter,
-	// the window the store was built with). Load fills it for a client
-	// with an agent only: it is how long that client's unknown roll-up
-	// must stand before its host alert opens (unknownGrace).
+	// OnlineWindow is the agent's own online window (agents.OnlineWindow,
+	// backlog 3.58: three of its reported heartbeat intervals, at least
+	// the floor the store was built with). Load fills it for a client with
+	// an agent only: it is how long that client's unknown roll-up must
+	// stand before its host alert opens (unknownGrace).
 	OnlineWindow time.Duration
+}
+
+// AgentOnlineWindow is the rule an agent's online window follows
+// (agents.OnlineWindow, which this package never imports; internal/app
+// passes its constants in and pins the two together): HeartbeatsPerWindow
+// of the agent's reported heartbeat interval, never less than Floor, and
+// Floor for an agent that never reported its interval. The presence read
+// applies it per agent in SQL (GetHostPresence).
+type AgentOnlineWindow struct {
+	Floor               time.Duration
+	HeartbeatsPerWindow int
 }
 
 // frozen reports whether the evaluation must leave the host exactly as it

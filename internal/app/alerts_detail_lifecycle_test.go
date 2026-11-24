@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
@@ -56,7 +55,7 @@ func TestEvaluationCapturesWhyAnAlertFired(t *testing.T) {
 	alertsSvc := alerts.NewService(alerts.NewSQLStore(d), clock)
 	alertsSvc.SetDetailSource(NewAlertDetails(checksStore, checksSvc), quiet)
 	ticker := rules.NewTicker(
-		rules.NewEvalSQLStore(d, NewRulesHostChecks(checksSvc), itemsStore, agents.StaleAfter, quiet),
+		rules.NewEvalSQLStore(d, NewRulesHostChecks(checksSvc), itemsStore, rulesAgentWindow(), quiet),
 		alertsSvc, rules.WithTickerClock(clock), rules.WithTickerLogger(quiet))
 
 	scoped := db.WithOrgScope(ctx, org)

@@ -247,7 +247,9 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 // needs no organization scope, which this unscoped store does not have.
 func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (HostPresence, error) {
 	row, err := q.GetHostPresence(ctx, gen.GetHostPresenceParams{
-		OrgID: d.OrgID, HostID: d.HostID, OnlineWindowSeconds: s.agentWindow.Seconds(),
+		OrgID: d.OrgID, HostID: d.HostID,
+		OnlineWindowFloorSeconds:  s.agentWindow.Floor.Seconds(),
+		HeartbeatsPerOnlineWindow: float64(s.agentWindow.HeartbeatsPerWindow),
 	})
 	if err != nil {
 		return HostPresence{}, fmt.Errorf("get host presence: %w", err)
@@ -265,7 +267,7 @@ func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (Hos
 			return HostPresence{}, fmt.Errorf("get client absent days: %w", err)
 		}
 		p.AbsentAfter = time.Duration(days) * 24 * time.Hour
-		p.OnlineWindow = s.agentWindow
+		p.OnlineWindow = time.Duration(row.AgentOnlineWindowSeconds * float64(time.Second))
 	}
 	return p, nil
 }

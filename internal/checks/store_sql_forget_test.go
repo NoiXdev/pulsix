@@ -208,7 +208,7 @@ func (noChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.Che
 // are discovered into check_items.
 func loadHost(t *testing.T, d *db.DB, org, host uuid.UUID) {
 	t.Helper()
-	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), agents.StaleAfter, nil).
+	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), rules.AgentOnlineWindow{Floor: agents.OnlineWindowFloor, HeartbeatsPerWindow: agents.HeartbeatsPerOnlineWindow}, nil).
 		Load(ctx, rules.Due{OrgID: org, HostID: host}, time.Now()); err != nil {
 		t.Fatalf("evaluator load: %v", err)
 	}

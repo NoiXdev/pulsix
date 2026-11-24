@@ -162,7 +162,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -203,6 +203,7 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.LocalChecks,
 		&i.HostAgent.LocalCheckProblems,
 		&i.HostAgent.ProbesSupported,
+		&i.HostAgent.HeartbeatIntervalS,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -280,7 +281,7 @@ func (q *Queries) ListAgentLocalChecks(ctx context.Context, arg ListAgentLocalCh
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -324,6 +325,7 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.LocalChecks,
 			&i.HostAgent.LocalCheckProblems,
 			&i.HostAgent.ProbesSupported,
+			&i.HostAgent.HeartbeatIntervalS,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -382,18 +384,20 @@ func (q *Queries) ListPendingAgentEnrollments(ctx context.Context, arg ListPendi
 }
 
 const listProbeCapableAgents = `-- name: ListProbeCapableAgents :many
-SELECT host_id, last_seen FROM host_agents
+SELECT host_id, last_seen, heartbeat_interval_s FROM host_agents
 WHERE org_id = $1 AND probes_supported
 ORDER BY host_id
 `
 
 type ListProbeCapableAgentsRow struct {
-	HostID   uuid.UUID          `json:"host_id"`
-	LastSeen pgtype.Timestamptz `json:"last_seen"`
+	HostID             uuid.UUID          `json:"host_id"`
+	LastSeen           pgtype.Timestamptz `json:"last_seen"`
+	HeartbeatIntervalS *int32             `json:"heartbeat_interval_s"`
 }
 
 // The organization's agents that report probes_supported, with their last
-// heartbeat; the service applies the online rule.
+// heartbeat and their reported heartbeat interval; the service applies the
+// online rule.
 func (q *Queries) ListProbeCapableAgents(ctx context.Context, orgID uuid.UUID) ([]ListProbeCapableAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listProbeCapableAgents, orgID)
 	if err != nil {
@@ -403,7 +407,7 @@ func (q *Queries) ListProbeCapableAgents(ctx context.Context, orgID uuid.UUID) (
 	var items []ListProbeCapableAgentsRow
 	for rows.Next() {
 		var i ListProbeCapableAgentsRow
-		if err := rows.Scan(&i.HostID, &i.LastSeen); err != nil {
+		if err := rows.Scan(&i.HostID, &i.LastSeen, &i.HeartbeatIntervalS); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -631,20 +635,22 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => $7::double precision)
+      OR last_seen < now() - make_interval(secs => GREATEST($7::double precision,
+          $8::double precision * COALESCE(heartbeat_interval_s, 0)))
     THEN now() ELSE online_since END
-WHERE cert_serial = $8
+WHERE cert_serial = $9
 `
 
 type RecordAgentHeartbeatParams struct {
-	Version             string   `json:"version"`
-	SecretNames         []string `json:"secret_names"`
-	SecretsState        *string  `json:"secrets_state"`
-	LocalChecks         []byte   `json:"local_checks"`
-	LocalCheckProblems  []string `json:"local_check_problems"`
-	ReconnectGapSeconds float64  `json:"reconnect_gap_seconds"`
-	OnlineWindowSeconds float64  `json:"online_window_seconds"`
-	Serial              string   `json:"serial"`
+	Version                   string   `json:"version"`
+	SecretNames               []string `json:"secret_names"`
+	SecretsState              *string  `json:"secrets_state"`
+	LocalChecks               []byte   `json:"local_checks"`
+	LocalCheckProblems        []string `json:"local_check_problems"`
+	ReconnectGapSeconds       float64  `json:"reconnect_gap_seconds"`
+	OnlineWindowFloorSeconds  float64  `json:"online_window_floor_seconds"`
+	HeartbeatsPerOnlineWindow float64  `json:"heartbeats_per_online_window"`
+	Serial                    string   `json:"serial"`
 }
 
 // A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
@@ -662,7 +668,8 @@ func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeart
 		arg.LocalChecks,
 		arg.LocalCheckProblems,
 		arg.ReconnectGapSeconds,
-		arg.OnlineWindowSeconds,
+		arg.OnlineWindowFloorSeconds,
+		arg.HeartbeatsPerOnlineWindow,
 		arg.Serial,
 	)
 	return err
@@ -681,6 +688,25 @@ type RevokeAgentCertificatesParams struct {
 // Idempotent: a second revoke keeps the first timestamp.
 func (q *Queries) RevokeAgentCertificates(ctx context.Context, arg RevokeAgentCertificatesParams) error {
 	_, err := q.db.Exec(ctx, revokeAgentCertificates, arg.OrgID, arg.HostID)
+	return err
+}
+
+const setAgentHeartbeatInterval = `-- name: SetAgentHeartbeatInterval :exec
+UPDATE host_agents SET heartbeat_interval_s = $1::integer
+WHERE cert_serial = $2
+  AND heartbeat_interval_s IS DISTINCT FROM $1::integer
+`
+
+type SetAgentHeartbeatIntervalParams struct {
+	IntervalSeconds *int32 `json:"interval_seconds"`
+	Serial          string `json:"serial"`
+}
+
+// The agent's reported heartbeat interval (00119, backlog 3.58), by serial
+// and org-unscoped like the other stream writes; NULL when it reports
+// none. Written only when it changes.
+func (q *Queries) SetAgentHeartbeatInterval(ctx context.Context, arg SetAgentHeartbeatIntervalParams) error {
+	_, err := q.db.Exec(ctx, setAgentHeartbeatInterval, arg.IntervalSeconds, arg.Serial)
 	return err
 }
 
@@ -710,16 +736,18 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => $3::double precision)
+      OR last_seen < now() - make_interval(secs => GREATEST($3::double precision,
+          $4::double precision * COALESCE(heartbeat_interval_s, 0)))
     THEN now() ELSE online_since END
-WHERE cert_serial = $4
+WHERE cert_serial = $5
 `
 
 type TouchAgentBySerialParams struct {
-	Version             string  `json:"version"`
-	ReconnectGapSeconds float64 `json:"reconnect_gap_seconds"`
-	OnlineWindowSeconds float64 `json:"online_window_seconds"`
-	Serial              string  `json:"serial"`
+	Version                   string  `json:"version"`
+	ReconnectGapSeconds       float64 `json:"reconnect_gap_seconds"`
+	OnlineWindowFloorSeconds  float64 `json:"online_window_floor_seconds"`
+	HeartbeatsPerOnlineWindow float64 `json:"heartbeats_per_online_window"`
+	Serial                    string  `json:"serial"`
 }
 
 // Org-unscoped heartbeat by serial: the gRPC stream has no org context
@@ -740,14 +768,19 @@ type TouchAgentBySerialParams struct {
 //
 // online_since (00092, backlog 3.57) is when the agent's current online
 // period began, which an online client host's staleness is measured from:
-// kept while the previous touch is within the agents list's online window
-// (agents.StaleAfter, online_window_seconds), set to now() after a longer
-// gap, after a registration (last_seen NULL) and when it is unknown.
+// kept while the previous touch is within the agents list's online window,
+// set to now() after a longer gap, after a registration (last_seen NULL)
+// and when it is unknown. The window is the row's own (agents.OnlineWindow,
+// backlog 3.58): heartbeats_per_online_window of the agent's reported
+// heartbeat interval (heartbeat_interval_s, 00119), never less than
+// online_window_floor_seconds, which is the whole window when the agent
+// never reported its interval.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
 	_, err := q.db.Exec(ctx, touchAgentBySerial,
 		arg.Version,
 		arg.ReconnectGapSeconds,
-		arg.OnlineWindowSeconds,
+		arg.OnlineWindowFloorSeconds,
+		arg.HeartbeatsPerOnlineWindow,
 		arg.Serial,
 	)
 	return err
@@ -803,7 +836,7 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     local_checks = CASE WHEN $7::boolean THEN host_agents.local_checks END,
     local_check_problems = CASE WHEN $7::boolean THEN host_agents.local_check_problems END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported, heartbeat_interval_s
 `
 
 type UpsertHostAgentParams struct {
@@ -865,6 +898,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.LocalChecks,
 		&i.LocalCheckProblems,
 		&i.ProbesSupported,
+		&i.HeartbeatIntervalS,
 	)
 	return i, err
 }

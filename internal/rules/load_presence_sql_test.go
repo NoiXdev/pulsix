@@ -13,18 +13,25 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
-// testAgentWindow is the online window these tests build the store with.
-// Production passes agents.StaleAfter (internal/app pins that); the value
-// here only has to be one the timestamps below are clearly inside or
-// outside of.
-const testAgentWindow = 90 * time.Second
+// testAgentWindow is the online window rule these tests build the store
+// with. Production passes agents.OnlineWindowFloor and
+// agents.HeartbeatsPerOnlineWindow (internal/app pins that); the values
+// here only have to be ones the timestamps below are clearly inside or
+// outside of. testFloor is the window of an agent that never reported its
+// heartbeat interval.
+const testFloor = 90 * time.Second
+
+var testAgentWindow = rules.AgentOnlineWindow{Floor: testFloor, HeartbeatsPerWindow: 3}
 
 // agentRow is a host_agents row written relative to the database's own
 // now(): lastSeen and online are SQL interval texts ("10 seconds"), or
-// "" for NULL. The timestamps actually stored are returned, so a test
-// compares against what the database holds rather than a Go clock.
+// "" for NULL. intervalS is the reported heartbeat interval in seconds, 0
+// for NULL (never reported). The timestamps actually stored are returned,
+// so a test compares against what the database holds rather than a Go
+// clock.
 type agentRow struct {
 	lastSeen, online string
+	intervalS        int32
 }
 
 func insertAgent(t *testing.T, d *db.DB, org, host uuid.UUID, a agentRow) (lastSeen, online, created *time.Time) {
@@ -35,12 +42,17 @@ func insertAgent(t *testing.T, d *db.DB, org, host uuid.UUID, a agentRow) (lastS
 		}
 		return s
 	}
+	var interval *int32
+	if a.intervalS > 0 {
+		interval = &a.intervalS
+	}
 	err := d.Pool().QueryRow(context.Background(), `
-		INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, last_seen, online_since, connected_since)
+		INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, last_seen, online_since, connected_since,
+		                         heartbeat_interval_s)
 		VALUES ($1, $2, 'agent', $3,
-		        now() - $4::text::interval, now() - $5::text::interval, now() - interval '30 days')
+		        now() - $4::text::interval, now() - $5::text::interval, now() - interval '30 days', $6)
 		RETURNING last_seen, online_since, created_at`,
-		host, org, uuid.NewString(), ago(a.lastSeen), ago(a.online)).Scan(&lastSeen, &online, &created)
+		host, org, uuid.NewString(), ago(a.lastSeen), ago(a.online), interval).Scan(&lastSeen, &online, &created)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +127,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: true,
 			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 7 * 24 * time.Hour,
-			OnlineWindow: testAgentWindow,
+			OnlineWindow: testFloor,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
@@ -130,7 +142,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: false,
 			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
-			OnlineWindow: testAgentWindow,
+			OnlineWindow: testFloor,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
@@ -143,9 +155,57 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		setKind(t, d, host, "client")
 		setAbsentDays(t, d, org, 0)
 		_, _, created := insertAgent(t, d, org, host, agentRow{})
-		want := rules.HostPresence{Client: true, HasAgent: true, AgentLastSeen: timeOf(created), OnlineWindow: testAgentWindow}
+		want := rules.HostPresence{Client: true, HasAgent: true, AgentLastSeen: timeOf(created), OnlineWindow: testFloor}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v (the warning off, the online start unknown)", got, want)
+		}
+	})
+
+	// Backlog 3.58: the window is the agent's own, three of its reported
+	// heartbeat intervals and never less than the floor — the online
+	// verdict and the unknown grace alike.
+	t.Run("a client whose agent reports 120 s is online 300 s after its last contact", func(t *testing.T) {
+		org := seedOrg(t, d, "presence-slow-online")
+		host := seedHost(t, d, org, "h")
+		setKind(t, d, host, "client")
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "300 seconds", online: "1 hour", intervalS: 120})
+		want := rules.HostPresence{
+			Client: true, HasAgent: true, AgentOnline: true,
+			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
+			OnlineWindow: 6 * time.Minute,
+		}
+		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
+			t.Fatalf("presence = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a client whose agent reports 120 s is offline 370 s after its last contact", func(t *testing.T) {
+		org := seedOrg(t, d, "presence-slow-offline")
+		host := seedHost(t, d, org, "h")
+		setKind(t, d, host, "client")
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "370 seconds", online: "1 hour", intervalS: 120})
+		want := rules.HostPresence{
+			Client: true, HasAgent: true, AgentOnline: false,
+			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
+			OnlineWindow: 6 * time.Minute,
+		}
+		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
+			t.Fatalf("presence = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a reported interval under the floor keeps the floor", func(t *testing.T) {
+		org := seedOrg(t, d, "presence-fast")
+		host := seedHost(t, d, org, "h")
+		setKind(t, d, host, "client")
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "80 seconds", online: "1 hour", intervalS: 10})
+		want := rules.HostPresence{
+			Client: true, HasAgent: true, AgentOnline: true,
+			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
+			OnlineWindow: testFloor,
+		}
+		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
+			t.Fatalf("presence = %+v, want %+v", got, want)
 		}
 	})
 
@@ -210,14 +270,23 @@ func TestApplyOfAFrozenResultWritesOnlyTheCursor(t *testing.T) {
 	}
 }
 
-// TestNewEvalSQLStoreRefusesNoAgentWindow: a zero window would read every
-// agent as offline and freeze every client for ever, quietly. Refused at
-// construction, like a nil ItemStore.
+// TestNewEvalSQLStoreRefusesNoAgentWindow: a zero floor would read every
+// agent that never reported its interval as offline and freeze its client
+// for ever, quietly, and no heartbeats per window would ignore every
+// reported interval. Refused at construction, like a nil ItemStore.
 func TestNewEvalSQLStoreRefusesNoAgentWindow(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("NewEvalSQLStore(window 0) returned a store, want a panic at construction")
-		}
-	}()
-	rules.NewEvalSQLStore(nil, cpuMinute(), &fakeItemStore{}, 0, discard())
+	for _, w := range []rules.AgentOnlineWindow{
+		{},
+		{HeartbeatsPerWindow: 3},
+		{Floor: testFloor},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("NewEvalSQLStore(%+v) returned a store, want a panic at construction", w)
+				}
+			}()
+			rules.NewEvalSQLStore(nil, cpuMinute(), &fakeItemStore{}, w, discard())
+		}()
+	}
 }

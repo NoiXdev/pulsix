@@ -278,6 +278,62 @@ func TestFactsDroppedWithoutSink(t *testing.T) {
 	}
 }
 
+// TestFactsRecordTheHeartbeatInterval (backlog 3.58): the facts, the
+// first message of every stream, carry the agent's heartbeat interval,
+// which the registry stores for the agent's online window — also without
+// a facts sink. Facts without it (an agent older than the field) store
+// "not reported", the 90 s window.
+func TestFactsRecordTheHeartbeatInterval(t *testing.T) {
+	for _, withFacts := range []bool{true, false} {
+		h := newHarnessOpts(t, withFacts, nil)
+		_, client := enrollAnAgent(t, h, "web-1")
+		stream, err := (*client).AgentStream(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, seconds := range []int32{120, 0} {
+			if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{Facts: &agentpb.Facts{
+				Values: map[string]string{"os": "linux"}, HeartbeatIntervalSeconds: seconds,
+			}}}); err != nil {
+				t.Fatal(err)
+			}
+			if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
+				t.Fatalf("facts ack = %+v, %v", ack, err)
+			}
+		}
+		calls := h.store.intervalCalls()
+		if len(calls) != 2 || calls[0].interval == nil || *calls[0].interval != 2*time.Minute || calls[1].interval != nil {
+			t.Fatalf("with a sink %v: interval calls = %+v, want 2m then not reported", withFacts, calls)
+		}
+		if calls[0].serial == "" || calls[0].serial != calls[1].serial {
+			t.Fatalf("interval calls by serial %q and %q, want the stream's own", calls[0].serial, calls[1].serial)
+		}
+	}
+}
+
+// TestFactsIntervalFaultEndsStream: failing to store the interval is a
+// registry fault like a failed heartbeat record — the stream ends with
+// Internal and the agent reconnects, sending its facts first again.
+func TestFactsIntervalFaultEndsStream(t *testing.T) {
+	h := newHarness(t)
+	h.store.mu.Lock()
+	h.store.intervalErr = errors.New("db down")
+	h.store.mu.Unlock()
+	_, client := enrollAnAgent(t, h, "web-1")
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{Facts: &agentpb.Facts{
+		Values: map[string]string{"os": "linux"}, HeartbeatIntervalSeconds: 60,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.Internal {
+		t.Fatalf("interval fault: %v, want Internal", err)
+	}
+}
+
 // TestFactsSinkFaultEndsStream: a sink fault is a server error — the
 // stream ends with Internal and the agent reconnects (facts re-push at
 // their next interval).

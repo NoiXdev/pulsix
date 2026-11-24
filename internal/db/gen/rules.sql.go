@@ -426,34 +426,45 @@ func (q *Queries) GetHostFacts(ctx context.Context, arg GetHostFactsParams) ([]b
 const getHostPresence = `-- name: GetHostPresence :one
 SELECT h.kind,
   (a.host_id IS NOT NULL)::boolean AS has_agent,
-  COALESCE(a.last_seen > now() - make_interval(secs => $1::double precision), false)::boolean AS agent_online,
+  COALESCE(a.last_seen > now() - make_interval(secs => w.seconds), false)::boolean AS agent_online,
   COALESCE(a.last_seen, a.created_at, 'epoch')::timestamptz AS agent_last_contact,
-  COALESCE(a.online_since, 'epoch')::timestamptz AS agent_online_since
+  COALESCE(a.online_since, 'epoch')::timestamptz AS agent_online_since,
+  w.seconds::double precision AS agent_online_window_seconds
 FROM hosts h
 LEFT JOIN host_agents a ON a.org_id = h.org_id AND a.host_id = h.id
-WHERE h.org_id = $2 AND h.id = $3
+CROSS JOIN LATERAL (
+  SELECT GREATEST($1::double precision,
+    $2::double precision * COALESCE(a.heartbeat_interval_s, 0)) AS seconds
+) w
+WHERE h.org_id = $3 AND h.id = $4
 `
 
 type GetHostPresenceParams struct {
-	OnlineWindowSeconds float64   `json:"online_window_seconds"`
-	OrgID               uuid.UUID `json:"org_id"`
-	HostID              uuid.UUID `json:"host_id"`
+	OnlineWindowFloorSeconds  float64   `json:"online_window_floor_seconds"`
+	HeartbeatsPerOnlineWindow float64   `json:"heartbeats_per_online_window"`
+	OrgID                     uuid.UUID `json:"org_id"`
+	HostID                    uuid.UUID `json:"host_id"`
 }
 
 type GetHostPresenceRow struct {
-	Kind             string    `json:"kind"`
-	HasAgent         bool      `json:"has_agent"`
-	AgentOnline      bool      `json:"agent_online"`
-	AgentLastContact time.Time `json:"agent_last_contact"`
-	AgentOnlineSince time.Time `json:"agent_online_since"`
+	Kind                     string    `json:"kind"`
+	HasAgent                 bool      `json:"has_agent"`
+	AgentOnline              bool      `json:"agent_online"`
+	AgentLastContact         time.Time `json:"agent_last_contact"`
+	AgentOnlineSince         time.Time `json:"agent_online_since"`
+	AgentOnlineWindowSeconds float64   `json:"agent_online_window_seconds"`
 }
 
 // Backlog 3.57: the host's kind and its agent's presence, once per host per
 // evaluation (rules.HostPresence). agent_online is the agents list's own
-// verdict (agents.isOnline: last_seen within agents.StaleAfter, which the
-// caller passes as online_window_seconds), taken against this
-// transaction's now() — the clock that wrote last_seen. A NULL last_seen
-// is not online. agent_last_contact is last_seen, or the registration
+// verdict (agents.isOnline: last_seen within the agent's online window),
+// taken against this transaction's now() — the clock that wrote
+// last_seen. A NULL last_seen is not online. The window is the agent's
+// own (agents.OnlineWindow, backlog 3.58): heartbeats_per_online_window of
+// its reported heartbeat interval (heartbeat_interval_s, 00119), never
+// less than online_window_floor_seconds, which is the whole window when
+// the agent never reported its interval; agent_online_window_seconds
+// returns it (the floor for a host without an agent). agent_last_contact is last_seen, or the registration
 // (created_at, which UpsertHostAgent sets) when the agent has not touched
 // since. agent_online_since is the start of the agent's current online
 // period (00092). 'epoch' stands in for "no agent" and "online start
@@ -461,7 +472,12 @@ type GetHostPresenceRow struct {
 // whether the agent fields are real, and the Go side reads the epoch as
 // unknown.
 func (q *Queries) GetHostPresence(ctx context.Context, arg GetHostPresenceParams) (GetHostPresenceRow, error) {
-	row := q.db.QueryRow(ctx, getHostPresence, arg.OnlineWindowSeconds, arg.OrgID, arg.HostID)
+	row := q.db.QueryRow(ctx, getHostPresence,
+		arg.OnlineWindowFloorSeconds,
+		arg.HeartbeatsPerOnlineWindow,
+		arg.OrgID,
+		arg.HostID,
+	)
 	var i GetHostPresenceRow
 	err := row.Scan(
 		&i.Kind,
@@ -469,6 +485,7 @@ func (q *Queries) GetHostPresence(ctx context.Context, arg GetHostPresenceParams
 		&i.AgentOnline,
 		&i.AgentLastContact,
 		&i.AgentOnlineSince,
+		&i.AgentOnlineWindowSeconds,
 	)
 	return i, err
 }

@@ -233,7 +233,7 @@ func TestProbeResultDrivesARule(t *testing.T) {
 	}()
 
 	ticker := rules.NewTicker(
-		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), items.NewSQLStore(d), agents.StaleAfter, quiet),
+		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), items.NewSQLStore(d), rules.AgentOnlineWindow{Floor: agents.OnlineWindowFloor, HeartbeatsPerWindow: agents.HeartbeatsPerOnlineWindow}, quiet),
 		alerts.NewService(alerts.NewSQLStore(d), time.Now),
 		rules.WithTickerLogger(quiet),
 	)

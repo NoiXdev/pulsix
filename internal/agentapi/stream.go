@@ -164,9 +164,10 @@ func (s *Service) pacedResults(msg *agentpb.AgentMessage) (int, bool) {
 }
 
 // process applies one agent message: a heartbeat touches the registry and
-// answers a configuration mismatch (processHeartbeat); facts flow to the
-// FactsSink (a nil sink drops them with a server log — Task 8 wires the
-// facts service); check results flow to the ChecksPort and probe results
+// answers a configuration mismatch (processHeartbeat); facts record the
+// agent's heartbeat interval in the registry and flow to the FactsSink (a
+// nil sink drops them with a server log — Task 8 wires the facts
+// service); check results flow to the ChecksPort and probe results
 // to the ProbesPort (a nil port drops them with a server log the same way,
 // so this package can ship ahead of or without it). An unknown body (the
 // proto union is deliberately open for future manager messages) is a no-op
@@ -176,6 +177,14 @@ func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *
 	case *agentpb.AgentMessage_Heartbeat:
 		return s.processHeartbeat(ctx, agent, body.Heartbeat)
 	case *agentpb.AgentMessage_Facts:
+		// The facts open every stream, so the heartbeat interval they
+		// carry sizes the agent's online window (backlog 3.58) from the
+		// start of the stream on; facts without it store "not reported".
+		// A failed write is a registry fault, like a failed heartbeat
+		// record: the stream ends and the agent's next one repeats it.
+		if err := s.deps.Agents.RecordHeartbeatInterval(ctx, agent.Serial, body.Facts.GetHeartbeatIntervalSeconds()); err != nil {
+			return reply{}, err
+		}
 		if s.deps.Facts == nil {
 			slog.WarnContext(ctx, "agent facts received but no facts sink is wired; dropping",
 				"serial", agent.Serial, "host_id", agent.HostID)

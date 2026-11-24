@@ -551,10 +551,12 @@ func decodeParamsJSON(raw string) (map[string]any, error) {
 	return params, nil
 }
 
-// pushFacts collects the host's facts and pushes them. A collection error
-// is advisory — whatever map came back is still pushed, because one probe
-// hiccup must not blind the manager to the whole host; only a dead
-// context (shutdown) fails outright.
+// pushFacts collects the host's facts and pushes them, with the agent's
+// heartbeat interval: the facts open every stream, so the manager sizes
+// the agent's online window from it before anything else arrives (backlog
+// 3.58). A collection error is advisory — whatever map came back is still
+// pushed, because one probe hiccup must not blind the manager to the whole
+// host; only a dead context (shutdown) fails outright.
 func (l *Loop) pushFacts(ctx context.Context, sender *streamSender) error {
 	facts, err := l.facts.Collect(ctx)
 	if err != nil {
@@ -564,11 +566,18 @@ func (l *Loop) pushFacts(ctx context.Context, sender *streamSender) error {
 		l.log.WarnContext(ctx, "collecting host facts failed; pushing what was collected", "err", err)
 	}
 	if err := sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{
-		Facts: &agentpb.Facts{Values: facts},
+		Facts: &agentpb.Facts{Values: facts, HeartbeatIntervalSeconds: reportedHeartbeatInterval(l.cfg.HeartbeatInterval)},
 	}}); err != nil {
 		return fmt.Errorf("send facts: %w", err)
 	}
 	return nil
+}
+
+// reportedHeartbeatInterval is the heartbeat interval as the facts carry
+// it (backlog 3.58): whole seconds, rounded up, so the manager's online
+// window built from it is never narrower than the agent's real cadence.
+func reportedHeartbeatInterval(d time.Duration) int32 {
+	return int32((d + time.Second - 1) / time.Second)
 }
 
 // wallTicker is the production ticker: a time.Ticker.

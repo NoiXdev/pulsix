@@ -41,7 +41,7 @@ type agentDTO struct {
 	AgentName     string     `json:"agent_name"`
 	Version       string     `json:"version,omitempty"`
 	VersionStatus string     `json:"version_status" enum:"current,previous_minor,update_required,newer,unknown" doc:"The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's"`
-	Status        string     `json:"status" enum:"online,offline" doc:"online = a heartbeat within three heartbeat intervals"`
+	Status        string     `json:"status" enum:"online,offline" doc:"online = a heartbeat within three of the agent's own heartbeat intervals, and never less than 90 seconds"`
 	LastSeen      *time.Time `json:"last_seen,omitempty"`
 	CertExpiresAt *time.Time `json:"cert_expires_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`

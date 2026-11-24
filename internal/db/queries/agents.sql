@@ -113,9 +113,13 @@ RETURNING *;
 --
 -- online_since (00092, backlog 3.57) is when the agent's current online
 -- period began, which an online client host's staleness is measured from:
--- kept while the previous touch is within the agents list's online window
--- (agents.StaleAfter, online_window_seconds), set to now() after a longer
--- gap, after a registration (last_seen NULL) and when it is unknown.
+-- kept while the previous touch is within the agents list's online window,
+-- set to now() after a longer gap, after a registration (last_seen NULL)
+-- and when it is unknown. The window is the row's own (agents.OnlineWindow,
+-- backlog 3.58): heartbeats_per_online_window of the agent's reported
+-- heartbeat interval (heartbeat_interval_s, 00119), never less than
+-- online_window_floor_seconds, which is the whole window when the agent
+-- never reported its interval.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   connected_since = CASE
     WHEN connected_since IS NULL
@@ -124,7 +128,8 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision)
+      OR last_seen < now() - make_interval(secs => GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
+          sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0)))
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
@@ -149,7 +154,8 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision)
+      OR last_seen < now() - make_interval(secs => GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
+          sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0)))
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
@@ -285,9 +291,18 @@ ON CONFLICT (host_id, key, source) DO UPDATE SET value = EXCLUDED.value;
 UPDATE host_agents SET probes_supported = sqlc.arg(supported)
 WHERE host_id = sqlc.arg(host_id) AND probes_supported IS DISTINCT FROM sqlc.arg(supported);
 
+-- name: SetAgentHeartbeatInterval :exec
+-- The agent's reported heartbeat interval (00119, backlog 3.58), by serial
+-- and org-unscoped like the other stream writes; NULL when it reports
+-- none. Written only when it changes.
+UPDATE host_agents SET heartbeat_interval_s = sqlc.narg(interval_seconds)::integer
+WHERE cert_serial = sqlc.arg(serial)
+  AND heartbeat_interval_s IS DISTINCT FROM sqlc.narg(interval_seconds)::integer;
+
 -- name: ListProbeCapableAgents :many
 -- The organization's agents that report probes_supported, with their last
--- heartbeat; the service applies the online rule.
-SELECT host_id, last_seen FROM host_agents
+-- heartbeat and their reported heartbeat interval; the service applies the
+-- online rule.
+SELECT host_id, last_seen, heartbeat_interval_s FROM host_agents
 WHERE org_id = sqlc.arg(org_id) AND probes_supported
 ORDER BY host_id;

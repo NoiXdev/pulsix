@@ -22,8 +22,8 @@ import { useAgentListActions } from './useAgentListActions.ts';
 
 /** AgentsPage lists the organization's host agents (v0.3a, spec §8):
  * which host each one runs on, whether it is still reporting (online =
- * a heartbeat within three heartbeat intervals), its version and its
- * certificate expiry — plus the enrollment tokens waiting to be redeemed.
+ * a heartbeat within three of the agent's own heartbeat intervals, at
+ * least 90 s), its version and its certificate expiry — plus the enrollment tokens waiting to be redeemed.
  * Viewers read; operators enrol and revoke. Both are lists on the shared list
  * component, fetched whole and sorted and paged in the browser: the agents
  * (list id `agents`) keep their sort and page in the URL, the pending tokens

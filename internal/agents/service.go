@@ -41,17 +41,6 @@ var (
 	ErrTokenConflict = errors.New("host name already in use")
 )
 
-// HeartbeatInterval is the cadence the agent reports at by default
-// (PULSIX_HEARTBEAT_INTERVAL, spec §8) and StaleAfter is three of them:
-// the window the GUI calls an agent online in. One missed heartbeat is a
-// hiccup — a reconnect, a slow network — three is an agent that stopped
-// reporting. The verdict is computed at read time from last_seen, so
-// nothing has to run to keep it current.
-const (
-	HeartbeatInterval = 30 * time.Second
-	StaleAfter        = 3 * HeartbeatInterval
-)
-
 // AgentTTL is how long a token is valid by default shape (the caller
 // passes ExpiresAt explicitly; the worker side pins one hour).
 const AgentTTL = time.Hour
@@ -91,6 +80,12 @@ type Agent struct {
 	// RecordConfigCheck; reads fill it, Register ignores it (and resets
 	// the stored one).
 	Config ConfigCheck
+	// HeartbeatInterval is the heartbeat interval the agent reported at
+	// the start of its stream (RecordHeartbeatInterval, backlog 3.58), nil
+	// when it never reported one; it sizes the agent's online window
+	// (OnlineWindow). Reads fill it, Register ignores it (and keeps the
+	// stored one: the agent reports it again on its next stream).
+	HeartbeatInterval *time.Duration
 }
 
 // Registration is one enrollment's or renewal's identity as the registry
@@ -261,8 +256,13 @@ type Store interface {
 	// (migration 00098) by host, org-unscoped; it writes only on change.
 	SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error
 	// ProbeCapableAgents lists the organization's agents that report
-	// probes_supported, with their last heartbeat, ordered by host id.
+	// probes_supported, with their last heartbeat and reported heartbeat
+	// interval, ordered by host id.
 	ProbeCapableAgents(ctx context.Context, orgID uuid.UUID) ([]ProbeCapable, error)
+	// RecordHeartbeatInterval stores the agent's reported heartbeat
+	// interval by serial, org-unscoped (nil: not reported); it writes only
+	// on change, and an unknown serial writes nothing.
+	RecordHeartbeatInterval(ctx context.Context, serial string, interval *time.Duration) error
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
 	// GetByHost is one host's active agent, org-scoped; ErrNotFound when
 	// the host runs none (never enrolled, or revoked).
@@ -607,7 +607,7 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 }
 
 // View is one agent as the GUI shows it: the registry row plus the
-// staleness verdict (see StaleAfter). The host's name rides along so the
+// staleness verdict (see OnlineWindow). The host's name rides along so the
 // Agents page can name its rows without a second query.
 type View struct {
 	Agent
@@ -624,7 +624,7 @@ func (s *Service) ListView(ctx context.Context, orgID uuid.UUID) ([]View, error)
 	now := s.now()
 	out := make([]View, len(list))
 	for i, a := range list {
-		out[i] = View{Agent: a, Online: isOnline(a.LastSeen, now)}
+		out[i] = View{Agent: a, Online: isOnline(a.LastSeen, a.HeartbeatInterval, now)}
 	}
 	return out, nil
 }
@@ -636,13 +636,7 @@ func (s *Service) ViewByHost(ctx context.Context, orgID, hostID uuid.UUID) (View
 	if err != nil {
 		return View{}, err
 	}
-	return View{Agent: a, Online: isOnline(a.LastSeen, s.now())}, nil
-}
-
-// isOnline: an agent that never reported is not online, and one whose
-// last heartbeat is older than StaleAfter has stopped reporting.
-func isOnline(lastSeen *time.Time, now time.Time) bool {
-	return lastSeen != nil && now.Sub(*lastSeen) < StaleAfter
+	return View{Agent: a, Online: isOnline(a.LastSeen, a.HeartbeatInterval, s.now())}, nil
 }
 
 // ProbeCapable is an agent that reports probes_supported: its host and its
@@ -650,6 +644,9 @@ func isOnline(lastSeen *time.Time, now time.Time) bool {
 type ProbeCapable struct {
 	HostID   uuid.UUID
 	LastSeen *time.Time
+	// HeartbeatInterval is the agent's reported heartbeat interval, nil
+	// when it never reported one (OnlineWindow).
+	HeartbeatInterval *time.Duration
 }
 
 // SetProbesSupported records whether the host's agent can run probes for
@@ -670,7 +667,7 @@ func (s *Service) OnlineProbeAgents(ctx context.Context, orgID uuid.UUID) ([]uui
 	now := s.now()
 	out := make([]uuid.UUID, 0, len(capable))
 	for _, c := range capable {
-		if isOnline(c.LastSeen, now) {
+		if isOnline(c.LastSeen, c.HeartbeatInterval, now) {
 			out = append(out, c.HostID)
 		}
 	}

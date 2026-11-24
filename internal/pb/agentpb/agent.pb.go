@@ -494,10 +494,16 @@ func (x *LocalCheck) GetIntervalSeconds() int32 {
 }
 
 type Facts struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Values        map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Values map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// The agent's effective heartbeat interval in seconds
+	// (PULSIX_HEARTBEAT_INTERVAL). It rides the facts because they are the
+	// first message of every stream; the manager sizes the agent's online
+	// window from it (three intervals, at least 90 s). 0 from an agent older
+	// than the field, which keeps the 90 s window.
+	HeartbeatIntervalSeconds int32 `protobuf:"varint,2,opt,name=heartbeat_interval_seconds,json=heartbeatIntervalSeconds,proto3" json:"heartbeat_interval_seconds,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *Facts) Reset() {
@@ -535,6 +541,13 @@ func (x *Facts) GetValues() map[string]string {
 		return x.Values
 	}
 	return nil
+}
+
+func (x *Facts) GetHeartbeatIntervalSeconds() int32 {
+	if x != nil {
+		return x.HeartbeatIntervalSeconds
+	}
+	return 0
 }
 
 type CheckResults struct {
@@ -1256,9 +1269,10 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\x06plugin\x18\x02 \x01(\tR\x06plugin\x12\x1f\n" +
 	"\vparams_json\x18\x03 \x01(\tR\n" +
 	"paramsJson\x12)\n" +
-	"\x10interval_seconds\x18\x04 \x01(\x05R\x0fintervalSeconds\"~\n" +
+	"\x10interval_seconds\x18\x04 \x01(\x05R\x0fintervalSeconds\"\xbc\x01\n" +
 	"\x05Facts\x12:\n" +
-	"\x06values\x18\x01 \x03(\v2\".pulsix.agent.v1.Facts.ValuesEntryR\x06values\x1a9\n" +
+	"\x06values\x18\x01 \x03(\v2\".pulsix.agent.v1.Facts.ValuesEntryR\x06values\x12<\n" +
+	"\x1aheartbeat_interval_seconds\x18\x02 \x01(\x05R\x18heartbeatIntervalSeconds\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"F\n" +

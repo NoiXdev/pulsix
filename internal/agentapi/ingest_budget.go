@@ -130,10 +130,14 @@ func newIngestPacer(now time.Time) *ingestPacer { return &ingestPacer{lastTouch:
 // and loses the stream, instead of reserving an unbounded debt.
 //
 // While the loop waits it reads nothing, so a heartbeat queued behind the
-// batch waits too, and the registry's staleness verdict (agents.StaleAfter,
-// three heartbeat intervals) would mark a host offline during a long replay.
-// A paced stream is demonstrably alive, so the wait is sliced at the
-// heartbeat interval and last_seen is refreshed between slices.
+// batch waits too, and the registry's staleness verdict (agents.OnlineWindow,
+// three of the agent's heartbeat intervals) would mark a host offline
+// during a long replay. A paced stream is demonstrably alive, so the wait
+// is sliced at the default heartbeat interval and last_seen is refreshed
+// between slices. The default, not the agent's own interval, on purpose:
+// every agent's online window is at least agents.OnlineWindowFloor, three
+// default intervals, so a refresh every default interval keeps any agent
+// online, and a shorter slice only costs a touch per 30 s of waiting.
 func (s *Service) pace(ctx context.Context, agent agents.AgentIdentity, p *ingestPacer, n int) error {
 	if n > checks.MaxObservationsPerBatch {
 		return fmt.Errorf("%w: batch of %d observations exceeds %d",
