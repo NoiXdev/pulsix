@@ -255,7 +255,8 @@ func TestAssistantSettingsRefusesAnEmptyUpdate(t *testing.T) {
 	f := newAssistantSettingsFx(t, "asst-empty")
 	f.put(t, map[string]any{"assistant_enabled": true, "approved_runs_start_follow_ups": true})
 	resp := requestJSON(t, f.c, http.MethodPut, f.url, map[string]any{})
-	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "nothing to change") {
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "nothing to change") ||
+		!strings.Contains(body, "assistant_enabled") || !strings.Contains(body, "approved_runs_start_follow_ups") {
 		t.Fatalf("empty PUT = %d %s, want 422", resp.StatusCode, body)
 	}
 	if access, followUps := f.get(t); !access || !followUps {

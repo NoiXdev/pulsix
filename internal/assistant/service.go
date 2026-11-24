@@ -30,7 +30,7 @@ type Change struct {
 }
 
 // ErrNothingToChange refuses a Change that names no field.
-var ErrNothingToChange = errors.New("nothing to change: give assistant_enabled, approved_runs_start_follow_ups or both")
+var ErrNothingToChange = errors.New("nothing to change")
 
 // Store persists the settings.
 type Store interface {

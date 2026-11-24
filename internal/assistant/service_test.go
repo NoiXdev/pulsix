@@ -89,6 +89,10 @@ func TestUpdateRefusesAnEmptyChange(t *testing.T) {
 	if _, _, err := assistant.NewService(st).Update(context.Background(), uuid.Nil, assistant.Change{}); !errors.Is(err, assistant.ErrNothingToChange) {
 		t.Fatalf("err = %v, want ErrNothingToChange", err)
 	}
+	// The domain says it in its own words; the transport names its fields.
+	if got := assistant.ErrNothingToChange.Error(); got != "nothing to change" {
+		t.Fatalf("ErrNothingToChange = %q, want %q", got, "nothing to change")
+	}
 	if len(st.calls) != 0 {
 		t.Fatalf("calls = %v, want none", st.calls)
 	}

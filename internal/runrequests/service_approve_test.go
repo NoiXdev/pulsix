@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,29 +279,33 @@ func TestApproveSelection(t *testing.T) {
 	}
 
 	// An id the picture could not have written fails the approval as a
-	// fault, not as the person's mistake, and starts nothing.
-	t.Run("unparsable follow-up id", func(t *testing.T) {
-		w := newWiring()
-		w.pics.p.FollowUps = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{
-			{TemplateID: y.String(), TemplateName: "y", TemplateRevision: 1},
-			{TemplateID: "not-a-uuid", TemplateName: "broken", TemplateRevision: 1},
-		}}
-		r := w.create(t)
-		_, _, fp, err := w.svc.Get(context.Background(), w.org, r.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
-		if err == nil || errors.Is(err, runrequests.ErrInvalidInput) {
-			t.Fatalf("approve = %v, want an internal error", err)
-		}
-		if len(w.enq.runs) != 0 {
-			t.Fatal("an approval with an unparsable follow-up id was enqueued")
-		}
-		if after, _, _, _ := w.svc.Get(context.Background(), w.org, r.ID); after.Status != runrequests.StatusPending {
-			t.Fatalf("status = %s, want pending", after.Status)
-		}
-	})
+	// fault, not as the person's mistake, and starts nothing — a
+	// stop-marked follow-up's included, so the check never depends on
+	// which nodes would start.
+	for _, stop := range []string{"", runrequests.StopDeleted} {
+		t.Run("unparsable follow-up id, stop "+stop, func(t *testing.T) {
+			w := newWiring()
+			w.pics.p.FollowUps = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{
+				{TemplateID: y.String(), TemplateName: "y", TemplateRevision: 1},
+				{TemplateID: "not-a-uuid", TemplateName: "broken", TemplateRevision: 1, Stop: stop},
+			}}
+			r := w.create(t)
+			_, _, fp, err := w.svc.Get(context.Background(), w.org, r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+			if err == nil || errors.Is(err, runrequests.ErrInvalidInput) || !strings.Contains(err.Error(), "not-a-uuid") {
+				t.Fatalf("approve = %v, want an internal error naming the id", err)
+			}
+			if len(w.enq.runs) != 0 {
+				t.Fatal("an approval with an unparsable follow-up id was enqueued")
+			}
+			if after, _, _, _ := w.svc.Get(context.Background(), w.org, r.ID); after.Status != runrequests.StatusPending {
+				t.Fatalf("status = %s, want pending", after.Status)
+			}
+		})
+	}
 
 	t.Run("a changed fingerprint wins", func(t *testing.T) {
 		w := newWiring()

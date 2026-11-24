@@ -73,7 +73,7 @@ func registerAssistantSettingsRoutes(hapi huma.API, deps Deps) {
 			Enabled: in.Body.AssistantEnabled, StartsFollowUps: in.Body.ApprovedRunsStartFollowUps,
 		})
 		if errors.Is(err, assistant.ErrNothingToChange) {
-			return nil, huma.Error422UnprocessableEntity(err.Error())
+			return nil, huma.Error422UnprocessableEntity(err.Error() + ": give assistant_enabled, approved_runs_start_follow_ups or both")
 		}
 		if err != nil {
 			slog.ErrorContext(ctx, "store assistant settings", "err", err)

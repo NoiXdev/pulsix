@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -223,9 +222,6 @@ func TestBuildFollowUps(t *testing.T) {
 		if !got.Truncated {
 			t.Error("Truncated not set")
 		}
-		if s, err := got.Startable(); err != nil || len(s) != 0 {
-			t.Errorf("Startable = %v, %v, want none", s, err)
-		}
 	})
 
 	t.Run("lookup error", func(t *testing.T) {
@@ -236,30 +232,4 @@ func TestBuildFollowUps(t *testing.T) {
 			t.Errorf("err = %v", err)
 		}
 	})
-}
-
-func TestStartable(t *testing.T) {
-	f := &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{
-		fuNode(1, 1, ""), fuNode(2, 0, runrequests.StopDeleted), fuNode(3, 1, runrequests.StopInChain), fuNode(4, 1, ""),
-	}}
-	if got, err := f.Startable(); err != nil || !reflect.DeepEqual(got, []uuid.UUID{fuID(1), fuID(4)}) {
-		t.Errorf("got %v, %v; want %v", got, err, []uuid.UUID{fuID(1), fuID(4)})
-	}
-	f.Start = false
-	if got, err := f.Startable(); err != nil || len(got) != 0 {
-		t.Errorf("start=false: got %v, %v", got, err)
-	}
-	if got, err := (*runrequests.PictureFollowUps)(nil).Startable(); err != nil || len(got) != 0 {
-		t.Errorf("nil: got %v, %v", got, err)
-	}
-
-	// The picture writes every id from a uuid.UUID: one that does not parse
-	// is a fault, never a follow-up quietly left out.
-	f = &runrequests.PictureFollowUps{Start: true, Templates: []runrequests.PictureFollowUp{
-		fuNode(1, 1, ""), {TemplateID: "not-a-uuid", TemplateName: "broken", TemplateRevision: 1},
-	}}
-	got, err := f.Startable()
-	if err == nil || errors.Is(err, runrequests.ErrInvalidInput) || !strings.Contains(err.Error(), "not-a-uuid") {
-		t.Errorf("unparsable id: got %v, %v; want an internal error naming it", got, err)
-	}
 }

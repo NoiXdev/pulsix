@@ -128,16 +128,11 @@ func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int,
 	return n, true, nil
 }
 
-// Startable is the direct follow-ups an approval can start: those without a
-// Stop, in order. None when the setting is off or the tree was truncated.
-// The picture writes every id from a uuid.UUID, so one that does not parse
-// is a fault and an error, never a follow-up quietly left out.
-func (f *PictureFollowUps) Startable() ([]uuid.UUID, error) {
-	_, ids, err := f.startable()
-	return ids, err
-}
-
-// startable is Startable with the nodes beside their parsed ids.
+// startable is the direct follow-ups an approval can start, those without a
+// Stop, in order, beside their parsed ids. None when the setting is off or
+// the tree was truncated. The picture writes every id from a uuid.UUID, so
+// one that does not parse — a stop-marked node's included — is a fault and
+// an error, never a follow-up quietly left out.
 func (f *PictureFollowUps) startable() ([]PictureFollowUp, []uuid.UUID, error) {
 	if f == nil || !f.Start || f.Truncated {
 		return nil, nil, nil
@@ -163,7 +158,7 @@ func (f *PictureFollowUps) startable() ([]PictureFollowUp, []uuid.UUID, error) {
 // every startable one when the setting is on and the tree is complete, none
 // otherwise. A given selection must name startable ones only; with the
 // setting off, no follow-ups or a truncated tree, only an empty one is
-// accepted. An id in f that does not parse is an error (see Startable).
+// accepted. An id in f that does not parse is an error (see startable).
 func selectFollowUps(f *PictureFollowUps, selection *[]uuid.UUID) ([]PictureFollowUp, []uuid.UUID, error) {
 	out, outIDs := []PictureFollowUp{}, []uuid.UUID{}
 	given := selection != nil && len(*selection) > 0
