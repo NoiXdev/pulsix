@@ -25,6 +25,7 @@ export const deTokens: Messages['tokens'] = {
     owner: 'Besitzer',
   },
   label: 'API-Tokens',
+  editExpiredHint: 'Abgelaufene Token kannst du nicht bearbeiten',
   editItem: 'Bearbeiten',
   revokeItem: 'Widerrufen…',
   revokeConfirm: (name: string) => `Token ${name} widerrufen?`,

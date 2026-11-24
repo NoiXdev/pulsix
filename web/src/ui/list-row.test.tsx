@@ -428,3 +428,22 @@ describe('RowMenu and the browser menu', () => {
     expect(fireEvent.contextMenu(screen.getByRole('menuitem', { name: 'Restart' }), { button: 2 })).toBe(true);
   });
 });
+
+describe('RowMenuItem hint', () => {
+  it('shows the hint in the item and describes the item by it, leaving the name alone', async () => {
+    const user = userEvent.setup();
+    render(
+      <RowMenu label="Actions">
+        <RowMenuItem onSelect={vi.fn()} disabled hint="Expired tokens can't be edited">
+          Edit
+        </RowMenuItem>
+        <RowMenuItem onSelect={vi.fn()}>Revoke</RowMenuItem>
+      </RowMenu>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Actions' }));
+    const item = screen.getByRole('menuitem', { name: 'Edit' });
+    expect(screen.getByText("Expired tokens can't be edited")).toBeVisible();
+    expect(item).toHaveAccessibleDescription("Expired tokens can't be edited");
+    expect(screen.getByRole('menuitem', { name: 'Revoke' })).not.toHaveAttribute('aria-describedby');
+  });
+});

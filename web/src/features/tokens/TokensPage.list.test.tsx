@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
@@ -72,7 +72,10 @@ describe('TokensPage list', () => {
     expect(await screen.findByRole('menuitem', { name: 'Edit' })).not.toHaveAttribute('aria-disabled');
     await user.keyboard('{Escape}');
     await openRowMenu(user, 'old (viewer)');
-    expect(await screen.findByRole('menuitem', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
+    const edit = await screen.findByRole('menuitem', { name: 'Edit' });
+    expect(edit).toHaveAttribute('aria-disabled', 'true');
+    expect(edit).toHaveAccessibleDescription("Expired tokens can't be edited");
+    expect(within(edit).getByText("Expired tokens can't be edited")).toBeVisible();
   });
 
   it('opens the row\'s dialog from the row itself', async () => {

@@ -26,6 +26,8 @@ export const enTokens = {
   },
   label: 'API tokens',
   editItem: 'Edit',
+  /** Under the disabled Edit item of an expired token. */
+  editExpiredHint: 'Expired tokens can\'t be edited',
   revokeItem: 'Revoke…',
   revokeConfirm: (name: string) => `Revoke token ${name}?`,
   revoked: (name: string) => `Token ${name} revoked`,

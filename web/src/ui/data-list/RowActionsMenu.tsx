@@ -17,7 +17,7 @@ function ActionItems({ actions }: { actions: RowAction[] }) {
             {a.label}
           </RowMenuLink>
         ) : (
-          <RowMenuItem key={a.id} onSelect={a.onSelect} destructive={a.destructive} disabled={a.disabled}>
+          <RowMenuItem key={a.id} onSelect={a.onSelect} destructive={a.destructive} disabled={a.disabled} hint={a.hint}>
             {a.label}
           </RowMenuItem>
         ),

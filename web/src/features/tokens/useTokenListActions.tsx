@@ -102,7 +102,7 @@ export function useTokenListActions(org: string): {
       row.kind === 'assistant' && !isExpired(row.expires_at) ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(row) }] : [];
     return [
       ...connect,
-      { id: 'edit', label: t.tokens.editItem, onSelect: () => setEditing(row), disabled: isExpired(row.expires_at) },
+      { id: 'edit', label: t.tokens.editItem, onSelect: () => setEditing(row), disabled: isExpired(row.expires_at), hint: isExpired(row.expires_at) ? t.tokens.editExpiredHint : undefined },
       { id: 'revoke', label: t.tokens.revokeItem, destructive: true, onSelect: () => void del.run(row), disabled: del.pending.has(row.id) },
     ];
   }

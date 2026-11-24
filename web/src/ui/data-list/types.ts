@@ -61,7 +61,7 @@ export interface DataListColumn<Row> {
 
 /** One entry of a row's menu: an action, or a link (a download, a page). */
 export type RowAction =
-  | { kind?: 'action'; id: string; label: string; onSelect: () => void; destructive?: boolean; disabled?: boolean }
+  | { kind?: 'action'; id: string; label: string; onSelect: () => void; destructive?: boolean; disabled?: boolean; hint?: string }
   | { kind: 'link'; id: string; label: string; href: string; download?: string };
 
 /** Where a row leads, and the link's accessible name. */

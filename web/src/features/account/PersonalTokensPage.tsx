@@ -66,7 +66,7 @@ export function PersonalTokensPage() {
       tok.kind === 'assistant' && !isExpired(tok.expires_at) ? [{ id: 'connect', label: t.tokens.connect.item, onSelect: () => setConnecting(tok) }] : [];
     return [
       ...connect,
-      { id: 'edit', label: p.editItem, onSelect: () => setEditing({ kind: 'edit', token: tok }), disabled: isExpired(tok.expires_at) },
+      { id: 'edit', label: p.editItem, onSelect: () => setEditing({ kind: 'edit', token: tok }), disabled: isExpired(tok.expires_at), hint: isExpired(tok.expires_at) ? t.tokens.editExpiredHint : undefined },
       { id: 'revoke', label: p.revokeItem, destructive: true, onSelect: () => void del.run(tok), disabled: del.pending.has(tok.id) },
     ];
   }

@@ -138,25 +138,31 @@ export function RowMenu({ label, triggerClassName, children }: { label: string; 
 /** One action in a RowMenu. `destructive` colours it as a delete-like one.
  * `disabled` dims it and ignores a pick, which leaves the menu open. It stays
  * focusable (aria-disabled, not the attribute), as the menu pattern keeps a
- * disabled item reachable by the arrow keys so its label can be read. */
+ * disabled item reachable by the arrow keys so its label can be read.
+ * `hint` is a line of small text in the item (pass it with `disabled` to say
+ * why); the item is described by it, its name stays the label. */
 export function RowMenuItem({
   onSelect,
   destructive,
   disabled,
+  hint,
   children,
 }: {
   onSelect: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  hint?: string;
   children: ReactNode;
 }) {
   const menu = useMenu();
+  const hintId = useId();
   return (
     <button
       type="button"
       role="menuitem"
       tabIndex={-1}
       aria-disabled={disabled ? true : undefined}
+      aria-describedby={hint ? hintId : undefined}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -173,6 +179,11 @@ export function RowMenuItem({
       )}
     >
       {children}
+      {hint && (
+        <span id={hintId} aria-hidden="true" className="mt-0.5 block text-[11px] text-muted-foreground">
+          {hint}
+        </span>
+      )}
     </button>
   );
 }
