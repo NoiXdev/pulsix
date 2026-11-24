@@ -11,9 +11,10 @@
 # the base URL with the runner's own binary in its dist. The install points
 # the agent at manager 127.0.0.1:1, where nothing listens: the agent keeps
 # retrying its enrollment, which is enough to show that it runs as a
-# daemon. It installs twice, a fresh install and then an upgrade over the
-# running agent, and checks the daemon, the file protection and the log
-# after each. Then it removes the agent with the installer's own
+# daemon. It installs three times, a fresh install, an upgrade over the
+# running agent and an upgrade with no token over a planted identity (which
+# must ask for none and leave the token out of agent.env, backlog 3.60),
+# and checks the daemon, the file protection and the log after each. Then it removes the agent with the installer's own
 # --uninstall and checks that daemon, plist, binary, logs and data
 # directory are gone, and runs the uninstall again, which finds nothing
 # and still succeeds. The cleanup trap removes the agent by hand as a
@@ -134,6 +135,58 @@ install_agent() {
 		fail "install.sh failed"
 }
 
+# plant_identity: puts an identity into the data directory the way an
+# enrollment would leave it (backlog 3.60): a self-signed certificate with
+# the org URI SAN the agent insists on, its key, and the certificate again
+# as the CA chain. The manager at 127.0.0.1:1 never answers, so no
+# enrollment can happen here; the agent only needs the files to load.
+plant_identity() {
+	mkdir -p "$WORK/identity"
+	cat > "$WORK/identity/openssl.cnf" <<'EOF_CNF'
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = ci-smoke
+[ext]
+subjectAltName = URI:urn:pulsix:org:ci-smoke
+EOF_CNF
+	openssl ecparam -name prime256v1 -genkey -noout -out "$WORK/identity/agent.key" ||
+		fail "could not generate the identity key"
+	openssl req -x509 -new -key "$WORK/identity/agent.key" -days 3650 -config "$WORK/identity/openssl.cnf" -out "$WORK/identity/agent.crt" ||
+		fail "could not generate the identity certificate"
+	cp "$WORK/identity/agent.crt" "$WORK/identity/agent.ca.pem"
+	for f in agent.crt agent.key agent.ca.pem; do
+		sudo cp "$WORK/identity/$f" "$DATA_DIR/$f"
+		sudo chown 0:0 "$DATA_DIR/$f"
+		sudo chmod 600 "$DATA_DIR/$f"
+	done
+}
+
+# install_agent_tokenless: an install over an existing identity with no
+# token at all (backlog 3.60). The output is echoed and kept in
+# INSTALL_OUT.
+install_agent_tokenless() {
+	fetch_installer
+	# shellcheck disable=SC2024
+	INSTALL_OUT="$(sudo sh -s -- --manager 127.0.0.1:1 --name ci-smoke < "$WORK/install.sh")" ||
+		fail "install.sh without a token failed: $INSTALL_OUT"
+	printf '%s\n' "$INSTALL_OUT"
+	printf '%s\n' "$INSTALL_OUT" | grep -q '^pulsix-agent: reusing the existing identity' ||
+		fail "the install did not say it reuses the existing identity"
+}
+
+# assert_env_token yes|no: whether agent.env carries the enrollment token.
+assert_env_token() {
+	if sudo grep -q '^PULSIX_ENROLL_TOKEN=' "$ENV_FILE"; then
+		has=yes
+	else
+		has=no
+	fi
+	[ "$has" = "$1" ] || fail "$ENV_FILE carries the enrollment token: $has, want $1"
+}
+
 # uninstall_agent: the documented `sh -s -- --uninstall` invocation. Its
 # output is echoed and kept in UNINSTALL_OUT.
 uninstall_agent() {
@@ -157,6 +210,16 @@ echo "install-smoke: upgrade over the running agent"
 previous_starts="$(starts_logged)"
 install_agent
 assert_installed $((previous_starts + 1))
+assert_env_token yes
+
+# With an identity in the data directory the token is optional (backlog
+# 3.60): the upgrade asks for none and writes agent.env without it.
+echo "install-smoke: upgrade without a token over an existing identity"
+plant_identity
+previous_starts="$(starts_logged)"
+install_agent_tokenless
+assert_installed $((previous_starts + 1))
+assert_env_token no
 
 echo "install-smoke: uninstall"
 uninstall_agent

@@ -20,12 +20,18 @@
 # in the event log. -TokenFile names a file only SYSTEM, Administrators and
 # its owner can read, for unattended installs; -Token exists for automation
 # and keeps those drawbacks.
+# The token is optional on a re-run (backlog 3.60): when the data directory
+# already holds the agent's identity (agent.crt, agent.key and agent.ca.pem,
+# each a non-empty file) and neither -Token nor -TokenFile is given, the
+# script asks for nothing and writes agent.env without the token. An
+# upgrade, or a reinstall after -Uninstall -KeepData, needs none.
 # -ServerName is the manager gRPC certificate's DNS name for deployments
 # where it is not the host being dialed.
 # The token is written into %ProgramData%\Pulsix\agent.env, which only
 # SYSTEM and Administrators can read (the agent refuses anything looser),
 # and the agent forgets it as soon as a valid identity exists. Running the
-# script again upgrades the agent and keeps its identity.
+# script again upgrades the agent and keeps its identity, and needs no token
+# while that identity is there.
 #
 # -Uninstall removes the agent from the host (backlog 3.49): it stops and
 # deletes the PulsixAgent service and removes the binary and the data
@@ -186,6 +192,22 @@ function Read-TokenFile([string]$Path) {
 		return ''
 	}
 	return [string]$line
+}
+
+# Test-IdentityPresent says whether $Dir holds the agent's identity, which
+# is exactly what the agent needs to start without enrolling: the
+# certificate, its key and the CA chain it dials with (agent.crt, agent.key,
+# agent.ca.pem; internal/agent/config.go), each a non-empty regular file.
+# agent.json only carries bookkeeping and is not required. Anything less
+# counts as no identity, so the token is asked for as before.
+function Test-IdentityPresent([string]$Dir) {
+	foreach ($file in @('agent.crt', 'agent.key', 'agent.ca.pem')) {
+		$item = Get-Item -LiteralPath (Join-Path $Dir $file) -Force -ErrorAction SilentlyContinue
+		if (($null -eq $item) -or $item.PSIsContainer -or ($item.Length -le 0) -or (Test-ReparsePoint $item.FullName)) {
+			return $false
+		}
+	}
+	return $true
 }
 
 # Read-TokenHidden asks for the token without echoing it.
@@ -535,17 +557,26 @@ foreach ($pair in @(@('-Manager', $Manager), @('-ServerName', $ServerName), @('-
 	}
 }
 
-# 5. The token.
+# 5. The token. An identity already on disk makes it unnecessary (backlog
+# 3.60): the agent enrolls only while it holds no valid identity and
+# forgets the token afterwards anyway (internal/agent/loop.go). A token
+# given on the command line is still read, validated and written as always.
+$reuseIdentity = $false
 if ($TokenFile) {
 	if ($Token) {
 		Stop-Install '-Token and -TokenFile exclude each other'
 	}
 	$Token = Read-TokenFile $TokenFile
 } elseif (-not $Token) {
-	$Token = Read-TokenHidden
+	if (Test-IdentityPresent $DataDir) {
+		$reuseIdentity = $true
+		Write-Host "pulsix-agent: reusing the existing identity in $DataDir; no enrollment token needed"
+	} else {
+		$Token = Read-TokenHidden
+	}
 }
 $Token = [string]$Token -replace '\s', ''
-if (-not $Token) {
+if ((-not $reuseIdentity) -and (-not $Token)) {
 	Stop-Install 'no enrollment token given'
 }
 
@@ -680,7 +711,10 @@ try {
 	Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -ne 'agent.yaml' } | ForEach-Object { Assert-OnlyAdmins $_.FullName }
 
 	# UTF-8 without a byte order mark, LF line endings.
-	$lines = @("PULSIX_MANAGER_ADDR=$Manager", "PULSIX_ENROLL_TOKEN=$Token")
+	$lines = @("PULSIX_MANAGER_ADDR=$Manager")
+	if (-not $reuseIdentity) {
+		$lines += "PULSIX_ENROLL_TOKEN=$Token"
+	}
 	if ($Name) {
 		$lines += "PULSIX_AGENT_NAME=$Name"
 	}

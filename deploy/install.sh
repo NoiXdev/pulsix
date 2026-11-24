@@ -18,6 +18,8 @@
 #     [--name <agent name>] [--server-name <manager certificate name>] \
 #     [--token-file <path> | --token pxa1.<id>.<secret>.<pin>]
 #
+# The token is optional on a re-run (see below); a first install needs it.
+#
 #   curl -fsSL https://<manager>/install.sh | sudo sh -s -- --uninstall [--keep-data]
 #
 # The token and manager address are the two values the Agents page prints.
@@ -27,6 +29,11 @@
 # host can read it for as long as the install runs. --token-file names a
 # file only root can read, for unattended installs; --token still works
 # and still puts the token in the process list.
+# The token is optional on a re-run (backlog 3.60): when the data directory
+# already holds the agent's identity (agent.crt, agent.key and agent.ca.pem,
+# each a non-empty file) and neither --token nor --token-file is given, the
+# script asks for nothing and writes agent.env without the token. An
+# upgrade, or a reinstall after --uninstall --keep-data, needs none.
 # --server-name is the manager gRPC certificate's DNS SAN (the manager's
 # own PULSIX_GRPC_SERVER_NAME) for deployments where it is not the host
 # being dialed — the same override the worker enrollment snippet passes.
@@ -36,7 +43,8 @@
 # forgets it as soon as a valid identity exists (first start enrolls,
 # restarts reconnect).
 #
-# A re-run upgrades: it replaces the binary and restarts the service.
+# A re-run upgrades: it replaces the binary and restarts the service. It
+# needs no token while the identity is there (see above).
 #
 # --uninstall removes the agent from the host (backlog 3.49): it stops the
 # service and removes the service definition, the binary, the macOS log
@@ -69,6 +77,7 @@ die() {
 
 usage() {
 	echo "usage: install.sh --manager <manager>:8444 [--name <agent name>] [--server-name <manager certificate name>] [--token-file <path> | --token pxa1.<id>.<secret>.<pin>]" >&2
+	echo "       (the token is optional on a re-run over an existing identity)" >&2
 	echo "       install.sh --uninstall [--keep-data]" >&2
 	exit 2
 }
@@ -274,13 +283,37 @@ read_token_tty() {
 	printf '%s' "$token" | tr -d '[:space:]'
 }
 
+# has_identity DIR: succeeds when DIR holds the agent's identity, which is
+# exactly what the agent needs to start without enrolling: the certificate,
+# its key and the CA chain it dials with (agent.crt, agent.key,
+# agent.ca.pem; internal/agent/config.go), each a non-empty regular file.
+# agent.json only carries bookkeeping and is not required. Anything less is
+# treated as no identity, so the token is asked for as before.
+has_identity() {
+	for identity_file in agent.crt agent.key agent.ca.pem; do
+		[ -f "$1/$identity_file" ] && [ ! -L "$1/$identity_file" ] && [ -s "$1/$identity_file" ] || return 1
+	done
+}
+
+# An identity already on disk makes the token unnecessary (backlog 3.60):
+# the agent enrolls only while it holds no valid identity and forgets the
+# token afterwards anyway (internal/agent/loop.go). A token given on the
+# command line is still read, validated and written as always.
+PULSIX_REUSE_IDENTITY=""
 if [ -n "$PULSIX_TOKEN_FILE" ]; then
 	[ -z "$PULSIX_TOKEN" ] || die "--token and --token-file exclude each other"
 	PULSIX_TOKEN="$(read_token_file "$PULSIX_TOKEN_FILE")"
 elif [ -z "$PULSIX_TOKEN" ]; then
-	PULSIX_TOKEN="$(read_token_tty)"
+	if has_identity "$DATA_DIR"; then
+		PULSIX_REUSE_IDENTITY=1
+		echo "pulsix-agent: reusing the existing identity in $DATA_DIR; no enrollment token needed"
+	else
+		PULSIX_TOKEN="$(read_token_tty)"
+	fi
 fi
-[ -n "$PULSIX_TOKEN" ] || die "no enrollment token given"
+if [ -z "$PULSIX_REUSE_IDENTITY" ]; then
+	[ -n "$PULSIX_TOKEN" ] || die "no enrollment token given"
+fi
 if [ "$SYSTEM" = "Linux" ]; then
 	[ -d /run/systemd/system ] || die "systemd is required (no /run/systemd/system found)"
 fi
@@ -338,7 +371,9 @@ chmod 700 "$DATA_DIR"
 umask 077
 {
 	echo "PULSIX_MANAGER_ADDR=$PULSIX_MANAGER"
-	echo "PULSIX_ENROLL_TOKEN=$PULSIX_TOKEN"
+	if [ -z "$PULSIX_REUSE_IDENTITY" ]; then
+		echo "PULSIX_ENROLL_TOKEN=$PULSIX_TOKEN"
+	fi
 	if [ -n "$PULSIX_NAME" ]; then
 		echo "PULSIX_AGENT_NAME=$PULSIX_NAME"
 	fi

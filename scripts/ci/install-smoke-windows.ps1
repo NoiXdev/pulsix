@@ -16,11 +16,14 @@
 #   0. an install with a token file Users may read, which the installer
 #      must refuse before it installs anything (5.1);
 #   1. a fresh install (5.1);
-#   2. an upgrade over the running agent (7);
+#   2. an upgrade over the running agent (7), then an upgrade with no token
+#      over a planted identity (7), which must ask for none, leave the
+#      token out of agent.env and keep the agent running (backlog 3.60);
 #   3. an uninstall with -KeepData (5.1), which removes the service and the
 #      binary but keeps ProgramData\Pulsix with agent.env and the log;
 #   4. a reinstall over the kept data directory (7), whose log goes on
-#      counting the agent's starts;
+#      counting the agent's starts, with a token (written as given) and
+#      then, since the identity was kept, without one (5.1);
 #   5. a full uninstall (7), after which service, binary, Program
 #      Files\Pulsix and ProgramData\Pulsix are gone;
 #   6. the uninstall again (5.1), which finds nothing and still succeeds.
@@ -370,6 +373,47 @@ function Install-Agent([string]$Shell) {
 	[void](Invoke-Installer $Shell @('-Manager', '127.0.0.1:1', '-Name', 'ci-smoke', '-TokenFile', $tokenFile))
 }
 
+# Install-AgentWithoutToken upgrades the agent under $Shell with no token
+# at all (backlog 3.60) and fails unless the installer says it reuses the
+# existing identity.
+function Install-AgentWithoutToken([string]$Shell) {
+	$output = Invoke-Installer $Shell @('-Manager', '127.0.0.1:1', '-Name', 'ci-smoke')
+	Assert-Output $output 'pulsix-agent: reusing the existing identity'
+}
+
+# Assert-EnvToken fails unless agent.env carries the enrollment token
+# exactly when $Want says so.
+function Assert-EnvToken([bool]$Want) {
+	$has = [IO.File]::ReadAllText($EnvFile) -match '(?m)^PULSIX_ENROLL_TOKEN='
+	if ($has -ne $Want) {
+		Fail "$EnvFile carries the enrollment token: $has, want $Want"
+	}
+}
+
+# Set-PlantedIdentity puts an identity into the data directory the way an
+# enrollment would leave it (backlog 3.60): a self-signed certificate with
+# the org URI SAN the agent insists on, its key (PKCS#8) and the
+# certificate again as the CA chain. The manager at 127.0.0.1:1 never
+# answers, so no enrollment can happen here; the agent only needs the
+# files to load. PowerShell 7 only (ExportPkcs8PrivateKey), which is what
+# runs this script.
+function Set-PlantedIdentity {
+	$ecdsa = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve]::CreateFromFriendlyName('nistP256'))
+	$request = New-Object Security.Cryptography.X509Certificates.CertificateRequest('CN=ci-smoke', $ecdsa, [Security.Cryptography.HashAlgorithmName]::SHA256)
+	$san = New-Object Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder
+	$san.AddUri([Uri]'urn:pulsix:org:ci-smoke')
+	$request.CertificateExtensions.Add($san.Build())
+	$cert = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(3650))
+	$certPem = "-----BEGIN CERTIFICATE-----`n" + ([Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks') -replace "`r`n", "`n") + "`n-----END CERTIFICATE-----`n"
+	$keyPem = "-----BEGIN PRIVATE KEY-----`n" + ([Convert]::ToBase64String($ecdsa.ExportPkcs8PrivateKey(), 'InsertLineBreaks') -replace "`r`n", "`n") + "`n-----END PRIVATE KEY-----`n"
+	$utf8 = New-Object Text.UTF8Encoding $false
+	[IO.File]::WriteAllText((Join-Path $DataDir 'agent.crt'), $certPem, $utf8)
+	[IO.File]::WriteAllText((Join-Path $DataDir 'agent.key'), $keyPem, $utf8)
+	[IO.File]::WriteAllText((Join-Path $DataDir 'agent.ca.pem'), $certPem, $utf8)
+	$cert.Dispose()
+	$ecdsa.Dispose()
+}
+
 function Show-Diagnostics {
 	Write-Host "--- sc.exe query $ServiceName"
 	& sc.exe query $ServiceName | Out-Host
@@ -438,6 +482,17 @@ try {
 	Install-Agent 'pwsh'
 	Assert-Installed ($previousStarts + 1)
 	Assert-Recovery
+	Assert-EnvToken $true
+
+	# With an identity in the data directory the token is optional (backlog
+	# 3.60): the upgrade asks for none and writes agent.env without it.
+	Write-Host 'install-smoke: upgrade without a token over an existing identity under PowerShell 7'
+	Set-PlantedIdentity
+	$previousStarts = Get-StartCount
+	Install-AgentWithoutToken 'pwsh'
+	Assert-Installed ($previousStarts + 1)
+	Assert-Recovery
+	Assert-EnvToken $false
 
 	Write-Host 'install-smoke: uninstall with -KeepData under Windows PowerShell 5.1'
 	$previousStarts = Get-StartCount
@@ -448,10 +503,19 @@ try {
 	# The kept data directory keeps the log too, so the count goes on from
 	# where it was: a reinstall that started over in a new directory would
 	# log a single start.
-	Write-Host 'install-smoke: reinstall over the kept data directory under PowerShell 7'
+	Write-Host 'install-smoke: reinstall over the kept data directory, with a token, under PowerShell 7'
 	Install-Agent 'pwsh'
 	Assert-Installed ($previousStarts + 1)
 	Assert-Recovery
+	Assert-EnvToken $true
+
+	# The identity survived -KeepData too.
+	Write-Host 'install-smoke: reinstall over the kept data directory, without a token, under Windows PowerShell 5.1'
+	$previousStarts = Get-StartCount
+	Install-AgentWithoutToken 'powershell.exe'
+	Assert-Installed ($previousStarts + 1)
+	Assert-Recovery
+	Assert-EnvToken $false
 
 	Write-Host 'install-smoke: uninstall under PowerShell 7'
 	$output = Invoke-Installer 'pwsh' @('-Uninstall')

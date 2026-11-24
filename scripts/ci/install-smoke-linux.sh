@@ -17,10 +17,13 @@
 #   1. a fresh install, and a check that the unit's address-family filter
 #      lets a process read the network interfaces over netlink;
 #   2. an upgrade over the running agent, which must restart it: exactly
-#      one new start in the journal (backlog 3.51);
+#      one new start in the journal (backlog 3.51), then an upgrade with no
+#      token over a planted identity, which must ask for none, leave the
+#      token out of agent.env and keep the agent running (backlog 3.60);
 #   3. an uninstall with --keep-data, which removes the unit and the
 #      binary but keeps /etc/pulsix;
-#   4. a reinstall over the kept data directory;
+#   4. a reinstall over the kept data directory, with a token (written as
+#      given) and again without one (the identity was kept);
 #   5. a full uninstall, after which unit, binary and /etc/pulsix are gone
 #      and systemd no longer knows the unit;
 #   6. the uninstall again, which finds nothing and still succeeds.
@@ -182,6 +185,58 @@ install_agent() {
 		fail "install.sh failed"
 }
 
+# plant_identity: puts an identity into the data directory the way an
+# enrollment would leave it (backlog 3.60): a self-signed certificate with
+# the org URI SAN the agent insists on, its key, and the certificate again
+# as the CA chain. The manager at 127.0.0.1:1 never answers, so no
+# enrollment can happen here; the agent only needs the files to load.
+plant_identity() {
+	mkdir -p "$WORK/identity"
+	cat > "$WORK/identity/openssl.cnf" <<'EOF_CNF'
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = ci-smoke
+[ext]
+subjectAltName = URI:urn:pulsix:org:ci-smoke
+EOF_CNF
+	openssl ecparam -name prime256v1 -genkey -noout -out "$WORK/identity/agent.key" ||
+		fail "could not generate the identity key"
+	openssl req -x509 -new -key "$WORK/identity/agent.key" -days 3650 -config "$WORK/identity/openssl.cnf" -out "$WORK/identity/agent.crt" ||
+		fail "could not generate the identity certificate"
+	cp "$WORK/identity/agent.crt" "$WORK/identity/agent.ca.pem"
+	for f in agent.crt agent.key agent.ca.pem; do
+		sudo cp "$WORK/identity/$f" "$DATA_DIR/$f"
+		sudo chown 0:0 "$DATA_DIR/$f"
+		sudo chmod 600 "$DATA_DIR/$f"
+	done
+}
+
+# install_agent_tokenless: an install over an existing identity with no
+# token at all (backlog 3.60). The output is echoed and kept in
+# INSTALL_OUT.
+install_agent_tokenless() {
+	fetch_installer
+	# shellcheck disable=SC2024
+	INSTALL_OUT="$(sudo sh -s -- --manager 127.0.0.1:1 --name ci-smoke < "$WORK/install.sh")" ||
+		fail "install.sh without a token failed: $INSTALL_OUT"
+	printf '%s\n' "$INSTALL_OUT"
+	printf '%s\n' "$INSTALL_OUT" | grep -q '^pulsix-agent: reusing the existing identity' ||
+		fail "the install did not say it reuses the existing identity"
+}
+
+# assert_env_token yes|no: whether agent.env carries the enrollment token.
+assert_env_token() {
+	if sudo grep -q '^PULSIX_ENROLL_TOKEN=' "$ENV_FILE"; then
+		has=yes
+	else
+		has=no
+	fi
+	[ "$has" = "$1" ] || fail "$ENV_FILE carries the enrollment token: $has, want $1"
+}
+
 # uninstall_agent [--keep-data]: the documented `sh -s -- --uninstall`
 # invocation. Its output is echoed and kept in UNINSTALL_OUT.
 uninstall_agent() {
@@ -216,6 +271,16 @@ echo "install-smoke: upgrade over the running agent"
 previous_starts="$(starts_logged)"
 install_agent
 assert_installed $((previous_starts + 1))
+assert_env_token yes
+
+# With an identity in the data directory the token is optional (backlog
+# 3.60): the upgrade asks for none and writes agent.env without it.
+echo "install-smoke: upgrade without a token over an existing identity"
+plant_identity
+previous_starts="$(starts_logged)"
+install_agent_tokenless
+assert_installed $((previous_starts + 1))
+assert_env_token no
 
 echo "install-smoke: uninstall with --keep-data"
 uninstall_agent --keep-data
@@ -226,10 +291,19 @@ got="$(owner_mode "$DATA_DIR")"
 [ "$got" = "root 700" ] || fail "--keep-data left $DATA_DIR as '$got', want 'root 700'"
 sudo test -f "$ENV_FILE" || fail "--keep-data did not keep $ENV_FILE"
 
-echo "install-smoke: reinstall over the kept data directory"
+# The identity survives --keep-data. A token given anyway is written as
+# always (backlog 3.60).
+echo "install-smoke: reinstall over the kept data directory, with a token"
 previous_starts="$(starts_logged)"
 install_agent
 assert_installed $((previous_starts + 1))
+assert_env_token yes
+
+echo "install-smoke: reinstall over the kept data directory, without a token"
+previous_starts="$(starts_logged)"
+install_agent_tokenless
+assert_installed $((previous_starts + 1))
+assert_env_token no
 
 echo "install-smoke: uninstall"
 uninstall_agent
