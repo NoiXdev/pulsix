@@ -2,7 +2,6 @@ package inventory
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -39,11 +38,15 @@ type Renderer struct {
 	ssh   SSHSource
 	creds CredentialSource
 	box   Sealer
+	// carries names the rows a snapshot opens: render.Carries, the rows
+	// the rendered document carries. Tests swap in every row as the
+	// oracle the narrowing is checked against.
+	carries func(render.Input) (render.Carried, error)
 }
 
 // NewRenderer wires the sources the renderer reads.
 func NewRenderer(store Store, hostSource HostSource, ssh SSHSource, creds CredentialSource, box Sealer) *Renderer {
-	return &Renderer{store: store, hosts: hostSource, ssh: ssh, creds: creds, box: box}
+	return &Renderer{store: store, hosts: hostSource, ssh: ssh, creds: creds, box: box, carries: render.Carries}
 }
 
 // HostPreview is one host's rendered variables and connection. Connection is
@@ -161,22 +164,11 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 	for _, h := range hostList {
 		hostNames[h.ID] = h.Name
 	}
-	var revealed []string
 	for _, g := range groups {
-		vars, err := r.secrets("inventory group "+g.Name, g.Schema.GroupFields(), g.Vars, GroupAAD(orgID, g.ID), reveal, &revealed)
-		if err != nil {
-			return render.Inventory{}, err
-		}
-		in.Groups = append(in.Groups, render.Group{ID: g.ID, ParentID: g.ParentID, Name: g.Name, Schema: g.Schema, Vars: vars, BastionID: g.BastionID})
+		in.Groups = append(in.Groups, render.Group{ID: g.ID, ParentID: g.ParentID, Name: g.Name, Schema: g.Schema, Vars: g.Vars, BastionID: g.BastionID})
 	}
 	for _, m := range memberships {
-		g := byID[m.GroupID]
-		subject := "inventory group " + g.Name + ", host " + hostNames[m.HostID]
-		vars, err := r.secrets(subject, g.Schema.MembershipFields(), m.Vars, MemberAAD(orgID, m.GroupID, m.HostID), reveal, &revealed)
-		if err != nil {
-			return render.Inventory{}, err
-		}
-		in.Memberships = append(in.Memberships, render.Membership{GroupID: m.GroupID, HostID: m.HostID, Vars: vars})
+		in.Memberships = append(in.Memberships, render.Membership{GroupID: m.GroupID, HostID: m.HostID, Vars: m.Vars})
 	}
 	for _, h := range hostList {
 		in.Hosts = append(in.Hosts, render.Host{ID: h.ID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address, Managed: h.Managed, Facts: h.Facts})
@@ -192,6 +184,16 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 			in.CredentialUsers[c.ID] = c.Username
 		}
 	}
+	rows := varRows(orgID, &in, byID, hostNames)
+	var revealed []string
+	if reveal {
+		revealed, err = r.reveal(in, rows)
+	} else {
+		err = mask(rows)
+	}
+	if err != nil {
+		return render.Inventory{}, err
+	}
 	out, err := render.Render(in)
 	if err != nil {
 		return render.Inventory{}, err
@@ -201,10 +203,11 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 }
 
 // secretsInDoc keeps the revealed secret values the rendered document
-// actually carries (as a string value anywhere in it): every group and
-// membership of the organization is opened before render.Render narrows
-// the scope, and a secret outside the job's scope must not travel to the
-// worker even as a redaction entry.
+// actually carries (as a string value anywhere in it). A snapshot opens
+// only the rows render.Carries names, but such a row can still hold a
+// secret the document leaves out (an inactive field, a value whose shape
+// no longer fits, see schema.Resolve), and a secret the run does not
+// carry must not travel to the worker even as a redaction entry.
 func secretsInDoc(revealed []string, doc map[string]any) []string {
 	if len(revealed) == 0 {
 		return nil
@@ -237,59 +240,7 @@ func secretsInDoc(revealed []string, doc map[string]any) []string {
 	return out
 }
 
-// secrets prepares one row's stored vars for rendering; subject names the
-// row in errors. A preview masks every non-null value of a secret field and
-// every other sealed value, declared or not, so no ciphertext envelope and
-// no plaintext stored before a field became secret is ever shown. A
-// snapshot opens the sealed values of secret fields and fails closed with
-// ErrUnrenderable when a declared field that is no longer secret still
-// holds a sealed value: Ansible must neither receive the envelope nor
-// silently lose the value. Undeclared (orphaned) values stay sealed; the
-// renderer drops them.
-//
-// renderIn calls this for every group and every membership of the whole
-// organization while building render.Input, before render.Render narrows
-// anything down to Scope — a Snapshot for one group or host therefore
-// still fails on a stray sealed value that belongs to a group or host
-// entirely outside that scope (backlog 2.22's decision, recorded in the
-// v0.2b plan: fail closed stays the behavior; only this error message
-// changed). Narrowing secrets() to run only inside the requested scope
-// would need reordering renderIn around render.Render's own scope logic —
-// out of reach here without disturbing 2.16's one-transaction read, and
-// not what the plan asked for.
-func (r *Renderer) secrets(subject string, fields []schema.Field, vars map[string]any, aad []byte, reveal bool, revealed *[]string) (map[string]any, error) {
-	if !reveal {
-		masked, err := schema.MapSecrets(fields, vars, func(string, any) (any, error) { return render.MaskedSecret, nil })
-		if err != nil {
-			return nil, err
-		}
-		return schema.ReplaceSealed(masked, func() any { return render.MaskedSecret }), nil
-	}
-	if stray := schema.StraySealed(fields, vars); len(stray) > 0 {
-		return nil, fmt.Errorf("%w: %s: %s", ErrUnrenderable, subject, straySealedMessage(stray))
-	}
-	return schema.MapSecrets(fields, vars, func(_ string, v any) (any, error) {
-		ct, ok := schema.SealedBytes(v)
-		if !ok {
-			// A plain value left under a field changed to secret (a schema
-			// change reseals nothing, see schema.MaskDeclared) is a secret
-			// to every read, so the run's redact list names it too
-			// (backlog 7.12).
-			if s, isString := v.(string); isString && s != "" {
-				*revealed = append(*revealed, s)
-			}
-			return v, nil
-		}
-		plain, err := r.box.OpenAAD(ct, aad)
-		if err != nil {
-			return nil, fmt.Errorf("open sealed inventory value: %w", err)
-		}
-		*revealed = append(*revealed, string(plain))
-		return string(plain), nil
-	})
-}
-
-// straySealedMessage builds secrets()'s ErrUnrenderable text from
+// straySealedMessage builds reveal()'s ErrUnrenderable text from
 // StraySealed's findings (backlog 2.22): a leaf stray (one scalar-typed
 // field's own value is a sealed envelope) reads "the field is no longer a
 // secret field", same as before this change; a container stray (the

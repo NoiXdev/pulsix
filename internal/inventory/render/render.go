@@ -128,7 +128,17 @@ type renderer struct {
 // a job must never see a different inventory or take a different route
 // than shown.
 func Render(in Input) (Inventory, error) {
-	r := renderer{in: in, groups: make(map[uuid.UUID]Group, len(in.Groups)), hosts: make(map[uuid.UUID]Host, len(in.Hosts))}
+	r, err := newRenderer(in)
+	if err != nil {
+		return Inventory{}, err
+	}
+	return r.run()
+}
+
+// newRenderer indexes in and checks its group tree; Render and Carries
+// both start here.
+func newRenderer(in Input) (*renderer, error) {
+	r := &renderer{in: in, groups: make(map[uuid.UUID]Group, len(in.Groups)), hosts: make(map[uuid.UUID]Host, len(in.Hosts))}
 	nodes := make([]grouptree.Node, len(in.Groups))
 	for i, g := range in.Groups {
 		nodes[i] = grouptree.Node{ID: g.ID, ParentID: g.ParentID, Name: g.Name}
@@ -139,19 +149,19 @@ func Render(in Input) (Inventory, error) {
 		r.hosts[h.ID] = h
 	}
 	if err := r.checkTree(); err != nil {
-		return Inventory{}, err
+		return nil, err
 	}
-	return r.run()
+	return r, nil
 }
 
 func (r *renderer) wholeOrg() bool { return r.in.Scope.GroupID == nil && len(r.in.Scope.HostIDs) == 0 }
 
 func (r *renderer) run() (Inventory, error) {
-	selected, err := r.selectHosts()
+	sel, err := r.selection()
 	if err != nil {
 		return Inventory{}, err
 	}
-	byHost := r.membershipsByHost(selected)
+	selected, byHost, included := sel.hosts, sel.byHost, sel.included
 	hostvars := map[string]any{}
 	conns := map[string]Connection{}
 	var ungrouped []string
@@ -168,7 +178,6 @@ func (r *renderer) run() (Inventory, error) {
 		conns[h.Name] = conn
 	}
 
-	included := r.includedGroups(byHost)
 	doc := map[string]any{}
 	var roots []string
 	for _, g := range r.sortedGroups() {
@@ -220,123 +229,6 @@ func (r *renderer) run() (Inventory, error) {
 		return cmp.Or(cmp.Compare(a.Host, b.Host), cmp.Compare(a.Group, b.Group), cmp.Compare(a.Message, b.Message))
 	})
 	return Inventory{Doc: doc, Connections: conns, Warnings: r.warnings}, nil
-}
-
-func (r *renderer) selectHosts() (map[uuid.UUID]bool, error) {
-	sel := map[uuid.UUID]bool{}
-	for _, h := range r.in.Hosts {
-		if h.Managed {
-			sel[h.ID] = true
-		}
-	}
-	if g := r.in.Scope.GroupID; g != nil {
-		if !r.tree.Has(*g) {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownGroup, *g)
-		}
-		subtree := map[uuid.UUID]bool{*g: true}
-		for _, d := range r.tree.Descendants(*g) {
-			subtree[d] = true
-		}
-		inSubtree := map[uuid.UUID]bool{}
-		for _, m := range r.in.Memberships {
-			if subtree[m.GroupID] {
-				inSubtree[m.HostID] = true
-			}
-		}
-		for id := range sel {
-			if !inSubtree[id] {
-				delete(sel, id)
-			}
-		}
-	}
-	if len(r.in.Scope.HostIDs) > 0 {
-		want := map[uuid.UUID]bool{}
-		for _, id := range r.in.Scope.HostIDs {
-			want[id] = true
-		}
-		for id := range sel {
-			if !want[id] {
-				delete(sel, id)
-			}
-		}
-	}
-	return sel, nil
-}
-
-// membershipsByHost returns each selected host's memberships ordered by group
-// depth (shallow first), then group name: the merge order of hostvars.
-func (r *renderer) membershipsByHost(sel map[uuid.UUID]bool) map[uuid.UUID][]Membership {
-	out := map[uuid.UUID][]Membership{}
-	warned := map[uuid.UUID]bool{}
-
-	// subtree, when Scope.GroupID is set, is that group and its
-	// descendants — the same set selectHosts intersects managed hosts
-	// against. hostWant, when Scope.HostIDs is set, is that set. A
-	// membership is "in scope" — and so worth warning about, even though
-	// its unmanaged host is never rendered — exactly when it would have
-	// survived selectHosts's filtering had its host been managed.
-	var subtree map[uuid.UUID]bool
-	if g := r.in.Scope.GroupID; g != nil {
-		subtree = map[uuid.UUID]bool{*g: true}
-		for _, d := range r.tree.Descendants(*g) {
-			subtree[d] = true
-		}
-	}
-	hostWant := map[uuid.UUID]bool{}
-	for _, id := range r.in.Scope.HostIDs {
-		hostWant[id] = true
-	}
-	inScope := func(m Membership) bool {
-		if subtree != nil && !subtree[m.GroupID] {
-			return false
-		}
-		if len(hostWant) > 0 && !hostWant[m.HostID] {
-			return false
-		}
-		return true
-	}
-
-	for _, m := range r.in.Memberships {
-		h, ok := r.hosts[m.HostID]
-		if _, known := r.groups[m.GroupID]; !ok || !known {
-			continue
-		}
-		if !h.Managed {
-			if inScope(m) && !warned[h.ID] {
-				warned[h.ID] = true
-				r.warnings = append(r.warnings, Warning{Host: h.Name, Message: "is a member of inventory groups but not managed; skipped"})
-			}
-			continue
-		}
-		if sel[m.HostID] {
-			out[m.HostID] = append(out[m.HostID], m)
-		}
-	}
-	for _, ms := range out {
-		slices.SortFunc(ms, func(a, b Membership) int {
-			return cmp.Or(cmp.Compare(r.tree.Depth(a.GroupID), r.tree.Depth(b.GroupID)), cmp.Compare(r.groups[a.GroupID].Name, r.groups[b.GroupID].Name))
-		})
-	}
-	return out
-}
-
-func (r *renderer) includedGroups(byHost map[uuid.UUID][]Membership) map[uuid.UUID]bool {
-	inc := map[uuid.UUID]bool{}
-	if r.wholeOrg() {
-		for id := range r.groups {
-			inc[id] = true
-		}
-		return inc
-	}
-	for _, ms := range byHost {
-		for _, m := range ms {
-			inc[m.GroupID] = true
-			for _, a := range r.tree.Ancestors(m.GroupID) {
-				inc[a] = true
-			}
-		}
-	}
-	return inc
 }
 
 func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection, error) {
