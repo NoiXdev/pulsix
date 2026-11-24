@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useHost } from '../../api/hooks/useHosts.ts';
@@ -365,6 +365,42 @@ describe('HostSshDialog', () => {
     confirm = within(await screen.findByRole('dialog', { name: 'Discard changes?' }));
     await user.click(confirm.getByRole('button', { name: 'Discard' }));
     expect(await screen.findByText('CLOSED')).toBeInTheDocument();
+  });
+
+  it('asks on Escape with the focus inside, and Discard closes', async () => {
+    const user = userEvent.setup();
+    mockApi(routes());
+    renderDialog();
+    const d = await dialog();
+
+    await user.type(await d.findByLabelText('User'), 'x');
+    await user.keyboard('{Escape}');
+    const confirm = within(await screen.findByRole('dialog', { name: 'Discard changes?' }));
+    expect(screen.queryByText('CLOSED')).not.toBeInTheDocument();
+    await user.click(confirm.getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByText('CLOSED')).toBeInTheDocument();
+  });
+
+  it('asks on every Escape with the focus on <body> and never sends a close request', async () => {
+    const user = userEvent.setup();
+    mockApi(routes());
+    renderDialog();
+    const d = await dialog();
+    await user.type(await d.findByLabelText('User'), 'x');
+    const el = screen.getByRole('dialog', { name: 'SSH access · web-04.fra' });
+    const cancels = vi.fn();
+    el.addEventListener('cancel', cancels);
+    for (let i = 0; i < 3; i++) {
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(document.activeElement).toBe(document.body);
+      await user.keyboard('{Escape}');
+      await screen.findByRole('dialog', { name: 'Discard changes?' });
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard changes?' })).not.toBeInTheDocument());
+      expect(screen.queryByText('CLOSED')).not.toBeInTheDocument();
+    }
+    expect(cancels).not.toHaveBeenCalled();
+    expect(d.getByLabelText('User')).toHaveValue('opsx');
   });
 
   it('closes on Cancel at once when nothing changed', async () => {

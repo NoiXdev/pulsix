@@ -150,6 +150,31 @@ describe('CodeEditor', () => {
     expect(codeOf(editor)).toBe('XYcd');
   });
 
+  it('leaves the caret after a cut paste at the cursor, as a textarea does', async () => {
+    render(<Controlled initial="abcd" maxLength={6} />);
+    const editor = await findCodeEditor('Playbook YAML');
+    const view = EditorView.findFromDOM(editor)!;
+    view.dispatch({ selection: { anchor: 2 } });
+    // The paste as CodeMirror sends it: the caret after the whole insert.
+    view.dispatch({ changes: { from: 2, insert: 'XYZW' }, selection: { anchor: 6 }, userEvent: 'input.paste' });
+    expect(codeOf(editor)).toBe('abXYcd');
+    const { main } = view.state.selection;
+    expect(main.empty).toBe(true);
+    expect(main.head).toBe(4);
+  });
+
+  it('leaves no selection over a cut paste that replaced one', async () => {
+    render(<Controlled initial="abcd" maxLength={6} />);
+    const editor = await findCodeEditor('Playbook YAML');
+    const view = EditorView.findFromDOM(editor)!;
+    view.dispatch({ selection: { anchor: 1, head: 3 } });
+    view.dispatch({ changes: { from: 1, to: 3, insert: 'XYZWVU' }, selection: { anchor: 7 }, userEvent: 'input.paste' });
+    expect(codeOf(editor)).toBe('aXYZWd');
+    const { main } = view.state.selection;
+    expect(main.empty).toBe(true);
+    expect(main.head).toBe(5);
+  });
+
   it('marks the line a diagnostic names, and clears the mark once it is gone', async () => {
     const { rerender, container } = render(
       <CodeEditor label="Code" language="yaml" value={'- hosts: all\n\tbad: 1'} onChange={() => {}} diagnostics={[{ line: 2, message: 'tab indentation' }]} />,

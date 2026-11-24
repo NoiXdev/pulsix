@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { ApiError } from '../../api/client.ts';
 import { useUpdateHost } from '../../api/hooks/useHosts.ts';
 import { useSetHostSSH } from '../../api/hooks/useSsh.ts';
@@ -13,6 +13,7 @@ import { useT } from '../../i18n/useT.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { kindName, routeLabel } from '../credentials/labels.ts';
+import { useAskOnEscape } from '../shared/useAskOnEscape.ts';
 import { RouteChain } from './RouteChain.tsx';
 import { SshDialogTest } from './SshDialogTest.tsx';
 import { SshJumpChoices } from './SshJumpChoices.tsx';
@@ -160,17 +161,15 @@ export function HostSshForm({
     if (!dirty || (await ask({ title: s.discardTitle, message: s.discardBody, confirmLabel: s.discard, destructive: true }))) onClose();
   }
 
-  // Escape asks too while there are changes (or a save is in flight):
-  // preventing the keydown's default is what stops the native <dialog>'s
-  // close request. A picker that closes its own list on Escape has already
-  // prevented it, and that press is left to the picker; so is one inside a
-  // create dialog opened from here (React bubbles it through this tree).
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Escape' || e.defaultPrevented || (!dirty && !pending)) return;
-    if ((e.target as Element).closest('dialog') !== e.currentTarget.closest('dialog')) return;
-    e.preventDefault();
+  // Escape asks too while there are changes (or holds while a save is in
+  // flight), wherever the focus is — in the form or on <body> after a click
+  // on the dialog's title bar or text (see useAskOnEscape). A picker that
+  // closes its own list on Escape keeps that press; so does a create dialog
+  // opened from here.
+  const content = useRef<HTMLDivElement>(null);
+  useAskOnEscape(content, true, dirty || pending, () => {
     if (!pending) void requestClose();
-  }
+  });
 
   async function reload() {
     await onReload();
@@ -178,7 +177,7 @@ export function HostSshForm({
   }
 
   return (
-    <div className="flex flex-col gap-4" onKeyDown={onKeyDown}>
+    <div ref={content} className="flex flex-col gap-4">
       <form id="ssh-access-form" onSubmit={submit} className="flex flex-col gap-4" noValidate>
         <div className="flex flex-col gap-1">
           <Label htmlFor="ssh-address">{s.address}</Label>

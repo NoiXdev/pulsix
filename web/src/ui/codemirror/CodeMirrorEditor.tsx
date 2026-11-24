@@ -1,5 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
-import { Annotation, Compartment, EditorState, Transaction, type ChangeSpec, type Extension, type TransactionSpec } from '@codemirror/state';
+import { Annotation, Compartment, EditorSelection, EditorState, Transaction, type ChangeSpec, type Extension, type TransactionSpec } from '@codemirror/state';
 import {
   EditorView,
   drawSelection,
@@ -70,9 +70,10 @@ const MAX_UNECHOED = 16;
 
 /** Cuts an edit that would make the text longer than `max` down to the room
  * left, as a textarea does with a paste: the inserted text is trimmed (in
- * order, over all of the transaction's changes) and the rest of the edit,
- * deletions included, goes through. Edits that do not grow the text, and
- * the caller's own value, are left alone. */
+ * order, over all of the transaction's changes), the rest of the edit,
+ * deletions included, goes through, and the caret lands after the cut
+ * insert. Edits that do not grow the text, and the caller's own value, are
+ * left alone. */
 function truncateToRoom(tr: Transaction, max: number): Transaction | TransactionSpec {
   if (!tr.docChanged || tr.annotation(fromProps)) return tr;
   if (tr.newDoc.length <= max || tr.newDoc.length <= tr.startState.doc.length) return tr;
@@ -94,7 +95,14 @@ function truncateToRoom(tr: Transaction, max: number): Transaction | Transaction
     if (fromA !== toA || text) changes.push({ from: fromA, to: toA, insert: text });
   });
   if (changes.length === 0) return {};
-  return { changes, userEvent: tr.annotation(Transaction.userEvent), scrollIntoView: true };
+  // The original selection was placed for the uncut insert, so it is set
+  // anew: each range becomes a caret after what replaced it, as a textarea
+  // leaves it (mapping the old selection would put the caret before the
+  // insert, or leave the paste selected).
+  const set = tr.startState.changes(changes);
+  const { ranges, mainIndex } = tr.startState.selection;
+  const selection = EditorSelection.create(ranges.map((r) => EditorSelection.cursor(set.mapPos(r.to, 1))), mainIndex);
+  return { changes: set, selection, userEvent: tr.annotation(Transaction.userEvent), scrollIntoView: true };
 }
 
 function languageOf(language: CodeEditorLanguage): Extension {

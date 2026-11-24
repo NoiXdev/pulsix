@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import { useRef } from 'react';
 import { Button } from '../../../ui/button.tsx';
 import { Dialog } from '../../../ui/dialog.tsx';
 import { useConfirm } from '../../../ui/confirmContext.ts';
@@ -7,6 +7,7 @@ import { StaleNotice } from '../sections/StaleNotice.tsx';
 import { FieldsEditor } from './FieldsEditor.tsx';
 import { useSchemaDraft } from './useSchemaDraft.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { useAskOnEscape } from '../../shared/useAskOnEscape.ts';
 
 export interface FieldsDialogProps {
   org: string;
@@ -47,20 +48,12 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
     if (await s.save()) onClose();
   }
 
-  // Escape asks on the keydown while there are changes, wherever the focus
-  // is in the dialog: preventing the keydown's default is what stops the
-  // native <dialog>'s close request. Answering the question with Escape
-  // spends the browser's user activation, after which the next `cancel` is
-  // not cancelable and would close the dialog with the edits, so the close
-  // request must never be the thing that asks. A picker or menu that closes
-  // itself on Escape has already prevented the keydown and keeps that press;
-  // so does a sub-field's own dialog, which gets its own.
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Escape' || e.defaultPrevented || !dirty) return;
-    if ((e.target as Element).closest('dialog') !== e.currentTarget.closest('dialog')) return;
-    e.preventDefault();
-    void requestClose();
-  }
+  // Escape asks while there are changes, wherever the focus is — in the
+  // content or on <body> after a click on the title bar or text (see
+  // useAskOnEscape). A picker or menu that closes itself on Escape keeps
+  // that press; so does a sub-field's own dialog, which gets its own.
+  const content = useRef<HTMLDivElement>(null);
+  useAskOnEscape(content, open, dirty, () => void requestClose());
 
   // The fallback for a close request that comes without that keydown (the
   // browser's own close gesture): refused and the question asked instead.
@@ -72,7 +65,7 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
 
   return (
     <Dialog open={open} onClose={onClose} onCancel={onCancel} title={canWrite ? f.manageTitle : f.viewTitle} size="xl">
-      <div className="flex flex-col gap-4" onKeyDown={onKeyDown}>
+      <div ref={content} className="flex flex-col gap-4">
         {s.stale && <StaleNotice onReload={s.reload} />}
         {s.problems.length > 0 && (
           <p role="alert" className="text-xs text-destructive">
