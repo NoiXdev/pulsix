@@ -650,7 +650,8 @@ The approved-run follow-up loose ends (2.123) add no migration, table, backup or
 proto change:
 - **`PUT /api/v1/orgs/{org}/settings/assistant` takes either field on its own.**
   `assistant_enabled` and `approved_runs_start_follow_ups` are both optional; a
-  field left out keeps its stored value, and a body with neither answers `422`.
+  field left out keeps its stored value, and a body with neither (`{}`) answers
+  `422` (no body at all stays `400`).
   The update reads and writes both in one locked transaction, so two admins
   changing different settings at once both keep their change. An older SPA,
   which always sends `assistant_enabled`, keeps working; a new SPA on an older
