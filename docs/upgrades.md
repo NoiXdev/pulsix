@@ -626,11 +626,17 @@ no migration, table, backup or proto change either:
   approved run. From a release before 2.120 this is the same one-time change
   described above.
 - **A job the approval check refuses at its claim** now fails with an error that
-  starts with `refused at claim: `. Approving the request again after its first
-  enqueue failed partway enqueues such a zone again instead of replaying the
-  refused job (only when the job was refused on its first claim; anything that
-  may have run is never repeated). A job refused before the upgrade carries the
-  old text, so its zone is not refilled; ask for the run again.
+  starts with `refused at claim: `. When the reason is that the request is no
+  longer approved (its first enqueue failed partway and put it back to
+  pending), the job is left out of its run: approving the request again
+  enqueues its zone again instead of replaying it (only when it was refused on
+  its first claim; anything that may have run is never repeated), and the run's
+  result, its notification and its follow-ups follow the jobs that do run. A run
+  with only such jobs has no result yet; if its request is never approved
+  again, its follow-ups are skipped as not started. Any other refusal (what the
+  run uses changed after approval) still fails the run. A job refused before
+  the upgrade carries the old text, so its zone is not refilled; ask for the run
+  again.
 - **The cap of 20 pending requests per token is exact** under concurrent
   creates (a transaction-scoped advisory lock per token). A request put back to
   pending after a failed enqueue is not counted against it again, so a token can
