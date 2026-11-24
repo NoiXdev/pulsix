@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,21 @@ type routeCase struct {
 	delivered func(stream *chunkingStream) int
 	// left drains this kind's ring and counts what was still in it.
 	left func(l *Loop) int
+}
+
+// routeWait bounds every wait in these tests, so a regression fails the
+// test instead of hanging the package until its timeout.
+const routeWait = 10 * time.Second
+
+// awaitClosed waits for ch to close, failing the test after routeWait.
+// Only from the test's own goroutine: it calls t.Fatalf.
+func awaitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(routeWait):
+		t.Fatalf("timed out after %s waiting for %s", routeWait, what)
+	}
 }
 
 func routeCases() map[string]routeCase {
@@ -70,7 +86,13 @@ func TestResultRoutedWhileDisconnectedIsNotStrandedByTheActivation(t *testing.T)
 			l.afterRoute = func() {
 				once.Do(func() {
 					close(routed)
-					<-release
+					select {
+					case <-release:
+					case <-time.After(routeWait):
+						// The sink's goroutine, not the test's: report
+						// and let it finish rather than Fatalf here.
+						t.Errorf("timed out after %s waiting for the activation to release the sink", routeWait)
+					}
 				})
 			}
 			handled := make(chan struct{})
@@ -78,12 +100,12 @@ func TestResultRoutedWhileDisconnectedIsNotStrandedByTheActivation(t *testing.T)
 				defer close(handled)
 				tc.handle(l, lt.now())
 			}()
-			<-routed
+			awaitClosed(t, routed, "the sink to finish routing")
 
 			stream := &chunkingStream{}
 			l.beforeInstall = func() {
 				close(release)
-				<-handled
+				awaitClosed(t, handled, "the sink to finish buffering")
 			}
 			if err := l.activateSender(newStreamSender(stream)); err != nil {
 				t.Fatalf("activateSender: %v", err)
@@ -99,22 +121,32 @@ func TestResultRoutedWhileDisconnectedIsNotStrandedByTheActivation(t *testing.T)
 	}
 }
 
-// failingOnceStream refuses every send and runs onFail inside the first
-// one, before the refusal reaches the caller — the window in which the
-// session that owned this stream ends and the next one goes live.
+// failingOnceStream refuses every send and runs onFail, when set, inside
+// the first one, before the refusal reaches the caller — the window in
+// which the session that owned this stream ends and the next one goes
+// live. sends counts every attempt.
 type failingOnceStream struct {
 	once   sync.Once
 	onFail func()
+	sends  atomic.Int32
 }
 
 func (s *failingOnceStream) Send(*agentpb.AgentMessage) error {
-	s.once.Do(s.onFail)
+	s.sends.Add(1)
+	if s.onFail != nil {
+		s.once.Do(s.onFail)
+	}
 	return errors.New("stream is dead")
 }
 
-func (s *failingOnceStream) Recv() (*agentpb.ManagerMessage, error) { select {} }
-func (s *failingOnceStream) CloseSend() error                       { return nil }
-func (s *failingOnceStream) Context() context.Context               { return context.Background() }
+// Recv reports the stream as dead too, rather than blocking forever: no
+// test here reads from it, and one that started to would fail, not hang.
+func (s *failingOnceStream) Recv() (*agentpb.ManagerMessage, error) {
+	return nil, errors.New("stream is dead")
+}
+
+func (s *failingOnceStream) CloseSend() error         { return nil }
+func (s *failingOnceStream) Context() context.Context { return context.Background() }
 
 // TestResultWhoseSendFailedIsNotStrandedByAReconnect (backlog 3.80): a
 // sink's send fails on a dying stream, and while it fails the session
@@ -149,5 +181,51 @@ func TestResultWhoseSendFailedIsNotStrandedByAReconnect(t *testing.T) {
 				t.Errorf("%d results stranded in the ring behind a live sender, want 0", got)
 			}
 		})
+	}
+}
+
+// TestResultWhoseSendFailedWithNoNewerSenderIsBufferedOnce pins
+// routeResults' own guard directly (route.go, `sender == failed`): when a
+// send fails and no different sender has gone live — the failed one still
+// installed, or none at all — the result goes into its ring once and the
+// sink returns. It must neither retry the failed stream in a loop nor
+// drop the result.
+func TestResultWhoseSendFailedWithNoNewerSenderIsBufferedOnce(t *testing.T) {
+	for name, tc := range routeCases() {
+		for _, still := range []struct {
+			name        string
+			deactivated bool
+		}{
+			{"failed sender still installed", false},
+			{"failed sender deactivated, none live", true},
+		} {
+			t.Run(name+"/"+still.name, func(t *testing.T) {
+				lt := newLoopTest(t)
+				l := lt.newLoop()
+
+				dying := &failingOnceStream{}
+				sender := newStreamSender(dying)
+				if err := l.activateSender(sender); err != nil {
+					t.Fatalf("activateSender: %v", err)
+				}
+				if still.deactivated {
+					dying.onFail = func() { l.deactivateSender(sender) }
+				}
+
+				handled := make(chan struct{})
+				go func() {
+					defer close(handled)
+					tc.handle(l, lt.now())
+				}()
+				awaitClosed(t, handled, "the sink to return after a failed send")
+
+				if got := dying.sends.Load(); got != 1 {
+					t.Errorf("the dead stream saw %d sends, want 1: a failed sender is never retried", got)
+				}
+				if got := tc.left(l); got != 1 {
+					t.Errorf("the ring holds %d results, want the 1 the dead stream refused", got)
+				}
+			})
+		}
 	}
 }
