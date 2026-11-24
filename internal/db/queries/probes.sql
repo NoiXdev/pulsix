@@ -67,6 +67,20 @@ DELETE FROM probe_current
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
   AND NOT (vantage = ANY(sqlc.arg(keep)::text[]));
 
+-- name: DeleteItemProbeCurrent :exec
+-- Every vantage's current rows of one item: the item forget's share
+-- (backlog 3.117). Samples stay until retention.
+DELETE FROM probe_current
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
+  AND item = sqlc.arg(item);
+
+-- name: DeleteMetricProbeCurrent :exec
+-- Every vantage's current rows of one metric: the metric forget's share
+-- (backlog 3.117).
+DELETE FROM probe_current
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
+  AND item = sqlc.arg(item) AND metric = sqlc.arg(metric);
+
 -- name: ProbeSeriesForHost :many
 -- One vantage's samples of one metric, downsampled like SeriesForHost
 -- (checks.sql): the same bucketing, NULL filter and value bounds, so a

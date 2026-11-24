@@ -37,7 +37,8 @@ var errForgetDeclined = errors.New("forget declined")
 //     (MarkHostDirty), so such an ingest is waiting for this transaction
 //     and lands after it, re-creating the item; waiting for its rows here
 //     would be a deadlock. Nothing deleted means nothing to forget.
-//  4. The item's states and state-change history: only the evaluator
+//  4. The item's per-vantage probe rows (backlog 3.117), then its states
+//     and state-change history: only the evaluator
 //     writes them, and only under the lock held since step 1, so no
 //     orphan state can appear behind this. Then its check_items row,
 //     which only the evaluator's discovery writes, under the same lock.
@@ -86,6 +87,11 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 	}
 	if deleted == 0 {
 		return errForgetDeclined
+	}
+	if err := q.DeleteItemProbeCurrent(ctx, gen.DeleteItemProbeCurrentParams{
+		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item,
+	}); err != nil {
+		return fmt.Errorf("delete item probe current: %w", err)
 	}
 	if err := q.DeleteItemStates(ctx, gen.DeleteItemStatesParams{
 		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item,

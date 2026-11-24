@@ -12,6 +12,58 @@ import (
 	"github.com/google/uuid"
 )
 
+const deleteItemProbeCurrent = `-- name: DeleteItemProbeCurrent :exec
+DELETE FROM probe_current
+WHERE org_id = $1 AND host_id = $2 AND check_key = $3
+  AND item = $4
+`
+
+type DeleteItemProbeCurrentParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// Every vantage's current rows of one item: the item forget's share
+// (backlog 3.117). Samples stay until retention.
+func (q *Queries) DeleteItemProbeCurrent(ctx context.Context, arg DeleteItemProbeCurrentParams) error {
+	_, err := q.db.Exec(ctx, deleteItemProbeCurrent,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	return err
+}
+
+const deleteMetricProbeCurrent = `-- name: DeleteMetricProbeCurrent :exec
+DELETE FROM probe_current
+WHERE org_id = $1 AND host_id = $2 AND check_key = $3
+  AND item = $4 AND metric = $5
+`
+
+type DeleteMetricProbeCurrentParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// Every vantage's current rows of one metric: the metric forget's share
+// (backlog 3.117).
+func (q *Queries) DeleteMetricProbeCurrent(ctx context.Context, arg DeleteMetricProbeCurrentParams) error {
+	_, err := q.db.Exec(ctx, deleteMetricProbeCurrent,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	return err
+}
+
 const deleteProbeAssignment = `-- name: DeleteProbeAssignment :exec
 DELETE FROM probe_assignments
 WHERE org_id = $1 AND agent_host_id = $2

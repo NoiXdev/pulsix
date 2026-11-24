@@ -21,7 +21,8 @@ import (
 //     refusal.
 //  3. DeleteMetricCurrent, skipping a row an in-flight ingest holds;
 //     nothing deleted means nothing to forget.
-//  4. The metric's states and state-change history. The item's
+//  4. The metric's per-vantage probe rows (backlog 3.117), its states and
+//     state-change history. The item's
 //     check_items row stays: the item is still there.
 //  5. MarkHostDirtyNow.
 //  6. steps.Within — the metric's alert close — on the same transaction.
@@ -66,6 +67,11 @@ func forgetMetric(ctx context.Context, tx pgx.Tx, ref MetricRef, steps MetricFor
 	}
 	if deleted == 0 {
 		return errForgetDeclined
+	}
+	if err := q.DeleteMetricProbeCurrent(ctx, gen.DeleteMetricProbeCurrentParams{
+		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item, Metric: ref.Metric,
+	}); err != nil {
+		return fmt.Errorf("delete metric probe current: %w", err)
 	}
 	if err := q.DeleteMetricStates(ctx, gen.DeleteMetricStatesParams{
 		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item, Metric: ref.Metric,
