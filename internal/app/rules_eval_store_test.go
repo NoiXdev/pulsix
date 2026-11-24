@@ -63,7 +63,7 @@ func TestEvalStoreJudgesAgentsOnlineLikeTheAgentsList(t *testing.T) {
 			host.ID, tc.ago.Seconds()); err != nil {
 			t.Fatal(err)
 		}
-		load, err := store.Load(ctx, rules.Due{OrgID: org, HostID: host.ID})
+		load, err := store.Load(ctx, rules.Due{OrgID: org, HostID: host.ID}, time.Now())
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}

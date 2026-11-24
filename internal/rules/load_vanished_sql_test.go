@@ -69,7 +69,7 @@ func TestLoadUsesTheVanishedRule(t *testing.T) {
 
 	checks := fixedChecks{intervals: map[string]time.Duration{"web": time.Minute, "disk": 5 * time.Minute, "smart": 5 * time.Minute}}
 	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestLoadLeavesMetricsNobodyAsksForUnmeasured(t *testing.T) {
 		asksMetric: map[string]func(string) bool{"web": func(metric string) bool { return metric != "http.body_match" }},
 	}
 	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

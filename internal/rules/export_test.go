@@ -41,3 +41,6 @@ func WithBatchDeadlineFloor(d time.Duration) TickerOption {
 // SetHostDeadline overrides the per-host deadline of one store (backlog
 // 7.112) so a test can cut a host off in milliseconds.
 func (s *EvalSQLStore) SetHostDeadline(d time.Duration) { s.hostDeadline = d }
+
+// ReplayHoldCap exposes replayHoldCap to the external tests.
+const ReplayHoldCap = replayHoldCap

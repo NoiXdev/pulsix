@@ -65,7 +65,7 @@ func setAbsentDays(t *testing.T, d *db.DB, org uuid.UUID, days int) {
 func loadPresence(t *testing.T, d *db.DB, org, host uuid.UUID) rules.HostPresence {
 	t.Helper()
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

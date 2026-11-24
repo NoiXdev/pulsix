@@ -32,7 +32,7 @@ func (s *stuckStore) ProcessDue(ctx context.Context, _ time.Time, _ int, _ func(
 	return 0, ctx.Err()
 }
 
-func (s *stuckStore) Load(context.Context, Due) (HostLoad, error) { return HostLoad{}, nil }
+func (s *stuckStore) Load(context.Context, Due, time.Time) (HostLoad, error) { return HostLoad{}, nil }
 
 func (s *stuckStore) Windows(context.Context, Due, []WindowRequest, time.Time) (map[WindowRequest]float64, error) {
 	return nil, nil

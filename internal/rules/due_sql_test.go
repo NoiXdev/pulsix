@@ -75,6 +75,7 @@ type fixedChecks struct {
 	asks       map[string]func(item string) bool
 	asksMetric map[string]func(metric string) bool
 	groups     []rules.GroupRank
+	synthetic  map[string]bool
 	err        error
 }
 
@@ -82,7 +83,7 @@ func (f fixedChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rule
 	if f.err != nil {
 		return rules.CheckContext{}, f.err
 	}
-	return rules.CheckContext{Intervals: f.intervals, Asks: f.asks, AsksMetric: f.asksMetric, Groups: f.groups}, nil
+	return rules.CheckContext{Intervals: f.intervals, Asks: f.asks, AsksMetric: f.asksMetric, Synthetic: f.synthetic, Groups: f.groups}, nil
 }
 
 // cpuMinute is the ordinary case: one check, "cpu", resolved at a
@@ -451,7 +452,7 @@ func TestLoadGathersEveryInputTheSnapshotNeeds(t *testing.T) {
 	insertHostState(t, d, org, host, rules.StateWarn, 0, 1, 0, now.Add(-time.Hour), now.Add(-time.Minute))
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -494,7 +495,7 @@ func TestLoadOfANeverEvaluatedHostCarriesNoPreviousRollUp(t *testing.T) {
 	org := seedOrg(t, d, "fresh")
 	host := seedHost(t, d, org, "h")
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -522,7 +523,7 @@ func TestLoadIgnoresAnotherOrganizationsRows(t *testing.T) {
 	}
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: orgA, HostID: hostA})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: orgA, HostID: hostA}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -555,7 +556,7 @@ func TestLoadDiscoversNonEmptyItemsAndSkipsWholeHostChecks(t *testing.T) {
 	insertCurrent(t, d, org, host, opt, ptr(60.0), nil, now, "")
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -609,7 +610,7 @@ func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
 
 	fake := &fakeItemStore{}
 	store := rules.NewEvalSQLStore(d, cpuMinute(), fake, testAgentWindow, discard())
-	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -653,7 +654,7 @@ func TestIgnoredResolvesPerTickEvenWhenTheDecisionPredatesTheItem(t *testing.T) 
 	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -687,7 +688,7 @@ func TestIgnoredDoesNotLeakAcrossHosts(t *testing.T) {
 	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
 
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
-	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -957,7 +958,7 @@ func TestLoadFailureLeavesTheHostDue(t *testing.T) {
 	org := seedOrg(t, d, "load-fail")
 	host := seedHost(t, d, org, "h")
 	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, items.NewSQLStore(d), testAgentWindow, discard())
-	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err == nil {
+	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now()); err == nil {
 		t.Fatal("Load returned no error although the check pipeline failed")
 	}
 }
@@ -972,10 +973,10 @@ type gateStore struct {
 	release chan struct{}
 }
 
-func (g *gateStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
+func (g *gateStore) Load(ctx context.Context, d rules.Due, now time.Time) (rules.HostLoad, error) {
 	close(g.entered)
 	<-g.release
-	return g.EvalStore.Load(ctx, d)
+	return g.EvalStore.Load(ctx, d, now)
 }
 
 // TestTwoTickersEvaluateOneDueHostExactlyOnce is review focus 5. The two

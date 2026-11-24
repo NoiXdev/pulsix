@@ -38,10 +38,13 @@ func newReplayFixture(t *testing.T, name, onlineFor string) *replayFixture {
 	_, online, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "5 seconds", online: onlineFor})
 	f := &replayFixture{
 		d: d, org: org, host: host, since: online.UTC().Truncate(time.Microsecond),
-		up:     rules.Tuple{CheckKey: "web", Metric: "http.up"},
-		dns:    rules.Tuple{CheckKey: "web", Metric: "http.dns_ms"},
-		checks: fixedChecks{intervals: map[string]time.Duration{"web": time.Minute}},
-		sink:   &fakeSink{},
+		up:  rules.Tuple{CheckKey: "web", Metric: "http.up"},
+		dns: rules.Tuple{CheckKey: "web", Metric: "http.dns_ms"},
+		checks: fixedChecks{
+			intervals: map[string]time.Duration{"web": time.Minute, "cpu": time.Minute, "ping": time.Minute},
+			synthetic: map[string]bool{"ping": true},
+		},
+		sink: &fakeSink{},
 	}
 	f.storeTuple = func(tuple rules.Tuple, at time.Time) {
 		insertCurrent(t, d, org, host, tuple, ptr(1.0), nil, at, "")
@@ -94,7 +97,7 @@ func judged(in rules.AlertInput, tuple rules.Tuple) bool {
 // from before the gap, forty minutes old. By the rule alone it trails its
 // sibling by far more than three intervals and would vanish — reported
 // unmeasured, its open crit alert closed as stale, only to reopen with the
-// next chunk. While the item's newest reading predates the agent's online
+// next chunk. While no reading of the host's agent is from its online
 // period the verdict is held instead: no state, no unmeasured report, the
 // stored crit untouched. The second chunk then brings it back to be judged.
 //
@@ -168,5 +171,58 @@ func TestAVanishedMetricWithoutAReplayStillCloses(t *testing.T) {
 	got := f.tick(t, now)
 	if len(got.Unmeasured) != 1 || got.Unmeasured[0] != f.dns {
 		t.Fatalf("unmeasured = %+v, want only %+v", got.Unmeasured, f.dns)
+	}
+}
+
+// TestAnItemThatNeverReportsAgainVanishesOnceTheHostIsLive: the replay is
+// the host's, not the item's. The web item's last collection came in the
+// replay and the agent no longer collects it at all, so it never has a
+// reading of the online period; another item's live reading proves the
+// replay is through, and the metric that trails is judged vanished.
+func TestAnItemThatNeverReportsAgainVanishesOnceTheHostIsLive(t *testing.T) {
+	f := newReplayFixture(t, "replay-host-live", "2 minutes")
+	now := f.since.Add(2 * time.Minute)
+	f.storeTuple(f.up, f.since.Add(-15*time.Minute))
+	f.storeTuple(f.dns, f.since.Add(-40*time.Minute))
+	f.storeTuple(rules.Tuple{CheckKey: "cpu", Metric: "cpu.usage_pct"}, f.since.Add(30*time.Second))
+
+	got := f.tick(t, now)
+	if len(got.Unmeasured) != 1 || got.Unmeasured[0] != f.dns {
+		t.Fatalf("unmeasured = %+v, want only %+v", got.Unmeasured, f.dns)
+	}
+}
+
+// TestTheReplayHoldEndsAfterTheCap: an agent online for longer than the cap
+// that has reported nothing live is no longer taken to be replaying, so
+// the trailing metric vanishes as always.
+func TestTheReplayHoldEndsAfterTheCap(t *testing.T) {
+	f := newReplayFixture(t, "replay-cap", "20 minutes")
+	now := f.since.Add(rules.ReplayHoldCap)
+	f.storeTuple(f.up, f.since.Add(-15*time.Minute))
+	f.storeTuple(f.dns, f.since.Add(-40*time.Minute))
+
+	got := f.tick(t, now)
+	if len(got.Unmeasured) != 1 || got.Unmeasured[0] != f.dns {
+		t.Fatalf("unmeasured = %+v, want only %+v", got.Unmeasured, f.dns)
+	}
+}
+
+// TestAManagerProbeReadingDoesNotEndTheReplay: a check the manager probes
+// writes the host's tuples with the manager's clock, whatever the agent is
+// doing, so its reading of the online period says nothing about the
+// agent's replay.
+func TestAManagerProbeReadingDoesNotEndTheReplay(t *testing.T) {
+	f := newReplayFixture(t, "replay-probe", "20 seconds")
+	now := f.since.Add(5 * time.Second)
+	f.storeTuple(f.up, f.since.Add(-15*time.Minute))
+	f.storeTuple(f.dns, f.since.Add(-40*time.Minute))
+	f.storeTuple(rules.Tuple{CheckKey: "ping", Metric: "ping.up"}, f.since.Add(time.Second))
+
+	got := f.tick(t, now)
+	if len(got.Unmeasured) != 0 {
+		t.Fatalf("unmeasured = %+v, want none while the agent replays", got.Unmeasured)
+	}
+	if judged(got, f.dns) {
+		t.Fatalf("states = %+v, want http.dns_ms held, not judged", got.States)
 	}
 }

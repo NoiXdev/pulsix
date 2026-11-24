@@ -131,10 +131,12 @@ type EvalStore interface {
 	// claim is skipped silently. It returns the number of hosts fn returned
 	// nil for — the hosts actually evaluated, not the hosts listed.
 	ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error)
-	// Load gathers one host's inputs: its tuples with the intervals that
-	// define staleness, its effective rules, its facts, its previous
-	// states, its flapping counts and its previous roll-up.
-	Load(ctx context.Context, d Due) (HostLoad, error)
+	// Load gathers one host's inputs as of now: its tuples with the
+	// intervals that define staleness, its effective rules, its facts, its
+	// previous states, its flapping counts and its previous roll-up. now is
+	// the evaluation's own clock reading, the one the replay hold's cap is
+	// measured against (HostReplaying).
+	Load(ctx context.Context, d Due, now time.Time) (HostLoad, error)
 	// Windows fetches the requested aggregates in one round trip, measured
 	// back from now. A request whose window holds no sample is simply
 	// absent from the result — a missing window is a non-match, never a
@@ -334,7 +336,7 @@ func (t *Ticker) batchDeadline() time.Duration {
 // (failedHostNext), and logged here, where the host is still in hand to
 // name.
 func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
-	load, err := t.store.Load(ctx, d)
+	load, err := t.store.Load(ctx, d, now)
 	if err != nil {
 		t.log.ErrorContext(ctx, "load host for evaluation; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)

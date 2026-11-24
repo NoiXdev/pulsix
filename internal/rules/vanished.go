@@ -38,8 +38,8 @@ import "time"
 // Load, through ItemNewest) takes a vanished tuple out of the evaluation
 // the way it takes out an item its check no longer asks for, and the host
 // page (GET /hosts/{id}/checks) reports it as `vanished`. Rule loading
-// alone holds the verdict while the item may be mid-replay
-// (ItemNewest.Replaying, withoutVanished): that hold exists to keep alerts
+// alone holds the verdict while the host may be mid-replay
+// (HostReplaying, withoutVanished): that hold exists to keep alerts
 // from closing and reopening, and the page has no alert to protect.
 func Vanished(at, itemNewest time.Time, interval time.Duration) bool {
 	return interval > 0 && itemNewest.Sub(at) > vanishedFactor*interval
@@ -76,35 +76,48 @@ func (n ItemNewest) Vanished(t Tuple, at time.Time, interval time.Duration) bool
 	return ok && Vanished(at, newest, interval)
 }
 
-// Replaying reports whether t's item may still be in the middle of a replay
-// (backlog 3.118): its newest error-free reading predates since, the start
-// of the host's agent's current online period (HostPresence.
-// AgentOnlineSince). An agent back from a gap replays its buffer before it
-// sends anything live, in chunks of 200 results, and one collection of an
-// item can be split across two chunks. Until the item's first reading of
-// the online period arrives, every reading of it the manager holds was
-// collected before the agent came back, so the rest of that collection may
-// still be in flight — and a metric that trails a sibling from the first
-// chunk is not evidence that it vanished.
+// HostReplaying reports whether a host's agent may still be replaying its
+// buffer (backlog 3.118). An agent back from a gap replays the results it
+// buffered, in chunks of 200, before it sends anything live, and one
+// collection of an item can be split across two chunks; an evaluation
+// between them would see the metrics still in flight trail the first
+// chunk's siblings and vanish them, closing their alerts as stale only for
+// the next chunk to reopen them.
 //
-// The online period's start is what the server already records for this:
-// the first touch after a gap longer than the agents list's online window
-// (agents.StaleAfter) restarts it, and the stream's own opening touch comes
-// before the replay. The comparison crosses the agent's clock and the
-// database's, like staleness does: an agent clock running behind keeps an
-// item replaying until its readings pass the period's start, one running
-// ahead by more than the ingest's two-minute plausibility bound has its
-// readings refused anyway.
+// since is the start of the agent's current online period
+// (HostPresence.AgentOnlineSince): the first touch after a gap longer than
+// the agents list's online window (agents.StaleAfter) restarts it, and the
+// stream's own opening touch comes before the replay. agentNewest is the
+// host's newest reading of a check its agent runs, an error included (zero
+// when there is none): because nothing live goes out before the replay is
+// through, the first such reading taken at or after since ends the replay
+// for the whole host — every item, including one that never reports again.
 //
-// A zero since (no agent, or an unknown start) never replays; neither does
-// an item never observed without an error, which has no newest reading.
-func (n ItemNewest) Replaying(t Tuple, since time.Time) bool {
-	if since.IsZero() {
+// The hold also ends replayHoldCap after since, whatever arrived: a
+// connected agent that reports nothing live, or one whose clock runs
+// behind (its live readings predate since until its clock passes it), must
+// not keep its host's verdicts held for ever. An agent clock running ahead
+// by more than the ingest's two-minute plausibility bound has its readings
+// refused anyway. A zero since (no agent, or an unknown start) never
+// replays.
+func HostReplaying(since, agentNewest, now time.Time) bool {
+	if since.IsZero() || !now.Before(since.Add(replayHoldCap)) {
 		return false
 	}
-	newest, ok := n[itemKeyOf(t)]
-	return ok && newest.Before(since)
+	return agentNewest.Before(since)
 }
+
+// replayHoldCap bounds how long after the start of an online period a host
+// can be taken to be replaying. It is the agent's disconnect buffer window
+// (internal/agent's bufferWindow, 15 minutes; this package imports neither
+// side): the buffer holds at most that much of the host's results, and the
+// manager paces an agent's ingest at checks.MaxTuplesPerHost observations
+// per checks.MinInterval (internal/agentapi's ingest budget) — the most a
+// well-behaved host can collect in that time — after a burst of twice
+// that, so even a host at the tuple cap has its whole buffer stored within
+// the window it was collected over. Typical hosts replay in one burst, in
+// well under a second; the cap only ever ends a hold nothing else ends.
+const replayHoldCap = 15 * time.Minute
 
 // withoutVanished applies the vanished rule (backlog 3.88) to tuples, in
 // place. A vanished tuple — its item reported again since, but not this
@@ -113,24 +126,24 @@ func (n ItemNewest) Replaying(t Tuple, since time.Time) bool {
 // the roll-up, and Evaluate reports it as unmeasured, which closes its open
 // alerts as stale.
 //
-// A tuple that would vanish while its item is replaying (backlog 3.118,
-// ItemNewest.Replaying: the item has not reported since the agent's online
-// period began at onlineSince) is held instead: left out of the snapshot
-// altogether, so nothing judges it, nothing reports it unmeasured, its
-// stored state and any alert on it stay exactly as they are, and it has no
-// part in the roll-up or its siblings' inputs for this pass. That is the
-// difference from simply not vanishing it: judged, a client's metric that
-// had vanished before the gap would be measured from the online period's
-// start (staleAt) and so read its frozen value as fresh — a crit reopening
-// for the length of the replay. The item's first reading of the period
-// ends the hold and the tuple is judged, vanished or not, as always.
-// Tuples the rule leaves alone are untouched; the result shares tuples'
-// backing array.
-func withoutVanished(tuples []TupleSnapshot, newest ItemNewest, onlineSince time.Time) []TupleSnapshot {
+// While the host is replaying (HostReplaying, backlog 3.118) a tuple that
+// would vanish is held instead, unless its check is one the manager probes
+// (synthetic: its readings carry the manager's clock and never come in a
+// replay). Held means left out of the snapshot altogether: nothing judges
+// it, nothing reports it unmeasured, its stored state and any alert on it
+// stay exactly as they are, and it has no part in the roll-up or its
+// siblings' inputs for this pass. That is the difference from simply not
+// vanishing it: judged, a client's metric that had vanished before the gap
+// would be measured from the online period's start (staleAt) and so read
+// its frozen value as fresh — a crit reopening for the length of the
+// replay. Once the replay is over every tuple is judged, vanished or not,
+// as always. Tuples the rule leaves alone are untouched; the result shares
+// tuples' backing array.
+func withoutVanished(tuples []TupleSnapshot, newest ItemNewest, replaying bool, synthetic map[string]bool) []TupleSnapshot {
 	kept := tuples[:0]
 	for _, ts := range tuples {
 		if newest.Vanished(ts.Tuple, ts.At, ts.Interval) {
-			if newest.Replaying(ts.Tuple, onlineSince) {
+			if replaying && !synthetic[ts.Tuple.CheckKey] {
 				continue
 			}
 			ts.Interval = 0

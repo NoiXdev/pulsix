@@ -46,7 +46,12 @@ type CheckContext struct {
 	// It is consulted for every item, the whole-host item "" included. A
 	// key with no predicate asks for every metric.
 	AsksMetric map[string]func(metric string) bool
-	Groups     []GroupRank
+	// Synthetic are the check keys the manager probes the host with
+	// (backlog 3.13): their readings are stamped by the manager's clock and
+	// never arrive in the agent's replay, so they neither end a replay nor
+	// are held by one (HostReplaying, backlog 3.118).
+	Synthetic map[string]bool
+	Groups    []GroupRank
 }
 
 // interval is the resolved interval tuple t is measured at, or zero —
@@ -99,7 +104,7 @@ type ItemStore interface {
 // Load implements EvalStore. It assembles the whole HostLoad itself,
 // resolution included: gathering a host's inputs is one job, and the
 // ticker above stays a pure orchestrator because of it.
-func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
+func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad, error) {
 	// The port runs on its own connection, org-scoped: this store is
 	// unscoped by necessity (it claims across every organization), but an
 	// ordinary domain service called from inside it gets the ordinary
@@ -120,9 +125,17 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 	tuples := make([]TupleSnapshot, len(current))
 	reported := make([]Tuple, len(current))
 	newest := ItemNewest{}
+	// agentNewest is the newest reading of a check the agent runs, an error
+	// or a metric nobody asks for any more included: any of them taken in
+	// the agent's online period proves its replay is through
+	// (HostReplaying).
+	var agentNewest time.Time
 	for i, r := range current {
 		t := Tuple{CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric}
 		reported[i] = t
+		if !checkCtx.Synthetic[t.CheckKey] && r.At.After(agentNewest) {
+			agentNewest = r.At
+		}
 		tuples[i] = TupleSnapshot{
 			Tuple: t, Value: r.Value, Label: r.Label, Err: textOf(r.Error), At: r.At,
 			// A check the manager no longer resolves for this host, or one
@@ -148,7 +161,8 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 	if err != nil {
 		return HostLoad{}, err
 	}
-	tuples = withoutVanished(tuples, newest, presence.AgentOnlineSince)
+	replaying := HostReplaying(presence.AgentOnlineSince, agentNewest, now)
+	tuples = withoutVanished(tuples, newest, replaying, checkCtx.Synthetic)
 
 	// Discovery and decision resolution (v0.3b-3 design, "Discovery and
 	// evaluation"): item names fall out of the tuples just read, so this

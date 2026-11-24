@@ -201,7 +201,7 @@ func (f *fakeEvalStore) ProcessDue(ctx context.Context, now time.Time, limit int
 	return n, nil
 }
 
-func (f *fakeEvalStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
+func (f *fakeEvalStore) Load(ctx context.Context, d rules.Due, _ time.Time) (rules.HostLoad, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.loaded = append(f.loaded, d.HostID)
@@ -574,7 +574,7 @@ type cancelOnLoadStore struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancelOnLoadStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
+func (c *cancelOnLoadStore) Load(ctx context.Context, d rules.Due, _ time.Time) (rules.HostLoad, error) {
 	c.cancel()
 	<-ctx.Done()
 	return rules.HostLoad{}, ctx.Err()
@@ -722,7 +722,9 @@ func (b bareEvalStore) ProcessDue(ctx context.Context, _ time.Time, _ int, fn fu
 	return 1, nil
 }
 
-func (b bareEvalStore) Load(context.Context, rules.Due) (rules.HostLoad, error) { return b.load, nil }
+func (b bareEvalStore) Load(context.Context, rules.Due, time.Time) (rules.HostLoad, error) {
+	return b.load, nil
+}
 
 func (b bareEvalStore) Windows(context.Context, rules.Due, []rules.WindowRequest, time.Time) (map[rules.WindowRequest]float64, error) {
 	return nil, nil

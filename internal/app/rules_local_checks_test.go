@@ -68,7 +68,7 @@ func TestAnOrgRuleJudgesALocalCheck(t *testing.T) {
 
 	evaluate := func(svc *checks.Service) (rules.TupleState, bool) {
 		t.Helper()
-		load, err := newEvalStore(d, NewRulesHostChecks(svc), items.NewSQLStore(d)).Load(ctx, rules.Due{OrgID: org, HostID: host.ID})
+		load, err := newEvalStore(d, NewRulesHostChecks(svc), items.NewSQLStore(d)).Load(ctx, rules.Due{OrgID: org, HostID: host.ID}, time.Now())
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}

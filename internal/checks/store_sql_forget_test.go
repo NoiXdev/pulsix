@@ -209,7 +209,7 @@ func (noChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.Che
 func loadHost(t *testing.T, d *db.DB, org, host uuid.UUID) {
 	t.Helper()
 	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), agents.StaleAfter, nil).
-		Load(ctx, rules.Due{OrgID: org, HostID: host}); err != nil {
+		Load(ctx, rules.Due{OrgID: org, HostID: host}, time.Now()); err != nil {
 		t.Fatalf("evaluator load: %v", err)
 	}
 }

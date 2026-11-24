@@ -74,6 +74,12 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 		asks[c.Key] = asksFor(c)
 		asksMetric[c.Key] = c.AsksForMetric
 	}
+	// The manager's probes are marked: their readings never come in the
+	// agent's replay, so they neither end nor wait for one (backlog 3.118).
+	synthetic := make(map[string]bool, len(set.Synthetic))
+	for _, c := range set.Synthetic {
+		synthetic[c.Key] = true
+	}
 	groups, err := a.checks.GroupsForHost(ctx, orgID, hostID)
 	if err != nil {
 		return rules.CheckContext{}, err
@@ -82,7 +88,7 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	for i, g := range groups {
 		ranks[i] = rules.GroupRank{ID: g.ID, Priority: g.Priority, CreatedAt: g.CreatedAt}
 	}
-	return rules.CheckContext{Intervals: intervals, Asks: asks, AsksMetric: asksMetric, Groups: ranks}, nil
+	return rules.CheckContext{Intervals: intervals, Asks: asks, AsksMetric: asksMetric, Synthetic: synthetic, Groups: ranks}, nil
 }
 
 // asksFor is c's item predicate for the evaluation (backlog 3.55): the

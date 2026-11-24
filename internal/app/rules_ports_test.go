@@ -55,6 +55,7 @@ func TestRulesHostChecksContextForHost(t *testing.T) {
 // check (backlog 3.13) is never pushed to the agent, but its results land
 // in the same tuples, so rules on its metrics need its interval exactly
 // like an agent check's — without it the evaluation would drop the tuple.
+// It is marked synthetic, which the replay hold reads.
 func TestRulesHostChecksContextForHostIncludesSyntheticChecks(t *testing.T) {
 	r := &fakeCheckResolver{set: checks.ResolvedSet{
 		Checks:    []checks.Resolved{{Key: "cpu", Interval: time.Minute}},
@@ -66,6 +67,11 @@ func TestRulesHostChecksContextForHostIncludesSyntheticChecks(t *testing.T) {
 	}
 	if len(got.Intervals) != 2 || got.Intervals["cpu"] != time.Minute || got.Intervals["web"] != 30*time.Second {
 		t.Fatalf("intervals = %+v, want cpu and the synthetic web", got.Intervals)
+	}
+	// Only the synthetic one is marked: its readings carry the manager's
+	// clock and never come in the agent's replay (backlog 3.118).
+	if len(got.Synthetic) != 1 || !got.Synthetic["web"] {
+		t.Fatalf("synthetic = %+v, want only web", got.Synthetic)
 	}
 }
 
