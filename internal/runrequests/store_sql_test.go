@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -326,5 +327,53 @@ func TestSQLStoreTokenRulesFollowTheOwner(t *testing.T) {
 	personalToken(blockedOwner, true) // another token of the owner, blocked here
 	if !revoked("personal token of a blocked owner", open) {
 		t.Fatal("a personal token whose owner is blocked through another grant still reads as able to ask")
+	}
+}
+
+// TestSQLStoreInsertCappedIsExact: 30 concurrent creates of one token end
+// with exactly the cap inserted and the rest refused; another token and
+// requests without a token are not held back by it.
+func TestSQLStoreInsertCappedIsExact(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-cap")
+	store := runrequests.NewSQLStore(d)
+	tok, other := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	mk := func(token *uuid.UUID) runrequests.Request {
+		return runrequests.Request{ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Kind: runrequests.KindRun, TemplateID: f.template,
+			Reason: "x", RequestedByUser: f.user, RequestedByToken: token, Status: runrequests.StatusPending,
+			ExpiresAt: now.Add(runrequests.TTL), CreatedAt: now}
+	}
+	const attempts = 30
+	errs := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.InsertCapped(f.ctx, mk(&tok), runrequests.MaxPendingPerToken, now)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	ok, refused := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, runrequests.ErrTooManyPending):
+			refused++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != runrequests.MaxPendingPerToken || refused != attempts-runrequests.MaxPendingPerToken {
+		t.Fatalf("inserted %d, refused %d; want %d and %d", ok, refused, runrequests.MaxPendingPerToken, attempts-runrequests.MaxPendingPerToken)
+	}
+	if n, err := store.CountPending(f.ctx, f.org, &tok, now); err != nil || n != runrequests.MaxPendingPerToken {
+		t.Fatalf("pending = %d %v, want %d", n, err, runrequests.MaxPendingPerToken)
+	}
+	if err := store.InsertCapped(f.ctx, mk(&other), runrequests.MaxPendingPerToken, now); err != nil {
+		t.Fatalf("another token: %v", err)
 	}
 }

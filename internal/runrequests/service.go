@@ -103,6 +103,10 @@ type CreateInput struct {
 // Store persists requests.
 type Store interface {
 	Insert(ctx context.Context, r Request) error
+	// InsertCapped inserts a token's request unless the token already has
+	// limit pending requests at now (ErrTooManyPending); the count and the
+	// insert are atomic against concurrent calls for the same token.
+	InsertCapped(ctx context.Context, r Request, limit int, now time.Time) error
 	Get(ctx context.Context, orgID, id uuid.UUID) (Request, error)
 	// List returns orgID's requests, newest first, at most a capped page;
 	// status, when given, keeps those whose effective status at now
@@ -165,9 +169,6 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if reason == "" || utf8.RuneCountInString(reason) > MaxReasonLength {
 		return Request{}, fmt.Errorf("%w: a reason of 1 to %d characters is required", ErrInvalidInput, MaxReasonLength)
 	}
-	if err := s.checkPendingCap(ctx, orgID, in.RequestedByToken); err != nil {
-		return Request{}, err
-	}
 	r := Request{
 		ID: s.newID(), OrgID: orgID, Kind: in.Kind, Reason: reason,
 		RequestedByUser: in.RequestedByUser, RequestedByToken: in.RequestedByToken,
@@ -193,7 +194,18 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	default:
 		return Request{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidInput, in.Kind)
 	}
-	if err := s.store.Insert(ctx, r); err != nil {
+	// A token's request is capped; the store counts and inserts atomically.
+	// A request without a token is not capped.
+	var err error
+	if r.RequestedByToken == nil {
+		err = s.store.Insert(ctx, r)
+	} else {
+		err = s.store.InsertCapped(ctx, r, MaxPendingPerToken, s.now())
+	}
+	if errors.Is(err, ErrTooManyPending) {
+		return Request{}, err
+	}
+	if err != nil {
 		return Request{}, fmt.Errorf("store run request: %w", err)
 	}
 	s.withTokensAfterWrite(ctx, orgID, &r)

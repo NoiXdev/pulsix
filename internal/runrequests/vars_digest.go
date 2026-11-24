@@ -37,6 +37,50 @@ func VarsDigestKey(masterKey [32]byte) []byte {
 	return key
 }
 
+// factsKey is the hostvar the renderer files a host's gathered facts under.
+const factsKey = "pulsix_facts"
+
+// withoutFacts returns doc with every host's gathered facts removed, on a
+// copy of the parts it changes: facts are gathered by the machine, not set
+// or reviewed by a person, so a refresh between approval and claim must not
+// fail the run. doc itself is never mutated.
+func withoutFacts(doc map[string]any) map[string]any {
+	meta, ok := doc["_meta"].(map[string]any)
+	if !ok {
+		return doc
+	}
+	hostvars, ok := meta["hostvars"].(map[string]any)
+	if !ok {
+		return doc
+	}
+	stripped := make(map[string]any, len(hostvars))
+	for host, v := range hostvars {
+		vars, ok := v.(map[string]any)
+		if !ok {
+			stripped[host] = v
+			continue
+		}
+		cp := make(map[string]any, len(vars))
+		for k, val := range vars {
+			if k != factsKey {
+				cp[k] = val
+			}
+		}
+		stripped[host] = cp
+	}
+	metaCopy := make(map[string]any, len(meta))
+	for k, v := range meta {
+		metaCopy[k] = v
+	}
+	metaCopy["hostvars"] = stripped
+	out := make(map[string]any, len(doc))
+	for k, v := range doc {
+		out[k] = v
+	}
+	out["_meta"] = metaCopy
+	return out
+}
+
 // varsDigest is the HMAC-SHA256, under the server-side VarsKey, of the
 // values the run would receive: the targets' rendered inventory (group and
 // membership vars, parents included, secrets revealed, and each host's
@@ -59,6 +103,7 @@ func (r *Resolver) varsDigest(ctx context.Context, orgID, requestID, templateID 
 		}
 		// The redact list only repeats values the document holds.
 		rendered.Secrets = nil
+		rendered.Doc = withoutFacts(rendered.Doc)
 		inv = &rendered
 	}
 	extra, err := r.src.Vars.ExtraVars(ctx, orgID, templateID)

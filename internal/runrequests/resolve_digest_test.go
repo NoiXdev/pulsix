@@ -173,3 +173,35 @@ func TestVarsDigestIsBoundToItsRequest(t *testing.T) {
 		t.Fatal("two requests over the same values share a vars digest")
 	}
 }
+
+// TestVarsDigestIgnoresGatheredFacts: facts are gathered by the machine, not
+// set or reviewed by a person, so a refresh between approval and claim must
+// not change the digest, while a real var still does. The inventory passed
+// in is not mutated.
+func TestVarsDigestIgnoresGatheredFacts(t *testing.T) {
+	w := newWorld()
+	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x}
+	setFacts := func(kernel string) {
+		w.inv.doc = map[string]any{
+			"web": map[string]any{"hosts": []any{"web-1"}},
+			"_meta": map[string]any{"hostvars": map[string]any{"web-1": map[string]any{
+				"host_var":     "a",
+				"pulsix_facts": map[string]any{"kernel": kernel},
+			}}},
+		}
+	}
+	setFacts("6.1")
+	before := w.picture(t, req).VarsDigest
+	setFacts("6.8")
+	if after := w.picture(t, req).VarsDigest; after != before {
+		t.Fatal("a facts refresh changed the vars digest")
+	}
+	hv := w.inv.doc["_meta"].(map[string]any)["hostvars"].(map[string]any)["web-1"].(map[string]any)
+	if _, ok := hv["pulsix_facts"]; !ok {
+		t.Fatal("the digest dropped the facts from the inventory it was given")
+	}
+	hv["host_var"] = "b"
+	if after := w.picture(t, req).VarsDigest; after == before {
+		t.Fatal("a var change left the vars digest unchanged")
+	}
+}

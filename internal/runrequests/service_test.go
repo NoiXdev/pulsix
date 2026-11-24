@@ -35,6 +35,14 @@ func (m *memStore) Insert(_ context.Context, r runrequests.Request) error {
 	return nil
 }
 
+func (m *memStore) InsertCapped(ctx context.Context, r runrequests.Request, limit int, now time.Time) error {
+	n, _ := m.CountPending(ctx, r.OrgID, r.RequestedByToken, now)
+	if n >= limit {
+		return runrequests.ErrTooManyPending
+	}
+	return m.Insert(ctx, r)
+}
+
 func (m *memStore) Get(_ context.Context, orgID, id uuid.UUID) (runrequests.Request, error) {
 	r, ok := m.rows[id]
 	if !ok || r.OrgID != orgID {

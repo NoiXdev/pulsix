@@ -15,15 +15,52 @@ import (
 )
 
 // SQLStore implements Store with sqlc queries.
-type SQLStore struct{ q *gen.Queries }
+type SQLStore struct {
+	db *db.DB
+	q  *gen.Queries
+}
 
 // NewSQLStore builds the store on d itself, never on its raw pool, so the
 // statements run inside the request's organization scope.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
+
+// tokenCapLockClass is the first key of the per-token pending cap lock,
+// taken in the two-int form pg_advisory_xact_lock(class, hashtext(token)).
+// The other advisory locks use the single-bigint form (a distinct lock
+// space, see pg_locks.objsubid) and none shares this class, so a token
+// lock cannot collide with a fixed key. Arbitrary but must never change.
+const tokenCapLockClass = 0x52525443
 
 // Insert implements Store.
 func (s *SQLStore) Insert(ctx context.Context, r Request) error {
-	return s.q.InsertRunRequest(ctx, gen.InsertRunRequestParams{
+	return insertRow(ctx, s.q, r)
+}
+
+// InsertCapped implements Store: the count and the insert run in one
+// transaction under the token's advisory lock, so concurrent creates of one
+// token cannot both pass the count.
+func (s *SQLStore) InsertCapped(ctx context.Context, r Request, limit int, now time.Time) error {
+	if r.RequestedByToken == nil {
+		return s.Insert(ctx, r)
+	}
+	return s.db.WithOrg(ctx, r.OrgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, int32(tokenCapLockClass), r.RequestedByToken.String()); err != nil {
+			return fmt.Errorf("acquire run request cap lock: %w", err)
+		}
+		q := gen.New(tx)
+		n, err := q.CountPendingRunRequests(ctx, gen.CountPendingRunRequestsParams{OrgID: r.OrgID, Now: now, Token: pgUUID(r.RequestedByToken)})
+		if err != nil {
+			return fmt.Errorf("count pending run requests: %w", err)
+		}
+		if int(n) >= limit {
+			return ErrTooManyPending
+		}
+		return insertRow(ctx, q, r)
+	})
+}
+
+func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
+	return q.InsertRunRequest(ctx, gen.InsertRunRequestParams{
 		ID: r.ID, OrgID: r.OrgID, Kind: string(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
 		HostID: pgUUID(r.HostID), JobID: pgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: pgUUID(r.RequestedByToken),
