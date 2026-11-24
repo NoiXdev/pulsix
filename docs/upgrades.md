@@ -662,9 +662,9 @@ proto change:
   always written by the manager, so this guards against corruption only.
 
 The token edit loose ends (2.125) add no migration, table, backup or proto
-change. Two answers of the token edit change for API clients: a token that
-expires between the server's read and its write now answers `409` like any
-expired token (it answered `404`), and a name of only spaces is refused with
+change. Two answers of the token edit change for API clients: an edit racing a
+concurrent edit that moved the token's expiry into the past now answers `409`
+like any expired token (it answered `404`), and a name of only spaces is refused with
 `422` (it was stored). The SPA shows why an expired token's *Edit* is disabled
 and describes each assistant area under its name.
 

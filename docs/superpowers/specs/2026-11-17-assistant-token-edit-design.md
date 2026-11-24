@@ -123,9 +123,11 @@ answers 422, not 409; the service then applies rules 2 to 5 in its own order:
    whatever its scope, exactly like create.
 2. Unknown id, another org's token, or a revoked token: 404.
 3. An expired token: 409 ("an expired token cannot be changed; create a new
-   one"). A token that expires between the service's read and its conditional
-   update answers 409 as well: after a zero-row update the service re-reads the
-   row to tell an expired token from a gone one (revoked: 404).
+   one"). The read and the conditional update use the same instant, so a token
+   that merely runs out in between is still edited; a concurrent edit that moved
+   its expiry into the past in between answers 409 as well: after a zero-row
+   update the service re-reads the row to tell an expired token from a gone one
+   (revoked: 404).
 4. An empty body: 422 ("nothing to change"). An empty or whitespace-only
    `name` is 422 too; the service refuses it itself (`ErrEmptyName`), the
    handler's `minLength` is only the first line.
@@ -177,7 +179,7 @@ each changed field with its old and new value, for example:
 
 `changed assistant token claude-laptop: areas inventory.read, repos.read → inventory.read, inventory.write, repos.read; expiry 2026-12-01 → never`
 
-`changed API token ci-old: name ci-old → ci; expiry never → 2027-01-01`
+`changed API token ci-old: name ci-old → ci; expiry never → 2027-01-01T00:00:00Z`
 
 The head names the token by its name before the edit, so a rename shows both
 the old and the new name; an edit without a rename names the token once.
