@@ -26,6 +26,30 @@ export function useRunRequests(org: string, status?: RunRequestStatus) {
   });
 }
 
+/** How long a 404 from the count route is remembered before it is asked
+ * again (a manager upgraded in the meantime then gets its exact count). */
+export const COUNT_ROUTE_RETRY_MS = 10 * 60_000;
+
+// When each org's count route last answered 404, in epoch ms. Module state
+// on purpose: it must outlive the query's cache entry, which a decision
+// invalidates; tests clear it with resetPendingCountRouteMemory.
+const countRouteMissing = new Map<string, number>();
+
+/** resetPendingCountRouteMemory forgets every remembered 404. For tests. */
+export function resetPendingCountRouteMemory() {
+  countRouteMissing.clear();
+}
+
+/** countPendingList counts the pending list instead, for a manager without
+ * the count route. An older manager filters that list in memory after its
+ * 500-row cap, so the number can undercount. */
+async function countPendingList(org: string) {
+  const { requests } = await unwrap(
+    api.GET('/api/v1/orgs/{org}/run-requests', { params: { path: { org }, query: { status: 'pending' } } }),
+  );
+  return { count: requests?.length ?? 0 };
+}
+
 /** usePendingRunRequestCount is the number the navigation shows: the
  * pending requests as the server counts them (not the length of a list it
  * caps), polled so a request an assistant makes shows up without a reload.
@@ -34,19 +58,19 @@ export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean
   const query = useQuery({
     queryKey: ['run-requests', org, 'pending-count'],
     queryFn: async () => {
+      const missingSince = countRouteMissing.get(org);
+      if (missingSince !== undefined && Date.now() - missingSince < COUNT_ROUTE_RETRY_MS) return countPendingList(org);
       try {
-        return await unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } }));
+        const result = await unwrap(api.GET('/api/v1/orgs/{org}/run-requests/pending-count', { params: { path: { org } } }));
+        countRouteMissing.delete(org);
+        return result;
       } catch (err) {
         if (!(err instanceof ApiError) || err.status !== 404) throw err;
-        // A manager from before the count route: count the pending list
-        // instead. Inside the queryFn, so the 404 is cached with the query
-        // and the count route is not asked again on every render. An older
-        // manager filters that list in memory after its 500-row cap, so the
-        // number can undercount.
-        const { requests } = await unwrap(
-          api.GET('/api/v1/orgs/{org}/run-requests', { params: { path: { org }, query: { status: 'pending' } } }),
-        );
-        return { count: requests?.length ?? 0 };
+        // A manager from before the count route: remember the 404 for a
+        // while so the polls go straight to the list instead of asking a
+        // route that is not there every 30 seconds.
+        countRouteMissing.set(org, Date.now());
+        return countPendingList(org);
       }
     },
     enabled: !!org && (opts.enabled ?? true),

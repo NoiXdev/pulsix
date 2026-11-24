@@ -22,7 +22,7 @@ export function RunGroupSection({ org, siblings }: { org: string; siblings: NonN
         {siblings.map((s) => (
           <ListRow key={s.id} to="/o/$org/runs/$id" params={{ org, id: s.id }} columns={COLUMNS} label={shortId(s.id)}>
             <span>
-              <Pill tone={statusTone(s.status)}>{statusLabel(s.status, t)}</Pill>
+              <Pill tone={statusTone(s.status, s.withdrawn_at_claim)}>{statusLabel(s.status, t, s.withdrawn_at_claim)}</Pill>
             </span>
             <ListRowName className="font-mono text-[13px]">{shortId(s.id)}</ListRowName>
             <span className="truncate font-mono text-xs text-muted-foreground">{zoneSlug(zones.data?.zones, s.zone_id)}</span>

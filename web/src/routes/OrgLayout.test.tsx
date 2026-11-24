@@ -6,10 +6,14 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { I18nProvider } from '../i18n/I18nProvider.tsx';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
+import { resetPendingCountRouteMemory } from '../api/hooks/useRunRequests.ts';
 import { lastOrg } from '../lib/lastOrg.ts';
 import { OrgLayout } from './OrgLayout.tsx';
 
-afterEach(() => sessionStorage.clear());
+afterEach(() => {
+  sessionStorage.clear();
+  resetPendingCountRouteMemory();
+});
 
 const ME_OK = {
   user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },

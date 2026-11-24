@@ -27,6 +27,7 @@ export const deRuns: Messages['runs'] = {
     cancelling: 'wird abgebrochen',
     error: 'Fehler',
   },
+  withdrawnAtClaim: 'Nicht gelaufen – Freigabe zurückgenommen',
   cancelState: {
     finished: 'kein Task aktiv',
     interrupted: 'unterbrochen',

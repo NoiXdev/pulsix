@@ -2,11 +2,12 @@ import type { Tone } from '../../ui/badge.tsx';
 import type { Messages } from '../../i18n/types.ts';
 import { readHostCounts, type RecapCounts } from './hostCounts.ts';
 
-/** statusTone maps a job status onto the design's state colours: the
+/** statusTone maps a job status onto the design's state colours (a job withdrawn at its claim reads neutral, not crit): the
  * active pair (running/cancelling) reads accent/warn, the terminal pair
  * (succeeded/failed) ok/crit, cancelled and error per the state colours,
  * and everything still waiting reads unknown. */
-export function statusTone(status: string): Tone {
+export function statusTone(status: string, withdrawn = false): Tone {
+  if (withdrawn && status === 'error') return 'unknown';
   switch (status) {
     case 'succeeded':
       return 'ok';
@@ -35,8 +36,10 @@ export function kindLabel(kind: string, t: Messages): string {
 }
 
 /** statusLabel names a job status; a status this build does not know is
- * shown as the API sent it. */
-export function statusLabel(status: string, t: Messages): string {
+ * shown as the API sent it. A job withdrawn at its claim (status error, ran
+ * nothing) reads as the neutral "not run" instead of an error. */
+export function statusLabel(status: string, t: Messages, withdrawn = false): string {
+  if (withdrawn && status === 'error') return t.runs.withdrawnAtClaim;
   return (t.runs.status as Record<string, string>)[status] ?? status;
 }
 

@@ -71,8 +71,8 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
       <SidebarHeading
         title={shortId(job.id)}
         mono
-        dot={{ tone: statusTone(status), label: statusLabel(status, t) }}
-        pill={<Pill tone={statusTone(status)}>{statusLabel(status, t)}</Pill>}
+        dot={{ tone: statusTone(status, job.withdrawn_at_claim), label: statusLabel(status, t, job.withdrawn_at_claim) }}
+        pill={<Pill tone={statusTone(status, job.withdrawn_at_claim)}>{statusLabel(status, t, job.withdrawn_at_claim)}</Pill>}
       >
         <span>{kindLabel(job.kind, t)}</span>
         {job.template && (

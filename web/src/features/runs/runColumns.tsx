@@ -50,7 +50,7 @@ export function runColumns(t: Messages, fmt: Pick<Format, 'relative' | 'dateTime
       defaultVisible: true,
       render: (j) => (
         <span>
-          <Pill tone={statusTone(j.status)}>{statusLabel(j.status, t)}</Pill>
+          <Pill tone={statusTone(j.status, j.withdrawn_at_claim)}>{statusLabel(j.status, t, j.withdrawn_at_claim)}</Pill>
         </span>
       ),
     },

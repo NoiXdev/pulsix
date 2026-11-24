@@ -106,6 +106,22 @@ describe('RunsPage', () => {
     expect(runCell).toBeDefined();
   });
 
+  it('lists a job withdrawn at its claim as not run, neutral instead of the error style', async () => {
+    mockApi({
+      'GET /api/v1/auth/me/preferences': PREFS,
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': {
+        jobs: [job({ status: 'error', withdrawn_at_claim: true })],
+        next_cursor: '',
+        total: 1,
+      },
+    });
+    renderPage();
+    const label = (await screen.findAllByText('Not run — approval withdrawn')).find((el) => el.tagName !== 'OPTION');
+    expect(label).toBeDefined();
+    expect(label?.style.color).not.toBe('var(--px-crit)');
+  });
+
   it('filters by status through the URL', async () => {
     const seen: string[] = [];
     mockApi({

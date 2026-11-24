@@ -27,6 +27,7 @@ export const enRuns = {
     cancelling: 'cancelling',
     error: 'error',
   },
+  withdrawnAtClaim: 'Not run — approval withdrawn',
   cancelState: {
     finished: 'no task in flight',
     interrupted: 'interrupted',
