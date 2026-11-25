@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agentapi"
 	"github.com/noixdev/pulsix/internal/agentdist"
+	"github.com/noixdev/pulsix/internal/agentenroll"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -739,7 +740,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Workers: workersSvc, WorkerEndpoint: api.WorkerEndpoint{Addr: cfg.GRPCPublicAddr, ServerName: cfg.CAListenHost()},
 		// The Agents page and the host Agent card read the same registry
 		// the gRPC enrollment surface writes (agentapi above).
-		Agents: agentsSvc,
+		Agents:      agentsSvc,
+		AgentEnroll: agentenroll.NewService(templatesSvc, jobsSvc, agentsSvc, hostsSvc),
 		// The check pipeline's own surface (v0.3b-1): the same
 		// checks.Service the resolver and the agent stream already run on,
 		// plus the write-path push hook — after a definition or monitoring

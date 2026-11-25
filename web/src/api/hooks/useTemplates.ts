@@ -55,6 +55,17 @@ export function useDeleteTemplate(org: string) {
   });
 }
 
+/** fetchTemplateEnrollment reads what a run of the template started now
+ * enrols the agent on (spec 2026-11-25 B): the person confirms it before
+ * the start, which sends the hosts' ids back as `enrollHostIds`. */
+export function fetchTemplateEnrollment(org: string, id: string, hostId?: string) {
+  return unwrap(
+    api.GET('/api/v1/orgs/{org}/job-templates/{id}/enrollment-preview', {
+      params: { path: { org, id }, query: hostId ? { host_id: hostId } : {} },
+    }),
+  );
+}
+
 /** useRunTemplateById starts a template's run (202, { jobs: [...] }, one
  * per involved zone sharing a run group) so the SPA can navigate to the run
  * view. With `hostId` the run is narrowed to that one host; the field is
@@ -65,11 +76,14 @@ export function useDeleteTemplate(org: string) {
 export function useRunTemplateById(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, hostId, followUps }: { id: string; hostId?: string; followUps?: string[] }) =>
+    mutationFn: ({ id, hostId, followUps, enrollHostIds }: { id: string; hostId?: string; followUps?: string[]; enrollHostIds?: string[] }) =>
       unwrap(
         api.POST('/api/v1/orgs/{org}/job-templates/{id}/run', {
           params: { path: { org, id } },
-          body: hostId || followUps ? { host_id: hostId, follow_ups: followUps } : undefined,
+          body:
+            hostId || followUps || enrollHostIds
+              ? { host_id: hostId, follow_ups: followUps, enroll_host_ids: enrollHostIds }
+              : undefined,
         }),
       ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['jobs', org] }),

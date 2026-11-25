@@ -68,6 +68,13 @@ export const enRuns = {
     empty: 'No runs match.',
   },
   /** Dry runs (backlog 3.126): their filter, badge and the run view's banner. */
+  /** Confirming the hosts a person's run enrols agents on (spec 2026-11-25 B). */
+  enrollment: {
+    title: 'Enrol agents',
+    confirm: (hosts: string) =>
+      `Will enrol agents on: ${hosts}. Each of these hosts gets a single-use enrollment token, valid for 24 hours, when the run starts.`,
+    start: 'Start and enrol',
+  },
   dryRun: {
     badge: 'Dry run',
     filter: 'Filter by mode',
@@ -328,6 +335,7 @@ export const enRuns = {
         willEnrol: (hosts: string) => `Will enrol agents on: ${hosts}`,
         enrolled: (hosts: string) => `Enrols agents on: ${hosts}`,
         none: 'Every target already has an agent: the run enrols none.',
+        approvedBefore: 'This run enrols no agents: it was approved before the template enrolled agents.',
         dryRun: 'A dry run enrols no agent.',
         how: 'When the run starts, each of these hosts that still has no agent gets a single-use enrollment token, valid for 24 hours, which the agent role reads. Nobody sees the token.',
         live: 'The hosts without an agent now; this list changes when an agent enrols before you approve.',

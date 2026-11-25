@@ -66,6 +66,11 @@ func TestRetryStoresTheApprovedEnrollList(t *testing.T) {
 	}
 	plain, err := f.svc.RetryFailed(ctx, f.org, orig, nil)
 	if err != nil || f.store.jobs[plain[0].ID].j.EnrollHostIDs != nil {
-		t.Fatalf("a person's retry = %+v, %v; want no list", plain, err)
+		t.Fatalf("a retry without a confirmed list = %+v, %v; want no list", plain, err)
+	}
+	// A person's retry stores the list they confirmed (controller ruling C).
+	confirmed, err := f.svc.RetryFailedWith(ctx, f.org, orig, nil, nil, []uuid.UUID{f.h1})
+	if err != nil || !slices.Equal(f.store.jobs[confirmed[0].ID].j.EnrollHostIDs, []uuid.UUID{f.h1}) {
+		t.Fatalf("a confirmed retry = %+v, %v; want [%s]", confirmed, err, f.h1)
 	}
 }

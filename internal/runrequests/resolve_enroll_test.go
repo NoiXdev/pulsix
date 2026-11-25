@@ -131,3 +131,16 @@ func TestPictureFailsWithoutTheAgents(t *testing.T) {
 		t.Fatal("Picture succeeded without the agents")
 	}
 }
+
+// An approval without a stored list (from before enrollment was switched
+// on for the template, or before 00127) shows that the run enrols no
+// agents, saying why, not "every target has an agent" (finding 5).
+func TestApprovedPictureWithoutAStoredList(t *testing.T) {
+	w := newWorld()
+	enrolling(w)
+	approved := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, Status: runrequests.StatusApproved, PinnedCommit: commitX}
+	e := enrollOf(t, w.picture(t, approved))
+	if e.NoneReason != runrequests.EnrollNoneApprovedBefore || e.Hosts == nil || len(e.Hosts)+len(e.HostIDs) != 0 {
+		t.Fatalf("enrollment = %+v, want none, approved_before_enrollment", e)
+	}
+}

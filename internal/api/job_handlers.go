@@ -327,6 +327,20 @@ type templateRunInput struct {
 		// FollowUps replaces the template's follow-ups for this run: omitted
 		// keeps them, an empty list runs none.
 		FollowUps *[]string `json:"follow_ups,omitempty" maxItems:"10" doc:"Template ids to start after this run succeeds, instead of the template's own follow-ups; an empty list starts none"`
+		// EnrollHostIDs is the hosts the person confirmed the run enrols
+		// the agent on (spec 2026-11-25 B).
+		EnrollHostIDs *[]string `json:"enroll_host_ids,omitempty" doc:"For a template that enrols agents: the hosts you confirmed the run enrols the agent on, as the enrollment preview listed them; required for such a template, refused for any other"`
+	}
+}
+
+// jobRetryInput is the retry route's input: the hosts its person
+// confirmed it enrols the agent on, for a template with agent enrollment.
+type jobRetryInput struct {
+	Org  string `path:"org"`
+	ID   string `path:"id"`
+	Body *struct {
+		_             struct{}  `nullable:"true"`
+		EnrollHostIDs *[]string `json:"enroll_host_ids,omitempty" doc:"For a template that enrols agents: the failed hosts you confirmed the retry enrols the agent on, as the enrollment preview listed them; required for such a template, refused for any other"`
 	}
 }
 
@@ -420,9 +434,6 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := requireEnrolment(ctx, deps, scope, id); err != nil {
-			return nil, err
-		}
 		var onlyHost *uuid.UUID
 		if in.Body != nil && in.Body.HostID != "" {
 			hostID, err := parseUUID(in.Body.HostID, "host_id")
@@ -430,6 +441,16 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 				return nil, err
 			}
 			onlyHost = &hostID
+		}
+		var confirmed *[]uuid.UUID
+		if in.Body != nil {
+			if confirmed, err = parseEnrollHostIDs(in.Body.EnrollHostIDs); err != nil {
+				return nil, err
+			}
+		}
+		enroll, err := deps.AgentEnroll.ConfirmRun(ctx, scope.OrgID, id, onlyHost, confirmed, mayEnrolAgents(scope))
+		if err != nil {
+			return nil, mapEnrollErr(ctx, err)
 		}
 		var override *[]uuid.UUID
 		if in.Body != nil && in.Body.FollowUps != nil {
@@ -443,7 +464,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		}
 		actor := scope.UserID
 		created, err := deps.Jobs.EnqueueRunWith(ctx, scope.OrgID, id, jobs.RunRequest{
-			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, FollowUps: override,
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, FollowUps: override, EnrollHostIDs: enroll,
 		})
 		if err != nil {
 			var fe *jobs.FollowUpsError
@@ -484,7 +505,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	}, withAudit("cancelJob", "job"))
 
-	huma.Post(hapi, "/api/v1/orgs/{org}/jobs/{id}/retry-failed", func(ctx context.Context, in *jobGetInput) (*jobStartOutput, error) {
+	huma.Post(hapi, "/api/v1/orgs/{org}/jobs/{id}/retry-failed", func(ctx context.Context, in *jobRetryInput) (*jobStartOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRun)
 		if err != nil {
 			return nil, err
@@ -493,8 +514,15 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := requireRetryEnrolment(ctx, deps, scope, id); err != nil {
-			return nil, err
+		var confirmed *[]uuid.UUID
+		if in.Body != nil {
+			if confirmed, err = parseEnrollHostIDs(in.Body.EnrollHostIDs); err != nil {
+				return nil, err
+			}
+		}
+		enroll, err := deps.AgentEnroll.ConfirmRetry(ctx, scope.OrgID, id, confirmed, mayEnrolAgents(scope))
+		if err != nil {
+			return nil, mapEnrollErr(ctx, err)
 		}
 		actor := scope.UserID
 		// A retry of a run an approved run request started repeats the
@@ -503,7 +531,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
-		created, err := deps.Jobs.RetryFailedWith(ctx, scope.OrgID, id, &actor, repeated)
+		created, err := deps.Jobs.RetryFailedWith(ctx, scope.OrgID, id, &actor, repeated, enroll)
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}

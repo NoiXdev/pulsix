@@ -50,6 +50,15 @@ describe('RunRequestDetailPage agent enrollment (spec 2026-11-25 B)', () => {
     expect(within(section).getByText('Enrols agents on: web-2')).toBeInTheDocument();
   });
 
+  it('says an approval from before the template enrolled agents enrols none', async () => {
+    renderDetail(
+      { agent_enrollment: { hosts: [], host_ids: [], none_reason: 'approved_before_enrollment' } },
+      { status: 'approved', decided_at: '2026-11-16T09:05:00Z', run_group_id: RQ },
+    );
+    const section = await screen.findByRole('region', { name: 'Agent enrollment' });
+    expect(within(section).getByText(/approved before the template enrolled agents/)).toBeInTheDocument();
+  });
+
   it('shows no section for a template without agent enrollment', async () => {
     renderDetail({});
     await screen.findByRole('region', { name: 'Template' });

@@ -848,19 +848,25 @@ and `jobs.enroll_host_ids` (uuid arrays, NULL for every existing row); all catal
 changes that rewrite nothing, and a backup carries them. A template's **Enrol agents**
 switch (`agent_enrollment` in the template API and `create_job_template` /
 `update_job_template`; an update that leaves it out keeps it) is part of its revision.
-Switching it needs `agents.write` besides `templates.write`, which no assistant area
-grants; so do approving a run request of such a template, starting, retrying or
-dry-running one by hand, and creating, changing, resuming or running a schedule of
-one (403 naming the enrollment). A webhook trigger of such a template is not refused.
-A run request picture of such a template carries `agent_enrollment`: the targets
-without an agent (`hosts`, `host_ids`; `none_reason: dry_run` for a dry run), live
-while pending; the approval stores that list on the request and its jobs, the
-approved picture shows the stored list, and the claim refuses a job whose list
-differs from the approval's. A picture of any other template is unchanged, so its
-fingerprint is. **An older manager ignores the flag**: it computes a picture without
-the enrollment, which a newer manager's claim refuses as changed, and it does not
-ask for `agents.write`. Stop every manager instance before the new version starts,
-as 00123 requires. Workers and agents are not affected.
+Only a person signed in (no API or assistant token) with `agents.write` may switch it,
+approve a run request of such a template, or start or retry one by hand. A run or
+retry of such a template sends `enroll_host_ids`, the hosts its person confirmed
+(`GET …/job-templates/{id}/enrollment-preview` and `GET …/jobs/{id}/enrollment-preview`
+list the targets without an agent); without it, or with another list, the start
+answers 409 with the current hosts in `enroll_hosts`. **An API client can no longer
+start or retry such a template; a person confirms its hosts in the GUI.** Schedules,
+chained follow-ups, webhook runs and dry runs of such a template carry no list,
+enrol nothing and need nothing more. A run request picture of such a template carries
+`agent_enrollment`: the targets without an agent (`hosts`, `host_ids`;
+`none_reason: dry_run` for a dry run, `approved_before_enrollment` for an approval
+that stored no list), live while pending; the approval stores the list on the
+request and its jobs, the approved picture shows the stored list, and the claim
+refuses a job whose list differs from the approval's. A picture of any other
+template is unchanged, so its fingerprint is. **An older manager ignores the flag**:
+it computes a picture without the enrollment, which a newer manager's claim refuses
+as changed, and it asks neither for `agents.write` nor for the confirmed list. Stop
+every manager instance before the new version starts, as 00123 requires. Workers and
+agents are not affected.
 
 ## Behaviour changes to check after an upgrade
 

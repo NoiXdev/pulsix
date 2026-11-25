@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import type { Host } from '../../api/types.ts';
@@ -46,9 +47,11 @@ function renderDialog(onClose = () => undefined) {
   });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
   return router;
@@ -187,5 +190,41 @@ describe('RunTemplateDialog', () => {
     await pickOption(within(dialog), 'Template', 'patch-all');
 
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // Spec 2026-11-25 B, controller ruling C: a template with agent
+  // enrollment asks first whether this host gets an agent, and sends the
+  // confirmed hosts; cancelling starts nothing.
+  it('asks to confirm the agent enrollment of a template that enrols agents, and sends the confirmed hosts', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    let previewQuery = '';
+    const enrolling = { ...template('t1', 'install-agent'), agent_enrollment: true };
+    mockApi({
+      'GET /api/v1/orgs/acme/job-templates': { templates: [enrolling] },
+      'GET /api/v1/orgs/acme/job-templates/t1/enrollment-preview': (req: MockRequest) => {
+        previewQuery = req.search.get('host_id') ?? '';
+        return { enrols: true, hosts: [{ id: 'h1', name: 'web-01' }] };
+      },
+      'POST /api/v1/orgs/acme/job-templates/t1/run': (req: MockRequest) => {
+        posted = req.body;
+        return new Response(JSON.stringify({ jobs: [job] }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Run template on web-01' });
+    await pickOption(within(dialog), 'Template', 'install-agent');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    const ask = await screen.findByRole('dialog', { name: 'Enrol agents' });
+    expect(ask).toHaveTextContent('Will enrol agents on: web-01.');
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }));
+    expect(posted).toBeUndefined();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Enrol agents' })).getByRole('button', { name: 'Start and enrol' }));
+    expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+    expect(previewQuery).toBe('h1');
+    expect(posted).toEqual({ host_id: 'h1', enroll_host_ids: ['h1'] });
   });
 });

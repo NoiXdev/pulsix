@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/agentenroll"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -220,7 +221,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
 		Repos: testRepos(), Playbooks: testPlaybooks(), Templates: testTemplates(), Jobs: testJobs(), Chain: &chain.SQLStore{}, ChainDismisser: &chain.Dismisser{},
-		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{},
+		Schedules: &schedules.Service{}, Triggers: &triggers.Service{}, Workers: &workers.Service{}, Agents: &agents.Service{}, AgentEnroll: &agentenroll.Service{},
 		Checks: &checks.Service{}, Rules: &rules.Service{}, RuleStates: rules.NewSQLStore(nil), AgentPush: noopPusher{},
 		// v0.3b-3's own two required dependencies. Zero-valued and
 		// nil-backed, like RuleStates above, for the same reason: these

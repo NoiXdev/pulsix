@@ -215,6 +215,38 @@ describe('TemplatesPage', () => {
     expect(posted).toBeNull();
   });
 
+  // Spec 2026-11-25 B, controller ruling C: a template with agent
+  // enrollment and follow-ups asks to confirm the hosts first, then for
+  // the follow-ups, and sends the confirmed hosts.
+  it('asks to confirm the agent enrollment before running a template that enrols agents', async () => {
+    const user = userEvent.setup();
+    let posted: unknown = 'none';
+    const enrolling = template({ agent_enrollment: true, follow_ups: [{ template_id: 't2', template_name: 'patch-all', position: 0 }] });
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [enrolling, template({ id: 't2', name: 'patch-all' })] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
+      'GET /api/v1/orgs/acme/job-templates/t1/enrollment-preview': { enrols: true, hosts: [{ id: 'h2', name: 'web-2' }, { id: 'h3', name: 'web-3' }] },
+      'POST /api/v1/orgs/acme/job-templates/t1/run': (req: MockRequest) => {
+        posted = req.body ?? null;
+        return { jobs: [{ id: 'job-9', zone_id: 'z1', kind: 'run', status: 'queued', run_group_id: 'rg1', trigger: 'manual', created_at: '' }] };
+      },
+    });
+    renderPage();
+    await chooseRowAction(user, 'deploy-site', 'Run');
+    const ask = await screen.findByRole('dialog', { name: 'Enrol agents' });
+    expect(ask).toHaveTextContent('Will enrol agents on: web-2, web-3.');
+    await user.click(within(ask).getByRole('button', { name: 'Start and enrol' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Run deploy-site' });
+    expect(posted).toBe('none');
+    await within(dialog).findByText('patch-all');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+    expect(posted).toEqual({ enroll_host_ids: ['h2', 'h3'] });
+  });
+
   // Backlog 2.56: useDeleteTemplate (useTemplates.ts) existed with nothing
   // calling it — the API already cascades a template delete to its
   // schedules and webhook triggers, but the dialog had no delete action at

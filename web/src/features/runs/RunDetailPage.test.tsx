@@ -103,6 +103,7 @@ describe('RunDetailPage', () => {
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ status: 'failed', stats: { failed_hosts: ['h2'] } }).job },
       'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/enrollment-preview': { enrols: false, hosts: [] },
       'POST /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/retry-failed': { jobs: [{ id: '0197c0bb-0000-7000-8000-00000000000c', zone_id: 'z', kind: 'run', status: 'queued', run_group_id: 'g2', trigger: 'manual', created_at: '' }] },
       'GET /api/v1/orgs/acme/jobs/0197c0bb-0000-7000-8000-00000000000c': { job: detail({ id: '0197c0bb-0000-7000-8000-00000000000c', status: 'queued', run_group_id: 'g2' }).job },
       'GET /api/v1/orgs/acme/jobs/0197c0bb-0000-7000-8000-00000000000c/events': { events: [] },
@@ -112,6 +113,33 @@ describe('RunDetailPage', () => {
     expect(retry).toBeEnabled();
     await user.click(retry);
     expect(await screen.findByText('0197c0bb')).toBeInTheDocument();
+  });
+
+  // Spec 2026-11-25 B, controller ruling C: a retry of a template with
+  // agent enrollment asks to confirm the failed hosts it enrols first.
+  it('asks to confirm the agent enrollment of a retry, and sends the confirmed hosts', async () => {
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001': { job: detail({ status: 'failed', stats: { failed_hosts: ['h2'] } }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/events': { events: [] },
+      'GET /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/enrollment-preview': { enrols: true, hosts: [{ id: 'h2', name: 'web-2' }] },
+      'POST /api/v1/orgs/acme/jobs/0197c0a2-0000-7000-8000-000000000001/retry-failed': (req: MockRequest) => {
+        posted = req.body;
+        return { jobs: [{ id: '0197c0bb-0000-7000-8000-00000000000c', zone_id: 'z', kind: 'run', status: 'queued', run_group_id: 'g2', trigger: 'manual', created_at: '' }] };
+      },
+      'GET /api/v1/orgs/acme/jobs/0197c0bb-0000-7000-8000-00000000000c': { job: detail({ id: '0197c0bb-0000-7000-8000-00000000000c', status: 'queued', run_group_id: 'g2' }).job },
+      'GET /api/v1/orgs/acme/jobs/0197c0bb-0000-7000-8000-00000000000c/events': { events: [] },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Retry failed' }));
+    const ask = await screen.findByRole('dialog', { name: 'Enrol agents' });
+    expect(ask).toHaveTextContent('Will enrol agents on: web-2.');
+    await user.click(within(ask).getByRole('button', { name: 'Start and enrol' }));
+    expect(await screen.findByText('0197c0bb')).toBeInTheDocument();
+    expect(posted).toEqual({ enroll_host_ids: ['h2'] });
   });
 
   // Final review I2 (plan decision "Per-run overrides travel sealed on

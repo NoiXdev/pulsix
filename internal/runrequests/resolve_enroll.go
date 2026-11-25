@@ -13,6 +13,8 @@ import (
 // agent enrollment (spec 2026-11-25 B), from the targets p already
 // describes:
 //   - a dry run enrols nothing (EnrollNoneDryRun);
+//   - an approved request whose approval stored no list (the template did
+//     not enrol agents then) enrols nothing (EnrollNoneApprovedBefore);
 //   - an approved request shows the list its approval stored, so an agent
 //     enrolled after the approval leaves the picture (and the claim
 //     guard's fingerprint) as approved; a stored host that is no longer a
@@ -27,6 +29,9 @@ func (r *Resolver) agentEnrollment(ctx context.Context, orgID uuid.UUID, req Req
 	names := make(map[string]string, len(p.Targets))
 	for _, h := range p.Targets {
 		names[h.ID] = h.Name
+	}
+	if req.Status == StatusApproved && req.EnrollHostIDs == nil {
+		return &PictureAgentEnrollment{Hosts: []string{}, HostIDs: []string{}, NoneReason: EnrollNoneApprovedBefore}, nil
 	}
 	var ids []string
 	if req.Status == StatusApproved {

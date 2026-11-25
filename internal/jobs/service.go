@@ -215,11 +215,15 @@ type Job struct {
 	// template's playbook repository at the enqueue (migration 00126); nil
 	// without a pin and for a job pinned before the column existed.
 	PinnedRepoID *uuid.UUID
-	// EnrollHostIDs are the hosts an approval enrols agents on (spec
-	// 2026-11-25 B, migration 00127): the approved list, set at enqueue
-	// from RunRequest.EnrollHostIDs and never changed after. nil is no
-	// list (every run not started by an approval of a template with agent
-	// enrollment); an empty list is an approved list with no host on it.
+	// EnrollHostIDs are the hosts a signed-in person confirmed this run
+	// enrols agents on (spec 2026-11-25 B, migration 00127): the approved
+	// list of a run request, or the list the person who started a manual
+	// run or retry confirmed; set at enqueue from RunRequest.EnrollHostIDs
+	// and never changed after. nil is no list, and such a job mints
+	// nothing: schedule, webhook and chained runs, dry runs, and runs of a
+	// template without agent enrollment. An empty list is a confirmed list
+	// with no host on it. The same list is on every job of the run; a job
+	// enrols only its own hosts of it.
 	EnrollHostIDs []uuid.UUID
 	ClaimedAt     *time.Time
 	StartedAt     *time.Time
@@ -1166,15 +1170,18 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	return s.RetryFailedWith(ctx, orgID, id, actor, nil)
+	return s.RetryFailedWith(ctx, orgID, id, actor, nil, nil)
 }
 
-// RetryFailedWith is RetryFailed carrying overrides: the retry of a run an
-// approved run request started repeats that request's extra vars (spec
-// 2026-11-25 A, final review M1), which the run request service hands over
-// already checked (runrequests.Service.RetryOverrides).
-func (s *Service) RetryFailedWith(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, overrides *RunOverrides) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, ApprovedRun{}, overrides)
+// RetryFailedWith is RetryFailed carrying overrides and the hosts its
+// person confirmed it enrols agents on: the retry of a run an approved run
+// request started repeats that request's extra vars (spec 2026-11-25 A,
+// final review M1), which the run request service hands over already
+// checked (runrequests.Service.RetryOverrides); enroll is the list a
+// person confirmed for a retry of a template with agent enrollment
+// (agentenroll.Service.ConfirmRetry; spec 2026-11-25 B), nil for none.
+func (s *Service) RetryFailedWith(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, overrides *RunOverrides, enroll []uuid.UUID) ([]Job, error) {
+	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, ApprovedRun{EnrollHostIDs: enroll}, overrides)
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:

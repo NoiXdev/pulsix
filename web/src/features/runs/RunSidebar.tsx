@@ -4,7 +4,8 @@ import { Pill } from '../../ui/badge.tsx';
 import { SidebarFacts, SidebarHeading } from '../../ui/detail-layout.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
-import { useDismissFollowUps, useRetryFailedJobs, isTerminal } from '../../api/hooks/useJobs.ts';
+import { fetchRetryEnrollment, useDismissFollowUps, useRetryFailedJobs, isTerminal } from '../../api/hooks/useJobs.ts';
+import { useConfirmEnrollment } from './useConfirmEnrollment.ts';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import type { JobDetail } from '../../api/types.ts';
 import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusTone, zoneSlug } from './status.ts';
@@ -32,6 +33,7 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
   const retry = useRetryFailedJobs(org, job.id);
   const dismiss = useDismissFollowUps(org, job.id);
   const confirm = useConfirm();
+  const confirmEnrollment = useConfirmEnrollment();
 
   const terminal = isTerminal(status);
   const retryable = terminal && hasFailedHosts(job.stats);
@@ -59,7 +61,11 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
 
   async function onRetry() {
     try {
-      const { jobs } = await retry.mutateAsync();
+      // A retry of a template with agent enrollment: the person confirms
+      // the failed hosts it enrols the agent on (spec 2026-11-25 B).
+      const enrollHostIds = await confirmEnrollment(await fetchRetryEnrollment(org, job.id));
+      if (enrollHostIds === null) return;
+      const { jobs } = await retry.mutateAsync(enrollHostIds);
       toast.show(t.runs.detail.retryStarted);
       if (jobs && jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
     } catch (err) {

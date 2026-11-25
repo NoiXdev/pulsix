@@ -5,7 +5,8 @@ import { Button } from '../../ui/button.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
+import { fetchTemplateEnrollment, useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.ts';
+import { useConfirmEnrollment } from './useConfirmEnrollment.ts';
 import type { Host } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { FollowUpsField } from '../templates/FollowUpsField.tsx';
@@ -26,6 +27,7 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
   const navigate = useNavigate();
   const templates = useTemplates(org);
   const run = useRunTemplateById(org);
+  const confirmEnrollment = useConfirmEnrollment();
   const [templateId, setTemplateId] = useState('');
   // The follow-ups of this run; reset to the chosen template's own list.
   const [followUps, setFollowUps] = useState<string[]>([]);
@@ -46,9 +48,18 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
     setError(null);
     setSubmitting(true);
     try {
+      // A template with agent enrollment: the person confirms first
+      // whether this host gets an agent (spec 2026-11-25 B).
+      let enrollHostIds: string[] | undefined;
+      if (chosen?.agent_enrollment) {
+        const confirmed = await confirmEnrollment(await fetchTemplateEnrollment(org, templateId, host.id));
+        if (confirmed === null) return setSubmitting(false);
+        enrollHostIds = confirmed;
+      }
       const { jobs } = await run.mutateAsync({
         id: templateId,
         hostId: host.id,
+        enrollHostIds,
         // Sent only when it differs from the template's own list.
         followUps: chosen && !sameIds(followUps, followUpIds(chosen)) ? followUps : undefined,
       });

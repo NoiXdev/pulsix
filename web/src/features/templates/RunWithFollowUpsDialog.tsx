@@ -14,10 +14,13 @@ import { followUpIds, sameIds } from './followUps.ts';
  * (order-sensitive); deselecting all sends an empty list.
  */
 export function RunWithFollowUpsDialog({
-  org, template, onStarted, onClose,
+  org, template, enrollHostIds, onStarted, onClose,
 }: {
   org: string;
   template: Template;
+  /** The hosts the person confirmed the run enrols the agent on, for a
+   * template with agent enrollment (useRunTemplate asked first). */
+  enrollHostIds?: string[];
   /** Called with the started run's jobs; the dialog closes after it. */
   onStarted: (jobs: { id: string }[]) => void | Promise<void>;
   onClose: () => void;
@@ -40,7 +43,7 @@ export function RunWithFollowUpsDialog({
     setError(null);
     setSubmitting(true);
     try {
-      const { jobs } = await run.mutateAsync({ id: template.id, followUps: sameIds(selection, own) ? undefined : selection });
+      const { jobs } = await run.mutateAsync({ id: template.id, followUps: sameIds(selection, own) ? undefined : selection, enrollHostIds });
       await onStarted(jobs ?? []);
       onClose();
     } catch (err) {

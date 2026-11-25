@@ -115,3 +115,30 @@ func TestAgentEnrollmentRefusesShadowingVars(t *testing.T) {
 		})
 	}
 }
+
+// A save that keeps the flag (an assistant's, without If-Match) racing a
+// person who switches it off must not write the flag it read back (review
+// finding 3, controller ruling D): the write is guarded by the revision
+// the service read, so it fails and the person's switch stands.
+func TestAgentEnrollmentIsNotLostToAConcurrentSave(t *testing.T) {
+	f := newFixture()
+	in := f.in()
+	in.AgentEnrollment, in.MayEnrolAgents = true, true
+	created, err := f.svc.Create(ctx, f.org, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store.beforeWrite = func() {
+		cur := f.store.byID[created.ID]
+		cur.AgentEnrollment = false
+		cur.Revision++
+		f.store.byID[created.ID] = cur
+	}
+	_, err = f.svc.Update(ctx, f.org, created.ID, templates.UpdateInput{Name: created.Name, PlaybookID: f.playbook, Limit: "web*"})
+	if !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("racing save = %v, want ErrRevisionMismatch", err)
+	}
+	if f.store.byID[created.ID].AgentEnrollment {
+		t.Fatal("the racing save wrote back the flag it read")
+	}
+}

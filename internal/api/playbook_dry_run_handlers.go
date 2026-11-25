@@ -55,9 +55,6 @@ func registerPlaybookDryRunRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := requireEnrolment(ctx, deps, scope, templateID); err != nil {
-			return nil, err
-		}
 		created, err := deps.Jobs.EnqueueRunWith(ctx, scope.OrgID, templateID, req)
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)

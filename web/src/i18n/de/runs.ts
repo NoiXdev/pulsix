@@ -64,6 +64,12 @@ export const deRuns: Messages['runs'] = {
     },
     empty: 'Keine passenden Läufe.',
   },
+  enrollment: {
+    title: 'Agents registrieren',
+    confirm: (hosts: string) =>
+      `Wird Agents registrieren auf: ${hosts}. Jeder dieser Hosts bekommt beim Start des Laufs ein einmal nutzbares Registrierungs-Token, 24 Stunden gültig.`,
+    start: 'Starten und registrieren',
+  },
   dryRun: {
     badge: 'Probelauf',
     filter: 'Nach Modus filtern',
@@ -311,6 +317,7 @@ export const deRuns: Messages['runs'] = {
         willEnrol: (hosts: string) => `Wird Agents registrieren auf: ${hosts}`,
         enrolled: (hosts: string) => `Registriert Agents auf: ${hosts}`,
         none: 'Jedes Ziel hat schon einen Agent: Der Lauf registriert keinen.',
+        approvedBefore: 'Dieser Lauf registriert keine Agents: Er wurde freigegeben, bevor die Vorlage Agents registrierte.',
         dryRun: 'Ein Probelauf registriert keinen Agent.',
         how: 'Beim Start des Laufs bekommt jeder dieser Hosts, der noch keinen Agent hat, ein einmal nutzbares Registrierungs-Token, 24 Stunden gültig, das die Agent-Rolle liest. Niemand sieht das Token.',
         live: 'Die Hosts, die jetzt keinen Agent haben; die Liste ändert sich, wenn sich vor der Freigabe ein Agent registriert.',

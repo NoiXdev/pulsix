@@ -68,9 +68,15 @@ type Picture struct {
 	AgentEnrollment *PictureAgentEnrollment `json:"agent_enrollment,omitempty" doc:"Set when the template enrols agents: the hosts the run enrols the agent on"`
 }
 
-// EnrollNoneDryRun is PictureAgentEnrollment.NoneReason for a dry run,
-// which enrols nothing.
-const EnrollNoneDryRun = "dry_run"
+// Why a run of a template with agent enrollment enrols no host
+// (PictureAgentEnrollment.NoneReason): a dry run enrols nothing; an
+// approval that stored no list (the template enrolled no agents when it
+// was approved, or it was approved before the list existed) enrols
+// nothing either.
+const (
+	EnrollNoneDryRun         = "dry_run"
+	EnrollNoneApprovedBefore = "approved_before_enrollment"
+)
 
 // PictureAgentEnrollment is what a run of a template with agent enrollment
 // enrols. While the request is pending it is live: the targets that have
@@ -84,8 +90,9 @@ type PictureAgentEnrollment struct {
 	Hosts   []string `json:"hosts" doc:"The names of the hosts the run enrols the agent on: the targets without an agent"`
 	HostIDs []string `json:"host_ids" doc:"The ids of those hosts, in the same order"`
 	// NoneReason says why the run enrols no host although the template
-	// enrols agents: EnrollNoneDryRun. Empty otherwise.
-	NoneReason string `json:"none_reason,omitempty" enum:"dry_run" doc:"Why the run enrols nothing: dry_run, a dry run mints no enrollment token"`
+	// enrols agents: EnrollNoneDryRun or EnrollNoneApprovedBefore. Empty
+	// otherwise.
+	NoneReason string `json:"none_reason,omitempty" enum:"dry_run,approved_before_enrollment" doc:"Why the run enrols nothing: dry_run, a dry run mints no enrollment token; approved_before_enrollment, the request was approved before the template enrolled agents"`
 }
 
 // BlockedSyncRunning is PictureCommit.Blocked's reason for a sync of the

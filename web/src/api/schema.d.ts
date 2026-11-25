@@ -2030,6 +2030,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/job-templates/{id}/enrollment-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org job templates by ID enrollment preview */
+        get: operations["get-api-v1-orgs-by-org-job-templates-by-id-enrollment-preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/job-templates/{id}/run": {
         parameters: {
             query?: never;
@@ -2187,6 +2204,23 @@ export interface paths {
         put?: never;
         /** Post API v1 orgs by org jobs by ID cancel */
         post: operations["cancelJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/jobs/{id}/enrollment-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org jobs by ID enrollment preview */
+        get: operations["get-api-v1-orgs-by-org-jobs-by-id-enrollment-preview"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4892,6 +4926,10 @@ export interface components {
             readonly $schema?: string;
             effective: components["schemas"]["EffectiveRuleDTO"][] | null;
         };
+        EnrollHostDTO: {
+            id: string;
+            name: string;
+        };
         EnrollmentCreateInputBody: {
             /**
              * Format: uri
@@ -4927,6 +4965,18 @@ export interface components {
              */
             readonly $schema?: string;
             enrollments: components["schemas"]["WorkerEnrollmentDTO"][] | null;
+        };
+        EnrollmentPreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/EnrollmentPreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Whether the template enrols agents; when it does, a run or retry sends hosts' ids as enroll_host_ids */
+            enrols: boolean;
+            /** @description The hosts a run started now enrols the agent on: its targets without an agent */
+            hosts: components["schemas"]["EnrollHostDTO"][] | null;
         };
         ErrorDetail: {
             /** @description Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
@@ -6105,6 +6155,16 @@ export interface components {
             trigger: string;
             zone_id: string;
         };
+        JobRetryInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/JobRetryInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description For a template that enrols agents: the failed hosts you confirmed the retry enrols the agent on, as the enrollment preview listed them; required for such a template, refused for any other */
+            enroll_host_ids?: string[];
+        } | null;
         JobStartOutputBody: {
             /**
              * Format: uri
@@ -7287,10 +7347,10 @@ export interface components {
             /** @description The names of the hosts the run enrols the agent on: the targets without an agent */
             hosts: string[] | null;
             /**
-             * @description Why the run enrols nothing: dry_run, a dry run mints no enrollment token
+             * @description Why the run enrols nothing: dry_run, a dry run mints no enrollment token; approved_before_enrollment, the request was approved before the template enrolled agents
              * @enum {string}
              */
-            none_reason?: "dry_run";
+            none_reason?: "dry_run" | "approved_before_enrollment";
         };
         PictureCommit: {
             /** @description Why the request cannot be approved now: the repository needs a sync first, a sync of it is queued or running, or (a retry) the template no longer runs the repository the original run's commit belongs to. Absent when the commit can be pinned */
@@ -8458,6 +8518,8 @@ export interface components {
              * @example https://example.com/schemas/TemplateRunInputBody.json
              */
             readonly $schema?: string;
+            /** @description For a template that enrols agents: the hosts you confirmed the run enrols the agent on, as the enrollment preview listed them; required for such a template, refused for any other */
+            enroll_host_ids?: string[];
             /** @description Template ids to start after this run succeeds, instead of the template's own follow-ups; an empty list starts none */
             follow_ups?: string[];
             /** @description Run on this one host only; it must be among the template's targets */
@@ -14619,6 +14681,41 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-job-templates-by-id-enrollment-preview": {
+        parameters: {
+            query?: {
+                /** @description Preview a run on this one host only */
+                host_id?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     runJobTemplate: {
         parameters: {
             query?: never;
@@ -14996,6 +15093,38 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-jobs-by-id-enrollment-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentPreviewOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-jobs-by-id-events": {
         parameters: {
             query?: {
@@ -15073,7 +15202,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["JobRetryInputBody"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {

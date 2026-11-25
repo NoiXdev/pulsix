@@ -360,6 +360,10 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		return Template{}, err
 	}
 	isProjection := cur.SharedTemplateID != nil
+	// The flag is decided against cur; the write below is guarded by cur's
+	// revision when the caller named none (readRevision), and by the
+	// caller's otherwise, which a change since cur no longer matches, so a
+	// concurrent switch is never written back (compare-and-set on the row).
 	enrol, err := enrollmentAfter(cur.AgentEnrollment, in.AgentEnrollment, in.MayEnrolAgents)
 	if err != nil {
 		return Template{}, err

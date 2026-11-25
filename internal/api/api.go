@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/agentenroll"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -145,6 +146,9 @@ type Deps struct {
 	// Agents is the host-agent registry (Agents page, host Agent card,
 	// enrollment tokens); v0.3a, spec §8.
 	Agents *agents.Service
+	// AgentEnroll previews and confirms the hosts a person's run of a
+	// template with agent enrollment enrols (spec 2026-11-25 B).
+	AgentEnroll *agentenroll.Service
 	// Checks is the monitoring check pipeline (v0.3b-1, spec
 	// docs/superpowers/specs/2026-09-27-v0.3b-checks-design.md): check
 	// definitions, monitoring groups, the per-host effective set and the
@@ -397,6 +401,9 @@ func (d Deps) validate() error {
 	}
 	if d.Agents == nil {
 		missing = append(missing, "Agents")
+	}
+	if d.AgentEnroll == nil {
+		missing = append(missing, "AgentEnroll")
 	}
 	if d.Checks == nil {
 		missing = append(missing, "Checks")
@@ -694,6 +701,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerTemplateRoutes(orgScoped, deps)           // /orgs/{org}/job-templates...
 	registerTemplateVarsRoutes(orgScoped, deps)       // /orgs/{org}/job-templates/{id}/variables
 	registerJobRoutes(orgScoped, deps)                // /orgs/{org}/jobs... + the run action on job templates
+	registerEnrollmentRoutes(orgScoped, deps)         // the enrollment previews of a run and a retry
 	registerAdhocRoute(orgScoped, deps)               // POST /orgs/{org}/hosts/command — the ad-hoc shell command
 	registerHostopsRoutes(orgScoped, deps)            // connection test + host key, all /orgs/{org}/hosts/{id}/...
 	registerScheduleRoutes(orgScoped, deps)           // /orgs/{org}/schedules...

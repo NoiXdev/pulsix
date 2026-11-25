@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/accounts"
+	"github.com/noixdev/pulsix/internal/agentenroll"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -770,7 +771,8 @@ func New(t *testing.T, opts ...Option) *Server {
 		// The agent registry, wired exactly as app.Build wires it (the
 		// same store and host provisioner), so the API tests exercise the
 		// real thing rather than a stand-in.
-		Agents: agentsSvc,
+		Agents:      agentsSvc,
+		AgentEnroll: agentenroll.NewService(templatesSvc, jobsSvc, agentsSvc, hostsSvc),
 		// The check pipeline and the write-path push hook it fires after
 		// every mutating check route (api.CheckConfigPusher). The recorder
 		// stands in for *agentapi.Service, which needs a live gRPC stream

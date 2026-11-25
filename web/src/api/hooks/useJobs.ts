@@ -183,12 +183,26 @@ export function useCancelJob(org: string) {
   });
 }
 
+/** fetchRetryEnrollment reads what a retry of the run's failed hosts
+ * started now enrols the agent on (spec 2026-11-25 B). */
+export function fetchRetryEnrollment(org: string, id: string) {
+  return unwrap(api.GET('/api/v1/orgs/{org}/jobs/{id}/enrollment-preview', { params: { path: { org, id } } }));
+}
+
 /** useRetryFailedJobs re-runs a finished run's failed hosts (202, { jobs })
- * — one job per involved zone, sharing a new run group. */
+ * — one job per involved zone, sharing a new run group. `enrollHostIds`
+ * are the hosts the person confirmed the retry enrols the agent on, for a
+ * template with agent enrollment. */
 export function useRetryFailedJobs(org: string, id: string) {
   const invalidate = useInvalidateJobs(org);
   return useMutation({
-    mutationFn: () => unwrap(api.POST('/api/v1/orgs/{org}/jobs/{id}/retry-failed', { params: { path: { org, id } } })),
+    mutationFn: (enrollHostIds?: string[]) =>
+      unwrap(
+        api.POST('/api/v1/orgs/{org}/jobs/{id}/retry-failed', {
+          params: { path: { org, id } },
+          body: enrollHostIds ? { enroll_host_ids: enrollHostIds } : undefined,
+        }),
+      ),
     onSuccess: invalidate,
   });
 }

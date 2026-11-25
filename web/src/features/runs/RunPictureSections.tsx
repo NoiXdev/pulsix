@@ -113,6 +113,7 @@ function EnrollmentSection({ enrollment, status }: { enrollment: NonNullable<Run
   const pending = status === 'pending';
   let line: string;
   if (enrollment.none_reason === 'dry_run') line = e.dryRun;
+  else if (enrollment.none_reason === 'approved_before_enrollment') line = e.approvedBefore;
   else if (hosts.length === 0) line = e.none;
   else line = pending ? e.willEnrol(hosts.join(', ')) : e.enrolled(hosts.join(', '));
   return (

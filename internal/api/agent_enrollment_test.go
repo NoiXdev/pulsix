@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -74,6 +75,10 @@ func TestTemplateAgentEnrollmentNeedsTheAgentsPermission(t *testing.T) {
 	resp = f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/job-templates", "", f.templateBody(map[string]any{"name": "enrol-new", "agent_enrollment": true}))
 	if resp.Code != http.StatusForbidden {
 		t.Fatalf("assistant creating one with it = %d %s, want 403", resp.Code, resp.Body)
+	}
+
+	if resp := f.s.Put(t, f.apiToken(t), f.templatePath(), "", f.templateBody(map[string]any{"agent_enrollment": true})); resp.Code != http.StatusForbidden {
+		t.Fatalf("api token switching it on = %d %s, want 403 (a credential never enrols)", resp.Code, resp.Body)
 	}
 
 	put := requestJSON(t, f.operatorC, http.MethodPut, f.s.HTTP.URL+f.templatePath(), f.templateBody(map[string]any{"agent_enrollment": true}))
@@ -153,65 +158,161 @@ func TestRunRequestOfAnEnrollingTemplate(t *testing.T) {
 	}
 }
 
-// TestScheduleOfAnEnrollingTemplateNeedsTheAgentsPermission (spec
-// 2026-11-25 B, "Who may"): creating or resuming a schedule of a template
-// with agent enrollment needs agents.write as well; a person has it, an
-// assistant token does not.
-func TestScheduleOfAnEnrollingTemplateNeedsTheAgentsPermission(t *testing.T) {
-	f := newRunRequestFixture(t, "enrol-schedule")
-	tok := f.enrollmentToken(t)
+// apiToken is a personal api token of the fixture's operator: the role
+// holds agents.write, but a credential never enrols agents (backlog 7.49,
+// controller ruling B).
+func (f runRequestFixture) apiToken(t *testing.T) string {
+	t.Helper()
+	operator := f.memberID(t, f.orgSlug+"-operator@example.test")
+	_, tok := f.s.PersonalToken(t, operator, map[uuid.UUID]tenancy.Role{f.orgID: tenancy.RoleOperator})
+	return tok
+}
+
+// enrolOn switches the fixture template's agent enrollment on.
+func (f runRequestFixture) enrolOn(t *testing.T) {
+	t.Helper()
 	put := requestJSON(t, f.adminC, http.MethodPut, f.s.HTTP.URL+f.templatePath(), f.templateBody(map[string]any{"agent_enrollment": true}))
 	if put.StatusCode != http.StatusOK {
 		t.Fatalf("switch on = %d %s", put.StatusCode, mustReadBody(t, put))
-	}
-	resp := f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/schedules", "", f.scheduleBody("nightly enrol"))
-	if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), "agents.write") {
-		t.Fatalf("assistant schedule = %d %s, want 403 naming agents.write", resp.Code, resp.Body)
-	}
-
-	created := postJSON(t, f.operatorC, f.schedulesURL(), f.scheduleBody("nightly enrol"))
-	if created.StatusCode != http.StatusCreated {
-		t.Fatalf("operator schedule = %d %s", created.StatusCode, mustReadBody(t, created))
-	}
-	var s struct {
-		Schedule struct {
-			ID string `json:"id"`
-		} `json:"schedule"`
-	}
-	decodeInto(t, created, &s)
-	if r := postJSON(t, f.operatorC, f.schedulesURL()+"/"+s.Schedule.ID+"/pause", nil); r.StatusCode != http.StatusOK {
-		t.Fatalf("pause = %d %s", r.StatusCode, mustReadBody(t, r))
-	}
-	resp = f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/schedules/"+s.Schedule.ID+"/resume", "", nil)
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("assistant resume = %d %s, want 403", resp.Code, resp.Body)
-	}
-	if r := postJSON(t, f.operatorC, f.schedulesURL()+"/"+s.Schedule.ID+"/resume", nil); r.StatusCode != http.StatusOK {
-		t.Fatalf("operator resume = %d %s", r.StatusCode, mustReadBody(t, r))
-	}
-	// Pausing only stops runs: the assistant may.
-	if resp = f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/schedules/"+s.Schedule.ID+"/pause", "", nil); resp.Code != http.StatusOK {
-		t.Fatalf("assistant pause = %d %s, want 200", resp.Code, resp.Body)
 	}
 }
 
-// TestManualRunsOfAnEnrollingTemplate: a person
-// with agents.write starts, retries and dry-runs a template with agent
-// enrollment as before (the refusal is mayEnrolAgents', unit-tested: no
-// principal holds jobs.run without agents.write today).
-func TestManualRunsOfAnEnrollingTemplate(t *testing.T) {
+// confirmRefusal reads a 409 asking to confirm the enrolled hosts: the
+// hosts the run enrols now, in its enroll_hosts.
+func confirmRefusal(t *testing.T, resp *http.Response) []string {
+	t.Helper()
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d %s, want 409", resp.StatusCode, body)
+	}
+	var problem struct {
+		Errors []struct {
+			Location string `json:"location"`
+		} `json:"errors"`
+		EnrollHosts []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"enroll_hosts"`
+	}
+	if err := json.Unmarshal([]byte(body), &problem); err != nil || len(problem.Errors) != 1 || problem.Errors[0].Location != "body.enroll_host_ids" {
+		t.Fatalf("409 body = %s, want one detail at body.enroll_host_ids", body)
+	}
+	var names []string
+	for _, h := range problem.EnrollHosts {
+		names = append(names, h.Name+"="+h.ID)
+	}
+	return names
+}
+
+// TestScheduleOfAnEnrollingTemplateNeedsNothingMore (controller ruling A):
+// a schedule's runs never mint, so a schedule of a template with agent
+// enrollment needs no more than any other.
+func TestScheduleOfAnEnrollingTemplateNeedsNothingMore(t *testing.T) {
+	f := newRunRequestFixture(t, "enrol-schedule")
+	f.enrolOn(t)
+	resp := f.s.AssistantDo(t, http.MethodPost, f.enrollmentToken(t), f.orgPath()+"/schedules", "", f.scheduleBody("nightly"))
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("assistant schedule = %d %s, want 201", resp.Code, resp.Body)
+	}
+}
+
+// TestManualRunOfAnEnrollingTemplate (controller rulings B, C): a person
+// starts a run of a template with agent enrollment only with the hosts
+// they confirmed, which must be the targets without an agent now (the
+// preview lists them); the job stores them. Without the field, or with
+// another list, 409 with the current list; an api token, 403. A dry run
+// runs without the field and stores no list; a template without the flag
+// refuses a list.
+func TestManualRunOfAnEnrollingTemplate(t *testing.T) {
 	f := newRunRequestFixture(t, "enrol-run")
-	put := requestJSON(t, f.adminC, http.MethodPut, f.s.HTTP.URL+f.templatePath(), f.templateBody(map[string]any{"agent_enrollment": true}))
-	if put.StatusCode != http.StatusOK {
-		t.Fatalf("switch on = %d %s", put.StatusCode, mustReadBody(t, put))
+	runURL := f.s.HTTP.URL + f.templatePath() + "/run"
+	plain := postJSON(t, f.operatorC, runURL, map[string]any{"enroll_host_ids": []string{}})
+	if body := mustReadBody(t, plain); plain.StatusCode != http.StatusConflict || !strings.Contains(body, "does not enrol agents") {
+		t.Fatalf("a list for a template without the flag = %d %s, want 409", plain.StatusCode, body)
 	}
-	run := postJSON(t, f.operatorC, f.s.HTTP.URL+f.templatePath()+"/run", nil)
-	if run.StatusCode != http.StatusAccepted {
-		t.Fatalf("run = %d %s", run.StatusCode, mustReadBody(t, run))
+	f.enrolOn(t)
+
+	preview := requestJSON(t, f.operatorC, http.MethodGet, f.s.HTTP.URL+f.templatePath()+"/enrollment-preview", nil)
+	var p struct {
+		Enrols bool `json:"enrols"`
+		Hosts  []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"hosts"`
 	}
+	decodeInto(t, preview, &p)
+	if !p.Enrols || len(p.Hosts) != 1 || p.Hosts[0].Name != "web-1" || p.Hosts[0].ID != f.hostA.String() {
+		t.Fatalf("preview = %+v, want web-1", p)
+	}
+
+	want := []string{"web-1=" + f.hostA.String()}
+	if got := confirmRefusal(t, postJSON(t, f.operatorC, runURL, nil)); !slices.Equal(got, want) {
+		t.Fatalf("run without confirmation lists %v, want %v", got, want)
+	}
+	if got := confirmRefusal(t, postJSON(t, f.operatorC, runURL, map[string]any{"enroll_host_ids": []string{f.hostB.String()}})); !slices.Equal(got, want) {
+		t.Fatalf("run with another list lists %v, want %v", got, want)
+	}
+	if resp := f.s.Post(t, f.apiToken(t), f.templatePath()+"/run", map[string]any{"enroll_host_ids": []string{f.hostA.String()}}); resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), "agents.write") {
+		t.Fatalf("api token = %d %s, want 403", resp.Code, resp.Body)
+	}
+
+	started := runJobWith(t, f.operatorC, runURL, map[string]any{"enroll_host_ids": []string{f.hostA.String()}})
+	j, err := f.s.Deps.Jobs.Get(f.scoped, f.orgID, mustUUID(t, started[0].ID))
+	if err != nil || !slices.Equal(j.EnrollHostIDs, []uuid.UUID{f.hostA}) {
+		t.Fatalf("started job = %+v, %v; want it enrolling %s", j.EnrollHostIDs, err, f.hostA)
+	}
+
 	dry := postJSON(t, f.operatorC, f.s.HTTP.URL+f.orgPath()+"/playbooks/"+f.playbook.String()+"/dry-run",
 		map[string]any{"template_id": f.templateID.String()})
+	var dryJobs struct {
+		Jobs []jobDTO `json:"jobs"`
+	}
 	if dry.StatusCode != http.StatusAccepted {
 		t.Fatalf("dry run = %d %s", dry.StatusCode, mustReadBody(t, dry))
+	}
+	decodeInto(t, dry, &dryJobs)
+	if j, err := f.s.Deps.Jobs.Get(f.scoped, f.orgID, mustUUID(t, dryJobs.Jobs[0].ID)); err != nil || j.EnrollHostIDs != nil {
+		t.Fatalf("dry run job enrols %v, %v; want no list", j.EnrollHostIDs, err)
+	}
+}
+
+// TestRetryOfAnEnrollingTemplate (controller rulings B, C, finding 4):
+// the retry route asks for the failed hosts without an agent like the run
+// route, refuses an api token, and stores the confirmed list.
+func TestRetryOfAnEnrollingTemplate(t *testing.T) {
+	f := newRunRequestFixture(t, "enrol-retry")
+	failed := runJob(t, f.operatorC, f.runURLFor(f.templateID))[0]
+	finishJob(t, f.s, f.zoneA, mustUUID(t, failed.ID), jobs.StatusFailed, map[string]any{
+		jobs.StatsFailedHosts: []any{f.hostA.String()}, jobs.StatsUnreachableHosts: []any{},
+	}, "playbook failed")
+	f.enrolOn(t)
+	retryPath := f.orgPath() + "/jobs/" + failed.ID + "/retry-failed"
+
+	preview := requestJSON(t, f.operatorC, http.MethodGet, f.s.HTTP.URL+f.orgPath()+"/jobs/"+failed.ID+"/enrollment-preview", nil)
+	var p struct {
+		Enrols bool `json:"enrols"`
+		Hosts  []struct {
+			Name string `json:"name"`
+		} `json:"hosts"`
+	}
+	decodeInto(t, preview, &p)
+	if !p.Enrols || len(p.Hosts) != 1 || p.Hosts[0].Name != "web-1" {
+		t.Fatalf("retry preview = %+v, want web-1", p)
+	}
+
+	want := []string{"web-1=" + f.hostA.String()}
+	if got := confirmRefusal(t, postJSON(t, f.operatorC, f.s.HTTP.URL+retryPath, nil)); !slices.Equal(got, want) {
+		t.Fatalf("retry without confirmation lists %v, want %v", got, want)
+	}
+	if got := confirmRefusal(t, postJSON(t, f.operatorC, f.s.HTTP.URL+retryPath, map[string]any{"enroll_host_ids": []string{}})); !slices.Equal(got, want) {
+		t.Fatalf("retry with another list lists %v, want %v", got, want)
+	}
+	if resp := f.s.Post(t, f.apiToken(t), retryPath, map[string]any{"enroll_host_ids": []string{f.hostA.String()}}); resp.Code != http.StatusForbidden {
+		t.Fatalf("api token retry = %d %s, want 403", resp.Code, resp.Body)
+	}
+	started := runJobWith(t, f.operatorC, f.s.HTTP.URL+retryPath, map[string]any{"enroll_host_ids": []string{f.hostA.String()}})
+	j, err := f.s.Deps.Jobs.Get(f.scoped, f.orgID, mustUUID(t, started[0].ID))
+	if err != nil || !slices.Equal(j.EnrollHostIDs, []uuid.UUID{f.hostA}) {
+		t.Fatalf("retry job = %+v, %v; want it enrolling %s", j.EnrollHostIDs, err, f.hostA)
 	}
 }

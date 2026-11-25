@@ -123,17 +123,20 @@ type RunRequest struct {
 	// pinnedRepo is the repository PinnedCommit belongs to, set by the
 	// enqueue from the template it resolved (Job.PinnedRepoID).
 	pinnedRepo *uuid.UUID
-	// EnrollHostIDs, when not nil, is the list of hosts an approval enrols
-	// agents on (spec 2026-11-25 B), stored on every job of the run
-	// (Job.EnrollHostIDs); an empty list is an approved list with no host
-	// on it. Only an approval stores one, so only a manual run takes it
-	// (checkEnrollList).
+	// EnrollHostIDs, when not nil, is the list of hosts a signed-in person
+	// confirmed the run enrols agents on (spec 2026-11-25 B): the approval
+	// of a run request, or the person who started a manual run or retry.
+	// It is stored on every job of the run (Job.EnrollHostIDs); an empty
+	// list is a confirmed list with no host on it. Only a manual run takes
+	// one (checkEnrollList): schedules, webhooks and chained follow-ups
+	// never carry one, so they mint nothing.
 	EnrollHostIDs []uuid.UUID
 }
 
-// ApprovedRun is what an approval stored on a run's jobs, which the claim
-// guard compares with what the approval stored on its request: the
-// commit (spec 2026-11-25 A) and the hosts it enrols agents on (B).
+// ApprovedRun is what an approval (or, for EnrollHostIDs, the person who
+// started a retry) stored on a run's jobs; the claim guard compares it
+// with what an approval stored on its request: the commit (spec
+// 2026-11-25 A) and the hosts it enrols agents on (B).
 type ApprovedRun struct {
 	PinnedCommit  string
 	EnrollHostIDs []uuid.UUID
@@ -142,7 +145,7 @@ type ApprovedRun struct {
 // checkEnrollList refuses an enroll list on a run no approval started.
 func checkEnrollList(req RunRequest) error {
 	if req.EnrollHostIDs != nil && req.Trigger != TriggerManual {
-		return fmt.Errorf("%w: only an approved run enrols agents on a stored list of hosts, not a %s run", ErrInvalidInput, req.Trigger)
+		return fmt.Errorf("%w: only a run a person started or approved enrols agents on a confirmed list of hosts, not a %s run", ErrInvalidInput, req.Trigger)
 	}
 	return nil
 }
