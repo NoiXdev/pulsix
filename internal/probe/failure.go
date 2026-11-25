@@ -45,8 +45,10 @@ const (
 	FailureAuth = "auth"
 	// FailureAuthOrLost: a SNMPv3 device answered the engine discovery,
 	// but neither the first request nor its second attempt got an answer
-	// the poll could use: the privacy password is wrong, or the requests
-	// were lost.
+	// the poll could use: the device did not accept the credentials (an
+	// unknown user, a wrong authentication or privacy password — none of
+	// which gosnmp names once it knows the engine), or the requests were
+	// lost.
 	FailureAuthOrLost = "auth_or_lost"
 	// FailureError: any other failure.
 	FailureError = "error"

@@ -162,6 +162,17 @@ collection errors.
   stderr, error) and the `/dev/zfs` check and clock, injected; no test
   runs the real `zpool`.
 
+## Later: pools that may be exported (backlog 3.74, 2026-11-25)
+
+Owner decision: a second list `optional_pools`. A pool named there and absent
+from `zpool list` reports only `zfs.state = EXPORTED`; a pool named in `pools`
+(and not in `optional_pools`) and absent reports only `zfs.state = MISSING`.
+`optional_pools` alone does not narrow the selection. While an item's current
+`zfs.state` is `EXPORTED` or `MISSING`, the descriptor's `MetricAskedForItem`
+hook says the item's other zfs metrics are not asked, so they neither turn stale
+nor make the host unknown. Plan:
+`docs/superpowers/plans/2026-11-25-snmp-retry-zfs-exported-3.70-3.74.md`.
+
 ## Manager and SPA
 
 The descriptor drives validation, items, rules catalogue and API enums.

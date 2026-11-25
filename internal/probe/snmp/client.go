@@ -205,7 +205,7 @@ func classify(err error) failure {
 // is down. Losing a request and its retry right after a successful
 // discovery reads the same way, so that case is failAuthOrLost, not
 // failCredentials: the poll sends the request once more before reporting
-// it, and names both possible causes (wrong privacy password, or the
+// it, and names both possible causes (credentials not accepted, or the
 // requests were lost). A refusal gosnmp names stays failCredentials.
 func classifyFirst(err error, v3, answered bool) failure {
 	f := classify(err)

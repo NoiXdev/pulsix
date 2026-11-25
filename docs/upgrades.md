@@ -715,7 +715,10 @@ targets no longer make another's checks report the manager too busy.
   upgrade: a rule or filter matching `auth` for SNMP v3 must match `auth_or_lost` as
   well (or instead); a rule on `snmp.up` is unaffected. Also, a first request cut
   off by the poll's deadline after the discovery now reads as that deadline's down
-  reason (`timeout` or `error`) instead of `auth`.
+  reason (`timeout` or `error`) instead of `auth`. Real packet loss after the
+  discovery now takes two request budgets (up to about four times `timeout_seconds`)
+  before it is judged; when the poll's deadline falls inside the second attempt (a
+  short interval), the reason reads `timeout` rather than `auth_or_lost`.
 - **A ZFS pool named in `pools` that is not imported now reads `MISSING` (backlog
   3.74, no migration):** the `zfs` check used to report nothing for a listed pool
   `zpool list` does not print, so its last readings turned stale and left the host

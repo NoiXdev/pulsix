@@ -267,7 +267,7 @@ export const deChecks: Messages['checks'] = {
       },
       optional_pools: {
         label: 'Optionale Pools (einer pro Zeile)',
-        hint: 'Pools, die exportiert sein dürfen, etwa ein Backup-Pool auf Wechselplatten: solange einer nicht importiert ist, lautet er EXPORTED und sonst wird nichts gemessen. Ein Pool unter Pools, der nicht importiert ist, lautet MISSING.',
+        hint: 'Pools, die exportiert sein dürfen, etwa ein Backup-Pool auf Wechselplatten: solange einer nicht importiert ist, lautet er EXPORTED und sonst wird nichts gemessen. Ein Pool unter Pools, der nicht importiert ist, lautet MISSING. Diese Liste schränkt den Check nicht ein: bei leeren Pools werden weiterhin alle importierten Pools überwacht.',
         placeholder: 'backup',
       },
     },

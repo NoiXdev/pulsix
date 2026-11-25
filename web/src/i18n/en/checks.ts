@@ -300,7 +300,7 @@ export const enChecks = {
       },
       optional_pools: {
         label: 'Optional pools (one per line)',
-        hint: 'Pools that may be exported, such as a backup pool on removable disks: while one is not imported it reads EXPORTED and nothing else is measured. A pool under Pools that is not imported reads MISSING.',
+        hint: 'Pools that may be exported, such as a backup pool on removable disks: while one is not imported it reads EXPORTED and nothing else is measured. A pool under Pools that is not imported reads MISSING. This list does not narrow the check: with Pools empty, every imported pool is still monitored.',
         placeholder: 'backup',
       },
     },

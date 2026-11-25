@@ -64,6 +64,7 @@ plugin's vocabulary:
 | `nxdomain` | the queried name does not exist | dns |
 | `servfail` | the server answered with an error code | dns |
 | `auth` | the agent refused the credentials (v3 auth or privacy failure) | snmp |
+| `auth_or_lost` | a v3 device answered the engine discovery but neither the request nor one more attempt got an answer: credentials not accepted, or requests lost (backlog 3.70) | snmp |
 | `error` | any other failure | all |
 
 - `probe.Down(plugin)` becomes `probe.Down(plugin, reason string)` and
