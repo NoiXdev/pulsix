@@ -41,7 +41,7 @@ func recordTexts(t *testing.T, store *sourcesStore, report varsource.Report, tex
 	t.Helper()
 	var buf bytes.Buffer
 	if _, err := sourcesService(store, &buf).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
-		time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC), encodeReport(t, report), texts, ""); err != nil {
+		time.Date(2026, 11, 23, 9, 0, 0, 0, time.UTC), encodeReport(t, report), texts, "", time.Time{}); err != nil {
 		t.Fatalf("RecordVarSources = %v, want nil", err)
 	}
 	return buf.String()

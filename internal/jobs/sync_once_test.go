@@ -160,6 +160,9 @@ func TestEnqueueSyncOnceUnderConcurrency(t *testing.T) {
 type recordingWaiters struct {
 	d      *db.DB
 	err    error
+	// broken makes the waiter run a failing statement first, which
+	// aborts the transaction it runs in unless it runs under a savepoint.
+	broken bool
 	calls  []uuid.UUID
 	orgs   []uuid.UUID
 	status []string
@@ -171,13 +174,20 @@ func (r *recordingWaiters) SyncFinished(ctx context.Context, orgID, jobID uuid.U
 		return err
 	}
 	r.calls, r.orgs, r.status = append(r.calls, jobID), append(r.orgs, orgID), append(r.status, status)
+	if r.broken {
+		if _, err := r.d.Exec(ctx, `SELECT 1/0`); err != nil {
+			return err
+		}
+	}
 	return r.err
 }
 
 // TestSyncFinishMovesItsWaiters (spec 2026-11-25 A, sync_first): a sync's
 // terminal transition tells the waiters, inside its transaction (they see
 // the terminal status), whatever the outcome; another kind does not. A
-// waiter's failure rolls the finish back, so the two never diverge.
+// waiter's failure does not hold the finish up (final review M5): it is
+// logged, its writes are rolled back to a savepoint, and the sweep moves
+// the requests later.
 func TestSyncFinishMovesItsWaiters(t *testing.T) {
 	f := newVarSourcesFixture(t, "jobs-sync-waiters-org")
 	waiters := &recordingWaiters{d: f.d}
@@ -201,14 +211,15 @@ func TestSyncFinishMovesItsWaiters(t *testing.T) {
 		t.Fatalf("waiters told %v %v %v", waiters.calls, waiters.orgs, waiters.status)
 	}
 
-	boom := errors.New("boom")
-	waiters.err = boom
-	stuck := f.runningJob(t, jobs.KindSyncRepo)
-	if err := f.queue.Finish(ctx, stuck.ID, jobs.StatusSucceeded, nil, ""); !errors.Is(err, boom) {
-		t.Fatalf("finish with failing waiters = %v, want boom", err)
-	}
-	var status string
-	if err := f.d.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, stuck.ID).Scan(&status); err != nil || status != "running" {
-		t.Fatalf("job after the rolled back finish = %q %v", status, err)
+	for _, broken := range []bool{false, true} {
+		waiters.err, waiters.broken = errors.New("boom"), broken
+		done := f.runningJob(t, jobs.KindSyncRepo)
+		if err := f.queue.Finish(ctx, done.ID, jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatalf("finish with failing waiters (broken statement %v) = %v, want it to finish", broken, err)
+		}
+		var status string
+		if err := f.d.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id = $1`, done.ID).Scan(&status); err != nil || status != "succeeded" {
+			t.Fatalf("job after a failing waiter = %q %v", status, err)
+		}
 	}
 }

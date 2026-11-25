@@ -63,7 +63,7 @@ func (f runRequestFixture) recordSync(t *testing.T, repo repos.Repo, commit stri
 		t.Fatal(err)
 	}
 	if _, err := f.s.Deps.Repos.RecordVarSources(f.scoped, f.orgID, repo.ID, time.Now(), raw, nil,
-		jobs.SyncedRef(repo.URL, repo.Branch, repo.Subpath)); err != nil {
+		jobs.SyncedRef(repo.URL, repo.Branch, repo.Subpath), time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 }

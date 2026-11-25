@@ -15,15 +15,15 @@ SELECT id FROM git_repos WHERE org_id = @org_id AND id = @repo_id FOR NO KEY UPD
 -- a repository deleted while its sync ran inserts nothing (zero rows),
 -- where a plain INSERT would fail its foreign key and abort the whole
 -- finish transaction.
-INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref)
+INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_queued_at)
 SELECT r.id, r.org_id, @commit_sha::text, @synced_at::timestamptz, true, @incomplete::boolean, @left_out::jsonb, @notes::jsonb,
-       sqlc.narg(synced_ref)::text
+       sqlc.narg(synced_ref)::text, sqlc.narg(sync_queued_at)::timestamptz
 FROM git_repos r
 WHERE r.org_id = @org_id AND r.id = @repo_id
 ON CONFLICT (repo_id) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha, synced_at = EXCLUDED.synced_at, worker_reads = true,
   incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes,
-  synced_ref = EXCLUDED.synced_ref;
+  synced_ref = EXCLUDED.synced_ref, sync_queued_at = EXCLUDED.sync_queued_at;
 
 -- name: MarkRepoVarSourcesUnread :exec
 -- A sync by a worker that reads no sources: an existing record is kept
@@ -45,7 +45,7 @@ INSERT INTO repo_playbook_sources (org_id, repo_id, path, result, content, conte
 VALUES (@org_id, @repo_id, @path, @result, sqlc.narg(content)::text, sqlc.narg(content_left_out)::text);
 
 -- name: GetRepoVarSources :one
-SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref
+SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_queued_at
 FROM repo_var_sources
 WHERE org_id = @org_id AND repo_id = @repo_id;
 

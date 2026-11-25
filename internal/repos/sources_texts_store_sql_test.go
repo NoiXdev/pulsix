@@ -112,7 +112,7 @@ func TestRecordVarSourcesTextsAcrossSyncs(t *testing.T) {
 	}
 
 	if _, err := svc.RecordVarSources(scoped, org, repoID, t0, encodeReport(t, reportOf("site.yml")),
-		encodeTexts(t, map[string]any{"site.yml": playText}, map[string]any{}), ""); err != nil {
+		encodeTexts(t, map[string]any{"site.yml": playText}, map[string]any{}), "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := textOf(t); got.Content == nil || *got.Content != playText || got.Commit != commitB {
@@ -122,14 +122,14 @@ func TestRecordVarSourcesTextsAcrossSyncs(t *testing.T) {
 	failed := varsource.Report{Commit: commitA, Failed: true, Playbooks: []varsource.Playbook{},
 		Notes: []varsource.Note{varsource.ReadFailed("no playbooks read")}}
 	if _, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(time.Hour), encodeReport(t, failed),
-		encodeTexts(t, map[string]any{}, map[string]any{}), ""); err != nil {
+		encodeTexts(t, map[string]any{}, map[string]any{}), "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := textOf(t); got.Content == nil || *got.Content != playText || got.Commit != commitB {
 		t.Fatalf("after a failed read: %+v, want the previous text kept", got)
 	}
 
-	if _, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(2*time.Hour), encodeReport(t, reportOf("site.yml")), nil, ""); err != nil {
+	if _, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(2*time.Hour), encodeReport(t, reportOf("site.yml")), nil, "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := textOf(t); got.Content != nil || got.LeftOut != "" {

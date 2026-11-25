@@ -98,9 +98,10 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 	var orgID uuid.UUID
 	var kind string
 	var payload json.RawMessage
+	var queuedAt time.Time
 	if err := q.db.QueryRow(ctx,
-		`SELECT org_id, kind, payload FROM jobs WHERE id = $1`, jobID,
-	).Scan(&orgID, &kind, &payload); err != nil {
+		`SELECT org_id, kind, payload, created_at FROM jobs WHERE id = $1`, jobID,
+	).Scan(&orgID, &kind, &payload, &queuedAt); err != nil {
 		return uuid.Nil, fmt.Errorf("record sync result: look up finished job: %w", err)
 	}
 	if Kind(kind) != KindSyncRepo {
@@ -120,7 +121,7 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 	if status != StatusSucceeded || q.sources == nil {
 		return uuid.Nil, nil
 	}
-	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources, texts, sp.SyncedRef)
+	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources, texts, sp.SyncedRef, queuedAt)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("record variable sources: %w", err)
 	}

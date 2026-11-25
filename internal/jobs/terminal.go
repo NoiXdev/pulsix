@@ -158,9 +158,7 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		}
 		applyRepo = repoID
 		if Kind(kind) == KindSyncRepo {
-			if err := q.tellSyncWaiters(ctx, orgID, t.jobID); err != nil {
-				return err
-			}
+			q.tellSyncWaiters(ctx, orgID, t.jobID)
 		}
 		if err := q.recordTest(ctx, t.jobID, t.status); err != nil {
 			return err

@@ -35,7 +35,7 @@ func TestSyncedCommitSaysWhetherARunMayPinIt(t *testing.T) {
 	record := func(raw []byte, syncedRef string) {
 		t.Helper()
 		at = at.Add(time.Minute)
-		if _, err := svc.RecordVarSources(scoped, org, repoID, at, raw, nil, syncedRef); err != nil {
+		if _, err := svc.RecordVarSources(scoped, org, repoID, at, raw, nil, syncedRef, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -29,6 +29,7 @@ type sourceCall struct {
 	raw           json.RawMessage
 	texts         json.RawMessage
 	syncedRef     string
+	queuedAt      time.Time
 }
 
 // recordingSourceSink records every RecordVarSources call and reports a
@@ -39,13 +40,13 @@ type recordingSourceSink struct {
 	err   error
 }
 
-func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string) (bool, error) {
+func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string, queuedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return false, s.err
 	}
-	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw, texts, syncedRef})
+	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw, texts, syncedRef, queuedAt})
 	return raw != nil, nil
 }
 
@@ -466,4 +467,24 @@ func TestSyncRecordsWhatItFetched(t *testing.T) {
 			t.Fatalf("sink calls = %+v, want one without a synced ref", calls)
 		}
 	})
+}
+
+// TestFinishSyncPassesWhenTheSyncWasQueued: the sink learns when the
+// finishing sync was queued, so a sync that finishes after a newer one
+// cannot overwrite the newer one's read (final review M2).
+func TestFinishSyncPassesWhenTheSyncWasQueued(t *testing.T) {
+	f := newVarSourcesFixture(t, "jobs-var-sources-queued-at-org")
+	j := f.runningJob(t, jobs.KindSyncRepo)
+	var created time.Time
+	if err := f.d.Pool().QueryRow(ctx, `SELECT created_at FROM jobs WHERE id = $1`, j.ID).Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	stats, _ := workerStats(t, f.repoID, testReport())
+	if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.sink.all()
+	if len(calls) != 1 || !calls[0].queuedAt.Equal(created) {
+		t.Fatalf("sink calls = %+v, want queued at %v", calls, created)
+	}
 }

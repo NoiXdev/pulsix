@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/varsource"
@@ -69,6 +70,7 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 	n, err := q.UpsertRepoVarSources(ctx, gen.UpsertRepoVarSourcesParams{
 		CommitSha: rec.Commit, SyncedAt: rec.SyncedAt, Incomplete: rec.Incomplete,
 		LeftOut: leftOut, Notes: notes, OrgID: orgID, RepoID: repoID, SyncedRef: nullString(rec.SyncedRef),
+		SyncQueuedAt: pgtype.Timestamptz{Time: rec.SyncQueuedAt, Valid: !rec.SyncQueuedAt.IsZero()},
 	})
 	if err != nil {
 		return fmt.Errorf("upsert repo variable sources: %w", err)
@@ -112,7 +114,11 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 		}
 		return SourcesRecord{}, fmt.Errorf("get repo variable sources: %w", err)
 	}
-	return decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
+	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
+	if err == nil && row.SyncQueuedAt.Valid {
+		rec.SyncQueuedAt = row.SyncQueuedAt.Time
+	}
+	return rec, err
 }
 
 // GetPlaybookVarSource implements Store: the record and the row of one

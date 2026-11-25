@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteRepoPlaybookSources = `-- name: DeleteRepoPlaybookSources :exec
@@ -114,7 +115,7 @@ func (q *Queries) GetRepoPlaybookText(ctx context.Context, arg GetRepoPlaybookTe
 }
 
 const getRepoVarSources = `-- name: GetRepoVarSources :one
-SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref
+SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_queued_at
 FROM repo_var_sources
 WHERE org_id = $1 AND repo_id = $2
 `
@@ -125,13 +126,14 @@ type GetRepoVarSourcesParams struct {
 }
 
 type GetRepoVarSourcesRow struct {
-	CommitSha   string    `json:"commit_sha"`
-	SyncedAt    time.Time `json:"synced_at"`
-	WorkerReads bool      `json:"worker_reads"`
-	Incomplete  bool      `json:"incomplete"`
-	LeftOut     []byte    `json:"left_out"`
-	Notes       []byte    `json:"notes"`
-	SyncedRef   *string   `json:"synced_ref"`
+	CommitSha    string             `json:"commit_sha"`
+	SyncedAt     time.Time          `json:"synced_at"`
+	WorkerReads  bool               `json:"worker_reads"`
+	Incomplete   bool               `json:"incomplete"`
+	LeftOut      []byte             `json:"left_out"`
+	Notes        []byte             `json:"notes"`
+	SyncedRef    *string            `json:"synced_ref"`
+	SyncQueuedAt pgtype.Timestamptz `json:"sync_queued_at"`
 }
 
 func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesParams) (GetRepoVarSourcesRow, error) {
@@ -145,6 +147,7 @@ func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesPa
 		&i.LeftOut,
 		&i.Notes,
 		&i.SyncedRef,
+		&i.SyncQueuedAt,
 	)
 	return i, err
 }
@@ -298,26 +301,27 @@ func (q *Queries) MarkRepoVarSourcesUnread(ctx context.Context, arg MarkRepoVarS
 }
 
 const upsertRepoVarSources = `-- name: UpsertRepoVarSources :execrows
-INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref)
+INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_queued_at)
 SELECT r.id, r.org_id, $1::text, $2::timestamptz, true, $3::boolean, $4::jsonb, $5::jsonb,
-       $6::text
+       $6::text, $7::timestamptz
 FROM git_repos r
-WHERE r.org_id = $7 AND r.id = $8
+WHERE r.org_id = $8 AND r.id = $9
 ON CONFLICT (repo_id) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha, synced_at = EXCLUDED.synced_at, worker_reads = true,
   incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes,
-  synced_ref = EXCLUDED.synced_ref
+  synced_ref = EXCLUDED.synced_ref, sync_queued_at = EXCLUDED.sync_queued_at
 `
 
 type UpsertRepoVarSourcesParams struct {
-	CommitSha  string    `json:"commit_sha"`
-	SyncedAt   time.Time `json:"synced_at"`
-	Incomplete bool      `json:"incomplete"`
-	LeftOut    []byte    `json:"left_out"`
-	Notes      []byte    `json:"notes"`
-	SyncedRef  *string   `json:"synced_ref"`
-	OrgID      uuid.UUID `json:"org_id"`
-	RepoID     uuid.UUID `json:"repo_id"`
+	CommitSha    string             `json:"commit_sha"`
+	SyncedAt     time.Time          `json:"synced_at"`
+	Incomplete   bool               `json:"incomplete"`
+	LeftOut      []byte             `json:"left_out"`
+	Notes        []byte             `json:"notes"`
+	SyncedRef    *string            `json:"synced_ref"`
+	SyncQueuedAt pgtype.Timestamptz `json:"sync_queued_at"`
+	OrgID        uuid.UUID          `json:"org_id"`
+	RepoID       uuid.UUID          `json:"repo_id"`
 }
 
 // A worker's read: the record is replaced, worker_reads set. Like
@@ -333,6 +337,7 @@ func (q *Queries) UpsertRepoVarSources(ctx context.Context, arg UpsertRepoVarSou
 		arg.LeftOut,
 		arg.Notes,
 		arg.SyncedRef,
+		arg.SyncQueuedAt,
 		arg.OrgID,
 		arg.RepoID,
 	)

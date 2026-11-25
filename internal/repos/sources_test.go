@@ -132,7 +132,7 @@ func sourcesService(store *sourcesStore, log *bytes.Buffer) *repos.Service {
 func record(t *testing.T, store *sourcesStore, at time.Time, raw json.RawMessage) (stored bool, log string) {
 	t.Helper()
 	var buf bytes.Buffer
-	stored, err := sourcesService(store, &buf).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil, "")
+	stored, err := sourcesService(store, &buf).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil, "", time.Time{})
 	if err != nil {
 		t.Fatalf("RecordVarSources = %v, want nil", err)
 	}
@@ -339,7 +339,7 @@ func TestRecordVarSources(t *testing.T) {
 	} {
 		t.Run("a store failure at the "+name+" is returned", func(t *testing.T) {
 			raw := encodeReport(t, varsource.Report{Commit: commitB, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{}})
-			if _, err := sourcesService(store, &bytes.Buffer{}).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil, ""); err == nil {
+			if _, err := sourcesService(store, &bytes.Buffer{}).RecordVarSources(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), at, raw, nil, "", time.Time{}); err == nil {
 				t.Fatal("RecordVarSources = nil, want the store failure (the finish retries)")
 			}
 		})

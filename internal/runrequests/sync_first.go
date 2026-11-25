@@ -95,8 +95,9 @@ func (s *Service) endWaitAtCreate(ctx context.Context, r *Request) {
 
 // SyncFinished moves the requests waiting for the sync job jobID once it
 // has finished (jobs.SyncWaiters): the queue calls it inside the finish's
-// transaction, so the requests move with the job's terminal state or not
-// at all.
+// transaction, under a savepoint, so the requests move with the job's
+// terminal state; when this fails the finish still commits and the sweep
+// moves them.
 func (s *Service) SyncFinished(ctx context.Context, _ uuid.UUID, jobID uuid.UUID) error {
 	rows, err := s.store.ListWaitingFor(ctx, jobID)
 	if err != nil {

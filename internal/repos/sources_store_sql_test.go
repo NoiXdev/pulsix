@@ -244,14 +244,14 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 	read := encodeReport(t, varsource.Report{Commit: commitA, Playbooks: []varsource.Playbook{
 		playbookSource("deploy.yml", "app_version"), playbookSource("site.yml", "env"),
 	}, Notes: []varsource.Note{}})
-	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0, read, nil, ""); err != nil || !stored {
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0, read, nil, "", time.Time{}); err != nil || !stored {
 		t.Fatalf("RecordVarSources = %v, %v", stored, err)
 	}
 	t1 := t0.Add(time.Hour)
 	failed := encodeReport(t, varsource.Report{Commit: commitB, Failed: true, Playbooks: []varsource.Playbook{},
 		Notes: []varsource.Note{varsource.ReadFailed("the repository subpath could not be opened; no playbooks discovered")}})
-	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, failed, nil, ""); err != nil || stored {
-		t.Fatalf("RecordVarSources(failed) = %v, %v; want false, nil", stored, err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, failed, nil, "", time.Time{}); err != nil || stored {
+		t.Fatalf("RecordVarSources(failed, time.Time{}) = %v, %v; want false, nil", stored, err)
 	}
 	rec, pbs, found, err := svc.VarSources(scoped, org, repoID)
 	if err != nil || !found {
@@ -262,8 +262,8 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 		t.Fatalf("after a failed read = %+v, %v", rec, playbookPaths(pbs))
 	}
 
-	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1.Add(time.Hour), nil, nil, ""); err != nil || stored {
-		t.Fatalf("RecordVarSources(older worker) = %v, %v; want false, nil", stored, err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1.Add(time.Hour), nil, nil, "", time.Time{}); err != nil || stored {
+		t.Fatalf("RecordVarSources(older worker, time.Time{}) = %v, %v; want false, nil", stored, err)
 	}
 	recp, pb, err := svc.PlaybookVarSource(scoped, org, repoID, "deploy.yml")
 	if err != nil || recp == nil || pb == nil || recp.WorkerReads || recp.Commit != commitA || !sameStrings(fieldNames(*pb), []string{"app_version"}) {
@@ -285,8 +285,8 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 		t.Fatalf("PlaybookVarSource without a record = %+v, %+v, %v; want neither", recp, pb, err)
 	}
 	// A sync of a repository gone meanwhile is skipped, never an error.
-	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, read, nil, ""); err != nil || stored {
-		t.Fatalf("RecordVarSources(gone repo) = %v, %v; want false, nil", stored, err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, read, nil, "", time.Time{}); err != nil || stored {
+		t.Fatalf("RecordVarSources(gone repo, time.Time{}) = %v, %v; want false, nil", stored, err)
 	}
 }
 
@@ -382,18 +382,18 @@ func TestUndecodablePlaybookRowCountsAsMissing(t *testing.T) {
 	leftOut := encodeReport(t, varsource.Report{Commit: commitB, Incomplete: true, LeftOut: []string{"old.yml"},
 		Playbooks: []varsource.Playbook{playbookSource("site.yml", "env")}, Notes: []varsource.Note{}})
 	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error {
-		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(time.Hour), leftOut, nil, "")
+		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(time.Hour), leftOut, nil, "", time.Time{})
 		return err
 	}); err != nil {
-		t.Fatalf("RecordVarSources(left out) = %v, want the finish to succeed", err)
+		t.Fatalf("RecordVarSources(left out, time.Time{}) = %v, want the finish to succeed", err)
 	}
 	failed := encodeReport(t, varsource.Report{Commit: commitB, Failed: true, Playbooks: []varsource.Playbook{},
 		Notes: []varsource.Note{varsource.ReadFailed("unreadable")}})
 	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error {
-		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(2*time.Hour), failed, nil, "")
+		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(2*time.Hour), failed, nil, "", time.Time{})
 		return err
 	}); err != nil {
-		t.Fatalf("RecordVarSources(failed) = %v, want the finish to succeed", err)
+		t.Fatalf("RecordVarSources(failed, time.Time{}) = %v, want the finish to succeed", err)
 	}
 	if pbs, err := store.ListPlaybookSources(scoped, org, repoID); err != nil || !sameStrings(playbookPaths(pbs), []string{"site.yml"}) {
 		t.Fatalf("playbooks after the finishes = %v, %v", playbookPaths(pbs), err)
@@ -487,5 +487,53 @@ func TestStoredPlaybookResultOverTheReadLimitReadsAsMissing(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "too large to read"); n != 2 || strings.Contains(logs.String(), "at.yml") {
 		t.Fatalf("log = %q, want two 'too large to read' lines naming over.yml only", logs.String())
+	}
+}
+
+// TestRecordVarSourcesKeepsTheNewerSync (final review M2): two syncs of one
+// repository finish out of order — the one queued later first. The older
+// sync's read, finishing last, does not overwrite the newer one's commit
+// or playbooks; a sync recorded without its queue time (an older manager)
+// is overwritten by anything.
+func TestRecordVarSourcesKeepsTheNewerSync(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	svc := repos.NewService(repos.NewSQLStore(d), nil, nil)
+	org := seedOrg(t, q, "var-sources-order-org")
+	scoped := db.WithOrgScope(ctx, org)
+	repoID := seedSourcesRepo(t, d, org, "infra")
+
+	t0 := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
+	olderQueued, newerQueued := t0, t0.Add(time.Minute)
+	newer := encodeReport(t, varsource.Report{Commit: commitB, Playbooks: []varsource.Playbook{playbookSource("site.yml", "env")}, Notes: []varsource.Note{}})
+	older := encodeReport(t, varsource.Report{Commit: commitA, Playbooks: []varsource.Playbook{playbookSource("old.yml", "x")}, Notes: []varsource.Note{}})
+
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(2*time.Minute), newer, nil, "ref-b", newerQueued); err != nil || !stored {
+		t.Fatalf("newer sync = %v %v", stored, err)
+	}
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(3*time.Minute), older, nil, "ref-a", olderQueued); err != nil || stored {
+		t.Fatalf("older sync finishing last = %v %v, want skipped", stored, err)
+	}
+	rec, pbs, _, err := svc.VarSources(scoped, org, repoID)
+	if err != nil || rec.Commit != commitB || rec.SyncedRef != "ref-b" || !sameStrings(playbookPaths(pbs), []string{"site.yml"}) {
+		t.Fatalf("record after the older sync = %+v %v %v", rec, playbookPaths(pbs), err)
+	}
+	// The older sync without a read (an older worker) does not flag it either.
+	if _, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(4*time.Minute), nil, nil, "", olderQueued); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _, _, _ := svc.VarSources(scoped, org, repoID); !rec.WorkerReads {
+		t.Fatalf("an older unread sync flagged the newer read: %+v", rec)
+	}
+	// A sync queued later still replaces it, and so does one whose queue
+	// time is unknown.
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(5*time.Minute), older, nil, "ref-a", newerQueued.Add(time.Minute)); err != nil || !stored {
+		t.Fatalf("a later sync = %v %v", stored, err)
+	}
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0.Add(6*time.Minute), newer, nil, "ref-b", time.Time{}); err != nil || !stored {
+		t.Fatalf("a sync without a queue time = %v %v", stored, err)
+	}
+	if rec, _, _, _ := svc.VarSources(scoped, org, repoID); rec.Commit != commitB {
+		t.Fatalf("record = %+v", rec)
 	}
 }

@@ -69,9 +69,10 @@ type SyncSink interface {
 // retried finish can fix; a malformed report or a repository gone
 // meanwhile is its own business to log and skip. syncedRef is what the
 // sync fetched (SyncedRef, recorded at its claim), "" for a sync claimed
-// by an older manager.
+// by an older manager. queuedAt is when the sync job was queued, so a sync
+// finishing after a newer one does not overwrite the newer one's read.
 type SourceSink interface {
-	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string) (stored bool, err error)
+	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string, queuedAt time.Time) (stored bool, err error)
 }
 
 // SourceApplier is the optional port called once a successful sync whose
