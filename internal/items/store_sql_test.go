@@ -813,3 +813,29 @@ func TestItemStoreViewPluginComesFromTheItemsMetric(t *testing.T) {
 		}
 	}
 }
+
+// TestItemStoreViewPluginIsTheNewestReadings: key web was switched from http
+// to tcp, and the old http rows linger beside the new tcp one. The newest
+// reading decides, not the alphabetically first metric.
+func TestItemStoreViewPluginIsTheNewestReadings(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "view-plugin-newest")
+	host := seedHost(t, d, org, "h1")
+	st := items.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	if err := st.Discover(scoped, org, host, []items.Seen{{CheckKey: "web", Name: "main"}}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	insertCheckCurrent(t, d, org, host, "web", "main", "http.up", 1, old)
+	insertCheckCurrent(t, d, org, host, "web", "main", "tcp.up", 1, old.Add(time.Hour))
+
+	views, err := st.ItemsForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].Plugin != "tcp" {
+		t.Fatalf("views = %+v, want one item whose plugin is tcp, the newest reading's", views)
+	}
+}

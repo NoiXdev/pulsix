@@ -273,3 +273,23 @@ func TestDescriptorsMarshalWithoutHooks(t *testing.T) {
 		}
 	}
 }
+
+// TestMetricOwners: every descriptor metric maps to the plugin that reports it.
+func TestMetricOwners(t *testing.T) {
+	owners := checkplugins.MetricOwners()
+	n := 0
+	for _, d := range checkplugins.All() {
+		for _, m := range d.Metrics {
+			n++
+			if owners[m.Name] != d.Name {
+				t.Errorf("owner of %q = %q, want %q", m.Name, owners[m.Name], d.Name)
+			}
+		}
+	}
+	if n == 0 || len(owners) != n {
+		t.Fatalf("%d owners for %d metrics", len(owners), n)
+	}
+	if _, ok := owners["no.such_metric"]; ok {
+		t.Fatal("an unknown metric has an owner")
+	}
+}

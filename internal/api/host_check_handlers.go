@@ -290,7 +290,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			// relabel as a checks failure.
 			return nil, err
 		}
-		ignored, err := hostIgnoredItems(ctx, deps, scope.OrgID, hostID, current)
+		ignored, err := hostIgnoredItems(ctx, deps, scope.OrgID, hostID, current, resolved)
 		if err != nil {
 			return nil, err
 		}
@@ -647,7 +647,7 @@ type ignoredKey struct{ CheckKey, Item string }
 // is what made an operator's own silencing invisible on the host page:
 // the metric really did stop being judged, and the `ignored` badge could
 // not say so.
-func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current) (map[ignoredKey]items.Resolution, error) {
+func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, current []checks.Current, resolved checks.ResolvedSet) (map[ignoredKey]items.Resolution, error) {
 	// Decisions, not ListDecisions: this route is polled every 30 s per
 	// open host page, and the only decisions that can ever govern an item
 	// on this host are the organization's own plus this host's — exactly
@@ -659,14 +659,36 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 		slog.ErrorContext(ctx, "host checks: item decisions", "org_id", orgID, "host_id", hostID, "err", err)
 		return nil, huma.Error500InternalServerError("internal error")
 	}
+	// The plugin of a check is its resolved definition's; for a key the host
+	// no longer resolves it is the owner of the metric of the key's newest
+	// reading, which is what the evaluation uses (backlog 3.13g). Older
+	// readings left by a plugin switched under the same key do not count.
+	plugins := map[string]string{}
+	for _, c := range resolved.All() {
+		plugins[c.Key] = c.Plugin
+	}
 	owners := checkplugins.MetricOwners()
+	newest := map[ignoredKey]time.Time{}
+	fallback := map[ignoredKey]string{}
+	for _, c := range current {
+		k := ignoredKey{CheckKey: c.CheckKey, Item: c.Item}
+		owner, ok := owners[c.Metric]
+		if prev, seen := newest[k]; !ok || (seen && !c.At.After(prev)) {
+			continue
+		}
+		newest[k], fallback[k] = c.At, owner
+	}
 	out := make(map[ignoredKey]items.Resolution, len(current))
 	for _, c := range current {
 		k := ignoredKey{CheckKey: c.CheckKey, Item: c.Item}
 		if _, ok := out[k]; ok {
 			continue
 		}
-		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Plugin: owners[c.Metric], Item: c.Item})
+		plugin, ok := plugins[c.CheckKey]
+		if !ok {
+			plugin = fallback[k]
+		}
+		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Plugin: plugin, Item: c.Item})
 	}
 	return out, nil
 }

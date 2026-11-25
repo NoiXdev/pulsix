@@ -708,10 +708,11 @@ targets no longer make another's checks report the manager too busy.
   an item decision (ignore or watch) whose check key is a plugin name now applies to
   every check of that plugin, the way rules have since 3.13e. An existing org-wide or
   host ignore on `disk` starts silencing the items of copied checks such as
-  `disk-data`, and a watch on `disk` starts overruling an ignore there. A decision on
-  the exact check key still wins over one on the plugin key, whatever the scope order
-  (host before organization first, then exact key before plugin key). To check after
-  the upgrade: the item decisions on a plugin name (Items page) and whether they were
+  `disk-data`, and a watch on `disk` starts overruling an ignore there. Scope still
+  ranks first (a host decision beats an organization one); within a scope a decision
+  on the exact check key beats one on the plugin key. A check whose key equals another
+  plugin's name (key `tcp` running `http`) is affected too: a decision on that key now
+  also reaches every check of the `tcp` plugin. To check after the upgrade: the item decisions on a plugin name (Items page) and whether they were
   meant to cover your copied checks; where not, restate them on the exact check key.
   The host page marks such items as decided "via the plugin's decision".
 - **A new SNMP failure label, `auth_or_lost` (backlog 3.70, no migration):** a SNMPv3

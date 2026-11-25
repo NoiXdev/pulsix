@@ -39,6 +39,11 @@ SELECT sqlc.arg(org_id), sqlc.arg(host_id),
 ON CONFLICT (host_id, check_key, item) DO NOTHING;
 
 -- name: ListItemsForHost :many
+-- sample_metric is a metric of the newest reading of the item, an empty
+-- string when it has none. A metric name belongs to exactly one plugin, which
+-- is how the store learns the plugin a copied check runs (backlog 3.13g); only
+-- the newest reading counts, since a plugin switched under the same key leaves
+-- the old plugin's rows behind for a while.
 -- Store.ItemsForHost: one host's discovered items, each with its own "last
 -- reported" moment — a correlated scalar subquery computing max(at) over
 -- that exact tuple's check_current rows, across every metric the tuple
@@ -73,9 +78,10 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
             AND cur.check_key = i.check_key AND cur.item = i.item
        ) AS reported,
        COALESCE(
-         (SELECT min(cur.metric) FROM check_current cur
+         (SELECT cur.metric FROM check_current cur
            WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
-             AND cur.check_key = i.check_key AND cur.item = i.item),
+             AND cur.check_key = i.check_key AND cur.item = i.item
+           ORDER BY cur.at DESC, cur.metric LIMIT 1),
          ''
        )::text AS sample_metric
 FROM check_items i
@@ -83,9 +89,11 @@ WHERE i.org_id = sqlc.arg(org_id) AND i.host_id = sqlc.arg(host_id)
 ORDER BY i.check_key, i.item;
 
 -- name: ListItemsForOrg :many
--- sample_metric (both statements) is one metric the item reports, '' when it
--- has no reading: a metric name belongs to exactly one plugin, which is how
--- the store learns the plugin a copied check runs (backlog 3.13g).
+-- sample_metric is a metric of the newest reading of the item, an empty
+-- string when it has none. A metric name belongs to exactly one plugin, which
+-- is how the store learns the plugin a copied check runs (backlog 3.13g); only
+-- the newest reading counts, since a plugin switched under the same key leaves
+-- the old plugin's rows behind for a while.
 -- Store.ItemsForOrg: the same per-item "last reported" subquery as
 -- ListItemsForHost, across every host in the organization, filtered by
 -- check_key and/or an item glob that the caller (internal/items.SQLStore)
@@ -112,9 +120,10 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
             AND cur.check_key = i.check_key AND cur.item = i.item
        ) AS reported,
        COALESCE(
-         (SELECT min(cur.metric) FROM check_current cur
+         (SELECT cur.metric FROM check_current cur
            WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
-             AND cur.check_key = i.check_key AND cur.item = i.item),
+             AND cur.check_key = i.check_key AND cur.item = i.item
+           ORDER BY cur.at DESC, cur.metric LIMIT 1),
          ''
        )::text AS sample_metric
 FROM check_items i

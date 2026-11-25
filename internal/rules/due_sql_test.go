@@ -2018,3 +2018,46 @@ func TestIgnoredPluginKeyDecisionReachesACopiedCheck(t *testing.T) {
 		t.Fatalf("Ignored = %+v, want %+v watched: another plugin's check", load.Ignored, key)
 	}
 }
+
+// TestIgnoredPluginComesFromTheNewestReading: key web was switched from http
+// to tcp; the stale http reading stays in check_current. An ignore on tcp
+// reaches the item, one on http no longer does.
+func TestIgnoredPluginComesFromTheNewestReading(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "plugin-newest")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	insertCurrent(t, d, org, host, rules.Tuple{CheckKey: "web", Item: "main", Metric: "http.up"}, ptr(1.0), nil, now.Add(-time.Hour), "")
+	insertCurrent(t, d, org, host, rules.Tuple{CheckKey: "web", Item: "main", Metric: "tcp.up"}, ptr(1.0), nil, now, "")
+
+	ignoreOn := func(plugin string) {
+		t.Helper()
+		dec := items.Decision{
+			ID: uuid.Must(uuid.NewV7()), OrgID: org, Scope: items.ScopeOrg,
+			CheckKey: plugin, MatchKind: items.MatchGlob, Pattern: "*", Verdict: items.Ignore,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := items.NewSQLStore(d).CreateDecision(context.Background(), dec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ignored := func() bool {
+		t.Helper()
+		store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
+		load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return load.Ignored[rules.ItemKey{CheckKey: "web", Item: "main"}]
+	}
+
+	ignoreOn("http")
+	if ignored() {
+		t.Fatal("an ignore on http reaches web, whose newest reading is tcp's")
+	}
+	ignoreOn("tcp")
+	if !ignored() {
+		t.Fatal("an ignore on tcp does not reach web, whose newest reading is tcp's")
+	}
+}

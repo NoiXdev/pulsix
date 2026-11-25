@@ -137,9 +137,12 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 	// the agent's online period proves its replay is through
 	// (HostReplaying).
 	var agentNewest time.Time
+	owners := checkplugins.MetricOwners()
+	plugins := newestPlugins(owners)
 	for i, r := range current {
 		t := Tuple{CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric}
 		reported[i] = t
+		plugins.observe(itemKeyOf(t), t.Metric, r.At)
 		if !checkCtx.Synthetic[t.CheckKey] && r.At.After(agentNewest) {
 			agentNewest = r.At
 		}
@@ -189,7 +192,7 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 	if err != nil {
 		return HostLoad{}, fmt.Errorf("list item decisions: %w", err)
 	}
-	ignored := resolveIgnored(d.HostID, reported, decisions)
+	ignored := resolveIgnored(d.HostID, reported, plugins.byKey(), decisions)
 
 	ruleRows, err := q.ListRules(ctx, gen.ListRulesParams{OrgID: d.OrgID})
 	if err != nil {
@@ -394,19 +397,47 @@ func seenItems(reported []Tuple) []items.Seen {
 	return out
 }
 
+// pluginOwners learns the plugin a (check key, item) runs from the metric
+// of its newest reading. A metric name belongs to exactly one plugin, so
+// the metric names the plugin whatever key the check runs under. Only the
+// newest reading counts: a check whose plugin was switched under the same
+// key leaves the old plugin's rows in check_current for a while, and those
+// must not decide. A metric no plugin owns is skipped.
+type pluginOwners struct {
+	owners map[string]string
+	at     map[ItemKey]time.Time
+	plugin map[ItemKey]string
+}
+
+func newestPlugins(owners map[string]string) *pluginOwners {
+	return &pluginOwners{owners: owners, at: map[ItemKey]time.Time{}, plugin: map[ItemKey]string{}}
+}
+
+func (p *pluginOwners) observe(k ItemKey, metric string, at time.Time) {
+	owner, ok := p.owners[metric]
+	if !ok {
+		return
+	}
+	if prev, seen := p.at[k]; seen && !at.After(prev) {
+		return
+	}
+	p.at[k], p.plugin[k] = at, owner
+}
+
+func (p *pluginOwners) byKey() map[ItemKey]string { return p.plugin }
+
 // resolveIgnored runs items.Decide once per distinct ItemKey among
-// reported — including the empty-item ones, since a decision could in
-// principle name one even though nothing discovers it — and keeps only
-// the ones it resolved to Ignore. An absent key means watched
+// reported, including the empty-item ones, since a decision could in
+// principle name one even though nothing discovers it, and keeps only the
+// ones it resolved to Ignore. An absent key means watched
 // (Snapshot.Ignored's own doc comment), so a host with no matching
 // decision at all costs nothing beyond the lookup itself, and a host whose
 // decisions cover only some of its items marks exactly those.
 //
-// A tuple's plugin is the owner of its metric (checkplugins.MetricOwners),
-// so a decision on a plugin key reaches every check of that plugin
-// (backlog 3.13g), the way an item rule does.
-func resolveIgnored(hostID uuid.UUID, reported []Tuple, decisions []items.Decision) map[ItemKey]bool {
-	owners := checkplugins.MetricOwners()
+// plugins is each key's plugin (pluginOwners), so a decision on a plugin
+// key reaches every check of that plugin (backlog 3.13g), the way an item
+// rule does.
+func resolveIgnored(hostID uuid.UUID, reported []Tuple, plugins map[ItemKey]string, decisions []items.Decision) map[ItemKey]bool {
 	ignored := make(map[ItemKey]bool)
 	seen := make(map[ItemKey]bool, len(reported))
 	for _, t := range reported {
@@ -415,7 +446,7 @@ func resolveIgnored(hostID uuid.UUID, reported []Tuple, decisions []items.Decisi
 			continue
 		}
 		seen[key] = true
-		target := items.Target{HostID: hostID, CheckKey: key.CheckKey, Plugin: owners[t.Metric], Item: key.Item}
+		target := items.Target{HostID: hostID, CheckKey: key.CheckKey, Plugin: plugins[key], Item: key.Item}
 		if items.Decide(decisions, target).Ignored() {
 			ignored[key] = true
 		}

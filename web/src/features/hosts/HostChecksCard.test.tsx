@@ -1203,6 +1203,47 @@ describe('HostChecksCard', () => {
       expect(screen.queryByRole('button', { name: /Watch|Ignore/ })).not.toBeInTheDocument();
     });
 
+    // Backlog 3.13g: a decision on the plugin key reaches a copied check, and
+    // the row says so; one on the row's own key adds no marker.
+    it.each([
+      ['a plugin-key decision', 'disk', true],
+      ['an own-key decision', 'disk-data', false],
+    ])('marks the origin "via the plugin’s decision" only for %s', async (_name, decisionKey, marked) => {
+      const user = userEvent.setup();
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+        'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+        'GET /api/v1/orgs/acme/hosts/h1/checks': {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            check({
+              definition_id: 'd2',
+              key: 'disk-data',
+              plugin: 'disk',
+              interval_seconds: 300,
+              source: 'org',
+              values: [
+                ignoredValue({
+                  decided_by: { id: 'dec-org', scope: 'org', check_key: decisionKey, match_kind: 'glob', pattern: '*', decision: 'ignore' },
+                }),
+              ],
+            }),
+          ],
+        },
+      });
+      await renderCard();
+
+      await user.click(await screen.findByText('Why ignored'));
+      expect(screen.getByText(/By the organization pattern/)).toBeInTheDocument();
+      if (marked) {
+        expect(screen.getByText(/via the plugin’s decision/)).toBeInTheDocument();
+      } else {
+        expect(screen.queryByText(/via the plugin’s decision/)).not.toBeInTheDocument();
+      }
+    });
+
     it('names an organization pattern as the origin, with its note, once the row is opened — not before', async () => {
       const user = userEvent.setup();
       mockApi({

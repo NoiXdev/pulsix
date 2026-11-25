@@ -138,10 +138,11 @@ func (d Decision) beats(other Decision, t Target) bool {
 
 // applies reports whether d is even a candidate for t: its CheckKey is t's
 // own check key or t's plugin (a decision on a plugin key covers every check
-// of that plugin, backlog 3.13g; an unknown, empty Plugin never matches), and — for a ScopeHost decision — its HostID is t's own. A ScopeOrg
-// decision applies to every host. Pattern matching is checked separately,
-// since it is the same cost either way but a distinct concern (applicability
-// vs. specificity).
+// of that plugin, backlog 3.13g; an unknown, empty Plugin never matches),
+// and, for a ScopeHost decision, its HostID is t's own. A ScopeOrg decision
+// applies to every host. Pattern matching is checked separately, since it is
+// the same cost either way but a distinct concern (applicability vs.
+// specificity).
 func (d Decision) applies(t Target) bool {
 	if d.CheckKey != t.CheckKey && (t.Plugin == "" || d.CheckKey != t.Plugin) {
 		return false

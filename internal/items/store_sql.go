@@ -54,9 +54,11 @@ type View struct {
 	Item
 	LastSeen time.Time
 	Reported bool
-	// Plugin is the plugin the item's check runs, learned from a metric the
-	// item reports; empty while it has no reading or its metric is no
-	// plugin's. A decision on a plugin key reaches the item through it.
+	// Plugin is the plugin the item's check runs, learned from the metric of
+	// its newest reading; empty while it has no reading or that metric is no
+	// plugin's. A decision on a plugin key reaches the item through it, so an
+	// item kept without any reading is not reached, while the evaluation has
+	// no tuple for it either.
 	Plugin string
 }
 
