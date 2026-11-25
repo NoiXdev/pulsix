@@ -211,6 +211,37 @@ func TestPollV3LostFirstRequestGetsOneMoreAttempt(t *testing.T) {
 			t.Fatalf("gets = %d, want 2", len(dev.gets))
 		}
 	})
+	t.Run("response time is the second attempt's", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100))
+		dev.getErr, dev.lost, dev.replied = lostErr, 1, true
+		dev.onGet = func() { dev.rtt = time.Duration(len(dev.gets)) * 10 * time.Millisecond }
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		wantValue(t, byKey(t, obs), "snmp.response_ms", "", 20)
+	})
+	t.Run("socket failure on the second attempt", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.getErr, dev.replied, dev.sockFailure = lostErr, true, probe.FailureRefused
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		probetest.WantDown(t, obs, "snmp", probe.FailureRefused)
+		if len(dev.gets) != 2 {
+			t.Fatalf("gets = %d, want 2", len(dev.gets))
+		}
+	})
+	t.Run("explicit refusal on the second attempt", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.getErr, dev.lost, dev.replied = lostErr, 2, true
+		dev.onGet = func() {
+			if len(dev.gets) == 2 {
+				dev.getErr = gosnmp.ErrWrongDigest
+			}
+		}
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
+		if len(dev.gets) != 2 {
+			t.Fatalf("gets = %d, want 2", len(dev.gets))
+		}
+	})
 	t.Run("both lost", func(t *testing.T) {
 		dev := newFakeDevice()
 		dev.getErr, dev.replied = lostErr, true

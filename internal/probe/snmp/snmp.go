@@ -134,7 +134,8 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	start := time.Now()
 	pkt, err := c.get(first)
 	if err != nil {
-		f := classifyFirst(err, creds.version == gosnmp.Version3, c.answered())
+		v3 := creds.version == gosnmp.Version3
+		f := classifyFirst(err, v3, c.answered())
 		if f == failAuthOrLost && ctx.Err() == nil {
 			// Credentials inferred, not named: one more attempt before
 			// judging (backlog 3.70). A retry failing otherwise, or past
@@ -142,7 +143,7 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 			start = time.Now()
 			pkt, err = c.get(first)
 			if err != nil {
-				f = classifyFirst(err, true, c.answered())
+				f = classifyFirst(err, v3, c.answered())
 				if c.socketFailure() != "" || ctx.Err() != nil {
 					f = failDown
 				}
