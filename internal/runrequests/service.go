@@ -31,13 +31,19 @@ const MaxReasonLength = 300
 // (backlog 2.120), so an assistant cannot bury the approvers' queue.
 const MaxPendingPerToken = 20
 
-// Kind is what a request asks for.
+// Kind is what a request asks for: a run, a retry, or (spec 2026-11-25
+// assistant API gaps, C) a schedule. Every kind shares the lifecycle, the
+// expiry, the per-token cap and the approvals page; the picture and what
+// an approval does are the kind's. The table also admits the later kinds
+// trigger, schedule_review and trigger_review (migration 00129).
 type Kind string
 
 // The request kinds.
 const (
 	KindRun         Kind = "run"
 	KindRetryFailed Kind = "retry_failed"
+	// KindSchedule creates, changes or resumes a schedule (ScheduleChange).
+	KindSchedule Kind = "schedule"
 )
 
 // Status is a request's state. StatusExpired is never stored: a pending
@@ -123,6 +129,13 @@ type Request struct {
 	// never stored.
 	SyncStarted *SyncStart
 	CreatedAt   time.Time
+	// Schedule is what a KindSchedule request does (the payload column);
+	// nil for every other kind.
+	Schedule *ScheduleChange
+	// TargetID is the object a request of a kind other than run and retry
+	// acts on: for a schedule request the schedule it creates (its id
+	// taken when the request is made), changes or resumes.
+	TargetID *uuid.UUID
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
 	TokenName  string
@@ -145,6 +158,8 @@ type CreateInput struct {
 	// SyncFirst syncs the template's repository first (KindRun only): the
 	// request waits for the sync and becomes pending once it succeeded.
 	SyncFirst bool
+	// Schedule is what a KindSchedule request asks for.
+	Schedule *ScheduleInput
 }
 
 // Store persists requests.
@@ -209,13 +224,14 @@ type Service struct {
 	enqueuer  Enqueuer
 	validator Validator
 	syncer    Syncer
+	auto      Automation
 	now       func() time.Time
 	newID     func() uuid.UUID
 }
 
 // NewService wires the service.
-func NewService(store Store, pictures Pictures, enqueuer Enqueuer, validator Validator, syncer Syncer, now func() time.Time, newID func() uuid.UUID) *Service {
-	return &Service{store: store, pictures: pictures, enqueuer: enqueuer, validator: validator, syncer: syncer, now: now, newID: newID}
+func NewService(store Store, pictures Pictures, enqueuer Enqueuer, validator Validator, syncer Syncer, auto Automation, now func() time.Time, newID func() uuid.UUID) *Service {
+	return &Service{store: store, pictures: pictures, enqueuer: enqueuer, validator: validator, syncer: syncer, auto: auto, now: now, newID: newID}
 }
 
 // Create records a pending request. A token's request is refused with
@@ -242,7 +258,17 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		Status: StatusPending, CreatedAt: s.now(), ExpiresInMinutes: in.ExpiresInMinutes,
 	}
 	r.ExpiresAt = r.CreatedAt.Add(ttl)
+	if in.Kind != KindSchedule && in.Schedule != nil {
+		return Request{}, fmt.Errorf("%w: only a schedule request takes a schedule", ErrInvalidInput)
+	}
 	switch in.Kind {
+	case KindSchedule:
+		if in.SyncFirst || ov != nil || in.HostID != nil || in.JobID != nil {
+			return Request{}, fmt.Errorf("%w: a schedule request takes no run options (sync_first, check_mode, hosts, limit or extra vars of a run)", ErrInvalidInput)
+		}
+		if err := s.scheduleRequest(ctx, orgID, in.Schedule, &r); err != nil {
+			return Request{}, err
+		}
 	case KindRun:
 		if in.HostID != nil && ov != nil && len(ov.HostIDs) > 0 {
 			return Request{}, fmt.Errorf("%w: give host_id or host_ids, not both", ErrInvalidInput)

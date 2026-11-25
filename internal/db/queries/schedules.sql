@@ -1,6 +1,8 @@
 -- name: CreateSchedule :one
-INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by)
-VALUES (@id, @org_id, @template_id, @name, @mode, @cron, @simple, @timezone, @guards, sqlc.narg(limit_override), @extra_vars, false, sqlc.narg(next_run_at), sqlc.narg(created_by))
+INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by,
+  untrusted_overrides)
+VALUES (@id, @org_id, @template_id, @name, @mode, @cron, @simple, @timezone, @guards, sqlc.narg(limit_override), @extra_vars, false, sqlc.narg(next_run_at), sqlc.narg(created_by),
+  @untrusted_overrides)
 RETURNING *;
 
 -- name: GetSchedule :one
@@ -16,6 +18,7 @@ ORDER BY name;
 -- tells the two apart with GetSchedule).
 UPDATE schedules SET template_id = @template_id, name = @name, mode = @mode, cron = @cron, simple = @simple,
   timezone = @timezone, guards = @guards, "limit" = sqlc.narg(limit_override), extra_vars = @extra_vars,
+  untrusted_overrides = @untrusted_overrides,
   next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;

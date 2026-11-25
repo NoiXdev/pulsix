@@ -94,13 +94,47 @@ func (s *Service) newID() uuid.UUID {
 
 // Create validates and stores a new schedule; next_run_at is computed from now.
 func (s *Service) Create(ctx context.Context, orgID, actor uuid.UUID, in Input) (Schedule, error) {
-	id := s.newID()
-	sch, err := s.build(ctx, orgID, id, in, nil)
+	return s.CreateAs(ctx, orgID, s.newID(), actor, in)
+}
+
+// CreateAs is Create under a given id: an approved schedule request
+// creates the schedule under the id the request took when it was made.
+func (s *Service) CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in Input) (Schedule, error) {
+	sch, err := s.build(ctx, orgID, id, in, nil, false)
 	if err != nil {
 		return Schedule{}, err
 	}
 	sch.CreatedBy = &actor
 	return s.store.Create(ctx, sch)
+}
+
+// Validate checks in as Create (id new) or Update (id of the schedule)
+// would store it, the name's uniqueness included, and stores nothing: a
+// schedule request is checked when it is made, not only at its approval.
+func (s *Service) Validate(ctx context.Context, orgID, id uuid.UUID, in Input) error {
+	var stored map[string]any
+	untrusted := false
+	cur, err := s.store.Get(ctx, orgID, id)
+	switch {
+	case err == nil:
+		stored, untrusted = cur.Overrides.ExtraVars, cur.UntrustedOverrides
+	case !errors.Is(err, ErrNotFound):
+		return err
+	}
+	sch, err := s.build(ctx, orgID, id, in, stored, untrusted)
+	if err != nil {
+		return err
+	}
+	all, err := s.store.List(ctx, orgID, nil)
+	if err != nil {
+		return err
+	}
+	for _, o := range all {
+		if o.ID != id && o.Name == sch.Name {
+			return ErrNameTaken
+		}
+	}
+	return nil
 }
 
 // Update replaces a schedule when revision is still current. A paused
@@ -113,7 +147,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 	if cur.Revision != revision {
 		return Schedule{}, ErrRevisionMismatch
 	}
-	sch, err := s.build(ctx, orgID, id, in, cur.Overrides.ExtraVars)
+	sch, err := s.build(ctx, orgID, id, in, cur.Overrides.ExtraVars, cur.UntrustedOverrides)
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -128,10 +162,21 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 	return s.store.Update(ctx, sch, revision)
 }
 
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stored map[string]any) (Schedule, error) {
+// build validates in into the schedule to store. Its overrides are
+// untrusted when in says so (an approved request) or, for an update, when
+// the current ones were (wasUntrusted) and some remain: a person's update
+// cannot be told apart from the assistant's values it keeps. Untrusted
+// overrides pass checkUntrusted.
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stored map[string]any, wasUntrusted bool) (Schedule, error) {
 	name, err := normalizeName(in.Name)
 	if err != nil {
 		return Schedule{}, err
+	}
+	untrusted := (in.Untrusted || wasUntrusted) && !in.Overrides.Empty()
+	if untrusted {
+		if err := checkUntrusted(in.Overrides); err != nil {
+			return Schedule{}, err
+		}
 	}
 	now := s.now()
 	tt, err := compileTimetable(in.Mode, in.Cron, in.Simple, in.Timezone, now)
@@ -160,7 +205,7 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stor
 	return Schedule{
 		ID: id, OrgID: orgID, TemplateID: in.TemplateID, Name: name, Mode: in.Mode,
 		Cron: tt.cron, Simple: tt.simple, Timezone: in.Timezone, Guards: guards,
-		Overrides: ov, NextRunAt: &next,
+		Overrides: ov, NextRunAt: &next, UntrustedOverrides: untrusted,
 	}, nil
 }
 
@@ -338,7 +383,7 @@ func (s *Service) enqueue(ctx context.Context, sch Schedule, actor *uuid.UUID, e
 		if err != nil {
 			return nil, fmt.Errorf("reveal overrides: %w", err)
 		}
-		ov = &jobs.RunOverrides{Limit: revealed.Limit, ExtraVars: revealed.ExtraVars}
+		ov = &jobs.RunOverrides{Limit: revealed.Limit, ExtraVars: revealed.ExtraVars, Untrusted: sch.UntrustedOverrides}
 	}
 	ref := sch.ID
 	var key string

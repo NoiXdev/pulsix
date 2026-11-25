@@ -183,6 +183,10 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"get_calendar":        {"from": now.Format(time.RFC3339), "to": now.Add(24 * time.Hour).Format(time.RFC3339)},
 		"list_activity":       {"limit": 100},
 		"get_host_metrics":    {"host_id": f.host.String(), "check": "cpu", "metric": "usage_percent", "range": "1h"},
+		// pause_schedule sorts before resume_schedule, so the resume asks
+		// for a paused schedule.
+		"update_schedule": {"schedule_id": scheduleID, "cron": "0 4 * * *", "reason": "sweep"},
+		"resume_schedule": {"schedule_id": scheduleID, "reason": "sweep"},
 	}
 	// Every swept tool must succeed with the seeded arguments, so an erroring
 	// tool cannot pass for "no secret in the output".
@@ -201,6 +205,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"set_group_schema":    "replaces the schema that types the seeded secrets, which set_group_vars is swept against",
 		"set_host_ssh":        "rewires the host's SSH credential; the same view is read by get_host, which is swept",
 		"request_run":         "called above as setup, and its output is checked there",
+		"delete_schedule":     "would delete the schedule get_schedule and list_schedule_runs read",
 	}
 	if text := callOK(t, cs, "get_check", map[string]any{"check_id": check.ID.String()}, nil); !strings.Contains(text, "sweep-api") {
 		t.Fatalf("get_check does not show the check's secret reference:\n%s", text)

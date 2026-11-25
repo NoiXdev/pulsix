@@ -66,6 +66,13 @@ type Picture struct {
 	// 2026-11-25 B): the hosts the run enrols the agent on. nil for every
 	// other template, so the canonical JSON of its picture is unchanged.
 	AgentEnrollment *PictureAgentEnrollment `json:"agent_enrollment,omitempty" doc:"Set when the template enrols agents: the hosts the run enrols the agent on"`
+
+	// Schedule is the picture of a schedule request (spec 2026-11-25 C):
+	// the schedule as it will be and as it is. A schedule request's
+	// picture names its template (TemplateID, TemplateName,
+	// TemplateRevision) and leaves every run field empty; nil for a run or
+	// a retry, so the canonical JSON of their pictures is unchanged.
+	Schedule *PictureSchedule `json:"schedule,omitempty" doc:"Set for a schedule request: the schedule as the approval stores it and as it is now"`
 }
 
 // Why a run of a template with agent enrollment enrols no host

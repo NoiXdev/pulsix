@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -160,6 +161,28 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	// no separate step to skip.
 	setAuditScope(ctx, &org.ID, p.UserID)
 	return Scope{OrgID: org.ID, UserID: p.UserID, Role: role, Org: org, TokenID: p.TokenID, TokenKind: kind, Areas: areas}, nil
+}
+
+// requireOrgAny is requireOrg for a route that any one of perms opens: the
+// first that passes wins. Every refusal but a missing permission (403)
+// answers at once; when none passes, the last refusal answers.
+func requireOrgAny(ctx context.Context, deps Deps, orgSlug string, perms ...tenancy.Permission) (Scope, error) {
+	var last error
+	for _, perm := range perms {
+		scope, err := requireOrg(ctx, deps, orgSlug, perm)
+		if err == nil {
+			return scope, nil
+		}
+		var se huma.StatusError
+		if !errors.As(err, &se) || se.GetStatus() != http.StatusForbidden {
+			return Scope{}, err
+		}
+		last = err
+	}
+	if last == nil {
+		return Scope{}, huma.Error500InternalServerError("internal error")
+	}
+	return Scope{}, last
 }
 
 // assistantOnlyAtEndpoint is the refusal an assistant token gets anywhere

@@ -3037,6 +3037,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/schedule-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedule requests */
+        post: operations["requestSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/schedules": {
         parameters: {
             query?: never;
@@ -3160,6 +3177,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/schedules/{id}/resume-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules by ID resume requests */
+        post: operations["requestScheduleResume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/schedules/{id}/run": {
         parameters: {
             query?: never;
@@ -3188,6 +3222,23 @@ export interface paths {
         get: operations["get-api-v1-orgs-by-org-schedules-by-id-runs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/schedules/{id}/update-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org schedules by ID update requests */
+        post: operations["requestScheduleUpdate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4477,6 +4528,10 @@ export interface components {
             target_name?: string;
             window_id: string;
         };
+        CatchUp: {
+            enabled: boolean;
+            window: string;
+        };
         CatchUpDTO: {
             enabled: boolean;
             /** @description Go duration, 1m to 24h (default 1h) */
@@ -5299,6 +5354,11 @@ export interface components {
             vars: {
                 [key: string]: unknown;
             };
+        };
+        Guards: {
+            catch_up: components["schemas"]["CatchUp"];
+            maintenance?: string;
+            overlap: string;
         };
         GuardsDTO: {
             catch_up?: components["schemas"]["CatchUpDTO"];
@@ -6977,7 +7037,7 @@ export interface components {
              * @example https://example.com/schemas/OrgTokenCreateInputBody.json
              */
             readonly $schema?: string;
-            /** @description Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request, monitoring.read, alerts.handle, activity.read) */
+            /** @description Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request, monitoring.read, alerts.handle, activity.read, automation.request) */
             areas?: string[] | null;
             /** Format: date-time */
             expires_at?: string;
@@ -7347,6 +7407,8 @@ export interface components {
             repo?: components["schemas"]["PictureRepo"];
             requested_host_ids?: string[] | null;
             retry?: components["schemas"]["PictureRetry"];
+            /** @description Set for a schedule request: the schedule as the approval stores it and as it is now */
+            schedule?: components["schemas"]["PictureSchedule"];
             ssh_credential?: string;
             ssh_credential_id?: string;
             targets: components["schemas"]["PictureHost"][] | null;
@@ -7425,6 +7487,23 @@ export interface components {
         PictureRetry: {
             failed_hosts: string[] | null;
             job_id: string;
+        };
+        PictureSchedule: {
+            /**
+             * @description create a schedule, change one, or resume a paused one
+             * @enum {string}
+             */
+            action: "create" | "update" | "resume";
+            /** @description The limit and extra vars are the assistant's: its runs take every text in them literally, never as a template */
+            assistant_overrides?: boolean;
+            /** @description The schedule as it is now (update and resume) */
+            current?: components["schemas"]["ScheduleState"];
+            /** @description The schedule no longer exists; the request cannot be approved */
+            gone?: boolean;
+            /** @description The schedule as the approval stores it (create and update) */
+            new?: components["schemas"]["ScheduleState"];
+            /** @description The schedule the request creates (its id is taken when the request is made), changes or resumes */
+            schedule_id: string;
         };
         PictureVault: {
             credential: string;
@@ -8076,8 +8155,11 @@ export interface components {
             host_id?: string;
             id: string;
             job_id?: string;
-            /** @enum {string} */
-            kind: "run" | "retry_failed";
+            /**
+             * @description run, retry_failed, or schedule (create, change or resume a schedule; the picture's schedule says which)
+             * @enum {string}
+             */
+            kind: "run" | "retry_failed" | "schedule";
             reason: string;
             requested_by_token_id?: string;
             /** @description The requesting token's name; empty when the token is gone or there is none */
@@ -8090,6 +8172,8 @@ export interface components {
             sync_error?: string;
             /** @description The repository sync a sync_first request waits or waited for */
             sync_job_id?: string;
+            /** @description A schedule request's schedule: the one it creates (its id is taken when the request is made), changes or resumes */
+            target_id?: string;
             template_id: string;
             /**
              * @description Whether the requesting token can still ask for runs; approving starts the run either way
@@ -8108,7 +8192,7 @@ export interface components {
             approval_path: string;
             /** @description Send it back on approve; a change to the picture refuses the approval */
             fingerprint: string;
-            /** @description What the run would use if it were approved now */
+            /** @description What the run would use if it were approved now; for a schedule request, the schedule as the approval stores it (schedule) and its template */
             picture: components["schemas"]["Picture"];
             request: components["schemas"]["RunRequestDTO"];
         };
@@ -8247,6 +8331,51 @@ export interface components {
             description: string;
             next: string[] | null;
         };
+        ScheduleRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleRequestBody.json
+             */
+            readonly $schema?: string;
+            cron?: string;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @description Extra vars replacing the template's top-level ones of the same name, checked against the template's schema (the template must declare its extra vars). Secret fields and names Ansible or Pulsix act on (ansible_…, pulsix_…, Ansible's magic variables and playbook keywords) cannot be set here; the schedule's runs receive every text in them as literal text, never as a template */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            guards?: components["schemas"]["GuardsDTO"];
+            /** @description Host patterns replacing the template's limit (no @file, regex or subscript patterns) */
+            limit?: string;
+            /** @enum {string} */
+            mode: "cron" | "simple";
+            name: string;
+            /** @description Why the schedule is needed, shown to the person who approves it */
+            reason: string;
+            simple?: components["schemas"]["SimpleDTO"];
+            /** Format: uuid */
+            template_id: string;
+            timezone: string;
+        };
+        ScheduleResumeRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleResumeRequestBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @description Why the schedule should run again, shown to the person who approves it */
+            reason: string;
+        };
         ScheduleRunDTO: {
             /** Format: date-time */
             decided_at: string;
@@ -8266,6 +8395,59 @@ export interface components {
              */
             readonly $schema?: string;
             runs: components["schemas"]["ScheduleRunDTO"][] | null;
+        };
+        ScheduleState: {
+            cron: string;
+            /** @description Human text for the timetable; empty when there is none */
+            description: string;
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            guards: components["schemas"]["Guards"];
+            limit?: string;
+            /** @enum {string} */
+            mode: "cron" | "simple";
+            name: string;
+            paused: boolean;
+            /** Format: int64 */
+            revision?: number;
+            simple?: components["schemas"]["Simple"];
+            template_id: string;
+            template_name: string;
+            timezone: string;
+        };
+        ScheduleUpdateRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ScheduleUpdateRequestBody.json
+             */
+            readonly $schema?: string;
+            cron?: string;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @description The complete new set of the schedule's extra vars (left out keeps them). A secret field the schedule holds is kept with {"$secret":"keep"} and dropped when left out. Extra vars replacing the template's top-level ones of the same name, checked against the template's schema (the template must declare its extra vars). Secret fields and names Ansible or Pulsix act on (ansible_…, pulsix_…, Ansible's magic variables and playbook keywords) cannot be set here; the schedule's runs receive every text in them as literal text, never as a template */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            guards?: components["schemas"]["GuardsDTO"];
+            /** @description Host patterns replacing the template's limit; an empty text removes the schedule's limit */
+            limit?: string;
+            /**
+             * @description Left out, cron switches to cron mode and simple to simple mode
+             * @enum {string}
+             */
+            mode?: "cron" | "simple";
+            name?: string;
+            /** @description Why the change is needed, shown to the person who approves it */
+            reason: string;
+            simple?: components["schemas"]["SimpleDTO"];
+            /** Format: uuid */
+            template_id?: string;
+            timezone?: string;
         };
         Schema: {
             fields: components["schemas"]["Field"][] | null;
@@ -8320,6 +8502,15 @@ export interface components {
             default_locale: "en" | "de";
             mfa_optional: boolean;
             version: string;
+        };
+        Simple: {
+            /** Format: int64 */
+            day?: number;
+            days?: string[] | null;
+            /** Format: int64 */
+            every?: number;
+            kind: string;
+            time?: string;
         };
         SimpleDTO: {
             /**
@@ -17545,6 +17736,41 @@ export interface operations {
             };
         };
     };
+    requestSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-schedules": {
         parameters: {
             query?: {
@@ -17920,6 +18146,42 @@ export interface operations {
             };
         };
     };
+    requestScheduleResume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleResumeRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     runSchedule: {
         parameters: {
             query?: never;
@@ -17973,6 +18235,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleRunsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    requestScheduleUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdateRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
                 };
             };
             /** @description Error */

@@ -714,10 +714,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
 		Commits: reposSvc, SyncJobs: jobsSvc, RepoSyncs: reposSvc,
-		InventorySecrets: inventorySvc, PlaybookVars: playbooksSvc, Agents: agentsSvc,
+		InventorySecrets: inventorySvc, PlaybookVars: playbooksSvc, Agents: agentsSvc, Schedules: schedulesSvc,
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
-		runRequestResolver, time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+		runRequestResolver, runRequestResolver, time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	// A request made with sync_first waits for its repository's sync: the
 	// sync's terminal transition moves it, in the same transaction.
 	jobsQueue.SetSyncWaiters(runRequestsSvc)

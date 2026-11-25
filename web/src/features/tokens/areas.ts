@@ -17,7 +17,8 @@ export type Area =
   | 'jobs.request'
   | 'monitoring.read'
   | 'alerts.handle'
-  | 'activity.read';
+  | 'activity.read'
+  | 'automation.request';
 
 /** One row of the area grid: a read area and the area that writes it. */
 export interface AreaRow {
@@ -36,9 +37,12 @@ export const AREA_ROWS: readonly AreaRow[] = [
 
 export const CREDENTIALS_AREA: Area = 'credentials.names';
 export const ACTIVITY_AREA: Area = 'activity.read';
+/** Asking for schedules a person approves, and pausing or deleting them
+ * (spec 2026-11-25 C): on its own, like the activity log. */
+export const AUTOMATION_AREA: Area = 'automation.request';
 
 /** Every area in the order the grid shows them. */
-const ORDER: readonly Area[] = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA];
+const ORDER: readonly Area[] = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA, AUTOMATION_AREA];
 
 /** The lowest role whose permissions cover the area: the server refuses
  * (422) an area the token's role cannot cover. */
@@ -55,6 +59,7 @@ const MINIMUM_ROLE: Record<Area, Role> = {
   'templates.write': 'operator',
   'credentials.names': 'operator',
   'jobs.request': 'operator',
+  'automation.request': 'operator',
 };
 
 const RANK: Record<Role, number> = { viewer: 1, operator: 2, admin: 3, owner: 4 };

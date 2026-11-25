@@ -723,6 +723,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerOrgSettingsRoutes(orgScoped, deps)        // /orgs/{org}/settings/jobs
 	registerAssistantSettingsRoutes(orgScoped, deps)  // /orgs/{org}/settings/assistant
 	registerRunRequestRoutes(orgScoped, deps)         // /orgs/{org}/run-requests..., .../run-requests, .../retry-requests
+	registerScheduleRequestRoutes(orgScoped, deps)    // /orgs/{org}/schedule-requests, .../schedules/{id}/update-requests, .../resume-requests
 	registerMonitoringSettingsRoutes(orgScoped, deps) // /orgs/{org}/settings/monitoring
 	registerAlertRoutes(orgScoped, deps)              // /orgs/{org}/alerts..., the host view is List's own ?host= filter
 	registerAlertRouteRoutes(orgScoped, deps)         // /orgs/{org}/alert-routes..., GET /orgs/{org}/hosts/{id}/alert-routes

@@ -9,18 +9,19 @@ import (
 
 func TestAreaPermissions(t *testing.T) {
 	cases := map[tenancy.Area][]tenancy.Permission{
-		tenancy.AreaInventoryRead:    {tenancy.PermHostsRead, tenancy.PermInventoryRead},
-		tenancy.AreaInventoryWrite:   {tenancy.PermHostsRead, tenancy.PermInventoryRead, tenancy.PermHostsWrite, tenancy.PermInventoryWrite},
-		tenancy.AreaReposRead:        {tenancy.PermReposRead, tenancy.PermPlaybooksRead},
-		tenancy.AreaReposWrite:       {tenancy.PermReposRead, tenancy.PermPlaybooksRead, tenancy.PermReposWrite, tenancy.PermPlaybooksWrite},
-		tenancy.AreaTemplatesRead:    {tenancy.PermTemplatesRead},
-		tenancy.AreaTemplatesWrite:   {tenancy.PermTemplatesRead, tenancy.PermTemplatesWrite},
-		tenancy.AreaCredentialsNames: {tenancy.PermCredentialsRead},
-		tenancy.AreaJobsRead:         {tenancy.PermJobsRead},
-		tenancy.AreaJobsRequest:      {tenancy.PermJobsRead, tenancy.PermJobsRequest},
-		tenancy.AreaMonitoringRead:   {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead},
-		tenancy.AreaAlertsHandle:     {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead, tenancy.PermAlertsHandle},
-		tenancy.AreaActivityRead:     {tenancy.PermAuditRead},
+		tenancy.AreaInventoryRead:     {tenancy.PermHostsRead, tenancy.PermInventoryRead},
+		tenancy.AreaInventoryWrite:    {tenancy.PermHostsRead, tenancy.PermInventoryRead, tenancy.PermHostsWrite, tenancy.PermInventoryWrite},
+		tenancy.AreaReposRead:         {tenancy.PermReposRead, tenancy.PermPlaybooksRead},
+		tenancy.AreaReposWrite:        {tenancy.PermReposRead, tenancy.PermPlaybooksRead, tenancy.PermReposWrite, tenancy.PermPlaybooksWrite},
+		tenancy.AreaTemplatesRead:     {tenancy.PermTemplatesRead},
+		tenancy.AreaTemplatesWrite:    {tenancy.PermTemplatesRead, tenancy.PermTemplatesWrite},
+		tenancy.AreaCredentialsNames:  {tenancy.PermCredentialsRead},
+		tenancy.AreaJobsRead:          {tenancy.PermJobsRead},
+		tenancy.AreaJobsRequest:       {tenancy.PermJobsRead, tenancy.PermJobsRequest},
+		tenancy.AreaMonitoringRead:    {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead},
+		tenancy.AreaAlertsHandle:      {tenancy.PermAgentsRead, tenancy.PermChecksRead, tenancy.PermMaintenanceRead, tenancy.PermAlertsHandle},
+		tenancy.AreaActivityRead:      {tenancy.PermAuditRead},
+		tenancy.AreaAutomationRequest: {tenancy.PermJobsRead, tenancy.PermAutomationRequest},
 	}
 	for area, want := range cases {
 		got, ok := tenancy.AreaPermissions(area)
@@ -119,7 +120,24 @@ func TestNewAreas(t *testing.T) {
 	if len(all) < len(want) {
 		t.Fatalf("Areas() = %v", all)
 	}
-	if got := all[len(all)-3:]; !slices.Equal(got, want) {
+	if got := all[len(all)-4 : len(all)-1]; !slices.Equal(got, want) {
 		t.Errorf("Areas() ends with %v, want %v", got, want)
+	}
+}
+
+func TestAutomationRequestArea(t *testing.T) {
+	if tenancy.RoleAllowsArea(tenancy.RoleViewer, tenancy.AreaAutomationRequest) {
+		t.Error("a viewer role covers automation.request")
+	}
+	if !tenancy.RoleAllowsArea(tenancy.RoleOperator, tenancy.AreaAutomationRequest) {
+		t.Error("an operator role does not cover automation.request")
+	}
+	for _, p := range []tenancy.Permission{tenancy.PermTemplatesWrite, tenancy.PermReposWrite, tenancy.PermJobsRun, tenancy.PermAgentsWrite} {
+		if tenancy.AreasAllow([]tenancy.Area{tenancy.AreaAutomationRequest}, p) {
+			t.Errorf("automation.request grants %s", p)
+		}
+	}
+	if all := tenancy.Areas(); all[len(all)-1] != tenancy.AreaAutomationRequest {
+		t.Errorf("Areas() = %v, want automation.request last", all)
 	}
 }

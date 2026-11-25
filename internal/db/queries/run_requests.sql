@@ -3,10 +3,13 @@
 
 -- name: InsertRunRequest :exec
 -- A request is pending (expires_at set) or, made with sync_first, waiting
--- for its sync (expires_at NULL, sync_job_id set; migration 00124).
+-- for its sync (expires_at NULL, sync_job_id set; migration 00124). A
+-- request of another kind than run or retry_failed carries its payload and
+-- target (migration 00129).
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,
-  requested_by_user, requested_by_token, status, expires_at, created_at, overrides, sync_job_id, expires_in_minutes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16);
+  requested_by_user, requested_by_token, status, expires_at, created_at, overrides, sync_job_id, expires_in_minutes,
+  payload, target_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
 
 -- name: GetRunRequest :one
 SELECT * FROM run_requests WHERE org_id = $1 AND id = $2;
@@ -68,11 +71,12 @@ WHERE t.id = ANY(sqlc.arg(ids)::uuid[]);
 -- run group, before anything is enqueued, so a claim of one of its jobs
 -- always finds it (migration 00103), and the commit the run is pinned to
 -- (migration 00123; NULL for none) and the hosts it enrols agents on
--- (migration 00127; NULL for no list).
+-- (migration 00127; NULL for no list). Only a run or a retry takes a run
+-- group: the approval of another kind starts no run (migration 00129).
 UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
   approved_fingerprint = sqlc.narg(approved_fingerprint), pinned_commit = sqlc.narg(pinned_commit),
   enroll_host_ids = sqlc.narg(enroll_host_ids)::uuid[],
-  run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' THEN id ELSE run_group_id END,
+  run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' AND kind IN ('run', 'retry_failed') THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, sqlc.arg(decided_at))
 WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id)
   AND (status = 'pending' OR (status = 'waiting_for_sync' AND sqlc.arg(status)::text = 'rejected'));

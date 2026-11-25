@@ -49,6 +49,11 @@ const (
 	// 2026-11-16 assistant access, "Run requests"): the operator bar
 	// jobs.run clears, because an approved request starts a run.
 	PermJobsRequest Permission = "jobs.request"
+	// PermAutomationRequest asks for a schedule (create, change, resume)
+	// that a person then approves, and pauses or deletes one directly
+	// (spec 2026-11-25 assistant API gaps, C): the operator bar
+	// templates.write clears.
+	PermAutomationRequest Permission = "automation.request"
 
 	PermWorkersRead  Permission = "workers.read"
 	PermWorkersWrite Permission = "workers.write"
@@ -123,6 +128,8 @@ var matrix = map[Permission]Role{
 	PermJobsRun:  RoleOperator,
 	// Requesting a run is no less than starting one once approved.
 	PermJobsRequest: RoleOperator,
+	// Asking for a schedule is no less than creating one once approved.
+	PermAutomationRequest: RoleOperator,
 	// Workers are infrastructure: owner and admin see and manage them
 	// (spec 2026-09-18 §4).
 	PermWorkersRead:  RoleAdmin,

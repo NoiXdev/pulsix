@@ -22,6 +22,9 @@ type Approved struct {
 	TemplateRevision int64
 	FollowUps        *PictureFollowUps
 	Started          []PictureFollowUp
+	// Schedule is the approved picture of a schedule request; nil for a
+	// run or a retry.
+	Schedule *PictureSchedule
 }
 
 // Approve enqueues what the request asks for, if fingerprint still matches
@@ -50,6 +53,14 @@ type Approved struct {
 // about the picture. The hosts it enrols are stored with the decision and
 // passed to the enqueue like the commit.
 func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID, mayEnrol bool) (Approved, error) {
+	return s.ApproveWith(ctx, orgID, id, by, fingerprint, followUps, Approver{Enrol: mayEnrol})
+}
+
+// ApproveWith is Approve for a request of any kind, with what the
+// approving person may do: a run or a retry is approved as Approve
+// describes; a schedule request needs may.WriteTemplates
+// (approveSchedule).
+func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID, may Approver) (Approved, error) {
 	r, p, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
 		return Approved{}, err
@@ -65,7 +76,14 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	default:
 		return Approved{}, ErrDecided
 	}
-	if p.AgentEnrollment != nil && !mayEnrol {
+	switch r.Kind {
+	case KindSchedule:
+		return s.approveSchedule(ctx, orgID, r, p, by, fingerprint, current, followUps, may)
+	case KindRun, KindRetryFailed:
+	default:
+		return Approved{}, fmt.Errorf("%w: requests of kind %q cannot be approved by this version", ErrInvalidInput, r.Kind)
+	}
+	if p.AgentEnrollment != nil && !may.Enrol {
 		return Approved{}, ErrEnrollmentNotAllowed
 	}
 	pin := ""

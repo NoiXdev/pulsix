@@ -114,7 +114,7 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, approved.PinnedCommit
 	r.EnrollHostIDs = approved.EnrollHostIDs
-	if to == runrequests.StatusApproved {
+	if to == runrequests.StatusApproved && (r.Kind == runrequests.KindRun || r.Kind == runrequests.KindRetryFailed) {
 		group := r.ID
 		r.RunGroupID = &group
 	}
@@ -267,6 +267,7 @@ type wiring struct {
 	enq   *fakeEnqueuer
 	val   *fakeValidator
 	syncs *fakeSyncer
+	auto  *fakeAutomation
 	now   time.Time
 	org   uuid.UUID
 }
@@ -275,9 +276,10 @@ func newWiring() *wiring {
 	w := &wiring{
 		store: newMemStore(), pics: &fakePictures{p: runrequests.Picture{TemplateName: "deploy", Limit: "web"}},
 		enq: &fakeEnqueuer{group: uuid.Must(uuid.NewV7())}, val: &fakeValidator{template: uuid.Must(uuid.NewV7())}, syncs: &fakeSyncer{},
-		now: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC), org: uuid.Must(uuid.NewV7()),
+		auto: &fakeAutomation{template: uuid.Must(uuid.NewV7())},
+		now:  time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC), org: uuid.Must(uuid.NewV7()),
 	}
-	w.svc = runrequests.NewService(w.store, w.pics, w.enq, w.val, w.syncs, func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	w.svc = runrequests.NewService(w.store, w.pics, w.enq, w.val, w.syncs, w.auto, func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
 

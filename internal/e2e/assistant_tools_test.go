@@ -26,6 +26,7 @@ func (a *assistantSuite) everyTool() {
 	ids := a.inventoryWrites(cs)
 	a.repoAndTemplateWrites(cs)
 	a.alertWrites(cs)
+	a.automationWrites(cs)
 
 	// --- Job tools: a pending request and two refusals --------------------
 	// request_retry and cancel_job succeed only on a run of the token's own

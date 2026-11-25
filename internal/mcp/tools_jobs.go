@@ -200,7 +200,7 @@ func jobTools() []toolDef {
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in retryRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/jobs/%s/retry-requests", in.JobID, map[string]any{"reason": in.Reason})
 			}),
-		define("list_run_requests", "List run requests", "Run requests, newest first; check whether yours was approved.",
+		define("list_run_requests", "List run requests", "Requests (runs, retries and schedule requests), newest first; check whether yours was approved.",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in runRequestListArgs) (any, error) {
 				q := url.Values{}
 				if in.Status != "" {
@@ -208,7 +208,7 @@ func jobTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/run-requests")
 			}),
-		define("get_run_request", "Get run request", "One run request, what the run would use now, and, once approved, its run group.",
+		define("get_run_request", "Get run request", "One request: for a run, what the run would use now and, once approved, its run group; for a schedule request, the schedule as it will be and as it is (picture.schedule).",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in runRequestGetArgs) (any, error) {
 				return passGet(ctx, c, nil, "/run-requests/%s", in.RequestID)
 			}),
@@ -219,10 +219,20 @@ func jobTools() []toolDef {
 	}
 }
 
+// runNote is what a run or retry request's result tells the assistant.
+const runNote = "Nothing runs until a person approves this request at approval_url. Give them the link."
+
 // requestResult creates a run or retry request and returns what the
 // assistant hands on: the id, the status, the expiry and the link.
 func (c *caller) requestResult(ctx context.Context, format, id string, body map[string]any) (any, error) {
-	path, err := c.orgPath(format, id)
+	return c.requestAt(ctx, format, []string{id}, body, runNote)
+}
+
+// requestAt creates a request of any kind at the route format names (its
+// ids filled in) and returns the id, the status, the expiry, the link,
+// note and the picture.
+func (c *caller) requestAt(ctx context.Context, format string, ids []string, body map[string]any, note string) (any, error) {
+	path, err := c.orgPath(format, ids...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +256,7 @@ func (c *caller) requestResult(ctx context.Context, format, id string, body map[
 	result := map[string]any{
 		"request_id": out.Request.ID, "status": out.Request.Status,
 		"approval_url": c.publicURL + out.ApprovalPath,
-		"note":         "Nothing runs until a person approves this request at approval_url. Give them the link.",
+		"note":         note,
 		"picture":      out.Picture,
 	}
 	if out.Request.ExpiresAt != "" {

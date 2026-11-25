@@ -381,4 +381,9 @@ func TestCheckUntrustedRefusesReservedNamesAndNamesItsSource(t *testing.T) {
 	if err := checkWireMarkers(json.RawMessage(`{"cfg":{"__ansible_unsafe":1}}`), TriggerManual); err == nil || !strings.Contains(err.Error(), "run request values") {
 		t.Fatalf("wire markers of a run request = %v", err)
 	}
+	// An assistant's schedule (an approved schedule request, spec
+	// 2026-11-25 C) is held to the run request's rules and says so.
+	if err := kw.checkUntrusted(TriggerSchedule); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "schedule request value") {
+		t.Fatalf("schedule request tags = %v", err)
+	}
 }

@@ -19,7 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
-// Resolver implements Pictures, Enqueuer, Validator and Syncer over the existing
+// Resolver implements Pictures, Enqueuer, Validator, Syncer and Automation over the existing
 // domain services, so the manager and the API tests wire the same code.
 type Resolver struct{ src Sources }
 
@@ -139,7 +139,11 @@ func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request
 }
 
 // Picture implements Pictures: everything the run would use now.
+// A schedule request's picture is the schedule's (schedulePicture).
 func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (Picture, error) {
+	if req.Kind == KindSchedule {
+		return r.schedulePicture(ctx, orgID, req)
+	}
 	tmpl, err := r.src.Templates.Get(ctx, orgID, req.TemplateID)
 	if err != nil {
 		return Picture{}, mapNotFound(err)

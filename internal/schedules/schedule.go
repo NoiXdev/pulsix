@@ -92,6 +92,12 @@ type Schedule struct {
 	CreatedBy             *uuid.UUID
 	CreatedAt, UpdatedAt  time.Time
 	Revision              int64
+	// UntrustedOverrides marks overrides an assistant asked for (an
+	// approved schedule request, spec 2026-11-25 C): the schedule's runs
+	// carry them untrusted (jobs.RunOverrides.Untrusted), so the claim
+	// re-checks them and marks every text unsafe for Ansible. It stays
+	// while the schedule has overrides (checkUntrusted).
+	UntrustedOverrides bool
 }
 
 // Input is what an operator submits for create and update.
@@ -104,6 +110,9 @@ type Input struct {
 	Timezone   string
 	Guards     Guards
 	Overrides  templates.Overrides
+	// Untrusted says the overrides are an assistant's (an approved
+	// schedule request); the REST routes never set it.
+	Untrusted bool
 }
 
 // Run is one recorded decision.

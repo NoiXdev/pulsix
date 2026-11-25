@@ -1006,27 +1006,30 @@ type RunRequest struct {
 	ExpiresInMinutes    *int32             `json:"expires_in_minutes"`
 	SyncError           *string            `json:"sync_error"`
 	EnrollHostIds       []uuid.UUID        `json:"enroll_host_ids"`
+	Payload             []byte             `json:"payload"`
+	TargetID            pgtype.UUID        `json:"target_id"`
 }
 
 type Schedule struct {
-	ID         uuid.UUID          `json:"id"`
-	OrgID      uuid.UUID          `json:"org_id"`
-	TemplateID uuid.UUID          `json:"template_id"`
-	Name       string             `json:"name"`
-	Mode       string             `json:"mode"`
-	Cron       string             `json:"cron"`
-	Simple     []byte             `json:"simple"`
-	Timezone   string             `json:"timezone"`
-	Guards     []byte             `json:"guards"`
-	Limit      *string            `json:"limit"`
-	ExtraVars  []byte             `json:"extra_vars"`
-	Paused     bool               `json:"paused"`
-	NextRunAt  pgtype.Timestamptz `json:"next_run_at"`
-	LastRunAt  pgtype.Timestamptz `json:"last_run_at"`
-	CreatedBy  pgtype.UUID        `json:"created_by"`
-	CreatedAt  time.Time          `json:"created_at"`
-	UpdatedAt  time.Time          `json:"updated_at"`
-	Revision   int64              `json:"revision"`
+	ID                 uuid.UUID          `json:"id"`
+	OrgID              uuid.UUID          `json:"org_id"`
+	TemplateID         uuid.UUID          `json:"template_id"`
+	Name               string             `json:"name"`
+	Mode               string             `json:"mode"`
+	Cron               string             `json:"cron"`
+	Simple             []byte             `json:"simple"`
+	Timezone           string             `json:"timezone"`
+	Guards             []byte             `json:"guards"`
+	Limit              *string            `json:"limit"`
+	ExtraVars          []byte             `json:"extra_vars"`
+	Paused             bool               `json:"paused"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	LastRunAt          pgtype.Timestamptz `json:"last_run_at"`
+	CreatedBy          pgtype.UUID        `json:"created_by"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Revision           int64              `json:"revision"`
+	UntrustedOverrides bool               `json:"untrusted_overrides"`
 }
 
 type ScheduleNotification struct {

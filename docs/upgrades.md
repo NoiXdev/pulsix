@@ -897,6 +897,30 @@ tokens a newer manager minted for a job an older one ends live out their 24 hour
 Stop every manager instance before the new version starts. Workers and agents are not
 affected: the token reaches the worker as an ordinary inventory variable.
 
+Schedule requests (spec 2026-11-25 assistant API gaps, C) add migration 00129. It
+widens the `run_requests.kind` CHECK by `schedule`, `trigger`, `schedule_review` and
+`trigger_review` (only `schedule` is used by this version) and adds the nullable
+`run_requests.payload` (jsonb: what a request of another kind than `run` and
+`retry_failed` creates or changes, never a secret) and `run_requests.target_id` (uuid,
+no foreign key), with a CHECK that a run or retry has no payload and every other kind
+has one; every existing row passes. It also adds `schedules.untrusted_overrides`
+(boolean, NOT NULL DEFAULT false). All catalog changes that rewrite nothing, and a
+backup carries them. The new token area `automation.request` lets an assistant ask for
+a schedule to be created, changed or resumed (`create_schedule`, `update_schedule`,
+`resume_schedule`; REST `POST …/schedule-requests`, `POST …/schedules/{id}/update-requests`,
+`POST …/schedules/{id}/resume-requests`) and pause or delete one directly
+(`pause_schedule`, `delete_schedule`; the existing routes accept `automation.request`
+beside `templates.write`). A person approves such a request on the run request routes
+and page, which needs `templates.write` beside `jobs.run`; the approval stores the
+schedule exactly as pictured, created by the approver. The limit and extra vars an
+assistant set are stored with `untrusted_overrides`: the schedule's runs carry them as
+untrusted values, re-checked at the claim and marked unsafe for Ansible; a person's
+later edit keeps the mark while the schedule has overrides. **An older manager
+alongside ignores the mark** and runs such a schedule's values as trusted, and it
+shows a schedule request as a run of its template, whose approval there would start
+that run instead of saving the schedule. Stop every manager instance before the new
+version starts, as 00123 requires. Workers and agents are not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

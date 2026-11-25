@@ -5,28 +5,9 @@ import type { RunPicture } from '../../api/hooks/useRunRequests.ts';
 import { useT } from '../../i18n/useT.ts';
 import { shortId } from './status.ts';
 import { CommitId } from './CommitId.tsx';
+import { isMaskedSecret, varText } from './pictureVars.ts';
 
 const NONE = '—';
-
-/** isMaskedSecret reports a value the server masked: a secret extra var
- * arrives as {"$secret": "set"}, never with its value. */
-function isMaskedSecret(value: unknown): boolean {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 1 &&
-    (value as Record<string, unknown>).$secret === 'set'
-  );
-}
-
-/** varText renders an extra var's value: a string as it is, anything else
- * as JSON, with every masked secret inside it replaced by `secretLabel`. */
-function varText(value: unknown, secretLabel: string): string {
-  if (isMaskedSecret(value)) return secretLabel;
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value, (_key, v: unknown) => (isMaskedSecret(v) ? secretLabel : v));
-}
 
 function Mono({ children }: { children: string | number | undefined | null }) {
   return <span className="font-mono">{children === undefined || children === null || children === '' ? NONE : children}</span>;

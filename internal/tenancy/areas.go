@@ -24,6 +24,11 @@ const (
 	AreaMonitoringRead   Area = "monitoring.read"
 	AreaAlertsHandle     Area = "alerts.handle"
 	AreaActivityRead     Area = "activity.read"
+	// AreaAutomationRequest asks for schedules (and, later, webhook
+	// triggers) that a person then approves (spec 2026-11-25 assistant API
+	// gaps, C), and pauses or deletes them directly: stopping runs needs
+	// no approval (decision D1).
+	AreaAutomationRequest Area = "automation.request"
 )
 
 // areaOrder is the canonical order Areas returns.
@@ -34,6 +39,7 @@ var areaOrder = []Area{
 	AreaCredentialsNames,
 	AreaJobsRead, AreaJobsRequest,
 	AreaMonitoringRead, AreaAlertsHandle, AreaActivityRead,
+	AreaAutomationRequest,
 }
 
 // areaPerms maps each area to its permissions. jobs.run is deliberately in
@@ -51,6 +57,10 @@ var areaPerms = map[Area][]Permission{
 	AreaMonitoringRead:   {PermAgentsRead, PermChecksRead, PermMaintenanceRead},
 	AreaAlertsHandle:     {PermAgentsRead, PermChecksRead, PermMaintenanceRead, PermAlertsHandle},
 	AreaActivityRead:     {PermAuditRead},
+	// automation.request reads requests (and the runs an approved schedule
+	// starts) like jobs.request does; it grants no write on templates or
+	// repositories, and approving stays a person's.
+	AreaAutomationRequest: {PermJobsRead, PermAutomationRequest},
 }
 
 // Areas returns every known area in canonical order.

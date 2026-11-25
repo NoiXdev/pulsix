@@ -42,7 +42,7 @@ const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
   approved_fingerprint = $4, pinned_commit = $5,
   enroll_host_ids = $6::uuid[],
-  run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END,
+  run_group_id = CASE WHEN $1::text = 'approved' AND kind IN ('run', 'retry_failed') THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, $3)
 WHERE org_id = $7::uuid AND id = $8
   AND (status = 'pending' OR (status = 'waiting_for_sync' AND $1::text = 'rejected'))
@@ -66,7 +66,8 @@ type DecideRunRequestParams struct {
 // run group, before anything is enqueued, so a claim of one of its jobs
 // always finds it (migration 00103), and the commit the run is pinned to
 // (migration 00123; NULL for none) and the hosts it enrols agents on
-// (migration 00127; NULL for no list).
+// (migration 00127; NULL for no list). Only a run or a retry takes a run
+// group: the approval of another kind starts no run (migration 00129).
 func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestParams) (int64, error) {
 	result, err := q.db.Exec(ctx, decideRunRequest,
 		arg.Status,
@@ -115,7 +116,7 @@ func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitPa
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -150,12 +151,14 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.ExpiresInMinutes,
 		&i.SyncError,
 		&i.EnrollHostIds,
+		&i.Payload,
+		&i.TargetID,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -190,6 +193,8 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.ExpiresInMinutes,
 		&i.SyncError,
 		&i.EnrollHostIds,
+		&i.Payload,
+		&i.TargetID,
 	)
 	return i, err
 }
@@ -197,8 +202,9 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 const insertRunRequest = `-- name: InsertRunRequest :exec
 
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,
-  requested_by_user, requested_by_token, status, expires_at, created_at, overrides, sync_job_id, expires_in_minutes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  requested_by_user, requested_by_token, status, expires_at, created_at, overrides, sync_job_id, expires_in_minutes,
+  payload, target_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 `
 
 type InsertRunRequestParams struct {
@@ -218,12 +224,16 @@ type InsertRunRequestParams struct {
 	Overrides        []byte             `json:"overrides"`
 	SyncJobID        pgtype.UUID        `json:"sync_job_id"`
 	ExpiresInMinutes *int32             `json:"expires_in_minutes"`
+	Payload          []byte             `json:"payload"`
+	TargetID         pgtype.UUID        `json:"target_id"`
 }
 
 // Run requests (spec 2026-11-16 assistant access). Org-scoped like every
 // store query; each statement also names org_id.
 // A request is pending (expires_at set) or, made with sync_first, waiting
-// for its sync (expires_at NULL, sync_job_id set; migration 00124).
+// for its sync (expires_at NULL, sync_job_id set; migration 00124). A
+// request of another kind than run or retry_failed carries its payload and
+// target (migration 00129).
 func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestParams) error {
 	_, err := q.db.Exec(ctx, insertRunRequest,
 		arg.ID,
@@ -242,6 +252,8 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 		arg.Overrides,
 		arg.SyncJobID,
 		arg.ExpiresInMinutes,
+		arg.Payload,
+		arg.TargetID,
 	)
 	return err
 }
@@ -367,7 +379,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -418,6 +430,8 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.ExpiresInMinutes,
 			&i.SyncError,
 			&i.EnrollHostIds,
+			&i.Payload,
+			&i.TargetID,
 		); err != nil {
 			return nil, err
 		}

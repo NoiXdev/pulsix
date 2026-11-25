@@ -5,7 +5,7 @@ import { en } from '../../i18n/en/index.ts';
 import { de } from '../../i18n/de/index.ts';
 import { AreaGrid } from './AreaGrid.tsx';
 
-const KEYS = ['inventory', 'repos', 'templates', 'jobs', 'monitoring', 'credentials', 'activity'] as const;
+const KEYS = ['inventory', 'repos', 'templates', 'jobs', 'monitoring', 'credentials', 'activity', 'automation'] as const;
 
 describe('AreaGrid descriptions', () => {
   it.each([
@@ -49,7 +49,7 @@ describe('AreaGrid descriptions', () => {
       const row = screen.getByText(a.rows[key]).closest('tr') as HTMLElement;
       expect(within(row).getByText(a.descriptions[key])).toBeInTheDocument();
     }
-    for (const key of ['credentials', 'activity'] as const) {
+    for (const key of ['credentials', 'activity', 'automation'] as const) {
       const label = screen.getByText(a.descriptions[key]).closest('label') as HTMLElement;
       expect(within(label).getByText(a[key])).toBeInTheDocument();
     }
@@ -69,6 +69,7 @@ describe('AreaGrid descriptions', () => {
       ['Monitoring & alerts: read', a.descriptions.monitoring],
       [a.credentials, a.descriptions.credentials],
       [a.activity, a.descriptions.activity],
+      [a.automation, a.descriptions.automation],
     ];
     for (const [name, text] of cases) {
       expect(screen.getByRole('checkbox', { name })).toHaveAccessibleDescription(text);

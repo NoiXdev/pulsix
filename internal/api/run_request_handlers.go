@@ -23,7 +23,7 @@ import (
 
 type runRequestDTO struct {
 	ID                 string `json:"id"`
-	Kind               string `json:"kind" enum:"run,retry_failed"`
+	Kind               string `json:"kind" enum:"run,retry_failed,schedule" doc:"run, retry_failed, or schedule (create, change or resume a schedule; the picture's schedule says which)"`
 	Status             string `json:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
 	TemplateID         string `json:"template_id"`
 	HostID             string `json:"host_id,omitempty"`
@@ -41,6 +41,7 @@ type runRequestDTO struct {
 	ExpiresAt            *time.Time `json:"expires_at,omitempty" doc:"When a pending request expires; absent while it waits for its sync, whose success starts the expiry"`
 	SyncJobID            string     `json:"sync_job_id,omitempty" doc:"The repository sync a sync_first request waits or waited for"`
 	SyncError            string     `json:"sync_error,omitempty" doc:"Why a failed request's sync did not let it become pending"`
+	TargetID             string     `json:"target_id,omitempty" doc:"A schedule request's schedule: the one it creates (its id is taken when the request is made), changes or resumes"`
 	CreatedAt            time.Time  `json:"created_at"`
 }
 
@@ -58,6 +59,7 @@ func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 	dto.SyncJobID = uuidString(r.SyncJobID)
 	dto.HostID, dto.JobID, dto.RequestedByTokenID = uuidString(r.HostID), uuidString(r.JobID), uuidString(r.RequestedByToken)
 	dto.DecidedByUserID, dto.RunGroupID = uuidString(r.DecidedBy), uuidString(r.RunGroupID)
+	dto.TargetID = uuidString(r.TargetID)
 	return dto
 }
 
@@ -71,7 +73,7 @@ func uuidString(id *uuid.UUID) string {
 type runRequestDetailOutput struct {
 	Body struct {
 		Request      runRequestDTO       `json:"request"`
-		Picture      runrequests.Picture `json:"picture" doc:"What the run would use if it were approved now"`
+		Picture      runrequests.Picture `json:"picture" doc:"What the run would use if it were approved now; for a schedule request, the schedule as the approval stores it (schedule) and its template"`
 		Fingerprint  string              `json:"fingerprint" doc:"Send it back on approve; a change to the picture refuses the approval"`
 		ApprovalPath string              `json:"approval_path" doc:"The GUI page where a person approves or rejects the request"`
 	}
@@ -246,11 +248,19 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 			}
 			selection = &ids
 		}
-		a, err := deps.RunRequests.Approve(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection, mayEnrolAgents(scope))
+		// Approving a schedule request also needs what the schedule
+		// routes need (templates.write); the service asks for it by kind.
+		may := runrequests.Approver{Enrol: mayEnrolAgents(scope), WriteTemplates: tenancy.Allows(scope.Role, tenancy.PermTemplatesWrite)}
+		a, err := deps.RunRequests.ApproveWith(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection, may)
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
-		setAuditObject(ctx, a.Request.ID.String(), approvalSummary(a))
+		if a.Schedule != nil {
+			setAuditObject(ctx, a.Request.ID.String(), scheduleApprovalSummary(a))
+			auditAppliedSchedule(ctx, deps, scope, a)
+		} else {
+			setAuditObject(ctx, a.Request.ID.String(), approvalSummary(a))
+		}
 		out := &runRequestOutput{}
 		out.Body.Request = toRunRequestDTO(a.Request)
 		return out, nil
@@ -344,7 +354,7 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, runrequests.ErrNotFound):
 		return huma.Error404NotFound("not found")
-	case errors.Is(err, runrequests.ErrEnrollmentNotAllowed):
+	case errors.Is(err, runrequests.ErrEnrollmentNotAllowed), errors.Is(err, runrequests.ErrNotAllowed):
 		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, runrequests.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())

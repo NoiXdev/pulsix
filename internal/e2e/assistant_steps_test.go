@@ -69,6 +69,8 @@ var expectedTools = map[tenancy.Area][]string{
 	tenancy.AreaMonitoringRead:   monitoringReadTools,
 	tenancy.AreaAlertsHandle:     alertsHandleTools,
 	tenancy.AreaActivityRead:     {"list_activity"},
+	// automation.request reads requests like jobs.request (jobs.read).
+	tenancy.AreaAutomationRequest: append(slices.Clone(jobsReadTools), "create_schedule", "update_schedule", "resume_schedule", "pause_schedule", "delete_schedule"),
 }
 
 // assistantSeed holds the ids the seed created.

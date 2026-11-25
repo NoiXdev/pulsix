@@ -34,7 +34,7 @@ type orgTokenCreateInput struct {
 		// Kind and Areas (spec 2026-11-16 assistant access): an assistant
 		// token works only at the assistant endpoint and within its areas.
 		Kind  string   `json:"kind,omitempty" enum:"api,assistant" doc:"api (the default) or assistant"`
-		Areas []string `json:"areas,omitempty" doc:"Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request, monitoring.read, alerts.handle, activity.read)"`
+		Areas []string `json:"areas,omitempty" doc:"Assistant tokens only: the areas the token may use (inventory.read, inventory.write, repos.read, repos.write, templates.read, templates.write, credentials.names, jobs.read, jobs.request, monitoring.read, alerts.handle, activity.read, automation.request)"`
 	}
 }
 

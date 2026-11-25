@@ -240,7 +240,9 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("updateSchedule", "schedule"))
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/schedules/{id}", func(ctx context.Context, in *scheduleIDInput) (*okOutput, error) {
-		scope, id, err := scheduleScope(ctx, deps, in.Org, in.ID, tenancy.PermTemplatesWrite)
+		// Deleting only stops runs: automation.request may do it directly
+		// (spec 2026-11-25 assistant API gaps, decision D1).
+		scope, id, err := scheduleScope(ctx, deps, in.Org, in.ID, tenancy.PermTemplatesWrite, tenancy.PermAutomationRequest)
 		if err != nil {
 			return nil, err
 		}
@@ -259,7 +261,14 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		{"/resume", "resumeSchedule", "resumed schedule ", false},
 	} {
 		huma.Post(hapi, "/api/v1/orgs/{org}/schedules/{id}"+action.path, func(ctx context.Context, in *scheduleIDInput) (*scheduleOutput, error) {
-			scope, id, err := scheduleScope(ctx, deps, in.Org, in.ID, tenancy.PermTemplatesWrite)
+			// Pausing only stops runs: automation.request may do it
+			// directly (decision D1); resuming starts them again, which
+			// an assistant asks for (resume-requests).
+			perms := []tenancy.Permission{tenancy.PermTemplatesWrite}
+			if action.pause {
+				perms = append(perms, tenancy.PermAutomationRequest)
+			}
+			scope, id, err := scheduleScope(ctx, deps, in.Org, in.ID, perms...)
 			if err != nil {
 				return nil, err
 			}
@@ -311,8 +320,8 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 	})
 }
 
-func scheduleScope(ctx context.Context, deps Deps, org, rawID string, perm tenancy.Permission) (Scope, uuid.UUID, error) {
-	scope, err := requireOrg(ctx, deps, org, perm)
+func scheduleScope(ctx context.Context, deps Deps, org, rawID string, perms ...tenancy.Permission) (Scope, uuid.UUID, error) {
+	scope, err := requireOrgAny(ctx, deps, org, perms...)
 	if err != nil {
 		return Scope{}, uuid.Nil, err
 	}

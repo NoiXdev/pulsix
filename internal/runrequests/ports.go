@@ -37,3 +37,19 @@ type Validator interface {
 	// returns them as the retry's run overrides; nil for none.
 	RetryRunOverrides(ctx context.Context, orgID, jobID uuid.UUID, ov *Overrides) (*jobs.RunOverrides, error)
 }
+
+// Automation checks and applies the requests that create or change what
+// runs later (spec 2026-11-25 assistant API gaps, C): schedules now,
+// webhook triggers next.
+type Automation interface {
+	// ValidateSchedule checks a schedule request the way the schedule
+	// routes would check the schedule itself, against target (the id a
+	// create takes, or the schedule an update or resume names), and
+	// returns what the request stores: the change, with an update's patch
+	// merged into the schedule as it is now, and the template the
+	// schedule runs with its revision.
+	ValidateSchedule(ctx context.Context, orgID, target uuid.UUID, in ScheduleInput) (ScheduleChange, uuid.UUID, int64, error)
+	// ApplySchedule does what the approved schedule request r asks for,
+	// exactly as p (the approved picture) shows it, as actor.
+	ApplySchedule(ctx context.Context, orgID uuid.UUID, r Request, p PictureSchedule, actor uuid.UUID) error
+}

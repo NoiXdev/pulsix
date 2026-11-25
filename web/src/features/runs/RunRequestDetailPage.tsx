@@ -21,6 +21,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { RunPictureSections } from './RunPictureSections.tsx';
 import { RunRequestFollowUps } from './RunRequestFollowUps.tsx';
+import { ScheduleRequestSections } from './ScheduleRequestSections.tsx';
 import { startableFollowUps } from './followUps.ts';
 import { requestTone, useNow } from './runRequestStatus.ts';
 import { shortId } from './status.ts';
@@ -47,6 +48,10 @@ import { shortId } from './status.ts';
  * A request made with sync_first waits for its repository's sync first:
  * the page says so and links the sync, offers only Reject, and once the
  * sync failed shows its error (spec 2026-11-25 A).
+ *
+ * A schedule request (spec 2026-11-25 C) shows the schedule as it is and
+ * as the approval leaves it instead of a run picture; approving it needs
+ * templates.write as well, starts no run, and opens the schedule.
  */
 export function RunRequestDetailPage() {
   const t = useT();
@@ -102,7 +107,11 @@ export function RunRequestDetailPage() {
     if (!ids.delete(templateId)) ids.add(templateId);
     setDeselection({ fingerprint, ids });
   }
-  const canRun = may(orgInfo.data?.org.role, 'jobs.run');
+  // A schedule request's picture is the schedule's (spec 2026-11-25 C).
+  const schedule = request.kind === 'schedule' ? picture.schedule : undefined;
+  const sd = d.schedule;
+  const canRun = may(orgInfo.data?.org.role, 'jobs.run') && (!schedule || may(orgInfo.data?.org.role, 'templates.write'));
+  const scheduleGone = !!schedule?.gone;
   const pending = request.status === 'pending';
   // A sync_first request waits for its repository's sync, then is pending,
   // or fails with the sync's error (spec 2026-11-25 A). While it waits a
@@ -170,6 +179,11 @@ export function RunRequestDetailPage() {
         ? startable.filter((f) => !deselected.has(f.template_id)).map((f) => f.template_id)
         : undefined;
       const { request: approved } = await approve.mutateAsync({ fingerprint, followUps });
+      if (schedule) {
+        toast.show(sd.approved);
+        await openSchedule(approved.target_id);
+        return;
+      }
       toast.show(d.approved);
       await openRun(approved.run_group_id);
     } catch (err) {
@@ -183,8 +197,12 @@ export function RunRequestDetailPage() {
     }
   }
 
+  async function openSchedule(scheduleId: string | undefined) {
+    await navigate({ to: '/o/$org/schedules', params: { org }, search: { id: scheduleId, template: undefined } });
+  }
+
   async function onReject() {
-    if (!(await ask({ message: d.rejectConfirm, confirmLabel: d.reject, destructive: true }))) return;
+    if (!(await ask({ message: schedule ? sd.rejectConfirm : d.rejectConfirm, confirmLabel: d.reject, destructive: true }))) return;
     try {
       await reject.mutateAsync();
       toast.show(d.rejected);
@@ -194,21 +212,23 @@ export function RunRequestDetailPage() {
   }
 
   const s = d.section;
-  const nav: SectionNavItem[] = [
-    { id: 'template', label: s.template },
-    { id: 'playbook', label: s.playbook },
-    { id: 'targets', label: s.targets, count: (picture.targets ?? []).length },
-    ...(picture.agent_enrollment ? [{ id: 'enrollment', label: s.enrollment }] : []),
-    { id: 'credentials', label: s.credentials },
-    { id: 'vars', label: s.vars },
-    ...(picture.retry ? [{ id: 'retry', label: s.retry }] : []),
-    ...(picture.follow_ups ? [{ id: 'follow-ups', label: s.followUps }] : []),
-  ];
+  const nav: SectionNavItem[] = schedule
+    ? [{ id: 'schedule', label: sd.section }]
+    : [
+        { id: 'template', label: s.template },
+        { id: 'playbook', label: s.playbook },
+        { id: 'targets', label: s.targets, count: (picture.targets ?? []).length },
+        ...(picture.agent_enrollment ? [{ id: 'enrollment', label: s.enrollment }] : []),
+        { id: 'credentials', label: s.credentials },
+        { id: 'vars', label: s.vars },
+        ...(picture.retry ? [{ id: 'retry', label: s.retry }] : []),
+        ...(picture.follow_ups ? [{ id: 'follow-ups', label: s.followUps }] : []),
+      ];
 
   const sidebar = (
     <div className="flex flex-col gap-4">
       <SidebarHeading
-        title={d.title}
+        title={schedule ? sd.title[schedule.action] : d.title}
         dot={{ tone: requestTone(request.status), label: t.runs.requests.status[request.status] }}
         pill={<Pill tone={requestTone(request.status)}>{t.runs.requests.status[request.status]}</Pill>}
       >
@@ -259,7 +279,12 @@ export function RunRequestDetailPage() {
         canRun ? (
           <div className="flex flex-col items-start gap-2">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="primary" disabled={busy || changed || commitBlocked} onClick={() => void onApprove()}>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={busy || changed || commitBlocked || scheduleGone}
+                onClick={() => void onApprove()}
+              >
                 {d.approve}
               </Button>
               <Button type="button" variant="destructive" disabled={busy} onClick={() => void onReject()}>
@@ -273,7 +298,7 @@ export function RunRequestDetailPage() {
             )}
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">{d.noPermission}</span>
+          <span className="text-xs text-muted-foreground">{schedule ? sd.noPermission : d.noPermission}</span>
         )
       ) : waiting ? (
         canRun ? (
@@ -285,7 +310,19 @@ export function RunRequestDetailPage() {
         )
       ) : (
         <div className="flex flex-col items-start gap-2 text-xs text-muted-foreground">
-          <span>{d.decided[request.status as keyof typeof d.decided]}</span>
+          <span>
+            {schedule ? sd.decided[request.status as keyof typeof sd.decided] : d.decided[request.status as keyof typeof d.decided]}
+          </span>
+          {schedule && request.status === 'approved' && (
+            <Link
+              to="/o/$org/schedules"
+              params={{ org }}
+              search={{ id: request.target_id, template: undefined }}
+              className="text-xs font-medium hover:text-primary"
+            >
+              {sd.openSchedules}
+            </Link>
+          )}
           {request.status === 'approved' && request.run_group_id && (
             <Button type="button" onClick={() => void openRun(request.run_group_id as string)}>
               {d.openRun}
@@ -298,8 +335,8 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
-      <RunPictureSections org={org} picture={picture} status={request.status} />
-      {picture.follow_ups && (
+      {schedule ? <ScheduleRequestSections schedule={schedule} /> : <RunPictureSections org={org} picture={picture} status={request.status} />}
+      {!schedule && picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}
     </DetailLayout>

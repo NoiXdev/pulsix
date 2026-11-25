@@ -17,6 +17,8 @@ describe('assistant token areas', () => {
     ['operator', 'alerts.handle', true],
     ['operator', 'activity.read', true],
     ['owner', 'templates.write', true],
+    ['viewer', 'automation.request', false],
+    ['operator', 'automation.request', true],
     ['nobody', 'inventory.read', false],
   ] as const)('%s may hold %s: %s', (role, area, want) => {
     expect(areaAllowed(role, area)).toBe(want);
@@ -33,6 +35,11 @@ describe('assistant token areas', () => {
 
   it('keeps the activity area in grid order after credentials', () => {
     expect(toggleArea(['activity.read'], 'credentials.names', true)).toEqual(['credentials.names', 'activity.read']);
+  });
+
+  it('keeps the automation area last and on its own', () => {
+    expect(toggleArea(['automation.request'], 'activity.read', true)).toEqual(['activity.read', 'automation.request']);
+    expect(toggleArea([], 'automation.request', true)).toEqual(['automation.request']);
   });
 
   it('unticks the write area with its read area', () => {

@@ -1,14 +1,14 @@
 import { useT } from '../../i18n/useT.ts';
 import { roleLabel } from '../../i18n/roleLabel.ts';
-import { ACTIVITY_AREA, AREA_ROWS, CREDENTIALS_AREA, areaAllowed, toggleArea, type Area } from './areas.ts';
+import { ACTIVITY_AREA, AREA_ROWS, AUTOMATION_AREA, CREDENTIALS_AREA, areaAllowed, toggleArea, type Area } from './areas.ts';
 
 const CELL = 'px-3 py-1.5';
 
 /**
  * AreaGrid is the assistant token's area choice: one row per subject with a
  * read and a write checkbox (for Jobs the second one requests runs, for
- * Monitoring it handles alerts), and the credential names and the activity
- * log on their own. Each area has a one-line description under its label.
+ * Monitoring it handles alerts), and the credential names, the activity
+ * log and asking for schedules on their own. Each area has a one-line description under its label.
  * Ticking write ticks read, unticking read unticks write; an area the chosen
  * role cannot cover is disabled, and a line under the grid says why.
  */
@@ -26,7 +26,9 @@ export function AreaGrid({
   const t = useT();
   const a = t.tokens.areas;
   const held = new Set(value);
-  const anyDisabled = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA].some((area) => !areaAllowed(role, area));
+  const anyDisabled = [...AREA_ROWS.flatMap((r) => [r.read, r.write]), CREDENTIALS_AREA, ACTIVITY_AREA, AUTOMATION_AREA].some(
+    (area) => !areaAllowed(role, area),
+  );
 
   function box(area: Area, label: string, descId: string) {
     const allowed = areaAllowed(role, area);
@@ -95,6 +97,15 @@ export function AreaGrid({
         <span>
           <span aria-hidden="true">{a.activity}</span>
           <span id="token_area_activity" className="block text-[11px] text-muted-foreground">{a.descriptions.activity}</span>
+        </span>
+      </label>
+      <label className="flex items-center gap-2 text-xs">
+        {box(AUTOMATION_AREA, a.automation, 'token_area_automation')}
+        <span>
+          <span aria-hidden="true">{a.automation}</span>
+          <span id="token_area_automation" className="block text-[11px] text-muted-foreground">
+            {a.descriptions.automation}
+          </span>
         </span>
       </label>
       <span id="token_areas_hint" className="text-[11px] text-muted-foreground">

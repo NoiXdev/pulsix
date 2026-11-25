@@ -71,6 +71,13 @@ func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
 			return fmt.Errorf("encode run request overrides: %w", err)
 		}
 	}
+	var payload []byte
+	if r.Schedule != nil {
+		var err error
+		if payload, err = json.Marshal(r.Schedule); err != nil {
+			return fmt.Errorf("encode schedule request: %w", err)
+		}
+	}
 	var expiresIn *int32
 	if r.ExpiresInMinutes > 0 {
 		v := int32(min(r.ExpiresInMinutes, MaxExpiresInMinutes)) //nolint:gosec // bounded just now
@@ -81,7 +88,7 @@ func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
 		HostID: pgUUID(r.HostID), JobID: pgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: pgUUID(r.RequestedByToken),
 		Status: string(cmp.Or(r.Status, StatusPending)), ExpiresAt: pgTime(r.ExpiresAt), CreatedAt: r.CreatedAt, Overrides: overrides,
-		SyncJobID: pgUUID(r.SyncJobID), ExpiresInMinutes: expiresIn,
+		SyncJobID: pgUUID(r.SyncJobID), ExpiresInMinutes: expiresIn, Payload: payload, TargetID: pgUUID(r.TargetID),
 	})
 }
 
@@ -248,7 +255,7 @@ func fromRow(r gen.RunRequest) (Request, error) {
 		HostID: fromPgUUID(r.HostID), JobID: fromPgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: fromPgUUID(r.RequestedByToken),
 		Status: Status(r.Status), DecidedBy: fromPgUUID(r.DecidedBy), RunGroupID: fromPgUUID(r.RunGroupID),
-		CreatedAt: r.CreatedAt, SyncJobID: fromPgUUID(r.SyncJobID),
+		CreatedAt: r.CreatedAt, SyncJobID: fromPgUUID(r.SyncJobID), TargetID: fromPgUUID(r.TargetID),
 	}
 	if r.ExpiresAt.Valid {
 		out.ExpiresAt = r.ExpiresAt.Time
@@ -278,6 +285,15 @@ func fromRow(r gen.RunRequest) (Request, error) {
 			return Request{}, fmt.Errorf("decode run request %s overrides: %w", r.ID, err)
 		}
 		out.Overrides = &ov
+	}
+	if len(r.Payload) > 0 && out.Kind == KindSchedule {
+		var ch ScheduleChange
+		dec := json.NewDecoder(bytes.NewReader(r.Payload))
+		dec.UseNumber() // extra vars keep their numbers exact
+		if err := dec.Decode(&ch); err != nil {
+			return Request{}, fmt.Errorf("decode schedule request %s: %w", r.ID, err)
+		}
+		out.Schedule = &ch
 	}
 	return out, nil
 }

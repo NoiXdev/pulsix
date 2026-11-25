@@ -30,7 +30,7 @@ func (st *SQLStore) Create(ctx context.Context, s Schedule) (Schedule, error) {
 	row, err := st.q.CreateSchedule(ctx, gen.CreateScheduleParams{
 		ID: s.ID, OrgID: s.OrgID, TemplateID: s.TemplateID, Name: s.Name, Mode: string(s.Mode), Cron: s.Cron,
 		Simple: simple, Timezone: s.Timezone, Guards: guards, LimitOverride: s.Overrides.Limit, ExtraVars: vars,
-		NextRunAt: db.NullTime(s.NextRunAt), CreatedBy: db.NullUUID(s.CreatedBy),
+		NextRunAt: db.NullTime(s.NextRunAt), CreatedBy: db.NullUUID(s.CreatedBy), UntrustedOverrides: s.UntrustedOverrides,
 	})
 	if db.IsUniqueViolation(err) {
 		return Schedule{}, ErrNameTaken
@@ -79,7 +79,7 @@ func (st *SQLStore) Update(ctx context.Context, s Schedule, revision int64) (Sch
 	row, err := st.q.UpdateSchedule(ctx, gen.UpdateScheduleParams{
 		OrgID: s.OrgID, ID: s.ID, Revision: revision, TemplateID: s.TemplateID, Name: s.Name, Mode: string(s.Mode),
 		Cron: s.Cron, Simple: simple, Timezone: s.Timezone, Guards: guards, LimitOverride: s.Overrides.Limit,
-		ExtraVars: vars, NextRunAt: db.NullTime(s.NextRunAt),
+		ExtraVars: vars, NextRunAt: db.NullTime(s.NextRunAt), UntrustedOverrides: s.UntrustedOverrides,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gerr := st.Get(ctx, s.OrgID, s.ID); gerr != nil {
@@ -209,6 +209,7 @@ func toSchedule(r gen.Schedule) (Schedule, error) {
 		ID: r.ID, OrgID: r.OrgID, TemplateID: r.TemplateID, Name: r.Name, Mode: Mode(r.Mode), Cron: r.Cron,
 		Timezone: r.Timezone, Paused: r.Paused, NextRunAt: db.TimePtr(r.NextRunAt), LastRunAt: db.TimePtr(r.LastRunAt),
 		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
+		UntrustedOverrides: r.UntrustedOverrides,
 	}
 	s.Overrides.Limit = r.Limit
 	if len(r.Simple) > 0 {

@@ -105,7 +105,8 @@ export const enTokens = {
     /** One line under each area's label: what the area lets the assistant do.
      * Source of truth: the tool definitions in internal/mcp/tools_*.go and the
      * areas in internal/tenancy/areas.go. The assistant deletes nothing but a
-     * group membership and writes no schedule. */
+     * group membership and a schedule (automation) and writes a schedule only
+     * through a person's approval. */
     descriptions: {
       inventory: 'Read hosts, groups and variables; with write, also create and change hosts, groups, their variables, tags and memberships, and test a host\'s connection.',
       repos: 'Read repositories and playbooks; with write, also add and change them, sync repositories and register playbooks.',
@@ -114,9 +115,11 @@ export const enTokens = {
       monitoring: 'Read agents, checks, metrics, alert rules, alerts and maintenance windows; with handle alerts, also acknowledge and snooze alerts.',
       credentials: 'Lets the assistant see which credentials exist, never their contents.',
       activity: 'Lets the assistant read the organization\'s activity log.',
+      automation: 'Lets the assistant ask for schedules to be created, changed or resumed, which a person still has to approve, and pause or delete schedules.',
     },
     credentials: 'Credentials: names only',
     activity: 'Activity log: read',
+    automation: 'Schedules: request',
     /** The accessible name of one checkbox in the grid. */
     cell: (row: string, column: string) => `${row}: ${column}`,
     writeHint: 'Write includes read. Handling alerts means acknowledging and snoozing them. Credential names show which credentials exist, never their contents.',
@@ -136,6 +139,7 @@ export const enTokens = {
       'monitoring.read': 'Monitoring & alerts: read',
       'alerts.handle': 'Monitoring & alerts: handle alerts',
       'activity.read': 'Activity log: read',
+      'automation.request': 'Schedules: request',
     },
   },
   /** Members' personal tokens on the organization's token page, and the

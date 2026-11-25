@@ -12,6 +12,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 )
@@ -86,6 +87,15 @@ type (
 	PlaybookVarSource interface {
 		VarSource(ctx context.Context, orgID, playbookID uuid.UUID) (playbooks.VarSource, error)
 	}
+	// ScheduleSource reads, checks and writes schedules for schedule
+	// requests (schedules.Service).
+	ScheduleSource interface {
+		Get(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, error)
+		Validate(ctx context.Context, orgID, id uuid.UUID, in schedules.Input) error
+		CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in schedules.Input) (schedules.Schedule, error)
+		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in schedules.Input) (schedules.Schedule, error)
+		Resume(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, error)
+	}
 	// RunVarsSource reads the variable values a run would receive, secrets
 	// in the clear. The resolver feeds them only into the keyed vars
 	// digest; they never enter a picture.
@@ -131,4 +141,7 @@ type Sources struct {
 	// Agents gives a template with agent enrollment its picture's hosts
 	// (spec 2026-11-25 B).
 	Agents AgentSource
+	// Schedules checks, pictures and applies schedule requests (spec
+	// 2026-11-25 C).
+	Schedules ScheduleSource
 }

@@ -71,7 +71,7 @@ func mergeExtraVars(base json.RawMessage, ov *RunOverrides) (json.RawMessage, er
 // override (a webhook payload) has every string inside its extra vars
 // marked unsafe for Ansible, so a "{{ … }}" or "{% … %}" value stays
 // literal text instead of running on the worker (final review C1). Trusted
-// overrides (schedules, set by operators — spec §14) pass unchanged.
+// overrides (a person's schedule, spec §14) pass unchanged.
 func (o *RunOverrides) inert() *RunOverrides {
 	if o == nil || !o.Untrusted || len(o.ExtraVars) == 0 {
 		return o
@@ -120,11 +120,15 @@ func (o *RunOverrides) checkUntrusted(trigger string) error {
 }
 
 // untrustedSource names where a run's untrusted overrides came from, by
-// the job's trigger: a webhook delivery, else an approved run request (the
-// only other caller that sets Untrusted).
+// the job's trigger: a webhook delivery, a schedule an approved schedule
+// request set them on, else an approved run request (the only other
+// caller that sets Untrusted).
 func untrustedSource(trigger string) string {
-	if trigger == TriggerWebhook {
+	switch trigger {
+	case TriggerWebhook:
 		return "webhook value"
+	case TriggerSchedule:
+		return "schedule request value"
 	}
 	return "run request value"
 }
