@@ -22,7 +22,7 @@ func TestUnknownSchedulesAreNotFound(t *testing.T) {
 	if _, err := w.svc.Update(ctx, w.org, id, 1, validInput(w.templateID)); !errors.Is(err, schedules.ErrNotFound) {
 		t.Errorf("Update: %v", err)
 	}
-	if _, err := w.svc.Resume(ctx, w.org, id); !errors.Is(err, schedules.ErrNotFound) {
+	if _, err := w.svc.Resume(ctx, w.org, id, w.actor); !errors.Is(err, schedules.ErrNotFound) {
 		t.Errorf("Resume: %v", err)
 	}
 	if _, err := w.svc.Runs(ctx, w.org, id, 10); !errors.Is(err, schedules.ErrNotFound) {

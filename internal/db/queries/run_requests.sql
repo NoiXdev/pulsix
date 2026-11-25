@@ -31,11 +31,14 @@ ORDER BY created_at DESC, id DESC LIMIT 500;
 -- or, when token is given, of that one token (the per-token cap), which
 -- also counts the token's requests waiting for their sync (migration
 -- 00124): they become pending without asking again.
+-- A review (migration 00130) is not what the token asked for: it counts
+-- on the badge, not against the token's cap.
 SELECT count(*)::int AS n FROM run_requests
 WHERE org_id = sqlc.arg(org_id)
   AND ((status = 'pending' AND expires_at > sqlc.arg(now)::timestamptz)
     OR (sqlc.narg(token)::uuid IS NOT NULL AND status = 'waiting_for_sync'))
-  AND (sqlc.narg(token)::uuid IS NULL OR requested_by_token = sqlc.narg(token)::uuid);
+  AND (sqlc.narg(token)::uuid IS NULL OR (requested_by_token = sqlc.narg(token)::uuid
+    AND kind NOT IN ('schedule_review', 'trigger_review')));
 
 -- name: ListRunRequestTokens :many
 -- The tokens that made requests, by id (backlog 2.120): the name and whether
@@ -125,3 +128,32 @@ ORDER BY r.created_at, r.id;
 -- no longer waits.
 UPDATE run_requests SET status = sqlc.arg(status), expires_at = sqlc.arg(expires_at), sync_error = sqlc.narg(sync_error)
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND status = 'waiting_for_sync';
+
+-- name: GetOpenReviewRequest :one
+-- The open review of a paused schedule or trigger (spec 2026-11-25 C2,
+-- migration 00130): pending and unexpired at now; the newest if there were
+-- ever more.
+SELECT * FROM run_requests
+WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = sqlc.arg(target_id)::uuid
+  AND status = 'pending' AND expires_at > sqlc.arg(now)::timestamptz
+ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- name: RefreshReviewRequest :execrows
+-- Another assistant change hit an item already paused for review: its
+-- open review shows every change and its expiry starts again.
+UPDATE run_requests SET payload = sqlc.arg(payload), expires_at = sqlc.arg(expires_at), template_revision = sqlc.arg(template_revision)
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND status = 'pending';
+
+-- name: CloseReviewRequests :execrows
+-- A person resumed or enabled the item directly: its open reviews are
+-- decided as approved by that person, who looked at the item.
+UPDATE run_requests SET status = 'approved', decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at)
+WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = sqlc.arg(target_id)::uuid
+  AND status = 'pending' AND expires_at > sqlc.arg(decided_at)::timestamptz;
+
+-- name: LatestReviewRequests :many
+-- The newest review of each of the items (the schedule and trigger pages
+-- link it).
+SELECT DISTINCT ON (target_id) id, target_id FROM run_requests
+WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = ANY(sqlc.arg(target_ids)::uuid[])
+ORDER BY target_id, created_at DESC, id DESC;

@@ -16,7 +16,8 @@ SELECT * FROM schedules WHERE org_id = @org_id AND name = @name;
 -- SetSchedulePaused guarded by the revision a person saw (an approved
 -- resume request): no row back means a stale revision or an unknown
 -- schedule.
-UPDATE schedules SET paused = @paused, next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now()
+UPDATE schedules SET paused = @paused, next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now(),
+  paused_reason = CASE WHEN @paused::boolean THEN paused_reason END
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
@@ -36,9 +37,27 @@ WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
 -- name: SetSchedulePaused :one
-UPDATE schedules SET paused = @paused, next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now()
+-- Resuming clears why the schedule was paused (migration 00130); pausing
+-- keeps it.
+UPDATE schedules SET paused = @paused, next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now(),
+  paused_reason = CASE WHEN @paused::boolean THEN paused_reason END
 WHERE org_id = @org_id AND id = @id
 RETURNING *;
+
+-- name: PauseScheduleForReview :one
+-- An assistant's change paused the schedule until a person reviews it
+-- (spec 2026-11-25 C2): only an active schedule moves; no row back means
+-- it was already paused.
+UPDATE schedules SET paused = true, paused_reason = 'assistant_change', next_run_at = NULL,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id AND NOT paused
+RETURNING *;
+
+-- name: ListSchedulesOfTemplates :many
+-- The schedules that run any of the templates, oldest name first.
+SELECT * FROM schedules
+WHERE org_id = @org_id AND template_id = ANY(@template_ids::uuid[])
+ORDER BY name, id;
 
 -- name: PauseAllSchedules :execrows
 UPDATE schedules SET paused = true, next_run_at = NULL, revision = revision + 1, updated_at = now()

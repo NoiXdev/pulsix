@@ -21,6 +21,8 @@ import { presetLabel } from './presets.ts';
 import { outcomeLabel } from './outcome.ts';
 import { useT } from '../../i18n/useT.ts';
 import { snippets } from './snippets.ts';
+import { ReviewNotice } from '../../ui/review-notice.tsx';
+import { reviewHref } from '../../ui/reviewHref.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
 
 /** TriggersDialog is the mockup's Triggers card for one job template or
@@ -151,6 +153,9 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
         <span className="text-sm font-semibold">{t.name}</span>
         <span className="text-xs text-muted-foreground">{t.enabled ? m.enabled : m.disabled}</span>
       </div>
+      {t.disabled_reason && (
+        <ReviewNotice title={m.pausedForReview} hint={m.pausedForReviewHint} linkLabel={m.openReview} href={reviewHref(org, t.review_request_id)} />
+      )}
       <div className="flex items-center gap-2">
         <span className="text-xs font-semibold">POST</span>
         <code className="flex-1 truncate font-mono text-xs">{t.url}</code>

@@ -21,6 +21,10 @@ export const enTriggers = {
   secretPlaceholder: '<the trigger secret>',
   enabled: 'enabled',
   disabled: 'disabled',
+  /** An assistant's change disabled it until a person reviews it (spec 2026-11-25 C2). */
+  pausedForReview: 'Paused: changed by an assistant, needs review',
+  pausedForReviewHint: 'Approving the review request enables it again; enabling it here does too and closes the review.',
+  openReview: 'Open the review',
   copyUrl: 'Copy URL',
   auth: (preset: string, header: string) => `Auth: ${preset} · ${header}`,
   replay: (header: string) => `Replay window (±5 min) via ${header}`,

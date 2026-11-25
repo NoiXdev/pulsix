@@ -418,6 +418,41 @@ func (q *Queries) ListTemplateFollowUps(ctx context.Context, arg ListTemplateFol
 	return items, nil
 }
 
+const listTemplateIDsForRepo = `-- name: ListTemplateIDsForRepo :many
+SELECT job_templates.id FROM job_templates
+WHERE job_templates.org_id = $1
+  AND job_templates.playbook_id IN (
+    SELECT p.id FROM playbooks p WHERE p.org_id = $1 AND p.repo_id = $2)
+ORDER BY job_templates.name, job_templates.id
+`
+
+type ListTemplateIDsForRepoParams struct {
+	OrgID  uuid.UUID   `json:"org_id"`
+	RepoID pgtype.UUID `json:"repo_id"`
+}
+
+// The templates whose playbook belongs to the repository: what a change of
+// the repository changes for them (spec 2026-11-25 C2).
+func (q *Queries) ListTemplateIDsForRepo(ctx context.Context, arg ListTemplateIDsForRepoParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTemplateIDsForRepo, arg.OrgID, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates WHERE org_id = $1 ORDER BY name
 `

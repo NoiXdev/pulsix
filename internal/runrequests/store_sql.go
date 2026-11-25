@@ -303,6 +303,8 @@ func encodePayload(r Request) ([]byte, error) {
 		v = r.Schedule
 	case r.Trigger != nil:
 		v = r.Trigger
+	case r.Review != nil:
+		v = r.Review
 	default:
 		return nil, nil
 	}
@@ -327,6 +329,9 @@ func decodePayload(payload []byte, out *Request) error {
 	case KindTrigger:
 		out.Trigger = &TriggerChange{}
 		v = out.Trigger
+	case KindScheduleReview, KindTriggerReview:
+		out.Review = &ReviewChange{}
+		v = out.Review
 	default:
 		return nil
 	}

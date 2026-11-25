@@ -1,0 +1,85 @@
+package runrequests
+
+import (
+	"time"
+
+	"github.com/noixdev/pulsix/internal/assistantchange"
+)
+
+// ReviewTTL is how long a review stays approvable. Another assistant change
+// of what the item runs starts it again. A review that expires leaves its
+// item paused, as a rejection does; a person can still resume or enable
+// the item directly.
+const ReviewTTL = 30 * 24 * time.Hour
+
+// MaxReviewChanges caps the changes one review lists: the newest are kept.
+const MaxReviewChanges = 20
+
+// ReviewChange is what a review request shows (its payload): the
+// assistant changes, oldest first, that paused its schedule or disabled
+// its trigger (spec 2026-11-25 C2). Never a secret: a secret value is the
+// masked marker.
+type ReviewChange struct {
+	Changes []assistantchange.Change `json:"changes"`
+}
+
+// PictureReview is the picture of a review request: the paused schedule
+// or the disabled trigger as it is now, and the assistant changes that
+// stopped it. Approving resumes or enables the item at the revision shown.
+type PictureReview struct {
+	// Item is "schedule" or "trigger"; ItemID its id.
+	Item   string `json:"item" enum:"schedule,trigger" doc:"What the review resumes: a schedule or a webhook trigger"`
+	ItemID string `json:"item_id"`
+	// Schedule and Trigger are the item as it is now (one of them; nil
+	// when it is gone). The trigger never shows its secret.
+	Schedule *ScheduleState `json:"schedule,omitempty" doc:"The paused schedule as it is now"`
+	Trigger  *TriggerState  `json:"trigger,omitempty" doc:"The disabled webhook trigger as it is now; never its secret"`
+	// PausedForReview is whether the item is still stopped for this
+	// review: false once a person resumed or paused it otherwise (an
+	// approval then changes nothing about it).
+	PausedForReview bool `json:"paused_for_review" doc:"Whether the item is still paused (disabled) because of the changes; approving resumes (enables) it"`
+	// Changes are the assistant changes, oldest first.
+	Changes []ChangedObject `json:"changes" doc:"The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token"`
+	// Gone is set when the item, or what it starts, no longer exists.
+	Gone bool `json:"gone,omitempty"`
+}
+
+// Review items.
+const (
+	ReviewItemSchedule = "schedule"
+	ReviewItemTrigger  = "trigger"
+)
+
+// ChangedObject is one assistant change as a review's picture shows it
+// (assistantchange.Change).
+type ChangedObject struct {
+	Subject string         `json:"subject" enum:"job_template,repo" doc:"What the assistant changed: a job template or a repository"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Fields  []ChangedField `json:"fields"`
+	UserID  string         `json:"user_id" doc:"The person whose assistant token made the change"`
+	TokenID string         `json:"token_id,omitempty" doc:"The assistant token that made the change"`
+}
+
+// ChangedField is one field an assistant change moved (assistantchange.Field).
+type ChangedField struct {
+	Field string `json:"field" doc:"The field; an extra var as extra_vars.<name>"`
+	Old   any    `json:"old" doc:"The value before; null for none. A secret is {\"$secret\":\"set\"}"`
+	New   any    `json:"new" doc:"The value after; null for none. A secret is {\"$secret\":\"set\"}"`
+}
+
+// changedObjects is changes as a picture shows them.
+func changedObjects(changes []assistantchange.Change) []ChangedObject {
+	out := make([]ChangedObject, len(changes))
+	for i, c := range changes {
+		o := ChangedObject{Subject: string(c.Subject), ID: c.ID.String(), Name: c.Name, UserID: c.UserID.String(), Fields: make([]ChangedField, len(c.Fields))}
+		if c.TokenID != nil {
+			o.TokenID = c.TokenID.String()
+		}
+		for j, f := range c.Fields {
+			o.Fields[j] = ChangedField{Field: f.Name, Old: f.Old, New: f.New}
+		}
+		out[i] = o
+	}
+	return out
+}

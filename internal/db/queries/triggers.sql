@@ -25,7 +25,8 @@ ORDER BY name;
 UPDATE job_triggers SET name = sqlc.arg(name), enabled = sqlc.arg(enabled), preset = sqlc.arg(preset), auth = sqlc.arg(auth),
   signature_header = sqlc.arg(signature_header), timestamp_header = sqlc.arg(timestamp_header),
   allow_cidrs = sqlc.arg(allow_cidrs), mapping = sqlc.arg(mapping), on_active = sqlc.arg(on_active),
-  rate_limit = sqlc.arg(rate_limit), revision = revision + 1, updated_at = now()
+  rate_limit = sqlc.arg(rate_limit), revision = revision + 1, updated_at = now(),
+  disabled_reason = CASE WHEN sqlc.arg(enabled)::boolean THEN NULL ELSE disabled_reason END
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(revision)
 RETURNING *;
 
@@ -47,6 +48,29 @@ RETURNING *;
 UPDATE job_triggers SET enabled = false, revision = revision + 1, updated_at = now()
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND enabled
 RETURNING *;
+
+-- name: DisableTriggerForReview :one
+-- An assistant's change disabled the trigger until a person reviews it
+-- (spec 2026-11-25 C2): only an enabled trigger moves; no row back means
+-- it was already disabled.
+UPDATE job_triggers SET enabled = false, disabled_reason = 'assistant_change', revision = revision + 1, updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND enabled
+RETURNING *;
+
+-- name: EnableTriggerAt :one
+-- An approved review enables the trigger at the revision the person saw
+-- and clears why it was disabled; no row back means a stale revision or an
+-- unknown trigger.
+UPDATE job_triggers SET enabled = true, disabled_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(revision)
+RETURNING *;
+
+-- name: ListTriggersForReview :many
+-- The triggers that run any of the templates or sync the repository.
+SELECT * FROM job_triggers
+WHERE org_id = sqlc.arg(org_id)
+  AND (template_id = ANY(sqlc.arg(template_ids)::uuid[]) OR repo_id = sqlc.narg(repo_id)::uuid)
+ORDER BY name, id;
 
 -- name: DeleteTrigger :execrows
 DELETE FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);

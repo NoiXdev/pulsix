@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
@@ -217,6 +218,9 @@ type Store interface {
 	// the organization in one call, keyed by template id (backlog 2.94):
 	// List calls this once instead of once per row.
 	ListOrgVaultCredentials(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultCredential, error)
+	// IDsOfRepo lists the templates whose playbook belongs to the
+	// repository.
+	IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error)
 	FollowUpStore
 	VarsStore
 }
@@ -244,6 +248,9 @@ type Service struct {
 	creds     CredentialLookup
 	box       Sealer
 	link      linkDeps
+	// watcher is told about an assistant's run-relevant change
+	// (SetChangeWatcher); nil hands nothing on.
+	watcher assistantchange.Watcher
 }
 
 // NewService wires the store, the four lookups validation needs and the
@@ -292,6 +299,10 @@ type UpdateInput struct {
 	// does not.
 	AgentEnrollment *bool
 	MayEnrolAgents  bool
+	// Actor is who saves: an assistant's save that changes what the
+	// template runs pauses its schedules and triggers for a person's
+	// review (spec 2026-11-25 C2, SetChangeWatcher).
+	Actor assistantchange.Actor
 }
 
 // Create validates the input and stores a new template, then its own
@@ -395,6 +406,12 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	var followUps []FollowUp
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
+		var before runState
+		if s.watches(in.Actor) {
+			if before, err = s.stateOf(ctx, cur); err != nil {
+				return err
+			}
+		}
 		// The graph lock and the follow-up validation come before the write:
 		// they read the graph this save then changes.
 		if in.FollowUps != nil {
@@ -417,7 +434,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
 			return fmt.Errorf("store template vault credentials: %w", err)
 		}
-		return nil
+		return s.handOn(ctx, orgID, in.Actor, before, runState{t: updated, vault: in.VaultCredentials, followUps: followUps})
 	}); err != nil {
 		return Template{}, err
 	}

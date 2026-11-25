@@ -20,7 +20,7 @@ INSERT INTO job_triggers (id, org_id, kind, template_id, repo_id, name, enabled,
 VALUES ($1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11,
         $12, $13, $14, $15, $16, $17)
-RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
 type CreateTriggerParams struct {
@@ -85,6 +85,7 @@ func (q *Queries) CreateTrigger(ctx context.Context, arg CreateTriggerParams) (J
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -109,7 +110,7 @@ func (q *Queries) DeleteTrigger(ctx context.Context, arg DeleteTriggerParams) (i
 const disableTrigger = `-- name: DisableTrigger :one
 UPDATE job_triggers SET enabled = false, revision = revision + 1, updated_at = now()
 WHERE org_id = $1 AND id = $2 AND enabled
-RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
 type DisableTriggerParams struct {
@@ -143,6 +144,94 @@ func (q *Queries) DisableTrigger(ctx context.Context, arg DisableTriggerParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
+	)
+	return i, err
+}
+
+const disableTriggerForReview = `-- name: DisableTriggerForReview :one
+UPDATE job_triggers SET enabled = false, disabled_reason = 'assistant_change', revision = revision + 1, updated_at = now()
+WHERE org_id = $1 AND id = $2 AND enabled
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
+`
+
+type DisableTriggerForReviewParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// An assistant's change disabled the trigger until a person reviews it
+// (spec 2026-11-25 C2): only an enabled trigger moves; no row back means
+// it was already disabled.
+func (q *Queries) DisableTriggerForReview(ctx context.Context, arg DisableTriggerForReviewParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, disableTriggerForReview, arg.OrgID, arg.ID)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.DisabledReason,
+	)
+	return i, err
+}
+
+const enableTriggerAt = `-- name: EnableTriggerAt :one
+UPDATE job_triggers SET enabled = true, disabled_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = $1 AND id = $2 AND revision = $3
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
+`
+
+type EnableTriggerAtParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	ID       uuid.UUID `json:"id"`
+	Revision int64     `json:"revision"`
+}
+
+// An approved review enables the trigger at the revision the person saw
+// and clears why it was disabled; no row back means a stale revision or an
+// unknown trigger.
+func (q *Queries) EnableTriggerAt(ctx context.Context, arg EnableTriggerAtParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, enableTriggerAt, arg.OrgID, arg.ID, arg.Revision)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -171,7 +260,7 @@ func (q *Queries) FillTriggerBucket(ctx context.Context, arg FillTriggerBucketPa
 }
 
 const getTrigger = `-- name: GetTrigger :one
-SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision FROM job_triggers WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers WHERE org_id = $1 AND id = $2
 `
 
 type GetTriggerParams struct {
@@ -203,6 +292,7 @@ func (q *Queries) GetTrigger(ctx context.Context, arg GetTriggerParams) (JobTrig
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -312,7 +402,7 @@ func (q *Queries) ListTriggerDeliveries(ctx context.Context, arg ListTriggerDeli
 }
 
 const listTriggers = `-- name: ListTriggers :many
-SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision FROM job_triggers
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR template_id = $2::uuid)
   AND ($3::uuid IS NULL OR repo_id = $3::uuid)
@@ -355,6 +445,63 @@ func (q *Queries) ListTriggers(ctx context.Context, arg ListTriggersParams) ([]J
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.DisabledReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTriggersForReview = `-- name: ListTriggersForReview :many
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers
+WHERE org_id = $1
+  AND (template_id = ANY($2::uuid[]) OR repo_id = $3::uuid)
+ORDER BY name, id
+`
+
+type ListTriggersForReviewParams struct {
+	OrgID       uuid.UUID   `json:"org_id"`
+	TemplateIds []uuid.UUID `json:"template_ids"`
+	RepoID      pgtype.UUID `json:"repo_id"`
+}
+
+// The triggers that run any of the templates or sync the repository.
+func (q *Queries) ListTriggersForReview(ctx context.Context, arg ListTriggersForReviewParams) ([]JobTrigger, error) {
+	rows, err := q.db.Query(ctx, listTriggersForReview, arg.OrgID, arg.TemplateIds, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JobTrigger
+	for rows.Next() {
+		var i JobTrigger
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Kind,
+			&i.TemplateID,
+			&i.RepoID,
+			&i.Name,
+			&i.Enabled,
+			&i.Preset,
+			&i.Auth,
+			&i.SignatureHeader,
+			&i.TimestampHeader,
+			&i.Secret,
+			&i.AllowCidrs,
+			&i.Mapping,
+			&i.OnActive,
+			&i.RateLimit,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Revision,
+			&i.DisabledReason,
 		); err != nil {
 			return nil, err
 		}
@@ -404,7 +551,7 @@ func (q *Queries) NoteDeliveryRateLimited(ctx context.Context, arg NoteDeliveryR
 }
 
 const resolveTrigger = `-- name: ResolveTrigger :one
-SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision FROM job_triggers WHERE id = $1
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers WHERE id = $1
 `
 
 // The hook endpoints' lookup: no org in the path, no org scope bound (the
@@ -433,6 +580,7 @@ func (q *Queries) ResolveTrigger(ctx context.Context, id uuid.UUID) (JobTrigger,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -440,7 +588,7 @@ func (q *Queries) ResolveTrigger(ctx context.Context, id uuid.UUID) (JobTrigger,
 const setTriggerSecret = `-- name: SetTriggerSecret :one
 UPDATE job_triggers SET secret = $1, revision = revision + 1, updated_at = now()
 WHERE org_id = $2 AND id = $3
-RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
 type SetTriggerSecretParams struct {
@@ -473,6 +621,7 @@ func (q *Queries) SetTriggerSecret(ctx context.Context, arg SetTriggerSecretPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -480,7 +629,7 @@ func (q *Queries) SetTriggerSecret(ctx context.Context, arg SetTriggerSecretPara
 const setTriggerSecretAt = `-- name: SetTriggerSecretAt :one
 UPDATE job_triggers SET secret = $1, revision = revision + 1, updated_at = now()
 WHERE org_id = $2 AND id = $3 AND revision = $4
-RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
 type SetTriggerSecretAtParams struct {
@@ -521,6 +670,7 @@ func (q *Queries) SetTriggerSecretAt(ctx context.Context, arg SetTriggerSecretAt
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }
@@ -596,9 +746,10 @@ const updateTrigger = `-- name: UpdateTrigger :one
 UPDATE job_triggers SET name = $1, enabled = $2, preset = $3, auth = $4,
   signature_header = $5, timestamp_header = $6,
   allow_cidrs = $7, mapping = $8, on_active = $9,
-  rate_limit = $10, revision = revision + 1, updated_at = now()
+  rate_limit = $10, revision = revision + 1, updated_at = now(),
+  disabled_reason = CASE WHEN $2::boolean THEN NULL ELSE disabled_reason END
 WHERE org_id = $11 AND id = $12 AND revision = $13
-RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
 type UpdateTriggerParams struct {
@@ -655,6 +806,7 @@ func (q *Queries) UpdateTrigger(ctx context.Context, arg UpdateTriggerParams) (J
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.DisabledReason,
 	)
 	return i, err
 }

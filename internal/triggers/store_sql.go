@@ -202,6 +202,64 @@ func (st *SQLStore) Disable(ctx context.Context, orgID, id uuid.UUID) (Trigger, 
 	return toTrigger(row)
 }
 
+// InTx runs fn in one organization-scoped write transaction that every
+// store on the same database joins (db.WithWriteTx).
+func (st *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return st.d.WithWriteTx(ctx, orgID, fn)
+}
+
+// DisableForReview disables an enabled trigger for a person's review
+// (reason DisabledForReview); ok is false, and the trigger comes back as it
+// is, when it was disabled already.
+func (st *SQLStore) DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error) {
+	row, err := st.q.DisableTriggerForReview(ctx, gen.DisableTriggerForReviewParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		cur, gerr := st.Get(ctx, orgID, id)
+		return cur, false, gerr
+	}
+	if err != nil {
+		return Trigger{}, false, fmt.Errorf("disable trigger for review: %w", err)
+	}
+	t, err := toTrigger(row)
+	return t, err == nil, err
+}
+
+// EnableAt enables the trigger at revision and clears why it was
+// disabled: ErrRevisionMismatch when it changed since, ErrNotFound when it
+// is gone.
+func (st *SQLStore) EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error) {
+	row, err := st.q.EnableTriggerAt(ctx, gen.EnableTriggerAtParams{OrgID: orgID, ID: id, Revision: revision})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := st.Get(ctx, orgID, id); gerr != nil {
+			return Trigger{}, gerr
+		}
+		return Trigger{}, ErrRevisionMismatch
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("enable trigger: %w", err)
+	}
+	return toTrigger(row)
+}
+
+// ListForReview lists the triggers that run any of templateIDs or sync
+// repoID (nil for none).
+func (st *SQLStore) ListForReview(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID, repoID *uuid.UUID) ([]Trigger, error) {
+	if templateIDs == nil {
+		templateIDs = []uuid.UUID{}
+	}
+	rows, err := st.q.ListTriggersForReview(ctx, gen.ListTriggersForReviewParams{OrgID: orgID, TemplateIds: templateIDs, RepoID: db.NullUUID(repoID)})
+	if err != nil {
+		return nil, fmt.Errorf("list triggers for review: %w", err)
+	}
+	out := make([]Trigger, len(rows))
+	for i, r := range rows {
+		if out[i], err = toTrigger(r); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 func (st *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	n, err := st.q.DeleteTrigger(ctx, gen.DeleteTriggerParams{OrgID: orgID, ID: id})
 	if err != nil {
@@ -329,6 +387,9 @@ func toTrigger(r gen.JobTrigger) (Trigger, error) {
 		Name: r.Name, Enabled: r.Enabled, Preset: Preset(r.Preset), TimestampHeader: r.TimestampHeader,
 		AllowCIDRs: r.AllowCidrs, OnActive: OnActive(r.OnActive), CreatedBy: db.UUIDPtr(r.CreatedBy),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
+	}
+	if r.DisabledReason != nil {
+		t.DisabledReason = *r.DisabledReason
 	}
 	if err := json.Unmarshal(r.Mapping, &t.Mapping); err != nil {
 		return Trigger{}, fmt.Errorf("decode trigger mapping: %w", err)

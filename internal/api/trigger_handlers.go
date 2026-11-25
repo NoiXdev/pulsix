@@ -9,8 +9,10 @@ import (
 	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -199,8 +201,18 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &triggerListOutput{}
 		out.Body.Triggers = make([]triggerDTO, len(list))
+		var underReview []uuid.UUID
+		for _, t := range list {
+			if t.DisabledReason != "" {
+				underReview = append(underReview, t.ID)
+			}
+		}
+		reviews := latestReviews(ctx, deps, scope.OrgID, runrequests.KindTriggerReview, underReview)
 		for i, t := range list {
 			out.Body.Triggers[i] = toTriggerDTO(t, deps.Triggers.URL(t))
+			if id, ok := reviews[t.ID]; ok {
+				out.Body.Triggers[i].ReviewRequestID = id.String()
+			}
 		}
 		return out, nil
 	})
@@ -223,11 +235,17 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createTrigger", "trigger"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/triggers/{id}", func(ctx context.Context, in *triggerIDInput) (*triggerOutput, error) {
-		_, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerRead)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerRead)
 		if err != nil {
 			return nil, err
 		}
-		return triggerOut(deps, t), nil
+		out := triggerOut(deps, t)
+		if t.DisabledReason != "" {
+			if rid, ok := latestReviews(ctx, deps, scope.OrgID, runrequests.KindTriggerReview, []uuid.UUID{t.ID})[t.ID]; ok {
+				out.Body.Trigger.ReviewRequestID = rid.String()
+			}
+		}
+		return out, nil
 	})
 
 	huma.Put(hapi, "/api/v1/orgs/{org}/triggers/{id}", func(ctx context.Context, in *triggerUpdateInput) (*triggerOutput, error) {
@@ -243,7 +261,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		up, err := deps.Triggers.Update(ctx, scope.OrgID, t.ID, rev, input)
+		up, err := deps.Triggers.UpdateBy(ctx, scope.OrgID, t.ID, scope.UserID, rev, input)
 		if err != nil {
 			return nil, mapTriggersErr(ctx, err)
 		}

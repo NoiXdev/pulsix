@@ -26,6 +26,8 @@ type fakeTriggerSource struct {
 	updated     []triggers.Input
 	updatedRev  []int64
 	rotatedRev  []int64
+	enabled     []uuid.UUID
+	enabledRev  []int64
 }
 
 func (f *fakeTriggerSource) Get(_ context.Context, _, id uuid.UUID) (triggers.Trigger, error) {

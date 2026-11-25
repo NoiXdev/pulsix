@@ -125,6 +125,18 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 
 // InTx runs fn and, when it fails, puts the rows back as they were: the
 // SQL store's transaction rollback.
+func (m *memStore) LatestReviews(_ context.Context, orgID uuid.UUID, kind runrequests.Kind, targets []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	out := map[uuid.UUID]uuid.UUID{}
+	for _, r := range m.rows {
+		for _, t := range targets {
+			if r.OrgID == orgID && r.Kind == kind && r.TargetID != nil && *r.TargetID == t {
+				out[t] = r.ID
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *memStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
 	saved := maps.Clone(m.rows)
 	if err := fn(ctx); err != nil {

@@ -176,6 +176,61 @@ func (f *fakeStore) NoteRateLimited(context.Context, uuid.UUID, uuid.UUID, trigg
 	return nil
 }
 
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+func (f *fakeStore) DisableForReview(_ context.Context, orgID, id uuid.UUID) (triggers.Trigger, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.byID[id]
+	if !ok || t.OrgID != orgID {
+		return triggers.Trigger{}, false, triggers.ErrNotFound
+	}
+	if !t.Enabled {
+		return t, false, nil
+	}
+	t.Enabled, t.DisabledReason = false, triggers.DisabledForReview
+	t.Revision++
+	f.byID[id] = t
+	return t, true, nil
+}
+
+func (f *fakeStore) EnableAt(_ context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.byID[id]
+	if !ok || t.OrgID != orgID {
+		return triggers.Trigger{}, triggers.ErrNotFound
+	}
+	if t.Revision != revision {
+		return triggers.Trigger{}, triggers.ErrRevisionMismatch
+	}
+	t.Enabled, t.DisabledReason = true, ""
+	t.Revision++
+	f.byID[id] = t
+	return t, nil
+}
+
+func (f *fakeStore) ListForReview(_ context.Context, orgID uuid.UUID, templateIDs []uuid.UUID, repoID *uuid.UUID) ([]triggers.Trigger, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []triggers.Trigger
+	for _, t := range f.byID {
+		if t.OrgID != orgID {
+			continue
+		}
+		hit := repoID != nil && t.RepoID != nil && *t.RepoID == *repoID
+		for _, id := range templateIDs {
+			hit = hit || (t.TemplateID != nil && *t.TemplateID == id)
+		}
+		if hit {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
 type fakeTemplates struct {
 	byID map[uuid.UUID]templates.Template
 	// opts records the options every ValidateOverrides call received.

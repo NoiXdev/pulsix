@@ -41,6 +41,21 @@ type Store interface {
 	LatestRuns(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]Run, error)
 	// RunsBetween lists the organization's decisions due in [from, to).
 	RunsBetween(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]Run, error)
+	// InTx runs fn in one write transaction every store on the same
+	// database joins.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
+	// PauseForReview pauses an active schedule with PausedForReview; ok
+	// is false (the schedule as it is) when it was already paused.
+	PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error)
+	// ListOfTemplates lists the schedules that run any of templateIDs.
+	ListOfTemplates(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]Schedule, error)
+}
+
+// Reviews is told when a person resumes a schedule an assistant's change
+// paused for review (spec 2026-11-25 C2): its open review is closed as
+// decided by that person, in the resume's transaction.
+type Reviews interface {
+	ScheduleResumed(ctx context.Context, orgID, scheduleID, by uuid.UUID) error
 }
 
 // TemplateChecker is the slice of templates.Service overrides need.
@@ -78,7 +93,15 @@ type Service struct {
 	// maint answers the maintenance guard (SetMaintenance). Nil fails a
 	// schedule whose guard needs it closed: recorded as failed, never run.
 	maint MaintenanceChecker
+
+	// reviews closes the review of a schedule a person resumes
+	// (SetReviews); nil closes nothing.
+	reviews Reviews
 }
+
+// SetReviews wires what a person's resume of a schedule paused for review
+// closes.
+func (s *Service) SetReviews(r Reviews) { s.reviews = r }
 
 // NewService wires the service; now and rand are injected for tests.
 func NewService(store Store, tmpl TemplateChecker, runs RunEnqueuer, auditor Auditor, now func() time.Time, rand io.Reader, log *slog.Logger) *Service {
@@ -264,7 +287,12 @@ func (s *Service) Pause(ctx context.Context, orgID, id uuid.UUID) (Schedule, err
 // a real outcome, not a hypothetical one, since an idempotent retry of the
 // same API call is exactly the kind of caller that resends Resume without
 // checking whether the first attempt already landed.
-func (s *Service) Resume(ctx context.Context, orgID, id uuid.UUID) (Schedule, error) {
+//
+// by is the person resuming. A schedule an assistant's change paused for
+// review (PausedForReview) may be resumed by a person directly: the
+// resume clears the reason and closes the review as decided by them, in
+// one transaction.
+func (s *Service) Resume(ctx context.Context, orgID, id, by uuid.UUID) (Schedule, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
 		return Schedule{}, err
@@ -277,7 +305,34 @@ func (s *Service) Resume(ctx context.Context, orgID, id uuid.UUID) (Schedule, er
 		return Schedule{}, err
 	}
 	next := tt.expr.Next(s.now(), tt.loc)
-	return s.store.SetPaused(ctx, orgID, id, false, &next)
+	if cur.PausedReason == "" || s.reviews == nil {
+		return s.store.SetPaused(ctx, orgID, id, false, &next)
+	}
+	var out Schedule
+	err = s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if out, err = s.store.SetPaused(ctx, orgID, id, false, &next); err != nil {
+			return err
+		}
+		if err := s.reviews.ScheduleResumed(ctx, orgID, id, by); err != nil {
+			return fmt.Errorf("close the schedule's review: %w", err)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// PauseForReview pauses an active schedule because an assistant changed
+// what it runs (spec 2026-11-25 C2): the reason PausedForReview tells its
+// page to point at the review. ok is false, and the schedule comes back as
+// it is, when it was paused already.
+func (s *Service) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error) {
+	return s.store.PauseForReview(ctx, orgID, id)
+}
+
+// ListOfTemplates lists the schedules that run any of templateIDs.
+func (s *Service) ListOfTemplates(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]Schedule, error) {
+	return s.store.ListOfTemplates(ctx, orgID, templateIDs)
 }
 
 // ResumeAt is Resume at the revision a person saw (an approved resume

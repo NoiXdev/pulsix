@@ -80,6 +80,12 @@ type Picture struct {
 	// request's; a repository sync trigger's names none (the repository
 	// is in the trigger's states). nil for every other kind.
 	Trigger *PictureTrigger `json:"trigger,omitempty" doc:"Set for a trigger request: the webhook trigger as the approval stores it and as it is now; never its secret"`
+
+	// Review is the picture of a review request (spec 2026-11-25 C2): the
+	// schedule or trigger an assistant's change stopped, as it is now, and
+	// the changes. It names the item's template like a schedule request's
+	// (none for a repository sync trigger); nil for every other kind.
+	Review *PictureReview `json:"review,omitempty" doc:"Set for a review request: the schedule or webhook trigger an assistant's change paused, as it is now, and the changes"`
 }
 
 // Why a run of a template with agent enrollment enrols no host

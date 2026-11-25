@@ -228,6 +228,19 @@ func (f *fakeStore) ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid
 	})
 }
 
+// IDsOfRepo mirrors the real store's join: the templates of the
+// repository's playbooks, by name.
+func (f *fakeStore) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error) {
+	all, _ := f.List(ctx, orgID)
+	var out []uuid.UUID
+	for _, t := range all {
+		if repo, ok := f.playbookRepo[t.PlaybookID]; ok && repo == repoID {
+			out = append(out, t.ID)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListAutomaticForPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]templates.Template, error) {
 	return f.listAutomatic(ctx, orgID, func(t templates.Template) bool { return t.PlaybookID == playbookID })
 }
@@ -348,7 +361,7 @@ func newFixture() fixture {
 		}, sources: sources, sourceErrs: sourceErrs, sourceReads: sourceReads},
 		fakeGroups{known: map[uuid.UUID]bool{group: true}},
 		fakeHosts{list: []hosts.Host{
-			{ID: managed, OrgID: org, Managed: true},
+			{ID: managed, OrgID: org, Name: "web-1", Managed: true},
 			{ID: unmanaged, OrgID: org, Managed: false},
 		}},
 		fakeCreds{byID: map[uuid.UUID]credentials.Credential{

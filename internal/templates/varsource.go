@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/varsync"
@@ -88,6 +89,8 @@ type ApplyInput struct {
 	RemoveGone     bool
 	Values         map[string]any
 	IfRevision     *int64
+	// Actor is who applies (UpdateInput.Actor).
+	Actor assistantchange.Actor
 }
 
 // SetVariablesMode switches a linked template between manual and
@@ -187,7 +190,7 @@ func (s *Service) ApplyVariables(ctx context.Context, orgID, id uuid.UUID, in Ap
 	next.VarsMode, next.VarsSourceRev = in.Mode, varsync.AppliedRev(cur.VarsSourceRev, src)
 	at := s.now()
 	next.VarsAppliedAt = &at
-	updated, err := s.store.UpdateVariables(ctx, next, readRevision(in.IfRevision, cur))
+	updated, err := s.writeVariables(ctx, in.Actor, cur, next, readRevision(in.IfRevision, cur))
 	if err != nil {
 		return Template{}, err
 	}

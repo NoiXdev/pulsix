@@ -136,7 +136,16 @@ type Trigger struct {
 	CreatedBy            *uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 	Revision             int64
+	// DisabledReason says why a disabled trigger stopped: DisabledForReview
+	// when an assistant's change disabled it, "" otherwise (and always
+	// while it is enabled). Enabling it clears it.
+	DisabledReason string
 }
+
+// DisabledForReview is DisabledReason for a trigger an assistant's change
+// to what it runs or syncs disabled until a person reviews it (spec
+// 2026-11-25 C2, migration 00130).
+const DisabledForReview = "assistant_change"
 
 // Auth is the preset's authentication mode.
 func (t Trigger) Auth() Auth { spec, _ := preset(t.Preset); return spec.auth }

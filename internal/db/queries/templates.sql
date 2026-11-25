@@ -92,6 +92,15 @@ WHERE job_templates.org_id = @org_id AND job_templates.vars_mode = 'automatic'
     SELECT p.id FROM playbooks p WHERE p.org_id = @org_id AND p.repo_id = @repo_id)
 ORDER BY job_templates.name;
 
+-- name: ListTemplateIDsForRepo :many
+-- The templates whose playbook belongs to the repository: what a change of
+-- the repository changes for them (spec 2026-11-25 C2).
+SELECT job_templates.id FROM job_templates
+WHERE job_templates.org_id = @org_id
+  AND job_templates.playbook_id IN (
+    SELECT p.id FROM playbooks p WHERE p.org_id = @org_id AND p.repo_id = @repo_id)
+ORDER BY job_templates.name, job_templates.id;
+
 -- name: ListAutomaticTemplatesForPlaybook :many
 -- The templates an editor playbook's save applies its new variable
 -- sources to: those of the playbook in automatic mode.

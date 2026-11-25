@@ -4661,6 +4661,28 @@ export interface components {
             needs_review: boolean;
             reason?: string;
         };
+        ChangedField: {
+            /** @description The field; an extra var as extra_vars.<name> */
+            field: string;
+            /** @description The value after; null for none. A secret is {"$secret":"set"} */
+            new: unknown;
+            /** @description The value before; null for none. A secret is {"$secret":"set"} */
+            old: unknown;
+        };
+        ChangedObject: {
+            fields: components["schemas"]["ChangedField"][] | null;
+            id: string;
+            name: string;
+            /**
+             * @description What the assistant changed: a job template or a repository
+             * @enum {string}
+             */
+            subject: "job_template" | "repo";
+            /** @description The assistant token that made the change */
+            token_id?: string;
+            /** @description The person whose assistant token made the change */
+            user_id: string;
+        };
         CheckDTO: {
             detail: string;
             name: string;
@@ -7481,6 +7503,8 @@ export interface components {
             repo?: components["schemas"]["PictureRepo"];
             requested_host_ids?: string[] | null;
             retry?: components["schemas"]["PictureRetry"];
+            /** @description Set for a review request: the schedule or webhook trigger an assistant's change paused, as it is now, and the changes */
+            review?: components["schemas"]["PictureReview"];
             /** @description Set for a schedule request: the schedule as the approval stores it and as it is now */
             schedule?: components["schemas"]["PictureSchedule"];
             ssh_credential?: string;
@@ -7563,6 +7587,23 @@ export interface components {
         PictureRetry: {
             failed_hosts: string[] | null;
             job_id: string;
+        };
+        PictureReview: {
+            /** @description The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token */
+            changes: components["schemas"]["ChangedObject"][] | null;
+            gone?: boolean;
+            /**
+             * @description What the review resumes: a schedule or a webhook trigger
+             * @enum {string}
+             */
+            item: "schedule" | "trigger";
+            item_id: string;
+            /** @description Whether the item is still paused (disabled) because of the changes; approving resumes (enables) it */
+            paused_for_review: boolean;
+            /** @description The paused schedule as it is now */
+            schedule?: components["schemas"]["ScheduleState"];
+            /** @description The disabled webhook trigger as it is now; never its secret */
+            trigger?: components["schemas"]["TriggerState"];
         };
         PictureSchedule: {
             /**
@@ -8269,10 +8310,10 @@ export interface components {
             id: string;
             job_id?: string;
             /**
-             * @description run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which) or trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which)
+             * @description run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which), trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which), or schedule_review / trigger_review (an assistant's change paused a schedule or disabled a trigger; approving resumes or enables it, the picture's review shows the change)
              * @enum {string}
              */
-            kind: "run" | "retry_failed" | "schedule" | "trigger";
+            kind: "run" | "retry_failed" | "schedule" | "trigger" | "schedule_review" | "trigger_review";
             reason: string;
             requested_by_token_id?: string;
             /** @description The requesting token's name; empty when the token is gone or there is none */
@@ -8390,6 +8431,13 @@ export interface components {
             next_run_at?: string;
             notify_on?: string[] | null;
             paused: boolean;
+            /**
+             * @description Why a paused schedule stopped: assistant_change when an assistant changed what it runs and a person has to review it; absent otherwise
+             * @enum {string}
+             */
+            paused_reason?: "assistant_change";
+            /** @description The newest review request of a schedule paused for review */
+            review_request_id?: string;
             /** Format: int64 */
             revision: number;
             simple?: components["schemas"]["SimpleDTO"];
@@ -9101,6 +9149,11 @@ export interface components {
             auth: "hmac" | "token";
             /** Format: date-time */
             created_at: string;
+            /**
+             * @description Why a disabled trigger stopped: assistant_change when an assistant changed what it runs or syncs and a person has to review it; absent otherwise
+             * @enum {string}
+             */
+            disabled_reason?: "assistant_change";
             enabled: boolean;
             id: string;
             /** @enum {string} */
@@ -9113,6 +9166,8 @@ export interface components {
             preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
             rate_limit: components["schemas"]["RateLimitDTO"];
             repo_id?: string;
+            /** @description The newest review request of a trigger disabled for review */
+            review_request_id?: string;
             /** Format: int64 */
             revision: number;
             signature_header: string;

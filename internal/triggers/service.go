@@ -52,6 +52,25 @@ type Store interface {
 	// amend (no such row — outcome, say, OutcomeNotFound never has one) is
 	// a harmless no-op, not an error.
 	NoteRateLimited(ctx context.Context, orgID, triggerID uuid.UUID, outcome Outcome, at time.Time) error
+	// InTx runs fn in one write transaction every store on the same
+	// database joins.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
+	// DisableForReview disables an enabled trigger with
+	// DisabledForReview; ok is false (the trigger as it is) when it was
+	// disabled already.
+	DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error)
+	// EnableAt enables the trigger at revision and clears its reason.
+	EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error)
+	// ListForReview lists the triggers that run any of templateIDs or
+	// sync repoID.
+	ListForReview(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID, repoID *uuid.UUID) ([]Trigger, error)
+}
+
+// Reviews is told when a person enables a trigger an assistant's change
+// disabled for review (spec 2026-11-25 C2): its open review is closed as
+// decided by that person, in the update's transaction.
+type Reviews interface {
+	TriggerEnabled(ctx context.Context, orgID, triggerID, by uuid.UUID) error
 }
 
 type TemplateChecker interface {
@@ -97,7 +116,16 @@ type Deps struct {
 	Log     *slog.Logger
 }
 
-type Service struct{ d Deps }
+type Service struct {
+	d Deps
+	// reviews closes the review of a trigger a person enables
+	// (SetReviews); nil closes nothing.
+	reviews Reviews
+}
+
+// SetReviews wires what a person's enabling of a trigger disabled for
+// review closes.
+func (s *Service) SetReviews(r Reviews) { s.reviews = r }
 
 func NewService(d Deps) *Service {
 	if d.Now == nil {
@@ -165,6 +193,14 @@ func (s *Service) CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in I
 
 // Update replaces the editable fields; kind and target are immutable.
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in Input) (Trigger, error) {
+	return s.UpdateBy(ctx, orgID, id, uuid.Nil, revision, in)
+}
+
+// UpdateBy is Update by the person by. A person may enable a trigger an
+// assistant's change disabled for review (DisabledForReview) directly:
+// the update clears the reason and closes the review as decided by them,
+// in one transaction.
+func (s *Service) UpdateBy(ctx context.Context, orgID, id, by uuid.UUID, revision int64, in Input) (Trigger, error) {
 	cur, err := s.d.Store.Get(ctx, orgID, id)
 	if err != nil {
 		return Trigger{}, err
@@ -177,7 +213,40 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 		return Trigger{}, err
 	}
 	t.CreatedBy, t.CreatedAt = cur.CreatedBy, cur.CreatedAt
-	return s.d.Store.Update(ctx, t, revision)
+	if cur.DisabledReason == "" || !t.Enabled || s.reviews == nil {
+		return s.d.Store.Update(ctx, t, revision)
+	}
+	var out Trigger
+	err = s.d.Store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if out, err = s.d.Store.Update(ctx, t, revision); err != nil {
+			return err
+		}
+		if err := s.reviews.TriggerEnabled(ctx, orgID, id, by); err != nil {
+			return fmt.Errorf("close the trigger's review: %w", err)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// DisableForReview disables an enabled trigger because an assistant
+// changed what it runs or syncs (spec 2026-11-25 C2). ok is false, and the
+// trigger comes back as it is, when it was disabled already.
+func (s *Service) DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error) {
+	return s.d.Store.DisableForReview(ctx, orgID, id)
+}
+
+// EnableAt enables the trigger at the revision a person saw (an approved
+// review) and clears why it was disabled.
+func (s *Service) EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error) {
+	return s.d.Store.EnableAt(ctx, orgID, id, revision)
+}
+
+// ListForReview lists the triggers that run any of templateIDs or sync
+// repoID (nil for none).
+func (s *Service) ListForReview(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID, repoID *uuid.UUID) ([]Trigger, error) {
+	return s.d.Store.ListForReview(ctx, orgID, templateIDs, repoID)
 }
 
 // RotateSecret replaces the secret; the new one is returned once.

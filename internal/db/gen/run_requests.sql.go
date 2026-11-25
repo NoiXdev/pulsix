@@ -13,12 +13,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeReviewRequests = `-- name: CloseReviewRequests :execrows
+UPDATE run_requests SET status = 'approved', decided_by = $1, decided_at = $2
+WHERE org_id = $3 AND kind = $4 AND target_id = $5::uuid
+  AND status = 'pending' AND expires_at > $2::timestamptz
+`
+
+type CloseReviewRequestsParams struct {
+	DecidedBy pgtype.UUID        `json:"decided_by"`
+	DecidedAt pgtype.Timestamptz `json:"decided_at"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	Kind      string             `json:"kind"`
+	TargetID  uuid.UUID          `json:"target_id"`
+}
+
+// A person resumed or enabled the item directly: its open reviews are
+// decided as approved by that person, who looked at the item.
+func (q *Queries) CloseReviewRequests(ctx context.Context, arg CloseReviewRequestsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeReviewRequests,
+		arg.DecidedBy,
+		arg.DecidedAt,
+		arg.OrgID,
+		arg.Kind,
+		arg.TargetID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countPendingRunRequests = `-- name: CountPendingRunRequests :one
 SELECT count(*)::int AS n FROM run_requests
 WHERE org_id = $1
   AND ((status = 'pending' AND expires_at > $2::timestamptz)
     OR ($3::uuid IS NOT NULL AND status = 'waiting_for_sync'))
-  AND ($3::uuid IS NULL OR requested_by_token = $3::uuid)
+  AND ($3::uuid IS NULL OR (requested_by_token = $3::uuid
+    AND kind NOT IN ('schedule_review', 'trigger_review')))
 `
 
 type CountPendingRunRequestsParams struct {
@@ -31,6 +62,8 @@ type CountPendingRunRequestsParams struct {
 // or, when token is given, of that one token (the per-token cap), which
 // also counts the token's requests waiting for their sync (migration
 // 00124): they become pending without asking again.
+// A review (migration 00130) is not what the token asked for: it counts
+// on the badge, not against the token's cap.
 func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingRunRequestsParams) (int32, error) {
 	row := q.db.QueryRow(ctx, countPendingRunRequests, arg.OrgID, arg.Now, arg.Token)
 	var n int32
@@ -113,6 +146,61 @@ func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getOpenReviewRequest = `-- name: GetOpenReviewRequest :one
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
+WHERE org_id = $1 AND kind = $2 AND target_id = $3::uuid
+  AND status = 'pending' AND expires_at > $4::timestamptz
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetOpenReviewRequestParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	Kind     string    `json:"kind"`
+	TargetID uuid.UUID `json:"target_id"`
+	Now      time.Time `json:"now"`
+}
+
+// The open review of a paused schedule or trigger (spec 2026-11-25 C2,
+// migration 00130): pending and unexpired at now; the newest if there were
+// ever more.
+func (q *Queries) GetOpenReviewRequest(ctx context.Context, arg GetOpenReviewRequestParams) (RunRequest, error) {
+	row := q.db.QueryRow(ctx, getOpenReviewRequest,
+		arg.OrgID,
+		arg.Kind,
+		arg.TargetID,
+		arg.Now,
+	)
+	var i RunRequest
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.TemplateRevision,
+		&i.HostID,
+		&i.JobID,
+		&i.Reason,
+		&i.RequestedByUser,
+		&i.RequestedByToken,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.RunGroupID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.ApprovedFingerprint,
+		&i.Overrides,
+		&i.PinnedCommit,
+		&i.SyncJobID,
+		&i.ExpiresInMinutes,
+		&i.SyncError,
+		&i.EnrollHostIds,
+		&i.Payload,
+		&i.TargetID,
+	)
+	return i, err
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
@@ -256,6 +344,45 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 		arg.TargetID,
 	)
 	return err
+}
+
+const latestReviewRequests = `-- name: LatestReviewRequests :many
+SELECT DISTINCT ON (target_id) id, target_id FROM run_requests
+WHERE org_id = $1 AND kind = $2 AND target_id = ANY($3::uuid[])
+ORDER BY target_id, created_at DESC, id DESC
+`
+
+type LatestReviewRequestsParams struct {
+	OrgID     uuid.UUID   `json:"org_id"`
+	Kind      string      `json:"kind"`
+	TargetIds []uuid.UUID `json:"target_ids"`
+}
+
+type LatestReviewRequestsRow struct {
+	ID       uuid.UUID   `json:"id"`
+	TargetID pgtype.UUID `json:"target_id"`
+}
+
+// The newest review of each of the items (the schedule and trigger pages
+// link it).
+func (q *Queries) LatestReviewRequests(ctx context.Context, arg LatestReviewRequestsParams) ([]LatestReviewRequestsRow, error) {
+	rows, err := q.db.Query(ctx, latestReviewRequests, arg.OrgID, arg.Kind, arg.TargetIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LatestReviewRequestsRow
+	for rows.Next() {
+		var i LatestReviewRequestsRow
+		if err := rows.Scan(&i.ID, &i.TargetID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDueWaitingRunRequests = `-- name: ListDueWaitingRunRequests :many
@@ -490,6 +617,35 @@ func (q *Queries) ListWaitingRunRequestsForSync(ctx context.Context, syncJobID u
 		return nil, err
 	}
 	return items, nil
+}
+
+const refreshReviewRequest = `-- name: RefreshReviewRequest :execrows
+UPDATE run_requests SET payload = $1, expires_at = $2, template_revision = $3
+WHERE org_id = $4 AND id = $5 AND status = 'pending'
+`
+
+type RefreshReviewRequestParams struct {
+	Payload          []byte             `json:"payload"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	TemplateRevision int64              `json:"template_revision"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	ID               uuid.UUID          `json:"id"`
+}
+
+// Another assistant change hit an item already paused for review: its
+// open review shows every change and its expiry starts again.
+func (q *Queries) RefreshReviewRequest(ctx context.Context, arg RefreshReviewRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshReviewRequest,
+		arg.Payload,
+		arg.ExpiresAt,
+		arg.TemplateRevision,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revertRunRequest = `-- name: RevertRunRequest :exec

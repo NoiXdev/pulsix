@@ -23,7 +23,7 @@ import (
 
 type runRequestDTO struct {
 	ID                 string `json:"id"`
-	Kind               string `json:"kind" enum:"run,retry_failed,schedule,trigger" doc:"run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which) or trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which)"`
+	Kind               string `json:"kind" enum:"run,retry_failed,schedule,trigger,schedule_review,trigger_review" doc:"run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which), trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which), or schedule_review / trigger_review (an assistant's change paused a schedule or disabled a trigger; approving resumes or enables it, the picture's review shows the change)"`
 	Status             string `json:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
 	TemplateID         string `json:"template_id" doc:"The template the request runs; empty for a repository sync trigger's request, which runs none"`
 	TemplateRevision   int64  `json:"template_revision" doc:"The template's revision when the request was made; the picture's template_revision is the one an approval approves"`
@@ -283,6 +283,9 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		case a.Trigger != nil:
 			setAuditObject(ctx, a.Request.ID.String(), triggerApprovalSummary(a))
 			auditAppliedTrigger(ctx, deps, scope, a)
+		case a.Review != nil:
+			setAuditObject(ctx, a.Request.ID.String(), reviewApprovalSummary(a))
+			auditAppliedReview(ctx, deps, scope, a)
 		default:
 			setAuditObject(ctx, a.Request.ID.String(), approvalSummary(a))
 		}

@@ -148,6 +148,8 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		return r.schedulePicture(ctx, orgID, req)
 	case KindTrigger:
 		return r.triggerPicture(ctx, orgID, req)
+	case KindScheduleReview, KindTriggerReview:
+		return r.reviewPicture(ctx, orgID, req)
 	case KindRun, KindRetryFailed:
 	default:
 		// A kind a newer version wrote is no run: never shown as one.

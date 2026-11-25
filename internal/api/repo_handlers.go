@@ -293,7 +293,7 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		r, err := deps.Repos.Update(ctx, scope.OrgID, id, repos.UpdateInput{
 			Name: in.Body.Name, URL: in.Body.URL, Branch: in.Body.Branch,
 			Subpath: in.Body.Subpath, CredentialID: credentialID, VaultCredentialID: vaultCredentialID,
-			VaultIdentities: vaultIdentities,
+			VaultIdentities: vaultIdentities, Actor: changeActor(scope),
 		})
 		if err != nil {
 			return nil, mapReposErr(ctx, err)

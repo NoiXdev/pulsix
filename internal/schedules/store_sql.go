@@ -16,11 +16,54 @@ import (
 )
 
 // SQLStore is the org-scoped schedule store.
-type SQLStore struct{ q *gen.Queries }
+type SQLStore struct {
+	d *db.DB
+	q *gen.Queries
+}
 
 // NewSQLStore builds the store on *db.DB so every statement runs in the
 // request's org scope.
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
+
+// InTx runs fn in one organization-scoped write transaction that every
+// store on the same database joins (db.WithWriteTx).
+func (st *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return st.d.WithWriteTx(ctx, orgID, fn)
+}
+
+// PauseForReview pauses an active schedule for a person's review (reason
+// PausedForReview); ok is false, and the schedule comes back as it is,
+// when it was already paused.
+func (st *SQLStore) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error) {
+	row, err := st.q.PauseScheduleForReview(ctx, gen.PauseScheduleForReviewParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		cur, gerr := st.Get(ctx, orgID, id)
+		return cur, false, gerr
+	}
+	if err != nil {
+		return Schedule{}, false, fmt.Errorf("pause schedule for review: %w", err)
+	}
+	s, err := toSchedule(row)
+	return s, err == nil, err
+}
+
+// ListOfTemplates lists the schedules that run any of templateIDs.
+func (st *SQLStore) ListOfTemplates(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]Schedule, error) {
+	if len(templateIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := st.q.ListSchedulesOfTemplates(ctx, gen.ListSchedulesOfTemplatesParams{OrgID: orgID, TemplateIds: templateIDs})
+	if err != nil {
+		return nil, fmt.Errorf("list schedules of templates: %w", err)
+	}
+	out := make([]Schedule, len(rows))
+	for i, r := range rows {
+		if out[i], err = toSchedule(r); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
 
 func (st *SQLStore) Create(ctx context.Context, s Schedule) (Schedule, error) {
 	simple, guards, vars, err := encodeJSON(s)
@@ -240,6 +283,9 @@ func toSchedule(r gen.Schedule) (Schedule, error) {
 		Timezone: r.Timezone, Paused: r.Paused, NextRunAt: db.TimePtr(r.NextRunAt), LastRunAt: db.TimePtr(r.LastRunAt),
 		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
 		UntrustedLimit: r.UntrustedLimit, UntrustedExtraVars: r.UntrustedExtraVars,
+	}
+	if r.PausedReason != nil {
+		s.PausedReason = *r.PausedReason
 	}
 	s.Overrides.Limit = r.Limit
 	if len(r.Simple) > 0 {

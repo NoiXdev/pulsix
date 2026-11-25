@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/varsource"
@@ -158,6 +159,11 @@ type UpdateInput struct {
 	CredentialID      *uuid.UUID
 	VaultCredentialID *uuid.UUID
 	VaultIdentities   []VaultIdentity
+	// Actor is who saves: an assistant's save that changes what a sync
+	// fetches or how a run reads the files pauses what runs the
+	// repository's playbooks, or syncs it, for a person's review (spec
+	// 2026-11-25 C2, SetChangeWatcher).
+	Actor assistantchange.Actor
 }
 
 // CredentialSource is the slice of credentials.Service a repo's credential
@@ -244,6 +250,9 @@ type Service struct {
 	creds CredentialSource
 	jobs  JobEnqueuer
 	log   *slog.Logger
+	// watcher is told about an assistant's run-relevant change
+	// (SetChangeWatcher); nil hands nothing on.
+	watcher assistantchange.Watcher
 }
 
 // NewService wires the store, the credential source and the sync enqueuer.
@@ -380,6 +389,12 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	var updated Repo
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
+		before := cur
+		if in.Actor.Assistant && s.watcher != nil {
+			if before.VaultIdentities, err = s.store.ListRepoVaultIdentities(ctx, orgID, id); err != nil {
+				return fmt.Errorf("list repo vault identities: %w", err)
+			}
+		}
 		if updated, err = s.store.Update(ctx, next); err != nil {
 			return err
 		}
@@ -389,7 +404,9 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		if err := s.store.ReplaceRepoVaultIdentities(ctx, orgID, id, in.VaultIdentities); err != nil {
 			return fmt.Errorf("store repo vault identities: %w", err)
 		}
-		return nil
+		after := updated
+		after.VaultIdentities = in.VaultIdentities
+		return s.handOn(ctx, orgID, in.Actor, before, after)
 	}); err != nil {
 		return Repo{}, err
 	}

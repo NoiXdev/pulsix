@@ -31,6 +31,11 @@ export const enSchedules = {
   countOfTemplate: (n: number) => (n === 1 ? '1 schedule of this template' : `${n} schedules of this template`),
   paused: 'paused',
   active: 'active',
+  /** An assistant's change paused it until a person reviews it (spec 2026-11-25 C2). */
+  needsReview: 'needs review',
+  pausedForReview: 'Paused: changed by an assistant, needs review',
+  pausedForReviewHint: 'Approving the review request resumes it; resuming it here does too and closes the review.',
+  openReview: 'Open the review',
   empty: 'No schedules yet.',
   pauseAllConfirm: 'Pause every schedule of this organization?',
   pausedCount: (n: number) => `${n} schedule(s) paused`,

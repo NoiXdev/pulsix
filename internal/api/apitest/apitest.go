@@ -811,6 +811,9 @@ func New(t *testing.T, opts ...Option) *Server {
 		PublicURL: publicURL,
 	}
 	s.Deps.RunRequests = newRunRequests(d, s.Deps, time.Now)
+	// The pause after an assistant's change, exactly as production wires
+	// it (internal/app.Build).
+	app.WireChangeReviews(d, templatesSvc, reposSvc, schedulesSvc, triggersSvc, auditRec)
 	// Personal tokens (backlog 3.100), wired as app.Build wires them.
 	s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, tenancySvc, time.Now, personaltokens.WithSessionCheck(s.Sessions))
 	s.Queue.SetClaimGuard(s.Deps.RunRequests)

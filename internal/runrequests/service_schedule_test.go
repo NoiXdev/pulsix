@@ -24,6 +24,8 @@ type fakeAutomation struct {
 	appliedPic runrequests.PictureSchedule
 	// triggers is the trigger side (service_trigger_test.go).
 	triggers fakeTriggers
+	// reviews is the review side (service_review_test.go).
+	reviews fakeReviewApply
 }
 
 func (f *fakeAutomation) ValidateSchedule(_ context.Context, _, target uuid.UUID, in runrequests.ScheduleInput) (runrequests.ScheduleChange, uuid.UUID, int64, error) {

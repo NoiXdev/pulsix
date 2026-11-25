@@ -952,6 +952,37 @@ approve a trigger request (it refuses the unknown kind), and its request list fa
 while a repository sync trigger request exists (it cannot read the NULL template); stop
 every manager instance first, as above.
 
+Pausing after an assistant's change (same spec, C2, decision D5) adds migration 00130:
+the nullable `schedules.paused_reason` and `job_triggers.disabled_reason` (text, only
+`assistant_change`; a CHECK each allows a reason only on a paused schedule or a
+disabled trigger, which every existing row passes with NULL) and a partial index
+`run_requests_review_target_idx` on `(org_id, target_id)` for the two review kinds 00129
+already admits. Catalog changes plus a small index; a backup carries both columns. When
+a change made with an assistant token moves a run-relevant field of a job template
+(playbook, scope, limit, extra vars values or schema, credential, vault identities,
+agent enrollment, follow-ups; through the template save, variables save or variables
+apply routes) or of a repository (URL, branch, subpath, credential, vault identities),
+the same transaction pauses every active schedule of the affected templates (a
+repository's: the templates whose playbook comes from it) and disables every enabled
+trigger that runs one of them or syncs the repository, each with the reason
+`assistant_change`, one activity entry (`pauseScheduleForReview`,
+`disableTriggerForReview`, attributed to the token) and one review request
+(`schedule_review`, `trigger_review`) whose picture shows the item and the changes, old
+and new, secrets masked. Another change of an item already paused for review is added
+to its open review instead. A schedule a person paused, or a trigger a person disabled,
+is left as it is. A person's change pauses nothing; inventory changes never do. A review
+does not count against its token's pending cap and expires after 30 days (the item
+stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
+repository sync trigger) and resumes (enables) the item at the revision shown;
+rejecting leaves it paused. A person may resume or enable such an item directly, which
+clears the reason and closes the open review as approved by them; an assistant's
+`resume_schedule`, or an `update_trigger` that enables it, is refused with 422. The
+schedule and trigger reads carry `paused_reason` / `disabled_reason` and
+`review_request_id`. **An older manager alongside** neither pauses anything after an
+assistant's change, nor shows or approves a review (unknown kind), and its resume of a
+schedule (enabling of a trigger) paused for review fails on the new CHECK, since it
+does not clear the reason; stop every manager instance first, as above.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

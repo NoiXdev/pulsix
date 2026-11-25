@@ -205,3 +205,17 @@ describe('TriggersDialog', () => {
     expect(putBody).toMatchObject({ name: 'deploy on release' });
   });
 });
+
+describe('TriggersDialog: a trigger an assistant change disabled (spec 2026-11-25 C2)', () => {
+  it('says why and links the review request', async () => {
+    const review = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [trigger({ enabled: false, disabled_reason: 'assistant_change', review_request_id: review })] },
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+    });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Triggers · patch-all' });
+    const note = await within(dialog).findByRole('note', { name: 'Paused: changed by an assistant, needs review' });
+    expect(within(note).getByRole('link', { name: 'Open the review' })).toHaveAttribute('href', `/o/acme/runs/requests/${review}`);
+  });
+});

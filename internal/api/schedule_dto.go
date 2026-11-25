@@ -37,21 +37,26 @@ type scheduleRunDTO struct {
 }
 
 type scheduleDTO struct {
-	ID          string          `json:"id"`
-	TemplateID  string          `json:"template_id"`
-	Name        string          `json:"name"`
-	Mode        string          `json:"mode" enum:"cron,simple"`
-	Cron        string          `json:"cron"`
-	Description string          `json:"description" doc:"Human text for simple shapes; empty otherwise"`
-	Simple      *simpleDTO      `json:"simple,omitempty"`
-	Timezone    string          `json:"timezone"`
-	Guards      guardsDTO       `json:"guards"`
-	Limit       *string         `json:"limit,omitempty"`
-	ExtraVars   map[string]any  `json:"extra_vars,omitempty" doc:"Overrides; secret values read as {\"$secret\":\"set\"}"`
-	Paused      bool            `json:"paused"`
-	NextRunAt   *time.Time      `json:"next_run_at,omitempty"`
-	LastRunAt   *time.Time      `json:"last_run_at,omitempty"`
-	LastRun     *scheduleRunDTO `json:"last_run,omitempty"`
+	ID          string         `json:"id"`
+	TemplateID  string         `json:"template_id"`
+	Name        string         `json:"name"`
+	Mode        string         `json:"mode" enum:"cron,simple"`
+	Cron        string         `json:"cron"`
+	Description string         `json:"description" doc:"Human text for simple shapes; empty otherwise"`
+	Simple      *simpleDTO     `json:"simple,omitempty"`
+	Timezone    string         `json:"timezone"`
+	Guards      guardsDTO      `json:"guards"`
+	Limit       *string        `json:"limit,omitempty"`
+	ExtraVars   map[string]any `json:"extra_vars,omitempty" doc:"Overrides; secret values read as {\"$secret\":\"set\"}"`
+	Paused      bool           `json:"paused"`
+	// PausedReason and ReviewRequestID: an assistant's change to what the
+	// schedule runs paused it until a person reviews it (spec 2026-11-25
+	// C2); the review request is on the approvals page.
+	PausedReason    string          `json:"paused_reason,omitempty" enum:"assistant_change" doc:"Why a paused schedule stopped: assistant_change when an assistant changed what it runs and a person has to review it; absent otherwise"`
+	ReviewRequestID string          `json:"review_request_id,omitempty" doc:"The newest review request of a schedule paused for review"`
+	NextRunAt       *time.Time      `json:"next_run_at,omitempty"`
+	LastRunAt       *time.Time      `json:"last_run_at,omitempty"`
+	LastRun         *scheduleRunDTO `json:"last_run,omitempty"`
 	// NotifyOn lists the distinct categories (failure, change, success,
 	// skipped) any of the schedule's notify rules cover, in canonical
 	// order; empty when it has none. The schedules list's "Notify" column
@@ -84,7 +89,7 @@ func toScheduleDTO(s schedules.Schedule, last *schedules.Run, notifyOn []notify.
 		Guards: guardsDTO{Overlap: string(s.Guards.Overlap), CatchUp: catchUpDTO{Enabled: s.Guards.CatchUp.Enabled, Window: s.Guards.CatchUp.Window}, Maintenance: string(s.Guards.Maintenance)},
 		Limit:  s.Overrides.Limit, ExtraVars: schedules.MaskSealed(s.Overrides.ExtraVars),
 		Paused: s.Paused, NextRunAt: s.NextRunAt, LastRunAt: s.LastRunAt,
-		Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
+		Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, PausedReason: s.PausedReason,
 	}
 	if s.Simple != nil {
 		dto.Simple = &simpleDTO{Kind: s.Simple.Kind, Every: s.Simple.Every, Time: s.Simple.Time, Days: s.Simple.Days, Day: s.Simple.Day}

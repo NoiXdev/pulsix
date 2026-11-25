@@ -666,6 +666,7 @@ type JobTrigger struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	Revision        int64          `json:"revision"`
+	DisabledReason  *string        `json:"disabled_reason"`
 }
 
 type MaintenanceWindow struct {
@@ -1031,6 +1032,7 @@ type Schedule struct {
 	Revision           int64              `json:"revision"`
 	UntrustedLimit     bool               `json:"untrusted_limit"`
 	UntrustedExtraVars bool               `json:"untrusted_extra_vars"`
+	PausedReason       *string            `json:"paused_reason"`
 }
 
 type ScheduleNotification struct {

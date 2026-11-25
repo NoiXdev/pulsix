@@ -56,6 +56,9 @@ func (r *Resolver) ValidateSchedule(ctx context.Context, orgID, target uuid.UUID
 		if !cur.Paused {
 			return ScheduleChange{}, uuid.Nil, 0, fmt.Errorf("%w: the schedule is not paused", ErrInvalidInput)
 		}
+		if cur.PausedReason == schedules.PausedForReview {
+			return ScheduleChange{}, uuid.Nil, 0, errScheduleUnderReview
+		}
 		tmpl, err := r.src.Templates.Get(ctx, orgID, cur.TemplateID)
 		if err != nil {
 			return ScheduleChange{}, uuid.Nil, 0, mapNotFound(err)
@@ -105,6 +108,15 @@ func (r *Resolver) ApplySchedule(ctx context.Context, orgID uuid.UUID, req Reque
 	case ScheduleResume:
 		if p.Current == nil {
 			return errScheduleGone
+		}
+		// A change an assistant made since paused it for review: that
+		// review resumes it, not a resume the assistant asked for.
+		cur, gerr := r.src.Schedules.Get(ctx, orgID, *target)
+		if gerr != nil {
+			return scheduleErr(gerr)
+		}
+		if cur.PausedReason == schedules.PausedForReview {
+			return errScheduleUnderReview
 		}
 		_, err = r.src.Schedules.ResumeAt(ctx, orgID, *target, p.Current.Revision)
 	default:

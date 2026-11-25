@@ -106,7 +106,7 @@ func TestPauseAndResume(t *testing.T) {
 	}
 	// A week later, resume computes from now and never replays the week.
 	w.now = w.now.Add(7 * 24 * time.Hour)
-	r, err := w.svc.Resume(ctx, w.org, s.ID)
+	r, err := w.svc.Resume(ctx, w.org, s.ID, w.actor)
 	if err != nil || r.Paused || r.NextRunAt == nil || !r.NextRunAt.After(w.now) {
 		t.Fatalf("resumed = %+v, %v", r, err)
 	}
@@ -129,7 +129,7 @@ func TestResumeOnAnActiveScheduleIsANoOp(t *testing.T) {
 	}
 	want := *s.NextRunAt
 	w.now = w.now.Add(time.Hour) // time passes; a due occurrence is now overdue
-	r, err := w.svc.Resume(ctx, w.org, s.ID)
+	r, err := w.svc.Resume(ctx, w.org, s.ID, w.actor)
 	if err != nil {
 		t.Fatal(err)
 	}

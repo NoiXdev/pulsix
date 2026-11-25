@@ -93,8 +93,40 @@ func (f *fakeStore) SetPaused(_ context.Context, orgID, id uuid.UUID, paused boo
 		return schedules.Schedule{}, schedules.ErrNotFound
 	}
 	s.Paused, s.NextRunAt, s.Revision = paused, next, s.Revision+1
+	if !paused {
+		s.PausedReason = ""
+	}
 	f.byID[id] = s
 	return s, nil
+}
+
+// InTx runs fn straight through: the fake has no rollback.
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+func (f *fakeStore) PauseForReview(_ context.Context, orgID, id uuid.UUID) (schedules.Schedule, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.byID[id]
+	if !ok || s.OrgID != orgID {
+		return schedules.Schedule{}, false, schedules.ErrNotFound
+	}
+	if s.Paused {
+		return s, false, nil
+	}
+	s.Paused, s.PausedReason, s.NextRunAt, s.Revision = true, schedules.PausedForReview, nil, s.Revision+1
+	f.byID[id] = s
+	return s, true, nil
+}
+
+func (f *fakeStore) ListOfTemplates(_ context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]schedules.Schedule, error) {
+	var out []schedules.Schedule
+	for _, id := range templateIDs {
+		list, _ := f.List(ctx, orgID, &id)
+		out = append(out, list...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SetPausedAt(ctx context.Context, orgID, id uuid.UUID, paused bool, next *time.Time, revision int64) (schedules.Schedule, error) {

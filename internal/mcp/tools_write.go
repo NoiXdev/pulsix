@@ -293,7 +293,7 @@ func writeTools() []toolDef {
 			tenancy.AreaReposWrite, writeTool, func(ctx context.Context, c *caller, in repoCreateArgs) (any, error) {
 				return send(ctx, c, http.MethodPost, in, "", "/repos")
 			}),
-		define("update_repo", "Update repository", "Change a repository. Fields: "+strings.Join(repoKeys, ", ")+". Repositories have no revision, so a concurrent change is overwritten.",
+		define("update_repo", "Update repository", "Change a repository. Fields: "+strings.Join(repoKeys, ", ")+". Repositories have no revision, so a concurrent change is overwritten. "+pausesForReview,
 			tenancy.AreaReposWrite, writeTool, func(ctx context.Context, c *caller, in repoUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPut, "repo", repoKeys, updateArgs{Fields: in.Fields}, nil, false, "/repos/%s", in.RepoID)
 			}),
@@ -320,12 +320,16 @@ func writeTools() []toolDef {
 				}
 				return send(ctx, c, http.MethodPost, in, "", "/job-templates")
 			}),
-		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type. Switching agent_enrollment needs a person with the agents permission; saving keeps it as it is. The extra_vars_schema field is {\"fields\": [...]}: "+schemaFieldWords+".",
+		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type. Switching agent_enrollment needs a person with the agents permission; saving keeps it as it is. The extra_vars_schema field is {\"fields\": [...]}: "+schemaFieldWords+". "+pausesForReview,
 			tenancy.AreaTemplatesWrite, writeTool, func(ctx context.Context, c *caller, in templateUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPut, "template", templateKeys, in.updateArgs, templateSecrets, true, "/job-templates/%s", in.TemplateID)
 			}),
 	}
 }
+
+// pausesForReview tells the assistant what a change of what runs does to
+// the schedules and triggers that run it unattended (spec 2026-11-25 C2).
+const pausesForReview = "A change of what runs (a template's playbook, scope, limit, extra vars or their schema, credential, vault identities or follow-ups; a repository's URL, branch, subpath, credential or vault identities) pauses every active schedule and disables every enabled webhook trigger that runs it, until a person approves the review request each gets; the answer does not list them, list_run_requests does."
 
 // templateSecrets applies the secret rules to a merged template body: the
 // stored schema's secret fields keep their type, and extra vars pass the

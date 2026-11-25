@@ -21,6 +21,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { RunPictureSections } from './RunPictureSections.tsx';
 import { RunRequestFollowUps } from './RunRequestFollowUps.tsx';
+import { ReviewRequestSections } from './ReviewRequestSections.tsx';
 import { ScheduleRequestSections } from './ScheduleRequestSections.tsx';
 import { TriggerRequestSections } from './TriggerRequestSections.tsx';
 import { TriggerSecretDialog } from '../triggers/TriggerSecretDialog.tsx';
@@ -56,7 +57,9 @@ import { shortId } from './status.ts';
  * templates.write as well, starts no run, and opens the schedule. A
  * webhook trigger request does the same for a trigger (repos.write for a
  * repository sync trigger); when its approval draws a secret, the page
- * shows it once in a dialog and forgets it when the dialog closes.
+ * shows it once in a dialog and forgets it when the dialog closes. A review
+ * (spec 2026-11-25 C2) shows the schedule or trigger an assistant's change
+ * paused and the change; approving resumes it.
  */
 export function RunRequestDetailPage() {
   const t = useT();
@@ -121,11 +124,23 @@ export function RunRequestDetailPage() {
   const trigger = request.kind === 'trigger' ? picture.trigger : undefined;
   const tr = t.triggers.request;
   const triggerState = trigger?.new ?? trigger?.current;
+  // A review's picture is the paused item's (spec 2026-11-25 C2).
+  const reviewed = request.kind === 'schedule_review' || request.kind === 'trigger_review' ? picture.review : undefined;
+  const rv = d.review;
   // What else approving needs: what the schedule or trigger routes need.
   const role = orgInfo.data?.org.role;
-  const writes = schedule ? 'templates.write' : trigger ? (triggerState?.kind === 'repo_sync' ? 'repos.write' : 'templates.write') : undefined;
+  const repoTrigger = (triggerState ?? reviewed?.trigger)?.kind === 'repo_sync';
+  const writes = schedule || trigger || reviewed ? (repoTrigger ? 'repos.write' : 'templates.write') : undefined;
   const canRun = may(role, 'jobs.run') && (!writes || may(role, writes));
-  const scheduleGone = !!schedule?.gone || !!trigger?.gone;
+  const scheduleGone = !!schedule?.gone || !!trigger?.gone || !!reviewed?.gone;
+  // The kind's own words where they differ from a run's.
+  const texts = schedule
+    ? { title: sd.title[schedule.action], noPermission: sd.noPermission, decided: sd.decided as Record<string, string>, rejectConfirm: sd.rejectConfirm }
+    : trigger
+      ? { title: tr.title[trigger.action], noPermission: tr.noPermission, decided: tr.decided as Record<string, string>, rejectConfirm: tr.rejectConfirm }
+      : reviewed
+        ? { title: rv.title[reviewed.item], noPermission: rv.noPermission, decided: rv.decided as Record<string, string>, rejectConfirm: rv.rejectConfirm }
+        : { title: d.title, noPermission: d.noPermission, decided: d.decided as Record<string, string>, rejectConfirm: d.rejectConfirm };
   const pending = request.status === 'pending';
   // A sync_first request waits for its repository's sync, then is pending,
   // or fails with the sync's error (spec 2026-11-25 A). While it waits a
@@ -203,6 +218,11 @@ export function RunRequestDetailPage() {
         await openSchedule(approved.target_id);
         return;
       }
+      if (reviewed) {
+        toast.show(rv.approved[reviewed.item]);
+        if (reviewed.item === 'schedule') await openSchedule(approved.target_id);
+        return;
+      }
       toast.show(d.approved);
       await openRun(approved.run_group_id);
     } catch (err) {
@@ -221,8 +241,7 @@ export function RunRequestDetailPage() {
   }
 
   async function onReject() {
-    const message = schedule ? sd.rejectConfirm : trigger ? tr.rejectConfirm : d.rejectConfirm;
-    if (!(await ask({ message, confirmLabel: d.reject, destructive: true }))) return;
+    if (!(await ask({ message: texts.rejectConfirm, confirmLabel: d.reject, destructive: true }))) return;
     try {
       await reject.mutateAsync();
       toast.show(d.rejected);
@@ -236,7 +255,9 @@ export function RunRequestDetailPage() {
     ? [{ id: 'schedule', label: sd.section }]
     : trigger
       ? [{ id: 'trigger', label: tr.section }]
-      : [
+      : reviewed
+        ? [{ id: 'review', label: rv.section }]
+        : [
         { id: 'template', label: s.template },
         { id: 'playbook', label: s.playbook },
         { id: 'targets', label: s.targets, count: (picture.targets ?? []).length },
@@ -250,13 +271,13 @@ export function RunRequestDetailPage() {
   const sidebar = (
     <div className="flex flex-col gap-4">
       <SidebarHeading
-        title={schedule ? sd.title[schedule.action] : trigger ? tr.title[trigger.action] : d.title}
+        title={texts.title}
         dot={{ tone: requestTone(request.status), label: t.runs.requests.status[request.status] }}
         pill={<Pill tone={requestTone(request.status)}>{t.runs.requests.status[request.status]}</Pill>}
       >
         <span>{t.runs.requests.kind[request.kind]}</span>
         {' · '}
-        <span className="font-mono">{picture.template_name || triggerState?.name}</span>
+        <span className="font-mono">{picture.template_name || triggerState?.name || reviewed?.trigger?.name}</span>
       </SidebarHeading>
       <SidebarFacts
         items={[
@@ -320,7 +341,7 @@ export function RunRequestDetailPage() {
             )}
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">{schedule ? sd.noPermission : trigger ? tr.noPermission : d.noPermission}</span>
+          <span className="text-xs text-muted-foreground">{texts.noPermission}</span>
         )
       ) : waiting ? (
         canRun ? (
@@ -332,13 +353,7 @@ export function RunRequestDetailPage() {
         )
       ) : (
         <div className="flex flex-col items-start gap-2 text-xs text-muted-foreground">
-          <span>
-            {schedule
-              ? sd.decided[request.status as keyof typeof sd.decided]
-              : trigger
-                ? tr.decided[request.status as keyof typeof tr.decided]
-                : d.decided[request.status as keyof typeof d.decided]}
-          </span>
+          <span>{texts.decided[request.status]}</span>
           {schedule && request.status === 'approved' && (
             <Link
               to="/o/$org/schedules"
@@ -365,6 +380,8 @@ export function RunRequestDetailPage() {
         <ScheduleRequestSections schedule={schedule} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
       ) : trigger ? (
         <TriggerRequestSections trigger={trigger} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
+      ) : reviewed ? (
+        <ReviewRequestSections review={reviewed} tokenName={request.requested_by_token_name} tokenId={request.requested_by_token_id} />
       ) : (
         <RunPictureSections org={org} picture={picture} status={request.status} />
       )}
@@ -379,7 +396,7 @@ export function RunRequestDetailPage() {
           }}
         />
       )}
-      {!schedule && !trigger && picture.follow_ups && (
+      {!schedule && !trigger && !reviewed && picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}
     </DetailLayout>

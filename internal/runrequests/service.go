@@ -48,6 +48,12 @@ const (
 	// trigger (TriggerChange). A repository sync trigger's request has no
 	// template (TemplateID is uuid.Nil).
 	KindTrigger Kind = "trigger"
+	// KindScheduleReview and KindTriggerReview ask a person to resume a
+	// schedule, or enable a trigger, that an assistant's change to what it
+	// runs stopped (spec 2026-11-25 C2, ReviewChange). Nobody asks for
+	// them: the Reviewer makes them inside the change's transaction.
+	KindScheduleReview Kind = "schedule_review"
+	KindTriggerReview  Kind = "trigger_review"
 )
 
 // Status is a request's state. StatusExpired is never stored: a pending
@@ -139,6 +145,9 @@ type Request struct {
 	// Trigger is what a KindTrigger request does (the payload column); nil
 	// for every other kind. It never holds a secret.
 	Trigger *TriggerChange
+	// Review is what a review request shows (the payload column): the
+	// assistant changes that stopped its item. nil for every other kind.
+	Review *ReviewChange
 	// TargetID is the object a request of a kind other than run and retry
 	// acts on: for a schedule or trigger request the schedule or trigger it
 	// creates (its id taken when the request is made), changes, resumes or
@@ -216,6 +225,9 @@ type Store interface {
 	// expiresAt and, for a failure, syncError; false when it no longer
 	// waits.
 	EndWait(ctx context.Context, orgID, id uuid.UUID, to Status, expiresAt time.Time, syncError string) (bool, error)
+	// LatestReviews is the newest review of kind of each of targets that
+	// has one, by target.
+	LatestReviews(ctx context.Context, orgID uuid.UUID, kind Kind, targets []uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
 }
 
 // Waiting is a request waiting for its sync, with what the queue says
@@ -391,6 +403,13 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]
 		return nil, err
 	}
 	return rows, nil
+}
+
+// LatestReviews is the newest review request of kind (KindScheduleReview
+// or KindTriggerReview) of each of targets that has one, by target: the
+// schedule and trigger pages link it.
+func (s *Service) LatestReviews(ctx context.Context, orgID uuid.UUID, kind Kind, targets []uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	return s.store.LatestReviews(ctx, orgID, kind, targets)
 }
 
 // Reject refuses a pending request, or one waiting for its sync.

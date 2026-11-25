@@ -106,6 +106,9 @@ type (
 		CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in triggers.Input) (triggers.Created, error)
 		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in triggers.Input) (triggers.Trigger, error)
 		RotateSecretAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (triggers.Created, error)
+		// EnableAt enables a trigger at the revision a person saw (an
+		// approved review).
+		EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error)
 		URL(t triggers.Trigger) string
 	}
 	// RunVarsSource reads the variable values a run would receive, secrets

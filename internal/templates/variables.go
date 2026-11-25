@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
@@ -41,6 +42,8 @@ type VariablesInput struct {
 	Schema     *schema.Schema
 	ExtraVars  map[string]any
 	IfRevision *int64
+	// Actor is who saves (UpdateInput.Actor).
+	Actor assistantchange.Actor
 }
 
 // UpdateVariables replaces a template's schema and values with the same
@@ -66,7 +69,7 @@ func (s *Service) UpdateVariables(ctx context.Context, orgID, id uuid.UUID, in V
 	}
 	next := cur
 	next.ExtraVars, next.ExtraVarsSchema = vars, in.Schema
-	updated, err := s.store.UpdateVariables(ctx, next, readRevision(in.IfRevision, cur))
+	updated, err := s.writeVariables(ctx, in.Actor, cur, next, readRevision(in.IfRevision, cur))
 	if err != nil {
 		return Template{}, err
 	}
@@ -76,6 +79,29 @@ func (s *Service) UpdateVariables(ctx context.Context, orgID, id uuid.UUID, in V
 	}
 	updated.VaultCredentials = items
 	return masked(updated), nil
+}
+
+// writeVariables stores next's variables over cur at ifRevision and hands
+// an assistant's change on in the same transaction (handOn); a person's
+// write is the single statement it always was.
+func (s *Service) writeVariables(ctx context.Context, actor assistantchange.Actor, cur, next Template, ifRevision *int64) (Template, error) {
+	if !s.watches(actor) {
+		return s.store.UpdateVariables(ctx, next, ifRevision)
+	}
+	var updated Template
+	err := s.store.InTx(ctx, cur.OrgID, func(ctx context.Context) error {
+		before, err := s.stateOf(ctx, cur)
+		if err != nil {
+			return err
+		}
+		if updated, err = s.store.UpdateVariables(ctx, next, ifRevision); err != nil {
+			return err
+		}
+		after := before
+		after.t = updated
+		return s.handOn(ctx, cur.OrgID, actor, before, after)
+	})
+	return updated, err
 }
 
 // readRevision is the revision a read-modify-write is guarded by: the one

@@ -65,4 +65,8 @@ type Automation interface {
 	// update): the approving person's to see once, never stored in the
 	// clear.
 	ApplyTrigger(ctx context.Context, orgID uuid.UUID, r Request, p PictureTrigger, actor uuid.UUID) (string, error)
+	// ApplyReview resumes the schedule, or enables the trigger, of the
+	// approved review r at the revision p (the approved picture) shows;
+	// an item no longer stopped for the review is left as it is.
+	ApplyReview(ctx context.Context, orgID uuid.UUID, r Request, p PictureReview, actor uuid.UUID) error
 }

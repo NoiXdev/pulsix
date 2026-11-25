@@ -35,11 +35,21 @@ export function scheduleColumns({ t, templateName, now }: ScheduleColumnsContext
     {
       id: 'status',
       label: m.columns.status,
-      width: '90px',
+      width: '110px',
       sortKey: 'status',
       sortValue: (s) => s.paused,
       defaultVisible: true,
-      render: (s) => <span>{s.paused ? <Pill tone="unknown">{m.paused}</Pill> : <Pill tone="ok">{m.active}</Pill>}</span>,
+      render: (s) => (
+        <span>
+          {s.paused_reason ? (
+            <Pill tone="warn">{m.needsReview}</Pill>
+          ) : s.paused ? (
+            <Pill tone="unknown">{m.paused}</Pill>
+          ) : (
+            <Pill tone="ok">{m.active}</Pill>
+          )}
+        </span>
+      ),
     },
     {
       id: 'template',

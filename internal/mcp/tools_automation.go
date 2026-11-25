@@ -117,7 +117,7 @@ func automationTools() []toolDef {
 				putIf(body, "timezone", in.Timezone)
 				return c.requestAt(ctx, "/schedules/%s/update-requests", []string{in.ScheduleID}, body, scheduleNote)
 			}),
-		defineExact("resume_schedule", "Resume a schedule", "Ask for a paused schedule to run again, from now on (a long pause never replays). Nothing runs until a person approves the request in Pulsix.",
+		defineExact("resume_schedule", "Resume a schedule", "Ask for a paused schedule to run again, from now on (a long pause never replays). Nothing runs until a person approves the request in Pulsix. A schedule your change of its job template or repository paused (paused_reason assistant_change) is resumed only by a person approving its review request; asking is refused.",
 			area, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in scheduleResumeArgs) (any, error) {
 				body := map[string]any{"reason": in.Reason}
 				if in.ExpiresIn != 0 {

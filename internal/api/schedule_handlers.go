@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/cronexpr"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -145,12 +146,22 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &scheduleListOutput{}
 		out.Body.Schedules = make([]scheduleDTO, len(list))
+		var underReview []uuid.UUID
+		for _, s := range list {
+			if s.PausedReason != "" {
+				underReview = append(underReview, s.ID)
+			}
+		}
+		reviews := latestReviews(ctx, deps, scope.OrgID, runrequests.KindScheduleReview, underReview)
 		for i, s := range list {
 			var last *schedules.Run
 			if r, ok := latest[s.ID]; ok {
 				last = &r
 			}
 			out.Body.Schedules[i] = toScheduleDTO(s, last, notifyOn[s.ID])
+			if id, ok := reviews[s.ID]; ok {
+				out.Body.Schedules[i].ReviewRequestID = id.String()
+			}
 		}
 		return out, nil
 	})
@@ -215,7 +226,13 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapSchedulesErr(ctx, err)
 		}
-		return scheduleOut(s), nil
+		out := scheduleOut(s)
+		if s.PausedReason != "" {
+			if rid, ok := latestReviews(ctx, deps, scope.OrgID, runrequests.KindScheduleReview, []uuid.UUID{s.ID})[s.ID]; ok {
+				out.Body.Schedule.ReviewRequestID = rid.String()
+			}
+		}
+		return out, nil
 	})
 
 	huma.Put(hapi, "/api/v1/orgs/{org}/schedules/{id}", func(ctx context.Context, in *scheduleUpdateInput) (*scheduleOutput, error) {
@@ -276,7 +293,7 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 			if action.pause {
 				s, err = deps.Schedules.Pause(ctx, scope.OrgID, id)
 			} else {
-				s, err = deps.Schedules.Resume(ctx, scope.OrgID, id)
+				s, err = deps.Schedules.Resume(ctx, scope.OrgID, id, scope.UserID)
 			}
 			if err != nil {
 				return nil, mapSchedulesErr(ctx, err)

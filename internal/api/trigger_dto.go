@@ -32,9 +32,14 @@ type triggerDTO struct {
 	OnActive        string            `json:"on_active" enum:"queue,skip"`
 	RateLimit       rateLimitDTO      `json:"rate_limit"`
 	URL             string            `json:"url"`
-	Revision        int64             `json:"revision"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	// DisabledReason and ReviewRequestID: an assistant's change to what
+	// the trigger runs or syncs disabled it until a person reviews it
+	// (spec 2026-11-25 C2).
+	DisabledReason  string    `json:"disabled_reason,omitempty" enum:"assistant_change" doc:"Why a disabled trigger stopped: assistant_change when an assistant changed what it runs or syncs and a person has to review it; absent otherwise"`
+	ReviewRequestID string    `json:"review_request_id,omitempty" doc:"The newest review request of a trigger disabled for review"`
+	Revision        int64     `json:"revision"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type triggerDeliveryDTO struct {
@@ -67,7 +72,7 @@ func toTriggerDTO(t triggers.Trigger, url string) triggerDTO {
 		Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(), TimestampHeader: t.TimestampHeader,
 		AllowCIDRs: make([]string, len(t.AllowCIDRs)), Mapping: triggerMappingDTO{ExtraVars: t.Mapping.ExtraVars, Limit: t.Mapping.Limit},
 		OnActive: string(t.OnActive), RateLimit: rateLimitDTO{Count: t.RateLimit.Count, Per: t.RateLimit.Per},
-		URL: url, Revision: t.Revision, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		URL: url, Revision: t.Revision, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, DisabledReason: t.DisabledReason,
 	}
 	for i, p := range t.AllowCIDRs {
 		dto.AllowCIDRs[i] = p.String()

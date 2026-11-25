@@ -379,6 +379,7 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
 			VaultCredentials: vaultCredentials, IfRevision: ifRevision,
 			AgentEnrollment: in.Body.AgentEnrollment, MayEnrolAgents: mayEnrolAgents(scope),
+			Actor: changeActor(scope),
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)

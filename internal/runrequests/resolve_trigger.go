@@ -40,6 +40,9 @@ func (r *Resolver) ValidateTrigger(ctx context.Context, orgID, target uuid.UUID,
 		}
 		spec = mergeTriggerPatch(triggerSpecOf(cur), *in.Patch)
 		ch.KeepEnabled = in.Patch.Enabled == nil
+		if cur.DisabledReason == triggers.DisabledForReview && spec.Enabled {
+			return TriggerChange{}, uuid.Nil, 0, errTriggerUnderReview
+		}
 	case TriggerRotate:
 		cur, err := r.src.Triggers.Get(ctx, orgID, target)
 		if err != nil {
@@ -111,6 +114,14 @@ func (r *Resolver) ApplyTrigger(ctx context.Context, orgID uuid.UUID, req Reques
 		spec := *ch.Spec
 		if ch.KeepEnabled {
 			spec.Enabled = p.Current.Enabled
+		}
+		// A change an assistant made since disabled it for review: that
+		// review enables it, not an update the assistant asked for.
+		if spec.Enabled {
+			cur, gerr := r.src.Triggers.Get(ctx, orgID, *target)
+			if gerr == nil && cur.DisabledReason == triggers.DisabledForReview {
+				return "", errTriggerUnderReview
+			}
 		}
 		_, err = r.src.Triggers.Update(ctx, orgID, *target, p.Current.Revision, triggerInput(spec))
 	case TriggerRotate:

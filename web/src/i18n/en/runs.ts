@@ -208,7 +208,7 @@ export const enRuns = {
    * or rejects against what the page shows. */
   requests: {
     title: 'Run requests',
-    summary: 'Runs, schedules and webhook triggers an assistant asked for. Nothing runs and nothing changes until someone approves it: a run needs the right to run jobs, a schedule or a trigger also the right to change job templates (or, for a repository sync trigger, repositories).',
+    summary: 'Runs, schedules and webhook triggers an assistant asked for, and reviews of schedules and triggers an assistant\'s change paused. Nothing runs and nothing changes until someone approves it: a run needs the right to run jobs, a schedule, a trigger or a review also the right to change job templates (or, for a repository sync trigger, repositories).',
     pendingCount: (n: number) => `${n} pending`,
     label: 'Run requests',
     count: (n: number) => (n === 1 ? '1 request' : `${n} requests`),
@@ -244,6 +244,8 @@ export const enRuns = {
       retry_failed: 'retry of failed hosts',
       schedule: 'schedule',
       trigger: 'webhook trigger',
+      schedule_review: 'review of a paused schedule',
+      trigger_review: 'review of a disabled trigger',
     },
     /** `relative` is the formatted distance, e.g. "in 30 minutes". */
     expires: (relative: string) => `expires ${relative}`,
@@ -439,6 +441,43 @@ export const enRuns = {
         },
         rejectConfirm: 'Reject this schedule request? The schedule is not changed.',
         noPermission: 'Operators, admins and owners can approve or reject schedule requests.',
+      },
+      /** A review (spec 2026-11-25 C2): an assistant changed what a schedule
+       * or trigger runs, which paused it; approving resumes it. */
+      review: {
+        title: { schedule: 'Review a paused schedule', trigger: 'Review a disabled webhook trigger' } as Record<string, string>,
+        section: 'Review',
+        intro: {
+          schedule: 'An assistant changed what this schedule runs, so it was paused. Approving resumes it from now on with the changes below; rejecting leaves it paused.',
+          trigger: 'An assistant changed what this webhook trigger runs or syncs, so it was disabled. Approving enables it again with the changes below; rejecting leaves it disabled.',
+        } as Record<string, string>,
+        item: { schedule: 'Schedule', trigger: 'Webhook trigger' } as Record<string, string>,
+        timetable: 'Timetable',
+        target: 'Target',
+        state: 'State',
+        paused: 'paused',
+        active: 'active',
+        changes: 'What the assistant changed',
+        subject: { job_template: 'Job template', repo: 'Repository' } as Record<string, string>,
+        changedBy: (token: string) => `changed with the assistant token ${token}`,
+        otherToken: (id: string) => `changed with another assistant token (${id})`,
+        field: 'Field',
+        before: 'Before',
+        after: 'After',
+        none: '—',
+        notPaused: {
+          schedule: 'The schedule is no longer paused for this review: a person resumed or paused it. Approving changes nothing about it.',
+          trigger: 'The trigger is no longer disabled for this review: a person enabled or changed it. Approving changes nothing about it.',
+        } as Record<string, string>,
+        gone: 'The schedule or trigger no longer exists. This review cannot be approved; reject it.',
+        approved: { schedule: 'Review approved; the schedule runs again', trigger: 'Review approved; the trigger is enabled again' } as Record<string, string>,
+        decided: {
+          approved: 'Approved. The schedule or trigger runs again.',
+          rejected: 'Rejected. The schedule or trigger stays paused.',
+          expired: 'Expired before anyone decided. The schedule or trigger stays paused; a person can still resume it.',
+        },
+        rejectConfirm: 'Reject this review? The schedule or trigger stays paused until a person resumes it.',
+        noPermission: 'Operators, admins and owners can approve or reject reviews (a repository sync trigger needs the right to change repositories).',
       },
       noPermission: 'Operators, admins and owners can approve or reject run requests.',
     },

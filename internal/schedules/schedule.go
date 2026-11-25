@@ -100,7 +100,16 @@ type Schedule struct {
 	// for Ansible. A mark stays while its part is set (build).
 	UntrustedLimit     bool
 	UntrustedExtraVars bool
+	// PausedReason says why a paused schedule stopped: PausedForReview
+	// when an assistant's change paused it, "" otherwise (and always
+	// while it runs). Resuming clears it.
+	PausedReason string
 }
+
+// PausedForReview is PausedReason for a schedule an assistant's change to
+// what it runs paused until a person reviews it (spec 2026-11-25 C2,
+// migration 00130).
+const PausedForReview = "assistant_change"
 
 // Input is what an operator submits for create and update.
 type Input struct {

@@ -26,6 +26,8 @@ import { ScheduleRuns } from './ScheduleRuns.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useDeleteScheduleCommand } from './useDeleteScheduleCommand.ts';
+import { ReviewNotice } from '../../ui/review-notice.tsx';
+import { reviewHref } from '../../ui/reviewHref.ts';
 
 const WINDOWS = ['15m', '30m', '1h', '2h', '6h', '12h', '24h'];
 type MaintenanceGuard = 'ignore' | 'skip' | 'exclude_hosts';
@@ -183,6 +185,9 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
           {t.common.close}
         </Button>
       </div>
+      {initial?.paused_reason && (
+        <ReviewNotice title={t.schedules.pausedForReview} hint={t.schedules.pausedForReviewHint} linkLabel={t.schedules.openReview} href={reviewHref(org, initial.review_request_id)} />
+      )}
       <Label htmlFor="sched-name">{m.name}</Label>
       <Input id="sched-name" value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
       <Label htmlFor="sched-template">{m.jobTemplate}</Label>

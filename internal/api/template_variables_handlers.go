@@ -173,7 +173,7 @@ func registerTemplateVarsRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		t, err := deps.Templates.UpdateVariables(ctx, scope.OrgID, id, templates.VariablesInput{
-			Schema: in.Body.ExtraVarsSchema, ExtraVars: in.Body.ExtraVars, IfRevision: ifRevision,
+			Schema: in.Body.ExtraVarsSchema, ExtraVars: in.Body.ExtraVars, IfRevision: ifRevision, Actor: changeActor(scope),
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
@@ -282,7 +282,7 @@ func registerTemplateVarsLinkRoutes(hapi huma.API, deps Deps) {
 		}
 		t, err := deps.Templates.ApplyVariables(ctx, scope.OrgID, id, templates.ApplyInput{
 			Mode: templates.SourceMode(in.Body.Mode), SourceRev: in.Body.SourceRev, SourceSyncedAt: in.Body.SyncedAt, RemoveGone: in.Body.RemoveGone,
-			Values: in.Body.Values, IfRevision: ifRevision,
+			Values: in.Body.Values, IfRevision: ifRevision, Actor: changeActor(scope),
 		})
 		if err != nil {
 			return nil, mapTemplateApplyErr(ctx, err)
