@@ -105,6 +105,12 @@ type Alert struct {
 	// by an opening or a severity change of a tuple alert, through Apply's
 	// DetailSource; "" when there was nothing to say.
 	Detail string
+
+	// ContinuesAlertID names the episode this one continues (backlog
+	// 4.39, migration 00120): set when the alert opened within an hour of
+	// its subject's previous episode closing stale and took over that
+	// episode's acknowledgement or snooze (Adoption); nil otherwise.
+	ContinuesAlertID *uuid.UUID
 }
 
 // AlertWithHost pairs an Alert with its host's name — Get and List's own
@@ -183,7 +189,44 @@ type Action struct {
 	// the alert keeps the detail it had instead of taking Detail, which is
 	// then empty, and the change's events carry none.
 	KeepDetail bool
+
+	// Adopt (ActionOpen only, backlog 4.39) is what the new episode takes
+	// over from its subject's previous one; nil for a plain opening.
+	// Reconcile's adoption decides it, Execute writes it in the opening's
+	// own INSERT.
+	Adopt *Adoption
 }
+
+// Adoption is what a re-opened tuple alert takes over from the episode
+// its subject closed `stale` within the last hour (backlog 4.39,
+// reconcile.go's adoption has the rules): the acknowledgement, the
+// snooze, or both, and which episode they came from. Peak is never
+// adopted; the new episode's peak starts at its own opening severity.
+type Adoption struct {
+	// From is the previous episode's id: the new alert's
+	// ContinuesAlertID.
+	From uuid.UUID
+
+	// The acknowledgement, copied as it stood on the previous episode;
+	// AckSeverity "" when none is adopted (the other three are then
+	// zero too).
+	AckAt       *time.Time
+	AckBy       *uuid.UUID
+	AckSeverity rules.State
+	AckNote     string
+
+	// The snooze: a timed one still running (SnoozedUntil), or one
+	// until the severity changes (SnoozeUntilChange); neither when none
+	// is adopted.
+	SnoozedUntil      *time.Time
+	SnoozeUntilChange bool
+}
+
+// Ack reports whether the adoption carries an acknowledgement.
+func (a Adoption) Ack() bool { return a.AckSeverity != "" }
+
+// Snooze reports whether the adoption carries a snooze.
+func (a Adoption) Snooze() bool { return a.SnoozedUntil != nil || a.SnoozeUntilChange }
 
 // EventKind is one row of alert_events.kind. The eight constants below
 // are exactly the CHECK list migration 00056 widened 00049's original

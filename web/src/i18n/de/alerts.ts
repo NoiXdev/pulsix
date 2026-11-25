@@ -85,6 +85,8 @@ export const deAlerts: Messages['alerts'] = {
     escalatedTo: (position: number) => `Auf Stufe ${position} eskaliert`,
     escalated: 'Eskaliert',
     unknownEvent: 'Unbekanntes Ereignis',
+    ackCarriedOver: 'Quittierung aus der vorherigen Episode übernommen',
+    snoozeCarriedOver: 'Zurückstellung aus der vorherigen Episode übernommen',
     holdDeferred: 'Benachrichtigung zurückgehalten, bis das Zustellfenster öffnet.',
     holdSuppressed: 'Benachrichtigung zurückgehalten, bis das Wartungsfenster endet.',
   },

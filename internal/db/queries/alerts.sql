@@ -26,8 +26,11 @@ ORDER BY scope, check_key, item, metric;
 -- ActionOpen: a brand new row, never an update of a closed one — the
 -- partial unique index is what makes that legal once the old row has
 -- closed_at set, and this INSERT is the only thing that ever creates an
--- alert, so a reopened subject always starts with every ack/snooze column
--- at its default (unacknowledged, unsnoozed). severity and peak_severity
+-- alert. A reopened subject starts unacknowledged and unsnoozed unless
+-- the action carries an adoption (backlog 4.39): then the acknowledgement
+-- and snooze columns start as the previous episode had them, and
+-- continues_alert_id names it — in this same INSERT, so no reader ever
+-- sees the new episode without what it took over. severity and peak_severity
 -- both start at the opening severity (the Task 2 review's own ruling:
 -- Action.Severity on an ActionOpen feeds both columns).
 --
@@ -55,7 +58,9 @@ ORDER BY scope, check_key, item, metric;
 -- NULL when there is none.
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail,
+  acknowledged_at, acknowledged_by, acknowledged_severity, ack_note,
+  snoozed_until, snooze_until_change, continues_alert_id
 ) VALUES (
   @org_id, @host_id, @scope, @check_key, @item, @metric,
   @opened_at, @severity, @severity,
@@ -64,9 +69,24 @@ INSERT INTO alerts (
      WHERE @scope::text = 'tuple' AND s.org_id = @org_id AND s.host_id = @host_id
        AND s.check_key = @check_key AND s.item = @item AND s.metric = @metric),
     false),
-  @opened_at, sqlc.narg(detail)
+  @opened_at, sqlc.narg(detail),
+  sqlc.narg(acknowledged_at), sqlc.narg(acknowledged_by), sqlc.narg(acknowledged_severity), @ack_note,
+  sqlc.narg(snoozed_until), @snooze_until_change, sqlc.narg(continues_alert_id)
 )
 RETURNING id;
+
+-- name: ListRecentlyClosedAlertsForHost :many
+-- Store.RecentlyClosedForHost (backlog 4.39): the latest closed episode of
+-- each of the host's tuple subjects closed at or after @since — the
+-- `closed []Alert` Reconcile adopts from. Every close reason, not only
+-- 'stale': Reconcile must see that the latest episode was resolved or
+-- forgotten to leave an older stale one alone. alerts_host_closed_idx
+-- (migration 00120) bounds the read to the host's recent closes; the
+-- id tie-break makes the pick deterministic for two closes at one instant.
+SELECT DISTINCT ON (check_key, item, metric) * FROM alerts
+WHERE org_id = @org_id AND host_id = @host_id AND scope = 'tuple'
+  AND closed_at IS NOT NULL AND closed_at >= @since::timestamptz
+ORDER BY check_key, item, metric, closed_at DESC, id DESC;
 
 -- name: RaiseAlertSeverity :one
 -- The brief's own statement, verbatim, plus v0.4d's own fourth SET target.
@@ -175,11 +195,13 @@ WHERE id = @id AND org_id = @org_id;
 -- Every event Execute writes is system-caused (opened, severity_raised,
 -- ack_voided, closed) — actor_id is left NULL, the acknowledge/snooze
 -- events a human causes belong to Task 6's Service, not here. payload is
--- always the default '{}'::jsonb: nothing downstream reads one yet.
+-- the default '{}'::jsonb unless given: only an opening that continues a
+-- previous episode carries one (alerts.OpenedPayload, backlog 4.39), which
+-- the alert's timeline reads.
 -- detail (backlog 3.13b) is set on the events of an opening or a severity
 -- change only; a close carries none.
-INSERT INTO alert_events (org_id, alert_id, at, kind, detail)
-VALUES (@org_id, @alert_id, @at, @kind, sqlc.narg(detail));
+INSERT INTO alert_events (org_id, alert_id, at, kind, detail, payload)
+VALUES (@org_id, @alert_id, @at, @kind, sqlc.narg(detail), COALESCE(sqlc.narg(payload)::jsonb, '{}'::jsonb));
 
 -- name: SweepStaleAlerts :execrows
 -- The design doc's own UPDATE, driven by open alerts rather than by

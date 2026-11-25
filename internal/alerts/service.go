@@ -124,7 +124,9 @@ func NewService(store Store, clock func() time.Time) *Service {
 }
 
 // Apply is the lifecycle's whole composition for one host's evaluation:
-// OpenForHost loads what is already open, Reconcile (pure) decides what
+// OpenForHost loads what is already open, RecentlyClosedForHost what
+// closed within the last hour (a re-opening may continue it, backlog
+// 4.39), Reconcile (pure) decides what
 // must change, captureDetails (detail.go) says why an alert opens or moves,
 // Execute carries it out — all on tx, the evaluator's own per-host
 // transaction (store_sql.go's own doc comment on why). It adds no decision
@@ -134,7 +136,11 @@ func (s *Service) Apply(ctx context.Context, tx pgx.Tx, in rules.AlertInput) err
 	if err != nil {
 		return fmt.Errorf("apply: load open alerts: %w", err)
 	}
-	actions := Reconcile(in, open)
+	closed, err := s.store.RecentlyClosedForHost(ctx, tx, in.OrgID, in.HostID, reopenAdoptSince(in.At))
+	if err != nil {
+		return fmt.Errorf("apply: load recently closed alerts: %w", err)
+	}
+	actions := Reconcile(in, open, closed)
 	if len(actions) == 0 {
 		return nil
 	}

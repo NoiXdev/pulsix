@@ -196,3 +196,39 @@ describe('AlertTimeline — why the alert fired (backlog 3.13b)', () => {
   });
 });
 
+
+describe('AlertTimeline — carried over from the previous episode (backlog 4.39)', () => {
+  const at = '2026-10-01T00:00:00Z';
+  const continued = (ack: boolean, snooze: boolean): AlertTimelineEntry => ({
+    at,
+    kind: 'event',
+    event: {
+      id: 'e-opened', at, kind: 'opened', escalation_channel_ids: null,
+      continues_alert_id: 'prev', ack_carried_over: ack, snooze_carried_over: snooze,
+    },
+  });
+
+  it('says the acknowledgement and the snooze were carried over, right after the opening', () => {
+    render(<AlertTimeline closedReason="" entries={[continued(true, true), closed(at)]} />);
+    const carried = screen.getAllByTestId('timeline-carried').map((e) => e.textContent);
+    expect(carried).toEqual([
+      expect.stringContaining('Acknowledgement carried over from the previous episode'),
+      expect.stringContaining('Snooze carried over from the previous episode'),
+    ]);
+    const items = screen.getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('Alert opened');
+    expect(items[1]).toHaveTextContent('Acknowledgement carried over');
+    expect(items[3]).toHaveTextContent(/closed/i);
+  });
+
+  it('says only what was carried over', () => {
+    render(<AlertTimeline closedReason="" entries={[continued(false, true)]} />);
+    const carried = screen.getAllByTestId('timeline-carried').map((e) => e.textContent);
+    expect(carried).toEqual([expect.stringContaining('Snooze carried over from the previous episode')]);
+  });
+
+  it('adds nothing to a plain opening', () => {
+    render(<AlertTimeline closedReason="" entries={[opened(at)]} />);
+    expect(screen.queryByTestId('timeline-carried')).toBeNull();
+  });
+});

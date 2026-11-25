@@ -106,6 +106,7 @@ type Alert struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	Detail               *string            `json:"detail"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 }
 
 type AlertEscalation struct {

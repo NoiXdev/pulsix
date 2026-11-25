@@ -13,6 +13,7 @@ package alerts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -21,9 +22,25 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/rules"
 )
+
+// RecentlyClosedForHost implements Store.
+func (s *SQLStore) RecentlyClosedForHost(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, since time.Time) ([]Alert, error) {
+	rows, err := gen.New(tx).ListRecentlyClosedAlertsForHost(ctx, gen.ListRecentlyClosedAlertsForHostParams{
+		OrgID: orgID, HostID: hostID, Since: since,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("recently closed alerts for host: %w", err)
+	}
+	out := make([]Alert, len(rows))
+	for i, r := range rows {
+		out[i] = toAlert(r)
+	}
+	return out, nil
+}
 
 // OpenForHost implements Store.
 func (s *SQLStore) OpenForHost(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID) ([]Alert, error) {
@@ -94,18 +111,49 @@ func changedOne(n int64, err error) error {
 // open is ActionOpen: a brand new row (InsertAlert's own comment explains
 // why this is always an INSERT, never an update of a closed row), plus
 // the one event every newly opened alert gets; both carry a.Detail.
+//
+// An adoption (a.Adopt, backlog 4.39) goes into that same INSERT: the row
+// starts acknowledged and/or snoozed as the previous episode was, with
+// continues_alert_id naming it, and the opened event's payload
+// (OpenedPayload) says what was carried over, for the timeline. No
+// 'acknowledged' or 'snoozed' event is written: nobody acted, and a route
+// subscribed to those kinds must not hear of an acknowledgement given an
+// hour ago on another episode.
 func (s *SQLStore) open(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a Action) error {
-	id, err := q.InsertAlert(ctx, gen.InsertAlertParams{
+	params := gen.InsertAlertParams{
 		OrgID: orgID, HostID: a.Subject.HostID, Scope: string(a.Subject.Scope),
 		CheckKey: a.Subject.CheckKey, Item: a.Subject.Item, Metric: a.Subject.Metric,
 		OpenedAt: a.At, Severity: string(a.Severity), Detail: nullDetail(a.Detail),
-	})
+	}
+	var payload []byte
+	if ad := a.Adopt; ad != nil {
+		adopt(&params, *ad)
+		var err error
+		if payload, err = json.Marshal(OpenedPayload{
+			ContinuesAlertID: ad.From, AckCarried: ad.Ack(), SnoozeCarried: ad.Snooze(),
+		}); err != nil {
+			return fmt.Errorf("encode opened payload: %w", err)
+		}
+	}
+	id, err := q.InsertAlert(ctx, params)
 	if err != nil {
 		return fmt.Errorf("insert alert: %w", err)
 	}
 	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{
-		OrgID: orgID, AlertID: id, At: a.At, Kind: eventOpened, Detail: nullDetail(a.Detail),
+		OrgID: orgID, AlertID: id, At: a.At, Kind: eventOpened, Detail: nullDetail(a.Detail), Payload: payload,
 	})
+}
+
+// adopt fills the opening's acknowledgement, snooze and continuation
+// columns from ad.
+func adopt(p *gen.InsertAlertParams, ad Adoption) {
+	p.ContinuesAlertID = db.NullUUID(&ad.From)
+	if ad.Ack() {
+		severity := string(ad.AckSeverity)
+		p.AcknowledgedAt, p.AcknowledgedBy = db.NullTime(ad.AckAt), db.NullUUID(ad.AckBy)
+		p.AcknowledgedSeverity, p.AckNote = &severity, ad.AckNote
+	}
+	p.SnoozedUntil, p.SnoozeUntilChange = db.NullTime(ad.SnoozedUntil), ad.SnoozeUntilChange
 }
 
 // raiseAlertSeverityRank is RaiseAlertSeverity's own @severity_rank

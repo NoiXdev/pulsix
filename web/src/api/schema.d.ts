@@ -3845,6 +3845,8 @@ export interface components {
             closed_at?: string;
             /** @enum {string} */
             closed_reason?: "resolved" | "stale" | "forgotten";
+            /** @description The previous episode of the same subject this alert continues: it re-opened within an hour of that episode closing stale and took over its acknowledgement or snooze. Absent otherwise */
+            continues_alert_id?: string;
             /** @description Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none */
             detail?: string;
             host_id: string;
@@ -3892,6 +3894,8 @@ export interface components {
             closed_at?: string;
             /** @enum {string} */
             closed_reason?: "resolved" | "stale" | "forgotten";
+            /** @description The previous episode of the same subject this alert continues: it re-opened within an hour of that episode closing stale and took over its acknowledgement or snooze. Absent otherwise */
+            continues_alert_id?: string;
             /** @description Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none */
             detail?: string;
             host_id: string;
@@ -3931,9 +3935,13 @@ export interface components {
             was_flapping: boolean;
         };
         AlertEventDTO: {
+            /** @description Only on an opened event: the previous episode's acknowledgement was carried over */
+            ack_carried_over?: boolean;
             actor_id?: string;
             /** Format: date-time */
             at: string;
+            /** @description Only on an opened event that continued a previous episode: that episode's id */
+            continues_alert_id?: string;
             /** @description Why the alert fired as of this event; set on opened, severity_raised and ack_voided events that captured one */
             detail?: string;
             /** @description The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded */
@@ -3946,6 +3954,8 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "opened" | "severity_raised" | "acknowledged" | "ack_voided" | "snoozed" | "unsnoozed" | "closed" | "escalated";
+            /** @description Only on an opened event: the previous episode's snooze was carried over */
+            snooze_carried_over?: boolean;
         };
         AlertGetOutputBody: {
             /**

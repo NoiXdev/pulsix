@@ -95,6 +95,8 @@ export const enAlerts = {
     escalatedTo: (position: number) => `Escalated to step ${position}`,
     escalated: 'Escalated',
     unknownEvent: 'Unknown event',
+    ackCarriedOver: 'Acknowledgement carried over from the previous episode',
+    snoozeCarriedOver: 'Snooze carried over from the previous episode',
     holdDeferred: 'Notification held until the delivery window opens.',
     holdSuppressed: 'Notification held until the maintenance window ends.',
   },

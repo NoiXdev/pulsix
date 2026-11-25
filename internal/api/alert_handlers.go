@@ -81,6 +81,9 @@ type AlertDTO struct {
 	// web assertion and the value it saw. Plain text, part of which comes
 	// from the monitored site; the GUI renders it as text.
 	Detail string `json:"detail,omitempty" maxLength:"512" doc:"Why the alert fired, as of its opening or latest severity change: a synthetic check's failure reason, or a failed web assertion's expression and the value seen. Absent when there is none"`
+
+	// ContinuesAlertID is alerts.Alert.ContinuesAlertID (backlog 4.39).
+	ContinuesAlertID string `json:"continues_alert_id,omitempty" doc:"The previous episode of the same subject this alert continues: it re-opened within an hour of that episode closing stale and took over its acknowledgement or snooze. Absent otherwise"`
 }
 
 // toAlertDTO flattens one alerts.Alert, its host's name and its
@@ -105,6 +108,9 @@ func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression, notSeen
 	}
 	if a.AckBy != nil {
 		dto.AckBy = a.AckBy.String()
+	}
+	if a.ContinuesAlertID != nil {
+		dto.ContinuesAlertID = a.ContinuesAlertID.String()
 	}
 	if sup.WindowID != nil {
 		dto.MuteWindowID = sup.WindowID.String()
@@ -142,6 +148,12 @@ type alertEventDTO struct {
 	EscalationPosition   int       `json:"escalation_position,omitempty" doc:"The ladder step that fired; only set for kind escalated"`
 	EscalationChannelIDs []string  `json:"escalation_channel_ids" doc:"The channels this step reached: empty (not null) when the step reached nobody; null for every kind other than escalated, or if the payload could not be decoded"`
 	Detail               string    `json:"detail,omitempty" maxLength:"512" doc:"Why the alert fired as of this event; set on opened, severity_raised and ack_voided events that captured one"`
+	// ContinuesAlertID, AckCarriedOver and SnoozeCarriedOver are an
+	// opened event's alerts.OpenedPayload (backlog 4.39): set only when
+	// the opening continued a previous episode.
+	ContinuesAlertID  string `json:"continues_alert_id,omitempty" doc:"Only on an opened event that continued a previous episode: that episode's id"`
+	AckCarriedOver    bool   `json:"ack_carried_over,omitempty" doc:"Only on an opened event: the previous episode's acknowledgement was carried over"`
+	SnoozeCarriedOver bool   `json:"snooze_carried_over,omitempty" doc:"Only on an opened event: the previous episode's snooze was carried over"`
 }
 
 // alertStateChangeDTO is one alerts.StateChange (a check_state_changes row
@@ -197,7 +209,8 @@ func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
 			// kind, or a future kind added here with no payload shape yet)
 			// leaves both fields at their zero value rather than failing
 			// the whole timeline over one row.
-			if e.Event.Kind == string(alerts.EventEscalated) {
+			switch e.Event.Kind {
+			case string(alerts.EventEscalated):
 				var p alerts.EscalatedPayload
 				if err := json.Unmarshal(e.Event.Payload, &p); err == nil {
 					ev.EscalationPosition = p.Position
@@ -205,6 +218,12 @@ func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
 					for i, c := range p.Channels {
 						ev.EscalationChannelIDs[i] = c.String()
 					}
+				}
+			case string(alerts.EventOpened):
+				var p alerts.OpenedPayload
+				if err := json.Unmarshal(e.Event.Payload, &p); err == nil && p.ContinuesAlertID != uuid.Nil {
+					ev.ContinuesAlertID = p.ContinuesAlertID.String()
+					ev.AckCarriedOver, ev.SnoozeCarriedOver = p.AckCarried, p.SnoozeCarried
 				}
 			}
 			entry.Event = &ev

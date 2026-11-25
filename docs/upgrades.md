@@ -702,6 +702,20 @@ that follow store the new one. The JSON stage of `http` checks now hands its
 slots to organizations fairly (backlog 3.71), so one organization's slow JSON
 targets no longer make another's checks report the manager too busy.
 
+Backlog 4.39: migration 00120 adds the nullable column `alerts.continues_alert_id`
+(`REFERENCES alerts(id) ON DELETE SET NULL`; NULL for every existing alert, a catalog
+change) and the partial index `alerts_host_closed_idx` on `alerts (host_id, closed_at)
+WHERE closed_at IS NOT NULL`, which the evaluation now reads on every host evaluation.
+The index is built with a plain `CREATE INDEX` like 00079: it **blocks writes to
+`alerts` while it builds**, which holds up the evaluation (alerts open and close in the
+evaluation's transaction) for as long as the build reads the alert history; on a large
+history upgrade in a quiet moment. The alert API gains `continues_alert_id` on an alert
+and `continues_alert_id`, `ack_carried_over` and `snooze_carried_over` on its `opened`
+timeline event (additive; an older SPA ignores them). A backup carries the column.
+Skew: an older manager that keeps evaluating alongside opens a re-opened alert plain,
+without the acknowledgement or snooze; stop every manager instance before the new
+version starts if that matters. Workers and agents are not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **Item decisions on a plugin key reach copied checks (backlog 3.13g, no migration):**
@@ -715,6 +729,23 @@ targets no longer make another's checks report the manager too busy.
   also reaches every check of the `tcp` plugin. To check after the upgrade: the item decisions on a plugin name (Items page) and whether they were
   meant to cover your copied checks; where not, restate them on the exact check key.
   The host page marks such items as decided "via the plugin's decision".
+- **A check switched off and on within an hour keeps its alert's acknowledgement
+  (backlog 4.39, migration 00120):** an alert whose subject stops being measured (its
+  check disabled or taken off the host, the host no longer monitored, a monitoring-group
+  selector edited so the host drops out) still closes as `stale`. When the same subject
+  opens again within one hour of that close, the new alert takes over the closed one's
+  acknowledgement (when the new severity is not above the acknowledged one) and its
+  snooze (a timed snooze still running, or one until the severity changes when the
+  severity is the same as at the close); when the new severity is above the acknowledged
+  one, nothing is taken over. The new alert names the one it continues, and its timeline
+  says "Acknowledgement carried over from the previous episode" or "Snooze carried over
+  from the previous episode". A carried snooze holds the opening's notification as any
+  snooze does; a carried acknowledgement does not: the opening is still notified (the
+  problem is back), and escalation treats the alert as acknowledged, so no escalation
+  step fires. An alert closed `resolved` or `forgotten` is never continued, and the
+  peak severity starts afresh. To check after the upgrade: nothing to change; expect an
+  acknowledged alert that comes back after a short switch-off to reach you once and not
+  escalate.
 - **A new SNMP failure label, `auth_or_lost` (backlog 3.70, no migration):** a SNMPv3
   poll whose first request is lost after a successful engine discovery now gets one
   more attempt before it is judged, and when that fails the same way `snmp.failure`

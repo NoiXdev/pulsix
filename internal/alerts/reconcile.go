@@ -25,10 +25,19 @@ import (
 // else, since a severity change, a flap latching or a close are each
 // dated by when this evaluation observed them, not by when the underlying
 // state happened to begin.
-func Reconcile(in rules.AlertInput, open []Alert) []Action {
+//
+// closed is the host's recently closed tuple episodes, the latest per
+// subject (Store.RecentlyClosedForHost): an opening whose subject has one
+// may take over its acknowledgement and snooze (adoption, backlog 4.39).
+// Like open, it is only ever looked up, never ranged over.
+func Reconcile(in rules.AlertInput, open, closed []Alert) []Action {
 	bySubject := make(map[Subject]Alert, len(open))
 	for _, a := range open {
 		bySubject[a.Subject] = a
+	}
+	previous := make(map[Subject]Alert, len(closed))
+	for _, a := range closed {
+		previous[a.Subject] = a
 	}
 
 	var actions []Action
@@ -64,7 +73,11 @@ func Reconcile(in rules.AlertInput, open []Alert) []Action {
 
 		// ts.State is warn or crit from here on.
 		if !found {
-			actions = append(actions, Action{Kind: ActionOpen, Subject: sub, At: ts.Since, Severity: ts.State})
+			prev, hasPrev := previous[sub]
+			actions = append(actions, Action{
+				Kind: ActionOpen, Subject: sub, At: ts.Since, Severity: ts.State,
+				Adopt: adoption(in.At, ts.State, prev, hasPrev),
+			})
 			continue
 		}
 		actions = append(actions, advance(in.At, ts, existing)...)
@@ -73,6 +86,60 @@ func Reconcile(in rules.AlertInput, open []Alert) []Action {
 	actions = append(actions, staleActions(in, bySubject)...)
 	actions = append(actions, hostAction(in, bySubject)...)
 	return actions
+}
+
+// reopenAdoptWindow is how long after a `stale` close a re-opening of the
+// same subject still continues the closed episode (backlog 4.39, owner
+// decision 2026-11-25): a check switched off and on again, a host
+// un-monitored for a moment, a selector edited and corrected.
+const reopenAdoptWindow = time.Hour
+
+// reopenAdoptSince is the earliest close a re-opening at `at` can adopt
+// from: the lower bound Service.Apply loads the closed episodes with.
+func reopenAdoptSince(at time.Time) time.Time { return at.Add(-reopenAdoptWindow) }
+
+// adoption decides what a tuple alert opening at severity, in the
+// evaluation dated at, takes over from prev, its subject's latest closed
+// episode (backlog 4.39). It returns nil — a plain opening — unless:
+//
+//   - prev closed `stale` (a vanished subject; `resolved`, `forgotten` and
+//     any other reason end the story) and no earlier than one hour before
+//     at — exactly one hour is still inside;
+//   - the new severity is not above prev's acknowledged severity. When it
+//     is, nothing at all is adopted, the snooze included (owner decision):
+//     the problem came back worse than anyone said they knew about.
+//
+// Within those, the acknowledgement is adopted when prev was acknowledged
+// (a voided acknowledgement is not one), as it stood; the snooze when it
+// is a timed one still running at at, or one until the severity changes
+// and the new severity equals prev's severity at its close. With neither
+// to adopt there is nothing to continue, and the opening is plain. Only
+// tuple subjects get here: the host-scope alert opens in hostAction,
+// which never adopts. Peak is never adopted.
+func adoption(at time.Time, severity rules.State, prev Alert, found bool) *Adoption {
+	if !found || prev.ClosedReason != Stale || prev.ClosedAt == nil {
+		return nil
+	}
+	if prev.ClosedAt.Before(reopenAdoptSince(at)) || prev.ClosedAt.After(at) {
+		return nil
+	}
+	if prev.AckSeverity != "" && rules.StateRank(severity) > rules.StateRank(prev.AckSeverity) {
+		return nil
+	}
+	ad := Adoption{From: prev.ID}
+	if prev.AckSeverity != "" {
+		ad.AckAt, ad.AckBy, ad.AckSeverity, ad.AckNote = prev.AckAt, prev.AckBy, prev.AckSeverity, prev.AckNote
+	}
+	switch {
+	case prev.SnoozedUntil != nil && prev.SnoozedUntil.After(at):
+		ad.SnoozedUntil = prev.SnoozedUntil
+	case prev.SnoozeUntilChange && severity == prev.Severity:
+		ad.SnoozeUntilChange = true
+	}
+	if !ad.Ack() && !ad.Snooze() {
+		return nil
+	}
+	return &ad
 }
 
 // staleActions is design decision 5's "the check is taken off the host or

@@ -1,7 +1,8 @@
+import { Fragment } from 'react';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { Pill } from '../../ui/badge.tsx';
-import { notificationHoldLabel, timelineEntryAt, timelineEntryLabel } from './alertTimeline.ts';
+import { carriedOverLabels, notificationHoldLabel, timelineEntryAt, timelineEntryLabel } from './alertTimeline.ts';
 import { detailText } from './alertRow.ts';
 import type { AlertCloseReason, AlertNotificationHold, AlertTimelineEntry } from '../../api/types.ts';
 
@@ -75,16 +76,26 @@ export function AlertTimeline({ entries, closedReason, notificationHold = '' }: 
             const { label, tone } = timelineEntryLabel(entry, closedReason, t);
             // Backlog 3.13b: why the alert fired as of this event.
             const detail = detailText(entry.event?.detail, t);
+            const at = timelineEntryAt(entry.at, fmt);
             return (
-              <li key={`${entry.kind}-${entry.at}-${i}`} className="flex items-center gap-2.5 text-xs" data-testid="timeline-entry">
-                <span className="w-[150px] shrink-0 text-muted-foreground">{timelineEntryAt(entry.at, fmt)}</span>
-                <Pill tone={tone}>{label}</Pill>
-                {detail && (
-                  <span data-testid="timeline-detail" className="min-w-0 truncate text-muted-foreground" title={detail}>
-                    {detail}
-                  </span>
-                )}
-              </li>
+              <Fragment key={`${entry.kind}-${entry.at}-${i}`}>
+                <li className="flex items-center gap-2.5 text-xs" data-testid="timeline-entry">
+                  <span className="w-[150px] shrink-0 text-muted-foreground">{at}</span>
+                  <Pill tone={tone}>{label}</Pill>
+                  {detail && (
+                    <span data-testid="timeline-detail" className="min-w-0 truncate text-muted-foreground" title={detail}>
+                      {detail}
+                    </span>
+                  )}
+                </li>
+                {/* Backlog 4.39: what the opening took over from the previous episode. */}
+                {carriedOverLabels(entry.event, t).map((carried) => (
+                  <li key={carried} className="flex items-center gap-2.5 text-xs" data-testid="timeline-carried">
+                    <span className="w-[150px] shrink-0 text-muted-foreground">{at}</span>
+                    <Pill tone="unknown">{carried}</Pill>
+                  </li>
+                ))}
+              </Fragment>
             );
           })}
         </ol>

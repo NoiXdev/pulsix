@@ -57,12 +57,15 @@ type changesCall struct {
 // and appends to a *Calls slice (so a test can pin the exact arguments
 // Service passed, not merely the fake's own resulting state).
 type fakeStore struct {
-	open       map[uuid.UUID][]alerts.Alert // hostID -> OpenForHost's own answer
-	openErr    error
-	executed   [][]alerts.Action // one slice per Execute call
-	executeErr error
-	sweptN     int
-	sweepErr   error
+	open        map[uuid.UUID][]alerts.Alert // hostID -> OpenForHost's own answer
+	openErr     error
+	closed      map[uuid.UUID][]alerts.Alert // hostID -> RecentlyClosedForHost's own answer
+	closedErr   error
+	closedSince []time.Time       // every since RecentlyClosedForHost was asked with
+	executed    [][]alerts.Action // one slice per Execute call
+	executeErr  error
+	sweptN      int
+	sweepErr    error
 
 	alerts  map[uuid.UUID]alerts.Alert
 	getErr  error
@@ -105,6 +108,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		open:      map[uuid.UUID][]alerts.Alert{},
+		closed:    map[uuid.UUID][]alerts.Alert{},
 		alerts:    map[uuid.UUID]alerts.Alert{},
 		events:    map[uuid.UUID][]alerts.Event{},
 		changes:   map[alerts.Subject][]alerts.StateChange{},
@@ -120,6 +124,14 @@ func (f *fakeStore) OpenForHost(_ context.Context, _ pgx.Tx, _, hostID uuid.UUID
 		return nil, f.openErr
 	}
 	return f.open[hostID], nil
+}
+
+func (f *fakeStore) RecentlyClosedForHost(_ context.Context, _ pgx.Tx, _, hostID uuid.UUID, since time.Time) ([]alerts.Alert, error) {
+	f.closedSince = append(f.closedSince, since)
+	if f.closedErr != nil {
+		return nil, f.closedErr
+	}
+	return f.closed[hostID], nil
 }
 
 func (f *fakeStore) Execute(_ context.Context, _ pgx.Tx, _ uuid.UUID, actions []alerts.Action) error {
@@ -636,6 +648,41 @@ func TestApplyComposesOpenReconcileExecute(t *testing.T) {
 	}
 	if len(store.executed) != 1 {
 		t.Errorf("Execute called %d times after a quiet tick, want still 1 (no-op actions must not reach the store)", len(store.executed))
+	}
+}
+
+// TestApplyHandsReconcileTheRecentlyClosedEpisodes (backlog 4.39): Apply
+// loads the host's episodes closed within the last hour of the
+// evaluation's At, and an opening of the same subject adopts from them.
+func TestApplyHandsReconcileTheRecentlyClosedEpisodes(t *testing.T) {
+	store := newFakeStore()
+	svc := alerts.NewService(store, clockAt(t0))
+	sub := tupleSubject("cpu", "", "used")
+	prev := untilChange(closedEpisode(sub, rules.StateWarn, alerts.Stale, 10*time.Minute))
+	store.closed[hostID] = []alerts.Alert{prev}
+
+	in := input(stateAt(sub, rules.StateWarn, t0))
+	if err := svc.Apply(ctx, nil, in); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(store.closedSince) != 1 || !store.closedSince[0].Equal(in.At.Add(-time.Hour)) {
+		t.Fatalf("RecentlyClosedForHost asked with %v, want once with %v", store.closedSince, in.At.Add(-time.Hour))
+	}
+	acts := store.executed[0]
+	if len(acts) != 1 || acts[0].Adopt == nil || acts[0].Adopt.From != prev.ID || !acts[0].Adopt.SnoozeUntilChange {
+		t.Fatalf("executed actions = %+v, want one opening adopting the snooze of %s", acts, prev.ID)
+	}
+}
+
+func TestApplyPropagatesARecentlyClosedError(t *testing.T) {
+	store := newFakeStore()
+	store.closedErr = errors.New("boom")
+	svc := alerts.NewService(store, clockAt(t0))
+	if err := svc.Apply(ctx, nil, input(stateAt(tupleSubject("cpu", "", "used"), rules.StateWarn, t0))); err == nil {
+		t.Fatal("Apply succeeded although the closed episodes could not be read")
+	}
+	if len(store.executed) != 0 {
+		t.Fatalf("Execute called %d times after a failed read, want 0", len(store.executed))
 	}
 }
 

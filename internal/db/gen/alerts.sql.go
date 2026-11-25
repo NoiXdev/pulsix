@@ -232,7 +232,7 @@ func (q *Queries) CountAlerts(ctx context.Context, arg CountAlertsParams) (int64
 
 const getAlert = `-- name: GetAlert :one
 
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, a.continues_alert_id, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -267,6 +267,7 @@ type GetAlertRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	Detail               *string            `json:"detail"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -324,6 +325,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 		&i.WasFlapping,
 		&i.SeverityChangedAt,
 		&i.Detail,
+		&i.ContinuesAlertID,
 		&i.HostName,
 		&i.AgentLastContact,
 	)
@@ -333,7 +335,9 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 const insertAlert = `-- name: InsertAlert :one
 INSERT INTO alerts (
   org_id, host_id, scope, check_key, item, metric,
-  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail
+  opened_at, severity, peak_severity, was_flapping, severity_changed_at, detail,
+  acknowledged_at, acknowledged_by, acknowledged_severity, ack_note,
+  snoozed_until, snooze_until_change, continues_alert_id
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
   $7, $8, $8,
@@ -342,28 +346,40 @@ INSERT INTO alerts (
      WHERE $3::text = 'tuple' AND s.org_id = $1 AND s.host_id = $2
        AND s.check_key = $4 AND s.item = $5 AND s.metric = $6),
     false),
-  $7, $9
+  $7, $9,
+  $10, $11, $12, $13,
+  $14, $15, $16
 )
 RETURNING id
 `
 
 type InsertAlertParams struct {
-	OrgID    uuid.UUID `json:"org_id"`
-	HostID   uuid.UUID `json:"host_id"`
-	Scope    string    `json:"scope"`
-	CheckKey string    `json:"check_key"`
-	Item     string    `json:"item"`
-	Metric   string    `json:"metric"`
-	OpenedAt time.Time `json:"opened_at"`
-	Severity string    `json:"severity"`
-	Detail   *string   `json:"detail"`
+	OrgID                uuid.UUID          `json:"org_id"`
+	HostID               uuid.UUID          `json:"host_id"`
+	Scope                string             `json:"scope"`
+	CheckKey             string             `json:"check_key"`
+	Item                 string             `json:"item"`
+	Metric               string             `json:"metric"`
+	OpenedAt             time.Time          `json:"opened_at"`
+	Severity             string             `json:"severity"`
+	Detail               *string            `json:"detail"`
+	AcknowledgedAt       pgtype.Timestamptz `json:"acknowledged_at"`
+	AcknowledgedBy       pgtype.UUID        `json:"acknowledged_by"`
+	AcknowledgedSeverity *string            `json:"acknowledged_severity"`
+	AckNote              string             `json:"ack_note"`
+	SnoozedUntil         pgtype.Timestamptz `json:"snoozed_until"`
+	SnoozeUntilChange    bool               `json:"snooze_until_change"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 }
 
 // ActionOpen: a brand new row, never an update of a closed one — the
 // partial unique index is what makes that legal once the old row has
 // closed_at set, and this INSERT is the only thing that ever creates an
-// alert, so a reopened subject always starts with every ack/snooze column
-// at its default (unacknowledged, unsnoozed). severity and peak_severity
+// alert. A reopened subject starts unacknowledged and unsnoozed unless
+// the action carries an adoption (backlog 4.39): then the acknowledgement
+// and snooze columns start as the previous episode had them, and
+// continues_alert_id names it — in this same INSERT, so no reader ever
+// sees the new episode without what it took over. severity and peak_severity
 // both start at the opening severity (the Task 2 review's own ruling:
 // Action.Severity on an ActionOpen feeds both columns).
 //
@@ -400,6 +416,13 @@ func (q *Queries) InsertAlert(ctx context.Context, arg InsertAlertParams) (uuid.
 		arg.OpenedAt,
 		arg.Severity,
 		arg.Detail,
+		arg.AcknowledgedAt,
+		arg.AcknowledgedBy,
+		arg.AcknowledgedSeverity,
+		arg.AckNote,
+		arg.SnoozedUntil,
+		arg.SnoozeUntilChange,
+		arg.ContinuesAlertID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -436,8 +459,8 @@ func (q *Queries) InsertAlertActorEvent(ctx context.Context, arg InsertAlertActo
 }
 
 const insertAlertEvent = `-- name: InsertAlertEvent :exec
-INSERT INTO alert_events (org_id, alert_id, at, kind, detail)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO alert_events (org_id, alert_id, at, kind, detail, payload)
+VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '{}'::jsonb))
 `
 
 type InsertAlertEventParams struct {
@@ -446,12 +469,15 @@ type InsertAlertEventParams struct {
 	At      time.Time `json:"at"`
 	Kind    string    `json:"kind"`
 	Detail  *string   `json:"detail"`
+	Payload []byte    `json:"payload"`
 }
 
 // Every event Execute writes is system-caused (opened, severity_raised,
 // ack_voided, closed) — actor_id is left NULL, the acknowledge/snooze
 // events a human causes belong to Task 6's Service, not here. payload is
-// always the default '{}'::jsonb: nothing downstream reads one yet.
+// the default '{}'::jsonb unless given: only an opening that continues a
+// previous episode carries one (alerts.OpenedPayload, backlog 4.39), which
+// the alert's timeline reads.
 // detail (backlog 3.13b) is set on the events of an opening or a severity
 // change only; a close carries none.
 func (q *Queries) InsertAlertEvent(ctx context.Context, arg InsertAlertEventParams) error {
@@ -461,6 +487,7 @@ func (q *Queries) InsertAlertEvent(ctx context.Context, arg InsertAlertEventPara
 		arg.At,
 		arg.Kind,
 		arg.Detail,
+		arg.Payload,
 	)
 	return err
 }
@@ -509,7 +536,7 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 }
 
 const listAlerts = `-- name: ListAlerts :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, a.continues_alert_id, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -571,6 +598,7 @@ type ListAlertsRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	Detail               *string            `json:"detail"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -662,6 +690,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
 			&i.Detail,
+			&i.ContinuesAlertID,
 			&i.HostName,
 			&i.AgentLastContact,
 		); err != nil {
@@ -676,7 +705,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 }
 
 const listAlertsPage = `-- name: ListAlertsPage :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, a.continues_alert_id, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -741,6 +770,7 @@ type ListAlertsPageRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	Detail               *string            `json:"detail"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -795,6 +825,7 @@ func (q *Queries) ListAlertsPage(ctx context.Context, arg ListAlertsPageParams) 
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
 			&i.Detail,
+			&i.ContinuesAlertID,
 			&i.HostName,
 			&i.AgentLastContact,
 		); err != nil {
@@ -809,7 +840,7 @@ func (q *Queries) ListAlertsPage(ctx context.Context, arg ListAlertsPageParams) 
 }
 
 const listAlertsPageSorted = `-- name: ListAlertsPageSorted :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, a.continues_alert_id, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -889,6 +920,7 @@ type ListAlertsPageSortedRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	Detail               *string            `json:"detail"`
+	ContinuesAlertID     pgtype.UUID        `json:"continues_alert_id"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -945,6 +977,7 @@ func (q *Queries) ListAlertsPageSorted(ctx context.Context, arg ListAlertsPageSo
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
 			&i.Detail,
+			&i.ContinuesAlertID,
 			&i.HostName,
 			&i.AgentLastContact,
 		); err != nil {
@@ -1064,7 +1097,7 @@ func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMai
 
 const listOpenAlertsForHost = `-- name: ListOpenAlertsForHost :many
 
-SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at, detail FROM alerts
+SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at, detail, continues_alert_id FROM alerts
 WHERE org_id = $1 AND host_id = $2 AND closed_at IS NULL
 ORDER BY scope, check_key, item, metric
 `
@@ -1123,6 +1156,70 @@ func (q *Queries) ListOpenAlertsForHost(ctx context.Context, arg ListOpenAlertsF
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
 			&i.Detail,
+			&i.ContinuesAlertID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentlyClosedAlertsForHost = `-- name: ListRecentlyClosedAlertsForHost :many
+SELECT DISTINCT ON (check_key, item, metric) id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at, detail, continues_alert_id FROM alerts
+WHERE org_id = $1 AND host_id = $2 AND scope = 'tuple'
+  AND closed_at IS NOT NULL AND closed_at >= $3::timestamptz
+ORDER BY check_key, item, metric, closed_at DESC, id DESC
+`
+
+type ListRecentlyClosedAlertsForHostParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+	Since  time.Time `json:"since"`
+}
+
+// Store.RecentlyClosedForHost (backlog 4.39): the latest closed episode of
+// each of the host's tuple subjects closed at or after @since — the
+// `closed []Alert` Reconcile adopts from. Every close reason, not only
+// 'stale': Reconcile must see that the latest episode was resolved or
+// forgotten to leave an older stale one alone. alerts_host_closed_idx
+// (migration 00120) bounds the read to the host's recent closes; the
+// id tie-break makes the pick deterministic for two closes at one instant.
+func (q *Queries) ListRecentlyClosedAlertsForHost(ctx context.Context, arg ListRecentlyClosedAlertsForHostParams) ([]Alert, error) {
+	rows, err := q.db.Query(ctx, listRecentlyClosedAlertsForHost, arg.OrgID, arg.HostID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Alert
+	for rows.Next() {
+		var i Alert
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.HostID,
+			&i.Scope,
+			&i.CheckKey,
+			&i.Item,
+			&i.Metric,
+			&i.OpenedAt,
+			&i.Severity,
+			&i.PeakSeverity,
+			&i.ClosedAt,
+			&i.ClosedReason,
+			&i.AcknowledgedAt,
+			&i.AcknowledgedBy,
+			&i.AcknowledgedSeverity,
+			&i.AckNote,
+			&i.SnoozedUntil,
+			&i.SnoozeUntilChange,
+			&i.WasFlapping,
+			&i.SeverityChangedAt,
+			&i.Detail,
+			&i.ContinuesAlertID,
 		); err != nil {
 			return nil, err
 		}

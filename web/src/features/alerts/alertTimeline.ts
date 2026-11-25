@@ -115,6 +115,21 @@ export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: Aler
 }
 
 /**
+ * carriedOverLabels is what an opening took over from its subject's
+ * previous episode (backlog 4.39): an alert that re-opened within an hour
+ * of that episode closing stale starts with its acknowledgement and/or
+ * snooze, and its `opened` event says which. AlertTimeline shows each as a
+ * line of its own right after the opening; every other entry yields none.
+ */
+export function carriedOverLabels(event: AlertEvent | undefined, t: Messages): string[] {
+  if (event?.kind !== 'opened') return [];
+  const out: string[] = [];
+  if (event.ack_carried_over) out.push(t.alerts.timeline.ackCarriedOver);
+  if (event.snooze_carried_over) out.push(t.alerts.timeline.snoozeCarriedOver);
+  return out;
+}
+
+/**
  * notificationHoldLabel answers "why did nothing arrive" in the one
  * sentence AlertTimeline shows above the timeline itself (v0.4c Task 11):
  * `null` renders nothing at all, for the common case nothing is held.

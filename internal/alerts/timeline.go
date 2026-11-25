@@ -22,7 +22,8 @@ import (
 // Event is one alert_events row (migration 00049): an alert's own append-
 // only history, independent of its current-state columns. Payload carries
 // the raw jsonb column: '{}' (InsertAlertEvent's own default) for every
-// kind except EventEscalated, whose shape is EscalatedPayload below
+// kind except EventEscalated, whose shape is EscalatedPayload below, and
+// an EventOpened that continued a previous episode (OpenedPayload)
 // (alertroutes.RecordEscalation, migration 00056, writes it) — Task 8's
 // own GUI work is what first reads one back out.
 type Event struct {
@@ -46,6 +47,18 @@ type Event struct {
 type EscalatedPayload struct {
 	Position int         `json:"position"`
 	Channels []uuid.UUID `json:"channels"`
+}
+
+// OpenedPayload is the EventOpened payload of an opening that continued a
+// previous episode (backlog 4.39, SQLStore.open writes it): which episode,
+// and whether its acknowledgement, its snooze or both were carried over.
+// Every other opening keeps the default '{}'. Defined beside
+// EscalatedPayload for the same reason: one struct for the write side and
+// every read side.
+type OpenedPayload struct {
+	ContinuesAlertID uuid.UUID `json:"continues_alert_id"`
+	AckCarried       bool      `json:"ack_carried,omitempty"`
+	SnoozeCarried    bool      `json:"snooze_carried,omitempty"`
 }
 
 // StateChange is one check_state_changes row inside an alert's own

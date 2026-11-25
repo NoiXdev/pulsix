@@ -322,7 +322,7 @@ func TestReconcileClientHostAlert(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := alerts.Reconcile(tc.in, tc.open)
+			got := alerts.Reconcile(tc.in, tc.open, nil)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("Reconcile:\n got %+v\nwant %+v", got, tc.want)
 			}
@@ -370,7 +370,7 @@ func TestReconcileServerHostAlertIsUnchanged(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := alerts.Reconcile(tc.in, tc.open)
+			got := alerts.Reconcile(tc.in, tc.open, nil)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("Reconcile:\n got %+v\nwant %+v", got, tc.want)
 			}

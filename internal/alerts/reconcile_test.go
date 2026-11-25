@@ -116,17 +116,17 @@ func mustBeOneOpen(t *testing.T, acts []alerts.Action, wantAt time.Time, wantSev
 func TestReconcileOpensOneAlertPerEpisode(t *testing.T) {
 	sub := tupleSubject("disk", "/", "used_percent")
 	// warn opens; the alert then survives crit and the fall back to warn.
-	acts := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), nil)
+	acts := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), nil, nil)
 	mustBeOneOpen(t, acts, t0, rules.StateWarn)
 
 	a := openAlert(sub, rules.StateWarn, t0)
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{a})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{a}, nil)
 	if !hasSeverity(got, rules.StateCrit) {
 		t.Fatalf("rising to crit produced %+v, want a severity action", got)
 	}
 
 	a.Severity, a.Peak = rules.StateCrit, rules.StateCrit
-	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a})
+	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a}, nil)
 	if hasClose(got) {
 		t.Fatalf("falling back to warn closed the alert: %+v", got)
 	}
@@ -140,7 +140,7 @@ func TestReconcilePeakOnlyRises(t *testing.T) {
 	a := openAlert(sub, rules.StateCrit, t0)
 	a.Peak = rules.StateCrit // the alert's episode already touched crit
 
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a}, nil)
 	act, ok := findKind(got, alerts.ActionSeverity)
 	if !ok {
 		t.Fatalf("falling to warn produced no severity action: %+v", got)
@@ -155,7 +155,7 @@ func TestReconcileVoidsAckOnWorsening(t *testing.T) {
 
 	worsening := openAlert(sub, rules.StateWarn, t0)
 	worsening.AckSeverity = rules.StateWarn
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{worsening})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{worsening}, nil)
 	act, ok := findKind(got, alerts.ActionSeverity)
 	if !ok || !act.VoidsAck {
 		t.Fatalf("worsening past an ack at warn did not void it: %+v", got)
@@ -163,7 +163,7 @@ func TestReconcileVoidsAckOnWorsening(t *testing.T) {
 
 	improving := openAlert(sub, rules.StateCrit, t0)
 	improving.AckSeverity = rules.StateCrit
-	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{improving})
+	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{improving}, nil)
 	act, ok = findKind(got, alerts.ActionSeverity)
 	if !ok {
 		t.Fatalf("improving to warn produced no severity action: %+v", got)
@@ -186,7 +186,7 @@ func TestReconcileUnknownOpensOnlyAHostAlert(t *testing.T) {
 	}
 	in := withHost(input(states...), rules.HostState{HostID: hostID, State: rules.StateUnknown, Since: t0, EvaluatedAt: t0.Add(time.Hour)})
 
-	got := alerts.Reconcile(in, nil)
+	got := alerts.Reconcile(in, nil, nil)
 	var opens []alerts.Action
 	for _, a := range got {
 		if a.Kind == alerts.ActionOpen {
@@ -213,7 +213,7 @@ func TestReconcileFlappingHoldsTheAlertOpen(t *testing.T) {
 
 	flapping := stateAt(sub, rules.StateOK, t0)
 	flapping.Flapping = true
-	got := alerts.Reconcile(input(flapping), []alerts.Alert{a})
+	got := alerts.Reconcile(input(flapping), []alerts.Alert{a}, nil)
 	if hasClose(got) {
 		t.Fatalf("a flapping tuple at ok closed its alert: %+v", got)
 	}
@@ -227,7 +227,7 @@ func TestReconcileFlappingHoldsTheAlertOpen(t *testing.T) {
 
 	settled := stateAt(sub, rules.StateOK, t0)
 	settled.Flapping = false
-	got = alerts.Reconcile(input(settled), []alerts.Alert{a})
+	got = alerts.Reconcile(input(settled), []alerts.Alert{a}, nil)
 	act, ok := findKind(got, alerts.ActionClose)
 	if !ok {
 		t.Fatalf("a settled tuple at ok did not close its alert: %+v", got)
@@ -242,7 +242,7 @@ func TestReconcileFlappingHoldsTheAlertOpen(t *testing.T) {
 // open on it, so Reconcile has nothing to decide.
 func TestReconcileIgnoresAHealthyTupleWithNoOpenAlert(t *testing.T) {
 	sub := tupleSubject("disk", "/", "used_percent")
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateOK, t0)), nil)
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateOK, t0)), nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("a healthy tuple with no open alert produced %+v, want no actions", got)
 	}
@@ -260,7 +260,7 @@ func TestReconcileStaysQuietOnAnAlreadyFlaggedFlappingTuple(t *testing.T) {
 
 	flapping := stateAt(sub, rules.StateOK, t0)
 	flapping.Flapping = true
-	got := alerts.Reconcile(input(flapping), []alerts.Alert{a})
+	got := alerts.Reconcile(input(flapping), []alerts.Alert{a}, nil)
 	if len(got) != 0 {
 		t.Fatalf("an already-flagged flapping tuple produced %+v, want no actions", got)
 	}
@@ -274,7 +274,7 @@ func TestReconcileOpensAtStateSince(t *testing.T) {
 		t.Fatalf("test setup bug: in.At must differ from state.Since for this test to mean anything")
 	}
 
-	got := alerts.Reconcile(in, nil)
+	got := alerts.Reconcile(in, nil, nil)
 	act, ok := findKind(got, alerts.ActionOpen)
 	if !ok {
 		t.Fatalf("no open action: %+v", got)
@@ -294,7 +294,7 @@ func TestReconcileKeepsSeverityWhenTupleGoesUnknown(t *testing.T) {
 	a := openAlert(sub, rules.StateCrit, t0)
 	a.Peak = rules.StateCrit
 
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateUnknown, t0)), []alerts.Alert{a})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateUnknown, t0)), []alerts.Alert{a}, nil)
 	if len(got) != 0 {
 		t.Fatalf("a tuple going unknown produced %+v, want no actions on its open alert", got)
 	}
@@ -308,7 +308,7 @@ func TestReconcileClearsSnoozeUntilChangeOnSeverityChange(t *testing.T) {
 
 	rising := openAlert(sub, rules.StateWarn, t0)
 	rising.SnoozeUntilChange = true
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{rising})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateCrit, t0)), []alerts.Alert{rising}, nil)
 	act, ok := findKind(got, alerts.ActionSeverity)
 	if !ok || !act.ClearsSnoozeUntilChange {
 		t.Fatalf("a rising severity did not clear snooze_until_change: %+v", got)
@@ -316,7 +316,7 @@ func TestReconcileClearsSnoozeUntilChangeOnSeverityChange(t *testing.T) {
 
 	falling := openAlert(sub, rules.StateCrit, t0)
 	falling.SnoozeUntilChange = true
-	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{falling})
+	got = alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{falling}, nil)
 	act, ok = findKind(got, alerts.ActionSeverity)
 	if !ok || !act.ClearsSnoozeUntilChange {
 		t.Fatalf("a falling severity did not clear snooze_until_change: %+v", got)
@@ -332,7 +332,7 @@ func TestReconcileLeavesSnoozeUntilChangeWhenSeverityHolds(t *testing.T) {
 	a := openAlert(sub, rules.StateWarn, t0)
 	a.SnoozeUntilChange = true
 
-	got := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a})
+	got := alerts.Reconcile(input(stateAt(sub, rules.StateWarn, t0)), []alerts.Alert{a}, nil)
 	if _, ok := findKind(got, alerts.ActionSeverity); ok {
 		t.Fatalf("an unchanged severity produced a severity action: %+v", got)
 	}
@@ -344,7 +344,7 @@ func TestReconcileLatchesWasFlappingOnce(t *testing.T) {
 
 	flapping := stateAt(sub, rules.StateWarn, t0)
 	flapping.Flapping = true
-	got := alerts.Reconcile(input(flapping), []alerts.Alert{a})
+	got := alerts.Reconcile(input(flapping), []alerts.Alert{a}, nil)
 	flapped, ok := findKind(got, alerts.ActionFlapped)
 	if !ok {
 		t.Fatalf("a flapping tuple on an alert not yet marked flapping produced %+v, want a flapped action", got)
@@ -354,7 +354,7 @@ func TestReconcileLatchesWasFlappingOnce(t *testing.T) {
 	}
 
 	a.WasFlapping = true
-	got = alerts.Reconcile(input(flapping), []alerts.Alert{a})
+	got = alerts.Reconcile(input(flapping), []alerts.Alert{a}, nil)
 	if _, ok := findKind(got, alerts.ActionFlapped); ok {
 		t.Fatalf("an already-flapping alert produced another flapped action: %+v", got)
 	}
@@ -363,7 +363,7 @@ func TestReconcileLatchesWasFlappingOnce(t *testing.T) {
 func TestReconcileClosesHostAlertWhenHostRecovers(t *testing.T) {
 	h := alerts.Alert{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Subject: hostSubject(), Severity: rules.StateUnknown, Peak: rules.StateUnknown}
 
-	got := alerts.Reconcile(input(), []alerts.Alert{h})
+	got := alerts.Reconcile(input(), []alerts.Alert{h}, nil)
 	act, ok := findKind(got, alerts.ActionClose)
 	if !ok {
 		t.Fatalf("a recovered host did not close its host-scope alert: %+v", got)
@@ -380,7 +380,7 @@ func TestReconcileDoesNotReopenAnAlreadyOpenHostAlert(t *testing.T) {
 	h := alerts.Alert{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Subject: hostSubject(), Severity: rules.StateUnknown, Peak: rules.StateUnknown}
 	in := withHost(input(), rules.HostState{HostID: hostID, State: rules.StateUnknown, Since: t0, EvaluatedAt: t0.Add(time.Hour)})
 
-	got := alerts.Reconcile(in, []alerts.Alert{h})
+	got := alerts.Reconcile(in, []alerts.Alert{h}, nil)
 	if len(got) != 0 {
 		t.Fatalf("an already-open host alert produced %+v, want no actions", got)
 	}
@@ -419,7 +419,7 @@ func TestReconcileOrderFollowsStatesOrder(t *testing.T) {
 	}
 
 	for n := 1; n <= len(metrics); n++ {
-		got := alerts.Reconcile(input(states[:n]...), open)
+		got := alerts.Reconcile(input(states[:n]...), open, nil)
 		if len(got) != n {
 			t.Fatalf("n=%d: got %d actions, want %d: %+v", n, len(got), n, got)
 		}
@@ -451,7 +451,7 @@ func TestReconcileClosesAnUnmeasuredTupleStale(t *testing.T) {
 	in := input()
 	in.Unmeasured = []rules.Tuple{{CheckKey: sub.CheckKey, Item: sub.Item, Metric: sub.Metric}}
 
-	acts := alerts.Reconcile(in, []alerts.Alert{a})
+	acts := alerts.Reconcile(in, []alerts.Alert{a}, nil)
 	if len(acts) != 1 {
 		t.Fatalf("got %d actions, want exactly 1 close: %+v", len(acts), acts)
 	}
@@ -475,7 +475,7 @@ func TestReconcileIgnoresUnmeasuredTuplesWithNoOpenAlert(t *testing.T) {
 	in := input()
 	in.Unmeasured = []rules.Tuple{{CheckKey: "disk", Item: "/", Metric: "used_pct"}}
 
-	if acts := alerts.Reconcile(in, nil); len(acts) != 0 {
+	if acts := alerts.Reconcile(in, nil, nil); len(acts) != 0 {
 		t.Fatalf("got %+v, want no actions for an unmeasured tuple nothing is open on", acts)
 	}
 }
@@ -489,12 +489,12 @@ func TestReconcileIgnoresUnmeasuredTuplesWithNoOpenAlert(t *testing.T) {
 func TestReconcileClosesTheHostAlertStaleWhenNothingIsJudged(t *testing.T) {
 	a := openAlert(hostSubject(), rules.StateUnknown, t0)
 
-	gone := alerts.Reconcile(withHost(input(), rules.HostState{HostID: hostID}), []alerts.Alert{a})
+	gone := alerts.Reconcile(withHost(input(), rules.HostState{HostID: hostID}), []alerts.Alert{a}, nil)
 	if len(gone) != 1 || gone[0].Kind != alerts.ActionClose || gone[0].Reason != alerts.Stale {
 		t.Fatalf("zero roll-up produced %+v, want one close with reason stale", gone)
 	}
 
-	healthy := alerts.Reconcile(input(), []alerts.Alert{a})
+	healthy := alerts.Reconcile(input(), []alerts.Alert{a}, nil)
 	if len(healthy) != 1 || healthy[0].Kind != alerts.ActionClose || healthy[0].Reason != alerts.Resolved {
 		t.Fatalf("an ok roll-up produced %+v, want one close with reason resolved", healthy)
 	}

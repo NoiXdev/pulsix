@@ -139,6 +139,13 @@ type Store interface {
 	// OpenForHost returns every alert org/host has open right now — the
 	// `open []Alert` Reconcile's own signature consumes.
 	OpenForHost(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID) ([]Alert, error)
+	// RecentlyClosedForHost returns, inside tx, the latest closed
+	// tuple-scope alert of each of org/host's subjects whose closed_at is
+	// at or after since, whatever its close reason — the `closed []Alert`
+	// Reconcile adopts from (backlog 4.39). The latest, not the latest
+	// stale one: an episode resolved after a stale close ends the story
+	// the stale one could have continued.
+	RecentlyClosedForHost(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, since time.Time) ([]Alert, error)
 	// Execute applies every action Reconcile returned, in the order
 	// given, inside tx: opening a new alert, raising a severity (and
 	// voiding its acknowledgement when asked), latching a flap, or
@@ -302,8 +309,9 @@ func toAlert(r gen.Alert) Alert {
 		SnoozedUntil:      db.TimePtr(r.SnoozedUntil),
 		SnoozeUntilChange: r.SnoozeUntilChange,
 
-		WasFlapping: r.WasFlapping,
-		Detail:      derefOr(r.Detail, ""),
+		WasFlapping:      r.WasFlapping,
+		Detail:           derefOr(r.Detail, ""),
+		ContinuesAlertID: db.UUIDPtr(r.ContinuesAlertID),
 	}
 }
 
@@ -345,8 +353,9 @@ func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
 			SnoozedUntil:      db.TimePtr(r.SnoozedUntil),
 			SnoozeUntilChange: r.SnoozeUntilChange,
 
-			WasFlapping: r.WasFlapping,
-			Detail:      derefOr(r.Detail, ""),
+			WasFlapping:      r.WasFlapping,
+			Detail:           derefOr(r.Detail, ""),
+			ContinuesAlertID: db.UUIDPtr(r.ContinuesAlertID),
 		},
 		HostName:         r.HostName,
 		AgentLastContact: unlessEpoch(r.AgentLastContact),
@@ -378,8 +387,9 @@ func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
 			SnoozedUntil:      db.TimePtr(r.SnoozedUntil),
 			SnoozeUntilChange: r.SnoozeUntilChange,
 
-			WasFlapping: r.WasFlapping,
-			Detail:      derefOr(r.Detail, ""),
+			WasFlapping:      r.WasFlapping,
+			Detail:           derefOr(r.Detail, ""),
+			ContinuesAlertID: db.UUIDPtr(r.ContinuesAlertID),
 		},
 		HostName:         r.HostName,
 		AgentLastContact: unlessEpoch(r.AgentLastContact),
