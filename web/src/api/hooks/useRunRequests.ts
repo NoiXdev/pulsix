@@ -72,14 +72,21 @@ export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean
   return query.data?.count;
 }
 
+/** How often an open request waiting for its repository's sync is read
+ * again, so the page turns pending (or failed) on its own once the sync has
+ * finished (spec 2026-11-25 A, sync_first). */
+export const WAITING_POLL_MS = 5_000;
+
 /** useRunRequest is one request with its run picture (what the run would use
  * if it were approved now) and the fingerprint over that picture, which an
- * approval sends back. */
+ * approval sends back. While the request waits for its sync it is polled
+ * every WAITING_POLL_MS; the polling stops once it leaves that state. */
 export function useRunRequest(org: string, id: string) {
   return useQuery({
     queryKey: ['run-request', org, id],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/run-requests/{id}', { params: { path: { org, id } } })),
     enabled: !!org && !!id,
+    refetchInterval: (query) => (query.state.data?.request.status === 'waiting_for_sync' ? WAITING_POLL_MS : false),
   });
 }
 

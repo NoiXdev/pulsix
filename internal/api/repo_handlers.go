@@ -353,24 +353,39 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 			return nil, mapReposErr(ctx, err)
 		}
 		if already {
-			setAuditObject(ctx, id.String(), "requested sync of repo; sync job "+job.ID.String()+" was already queued or running")
+			setAuditObject(ctx, id.String(), "requested sync of repo; sync job "+job.ID.String()+" was already queued")
 		} else {
 			setAuditObject(ctx, id.String(), "requested sync of repo")
 		}
 		return repoSync(job, already), nil
 	}, func(o *huma.Operation) {
 		o.DefaultStatus = http.StatusAccepted
-		o.Description = "Queues a sync of the repository (202). While a sync of it is queued or running, that job is returned instead with already_running true (200), and nothing new is queued."
+		o.Description = "Queues a sync of the repository (202). While a sync of it is queued and not yet taken by a worker, that job is returned instead with already_running true (200), and nothing new is queued. A sync a worker already took may have fetched before the latest change, so a new one is queued behind it."
 	}, withAudit("syncRepo", "repo"))
+	declareSyncAlreadyQueued(hapi)
+}
+
+// declareSyncAlreadyQueued documents the sync route's 200 (the queued sync
+// handed back) next to its default 202, with the same body: huma only
+// declares the default status of an output with a Status field.
+func declareSyncAlreadyQueued(hapi huma.API) {
+	path := hapi.OpenAPI().Paths["/api/v1/orgs/{org}/repos/{id}/sync"]
+	if path == nil || path.Post == nil || path.Post.Responses["202"] == nil {
+		return
+	}
+	accepted := path.Post.Responses["202"]
+	ok := *accepted
+	ok.Description = "A sync of the repository was already queued: that job, with already_running true"
+	path.Post.Responses["200"] = &ok
 }
 
 // repoSyncOutput is 202 with a new sync, 200 with the one already queued
-// or running (spec 2026-11-25 G).
+// (spec 2026-11-25 G).
 type repoSyncOutput struct {
 	Status int
 	Body   struct {
 		Job            jobRefDTO `json:"job"`
-		AlreadyRunning bool      `json:"already_running" doc:"The repository's sync was already queued or running; job is that sync and nothing new was queued"`
+		AlreadyRunning bool      `json:"already_running" doc:"A sync of the repository was already queued (not yet taken by a worker); job is that sync and nothing new was queued"`
 	}
 }
 

@@ -39,9 +39,9 @@ func TestSyncFirstSyncsTheTemplatesRepository(t *testing.T) {
 	actor := id()
 	for _, already := range []bool{false, true} {
 		w.repoSyncs.already = already
-		job, err := w.resolver().SyncFirst(ctx, id(), w.x, actor)
-		if err != nil || job == nil || *job != w.repoSyncs.job {
-			t.Fatalf("already running %v: job = %v %v", already, job, err)
+		start, err := w.resolver().SyncFirst(ctx, id(), w.x, actor)
+		if err != nil || start == nil || start.JobID != w.repoSyncs.job || start.RepoID != w.repo || start.AlreadyQueued != already {
+			t.Fatalf("already queued %v: start = %+v %v", already, start, err)
 		}
 	}
 	if len(w.repoSyncs.repos) != 2 || w.repoSyncs.repos[0] != w.repo || w.repoSyncs.actors[0] != actor {

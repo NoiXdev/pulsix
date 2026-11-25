@@ -267,8 +267,9 @@ func (s *SQLStore) HasActiveTemplateJob(ctx context.Context, orgID, templateID u
 }
 
 // CreateSyncJobOnce implements Store: under a per-repository advisory
-// transaction lock, the oldest sync of the repository that is not terminal
-// is returned when there is one, and j is inserted otherwise.
+// transaction lock, the oldest queued sync of the repository is returned
+// when there is one, and j is inserted otherwise, so a repository has at
+// most one queued sync.
 func (s *SQLStore) CreateSyncJobOnce(ctx context.Context, j Job, payload json.RawMessage, repoID uuid.UUID) (Job, bool, error) {
 	if err := checkTrigger(j); err != nil {
 		return Job{}, false, err
@@ -279,7 +280,7 @@ func (s *SQLStore) CreateSyncJobOnce(ctx context.Context, j Job, payload json.Ra
 			return fmt.Errorf("lock repository sync: %w", err)
 		}
 		q := gen.New(tx)
-		id, err := q.ActiveRepoSyncJob(ctx, gen.ActiveRepoSyncJobParams{OrgID: j.OrgID, RepoID: repoID.String()})
+		id, err := q.QueuedRepoSyncJob(ctx, gen.QueuedRepoSyncJobParams{OrgID: j.OrgID, RepoID: repoID.String()})
 		switch {
 		case err == nil:
 			row, err := q.GetJob(ctx, gen.GetJobParams{OrgID: j.OrgID, ID: id})

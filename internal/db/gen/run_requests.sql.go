@@ -240,6 +240,62 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 	return err
 }
 
+const listDueWaitingRunRequests = `-- name: ListDueWaitingRunRequests :many
+SELECT r.org_id, r.id, r.created_at, r.expires_in_minutes, r.sync_job_id,
+  j.status AS sync_status, j.error AS sync_error
+FROM run_requests r
+LEFT JOIN jobs j ON j.org_id = r.org_id AND j.id = r.sync_job_id
+WHERE r.status = 'waiting_for_sync'
+  AND (j.id IS NULL OR j.status IN ('succeeded', 'failed', 'cancelled', 'error')
+    OR r.created_at <= $1::timestamptz)
+ORDER BY r.created_at, r.id
+`
+
+type ListDueWaitingRunRequestsRow struct {
+	OrgID            uuid.UUID   `json:"org_id"`
+	ID               uuid.UUID   `json:"id"`
+	CreatedAt        time.Time   `json:"created_at"`
+	ExpiresInMinutes *int32      `json:"expires_in_minutes"`
+	SyncJobID        pgtype.UUID `json:"sync_job_id"`
+	SyncStatus       *string     `json:"sync_status"`
+	SyncError        *string     `json:"sync_error"`
+}
+
+// The waiting requests the sweep moves: their sync job ended or is gone
+// (status and error NULL), or they have waited since before stale_before.
+// A request whose sync still runs in time is not listed, so however many
+// there are they never hide a due one. The partial index on the waiting
+// requests holds the candidates, the job is a primary key probe. The
+// manager's sweep runs without an organization scope and sees every
+// organization's.
+func (q *Queries) ListDueWaitingRunRequests(ctx context.Context, staleBefore time.Time) ([]ListDueWaitingRunRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listDueWaitingRunRequests, staleBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDueWaitingRunRequestsRow
+	for rows.Next() {
+		var i ListDueWaitingRunRequestsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ID,
+			&i.CreatedAt,
+			&i.ExpiresInMinutes,
+			&i.SyncJobID,
+			&i.SyncStatus,
+			&i.SyncError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunRequestTokens = `-- name: ListRunRequestTokens :many
 SELECT t.id, t.name, (t.revoked_at IS NOT NULL OR u.disabled_at IS NOT NULL)::boolean AS revoked, t.expires_at
 FROM api_tokens t JOIN users u ON u.id = t.user_id
@@ -366,18 +422,16 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 	return items, nil
 }
 
-const listWaitingRunRequests = `-- name: ListWaitingRunRequests :many
+const listWaitingRunRequestsForSync = `-- name: ListWaitingRunRequestsForSync :many
 SELECT r.org_id, r.id, r.created_at, r.expires_in_minutes, r.sync_job_id,
   j.status AS sync_status, j.error AS sync_error
 FROM run_requests r
 LEFT JOIN jobs j ON j.org_id = r.org_id AND j.id = r.sync_job_id
-WHERE r.status = 'waiting_for_sync'
-  AND ($1::uuid IS NULL OR r.sync_job_id = $1::uuid)
+WHERE r.status = 'waiting_for_sync' AND r.sync_job_id = $1::uuid
 ORDER BY r.created_at, r.id
-LIMIT 1000
 `
 
-type ListWaitingRunRequestsRow struct {
+type ListWaitingRunRequestsForSyncRow struct {
 	OrgID            uuid.UUID   `json:"org_id"`
 	ID               uuid.UUID   `json:"id"`
 	CreatedAt        time.Time   `json:"created_at"`
@@ -387,20 +441,17 @@ type ListWaitingRunRequestsRow struct {
 	SyncError        *string     `json:"sync_error"`
 }
 
-// The requests waiting for their sync (migration 00124) with the sync
-// job's status and error, both NULL when the job is gone: those of one
-// sync job, or, without one, every one the caller sees (the manager's
-// sweep runs without an organization scope and sees all of them), the
-// oldest first.
-func (q *Queries) ListWaitingRunRequests(ctx context.Context, syncJobID pgtype.UUID) ([]ListWaitingRunRequestsRow, error) {
-	rows, err := q.db.Query(ctx, listWaitingRunRequests, syncJobID)
+// The requests waiting for one sync job (migration 00124), with the job's
+// status and error.
+func (q *Queries) ListWaitingRunRequestsForSync(ctx context.Context, syncJobID uuid.UUID) ([]ListWaitingRunRequestsForSyncRow, error) {
+	rows, err := q.db.Query(ctx, listWaitingRunRequestsForSync, syncJobID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListWaitingRunRequestsRow
+	var items []ListWaitingRunRequestsForSyncRow
 	for rows.Next() {
-		var i ListWaitingRunRequestsRow
+		var i ListWaitingRunRequestsForSyncRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.ID,

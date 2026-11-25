@@ -34,7 +34,7 @@ func (w *wiring) createSyncFirst(token *uuid.UUID) (runrequests.Request, error) 
 // startSync makes the fake syncer hand out a new sync job in status.
 func (w *wiring) startSync(status jobs.Status) uuid.UUID {
 	job := uuid.Must(uuid.NewV7())
-	w.syncs.job = &job
+	w.syncs.job, w.syncs.repo = &job, uuid.Must(uuid.NewV7())
 	w.store.syncs[job] = memSync{status: status}
 	return job
 }
@@ -63,6 +63,13 @@ func TestSyncFirstWaitsThenBecomesPending(t *testing.T) {
 	}
 	if r.Status != runrequests.StatusWaitingForSync || !r.ExpiresAt.IsZero() || r.SyncJobID == nil || *r.SyncJobID != job {
 		t.Fatalf("created = %+v", r)
+	}
+	// The sync it started is reported for the caller's audit, never stored.
+	if r.SyncStarted == nil || r.SyncStarted.JobID != job || r.SyncStarted.RepoID != w.syncs.repo || r.SyncStarted.AlreadyQueued {
+		t.Fatalf("sync started = %+v", r.SyncStarted)
+	}
+	if stored := w.store.rows[r.ID]; stored.SyncStarted != nil {
+		t.Fatalf("stored the sync start: %+v", stored.SyncStarted)
 	}
 	_, _, fp, err := w.svc.Get(ctx, w.org, r.ID)
 	if err != nil {
@@ -172,7 +179,7 @@ func TestSweepEndsWaitsTheSyncCannotEnd(t *testing.T) {
 	cancelledReq := w.syncFirst(t, nil)
 	gone := w.startSync(jobs.StatusQueued)
 	goneReq := w.syncFirst(t, nil)
-	slow := w.startSync(jobs.StatusRunning)
+	w.startSync(jobs.StatusRunning) // a slow sync
 	slowReq := w.syncFirst(t, nil)
 	w.now = w.now.Add(time.Minute)
 	young := w.syncFirst(t, nil) // on the same slow sync, a minute later
@@ -198,8 +205,8 @@ func TestSweepEndsWaitsTheSyncCannotEnd(t *testing.T) {
 			t.Fatalf("%s = %s %q, want %s %q", id, got.Status, got.SyncError, want.status, want.reason)
 		}
 	}
-	if slow == uuid.Nil {
-		t.Fatal("no slow sync")
+	if len(w.store.dueCalls) != 1 || !w.store.dueCalls[0].Equal(w.now.Add(-runrequests.MaxSyncWait)) {
+		t.Fatalf("the sweep asked for due waits before %v, want %v", w.store.dueCalls, w.now.Add(-runrequests.MaxSyncWait))
 	}
 }
 

@@ -2838,7 +2838,7 @@ export interface paths {
         put?: never;
         /**
          * Post API v1 orgs by org repos by ID sync
-         * @description Queues a sync of the repository (202). While a sync of it is queued or running, that job is returned instead with already_running true (200), and nothing new is queued.
+         * @description Queues a sync of the repository (202). While a sync of it is queued and not yet taken by a worker, that job is returned instead with already_running true (200), and nothing new is queued. A sync a worker already took may have fetched before the latest change, so a new one is queued behind it.
          */
         post: operations["syncRepo"];
         delete?: never;
@@ -7734,7 +7734,7 @@ export interface components {
              * @example https://example.com/schemas/RepoSyncOutputBody.json
              */
             readonly $schema?: string;
-            /** @description The repository's sync was already queued or running; job is that sync and nothing new was queued */
+            /** @description A sync of the repository was already queued (not yet taken by a worker); job is that sync and nothing new was queued */
             already_running: boolean;
             job: components["schemas"]["JobRefDTO"];
         };
@@ -7790,7 +7790,7 @@ export interface components {
             limit?: string;
             /** @description Why the run is needed, shown to the person who approves it */
             reason: string;
-            /** @description Sync the template's repository first (needs repos.write): the request waits for the sync (status waiting_for_sync, sync_job_id; a sync already queued or running is the one it waits for). When the sync succeeds the request becomes pending with the new commit and its expiry starts; when it fails, is cancelled or does not finish within an hour, the request fails (status failed, sync_error). A playbook from no repository has nothing to sync and the request is pending at once */
+            /** @description Sync the template's repository first (needs repos.write): the request waits for the sync (status waiting_for_sync, sync_job_id; a sync already queued and not yet started is the one it waits for, one already running does not count as it may have fetched before). When the sync succeeds the request becomes pending with the new commit and its expiry starts; when it fails, is cancelled or does not finish within an hour, the request fails (status failed, sync_error). A playbook from no repository has nothing to sync and the request is pending at once */
             sync_first?: boolean;
         };
         ResetAvailableOutputBody: {
@@ -16945,6 +16945,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description A sync of the repository was already queued: that job, with already_running true */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoSyncOutputBody"];
+                };
+            };
             /** @description Accepted */
             202: {
                 headers: {

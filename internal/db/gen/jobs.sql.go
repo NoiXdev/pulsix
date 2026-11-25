@@ -13,29 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const activeRepoSyncJob = `-- name: ActiveRepoSyncJob :one
-SELECT id FROM jobs
-WHERE org_id = $1 AND kind = 'sync_repo'
-  AND payload->>'repo_id' = $2::text
-  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
-ORDER BY created_at, id
-LIMIT 1
-`
-
-type ActiveRepoSyncJobParams struct {
-	OrgID  uuid.UUID `json:"org_id"`
-	RepoID string    `json:"repo_id"`
-}
-
-// The oldest sync_repo job of the repository that is not terminal: the one
-// a sync of it returns instead of queuing another (spec 2026-11-25 G).
-func (q *Queries) ActiveRepoSyncJob(ctx context.Context, arg ActiveRepoSyncJobParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, activeRepoSyncJob, arg.OrgID, arg.RepoID)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const cancelJob = `-- name: CancelJob :one
 UPDATE jobs
 SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancelling' END,
@@ -1824,6 +1801,31 @@ func (q *Queries) PinRepoHostKey(ctx context.Context, arg PinRepoHostKeyParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queuedRepoSyncJob = `-- name: QueuedRepoSyncJob :one
+SELECT id FROM jobs
+WHERE org_id = $1 AND kind = 'sync_repo'
+  AND payload->>'repo_id' = $2::text
+  AND status = 'queued'
+ORDER BY created_at, id
+LIMIT 1
+`
+
+type QueuedRepoSyncJobParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	RepoID string    `json:"repo_id"`
+}
+
+// The oldest queued sync_repo job of the repository: the one a sync of it
+// returns instead of queuing another (spec 2026-11-25 G). Only a queued
+// one: a sync a worker took may have fetched before the change the caller
+// wants, so it does not stand for a new sync (controller ruling).
+func (q *Queries) QueuedRepoSyncJob(ctx context.Context, arg QueuedRepoSyncJobParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, queuedRepoSyncJob, arg.OrgID, arg.RepoID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const recordVaultIdentities = `-- name: RecordVaultIdentities :exec

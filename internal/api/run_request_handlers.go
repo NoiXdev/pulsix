@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/inventory"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -131,6 +132,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 			return nil, mapRunRequestErr(ctx, err)
 		}
 		setAuditObject(ctx, r.ID.String(), requestSummary(r))
+		auditSyncFirst(ctx, deps, scope, r)
 		return runRequestDetail(ctx, deps, scope, r.ID)
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("requestRun", "run_request"))
 
@@ -308,6 +310,21 @@ func approvalSummary(a runrequests.Approved) string {
 	return summary + ")"
 }
 
+// auditSyncFirst records the sync a sync_first request queued, or the one
+// it attached to, in the repository's feed as a sync_repo call would be,
+// attributed to the requester and its token.
+func auditSyncFirst(ctx context.Context, deps Deps, scope Scope, r runrequests.Request) {
+	st := r.SyncStarted
+	if st == nil {
+		return
+	}
+	summary := "requested sync of repo (sync first for run request " + r.ID.String() + ")"
+	if st.AlreadyQueued {
+		summary += "; sync job " + st.JobID.String() + " was already queued"
+	}
+	recordOrgEvent(ctx, deps, scope.OrgID, scope.UserID, http.MethodPost+" syncRepo", "repo", st.RepoID.String(), summary)
+}
+
 func runRequestDetail(ctx context.Context, deps Deps, scope Scope, id uuid.UUID) (*runRequestDetailOutput, error) {
 	r, picture, fingerprint, err := deps.RunRequests.Get(ctx, scope.OrgID, id)
 	if err != nil {
@@ -335,6 +352,10 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 		// synced first, or a sync of it is running. The message says
 		// which; it names no URL.
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, jobs.ErrNoZone):
+		// sync_first queues a sync, which runs in the default zone; the
+		// sync route answers the same.
+		return huma.Error409Conflict("the organization has no default zone, so nothing can be synced yet")
 	case errors.Is(err, inventory.ErrUnrenderable):
 		// The run picture renders the targets' inventory as the claim does,
 		// which fails closed (a stray sealed value, a broken jump host

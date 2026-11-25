@@ -296,7 +296,7 @@ func writeTools() []toolDef {
 			tenancy.AreaReposWrite, writeTool, func(ctx context.Context, c *caller, in repoUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPut, "repo", repoKeys, updateArgs{Fields: in.Fields}, nil, false, "/repos/%s", in.RepoID)
 			}),
-		define("sync_repo", "Sync repository", "Fetch the repository again. It touches no host. While a sync of the repository is queued or running, that sync is returned (already_running true) and no other is queued.",
+		define("sync_repo", "Sync repository", "Fetch the repository again. It touches no host. While a sync of the repository is queued and not yet started, that sync is returned (already_running true) and no other is queued; a sync already running may have fetched before your change, so a new one is queued behind it.",
 			tenancy.AreaReposWrite, writeTool, func(ctx context.Context, c *caller, in repoInput) (any, error) {
 				return send(ctx, c, http.MethodPost, nil, "", "/repos/%s/sync", in.RepoID)
 			}),

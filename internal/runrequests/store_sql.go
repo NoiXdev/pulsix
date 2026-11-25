@@ -184,30 +184,47 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 	return fromRow(row)
 }
 
-// ListWaiting implements Store.
-func (s *SQLStore) ListWaiting(ctx context.Context, syncJob *uuid.UUID) ([]Waiting, error) {
-	rows, err := s.q.ListWaitingRunRequests(ctx, pgUUID(syncJob))
+// ListWaitingFor implements Store.
+func (s *SQLStore) ListWaitingFor(ctx context.Context, syncJob uuid.UUID) ([]Waiting, error) {
+	rows, err := s.q.ListWaitingRunRequestsForSync(ctx, syncJob)
 	if err != nil {
 		return nil, fmt.Errorf("list run requests waiting for their sync: %w", err)
 	}
 	out := make([]Waiting, len(rows))
 	for i, row := range rows {
-		w := Waiting{OrgID: row.OrgID, ID: row.ID, CreatedAt: row.CreatedAt}
-		if row.SyncJobID.Valid {
-			w.SyncJobID = row.SyncJobID.Bytes
-		}
-		if row.ExpiresInMinutes != nil {
-			w.ExpiresInMinutes = int(*row.ExpiresInMinutes)
-		}
-		if row.SyncStatus != nil {
-			w.SyncStatus = jobs.Status(*row.SyncStatus)
-		}
-		if row.SyncError != nil {
-			w.SyncError = *row.SyncError
-		}
-		out[i] = w
+		out[i] = waitingRow(gen.ListDueWaitingRunRequestsRow(row))
 	}
 	return out, nil
+}
+
+// ListDueWaiting implements Store.
+func (s *SQLStore) ListDueWaiting(ctx context.Context, staleBefore time.Time) ([]Waiting, error) {
+	rows, err := s.q.ListDueWaitingRunRequests(ctx, staleBefore)
+	if err != nil {
+		return nil, fmt.Errorf("list run requests due to stop waiting: %w", err)
+	}
+	out := make([]Waiting, len(rows))
+	for i, row := range rows {
+		out[i] = waitingRow(row)
+	}
+	return out, nil
+}
+
+func waitingRow(row gen.ListDueWaitingRunRequestsRow) Waiting {
+	w := Waiting{OrgID: row.OrgID, ID: row.ID, CreatedAt: row.CreatedAt}
+	if row.SyncJobID.Valid {
+		w.SyncJobID = row.SyncJobID.Bytes
+	}
+	if row.ExpiresInMinutes != nil {
+		w.ExpiresInMinutes = int(*row.ExpiresInMinutes)
+	}
+	if row.SyncStatus != nil {
+		w.SyncStatus = jobs.Status(*row.SyncStatus)
+	}
+	if row.SyncError != nil {
+		w.SyncError = *row.SyncError
+	}
+	return w
 }
 
 // EndWait implements Store.

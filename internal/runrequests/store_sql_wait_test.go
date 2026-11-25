@@ -76,16 +76,16 @@ func TestSQLStoreWaitingForSync(t *testing.T) {
 		t.Fatalf("listed as waiting = %+v %v", rows, err)
 	}
 
-	list, err := store.ListWaiting(f.ctx, &job)
+	list, err := store.ListWaitingFor(f.ctx, job)
 	if err != nil || len(list) != 1 || list[0].ID != w.ID || list[0].OrgID != f.org || list[0].SyncStatus != jobs.StatusQueued ||
 		list[0].ExpiresInMinutes != 15 || !list[0].CreatedAt.Equal(now) || list[0].SyncJobID != job {
 		t.Fatalf("waiting on the sync = %+v %v", list, err)
 	}
-	if other, err := store.ListWaiting(f.ctx, new(uuid.Must(uuid.NewV7()))); err != nil || len(other) != 0 {
+	if other, err := store.ListWaitingFor(f.ctx, uuid.Must(uuid.NewV7())); err != nil || len(other) != 0 {
 		t.Fatalf("waiting on another sync = %+v %v", other, err)
 	}
 	f.setJob(t, job, jobs.StatusSucceeded, "")
-	if list, err = store.ListWaiting(f.ctx, &job); err != nil || len(list) != 1 || list[0].SyncStatus != jobs.StatusSucceeded {
+	if list, err = store.ListWaitingFor(f.ctx, job); err != nil || len(list) != 1 || list[0].SyncStatus != jobs.StatusSucceeded {
 		t.Fatalf("after the sync = %+v %v", list, err)
 	}
 
@@ -99,7 +99,7 @@ func TestSQLStoreWaitingForSync(t *testing.T) {
 	if got, err = store.Get(f.ctx, f.org, w.ID); err != nil || got.Status != runrequests.StatusPending || !got.ExpiresAt.Equal(expires) || got.SyncError != "" {
 		t.Fatalf("pending = %+v %v", got, err)
 	}
-	if list, err = store.ListWaiting(f.ctx, &job); err != nil || len(list) != 0 {
+	if list, err = store.ListWaitingFor(f.ctx, job); err != nil || len(list) != 0 {
 		t.Fatalf("still waiting = %+v %v", list, err)
 	}
 
@@ -154,38 +154,50 @@ func TestSQLStoreWaitingSchema(t *testing.T) {
 }
 
 // TestSQLStoreSweepSeesEveryOrganization: the sweep lists without an
-// organization scope and sees the waiting requests of every organization,
-// with a gone sync job as no status.
+// organization scope and sees the waiting requests of every organization
+// that are due: their sync ended or is gone, or they have waited since
+// before staleBefore. A request whose sync still runs within the bound is
+// not listed, however many there are.
 func TestSQLStoreSweepSeesEveryOrganization(t *testing.T) {
 	d := testdb.Open(t)
 	a, b := newSQLFixture(t, d, "runreq-sweep-a"), newSQLFixture(t, d, "runreq-sweep-b")
 	store := runrequests.NewSQLStore(d)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	wa := a.waiting(a.syncJob(t, jobs.StatusRunning, ""), nil, now)
-	wb := b.waiting(uuid.Must(uuid.NewV7()), nil, now.Add(time.Second)) // its sync job is gone
+	staleBefore := now.Add(-runrequests.MaxSyncWait)
+	running := a.syncJob(t, jobs.StatusRunning, "")
+	young := a.waiting(running, nil, now)
+	old := a.waiting(running, nil, staleBefore.Add(-time.Second))
+	ended := a.waiting(a.syncJob(t, jobs.StatusCancelled, ""), nil, now)
+	gone := b.waiting(uuid.Must(uuid.NewV7()), nil, now.Add(time.Second))
 	for _, w := range []struct {
 		f sqlFixture
 		r runrequests.Request
-	}{{a, wa}, {b, wb}} {
+	}{{a, young}, {a, old}, {a, ended}, {b, gone}} {
 		if err := store.Insert(w.f.ctx, w.r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	all, err := store.ListWaiting(context.Background(), nil)
+	due, err := store.ListDueWaiting(context.Background(), staleBefore)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen := map[uuid.UUID]runrequests.Waiting{}
-	for _, w := range all {
+	for _, w := range due {
 		seen[w.ID] = w
 	}
-	if seen[wa.ID].SyncStatus != jobs.StatusRunning || seen[wa.ID].OrgID != a.org {
-		t.Fatalf("organization a = %+v", seen[wa.ID])
+	if len(due) != 3 {
+		t.Fatalf("due = %+v, want the old, the ended and the gone one", due)
 	}
-	if got, ok := seen[wb.ID]; !ok || got.SyncStatus != "" || got.OrgID != b.org {
+	if _, ok := seen[young.ID]; ok {
+		t.Fatal("a request whose sync still runs within the bound was listed")
+	}
+	if seen[old.ID].SyncStatus != jobs.StatusRunning || seen[ended.ID].SyncStatus != jobs.StatusCancelled || seen[old.ID].OrgID != a.org {
+		t.Fatalf("organization a = %+v %+v", seen[old.ID], seen[ended.ID])
+	}
+	if got, ok := seen[gone.ID]; !ok || got.SyncStatus != "" || got.OrgID != b.org {
 		t.Fatalf("organization b = %+v %v", got, ok)
 	}
-	if scoped, err := store.ListWaiting(a.ctx, nil); err != nil || len(scoped) != 1 || scoped[0].ID != wa.ID {
-		t.Fatalf("scoped to a = %+v %v", scoped, err)
+	if scoped, err := store.ListDueWaiting(b.ctx, staleBefore); err != nil || len(scoped) != 1 || scoped[0].ID != gone.ID {
+		t.Fatalf("scoped to b = %+v %v", scoped, err)
 	}
 }

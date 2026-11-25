@@ -19,6 +19,8 @@ type memStore struct {
 	// syncs is what the queue says about each sync job; a job missing
 	// here is gone.
 	syncs map[uuid.UUID]memSync
+	// dueCalls are the staleBefore bounds the sweep asked with.
+	dueCalls []time.Time
 }
 
 type memSync struct {
@@ -135,17 +137,33 @@ func (m *memStore) ByRunGroup(_ context.Context, orgID, group uuid.UUID) (runreq
 	return runrequests.Request{}, runrequests.ErrNotFound
 }
 
-func (m *memStore) ListWaiting(_ context.Context, syncJob *uuid.UUID) ([]runrequests.Waiting, error) {
+func (m *memStore) waitingRows(keep func(runrequests.Waiting) bool) []runrequests.Waiting {
 	var out []runrequests.Waiting
 	for _, r := range m.rows {
-		if r.Status != runrequests.StatusWaitingForSync || (syncJob != nil && *r.SyncJobID != *syncJob) {
+		if r.Status != runrequests.StatusWaitingForSync {
 			continue
 		}
 		job := m.syncs[*r.SyncJobID]
-		out = append(out, runrequests.Waiting{OrgID: r.OrgID, ID: r.ID, CreatedAt: r.CreatedAt, ExpiresInMinutes: r.ExpiresInMinutes,
-			SyncJobID: *r.SyncJobID, SyncStatus: job.status, SyncError: job.err})
+		w := runrequests.Waiting{OrgID: r.OrgID, ID: r.ID, CreatedAt: r.CreatedAt, ExpiresInMinutes: r.ExpiresInMinutes,
+			SyncJobID: *r.SyncJobID, SyncStatus: job.status, SyncError: job.err}
+		if keep(w) {
+			out = append(out, w)
+		}
 	}
-	return out, nil
+	return out
+}
+
+func (m *memStore) ListWaitingFor(_ context.Context, syncJob uuid.UUID) ([]runrequests.Waiting, error) {
+	return m.waitingRows(func(w runrequests.Waiting) bool { return w.SyncJobID == syncJob }), nil
+}
+
+// ListDueWaiting is the SQL store's filter: the sync ended or is gone, or
+// the request waited since before staleBefore.
+func (m *memStore) ListDueWaiting(_ context.Context, staleBefore time.Time) ([]runrequests.Waiting, error) {
+	m.dueCalls = append(m.dueCalls, staleBefore)
+	return m.waitingRows(func(w runrequests.Waiting) bool {
+		return w.SyncStatus == "" || w.SyncStatus.Terminal() || !w.CreatedAt.After(staleBefore)
+	}), nil
 }
 
 func (m *memStore) EndWait(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, expiresAt time.Time, syncError string) (bool, error) {
@@ -207,20 +225,25 @@ func (f *fakeValidator) ValidateRetry(context.Context, uuid.UUID, uuid.UUID) (uu
 	return f.template, 7, f.err
 }
 
-// fakeSyncer starts the sync of a sync_first request: job, or nil for a
-// template without a repository.
+// fakeSyncer starts the sync of a sync_first request: job of repo, or
+// nil for a template without a repository.
 type fakeSyncer struct {
 	job      *uuid.UUID
+	repo     uuid.UUID
+	queued   bool // the sync was already queued
 	err      error
 	calls    int
 	template uuid.UUID
 	actor    uuid.UUID
 }
 
-func (f *fakeSyncer) SyncFirst(_ context.Context, _, templateID, actor uuid.UUID) (*uuid.UUID, error) {
+func (f *fakeSyncer) SyncFirst(_ context.Context, _, templateID, actor uuid.UUID) (*runrequests.SyncStart, error) {
 	f.calls++
 	f.template, f.actor = templateID, actor
-	return f.job, f.err
+	if f.err != nil || f.job == nil {
+		return nil, f.err
+	}
+	return &runrequests.SyncStart{JobID: *f.job, RepoID: f.repo, AlreadyQueued: f.queued}, nil
 }
 
 type wiring struct {

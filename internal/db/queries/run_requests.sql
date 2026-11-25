@@ -85,20 +85,32 @@ WHERE org_id = $1 AND id = $2;
 -- name: GetRunRequestByRunGroup :one
 SELECT * FROM run_requests WHERE org_id = $1 AND run_group_id = $2;
 
--- name: ListWaitingRunRequests :many
--- The requests waiting for their sync (migration 00124) with the sync
--- job's status and error, both NULL when the job is gone: those of one
--- sync job, or, without one, every one the caller sees (the manager's
--- sweep runs without an organization scope and sees all of them), the
--- oldest first.
+-- name: ListWaitingRunRequestsForSync :many
+-- The requests waiting for one sync job (migration 00124), with the job's
+-- status and error.
+SELECT r.org_id, r.id, r.created_at, r.expires_in_minutes, r.sync_job_id,
+  j.status AS sync_status, j.error AS sync_error
+FROM run_requests r
+LEFT JOIN jobs j ON j.org_id = r.org_id AND j.id = r.sync_job_id
+WHERE r.status = 'waiting_for_sync' AND r.sync_job_id = sqlc.arg(sync_job_id)::uuid
+ORDER BY r.created_at, r.id;
+
+-- name: ListDueWaitingRunRequests :many
+-- The waiting requests the sweep moves: their sync job ended or is gone
+-- (status and error NULL), or they have waited since before stale_before.
+-- A request whose sync still runs in time is not listed, so however many
+-- there are they never hide a due one. The partial index on the waiting
+-- requests holds the candidates, the job is a primary key probe. The
+-- manager's sweep runs without an organization scope and sees every
+-- organization's.
 SELECT r.org_id, r.id, r.created_at, r.expires_in_minutes, r.sync_job_id,
   j.status AS sync_status, j.error AS sync_error
 FROM run_requests r
 LEFT JOIN jobs j ON j.org_id = r.org_id AND j.id = r.sync_job_id
 WHERE r.status = 'waiting_for_sync'
-  AND (sqlc.narg(sync_job_id)::uuid IS NULL OR r.sync_job_id = sqlc.narg(sync_job_id)::uuid)
-ORDER BY r.created_at, r.id
-LIMIT 1000;
+  AND (j.id IS NULL OR j.status IN ('succeeded', 'failed', 'cancelled', 'error')
+    OR r.created_at <= sqlc.arg(stale_before)::timestamptz)
+ORDER BY r.created_at, r.id;
 
 -- name: EndRunRequestWait :execrows
 -- A waiting request becomes pending (its expiry starts) or failed (the

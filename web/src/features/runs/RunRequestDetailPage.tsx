@@ -67,7 +67,7 @@ export function RunRequestDetailPage() {
   // and whether the server refused an approval as changed. It names its
   // request, as the page stays mounted when it moves on to another one, and
   // starts afresh there.
-  const [review, setReview] = useState<{ id: string; fingerprint: string; refused: boolean }>();
+  const [review, setReview] = useState<{ id: string; fingerprint: string; refused: boolean; waiting?: boolean }>();
   // The deselected direct follow-ups belong to one loaded picture: a new
   // fingerprint (a refetch after a change) starts again from "all checked".
   const [deselection, setDeselection] = useState<{ fingerprint: string; ids: ReadonlySet<string> }>({
@@ -81,12 +81,17 @@ export function RunRequestDetailPage() {
 
   const { request, picture, fingerprint } = detail.data;
   // The first picture shown is the one reviewed (state set during render,
-  // React's way of deriving state from what arrives).
+  // React's way of deriving state from what arrives). While the request
+  // waits for its sync nothing can be approved, so the review starts with
+  // the picture shown once it is pending.
   const reviewHere = review?.id === id ? review : undefined;
-  if (!reviewHere) setReview({ id, fingerprint, refused: false });
+  const waitsNow = request.status === 'waiting_for_sync';
+  const reviewStarts =
+    !reviewHere || (reviewHere.waiting === true && (reviewHere.fingerprint !== fingerprint || !waitsNow));
+  if (reviewStarts) setReview({ id, fingerprint, refused: false, waiting: waitsNow });
   const changed = !!reviewHere && (reviewHere.refused || reviewHere.fingerprint !== fingerprint);
   function acceptNewVersion() {
-    setReview({ id, fingerprint, refused: false });
+    setReview({ id, fingerprint, refused: false, waiting: waitsNow });
   }
   const deselected = deselection.fingerprint === fingerprint ? deselection.ids : new Set<string>();
   const startable = startableFollowUps(picture.follow_ups);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import { screen, within } from '@testing-library/react';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
@@ -35,6 +35,36 @@ function mockDetail(req: Record<string, unknown>, role = 'operator') {
 // Spec 2026-11-25 A, sync_first: a request waits for its repository's sync,
 // then is pending, or fails with the sync's error.
 describe('RunRequestDetailPage, sync first', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('polls while the request waits and stops once it is pending, then approves without a changed notice', async () => {
+    let loads = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: () => {
+        loads += 1;
+        return loads < 3
+          ? detail({ request: { status: 'waiting_for_sync', expires_at: undefined, sync_job_id: SYNC }, fingerprint: 'fp-waiting' })
+          : detail({ fingerprint: 'fp-pending' });
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderDetail();
+    expect(await screen.findByRole('note', { name: "Waiting for the repository's sync" })).toBeInTheDocument();
+    expect(loads).toBe(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(loads).toBe(2));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled();
+    expect(loads).toBe(3);
+    expect(screen.queryByText('This request changed since you opened it. Review it again.')).not.toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(loads).toBe(3);
+  });
+
   it('says the request waits for its sync, links the sync, holds approval and allows a rejection', async () => {
     mockDetail({ status: 'waiting_for_sync', expires_at: undefined, sync_job_id: SYNC });
     renderDetail();

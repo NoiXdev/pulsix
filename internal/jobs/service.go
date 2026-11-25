@@ -399,9 +399,9 @@ type Store interface {
 	// is not terminal yet — the on_active guard a repo webhook asks.
 	HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
 	// CreateSyncJobOnce creates j, a sync_repo job of repoID, unless a
-	// sync of the repository is queued or running: then it returns that
-	// job and existing true. The check and the insert are atomic against
-	// concurrent calls for the same repository.
+	// sync of the repository is queued (not yet taken by a worker): then it
+	// returns that job and existing true. The check and the insert are
+	// atomic against concurrent calls for the same repository.
 	CreateSyncJobOnce(ctx context.Context, j Job, payload json.RawMessage, repoID uuid.UUID) (job Job, existing bool, err error)
 	// GroupSummaries aggregates the run jobs of each given run group
 	// (groups without run jobs are absent from the map).
@@ -1016,8 +1016,10 @@ type syncResultPayload struct {
 }
 
 // EnqueueSync enqueues one sync_repo job for the repository, unless a sync
-// of it is queued or running: then it returns that job and alreadyRunning
-// true (spec 2026-11-25 G), so asking twice never fetches twice. sync_repo
+// of it is queued: then it returns that job and alreadyRunning true (spec
+// 2026-11-25 G), so asking twice never queues twice. A sync a worker has
+// already taken may have fetched before what the caller wants to see, so
+// it does not count: a new one is queued behind it. sync_repo
 // is deliberately NOT host-bound: it runs once, in the organization's
 // default zone (resolved through the DefaultZoneSource port), so the git
 // fetch happens regardless of how many hosts the org manages and without

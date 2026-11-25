@@ -787,18 +787,22 @@ lacks one (every existing row has one), and adds the nullable `sync_job_id`,
 its sync, and a partial index on the waiting requests; nothing is rewritten and a
 backup carries the columns. A request made with `sync_first` is stored at once as
 `waiting_for_sync` (no expiry, counted against its token's pending cap, not in the
-approvers' badge), starts a sync of its template's repository (or attaches to the
-one queued or running) and becomes `pending`, its expiry starting then, when that
+approvers' badge), queues a sync of its template's repository (or attaches to the
+one queued and not yet taken by a worker; one already running may have fetched
+before the change the caller wants, so a new one is queued behind it) and becomes
+`pending`, its expiry starting then, when that
 sync succeeds; it becomes `failed` with the reason when the sync fails, is
 cancelled, is gone or has not finished within an hour. The sync's finish moves its
 requests in the same transaction; each manager also sweeps the waiting requests
 every 10 seconds, which catches what the finish does not see (a queued sync
 cancelled outright, a sync that ended before its request was stored, a manager
-stopped in between); a request moves once however many managers sweep.
-`POST /repos/{id}/sync` with a sync of the repository queued or running now answers
-200 with that job and `already_running: true` instead of queuing another (202 and
-`already_running: false` for a new sync, as before); a repository webhook keeps its
-own `on_active` rule. **An older manager cannot read a waiting request** (its
+stopped in between); a request moves once however many managers sweep. A sync that
+`sync_first` queues is recorded in the activity log as a repository sync by the
+requester. `POST /repos/{id}/sync` with a sync of the repository queued (not yet
+taken by a worker) now answers 200 with that job and `already_running: true`
+instead of queuing another (202 and `already_running: false` for a new sync, as
+before, also while a sync runs); a repository has at most one queued sync, and a
+repository webhook keeps its own `on_active` rule. **An older manager cannot read a waiting request** (its
 `expires_at` is NULL), so its run request list and detail fail while one exists:
 stop every manager instance before the new version starts, as 00123 already
 requires. Workers and agents are not affected.
@@ -1617,10 +1621,11 @@ requires. Workers and agents are not affected.
   zone's workers, since a worker older than this release never takes an approved run
   of a repository playbook (the run view says it waits for one).
 - **A repository's Sync no longer queues a second sync (spec 2026-11-25 G, migration
-  00124):** while a sync of the repository is queued or running, Sync (the
-  repository page, the API and the assistant's `sync_repo`) returns that sync with
-  `already_running: true` (HTTP 200) and the repository page says so. A script that
-  expected 202 for every sync call must accept 200.
+  00124):** while a sync of the repository is queued and not yet taken by a worker,
+  Sync (the repository page, the API and the assistant's `sync_repo`) returns that
+  sync with `already_running: true` (HTTP 200) and the repository page says so; while
+  one runs, a new one is still queued behind it. A script that expected 202 for every
+  sync call must accept 200.
 
 ## Roll order
 

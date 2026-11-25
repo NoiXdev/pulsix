@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -113,7 +114,13 @@ func TestRunRequestSyncFirst(t *testing.T) {
 	}
 	code, sync := f.syncRepo(t, repo)
 	if code != http.StatusOK || !sync.AlreadyRunning || sync.Job.ID != r.SyncJobID {
-		t.Fatalf("sync while the request's runs = %d %+v, want 200 with job %s", code, sync, r.SyncJobID)
+		t.Fatalf("sync while the request's is queued = %d %+v, want 200 with job %s", code, sync, r.SyncJobID)
+	}
+	// The sync the request queued is audited like a sync_repo call, as the
+	// requesting token.
+	if got := f.syncAudits(t, repo); len(got) != 2 || !strings.Contains(got[0], "sync first for run request "+r.ID) ||
+		!strings.Contains(got[1], "was already queued") {
+		t.Fatalf("sync audit events = %q", got)
 	}
 	second := f.syncFirst(t, tok)
 	if second.Request.Status != "waiting_for_sync" || second.Request.SyncJobID != r.SyncJobID {
@@ -212,8 +219,100 @@ func TestRunRequestSyncFirstRules(t *testing.T) {
 	}
 }
 
+// syncAudits are the summaries of repo's sync events, oldest first.
+func (f runRequestFixture) syncAudits(t *testing.T, repo repos.Repo) []string {
+	t.Helper()
+	rows, err := f.s.DB.Pool().Query(context.Background(),
+		`SELECT summary FROM audit_events WHERE action = 'POST syncRepo' AND object_type = 'repo' AND object_id = $1 ORDER BY at, id`, repo.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// TestRunRequestSyncFirstWantsAFreshFetch (controller ruling on the fresh
+// head): a sync a worker already took may have fetched before the change
+// the assistant wants, so a sync_first request queues a new sync behind
+// it and waits for that one; the next caller attaches to the queued one.
+// A sync_first start without a default zone is a 409, as on the sync route.
+func TestRunRequestSyncFirstWantsAFreshFetch(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-sync-first-fresh")
+	repo := f.repoTemplate(t)
+	tok := f.syncToken(t)
+	code, running := f.syncRepo(t, repo)
+	if code != http.StatusAccepted || running.AlreadyRunning {
+		t.Fatalf("first sync = %d %+v", code, running)
+	}
+	zone := uuid.MustParse(running.Job.ZoneID)
+	claim, err := f.s.Queue.Claim(context.Background(), f.orgID, []uuid.UUID{zone}, "v1")
+	if err != nil || claim == nil || claim.Job.GetId() != running.Job.ID {
+		t.Fatalf("claim the sync = %+v %v", claim, err)
+	}
+	created := f.syncFirst(t, tok)
+	if created.Request.Status != "waiting_for_sync" || created.Request.SyncJobID == "" || created.Request.SyncJobID == running.Job.ID {
+		t.Fatalf("request while a sync runs = %+v, want a new sync", created.Request)
+	}
+	if code, again := f.syncRepo(t, repo); code != http.StatusOK || !again.AlreadyRunning || again.Job.ID != created.Request.SyncJobID {
+		t.Fatalf("sync with one queued behind the running one = %d %+v", code, again)
+	}
+	// The running sync ending moves nothing: the request waits for its own.
+	if err := f.s.Queue.Finish(context.Background(), uuid.MustParse(running.Job.ID), jobs.StatusSucceeded, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if d := f.syncFirstDetail(t, created.Request.ID); d.Request.Status != "waiting_for_sync" {
+		t.Fatalf("after the older sync = %+v", d.Request)
+	}
+
+	if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE zones SET slug = 'not-default' WHERE org_id = $1 AND slug = 'default'`, f.orgID); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/job-templates/"+f.templateID.String()+"/run-requests", "",
+		map[string]any{"reason": "deploy", "sync_first": true})
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "no default zone") {
+		t.Fatalf("sync_first without a default zone = %d %s, want 409", resp.Code, resp.Body)
+	}
+}
+
 func (f runRequestFixture) cancelJob(t *testing.T, id string) (int, string) {
 	t.Helper()
 	resp := postJSON(t, f.adminC, f.s.HTTP.URL+f.orgPath()+"/jobs/"+id+"/cancel", nil)
 	return resp.StatusCode, mustReadBody(t, resp)
+}
+
+// TestSyncRouteDeclaresTheQueuedSync: the OpenAPI document declares both
+// answers of the sync route, the new sync (202) and the one already queued
+// (200), with the same body.
+func TestSyncRouteDeclaresTheQueuedSync(t *testing.T) {
+	raw, err := api.Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Content map[string]struct {
+					Schema struct {
+						Ref string `json:"$ref"`
+					} `json:"schema"`
+				} `json:"content"`
+			} `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	res := doc.Paths["/api/v1/orgs/{org}/repos/{id}/sync"]["post"].Responses
+	ok, accepted := res["200"].Content["application/json"].Schema.Ref, res["202"].Content["application/json"].Schema.Ref
+	if ok == "" || ok != accepted {
+		t.Fatalf("sync responses: 200 %q, 202 %q", ok, accepted)
+	}
 }

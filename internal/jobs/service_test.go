@@ -124,8 +124,8 @@ func (f *fakeStore) CreateJob(_ context.Context, j jobs.Job, payload json.RawMes
 	return nil
 }
 
-// CreateSyncJobOnce returns the repository's oldest stored sync that is
-// not terminal, and stores j otherwise.
+// CreateSyncJobOnce returns the repository's oldest queued sync, and
+// stores j otherwise.
 func (f *fakeStore) CreateSyncJobOnce(ctx context.Context, j jobs.Job, payload json.RawMessage, repoID uuid.UUID) (jobs.Job, bool, error) {
 	f.mu.Lock()
 	var found *jobs.Job
@@ -133,7 +133,7 @@ func (f *fakeStore) CreateSyncJobOnce(ctx context.Context, j jobs.Job, payload j
 		var p struct {
 			RepoID uuid.UUID `json:"repo_id"`
 		}
-		if sj.j.OrgID != j.OrgID || sj.j.Kind != jobs.KindSyncRepo || sj.j.Status.Terminal() || json.Unmarshal(sj.payload, &p) != nil || p.RepoID != repoID {
+		if sj.j.OrgID != j.OrgID || sj.j.Kind != jobs.KindSyncRepo || sj.j.Status != jobs.StatusQueued || json.Unmarshal(sj.payload, &p) != nil || p.RepoID != repoID {
 			continue
 		}
 		if found == nil || sj.j.CreatedAt.Before(found.CreatedAt) {

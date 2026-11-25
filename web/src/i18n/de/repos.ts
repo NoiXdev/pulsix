@@ -35,7 +35,7 @@ export const deRepos: Messages['repos'] = {
     synced: (date: string) => `synchronisiert ${date}`,
     neverSynced: 'nie synchronisiert',
     syncStarted: (name: string) => `Synchronisierung von ${name} gestartet`,
-    syncAlreadyRunning: (name: string) => `Eine Synchronisierung von ${name} lief bereits`,
+    syncAlreadyRunning: (name: string) => `Eine Synchronisierung von ${name} war bereits eingeplant`,
     syncError: 'Synchronisierung fehlgeschlagen',
     sync: 'Synchronisieren',
     empty: 'Noch keine Repositories.',

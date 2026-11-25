@@ -16,16 +16,26 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 )
 
-// TestEnqueueSyncReturnsTheSyncAlreadyRunning (spec 2026-11-25 G): a sync
-// of a repository with a sync queued or running hands that job back
-// instead of queuing another; once it has finished, the next sync is new.
-// Another repository's sync is its own.
-func TestEnqueueSyncReturnsTheSyncAlreadyRunning(t *testing.T) {
+// TestEnqueueSyncReturnsTheQueuedSync (spec 2026-11-25 G, controller
+// ruling on the fresh head): a sync of a repository with a sync queued
+// hands that job back instead of queuing another. A sync a worker already
+// took (claimed, running) or that is going away (cancelling) may have
+// fetched before the change the caller wants, so a new one is queued, and
+// the next caller attaches to that one. Another repository's sync is its
+// own.
+func TestEnqueueSyncReturnsTheQueuedSync(t *testing.T) {
 	org, repoID, other, actor := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	zs := &fakeZones{}
 	zs.add(org, uuid.Must(uuid.NewV7()), hosts.DefaultZoneSlug)
 	store := newFakeStore()
 	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+	setStatus := func(id uuid.UUID, st jobs.Status) {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		sj := store.jobs[id]
+		sj.j.Status = st
+		store.jobs[id] = sj
+	}
 
 	first, already, err := svc.EnqueueSync(ctx, org, repoID, &actor)
 	if err != nil || already {
@@ -33,18 +43,53 @@ func TestEnqueueSyncReturnsTheSyncAlreadyRunning(t *testing.T) {
 	}
 	again, already, err := svc.EnqueueSync(ctx, org, repoID, &actor)
 	if err != nil || !already || again.ID != first.ID {
-		t.Fatalf("second sync = %s %v %v, want %s already running", again.ID, already, err, first.ID)
+		t.Fatalf("second sync = %s %v %v, want %s already queued", again.ID, already, err, first.ID)
 	}
 	if theirs, already, err := svc.EnqueueSync(ctx, org, other, &actor); err != nil || already || theirs.ID == first.ID {
 		t.Fatalf("another repository's sync = %+v %v %v", theirs, already, err)
 	}
-	store.mu.Lock()
-	sj := store.jobs[first.ID]
-	sj.j.Status = jobs.StatusSucceeded
-	store.jobs[first.ID] = sj
-	store.mu.Unlock()
-	if next, already, err := svc.EnqueueSync(ctx, org, repoID, &actor); err != nil || already || next.ID == first.ID {
-		t.Fatalf("after the sync finished = %+v %v %v", next, already, err)
+	prev := first.ID
+	for _, st := range []jobs.Status{jobs.StatusClaimed, jobs.StatusRunning, jobs.StatusCancelling, jobs.StatusSucceeded} {
+		setStatus(prev, st)
+		next, already, err := svc.EnqueueSync(ctx, org, repoID, &actor)
+		if err != nil || already || next.ID == prev {
+			t.Fatalf("with the sync %s = %+v %v %v, want a new queued sync", st, next, already, err)
+		}
+		if attached, already, err := svc.EnqueueSync(ctx, org, repoID, &actor); err != nil || !already || attached.ID != next.ID {
+			t.Fatalf("after a new sync was queued (%s) = %+v %v %v, want %s", st, attached, already, err, next.ID)
+		}
+		prev = next.ID
+	}
+}
+
+// TestEnqueueSyncAttachesOnlyToAQueuedSyncInSQL is the same rule through the
+// SQL store: only a queued sync of the repository is returned.
+func TestEnqueueSyncAttachesOnlyToAQueuedSyncInSQL(t *testing.T) {
+	f := newVarSourcesFixture(t, "jobs-sync-queued-org")
+	scoped := db.WithOrgScope(ctx, f.org)
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(f.d), time.Now)
+	if _, err := hostsSvc.CreateZone(scoped, f.org, hosts.DefaultZoneSlug, hosts.DefaultZoneName); err != nil {
+		t.Fatal(err)
+	}
+	svc := jobs.NewService(f.store, f.queue, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, hostsSvc,
+		crypto.NewBox(testBoxKey("jobs-sync-queued-key")), time.Now, rand.Reader)
+	first, already, err := svc.EnqueueSync(scoped, f.org, f.repoID, nil)
+	if err != nil || already {
+		t.Fatalf("first = %+v %v %v", first, already, err)
+	}
+	if again, already, err := svc.EnqueueSync(scoped, f.org, f.repoID, nil); err != nil || !already || again.ID != first.ID {
+		t.Fatalf("while queued = %+v %v %v", again, already, err)
+	}
+	prev := first.ID
+	for _, st := range []jobs.Status{jobs.StatusClaimed, jobs.StatusRunning, jobs.StatusCancelling, jobs.StatusFailed} {
+		if _, err := f.d.Pool().Exec(ctx, `UPDATE jobs SET status = $2 WHERE id = $1`, prev, string(st)); err != nil {
+			t.Fatal(err)
+		}
+		next, already, err := svc.EnqueueSync(scoped, f.org, f.repoID, nil)
+		if err != nil || already || next.ID == prev || next.Status != jobs.StatusQueued {
+			t.Fatalf("with the sync %s = %+v %v %v, want a new queued sync", st, next, already, err)
+		}
+		prev = next.ID
 	}
 }
 

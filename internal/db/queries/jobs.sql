@@ -538,13 +538,15 @@ SELECT EXISTS (
     AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
 );
 
--- name: ActiveRepoSyncJob :one
--- The oldest sync_repo job of the repository that is not terminal: the one
--- a sync of it returns instead of queuing another (spec 2026-11-25 G).
+-- name: QueuedRepoSyncJob :one
+-- The oldest queued sync_repo job of the repository: the one a sync of it
+-- returns instead of queuing another (spec 2026-11-25 G). Only a queued
+-- one: a sync a worker took may have fetched before the change the caller
+-- wants, so it does not stand for a new sync (controller ruling).
 SELECT id FROM jobs
 WHERE org_id = sqlc.arg(org_id) AND kind = 'sync_repo'
   AND payload->>'repo_id' = sqlc.arg(repo_id)::text
-  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+  AND status = 'queued'
 ORDER BY created_at, id
 LIMIT 1;
 

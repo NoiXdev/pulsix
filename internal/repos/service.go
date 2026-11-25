@@ -171,7 +171,7 @@ type CredentialSource interface {
 // concrete jobs.Service implements it directly.
 type JobEnqueuer interface {
 	// EnqueueSync queues a sync of the repository, or returns the one
-	// queued or running with alreadyRunning true.
+	// queued (not yet taken by a worker) with alreadyRunning true.
 	EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (job jobs.Job, alreadyRunning bool, err error)
 }
 
@@ -461,8 +461,9 @@ func (s *Service) ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error {
 // Sync enqueues one sync_repo job for the repository (jobs.Service's
 // EnqueueSync, through the local port). The repo must exist; the job is
 // enqueued into the organization's default zone, which the jobs service
-// resolves. A sync of the repository already queued or running is
-// returned instead, with alreadyRunning true (spec 2026-11-25 G).
+// resolves. A sync of the repository already queued (not yet taken by a
+// worker) is returned instead, with alreadyRunning true (spec 2026-11-25
+// G).
 func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) (job jobs.Job, alreadyRunning bool, err error) {
 	if _, err := s.store.Get(ctx, orgID, id); err != nil {
 		return jobs.Job{}, false, err

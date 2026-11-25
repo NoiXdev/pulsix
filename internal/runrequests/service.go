@@ -111,7 +111,11 @@ type Request struct {
 	// SyncError is why a failed request's sync did not let it become
 	// pending; empty for any other request.
 	SyncError string
-	CreatedAt time.Time
+	// SyncStarted is the sync Create started or attached to for a
+	// sync_first request, for the caller's audit; set by Create only and
+	// never stored.
+	SyncStarted *SyncStart
+	CreatedAt   time.Time
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
 	TokenName  string
@@ -165,10 +169,13 @@ type Store interface {
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
-	// ListWaiting lists the requests waiting for their sync, with the
-	// sync job's state: those of syncJob, or with nil every one the
-	// context sees (an unscoped context sees every organization's).
-	ListWaiting(ctx context.Context, syncJob *uuid.UUID) ([]Waiting, error)
+	// ListWaitingFor lists the requests waiting for the sync syncJob, with
+	// the sync job's state.
+	ListWaitingFor(ctx context.Context, syncJob uuid.UUID) ([]Waiting, error)
+	// ListDueWaiting lists the waiting requests the sweep has to look at:
+	// those whose sync ended or is gone, and those waiting since before
+	// staleBefore. An unscoped context sees every organization's.
+	ListDueWaiting(ctx context.Context, staleBefore time.Time) ([]Waiting, error)
 	// EndWait moves a waiting request to to (pending or failed) with
 	// expiresAt and, for a failure, syncError; false when it no longer
 	// waits.
@@ -208,14 +215,6 @@ type Enqueuer interface {
 type Validator interface {
 	ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, ov *Overrides) (revision int64, err error)
 	ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (templateID uuid.UUID, revision int64, err error)
-}
-
-// Syncer starts the sync a sync_first request waits for.
-type Syncer interface {
-	// SyncFirst starts a sync of the repository the template's playbook
-	// comes from as actor, or finds the one queued or running, and returns
-	// its job; nil when the playbook comes from no repository.
-	SyncFirst(ctx context.Context, orgID, templateID, actor uuid.UUID) (*uuid.UUID, error)
 }
 
 // Service is the run request service.
@@ -286,8 +285,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	default:
 		return Request{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidInput, in.Kind)
 	}
+	var started *SyncStart
 	if in.SyncFirst {
-		if err := s.syncFirst(ctx, &r); err != nil {
+		if started, err = s.syncFirst(ctx, &r); err != nil {
 			return Request{}, err
 		}
 	}
@@ -307,6 +307,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if r.Status == StatusWaitingForSync {
 		s.endWaitAtCreate(ctx, &r)
 	}
+	r.SyncStarted = started
 	s.withTokensAfterWrite(ctx, orgID, &r)
 	return r, nil
 }
