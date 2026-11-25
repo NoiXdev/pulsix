@@ -115,11 +115,11 @@ export const enTokens = {
       monitoring: 'Read agents, checks, metrics, alert rules, alerts and maintenance windows; with handle alerts, also acknowledge and snooze alerts.',
       credentials: 'Lets the assistant see which credentials exist, never their contents.',
       activity: 'Lets the assistant read the organization\'s activity log.',
-      automation: 'Lets the assistant ask for schedules to be created, changed or resumed, which a person still has to approve, and pause or delete schedules.',
+      automation: 'Lets the assistant ask for schedules and webhook triggers to be created, changed or resumed, or for a new trigger secret, which a person still has to approve; and pause or delete schedules and disable or delete triggers.',
     },
     credentials: 'Credentials: names only',
     activity: 'Activity log: read',
-    automation: 'Schedules: request',
+    automation: 'Schedules & triggers: request',
     /** The accessible name of one checkbox in the grid. */
     cell: (row: string, column: string) => `${row}: ${column}`,
     writeHint: 'Write includes read. Handling alerts means acknowledging and snoozing them. Credential names show which credentials exist, never their contents.',
@@ -139,7 +139,7 @@ export const enTokens = {
       'monitoring.read': 'Monitoring & alerts: read',
       'alerts.handle': 'Monitoring & alerts: handle alerts',
       'activity.read': 'Activity log: read',
-      'automation.request': 'Schedules: request',
+      'automation.request': 'Schedules & triggers: request',
     },
   },
   /** Members' personal tokens on the organization's token page, and the
