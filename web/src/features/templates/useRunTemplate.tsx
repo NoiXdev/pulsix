@@ -31,12 +31,10 @@ export function useRunTemplate(org: string): { run: (tpl: Template) => Promise<v
 
   async function run(tpl: Template) {
     try {
-      let enrollHostIds: string[] | undefined;
-      if (tpl.agent_enrollment) {
-        const confirmed = await confirmEnrollment(await fetchTemplateEnrollment(org, tpl.id));
-        if (confirmed === null) return;
-        enrollHostIds = confirmed;
-      }
+      // The preview, not the cached template, decides whether to ask: a
+      // template switched to enrolling since the list loaded still asks.
+      const enrollHostIds = await confirmEnrollment(await fetchTemplateEnrollment(org, tpl.id));
+      if (enrollHostIds === null) return;
       if ((tpl.follow_ups ?? []).length > 0) return setAsking({ tpl, enrollHostIds });
       const { jobs } = await runTemplate.mutateAsync({ id: tpl.id, enrollHostIds });
       await opened(tpl, jobs ?? []);

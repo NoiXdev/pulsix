@@ -49,13 +49,10 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
     setSubmitting(true);
     try {
       // A template with agent enrollment: the person confirms first
-      // whether this host gets an agent (spec 2026-11-25 B).
-      let enrollHostIds: string[] | undefined;
-      if (chosen?.agent_enrollment) {
-        const confirmed = await confirmEnrollment(await fetchTemplateEnrollment(org, templateId, host.id));
-        if (confirmed === null) return setSubmitting(false);
-        enrollHostIds = confirmed;
-      }
+      // whether this host gets an agent (spec 2026-11-25 B). The preview,
+      // not the cached template, decides whether to ask.
+      const enrollHostIds = await confirmEnrollment(await fetchTemplateEnrollment(org, templateId, host.id));
+      if (enrollHostIds === null) return setSubmitting(false);
       const { jobs } = await run.mutateAsync({
         id: templateId,
         hostId: host.id,

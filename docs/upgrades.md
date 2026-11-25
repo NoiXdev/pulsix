@@ -855,8 +855,10 @@ retry of such a template sends `enroll_host_ids`, the hosts its person confirmed
 list the targets without an agent); without it, or with another list, the start
 answers 409 with the current hosts in `enroll_hosts`. **An API client can no longer
 start or retry such a template; a person confirms its hosts in the GUI.** Schedules,
-chained follow-ups, webhook runs and dry runs of such a template carry no list,
-enrol nothing and need nothing more. A run request picture of such a template carries
+chained follow-ups, webhook runs and dry runs started from the playbook page carry
+no list, enrol nothing and need nothing more. An assistant's dry-run request of such a
+template still needs an approver with `agents.write` (like any request of it); its
+approval stores an empty list, so it enrols nothing either. A run request picture of such a template carries
 `agent_enrollment`: the targets without an agent (`hosts`, `host_ids`;
 `none_reason: dry_run` for a dry run, `approved_before_enrollment` for an approval
 that stored no list), live while pending; the approval stores the list on the
@@ -874,7 +876,9 @@ partial index `agent_enrollments_job_idx`, empty at the upgrade) and
 `jobs.enroll_tokens_minted` (integer, NOT NULL DEFAULT 0); catalog changes plus a
 validation scan of the token table, and a backup carries both. The claim of a job with
 a confirmed list mints, for each listed host of the job that still has no agent, a
-host-bound single-use enrollment token in the job's zone, valid for 24 hours, and
+host-bound single-use enrollment token in the job's zone, valid for 24 hours — only
+for hosts the run's limit keeps (the template's limit or the run's own; a limit Pulsix
+cannot decide, or one naming a group, keeps every listed host) — and
 hands it over only as that host's inventory variables `pulsix_agent_enroll_token`
 (the token) and `pulsix_agent_enroll_tokens` (`{}`), which win over any group or
 membership value of those names; the token is in the claim's redact list, so the
@@ -885,8 +889,9 @@ in the transaction that ends it; a used one stays. A minting failure fails the j
 with "mint enrollment tokens: …" and hands nothing out. The activity log records
 "enrollment tokens minted for N hosts by job …" (with the host names) and "revoked N
 unused enrollment tokens of job …" as system entries. The job detail gains
-`enroll_tokens: {minted, used}` for an enrolling run (counts only), shown on the run
-page. **An older manager alongside mints nothing** for an enrolling run it claims (the
+`enroll_tokens: {minted, used}` (counts only) when the run minted at least one token,
+shown on the run page; the pending enrollment token list gains `job_id` for tokens a
+run minted, and the Agents page links them to their run. **An older manager alongside mints nothing** for an enrolling run it claims (the
 role then stops the play for those hosts) and revokes nothing when its jobs end, so
 tokens a newer manager minted for a job an older one ends live out their 24 hours.
 Stop every manager instance before the new version starts. Workers and agents are not

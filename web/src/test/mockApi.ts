@@ -57,6 +57,14 @@ export function mockApi(ownRoutes: Record<string, MockRoute>) {
       }
     }
 
+    // Starting a template always reads its enrollment preview first (spec
+    // 2026-11-25 B); a test that does not care gets "enrols nothing".
+    if (!(key in routes) && method === 'GET' && /\/job-templates\/[^/]+\/enrollment-preview$/.test(parsed.pathname)) {
+      return new Response(JSON.stringify({ enrols: false, hosts: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (!(key in routes)) {
       return new Response(JSON.stringify({ detail: `mockApi: no route for ${key}` }), {
         status: 404,
