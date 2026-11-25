@@ -34,23 +34,50 @@ func (s *SQLStore) RefreshReview(ctx context.Context, orgID, id uuid.UUID, chang
 	if err != nil {
 		return fmt.Errorf("encode review: %w", err)
 	}
-	if _, err := s.q.RefreshReviewRequest(ctx, gen.RefreshReviewRequestParams{
+	n, err := s.q.RefreshReviewRequest(ctx, gen.RefreshReviewRequestParams{
 		OrgID: orgID, ID: id, Payload: payload, ExpiresAt: pgTime(expiresAt), TemplateRevision: templateRevision,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("refresh review: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
 
+// LatestReview implements ReviewStore: the newest review of kind for
+// target, whatever its state; ErrNotFound when there is none.
+func (s *SQLStore) LatestReview(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID) (Request, error) {
+	row, err := s.q.GetLatestReviewRequest(ctx, gen.GetLatestReviewRequestParams{OrgID: orgID, Kind: string(kind), TargetID: target})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Request{}, ErrNotFound
+	}
+	if err != nil {
+		return Request{}, fmt.Errorf("get latest review: %w", err)
+	}
+	return fromRow(row)
+}
+
+// OpenChangeReviews implements ChangeReviews: the open reviews an
+// assistant's change of the template (or the repository) opened.
+func (s *SQLStore) OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.q.ListOpenChangeReviews(ctx, gen.ListOpenChangeReviewsParams{OrgID: orgID, TemplateID: pgUUID(templateID), RepoID: pgUUID(repoID)})
+	if err != nil {
+		return nil, fmt.Errorf("list open change reviews: %w", err)
+	}
+	return ids, nil
+}
+
 // CloseReviews implements ReviewStore: the open reviews of kind for target
-// become approved by by (uuid.Nil: nobody recorded) at at.
-func (s *SQLStore) CloseReviews(ctx context.Context, orgID uuid.UUID, kind Kind, target, by uuid.UUID, at time.Time) error {
+// become to (approved or rejected) by by (uuid.Nil: nobody recorded) at at.
+func (s *SQLStore) CloseReviews(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID, to Status, by uuid.UUID, at time.Time) error {
 	decidedBy := pgtype.UUID{}
 	if by != uuid.Nil {
 		decidedBy = pgtype.UUID{Bytes: by, Valid: true}
 	}
 	if _, err := s.q.CloseReviewRequests(ctx, gen.CloseReviewRequestsParams{
-		OrgID: orgID, Kind: string(kind), TargetID: target, DecidedBy: decidedBy, DecidedAt: pgtype.Timestamptz{Time: at, Valid: true},
+		OrgID: orgID, Kind: string(kind), TargetID: target, Status: string(to), DecidedBy: decidedBy, DecidedAt: pgtype.Timestamptz{Time: at, Valid: true},
 	}); err != nil {
 		return fmt.Errorf("close reviews: %w", err)
 	}

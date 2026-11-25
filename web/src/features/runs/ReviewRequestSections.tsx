@@ -68,7 +68,13 @@ export function ReviewRequestSections({ review, tokenName, tokenId, personName }
         <p className="text-xs text-muted-foreground">{r.intro[review.item]}</p>
         {review.paused_before && (
           <p role="note" className="rounded-md border border-border px-3 py-2 text-xs">
-            {r.pausedBefore[review.item](review.paused_before.by_user_id ? personName(review.paused_before.by_user_id) : '')}
+            {r.pausedBefore[review.item](
+              review.paused_before.by_assistant_token
+                ? r.byAssistant(review.paused_before.by_assistant_token)
+                : review.paused_before.by_user_id
+                  ? personName(review.paused_before.by_user_id)
+                  : '',
+            )}
           </p>
         )}
         {!review.gone && !review.paused_for_review && (

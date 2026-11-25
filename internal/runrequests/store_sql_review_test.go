@@ -73,7 +73,7 @@ func TestSQLStoreReviews(t *testing.T) {
 	if err != nil || len(latest) != 1 || latest[target] != r.ID {
 		t.Fatalf("latest = %+v %v", latest, err)
 	}
-	if err := store.CloseReviews(f.ctx, f.org, runrequests.KindScheduleReview, target, f.user, later); err != nil {
+	if err := store.CloseReviews(f.ctx, f.org, runrequests.KindScheduleReview, target, runrequests.StatusApproved, f.user, later); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.Get(f.ctx, f.org, r.ID)
@@ -83,8 +83,32 @@ func TestSQLStoreReviews(t *testing.T) {
 	if _, err := store.OpenReview(f.ctx, f.org, runrequests.KindScheduleReview, target, later); !errors.Is(err, runrequests.ErrNotFound) {
 		t.Fatalf("after close = %v", err)
 	}
+	// A refresh of a review decided in between finds nothing to refresh
+	// (final review 3); the newest review is found whatever its state.
+	if err := store.RefreshReview(f.ctx, f.org, r.ID, more, later.Add(runrequests.ReviewTTL), 8); !errors.Is(err, runrequests.ErrNotFound) {
+		t.Fatalf("refresh of a decided review = %v", err)
+	}
+	if latest, err := store.LatestReview(f.ctx, f.org, runrequests.KindScheduleReview, target); err != nil || latest.ID != r.ID {
+		t.Fatalf("latest = %+v %v", latest, err)
+	}
+	if _, err := store.LatestReview(f.ctx, f.org, runrequests.KindTriggerReview, target); !errors.Is(err, runrequests.ErrNotFound) {
+		t.Fatalf("no latest = %v", err)
+	}
+	// The open change reviews of the template: by the item's template and
+	// by the change's subject.
+	r2 := f.review(uuid.Must(uuid.NewV7()), &token, later)
+	if err := store.Insert(f.ctx, r2); err != nil {
+		t.Fatal(err)
+	}
+	if open, err := store.OpenChangeReviews(f.ctx, f.org, &f.template, nil); err != nil || len(open) != 1 || open[0] != r2.ID {
+		t.Fatalf("open change reviews = %v %v", open, err)
+	}
+	other := uuid.Must(uuid.NewV7())
+	if open, err := store.OpenChangeReviews(f.ctx, f.org, &other, &other); err != nil || len(open) != 0 {
+		t.Fatalf("none = %v %v", open, err)
+	}
 	// Closing again, or without a person (uuid.Nil), is harmless.
-	if err := store.CloseReviews(f.ctx, f.org, runrequests.KindScheduleReview, target, uuid.Nil, later); err != nil {
+	if err := store.CloseReviews(f.ctx, f.org, runrequests.KindScheduleReview, target, runrequests.StatusApproved, uuid.Nil, later); err != nil {
 		t.Fatal(err)
 	}
 }

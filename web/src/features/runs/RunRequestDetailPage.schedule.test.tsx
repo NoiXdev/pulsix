@@ -112,6 +112,12 @@ describe('RunRequestDetailPage schedule requests (spec 2026-11-25 C)', () => {
     expect(screen.queryByText(/The extra vars come from the assistant/)).not.toBeInTheDocument();
   });
 
+  it('says the template carries open change reviews and links them', async () => {
+    renderSchedule({ action: 'resume', current, open_change_reviews: ['0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01'] });
+    const note = await screen.findByRole('note', { name: /unreviewed changes/ });
+    expect(within(note).getByRole('link', { name: 'Open the review' })).toHaveAttribute('href', '/o/acme/runs/requests/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01');
+  });
+
   it('shows the template revision and says when the template changed since the request', async () => {
     renderSchedule({ action: 'resume', current }, 'operator', { template_revision: 6 });
     expect(await screen.findByText('Template revision 7')).toBeInTheDocument();

@@ -75,6 +75,18 @@ func (s *SQLStore) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uu
 	return ids, nil
 }
 
+// IDsReaching implements Store.
+func (s *SQLStore) IDsReaching(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out, err := s.q.ListTemplateIDsReaching(ctx, gen.ListTemplateIDsReachingParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("list the templates reaching others through follow-ups: %w", err)
+	}
+	return out, nil
+}
+
 // IDsOfPlaybook implements Store.
 func (s *SQLStore) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {
 	ids, err := s.q.ListTemplateIDsForPlaybook(ctx, gen.ListTemplateIDsForPlaybookParams{OrgID: orgID, PlaybookID: db.NullUUID(&playbookID)})

@@ -104,3 +104,33 @@ func TestARepoWatcherErrorFailsTheUpdate(t *testing.T) {
 		t.Fatalf("update = %v, want the watcher's error", err)
 	}
 }
+
+// Final review 7: the change handed on is against the row the update
+// overwrites, read locked inside its transaction: a person's write landing
+// after the service's first read is not lost from the diff.
+func TestTheDiffIsAgainstTheLockedRow(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, newFakeCreds(nil), &fakeEnqueuer{})
+	w := &recordingWatcher{}
+	svc.SetChangeWatcher(w)
+	created, err := svc.Create(ctx, org, repos.CreateInput{Name: "infra", URL: "https://git.example.com/acme/infra.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A person switched the URL after the service read the row.
+	store.onLock = func() {
+		r := store.byID[created.ID]
+		r.URL = "https://git.example.com/acme/person.git"
+		store.byID[created.ID] = r
+	}
+	if _, err := svc.Update(ctx, org, created.ID, repos.UpdateInput{
+		Name: "infra", URL: created.URL, Actor: assistantchange.Actor{Assistant: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.got) != 1 || !reflect.DeepEqual(w.got[0].Fields, []assistantchange.Field{{Name: "url",
+		Old: "https://git.example.com/acme/person.git", New: "https://git.example.com/acme/infra.git"}}) {
+		t.Fatalf("changes = %+v", w.got)
+	}
+}

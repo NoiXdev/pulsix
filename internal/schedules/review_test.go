@@ -69,6 +69,13 @@ func TestPauseForReviewThroughTheStore(t *testing.T) {
 	if err != nil || !cleared.Paused || cleared.PausedReason != "" || cleared.Revision != marked.Revision+1 {
 		t.Fatalf("cleared = %+v, %v", cleared, err)
 	}
+	// The reviewer reads the schedule with its row locked (final review 3).
+	if locked, err := st.LockForReview(scoped, org, byPerson.ID); err != nil || locked.ID != byPerson.ID || locked.Revision != cleared.Revision {
+		t.Fatalf("locked = %+v, %v", locked, err)
+	}
+	if _, err := st.LockForReview(scoped, org, uuid.Must(uuid.NewV7())); !errors.Is(err, schedules.ErrNotFound) {
+		t.Fatalf("lock unknown = %v", err)
+	}
 	// Pausing a paused schedule keeps its reason; resuming clears it.
 	if p, err := st.SetPaused(scoped, org, created.ID, true, nil); err != nil || p.PausedReason != schedules.PausedForReview {
 		t.Fatalf("pause = %+v, %v", p, err)
@@ -81,9 +88,15 @@ func TestPauseForReviewThroughTheStore(t *testing.T) {
 
 // fakeReviews records the reviews a person's resume closes.
 type fakeReviews struct {
-	closed []uuid.UUID
-	by     uuid.UUID
-	err    error
+	closed  []uuid.UUID
+	deleted []uuid.UUID
+	by      uuid.UUID
+	err     error
+}
+
+func (f *fakeReviews) ScheduleDeleted(_ context.Context, _, id, by uuid.UUID) error {
+	f.deleted, f.by = append(f.deleted, id), by
+	return nil
 }
 
 func (f *fakeReviews) ScheduleResumed(_ context.Context, _, id, by uuid.UUID) error {
@@ -133,5 +146,27 @@ func TestAPersonsResumeClosesTheReview(t *testing.T) {
 	reviews.err = errors.New("boom")
 	if _, err := w.svc.Resume(ctx, w.org, s.ID, person); err == nil {
 		t.Fatal("a resume whose review could not be closed succeeded")
+	}
+}
+
+// Final review 4: deleting a schedule closes its open review, so it does
+// not stay on the approvals badge.
+func TestDeletingAScheduleClosesItsReview(t *testing.T) {
+	w := newWorld(t)
+	reviews := &fakeReviews{}
+	w.svc.SetReviews(reviews)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	person := uuid.Must(uuid.NewV7())
+	if err := w.svc.DeleteBy(ctx, w.org, s.ID, person); err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews.deleted) != 1 || reviews.deleted[0] != s.ID || reviews.by != person {
+		t.Fatalf("deleted = %v by %v", reviews.deleted, reviews.by)
+	}
+	if _, err := w.svc.Get(ctx, w.org, s.ID); !errors.Is(err, schedules.ErrNotFound) {
+		t.Fatalf("still there: %v", err)
 	}
 }

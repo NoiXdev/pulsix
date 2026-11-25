@@ -40,7 +40,7 @@ func (r *Resolver) reviewPicture(ctx context.Context, orgID uuid.UUID, req Reque
 	}
 	pr := &PictureReview{ItemID: req.TargetID.String(), Changes: changedObjects(req.Review.Changes)}
 	if pb := req.Review.PausedBefore; pb != nil {
-		pr.PausedBefore = &PicturePausedBefore{}
+		pr.PausedBefore = &PicturePausedBefore{ByAssistantToken: pb.AssistantToken}
 		if pb.By != nil {
 			pr.PausedBefore.ByUserID = pb.By.String()
 		}

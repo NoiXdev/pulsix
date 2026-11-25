@@ -108,6 +108,21 @@ SELECT id FROM job_templates
 WHERE org_id = @org_id AND playbook_id = @playbook_id
 ORDER BY name, id;
 
+-- name: ListTemplateIDsReaching :many
+-- The templates and every template that reaches one of them through
+-- follow-ups (a run of it starts them, directly or along a chain): what an
+-- assistant's change of them changes for unattended runs (final review 1).
+-- The follow-up graph is acyclic (CycleError); UNION drops repeats anyway,
+-- so even a cycle would end.
+WITH RECURSIVE reaching(id) AS (
+  SELECT unnest(@ids::uuid[])
+  UNION
+  SELECT f.template_id FROM job_template_follow_ups f JOIN reaching r ON f.follow_up_template_id = r.id
+  WHERE f.org_id = @org_id
+)
+SELECT t.id FROM reaching JOIN job_templates t ON t.org_id = @org_id AND t.id = reaching.id
+ORDER BY t.id;
+
 -- name: ListAutomaticTemplatesForPlaybook :many
 -- The templates an editor playbook's save applies its new variable
 -- sources to: those of the playbook in automatic mode.

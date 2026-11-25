@@ -23,11 +23,15 @@ type ReviewStore interface {
 	// at now; ErrNotFound when there is none.
 	OpenReview(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID, now time.Time) (Request, error)
 	// RefreshReview makes the pending review id show change and expire
-	// at expiresAt.
+	// at expiresAt; ErrNotFound when it is no longer pending (decided in
+	// between).
 	RefreshReview(ctx context.Context, orgID, id uuid.UUID, change ReviewChange, expiresAt time.Time, templateRevision int64) error
-	// CloseReviews decides the open reviews of kind for target as
-	// approved by by.
-	CloseReviews(ctx context.Context, orgID uuid.UUID, kind Kind, target, by uuid.UUID, at time.Time) error
+	// CloseReviews decides the open reviews of kind for target as to
+	// (approved, or rejected when the item is gone) by by.
+	CloseReviews(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID, to Status, by uuid.UUID, at time.Time) error
+	// LatestReview is the newest review of kind for target, whatever its
+	// state; ErrNotFound when there is none.
+	LatestReview(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID) (Request, error)
 }
 
 // The services the Reviewer reads and stops, each narrowed to what it uses.
@@ -38,22 +42,25 @@ type (
 		Get(ctx context.Context, orgID, id uuid.UUID) (templates.Template, error)
 		IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error)
 		IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error)
+		IDsReaching(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error)
 	}
 	// ReviewHistory names who last did one of actions to an object (the
 	// activity log, audit.SQLStore): who had paused an item before.
 	ReviewHistory interface {
-		LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error)
+		LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions audit.StopActions) (*audit.Stopper, error)
 	}
 	// ReviewSchedules lists and pauses schedules (schedules.Service).
 	ReviewSchedules interface {
 		ListOfTemplates(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]schedules.Schedule, error)
 		PauseForReview(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, bool, error)
+		LockForReview(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, error)
 	}
 	// ReviewTriggers lists and disables webhook triggers
 	// (triggers.Service).
 	ReviewTriggers interface {
 		ListForReview(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID, repoID *uuid.UUID) ([]triggers.Trigger, error)
 		DisableForReview(ctx context.Context, orgID, id uuid.UUID) (triggers.Trigger, bool, error)
+		LockForReview(ctx context.Context, orgID, id uuid.UUID) (triggers.Trigger, error)
 	}
 	// Auditor records each pause in the activity log.
 	Auditor interface {
@@ -73,8 +80,12 @@ type ReviewSources struct {
 // The activity log actions that stop a schedule or a trigger (the API's
 // "<method> <operation>"): who did the last of them had stopped the item.
 var (
-	schedulePauseActions  = []string{"POST pauseSchedule"}
-	triggerDisableActions = []string{"POST disableTrigger", "PUT updateTrigger", "POST createTrigger"}
+	schedulePauseActions = audit.StopActions{
+		Stop: []string{"POST pauseSchedule"}, All: []string{"POST pauseAllSchedules"}, Start: []string{"POST resumeSchedule"},
+	}
+	triggerDisableActions = audit.StopActions{
+		Stop: []string{"POST disableTrigger", "PUT updateTrigger", "POST createTrigger"}, Start: []string{"POST enableTrigger"},
+	}
 )
 
 // Reviewer stops what runs unattended after an assistant's change to what
@@ -127,6 +138,15 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 	default:
 		return fmt.Errorf("an assistant change of an unknown subject %q", c.Subject)
 	}
+	// A run of a template that starts a changed one as a follow-up, along
+	// any chain, runs it too (final review 1).
+	if len(templateIDs) > 0 {
+		reaching, err := rv.src.Templates.IDsReaching(ctx, orgID, templateIDs)
+		if err != nil {
+			return fmt.Errorf("list the templates that start the changed ones: %w", err)
+		}
+		templateIDs = reaching
+	}
 	revisions := map[uuid.UUID]int64{}
 	if err := rv.pauseSchedules(ctx, orgID, c, templateIDs, revisions); err != nil {
 		return err
@@ -139,7 +159,16 @@ func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assis
 	if err != nil {
 		return fmt.Errorf("list the schedules to pause: %w", err)
 	}
-	for _, s := range list {
+	for _, listed := range list {
+		// Decide on the row as committed, locked until the change commits
+		// (final review 3): a person's concurrent resume is seen or waits.
+		s, err := rv.src.Schedules.LockForReview(ctx, orgID, listed.ID)
+		if errors.Is(err, schedules.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("lock schedule %s: %w", listed.ID, err)
+		}
 		wasPaused, paused := s.Paused, false
 		if s.PausedReason != schedules.PausedForReview {
 			id := s.ID
@@ -157,7 +186,7 @@ func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assis
 		if err != nil {
 			return err
 		}
-		id, err := rv.review(ctx, orgID, KindScheduleReview, s.ID, s.TemplateID, rev, c, before)
+		id, err := rv.review(ctx, orgID, KindScheduleReview, s.ID, s.TemplateID, rev, c, before, !paused)
 		if err != nil {
 			return err
 		}
@@ -179,7 +208,14 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 	if err != nil {
 		return fmt.Errorf("list the triggers to disable: %w", err)
 	}
-	for _, t := range list {
+	for _, listed := range list {
+		t, err := rv.src.Triggers.LockForReview(ctx, orgID, listed.ID)
+		if errors.Is(err, triggers.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("lock trigger %s: %w", listed.ID, err)
+		}
 		wasDisabled, disabled := !t.Enabled, false
 		if t.DisabledReason != triggers.DisabledForReview {
 			id := t.ID
@@ -200,7 +236,7 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 				return err
 			}
 		}
-		id, err := rv.review(ctx, orgID, KindTriggerReview, t.ID, tmpl, rev, c, before)
+		id, err := rv.review(ctx, orgID, KindTriggerReview, t.ID, tmpl, rev, c, before, !disabled)
 		if err != nil {
 			return err
 		}
@@ -218,17 +254,27 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 }
 
 // pausedBefore records who had stopped the item (objectType id) before:
-// the actor of the last of actions in the activity log, if any.
-func (rv *Reviewer) pausedBefore(ctx context.Context, orgID uuid.UUID, objectType string, id uuid.UUID, actions []string) (*PausedBefore, error) {
+// who did the last stop after the last start in the activity log, if any;
+// a stop made with an assistant token names the token (final review 6).
+func (rv *Reviewer) pausedBefore(ctx context.Context, orgID uuid.UUID, objectType string, id uuid.UUID, actions audit.StopActions) (*PausedBefore, error) {
 	before := &PausedBefore{}
 	if rv.src.History == nil {
 		return before, nil
 	}
-	by, err := rv.src.History.LastActor(ctx, orgID, objectType, id.String(), actions)
+	who, err := rv.src.History.LastActor(ctx, orgID, objectType, id.String(), actions)
 	if err != nil {
 		return nil, fmt.Errorf("find who stopped %s %s: %w", objectType, id, err)
 	}
-	before.By = by
+	switch {
+	case who == nil:
+	case who.Assistant:
+		before.AssistantToken = who.TokenName
+		if before.AssistantToken == "" {
+			before.AssistantToken = "?"
+		}
+	default:
+		before.By = who.UserID
+	}
 	return before, nil
 }
 
@@ -248,9 +294,12 @@ func (rv *Reviewer) revision(ctx context.Context, orgID, templateID uuid.UUID, s
 
 // review adds c to the open review of target, or opens one (with before,
 // who had stopped the item): one open review per item, whose expiry starts
-// again with each change and which keeps who had stopped it. It returns
-// the review's id.
-func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, target, templateID uuid.UUID, rev int64, c assistantchange.Change, before *PausedBefore) (uuid.UUID, error) {
+// again with each change and which keeps who had stopped it. A review
+// decided between the read and the refresh counts as none. A new review of
+// an item that was already stopped for review (carry: a review of it was
+// rejected or expired) carries over who had stopped it from its newest
+// review (final review 2). It returns the review's id.
+func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, target, templateID uuid.UUID, rev int64, c assistantchange.Change, before *PausedBefore, carry bool) (uuid.UUID, error) {
 	now := rv.now()
 	open, err := rv.store.OpenReview(ctx, orgID, kind, target, now)
 	switch {
@@ -263,12 +312,24 @@ func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, targ
 		if n := len(change.Changes); n > MaxReviewChanges {
 			change.Changes = change.Changes[n-MaxReviewChanges:]
 		}
-		if err := rv.store.RefreshReview(ctx, orgID, open.ID, change, now.Add(ReviewTTL), rev); err != nil {
+		err := rv.store.RefreshReview(ctx, orgID, open.ID, change, now.Add(ReviewTTL), rev)
+		if err == nil {
+			return open.ID, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return uuid.Nil, err
 		}
-		return open.ID, nil
 	case !errors.Is(err, ErrNotFound):
 		return uuid.Nil, err
+	}
+	if before == nil && carry {
+		latest, err := rv.store.LatestReview(ctx, orgID, kind, target)
+		switch {
+		case err == nil && latest.Review != nil:
+			before = latest.Review.PausedBefore
+		case err != nil && !errors.Is(err, ErrNotFound):
+			return uuid.Nil, err
+		}
 	}
 	r := Request{
 		ID: rv.newID(), OrgID: orgID, Kind: kind, TemplateID: templateID, TemplateRevision: rev,
@@ -326,11 +387,22 @@ func (rv *Reviewer) record(ctx context.Context, orgID uuid.UUID, c assistantchan
 // ScheduleResumed implements schedules.Reviews: a person resumed the
 // schedule directly, which decides its open review as theirs.
 func (rv *Reviewer) ScheduleResumed(ctx context.Context, orgID, id, by uuid.UUID) error {
-	return rv.store.CloseReviews(ctx, orgID, KindScheduleReview, id, by, rv.now())
+	return rv.store.CloseReviews(ctx, orgID, KindScheduleReview, id, StatusApproved, by, rv.now())
+}
+
+// ScheduleDeleted implements schedules.Reviews: a deleted schedule has
+// nothing left to resume, so its open review is rejected as by's.
+func (rv *Reviewer) ScheduleDeleted(ctx context.Context, orgID, id, by uuid.UUID) error {
+	return rv.store.CloseReviews(ctx, orgID, KindScheduleReview, id, StatusRejected, by, rv.now())
+}
+
+// TriggerDeleted implements triggers.Reviews (as ScheduleDeleted).
+func (rv *Reviewer) TriggerDeleted(ctx context.Context, orgID, id, by uuid.UUID) error {
+	return rv.store.CloseReviews(ctx, orgID, KindTriggerReview, id, StatusRejected, by, rv.now())
 }
 
 // TriggerEnabled implements triggers.Reviews: a person enabled the trigger
 // directly, which decides its open review as theirs.
 func (rv *Reviewer) TriggerEnabled(ctx context.Context, orgID, id, by uuid.UUID) error {
-	return rv.store.CloseReviews(ctx, orgID, KindTriggerReview, id, by, rv.now())
+	return rv.store.CloseReviews(ctx, orgID, KindTriggerReview, id, StatusApproved, by, rv.now())
 }

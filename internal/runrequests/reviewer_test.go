@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,18 @@ var ctx = context.Background()
 
 type memReviews struct {
 	rows []runrequests.Request
+	// refreshMiss makes the next RefreshReview find no pending row (a
+	// person decided it in between).
+	refreshMiss bool
+}
+
+func (m *memReviews) LatestReview(_ context.Context, _ uuid.UUID, kind runrequests.Kind, target uuid.UUID) (runrequests.Request, error) {
+	for i := len(m.rows) - 1; i >= 0; i-- {
+		if r := m.rows[i]; r.Kind == kind && *r.TargetID == target {
+			return r, nil
+		}
+	}
+	return runrequests.Request{}, runrequests.ErrNotFound
 }
 
 func (m *memReviews) Insert(_ context.Context, r runrequests.Request) error {
@@ -39,6 +52,10 @@ func (m *memReviews) OpenReview(_ context.Context, orgID uuid.UUID, kind runrequ
 }
 
 func (m *memReviews) RefreshReview(_ context.Context, _, id uuid.UUID, change runrequests.ReviewChange, expiresAt time.Time, rev int64) error {
+	if m.refreshMiss {
+		m.refreshMiss = false
+		return runrequests.ErrNotFound
+	}
 	for i, r := range m.rows {
 		if r.ID == id {
 			c := change
@@ -48,10 +65,10 @@ func (m *memReviews) RefreshReview(_ context.Context, _, id uuid.UUID, change ru
 	return nil
 }
 
-func (m *memReviews) CloseReviews(_ context.Context, _ uuid.UUID, kind runrequests.Kind, target, by uuid.UUID, at time.Time) error {
+func (m *memReviews) CloseReviews(_ context.Context, _ uuid.UUID, kind runrequests.Kind, target uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time) error {
 	for i, r := range m.rows {
 		if r.Kind == kind && *r.TargetID == target && r.Status == runrequests.StatusPending {
-			m.rows[i].Status, m.rows[i].DecidedBy, m.rows[i].DecidedAt = runrequests.StatusApproved, &by, &at
+			m.rows[i].Status, m.rows[i].DecidedBy, m.rows[i].DecidedAt = to, &by, &at
 		}
 	}
 	return nil
@@ -68,8 +85,37 @@ type reviewWorld struct {
 	now                     time.Time
 	// pausedBy answers who paused or disabled an item before; asked
 	// records the questions.
-	pausedBy *uuid.UUID
+	pausedBy *audit.Stopper
 	asked    []string
+	// locked overrides what LockForReview reads (the row as committed
+	// when it differs from the list); reaching maps a template to the
+	// templates that start it.
+	locked   map[uuid.UUID]schedules.Schedule
+	reaching map[uuid.UUID][]uuid.UUID
+}
+
+func (w *reviewWorld) LockForReview(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
+	w.asked = append(w.asked, "lock "+id.String())
+	if s, ok := w.locked[id]; ok {
+		w.schedules[id] = s
+		return s, nil
+	}
+	return w.schedules[id], nil
+}
+
+// worldTriggers is the trigger side of the world.
+type worldTriggers struct{ *reviewWorld }
+
+func (w worldTriggers) LockForReview(_ context.Context, _, id uuid.UUID) (triggers.Trigger, error) {
+	return w.triggers[id], nil
+}
+
+func (w *reviewWorld) IDsReaching(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	out := append([]uuid.UUID(nil), ids...)
+	for _, id := range ids {
+		out = append(out, w.reaching[id]...)
+	}
+	return out, nil
 }
 
 func (w *reviewWorld) Get(_ context.Context, _, id uuid.UUID) (templates.Template, error) {
@@ -118,7 +164,7 @@ func (w *reviewWorld) PauseForReview(_ context.Context, _, id uuid.UUID) (schedu
 	return s, true, nil
 }
 
-func (w *reviewWorld) ListForReview(_ context.Context, _ uuid.UUID, ids []uuid.UUID, repo *uuid.UUID) ([]triggers.Trigger, error) {
+func (w worldTriggers) ListForReview(_ context.Context, _ uuid.UUID, ids []uuid.UUID, repo *uuid.UUID) ([]triggers.Trigger, error) {
 	var out []triggers.Trigger
 	for _, t := range w.triggers {
 		hit := repo != nil && t.RepoID != nil && *t.RepoID == *repo
@@ -132,7 +178,7 @@ func (w *reviewWorld) ListForReview(_ context.Context, _ uuid.UUID, ids []uuid.U
 	return out, nil
 }
 
-func (w *reviewWorld) DisableForReview(_ context.Context, _, id uuid.UUID) (triggers.Trigger, bool, error) {
+func (w worldTriggers) DisableForReview(_ context.Context, _, id uuid.UUID) (triggers.Trigger, bool, error) {
 	t := w.triggers[id]
 	if t.DisabledReason != "" {
 		return t, false, nil
@@ -142,8 +188,8 @@ func (w *reviewWorld) DisableForReview(_ context.Context, _, id uuid.UUID) (trig
 	return t, true, nil
 }
 
-func (w *reviewWorld) LastActor(_ context.Context, _ uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error) {
-	w.asked = append(w.asked, objectType+" "+objectID+" "+strings.Join(actions, ","))
+func (w *reviewWorld) LastActor(_ context.Context, _ uuid.UUID, objectType, objectID string, actions audit.StopActions) (*audit.Stopper, error) {
+	w.asked = append(w.asked, objectType+" "+objectID+" "+strings.Join(actions.Stop, ","))
 	return w.pausedBy, nil
 }
 
@@ -159,7 +205,7 @@ func newReviewWorld() *reviewWorld {
 		schedules: map[uuid.UUID]schedules.Schedule{}, triggers: map[uuid.UUID]triggers.Trigger{},
 		reviews: &memReviews{}, now: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}
-	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w, History: w}, w,
+	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, w,
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
@@ -249,7 +295,7 @@ func TestAnAssistantsTemplateChangePausesWhatRunsIt(t *testing.T) {
 	}
 	// A review a person decided (closed) is not refreshed: the next change
 	// opens a new one.
-	if err := w.reviews.CloseReviews(ctx, w.org, runrequests.KindScheduleReview, active, user, w.now); err != nil {
+	if err := w.reviews.CloseReviews(ctx, w.org, runrequests.KindScheduleReview, active, runrequests.StatusApproved, user, w.now); err != nil {
 		t.Fatal(err)
 	}
 	s := w.schedules[active]
@@ -318,7 +364,7 @@ func (failingAudit) Record(context.Context, audit.Event) error { return errors.N
 func TestAReviewerFailureFailsTheChange(t *testing.T) {
 	w := newReviewWorld()
 	w.schedule("a", w.tmplA, false, "")
-	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w, History: w}, failingAudit{},
+	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, failingAudit{},
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	if err := r.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err == nil {
 		t.Fatal("a change whose pause could not be recorded succeeded")
@@ -332,7 +378,7 @@ func TestAReviewerFailureFailsTheChange(t *testing.T) {
 func TestAnAssistantsChangeMarksWhatAPersonStopped(t *testing.T) {
 	w := newReviewWorld()
 	person := uuid.Must(uuid.NewV7())
-	w.pausedBy = &person
+	w.pausedBy = &audit.Stopper{UserID: &person}
 	byPerson := w.schedule("weekly", w.tmplA, true, "")
 	off := w.trigger("old-hook", &w.tmplA, nil, false)
 	change := assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA, Name: "deploy",
@@ -352,8 +398,8 @@ func TestAnAssistantsChangeMarksWhatAPersonStopped(t *testing.T) {
 			t.Fatalf("review of %s = %+v", id, r)
 		}
 	}
-	if len(w.asked) != 2 || !strings.Contains(w.asked[0], "schedule "+byPerson.String()+" POST pauseSchedule") ||
-		!strings.Contains(w.asked[1], "trigger "+off.String()+" POST disableTrigger") {
+	if !slices.Contains(w.asked, "schedule "+byPerson.String()+" POST pauseSchedule") ||
+		!slices.ContainsFunc(w.asked, func(a string) bool { return strings.HasPrefix(a, "trigger "+off.String()+" POST disableTrigger") }) {
 		t.Fatalf("asked = %v", w.asked)
 	}
 	if len(w.events) != 2 || !strings.Contains(w.events[0].Summary, "kept schedule weekly paused") {
@@ -382,3 +428,105 @@ func TestAnAssistantsPlaybookChangePausesItsTemplates(t *testing.T) {
 		t.Fatalf("schedules = %+v %+v", w.schedules[a], w.schedules[b])
 	}
 }
+
+// Final review 1: a change of a template reaches the schedules of every
+// template that starts it as a follow-up.
+func TestAChangeReachesTheTemplatesThatStartIt(t *testing.T) {
+	w := newReviewWorld()
+	w.reaching = map[uuid.UUID][]uuid.UUID{w.tmplB: {w.tmplA}}
+	a := w.schedule("a", w.tmplA, false, "")
+	if err := w.reviewer.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplB, Name: "cleanup",
+		Fields: []assistantchange.Field{{Name: "limit", Old: nil, New: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if s := w.schedules[a]; !s.Paused || s.PausedReason != schedules.PausedForReview {
+		t.Fatalf("A's schedule = %+v", s)
+	}
+	if r := w.reviewOf(a); len(r) != 1 || r[0].TemplateID != w.tmplA {
+		t.Fatalf("review = %+v", r)
+	}
+}
+
+// Final review 2: a schedule a person paused keeps that fact across a
+// rejected review: the next change's review carries it over, so its
+// approval still only clears the reason.
+func TestPausedBeforeCarriesOverAfterARejection(t *testing.T) {
+	w := newReviewWorld()
+	person := uuid.Must(uuid.NewV7())
+	w.pausedBy = &audit.Stopper{UserID: &person}
+	s := w.schedule("weekly", w.tmplA, true, "")
+	change := assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA, Name: "deploy",
+		Fields: []assistantchange.Field{{Name: "limit", Old: nil, New: "x"}}}
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	w.reviews.rows[0].Status = runrequests.StatusRejected
+	w.pausedBy = nil
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	r := w.reviewOf(s)
+	if len(r) != 2 || r[1].Review.PausedBefore == nil || r[1].Review.PausedBefore.By == nil || *r[1].Review.PausedBefore.By != person {
+		t.Fatalf("reviews = %+v", r)
+	}
+}
+
+// Final review 3: the decision is made on the locked row, not the listed
+// one; and a refresh that finds no pending review (a person decided it in
+// between) opens a new review.
+func TestTheReviewerDecidesOnTheLockedRow(t *testing.T) {
+	w := newReviewWorld()
+	s := w.schedule("nightly", w.tmplA, true, schedules.PausedForReview)
+	// Listed as paused for review; committed meanwhile as resumed.
+	w.locked = map[uuid.UUID]schedules.Schedule{s: {ID: s, OrgID: w.org, TemplateID: w.tmplA, Name: "nightly", Revision: 3}}
+	change := assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA, Name: "deploy",
+		Fields: []assistantchange.Field{{Name: "limit", Old: nil, New: "x"}}}
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.schedules[s]; !got.Paused || got.PausedReason != schedules.PausedForReview {
+		t.Fatalf("schedule = %+v", got)
+	}
+	if r := w.reviewOf(s); len(r) != 1 || r[0].Review.PausedBefore != nil || len(w.events) != 1 {
+		t.Fatalf("reviews = %+v, events %d", r, len(w.events))
+	}
+	w.locked = nil
+	w.reviews.refreshMiss = true
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.reviewOf(s); len(r) != 2 || r[1].Status != runrequests.StatusPending || len(r[1].Review.Changes) != 1 {
+		t.Fatalf("after a missed refresh = %+v", r)
+	}
+}
+
+// Final review 6: a stop made with an assistant token names the token.
+func TestAnAssistantsPauseIsNamedAsTheAssistant(t *testing.T) {
+	w := newReviewWorld()
+	w.pausedBy = &audit.Stopper{UserID: ptrTo(uuid.Must(uuid.NewV7())), TokenName: "claude-ops", Assistant: true}
+	s := w.schedule("weekly", w.tmplA, true, "")
+	if err := w.reviewer.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.reviewOf(s); len(r) != 1 || r[0].Review.PausedBefore == nil || r[0].Review.PausedBefore.AssistantToken != "claude-ops" {
+		t.Fatalf("review = %+v", r[0].Review.PausedBefore)
+	}
+}
+
+// Final review 4: a deleted item's review is closed as rejected.
+func TestADeletedItemsReviewIsClosed(t *testing.T) {
+	w := newReviewWorld()
+	s := w.schedule("a", w.tmplA, false, "")
+	if err := w.reviewer.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err != nil {
+		t.Fatal(err)
+	}
+	person := uuid.Must(uuid.NewV7())
+	if err := w.reviewer.ScheduleDeleted(ctx, w.org, s, person); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.reviewOf(s); r[0].Status != runrequests.StatusRejected || *r[0].DecidedBy != person {
+		t.Fatalf("review = %+v", r[0])
+	}
+}
+
+func ptrTo(id uuid.UUID) *uuid.UUID { return &id }

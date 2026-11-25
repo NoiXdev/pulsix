@@ -286,22 +286,50 @@ func (s *SQLStore) pageEvents(ctx context.Context, rows []gen.AuditEvent) ([]Eve
 	return events, nil
 }
 
-// LastActor is who last did one of actions to the object (objectType,
-// objectID) in the organization; nil when no such event was recorded or
-// its actor is gone. The schedule and trigger reviews of spec 2026-11-25
-// C2 name the person who had paused or disabled an item before an
-// assistant's change.
-func (s *SQLStore) LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error) {
-	row, err := s.q.LastAuditActor(ctx, gen.LastAuditActorParams{OrgID: orgID, ObjectType: objectType, ObjectID: objectID, Actions: actions})
+// StopActions are the activity log actions that stop and start an object
+// of one kind: Stop on the object (a pause), All on every object of the
+// kind at once (pause all), Start on the object (a resume), after whose
+// newest one only a stop counts.
+type StopActions struct {
+	Stop, All, Start []string
+}
+
+// Stopper is who stopped an object: the person (UserID, nil when the
+// event names none) and, when it was done with an assistant token, that
+// token's name (Assistant true).
+type Stopper struct {
+	UserID    *uuid.UUID
+	TokenName string
+	Assistant bool
+}
+
+// LastActor is who stopped the object (objectType, objectID) of the
+// organization: the newest event of actions.Stop on it, or of actions.All,
+// after its newest actions.Start; nil when there is none. The schedule and
+// trigger reviews of spec 2026-11-25 C2 name who had paused or disabled an
+// item before an assistant's change.
+func (s *SQLStore) LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions StopActions) (*Stopper, error) {
+	row, err := s.q.LastAuditActor(ctx, gen.LastAuditActorParams{
+		OrgID: orgID, ObjectType: objectType, ObjectID: objectID,
+		StopActions: nonNil(actions.Stop), AllActions: nonNil(actions.All), StartActions: nonNil(actions.Start),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("find the last actor: %w", err)
+		return nil, fmt.Errorf("find who stopped %s %s: %w", objectType, objectID, err)
 	}
-	if !row.ActorID.Valid {
-		return nil, nil
+	out := &Stopper{TokenName: row.TokenName, Assistant: row.Assistant}
+	if row.ActorID.Valid {
+		id := uuid.UUID(row.ActorID.Bytes)
+		out.UserID = &id
 	}
-	id := uuid.UUID(row.ActorID.Bytes)
-	return &id, nil
+	return out, nil
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

@@ -557,6 +557,46 @@ func (q *Queries) ListTriggersForReview(ctx context.Context, arg ListTriggersFor
 	return items, nil
 }
 
+const lockTriggerForReview = `-- name: LockTriggerForReview :one
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers WHERE org_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockTriggerForReviewParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// The trigger, its row locked until the transaction ends (as
+// LockScheduleForReview).
+func (q *Queries) LockTriggerForReview(ctx context.Context, arg LockTriggerForReviewParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, lockTriggerForReview, arg.OrgID, arg.ID)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.DisabledReason,
+	)
+	return i, err
+}
+
 const noteDeliveryRateLimited = `-- name: NoteDeliveryRateLimited :exec
 UPDATE trigger_deliveries
 SET reason = CASE WHEN reason = '' THEN 'also answered 429 (address rate limit spent)'

@@ -965,7 +965,8 @@ variables apply or variables mode routes), of a repository (URL, branch, subpath
 credential, vault identities) or the text of an editor playbook (`PUT …/playbooks/{id}`),
 the same transaction pauses every schedule of the affected templates (a repository's:
 the templates whose playbook comes from it; an editor playbook's: the templates that
-run it) and disables every trigger that runs one of them or syncs the repository, each
+run it; in every case also each template that starts one of them as a follow-up, along
+any chain) and disables every trigger that runs one of them or syncs the repository, each
 with the reason
 `assistant_change`, one activity entry (`pauseScheduleForReview`,
 `disableTriggerForReview`, attributed to the token) and one review request
@@ -973,10 +974,16 @@ with the reason
 and new, secrets masked. Another change of an item already paused for review is added
 to its open review instead. A schedule a person had paused, or a trigger a person had
 disabled, gets the reason and a review as well, so the notice shows before anyone
-resumes it; its picture names who had stopped it (the last `POST pauseSchedule`, or
-`POST disableTrigger` / `PUT updateTrigger` / `POST createTrigger`, in the activity log,
-when there is one), and approving it accepts the changes and leaves it stopped without
-the reason. A person's change pauses nothing; inventory changes never do. A review
+resumes it; its picture names who had stopped it (the last `POST pauseSchedule` or
+`POST pauseAllSchedules` after its last `POST resumeSchedule`, or the last
+`POST disableTrigger` / `PUT updateTrigger` / `POST createTrigger` after its last
+`POST enableTrigger`, in the activity log; a stop made with an assistant token names the
+token), and approving it accepts the changes and leaves it stopped without the reason.
+That fact carries over to a later review of the item after one was rejected or expired.
+The reviewer locks each item's row before deciding, so a person's concurrent resume is
+either seen or waits. Deleting a schedule or trigger rejects its open review. A schedule
+or trigger request's picture lists the open change reviews of the template (repository)
+it would run (`open_change_reviews`). A person's change pauses nothing; inventory changes never do. A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
 repository sync trigger) and resumes (enables) the item at the revision shown (one a

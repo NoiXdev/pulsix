@@ -54,6 +54,12 @@ UPDATE schedules SET paused = true, paused_reason = 'assistant_change', next_run
 WHERE org_id = @org_id AND id = @id AND paused_reason IS NULL
 RETURNING *;
 
+-- name: LockScheduleForReview :one
+-- The schedule, its row locked until the transaction ends: an assistant's
+-- change decides pause or refresh on the row as it is committed, so a
+-- person's concurrent resume is either seen or waits (final review 3).
+SELECT * FROM schedules WHERE org_id = @org_id AND id = @id FOR UPDATE;
+
 -- name: ClearSchedulePausedReasonAt :one
 -- An approved review of a schedule a person had paused before the change:
 -- the reason goes, the schedule stays paused as that person left it, at the

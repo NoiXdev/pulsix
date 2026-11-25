@@ -26,6 +26,19 @@ type fakeStore struct {
 	identities map[uuid.UUID][]repos.VaultIdentity
 	nextErr    error
 	cleared    []uuid.UUID
+	// onLock runs once inside GetForUpdate: another writer landing between
+	// the service's read and its locked one.
+	onLock func()
+}
+
+func (f *fakeStore) GetForUpdate(ctx context.Context, orgID, id uuid.UUID) (repos.Repo, error) {
+	if hook := f.onLock; hook != nil {
+		f.onLock = nil
+		f.mu.Lock()
+		hook()
+		f.mu.Unlock()
+	}
+	return f.Get(ctx, orgID, id)
 }
 
 func newFakeStore() *fakeStore {

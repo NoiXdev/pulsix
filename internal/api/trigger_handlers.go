@@ -274,7 +274,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Triggers.Delete(ctx, scope.OrgID, t.ID); err != nil {
+		if err := deps.Triggers.DeleteBy(ctx, scope.OrgID, t.ID, scope.UserID); err != nil {
 			return nil, mapTriggersErr(ctx, err)
 		}
 		setAuditObject(ctx, t.ID.String(), "deleted webhook trigger "+t.Name)

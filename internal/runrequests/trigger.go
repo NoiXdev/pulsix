@@ -91,6 +91,10 @@ type PictureTrigger struct {
 	New     *TriggerState `json:"new,omitempty" doc:"The trigger as the approval stores it (create and update)"`
 	Current *TriggerState `json:"current,omitempty" doc:"The trigger as it is now (update and rotate)"`
 	Gone    bool          `json:"gone,omitempty" doc:"The trigger, or what it would start, no longer exists; the request cannot be approved"`
+	// OpenChangeReviews are the open reviews an assistant's change of the
+	// template (repository) it runs opened (final review 5): a note to the
+	// approver that it carries unreviewed changes.
+	OpenChangeReviews []string `json:"open_change_reviews,omitempty" doc:"Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet"`
 }
 
 // TriggerState is one trigger in a picture: every setting, the target by

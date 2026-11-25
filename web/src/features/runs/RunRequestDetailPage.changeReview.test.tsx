@@ -133,6 +133,11 @@ describe('RunRequestDetailPage reviews of an assistant change (spec 2026-11-25 C
     expect(screen.getByText(/Approving accepts the changes and leaves it paused/)).toBeInTheDocument();
   });
 
+  it('names an assistant that had paused the schedule by its token', async () => {
+    renderReview({ item: 'schedule', schedule, paused_before: { by_assistant_token: 'claude-ops' } });
+    expect(await screen.findByText(/An assistant \(token claude-ops\) had paused this schedule/)).toBeInTheDocument();
+  });
+
   it('names an editor playbook as what the assistant changed', async () => {
     const playbookChange = [{ subject: 'playbook', id: 'pb1', name: 'deploy', user_id: 'u1', fields: [{ field: 'playbook_text', old: '- hosts: all', new: '- hosts: web' }] }];
     renderReview({ item: 'schedule', schedule, changes: playbookChange });

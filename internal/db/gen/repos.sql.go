@@ -115,6 +115,41 @@ func (q *Queries) GetRepo(ctx context.Context, arg GetRepoParams) (GitRepo, erro
 	return i, err
 }
 
+const getRepoForUpdate = `-- name: GetRepoForUpdate :one
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id, shared_repo_id FROM git_repos WHERE org_id = $1 AND id = $2 FOR UPDATE
+`
+
+type GetRepoForUpdateParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// GetRepo with the row locked until the transaction ends: an update diffs
+// against the row it overwrites (repositories have no revision; final
+// review 7).
+func (q *Queries) GetRepoForUpdate(ctx context.Context, arg GetRepoForUpdateParams) (GitRepo, error) {
+	row := q.db.QueryRow(ctx, getRepoForUpdate, arg.OrgID, arg.ID)
+	var i GitRepo
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.Url,
+		&i.Branch,
+		&i.Subpath,
+		&i.CredentialID,
+		&i.LastSync,
+		&i.LastSyncError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SshHostKey,
+		&i.SshHostPublicKey,
+		&i.VaultCredentialID,
+		&i.SharedRepoID,
+	)
+	return i, err
+}
+
 const listRepos = `-- name: ListRepos :many
 SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id, shared_repo_id FROM git_repos WHERE org_id = $1 ORDER BY name
 `

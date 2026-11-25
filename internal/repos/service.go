@@ -197,6 +197,8 @@ type Store interface {
 	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, r Repo) (Repo, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Repo, error)
+	// GetForUpdate is Get with the row locked until the transaction ends.
+	GetForUpdate(ctx context.Context, orgID, id uuid.UUID) (Repo, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Repo, error)
 	Update(ctx context.Context, r Repo) (Repo, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
@@ -391,6 +393,13 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		var err error
 		before := cur
 		if in.Actor.Assistant && s.watcher != nil {
+			// The diff is against the row this write overwrites, locked:
+			// repositories have no revision to guard the write with, so a
+			// write landing after the read above must not hide from it
+			// (final review 7).
+			if before, err = s.store.GetForUpdate(ctx, orgID, id); err != nil {
+				return err
+			}
 			if before.VaultIdentities, err = s.store.ListRepoVaultIdentities(ctx, orgID, id); err != nil {
 				return fmt.Errorf("list repo vault identities: %w", err)
 			}

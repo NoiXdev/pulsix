@@ -21,6 +21,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { RunPictureSections } from './RunPictureSections.tsx';
 import { RunRequestFollowUps } from './RunRequestFollowUps.tsx';
+import { OpenChangeReviewsNote } from './OpenChangeReviewsNote.tsx';
 import { ReviewRequestSections } from './ReviewRequestSections.tsx';
 import { ScheduleRequestSections } from './ScheduleRequestSections.tsx';
 import { TriggerRequestSections } from './TriggerRequestSections.tsx';
@@ -376,6 +377,7 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
+      <OpenChangeReviewsNote org={org} ids={schedule?.open_change_reviews ?? trigger?.open_change_reviews} />
       {schedule ? (
         <ScheduleRequestSections schedule={schedule} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
       ) : trigger ? (

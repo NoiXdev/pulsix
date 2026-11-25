@@ -48,6 +48,9 @@ type Store interface {
 	// one, or one a person paused); ok is false (the schedule as it is)
 	// when it was already paused for review.
 	PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error)
+	// LockForReview reads the schedule with its row locked until the
+	// transaction ends (ErrNotFound).
+	LockForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, error)
 	// ClearReasonAt clears the reason at revision and leaves the schedule
 	// paused (ErrRevisionMismatch).
 	ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Schedule, error)
@@ -60,6 +63,8 @@ type Store interface {
 // decided by that person, in the resume's transaction.
 type Reviews interface {
 	ScheduleResumed(ctx context.Context, orgID, scheduleID, by uuid.UUID) error
+	// ScheduleDeleted closes the open review of a deleted schedule.
+	ScheduleDeleted(ctx context.Context, orgID, scheduleID, by uuid.UUID) error
 }
 
 // TemplateChecker is the slice of templates.Service overrides need.
@@ -275,7 +280,29 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, templateID *uuid.UU
 }
 
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.Delete(ctx, orgID, id)
+	return s.DeleteBy(ctx, orgID, id, uuid.Nil)
+}
+
+// DeleteBy deletes the schedule as by and closes its open review in the
+// same transaction (final review 4): nothing is left to resume, so the
+// review does not wait on the approvals page.
+func (s *Service) DeleteBy(ctx context.Context, orgID, id, by uuid.UUID) error {
+	if s.reviews == nil {
+		return s.store.Delete(ctx, orgID, id)
+	}
+	return s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		if err := s.store.Delete(ctx, orgID, id); err != nil {
+			return err
+		}
+		return s.reviews.ScheduleDeleted(ctx, orgID, id, by)
+	})
+}
+
+// LockForReview reads the schedule with its row locked until the caller's
+// transaction ends: an assistant's change decides pause or refresh on the
+// row as committed (final review 3).
+func (s *Service) LockForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, error) {
+	return s.store.LockForReview(ctx, orgID, id)
 }
 
 // Pause stops the schedule; next_run_at is cleared.
@@ -295,7 +322,9 @@ func (s *Service) Pause(ctx context.Context, orgID, id uuid.UUID) (Schedule, err
 // by is the person resuming. A schedule an assistant's change paused for
 // review (PausedForReview) may be resumed by a person directly: the
 // resume clears the reason and closes the review as decided by them, in
-// one transaction.
+// one transaction. Never call it inside a transaction: Store.InTx opens
+// its own (db.WithWriteTx does not join an outer one), which would split
+// the work and could wait on the outer transaction's row lock.
 func (s *Service) Resume(ctx context.Context, orgID, id, by uuid.UUID) (Schedule, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {

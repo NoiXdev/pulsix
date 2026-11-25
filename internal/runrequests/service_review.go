@@ -21,8 +21,8 @@ var (
 // picture p, spec 2026-11-25 C2): only a person who may write its item
 // approves it (templates.write; repos.write for a repository sync
 // trigger), the picture must still be the one the person saw and its item
-// must still exist. The decision and the resume (enable) are one
-// transaction, the decision first, so a concurrent second approval loses.
+// must still exist. The resume (enable) and the decision are one
+// transaction.
 // A rejection (Reject) leaves the item stopped.
 func (s *Service) approveReview(ctx context.Context, orgID uuid.UUID, r Request, p Picture, by uuid.UUID, fingerprint, current string, followUps *[]uuid.UUID, may Approver) (Approved, error) {
 	if p.Review == nil {
@@ -45,7 +45,14 @@ func (s *Service) approveReview(ctx context.Context, orgID uuid.UUID, r Request,
 		return Approved{}, errReviewGone
 	}
 	at := s.now()
+	// The item first, then the decision: the order every writer of both
+	// takes (a person's resume, a delete, the reviewer), so two of them
+	// never wait on each other. A concurrent second approval waits on the
+	// item and then finds its revision moved (ErrChanged).
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		if err := s.auto.ApplyReview(ctx, orgID, r, *p.Review, by); err != nil {
+			return err
+		}
 		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
 		if err != nil {
 			return fmt.Errorf("decide review: %w", err)
@@ -53,7 +60,7 @@ func (s *Service) approveReview(ctx context.Context, orgID uuid.UUID, r Request,
 		if !ok {
 			return ErrDecided
 		}
-		return s.auto.ApplyReview(ctx, orgID, r, *p.Review, by)
+		return nil
 	})
 	if err != nil {
 		return Approved{}, err

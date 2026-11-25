@@ -242,6 +242,19 @@ func (st *SQLStore) EnableAt(ctx context.Context, orgID, id uuid.UUID, revision 
 	return toTrigger(row)
 }
 
+// LockForReview reads the trigger with its row locked until the
+// transaction ends (ErrNotFound).
+func (st *SQLStore) LockForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
+	row, err := st.q.LockTriggerForReview(ctx, gen.LockTriggerForReviewParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Trigger{}, ErrNotFound
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("lock trigger: %w", err)
+	}
+	return toTrigger(row)
+}
+
 // ClearReasonAt clears why the trigger is disabled, leaving it disabled,
 // at revision: ErrRevisionMismatch when it changed since, ErrNotFound when
 // it is gone.

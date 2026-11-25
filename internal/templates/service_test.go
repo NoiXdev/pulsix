@@ -241,6 +241,34 @@ func (f *fakeStore) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]u
 	return out, nil
 }
 
+// IDsReaching mirrors the real store's recursive query over f.follow.
+func (f *fakeStore) IDsReaching(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	seen := map[uuid.UUID]bool{}
+	queue := append([]uuid.UUID(nil), ids...)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		for from, list := range f.follow {
+			for _, to := range list {
+				if to == id {
+					queue = append(queue, from)
+				}
+			}
+		}
+	}
+	var out []uuid.UUID
+	for id := range seen {
+		if _, ok := f.byID[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 // IDsOfPlaybook mirrors the real store: the templates of the playbook.
 func (f *fakeStore) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {
 	all, _ := f.List(ctx, orgID)

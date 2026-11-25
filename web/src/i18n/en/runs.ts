@@ -444,6 +444,14 @@ export const enRuns = {
       },
       /** A review (spec 2026-11-25 C2): an assistant changed what a schedule
        * or trigger runs, which paused it; approving resumes it. */
+      /** A schedule or trigger request whose template (repository) has
+       * open change reviews (spec 2026-11-25 C2, final review 5). */
+      openChangeReviews: {
+        title: 'What this would run has unreviewed changes',
+        body: (n: number) =>
+          `An assistant changed the template or repository it runs, and ${n === 1 ? 'a review waits' : `${n} reviews wait`} for a person. Approving this request does not wait for ${n === 1 ? 'it' : 'them'}.`,
+        link: 'Open the review',
+      },
       review: {
         title: { schedule: 'Review a paused schedule', trigger: 'Review a disabled webhook trigger' } as Record<string, string>,
         section: 'Review',
@@ -459,6 +467,7 @@ export const enRuns = {
         active: 'active',
         changes: 'What the assistant changed',
         subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook' } as Record<string, string>,
+        byAssistant: (token: string) => `An assistant (token ${token})`,
         /** A person had stopped the item before the change (fix round 1);
          * `who` is their name, or empty when no record names them. */
         pausedBefore: {

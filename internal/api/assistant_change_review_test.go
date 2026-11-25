@@ -18,6 +18,7 @@ import (
 	"github.com/noixdev/pulsix/internal/cronexpr"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/schedules"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -570,5 +571,114 @@ func TestAnAssistantsVariablesModeSwitchPausesTheTemplate(t *testing.T) {
 	d := f.reviewDetail(t, reviewID(f.reviews(t)[f.active]))
 	if c := d.Picture.Review.Changes; len(c) != 1 || c[0].Fields[0].Field != "vars_mode" || c[0].Fields[0].New != "automatic" {
 		t.Fatalf("changes = %+v", c)
+	}
+}
+
+// reviewPausedBefore reads the paused-before part of a review's picture.
+func (f changeReviewFixture) reviewPausedBefore(t *testing.T, id string) (byUser, byToken string, fingerprint string, ok bool) {
+	t.Helper()
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+id, nil)
+	var d struct {
+		Picture struct {
+			Review struct {
+				PausedBefore *struct {
+					ByUserID         string `json:"by_user_id"`
+					ByAssistantToken string `json:"by_assistant_token"`
+				} `json:"paused_before"`
+			} `json:"review"`
+		} `json:"picture"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	decodeInto(t, resp, &d)
+	if pb := d.Picture.Review.PausedBefore; pb != nil {
+		return pb.ByUserID, pb.ByAssistantToken, d.Fingerprint, true
+	}
+	return "", "", d.Fingerprint, false
+}
+
+// Final review 1: a change of a template B pauses the schedules and
+// triggers of a template A that starts B as a follow-up.
+func TestAChangeOfAFollowUpPausesWhatStartsIt(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-chain")
+	b, err := f.s.Deps.Templates.Create(f.scoped, f.orgID, templates.CreateInput{Name: "cleanup", PlaybookID: f.playbook,
+		Scope: templates.Scope{HostIDs: []uuid.UUID{f.hostA}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	follow := []uuid.UUID{b.ID}
+	updateTemplate(t, f.runRequestFixture, func(in *templates.UpdateInput) { in.FollowUps = &follow })
+	resp := f.s.AssistantDo(t, http.MethodPut, f.tok, f.orgPath()+"/job-templates/"+b.ID.String(), "", map[string]any{
+		"name": "cleanup", "playbook_id": f.playbook.String(), "scope": map[string]any{"host_ids": []string{f.hostA.String()}}, "limit": "web*",
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("assistant PUT follow-up = %d %s", resp.Code, resp.Body)
+	}
+	if paused, reason := f.scheduleState(t, f.active); !paused || reason != schedules.PausedForReview {
+		t.Fatalf("A's schedule = %v %q", paused, reason)
+	}
+	if enabled, reason := f.triggerState(t, f.hook); enabled || reason != triggers.DisabledForReview {
+		t.Fatalf("A's trigger = %v %q", enabled, reason)
+	}
+}
+
+// Final review 2, 4, 5: who had paused a schedule survives a rejected
+// review; a schedule request for the changed template names its open
+// change reviews; deleting the schedule closes its review.
+func TestPausedBeforeSurvivesARejectionAndDeleteClosesTheReview(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-carry")
+	in := schedules.Input{TemplateID: f.templateID, Name: "monthly", Mode: schedules.ModeCron, Cron: "0 5 1 * *", Timezone: "UTC"}
+	sch, err := f.s.Deps.Schedules.Create(f.scoped, f.orgID, f.operator, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := postJSON(t, f.adminC, f.s.HTTP.URL+f.orgPath()+"/schedules/"+sch.ID.String()+"/pause", map[string]any{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("pause = %d", resp.StatusCode)
+	}
+	admin := f.memberID(t, "acr-carry-admin@example.test")
+	f.putTemplateAsAssistant(t, map[string]any{"limit": "web*"})
+	first := reviewID(f.reviews(t)[sch.ID])
+	if resp := postJSON(t, f.adminC, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+first+"/reject", map[string]any{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("reject = %d", resp.StatusCode)
+	}
+	f.putTemplateAsAssistant(t, map[string]any{"limit": "db*"})
+	second := reviewID(f.reviews(t)[sch.ID])
+	by, _, fp, ok := f.reviewPausedBefore(t, second)
+	if second == first || !ok || by != admin.String() {
+		t.Fatalf("second review %s (first %s): paused before %v by %q", second, first, ok, by)
+	}
+	// A schedule request for the template now names its open reviews.
+	auto := f.s.AssistantDo(t, http.MethodPost, f.tok, f.orgPath()+"/schedule-requests", "", map[string]any{
+		"template_id": f.templateID.String(), "name": "hourly", "mode": "cron", "cron": "0 * * * *", "timezone": "UTC", "reason": "more often",
+	})
+	if auto.Code != http.StatusCreated || !strings.Contains(auto.Body.String(), `"open_change_reviews":["`) {
+		t.Fatalf("schedule request = %d %s", auto.Code, auto.Body)
+	}
+	if r := f.approve(t, f.adminC, second, fp); r.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", r.StatusCode, mustReadBody(t, r))
+	}
+	if paused, reason := f.scheduleState(t, sch.ID); !paused || reason != "" {
+		t.Fatalf("after approval = %v %q, want paused without the reason", paused, reason)
+	}
+	// Deleting a schedule paused for review rejects its open review.
+	del := requestJSON(t, f.adminC, http.MethodDelete, f.s.HTTP.URL+f.orgPath()+"/schedules/"+f.active.String(), nil)
+	if del.StatusCode != http.StatusOK {
+		t.Fatalf("delete = %d %s", del.StatusCode, mustReadBody(t, del))
+	}
+	if r := f.reviews(t)[f.active]; !strings.HasSuffix(r[len(r)-1], ":rejected") {
+		t.Fatalf("after delete = %v", r)
+	}
+}
+
+// Final review 6: a schedule an assistant paused is named as the
+// assistant's, not its owner's.
+func TestAnAssistantsPauseIsNamedAsTheAssistantsInTheReview(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-assistant-pause")
+	if resp := f.s.AssistantDo(t, http.MethodPost, f.tok, f.orgPath()+"/schedules/"+f.active.String()+"/pause", "", nil); resp.Code != http.StatusOK {
+		t.Fatalf("assistant pause = %d %s", resp.Code, resp.Body)
+	}
+	f.putTemplateAsAssistant(t, map[string]any{"limit": "web*"})
+	by, token, _, ok := f.reviewPausedBefore(t, reviewID(f.reviews(t)[f.active]))
+	if !ok || by != "" || token == "" {
+		t.Fatalf("paused before = %v by %q token %q", ok, by, token)
 	}
 }

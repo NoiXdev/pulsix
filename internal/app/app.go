@@ -715,6 +715,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
 		Commits: reposSvc, SyncJobs: jobsSvc, RepoSyncs: reposSvc,
 		InventorySecrets: inventorySvc, PlaybookVars: playbooksSvc, Agents: agentsSvc, Schedules: schedulesSvc, Triggers: triggersSvc,
+		ChangeReviews: runrequests.NewSQLStore(appDB),
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
 		runRequestResolver, runRequestResolver, time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })

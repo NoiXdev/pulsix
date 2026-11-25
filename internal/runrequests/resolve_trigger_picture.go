@@ -62,6 +62,22 @@ func (r *Resolver) triggerPicture(ctx context.Context, orgID uuid.UUID, req Requ
 		}
 		pt.New, pt.Gone = &state, pt.Gone || !found
 	}
+	var tmpl, repo *uuid.UUID
+	if req.TemplateID != uuid.Nil {
+		tid := req.TemplateID
+		tmpl = &tid
+	}
+	for _, s := range []*TriggerState{pt.New, pt.Current} {
+		if s != nil && s.RepoID != "" {
+			if rid, err := uuid.Parse(s.RepoID); err == nil {
+				repo = &rid
+			}
+		}
+	}
+	var err error
+	if pt.OpenChangeReviews, err = r.openChangeReviews(ctx, orgID, tmpl, repo); err != nil {
+		return Picture{}, err
+	}
 	p.Trigger = pt
 	return p, nil
 }

@@ -212,6 +212,10 @@ func (f *fakeStore) EnableAt(_ context.Context, orgID, id uuid.UUID, revision in
 	return t, nil
 }
 
+func (f *fakeStore) LockForReview(ctx context.Context, orgID, id uuid.UUID) (triggers.Trigger, error) {
+	return f.Get(ctx, orgID, id)
+}
+
 func (f *fakeStore) ClearReasonAt(_ context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

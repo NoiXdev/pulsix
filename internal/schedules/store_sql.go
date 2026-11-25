@@ -48,6 +48,20 @@ func (st *SQLStore) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Sc
 	return s, err == nil, err
 }
 
+// LockForReview reads the schedule with its row locked until the
+// transaction ends (ErrNotFound): an assistant's change decides on the
+// committed row, so a person's concurrent resume is seen or waits.
+func (st *SQLStore) LockForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, error) {
+	row, err := st.q.LockScheduleForReview(ctx, gen.LockScheduleForReviewParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Schedule{}, ErrNotFound
+	}
+	if err != nil {
+		return Schedule{}, fmt.Errorf("lock schedule: %w", err)
+	}
+	return toSchedule(row)
+}
+
 // ClearReasonAt clears why the schedule is paused, leaving it paused, at
 // revision: ErrRevisionMismatch when it changed since, ErrNotFound when it
 // is gone.

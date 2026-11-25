@@ -99,36 +99,64 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 }
 
 const lastAuditActor = `-- name: LastAuditActor :one
-SELECT actor_id, at FROM audit_events
-WHERE org_id = $1::uuid AND object_type = $2 AND object_id = $3
-  AND action = ANY($4::text[])
-ORDER BY at DESC, id DESC LIMIT 1
+WITH last_start AS (
+  SELECT max(at) AS at FROM audit_events
+  WHERE org_id = $1::uuid AND object_type = $2 AND object_id = $3
+    AND action = ANY($6::text[])
+)
+SELECT e.actor_id, e.actor_token_id, e.at,
+  COALESCE(t.name, p.name, '')::text AS token_name,
+  COALESCE(t.kind = 'assistant', p.kind = 'assistant', false)::boolean AS assistant
+FROM audit_events e
+LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+LEFT JOIN personal_tokens p ON p.id = e.actor_token_id
+WHERE e.org_id = $1::uuid AND e.object_type = $2
+  AND ((e.object_id = $3 AND e.action = ANY($4::text[]))
+    OR e.action = ANY($5::text[]))
+  AND e.at > COALESCE((SELECT at FROM last_start), '-infinity'::timestamptz)
+ORDER BY e.at DESC, e.id DESC LIMIT 1
 `
 
 type LastAuditActorParams struct {
-	OrgID      uuid.UUID `json:"org_id"`
-	ObjectType string    `json:"object_type"`
-	ObjectID   string    `json:"object_id"`
-	Actions    []string  `json:"actions"`
+	OrgID        uuid.UUID `json:"org_id"`
+	ObjectType   string    `json:"object_type"`
+	ObjectID     string    `json:"object_id"`
+	StopActions  []string  `json:"stop_actions"`
+	AllActions   []string  `json:"all_actions"`
+	StartActions []string  `json:"start_actions"`
 }
 
 type LastAuditActorRow struct {
-	ActorID pgtype.UUID `json:"actor_id"`
-	At      time.Time   `json:"at"`
+	ActorID      pgtype.UUID `json:"actor_id"`
+	ActorTokenID pgtype.UUID `json:"actor_token_id"`
+	At           time.Time   `json:"at"`
+	TokenName    string      `json:"token_name"`
+	Assistant    bool        `json:"assistant"`
 }
 
-// Who last did one of the actions to the object (the person who paused a
-// schedule or disabled a trigger before an assistant's change, spec
-// 2026-11-25 C2): the newest matching event of the organization.
+// Who stopped the object (the person who paused a schedule or disabled a
+// trigger before an assistant's change, spec 2026-11-25 C2): the newest
+// event of stop_actions on it, or of all_actions on the whole kind (pause
+// all), after the newest of start_actions on it (a resume or an enable).
+// The token it was made with, by name, and whether that is an assistant
+// token (the line then names the assistant, not the token's owner).
 func (q *Queries) LastAuditActor(ctx context.Context, arg LastAuditActorParams) (LastAuditActorRow, error) {
 	row := q.db.QueryRow(ctx, lastAuditActor,
 		arg.OrgID,
 		arg.ObjectType,
 		arg.ObjectID,
-		arg.Actions,
+		arg.StopActions,
+		arg.AllActions,
+		arg.StartActions,
 	)
 	var i LastAuditActorRow
-	err := row.Scan(&i.ActorID, &i.At)
+	err := row.Scan(
+		&i.ActorID,
+		&i.ActorTokenID,
+		&i.At,
+		&i.TokenName,
+		&i.Assistant,
+	)
 	return i, err
 }
 

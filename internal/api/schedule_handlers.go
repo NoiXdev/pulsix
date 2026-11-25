@@ -263,7 +263,7 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Schedules.Delete(ctx, scope.OrgID, id); err != nil {
+		if err := deps.Schedules.DeleteBy(ctx, scope.OrgID, id, scope.UserID); err != nil {
 			return nil, mapSchedulesErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), "deleted schedule")

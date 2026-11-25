@@ -57,6 +57,11 @@ UPDATE job_triggers SET enabled = false, disabled_reason = 'assistant_change', r
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND disabled_reason IS NULL
 RETURNING *;
 
+-- name: LockTriggerForReview :one
+-- The trigger, its row locked until the transaction ends (as
+-- LockScheduleForReview).
+SELECT * FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) FOR UPDATE;
+
 -- name: ClearTriggerDisabledReasonAt :one
 -- An approved review of a trigger a person had disabled before the change:
 -- the reason goes, the trigger stays disabled, at the revision the

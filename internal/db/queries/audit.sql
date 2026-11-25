@@ -122,10 +122,25 @@ UNION ALL
 SELECT id, name FROM personal_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: LastAuditActor :one
--- Who last did one of the actions to the object (the person who paused a
--- schedule or disabled a trigger before an assistant's change, spec
--- 2026-11-25 C2): the newest matching event of the organization.
-SELECT actor_id, at FROM audit_events
-WHERE org_id = sqlc.arg(org_id)::uuid AND object_type = sqlc.arg(object_type) AND object_id = sqlc.arg(object_id)
-  AND action = ANY(sqlc.arg(actions)::text[])
-ORDER BY at DESC, id DESC LIMIT 1;
+-- Who stopped the object (the person who paused a schedule or disabled a
+-- trigger before an assistant's change, spec 2026-11-25 C2): the newest
+-- event of stop_actions on it, or of all_actions on the whole kind (pause
+-- all), after the newest of start_actions on it (a resume or an enable).
+-- The token it was made with, by name, and whether that is an assistant
+-- token (the line then names the assistant, not the token's owner).
+WITH last_start AS (
+  SELECT max(at) AS at FROM audit_events
+  WHERE org_id = sqlc.arg(org_id)::uuid AND object_type = sqlc.arg(object_type) AND object_id = sqlc.arg(object_id)
+    AND action = ANY(sqlc.arg(start_actions)::text[])
+)
+SELECT e.actor_id, e.actor_token_id, e.at,
+  COALESCE(t.name, p.name, '')::text AS token_name,
+  COALESCE(t.kind = 'assistant', p.kind = 'assistant', false)::boolean AS assistant
+FROM audit_events e
+LEFT JOIN api_tokens t ON t.id = e.actor_token_id
+LEFT JOIN personal_tokens p ON p.id = e.actor_token_id
+WHERE e.org_id = sqlc.arg(org_id)::uuid AND e.object_type = sqlc.arg(object_type)
+  AND ((e.object_id = sqlc.arg(object_id) AND e.action = ANY(sqlc.arg(stop_actions)::text[]))
+    OR e.action = ANY(sqlc.arg(all_actions)::text[]))
+  AND e.at > COALESCE((SELECT at FROM last_start), '-infinity'::timestamptz)
+ORDER BY e.at DESC, e.id DESC LIMIT 1;

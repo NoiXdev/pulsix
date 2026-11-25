@@ -100,6 +100,11 @@ type (
 		// paused (a person had paused it before the change).
 		AcceptReviewAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error)
 	}
+	// ChangeReviews lists the open reviews an assistant's change of a
+	// template or repository opened (runrequests.SQLStore).
+	ChangeReviews interface {
+		OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error)
+	}
 	// TriggerSource reads, checks and writes webhook triggers for trigger
 	// requests (triggers.Service). Its writes return the new secret, which
 	// the resolver hands to the approval and nowhere else.
@@ -168,4 +173,7 @@ type Sources struct {
 	// Triggers checks, pictures and applies trigger requests (spec
 	// 2026-11-25 C).
 	Triggers TriggerSource
+	// ChangeReviews names the open change reviews in schedule and
+	// trigger request pictures (spec 2026-11-25 C2); nil names none.
+	ChangeReviews ChangeReviews
 }

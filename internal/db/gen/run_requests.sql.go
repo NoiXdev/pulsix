@@ -14,12 +14,13 @@ import (
 )
 
 const closeReviewRequests = `-- name: CloseReviewRequests :execrows
-UPDATE run_requests SET status = 'approved', decided_by = $1, decided_at = $2
-WHERE org_id = $3 AND kind = $4 AND target_id = $5::uuid
-  AND status = 'pending' AND expires_at > $2::timestamptz
+UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3
+WHERE org_id = $4 AND kind = $5 AND target_id = $6::uuid
+  AND status = 'pending' AND expires_at > $3::timestamptz
 `
 
 type CloseReviewRequestsParams struct {
+	Status    string             `json:"status"`
 	DecidedBy pgtype.UUID        `json:"decided_by"`
 	DecidedAt pgtype.Timestamptz `json:"decided_at"`
 	OrgID     uuid.UUID          `json:"org_id"`
@@ -27,10 +28,12 @@ type CloseReviewRequestsParams struct {
 	TargetID  uuid.UUID          `json:"target_id"`
 }
 
-// A person resumed or enabled the item directly: its open reviews are
-// decided as approved by that person, who looked at the item.
+// A person resumed or enabled the item directly (approved: they looked at
+// it), or the item was deleted (rejected: nothing is left to resume): its
+// open reviews are decided by that person.
 func (q *Queries) CloseReviewRequests(ctx context.Context, arg CloseReviewRequestsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, closeReviewRequests,
+		arg.Status,
 		arg.DecidedBy,
 		arg.DecidedAt,
 		arg.OrgID,
@@ -146,6 +149,54 @@ func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getLatestReviewRequest = `-- name: GetLatestReviewRequest :one
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
+WHERE org_id = $1 AND kind = $2 AND target_id = $3::uuid
+ORDER BY created_at DESC, id DESC LIMIT 1
+`
+
+type GetLatestReviewRequestParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	Kind     string    `json:"kind"`
+	TargetID uuid.UUID `json:"target_id"`
+}
+
+// The newest review of an item, whatever its state: a new review of an
+// item still paused for review carries over whether a person had paused it
+// before (fix round, final review 2).
+func (q *Queries) GetLatestReviewRequest(ctx context.Context, arg GetLatestReviewRequestParams) (RunRequest, error) {
+	row := q.db.QueryRow(ctx, getLatestReviewRequest, arg.OrgID, arg.Kind, arg.TargetID)
+	var i RunRequest
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.TemplateRevision,
+		&i.HostID,
+		&i.JobID,
+		&i.Reason,
+		&i.RequestedByUser,
+		&i.RequestedByToken,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.RunGroupID,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.ApprovedFingerprint,
+		&i.Overrides,
+		&i.PinnedCommit,
+		&i.SyncJobID,
+		&i.ExpiresInMinutes,
+		&i.SyncError,
+		&i.EnrollHostIds,
+		&i.Payload,
+		&i.TargetID,
+	)
+	return i, err
 }
 
 const getOpenReviewRequest = `-- name: GetOpenReviewRequest :one
@@ -434,6 +485,46 @@ func (q *Queries) ListDueWaitingRunRequests(ctx context.Context, staleBefore tim
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenChangeReviews = `-- name: ListOpenChangeReviews :many
+SELECT id FROM run_requests
+WHERE org_id = $1 AND kind IN ('schedule_review', 'trigger_review')
+  AND status = 'pending' AND expires_at > now()
+  AND (($2::uuid IS NOT NULL AND (template_id = $2::uuid
+         OR payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'job_template', 'id', $2::uuid))))
+    OR ($3::uuid IS NOT NULL
+         AND payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'repo', 'id', $3::uuid))))
+ORDER BY created_at, id
+`
+
+type ListOpenChangeReviewsParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	TemplateID pgtype.UUID `json:"template_id"`
+	RepoID     pgtype.UUID `json:"repo_id"`
+}
+
+// The open reviews an assistant's change of the template, or of the
+// repository, opened: those of the items that run the template, and those
+// whose changes name it (a schedule or trigger request's picture says so).
+func (q *Queries) ListOpenChangeReviews(ctx context.Context, arg ListOpenChangeReviewsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOpenChangeReviews, arg.OrgID, arg.TemplateID, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

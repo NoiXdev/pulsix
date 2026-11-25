@@ -422,6 +422,12 @@ export const deRuns: Messages['runs'] = {
         rejectConfirm: 'Diese Zeitplan-Anfrage ablehnen? Der Zeitplan wird nicht geändert.',
         noPermission: 'Operatoren, Admins und Inhaber können Zeitplan-Anfragen freigeben oder ablehnen.',
       },
+      openChangeReviews: {
+        title: 'Was dies ausführen würde, hat ungeprüfte Änderungen',
+        body: (n: number) =>
+          `Ein Assistent hat die Vorlage oder das Repository geändert, das es ausführt, und ${n === 1 ? 'eine Prüfung wartet' : `${n} Prüfungen warten`} auf eine Person. Die Freigabe dieser Anfrage wartet nicht darauf.`,
+        link: 'Prüfung öffnen',
+      },
       review: {
         title: { schedule: 'Pausierten Zeitplan prüfen', trigger: 'Deaktivierten Webhook-Trigger prüfen' } as Record<string, string>,
         section: 'Prüfung',
@@ -437,6 +443,7 @@ export const deRuns: Messages['runs'] = {
         active: 'aktiv',
         changes: 'Was der Assistent geändert hat',
         subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook' } as Record<string, string>,
+        byAssistant: (token: string) => `Ein Assistent (Token ${token})`,
         pausedBefore: {
           schedule: (who: string) =>
             `${who || 'Eine Person'} hatte diesen Zeitplan schon vor der Änderung des Assistenten pausiert. Die Freigabe übernimmt die Änderungen und lässt ihn pausiert; ihn fortzusetzen bleibt die Entscheidung einer Person.`,

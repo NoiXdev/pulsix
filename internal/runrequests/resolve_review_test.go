@@ -204,3 +204,58 @@ func TestReviewOfAnItemAPersonStopped(t *testing.T) {
 		t.Fatalf("enabled %v, accepted %v", tw.trigs.enabled, tw.trigs.accepted)
 	}
 }
+
+// fakeChangeReviews answers the open change reviews by template or repo.
+type fakeChangeReviews map[uuid.UUID][]uuid.UUID
+
+func (f fakeChangeReviews) OpenChangeReviews(_ context.Context, _ uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	if templateID != nil {
+		out = append(out, f[*templateID]...)
+	}
+	if repoID != nil {
+		out = append(out, f[*repoID]...)
+	}
+	return out, nil
+}
+
+// Final review 5: a schedule or trigger request's picture names the open
+// change reviews of what it would run, so the approver knows that template
+// (or repository) carries an assistant's unreviewed change.
+func TestRequestPicturesNameOpenChangeReviews(t *testing.T) {
+	ctx := context.Background()
+	review := id()
+	w := newScheduleWorld()
+	res := runrequests.NewResolver(runrequests.Sources{
+		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
+		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
+		Commits: w.commits, SyncJobs: w.syncs, RepoSyncs: w.repoSyncs, InventorySecrets: w.invSecrets, PlaybookVars: w.pbVars,
+		Agents: w.agents, Schedules: w.scheds, ChangeReviews: fakeChangeReviews{w.s: {review}},
+	})
+	target := w.sched
+	p, err := res.Picture(ctx, id(), runrequests.Request{ID: id(), Kind: runrequests.KindSchedule, TemplateID: w.s, TargetID: &target,
+		Schedule: &runrequests.ScheduleChange{Action: runrequests.ScheduleResume}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Schedule.OpenChangeReviews) != 1 || p.Schedule.OpenChangeReviews[0] != review.String() {
+		t.Fatalf("schedule picture = %+v", p.Schedule)
+	}
+
+	tw := newTriggerWorld()
+	tres := runrequests.NewResolver(runrequests.Sources{
+		Templates: tw.tmpls, Playbooks: tw.pbs, Repos: tw.repos, Jobs: tw.jobs, Hosts: tw.hosts, SSH: tw.ssh,
+		Credentials: tw.creds, Vars: tw.inv, VarsKey: tw.key, Settings: tw.settings, FollowUpRuns: tw.rows, Overrides: tw.ovr,
+		Commits: tw.commits, SyncJobs: tw.syncs, RepoSyncs: tw.repoSyncs, InventorySecrets: tw.invSecrets, PlaybookVars: tw.pbVars,
+		Agents: tw.agents, Triggers: tw.trigs, ChangeReviews: fakeChangeReviews{tw.repo: {review}},
+	})
+	sync := tw.sync
+	tp, err := tres.Picture(ctx, id(), runrequests.Request{ID: id(), Kind: runrequests.KindTrigger, TargetID: &sync,
+		Trigger: &runrequests.TriggerChange{Action: runrequests.TriggerRotate, Kind: triggers.KindRepoSync}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tp.Trigger.OpenChangeReviews) != 1 {
+		t.Fatalf("trigger picture = %+v", tp.Trigger)
+	}
+}

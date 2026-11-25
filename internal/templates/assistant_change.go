@@ -26,6 +26,13 @@ func (s *Service) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uui
 	return s.store.IDsOfRepo(ctx, orgID, repoID)
 }
 
+// IDsReaching lists the templates of ids and every template that starts one
+// of them through follow-ups, directly or along a chain: a run of any of
+// them runs the changed template (final review 1).
+func (s *Service) IDsReaching(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	return s.store.IDsReaching(ctx, orgID, ids)
+}
+
 // IDsOfPlaybook lists the templates that run the playbook: what a change of
 // an editor playbook's text changes for them (spec 2026-11-25 C2).
 func (s *Service) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {

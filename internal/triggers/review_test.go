@@ -76,6 +76,12 @@ func TestDisableForReviewThroughTheStore(t *testing.T) {
 	if err != nil || cleared.Enabled || cleared.DisabledReason != "" {
 		t.Fatalf("cleared = %+v, %v", cleared, err)
 	}
+	if locked, err := st.LockForReview(scoped, org, sync.ID); err != nil || locked.Revision != cleared.Revision {
+		t.Fatalf("locked = %+v, %v", locked, err)
+	}
+	if _, err := st.LockForReview(scoped, org, uuid.Must(uuid.NewV7())); !errors.Is(err, triggers.ErrNotFound) {
+		t.Fatalf("lock unknown = %v", err)
+	}
 	if _, err := st.EnableAt(scoped, org, run.ID, off.Revision-1); !errors.Is(err, triggers.ErrRevisionMismatch) {
 		t.Fatalf("stale = %v", err)
 	}
@@ -102,8 +108,14 @@ func TestDisableForReviewThroughTheStore(t *testing.T) {
 }
 
 type fakeReviews struct {
-	closed []uuid.UUID
-	by     uuid.UUID
+	closed  []uuid.UUID
+	deleted []uuid.UUID
+	by      uuid.UUID
+}
+
+func (f *fakeReviews) TriggerDeleted(_ context.Context, _, id, by uuid.UUID) error {
+	f.deleted, f.by = append(f.deleted, id), by
+	return nil
 }
 
 func (f *fakeReviews) TriggerEnabled(_ context.Context, _, id, by uuid.UUID) error {
@@ -140,5 +152,15 @@ func TestAPersonsEnableClosesTheReview(t *testing.T) {
 	on, err := svc.UpdateBy(scoped, org, c.Trigger.ID, person, kept.Revision, in)
 	if err != nil || !on.Enabled || on.DisabledReason != "" || len(reviews.closed) != 1 || reviews.closed[0] != c.Trigger.ID || reviews.by != person {
 		t.Fatalf("enabled = %+v closed %v by %v, %v", on, reviews.closed, reviews.by, err)
+	}
+	// Final review 4: deleting it closes its review too.
+	if err := svc.DeleteBy(scoped, org, c.Trigger.ID, person); err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews.deleted) != 1 || reviews.deleted[0] != c.Trigger.ID {
+		t.Fatalf("deleted = %v", reviews.deleted)
+	}
+	if _, err := svc.Get(scoped, org, c.Trigger.ID); !errors.Is(err, triggers.ErrNotFound) {
+		t.Fatalf("still there: %v", err)
 	}
 }

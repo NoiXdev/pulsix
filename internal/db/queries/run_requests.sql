@@ -145,9 +145,10 @@ UPDATE run_requests SET payload = sqlc.arg(payload), expires_at = sqlc.arg(expir
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND status = 'pending';
 
 -- name: CloseReviewRequests :execrows
--- A person resumed or enabled the item directly: its open reviews are
--- decided as approved by that person, who looked at the item.
-UPDATE run_requests SET status = 'approved', decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at)
+-- A person resumed or enabled the item directly (approved: they looked at
+-- it), or the item was deleted (rejected: nothing is left to resume): its
+-- open reviews are decided by that person.
+UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at)
 WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = sqlc.arg(target_id)::uuid
   AND status = 'pending' AND expires_at > sqlc.arg(decided_at)::timestamptz;
 
@@ -157,3 +158,24 @@ WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = sqlc.a
 SELECT DISTINCT ON (target_id) id, target_id FROM run_requests
 WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = ANY(sqlc.arg(target_ids)::uuid[])
 ORDER BY target_id, created_at DESC, id DESC;
+
+-- name: GetLatestReviewRequest :one
+-- The newest review of an item, whatever its state: a new review of an
+-- item still paused for review carries over whether a person had paused it
+-- before (fix round, final review 2).
+SELECT * FROM run_requests
+WHERE org_id = sqlc.arg(org_id) AND kind = sqlc.arg(kind) AND target_id = sqlc.arg(target_id)::uuid
+ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- name: ListOpenChangeReviews :many
+-- The open reviews an assistant's change of the template, or of the
+-- repository, opened: those of the items that run the template, and those
+-- whose changes name it (a schedule or trigger request's picture says so).
+SELECT id FROM run_requests
+WHERE org_id = sqlc.arg(org_id) AND kind IN ('schedule_review', 'trigger_review')
+  AND status = 'pending' AND expires_at > now()
+  AND ((sqlc.narg(template_id)::uuid IS NOT NULL AND (template_id = sqlc.narg(template_id)::uuid
+         OR payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'job_template', 'id', sqlc.narg(template_id)::uuid))))
+    OR (sqlc.narg(repo_id)::uuid IS NOT NULL
+         AND payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'repo', 'id', sqlc.narg(repo_id)::uuid))))
+ORDER BY created_at, id;

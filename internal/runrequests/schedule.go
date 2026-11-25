@@ -93,6 +93,10 @@ type PictureSchedule struct {
 	AssistantLimit     bool `json:"assistant_limit,omitempty" doc:"The limit is the assistant's: its runs hold it to plain host patterns"`
 	AssistantExtraVars bool `json:"assistant_extra_vars,omitempty" doc:"The extra vars are the assistant's: its runs take every text in them literally, never as a template"`
 	Gone               bool `json:"gone,omitempty" doc:"The schedule no longer exists; the request cannot be approved"`
+	// OpenChangeReviews are the open reviews an assistant's change of the
+	// template (repository) it runs opened (final review 5): a note to the
+	// approver that it carries unreviewed changes.
+	OpenChangeReviews []string `json:"open_change_reviews,omitempty" doc:"Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet"`
 }
 
 // ScheduleState is one schedule in a picture. Secrets appear as the

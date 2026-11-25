@@ -120,6 +120,10 @@ func (f *fakeStore) PauseForReview(_ context.Context, orgID, id uuid.UUID) (sche
 	return s, true, nil
 }
 
+func (f *fakeStore) LockForReview(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, error) {
+	return f.Get(ctx, orgID, id)
+}
+
 func (f *fakeStore) ClearReasonAt(_ context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

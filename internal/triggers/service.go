@@ -59,6 +59,9 @@ type Store interface {
 	// enabled one, or one a person disabled); ok is false (the trigger as
 	// it is) when it was disabled for review already.
 	DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error)
+	// LockForReview reads the trigger with its row locked until the
+	// transaction ends (ErrNotFound).
+	LockForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, error)
 	// ClearReasonAt clears the reason at revision and leaves the trigger
 	// disabled (ErrRevisionMismatch).
 	ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error)
@@ -74,6 +77,8 @@ type Store interface {
 // decided by that person, in the update's transaction.
 type Reviews interface {
 	TriggerEnabled(ctx context.Context, orgID, triggerID, by uuid.UUID) error
+	// TriggerDeleted closes the open review of a deleted trigger.
+	TriggerDeleted(ctx context.Context, orgID, triggerID, by uuid.UUID) error
 }
 
 type TemplateChecker interface {
@@ -202,7 +207,10 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 // UpdateBy is Update by the person by. A person may enable a trigger an
 // assistant's change disabled for review (DisabledForReview) directly:
 // the update clears the reason and closes the review as decided by them,
-// in one transaction.
+// in one transaction. Never let that path run inside a transaction:
+// Store.InTx opens its own (db.WithWriteTx does not join an outer one),
+// which would split the work and could wait on the outer row lock; the
+// approval's ApplyTrigger refuses such an enable before calling Update.
 func (s *Service) UpdateBy(ctx context.Context, orgID, id, by uuid.UUID, revision int64, in Input) (Trigger, error) {
 	cur, err := s.d.Store.Get(ctx, orgID, id)
 	if err != nil {
@@ -333,7 +341,27 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f ListFilter) ([]Tr
 }
 
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.d.Store.Delete(ctx, orgID, id)
+	return s.DeleteBy(ctx, orgID, id, uuid.Nil)
+}
+
+// DeleteBy deletes the trigger as by and closes its open review in the same
+// transaction (final review 4).
+func (s *Service) DeleteBy(ctx context.Context, orgID, id, by uuid.UUID) error {
+	if s.reviews == nil {
+		return s.d.Store.Delete(ctx, orgID, id)
+	}
+	return s.d.Store.InTx(ctx, orgID, func(ctx context.Context) error {
+		if err := s.d.Store.Delete(ctx, orgID, id); err != nil {
+			return err
+		}
+		return s.reviews.TriggerDeleted(ctx, orgID, id, by)
+	})
+}
+
+// LockForReview reads the trigger with its row locked until the caller's
+// transaction ends (final review 3).
+func (s *Service) LockForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
+	return s.d.Store.LockForReview(ctx, orgID, id)
 }
 
 // maxDeliveriesLimit bounds Deliveries so a negative or absurdly large

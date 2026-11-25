@@ -33,6 +33,9 @@ type ReviewChange struct {
 // By is nil when no record names them.
 type PausedBefore struct {
 	By *uuid.UUID `json:"by,omitempty"`
+	// AssistantToken names the assistant token the stop was made with;
+	// By is then unset (the token's owner did not stop it).
+	AssistantToken string `json:"assistant_token,omitempty"`
 }
 
 // PictureReview is the picture of a review request: the paused schedule
@@ -61,7 +64,8 @@ type PictureReview struct {
 
 // PicturePausedBefore names who had stopped the item before the change.
 type PicturePausedBefore struct {
-	ByUserID string `json:"by_user_id,omitempty" doc:"The person who paused (disabled) it, when the activity log names them"`
+	ByUserID         string `json:"by_user_id,omitempty" doc:"The person who paused (disabled) it, when the activity log names them"`
+	ByAssistantToken string `json:"by_assistant_token,omitempty" doc:"The assistant token it was paused (disabled) with, when an assistant did it"`
 }
 
 // Review items.

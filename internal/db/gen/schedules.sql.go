@@ -573,6 +573,47 @@ func (q *Queries) LockDueSchedules(ctx context.Context, arg LockDueSchedulesPara
 	return items, nil
 }
 
+const lockScheduleForReview = `-- name: LockScheduleForReview :one
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason FROM schedules WHERE org_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockScheduleForReviewParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// The schedule, its row locked until the transaction ends: an assistant's
+// change decides pause or refresh on the row as it is committed, so a
+// person's concurrent resume is either seen or waits (final review 3).
+func (q *Queries) LockScheduleForReview(ctx context.Context, arg LockScheduleForReviewParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, lockScheduleForReview, arg.OrgID, arg.ID)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.TemplateID,
+		&i.Name,
+		&i.Mode,
+		&i.Cron,
+		&i.Simple,
+		&i.Timezone,
+		&i.Guards,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.Paused,
+		&i.NextRunAt,
+		&i.LastRunAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
+		&i.PausedReason,
+	)
+	return i, err
+}
+
 const pauseAllSchedules = `-- name: PauseAllSchedules :execrows
 UPDATE schedules SET paused = true, next_run_at = NULL, revision = revision + 1, updated_at = now()
 WHERE org_id = $1 AND NOT paused

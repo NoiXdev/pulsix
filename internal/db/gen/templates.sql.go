@@ -486,6 +486,47 @@ func (q *Queries) ListTemplateIDsForRepo(ctx context.Context, arg ListTemplateID
 	return items, nil
 }
 
+const listTemplateIDsReaching = `-- name: ListTemplateIDsReaching :many
+WITH RECURSIVE reaching(id) AS (
+  SELECT unnest($2::uuid[])
+  UNION
+  SELECT f.template_id FROM job_template_follow_ups f JOIN reaching r ON f.follow_up_template_id = r.id
+  WHERE f.org_id = $1
+)
+SELECT t.id FROM reaching JOIN job_templates t ON t.org_id = $1 AND t.id = reaching.id
+ORDER BY t.id
+`
+
+type ListTemplateIDsReachingParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+// The templates and every template that reaches one of them through
+// follow-ups (a run of it starts them, directly or along a chain): what an
+// assistant's change of them changes for unattended runs (final review 1).
+// The follow-up graph is acyclic (CycleError); UNION drops repeats anyway,
+// so even a cycle would end.
+func (q *Queries) ListTemplateIDsReaching(ctx context.Context, arg ListTemplateIDsReachingParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTemplateIDsReaching, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates WHERE org_id = $1 ORDER BY name
 `

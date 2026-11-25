@@ -9,6 +9,12 @@ RETURNING *;
 -- organization must be invisible, not merely forbidden.
 SELECT * FROM git_repos WHERE org_id = $1 AND id = $2;
 
+-- name: GetRepoForUpdate :one
+-- GetRepo with the row locked until the transaction ends: an update diffs
+-- against the row it overwrites (repositories have no revision; final
+-- review 7).
+SELECT * FROM git_repos WHERE org_id = $1 AND id = $2 FOR UPDATE;
+
 -- name: ListRepos :many
 SELECT * FROM git_repos WHERE org_id = $1 ORDER BY name;
 

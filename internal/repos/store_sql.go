@@ -61,6 +61,15 @@ func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Repo, error) {
 	return toRepo(row), nil
 }
 
+// GetForUpdate is Get with the row locked until the transaction ends.
+func (s *SQLStore) GetForUpdate(ctx context.Context, orgID, id uuid.UUID) (Repo, error) {
+	row, err := s.q.GetRepoForUpdate(ctx, gen.GetRepoForUpdateParams{OrgID: orgID, ID: id})
+	if err != nil {
+		return Repo{}, mapErr(err)
+	}
+	return toRepo(row), nil
+}
+
 func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Repo, error) {
 	rows, err := s.q.ListRepos(ctx, orgID)
 	if err != nil {
