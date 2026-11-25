@@ -58,12 +58,9 @@ function renderTrigger(
     [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: { ...d, picture: triggerPicture(trigger, top) },
     ...extra,
   });
-  return renderRoutes(
-    [{ path: '/runs/requests/$id', component: RunRequestDetailPage }],
-    `/o/acme/runs/requests/${RQ}`,
-    new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-    lang,
-  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = renderRoutes([{ path: '/runs/requests/$id', component: RunRequestDetailPage }], `/o/acme/runs/requests/${RQ}`, client, lang);
+  return { router, client };
 }
 
 describe('RunRequestDetailPage trigger requests (spec 2026-11-25 C)', () => {
@@ -122,7 +119,7 @@ describe('RunRequestDetailPage trigger requests (spec 2026-11-25 C)', () => {
   it('shows the secret once after the approval, with copy, and forgets it', async () => {
     const user = userEvent.setup();
     let approved: unknown;
-    renderTrigger(
+    const { client } = renderTrigger(
       { action: 'create', new: { ...current, revision: undefined } },
       'operator',
       {},
@@ -148,6 +145,9 @@ describe('RunRequestDetailPage trigger requests (spec 2026-11-25 C)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'I stored the secret' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.queryByText(SECRET)).not.toBeInTheDocument();
+    // The approval's answer is dropped with the dialog, not kept in the
+    // mutation cache while the page stays open.
+    await waitFor(() => expect(JSON.stringify(client.getMutationCache().getAll().map((m) => m.state.data))).not.toContain(SECRET));
   });
 
   it('says a rotation keeps a disabled trigger disabled', async () => {

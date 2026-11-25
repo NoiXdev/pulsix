@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/cronexpr"
@@ -23,8 +24,8 @@ func TestValidateScheduleUpdatePatches(t *testing.T) {
 		patch runrequests.SchedulePatch
 		check func(t *testing.T, w *scheduleWorld, s *runrequests.ScheduleSpec)
 	}{
-		{"nothing", runrequests.SchedulePatch{}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Mode != modeSimple || s.Cron != "" || s.Simple == nil || s.Simple.Kind != "daily" || s.Name != "nightly" {
+		{"only the name", runrequests.SchedulePatch{Name: &name}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
+			if s.Mode != modeSimple || s.Cron != "" || s.Simple == nil || s.Simple.Kind != "daily" || s.Name != name {
 				t.Fatalf("spec = %+v", s)
 			}
 		}},
@@ -53,7 +54,7 @@ func TestValidateScheduleUpdatePatches(t *testing.T) {
 				t.Fatalf("limit = %q", *s.Limit)
 			}
 		}},
-		{"the template stays", runrequests.SchedulePatch{}, func(t *testing.T, w *scheduleWorld, s *runrequests.ScheduleSpec) {
+		{"the template stays", runrequests.SchedulePatch{Name: &name}, func(t *testing.T, w *scheduleWorld, s *runrequests.ScheduleSpec) {
 			if s.TemplateID != w.s {
 				t.Fatalf("template = %v", s.TemplateID)
 			}
@@ -194,5 +195,33 @@ func TestApplyResumeOfAGoneSchedule(t *testing.T) {
 	res := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleResume}, w.sched)
 	if err := w.resolver().ApplySchedule(context.Background(), id(), res, runrequests.PictureSchedule{Action: runrequests.ScheduleResume}, id()); !errors.Is(err, runrequests.ErrInvalidInput) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// An update that leaves the schedule as it is (no field, or every field as
+// it already is, with the trust unchanged) is refused: there is nothing
+// for a person to approve.
+func TestScheduleUpdateThatChangesNothingIsRefused(t *testing.T) {
+	same, tz := "nightly", "Europe/Berlin"
+	for name, patch := range map[string]runrequests.SchedulePatch{
+		"no field":             {},
+		"the values it has":    {Name: &same, Timezone: &tz},
+		"its own simple shape": {Simple: &cronexpr.Simple{Kind: "daily", Time: "03:00"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newScheduleWorld()
+			_, _, _, err := w.resolver().ValidateSchedule(context.Background(), id(), w.sched, runrequests.ScheduleInput{Action: runrequests.ScheduleUpdate, ScheduleID: w.sched, Patch: &patch})
+			if !errors.Is(err, runrequests.ErrInvalidInput) || !strings.Contains(err.Error(), "nothing to change") {
+				t.Fatalf("err = %v, want nothing to change", err)
+			}
+		})
+	}
+	// The same limit set by the assistant changes its trust: that is a change.
+	w := newScheduleWorld()
+	limit := "web*"
+	if _, _, _, err := w.resolver().ValidateSchedule(context.Background(), id(), w.sched, runrequests.ScheduleInput{
+		Action: runrequests.ScheduleUpdate, ScheduleID: w.sched, Patch: &runrequests.SchedulePatch{Limit: &limit},
+	}); err != nil {
+		t.Fatalf("the assistant's own copy of the limit: %v", err)
 	}
 }

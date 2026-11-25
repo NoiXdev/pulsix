@@ -11,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/templates"
+	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
 
@@ -285,8 +286,28 @@ func TestAutomationRequestDisablesAndDeletesTriggers(t *testing.T) {
 	if f.storedTrigger(t, c.Trigger.ID.String()).Enabled {
 		t.Fatal("the trigger is still enabled")
 	}
-	if resp := f.s.AssistantDo(t, http.MethodPost, f.auto, path+"/rotate-secret", "", nil); resp.Code != http.StatusForbidden {
-		t.Fatalf("rotate-secret with automation.request = %d %s", resp.Code, resp.Body)
+	// Only the request routes change a trigger for automation.request:
+	// enabling it, rotating its secret or a test call directly are refused,
+	// with templates.read beside it too.
+	both := f.s.AssistantTokenFor(t, f.orgID, f.memberID(t, f.orgSlug+"-operator@example.test"), tenancy.RoleOperator,
+		tenancy.AreaAutomationRequest, tenancy.AreaTemplatesRead)
+	for _, tok := range []string{f.auto, both} {
+		for _, call := range []struct {
+			method, path string
+			body         any
+			ifMatch      string
+		}{
+			{http.MethodPut, path, map[string]any{"kind": "template_run", "template_id": f.templateID.String(), "name": c.Trigger.Name, "preset": "pulsix", "enabled": true}, `"2"`},
+			{http.MethodPost, path + "/rotate-secret", nil, ""},
+			{http.MethodPost, path + "/test", map[string]any{}, ""},
+		} {
+			if resp := f.s.AssistantDo(t, call.method, tok, call.path, call.ifMatch, call.body); resp.Code != http.StatusForbidden {
+				t.Fatalf("%s %s with automation.request = %d %s", call.method, call.path, resp.Code, resp.Body)
+			}
+		}
+	}
+	if f.storedTrigger(t, c.Trigger.ID.String()).Enabled {
+		t.Fatal("a refused call enabled the trigger")
 	}
 	if resp := f.s.AssistantDo(t, http.MethodDelete, f.auto, path, "", nil); resp.Code != http.StatusOK {
 		t.Fatalf("delete = %d %s", resp.Code, resp.Body)
@@ -307,5 +328,35 @@ func TestAutomationRequestDisablesAndDeletesTriggers(t *testing.T) {
 	// A viewer cannot.
 	if resp := postJSON(t, f.viewerC, f.s.HTTP.URL+f.orgPath()+"/triggers/"+c2.Trigger.ID.String()+"/disable", nil); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("a viewer's disable = %d", resp.StatusCode)
+	}
+}
+
+// An update request that changes nothing, of a trigger or a schedule, is
+// refused: there is nothing for a person to approve.
+func TestUpdateRequestThatChangesNothing(t *testing.T) {
+	f := newScheduleRequestFixture(t, "tr-noop")
+	c := f.createTrigger(t, func(in *triggers.Input) { in.Name = "hook" })
+	for name, body := range map[string]map[string]any{
+		"no field":       {"reason": "nothing"},
+		"the same value": {"name": "hook", "reason": "same"},
+	} {
+		_, raw := f.askTrigger(t, "/triggers/"+c.Trigger.ID.String()+"/update-requests", body, http.StatusUnprocessableEntity)
+		if !strings.Contains(raw, "nothing to change") {
+			t.Fatalf("%s: %s", name, raw)
+		}
+	}
+	resp := postJSON(t, f.adminC, f.schedulesURL(), f.scheduleBody("Nightly"))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	var sched struct {
+		Schedule struct {
+			ID string `json:"id"`
+		} `json:"schedule"`
+	}
+	decodeInto(t, resp, &sched)
+	got := f.s.AssistantDo(t, http.MethodPost, f.auto, f.orgPath()+"/schedules/"+sched.Schedule.ID+"/update-requests", "", map[string]any{"name": "Nightly", "reason": "same"})
+	if got.Code != http.StatusUnprocessableEntity || !strings.Contains(got.Body.String(), "nothing to change") {
+		t.Fatalf("schedule no-op = %d %s", got.Code, got.Body)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 
 	"github.com/google/uuid"
 
@@ -44,6 +45,9 @@ func (r *Resolver) ValidateSchedule(ctx context.Context, orgID, target uuid.UUID
 		ch.Spec = &spec
 		ch.AssistantLimit = (in.Patch.Limit != nil || cur.UntrustedLimit) && spec.Limit != nil
 		ch.AssistantExtraVars = (in.Patch.ExtraVars != nil || cur.UntrustedExtraVars) && len(spec.ExtraVars) > 0
+		if scheduleUnchanged(cur, ch) {
+			return ScheduleChange{}, uuid.Nil, 0, errNothingToChange
+		}
 	case ScheduleResume:
 		cur, err := r.src.Schedules.Get(ctx, orgID, target)
 		if err != nil {
@@ -110,6 +114,24 @@ func (r *Resolver) ApplySchedule(ctx context.Context, orgID uuid.UUID, req Reque
 		return scheduleErr(err)
 	}
 	return nil
+}
+
+// errNothingToChange refuses an update request that leaves its schedule or
+// trigger as it is: there is nothing for a person to approve.
+var errNothingToChange = fmt.Errorf("%w: nothing to change: the update leaves it as it is", ErrInvalidInput)
+
+// scheduleUnchanged reports whether the update ch leaves the schedule cur as
+// it is: the same settings (kept secrets compared masked) and the same
+// trust of its limit and extra vars. A difference only in how a value is
+// written (a number's form, a default spelled out) counts as a change, so a
+// request is never refused for one that is real.
+func scheduleUnchanged(cur schedules.Schedule, ch ScheduleChange) bool {
+	now := mergePatch(cur, SchedulePatch{})
+	next := *ch.Spec
+	now.ExtraVars, next.ExtraVars = maskKept(now.ExtraVars), maskKept(next.ExtraVars)
+	return reflect.DeepEqual(now, next) &&
+		ch.AssistantLimit == (cur.UntrustedLimit && now.Limit != nil) &&
+		ch.AssistantExtraVars == (cur.UntrustedExtraVars && len(now.ExtraVars) > 0)
 }
 
 // scheduleInput is the schedule service's input for a create or update.

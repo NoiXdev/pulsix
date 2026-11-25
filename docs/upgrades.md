@@ -935,7 +935,14 @@ given a new secret (`create_trigger`, `update_trigger`, `rotate_trigger_secret`;
 `delete_trigger`; both routes accept `automation.request` beside `templates.write` /
 `repos.write`). The trigger routes now check a trigger's kind permission against an
 assistant token's areas as well as its role. `list_triggers` and `get_trigger` read
-with `templates.read` (`repos.read` for a repository sync trigger). Approving a trigger
+with `templates.read` (`repos.read` for a repository sync trigger); over MCP both tools
+are listed only for `templates.read`, so a token with `repos.read` alone reads no
+trigger there. `automation.request` alone shows a trigger's or a schedule's current
+settings (never a secret) in the picture of a request to change it, and a repository's
+URL and branch in a repository sync trigger request's picture, without the read area
+of either. An update request that changes nothing (no field, or every field as it is,
+with the trust of a schedule's limit and extra vars unchanged) is refused with 422
+"nothing to change". Approving a trigger
 request needs `jobs.run` and `templates.write` (`repos.write` for a repository sync
 trigger); the approval creates, changes or rotates the trigger in the transaction that
 records the approval and returns a new secret once, in the approval's response only

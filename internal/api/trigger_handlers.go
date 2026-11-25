@@ -6,9 +6,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -97,14 +99,15 @@ func triggerPerm(kind triggers.Kind, write bool) tenancy.Permission {
 	return tenancy.PermTemplatesRead
 }
 
-// loadTrigger resolves the org, loads the trigger and then requires one of
-// the permissions perms names for the trigger's kind. The org is resolved
-// at the lowest level any trigger route admits (reading either kind, or
-// automation.request for the direct disable and delete); the kind's own
-// permission is then checked through requireOrg as well, so an assistant
-// token is held to its areas, not only to its role.
+// loadTrigger authorizes once, for any trigger kind the route admits
+// (perms of both kinds), loads the trigger, and then requires one of the
+// permissions perms names for the trigger's own kind of that same scope:
+// its role, and for an assistant token its areas too.
 func loadTrigger(ctx context.Context, deps Deps, org, rawID string, perms func(triggers.Kind) []tenancy.Permission) (Scope, triggers.Trigger, error) {
-	scope, err := requireOrgAny(ctx, deps, org, tenancy.PermTemplatesRead, tenancy.PermReposRead, tenancy.PermAutomationRequest)
+	admitted := append(perms(triggers.KindTemplateRun), perms(triggers.KindRepoSync)...)
+	slices.Sort(admitted)
+	admitted = slices.Compact(admitted)
+	scope, err := requireOrgAny(ctx, deps, org, admitted...)
 	if err != nil {
 		return Scope{}, triggers.Trigger{}, err
 	}
@@ -116,10 +119,28 @@ func loadTrigger(ctx context.Context, deps Deps, org, rawID string, perms func(t
 	if err != nil {
 		return Scope{}, triggers.Trigger{}, mapTriggersErr(ctx, err)
 	}
-	if scope, err = requireOrgAny(ctx, deps, org, perms(t.Kind)...); err != nil {
+	if err := scopeAllowsAny(scope, perms(t.Kind)); err != nil {
 		return Scope{}, triggers.Trigger{}, err
 	}
 	return scope, t, nil
+}
+
+// scopeAllowsAny is requireOrg's permission check, on a scope requireOrg
+// already resolved: one of perms by the role and, for an assistant token,
+// by its areas.
+func scopeAllowsAny(scope Scope, perms []tenancy.Permission) error {
+	refusal := huma.Error403Forbidden("insufficient role")
+	for _, p := range perms {
+		if !tenancy.Allows(scope.Role, p) {
+			continue
+		}
+		if scope.TokenKind == auth.TokenKindAssistant && !tenancy.AreasAllow(scope.Areas, p) {
+			refusal = huma.Error403Forbidden("the token's areas do not include " + string(p))
+			continue
+		}
+		return nil
+	}
+	return refusal
 }
 
 // triggerRead, triggerWrite and triggerStop are loadTrigger's permission

@@ -368,7 +368,17 @@ export function RunRequestDetailPage() {
       ) : (
         <RunPictureSections org={org} picture={picture} status={request.status} />
       )}
-      {drawn && <TriggerSecretDialog secret={drawn.secret} url={drawn.url} onClose={() => setDrawn(undefined)} />}
+      {drawn && (
+        <TriggerSecretDialog
+          secret={drawn.secret}
+          url={drawn.url}
+          onClose={() => {
+            setDrawn(undefined);
+            // The approval's answer held the secret too: drop it.
+            approve.reset();
+          }}
+        />
+      )}
       {!schedule && !trigger && picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"slices"
 
 	"github.com/google/uuid"
@@ -28,12 +29,13 @@ func (r *Resolver) ValidateTrigger(ctx context.Context, orgID, target uuid.UUID,
 	}
 	ch := TriggerChange{Action: in.Action}
 	var spec TriggerSpec
+	var cur triggers.Trigger
 	switch in.Action {
 	case TriggerCreate:
 		spec = *in.Spec
 	case TriggerUpdate:
-		cur, err := r.src.Triggers.Get(ctx, orgID, target)
-		if err != nil {
+		var err error
+		if cur, err = r.src.Triggers.Get(ctx, orgID, target); err != nil {
 			return TriggerChange{}, uuid.Nil, 0, triggerErr(err)
 		}
 		spec = mergeTriggerPatch(triggerSpecOf(cur), *in.Patch)
@@ -54,6 +56,9 @@ func (r *Resolver) ValidateTrigger(ctx context.Context, orgID, target uuid.UUID,
 		return TriggerChange{}, uuid.Nil, 0, triggerErr(err)
 	}
 	stored := triggerSpecOf(t)
+	if in.Action == TriggerUpdate && reflect.DeepEqual(stored, triggerSpecOf(cur)) {
+		return TriggerChange{}, uuid.Nil, 0, errNothingToChange
+	}
 	ch.Kind, ch.Spec = t.Kind, &stored
 	tmpl, rev, err := r.triggerTemplate(ctx, orgID, t.Kind, t.TemplateID)
 	return ch, tmpl, rev, err

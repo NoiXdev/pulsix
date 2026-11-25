@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -374,5 +375,24 @@ func TestUpdateKeepsADisabledTriggerDisabled(t *testing.T) {
 	ch, _, _, err = r.ValidateTrigger(context.Background(), id(), w.run, runrequests.TriggerInput{Action: runrequests.TriggerUpdate, TriggerID: w.run, Patch: &runrequests.TriggerPatch{Enabled: &on}})
 	if err != nil || ch.KeepEnabled || !ch.Spec.Enabled {
 		t.Fatalf("enable = %+v %v", ch, err)
+	}
+}
+
+// An update that leaves the trigger as it is is refused: there is nothing
+// for a person to approve.
+func TestTriggerUpdateThatChangesNothingIsRefused(t *testing.T) {
+	same, off := "deploy hook", false
+	cidrs := []string{"192.0.2.0/24"}
+	for name, patch := range map[string]runrequests.TriggerPatch{
+		"no field":          {},
+		"the values it has": {Name: &same, Enabled: &off, AllowCIDRs: &cidrs},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newTriggerWorld()
+			_, _, _, err := w.resolver().ValidateTrigger(context.Background(), id(), w.run, runrequests.TriggerInput{Action: runrequests.TriggerUpdate, TriggerID: w.run, Patch: &patch})
+			if !errors.Is(err, runrequests.ErrInvalidInput) || !strings.Contains(err.Error(), "nothing to change") {
+				t.Fatalf("err = %v, want nothing to change", err)
+			}
+		})
 	}
 }
