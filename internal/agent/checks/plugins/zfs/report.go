@@ -114,6 +114,13 @@ func (r *report) label(item, metric, label string) {
 	r.obs = append(r.obs, checks.LabelObservation(item, metric, label))
 }
 
+// absent reports each pool zpool list does not print: its zfs.state alone.
+func (r *report) absent(pools []absentPool) {
+	for _, p := range pools {
+		r.label(p.name, "zfs.state", p.state)
+	}
+}
+
 // pool reports every metric of one pool.
 func (r *report) pool(lp listedPool, statuses map[string]poolStatus, statusErr error, age scrubAge) {
 	name := lp.name

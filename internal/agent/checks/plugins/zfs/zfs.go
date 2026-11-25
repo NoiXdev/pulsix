@@ -75,8 +75,20 @@
 // for; the ones it did print stand. Error texts
 // quote at most the first line of stderr, cleaned and cut to 256 bytes.
 //
-// zfs.pools is the number of pools reported this round, after the "pools"
-// filter, on every run, also 0. A host without /dev/zfs (no ZFS module)
+// Pools named in the "pools" parameter (a list; only the imported pools it
+// names are reported, every imported pool without it) or in
+// "optional_pools" (a list too; it never narrows: with "pools" empty every
+// imported pool is reported besides the optional ones) that zpool list does
+// not print report exactly one observation, zfs.state: EXPORTED for a name
+// in optional_pools (also when in both lists), MISSING for one only in
+// pools. Labels are upper case like zpool's own. Neither is asked about
+// with zpool status or zfs get, and a failing zpool list, where nothing is
+// known to be absent, reports none of them. The scrub memory of a pool
+// that is absent is kept: it may come back.
+//
+// zfs.pools is the number of imported pools reported this round, after the
+// "pools" filter, on every run, also 0; EXPORTED and MISSING pools are not
+// counted. A host without /dev/zfs (no ZFS module)
 // or without zpool has zero pools and no error. A pool name the manager
 // would refuse as an item is skipped and named in the advisory error. Off
 // Linux the plugin reports one collection error on zfs.pools: not
@@ -88,6 +100,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
@@ -158,6 +171,10 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 	if err != nil {
 		return nil, fmt.Errorf("zfs: %w", err)
 	}
+	optional, _, err := checks.ParamStrings(params, "optional_pools")
+	if err != nil {
+		return nil, fmt.Errorf("zfs: %w", err)
+	}
 	if p.hasZFS == nil {
 		return poolCount(0), nil // a zero plugin: no ZFS to look at
 	}
@@ -188,9 +205,12 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 	if err != nil {
 		return hostError(fmt.Errorf("zfs: zpool list: %w", err))
 	}
-	pools, errs := selectPools(listed, filter)
+	pools, absent, errs := selectPools(listed, filter, optional)
 	if len(pools) == 0 {
-		return poolCount(0), errors.Join(errs...)
+		r := newReport(errs)
+		r.absent(absent)
+		r.obs = append(r.obs, checks.ValueObservation("", poolsMetric, 0))
+		return r.obs, r.err()
 	}
 
 	var statuses map[string]poolStatus
@@ -216,6 +236,7 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 	for _, lp := range pools {
 		r.pool(lp, statuses, statusErr, scrubAge{base: bases[lp.name], created: created, now: now})
 	}
+	r.absent(absent)
 	r.obs = append(r.obs, checks.ValueObservation("", poolsMetric, float64(len(pools))))
 	return r.obs, r.err()
 }
@@ -243,13 +264,30 @@ func poolCount(n int) []checks.Observation {
 	return []checks.Observation{checks.ValueObservation("", poolsMetric, float64(n))}
 }
 
-// selectPools keeps the listed pools the filter asks for (all without
-// one), each once, and skips a name the manager would refuse as an item.
-func selectPools(listed []listedPool, filter []string) ([]listedPool, []error) {
+// Labels of a named pool that zpool list does not print, upper case like
+// zpool's own health values.
+const (
+	stateExported = "EXPORTED" // absent, and named in optional_pools
+	stateMissing  = "MISSING"  // absent, and named only in pools
+)
+
+// absentPool is a pool named in a parameter that zpool list does not print.
+type absentPool struct{ name, state string }
+
+// selectPools keeps the listed pools asked for, each once, and skips a name
+// the manager would refuse as an item. Without any list every listed pool
+// is asked for; "pools" narrows to the pools it names (and the optional
+// ones); "optional_pools" alone narrows nothing. A named pool that is not
+// listed is returned as absent, in the order the names are given: EXPORTED
+// when optional (also when named in both lists), else MISSING.
+func selectPools(listed []listedPool, filter, optional []string) ([]listedPool, []absentPool, []error) {
 	var want map[string]bool
 	if len(filter) > 0 {
-		want = make(map[string]bool, len(filter))
+		want = make(map[string]bool, len(filter)+len(optional))
 		for _, s := range filter {
+			want[s] = true
+		}
+		for _, s := range optional {
 			want[s] = true
 		}
 	}
@@ -264,12 +302,37 @@ func selectPools(listed []listedPool, filter []string) ([]listedPool, []error) {
 		}
 		seen[lp.name] = true
 		if !checks.ReportableItem(lp.name) {
-			errs = append(errs, fmt.Errorf("zfs: pool %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", lp.name, checks.MaxItemLen))
+			errs = append(errs, unreportable(lp.name))
 			continue
 		}
 		pools = append(pools, lp)
 	}
-	return pools, errs
+
+	isOptional := make(map[string]bool, len(optional))
+	for _, s := range optional {
+		isOptional[s] = true
+	}
+	var absent []absentPool
+	for _, name := range append(slices.Clone(filter), optional...) {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if !checks.ReportableItem(name) {
+			errs = append(errs, unreportable(name))
+			continue
+		}
+		state := stateMissing
+		if isOptional[name] {
+			state = stateExported
+		}
+		absent = append(absent, absentPool{name: name, state: state})
+	}
+	return pools, absent, errs
+}
+
+func unreportable(name string) error {
+	return fmt.Errorf("zfs: pool %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", name, checks.MaxItemLen)
 }
 
 var _ checks.Plugin = zfsPlugin{}

@@ -270,8 +270,8 @@ func TestCollectCallerCanceled(t *testing.T) {
 	}
 }
 
-// TestCollectFilter: the pools parameter as raid's arrays: a listed pool
-// that does not exist reports nothing, a repeated one once.
+// TestCollectFilter: the pools parameter as raid's arrays: a repeated pool
+// reports once, a listed pool that does not exist reports only MISSING.
 func TestCollectFilter(t *testing.T) {
 	f := newFake(t, map[string]reply{
 		"zpool list":   {stdout: load(t, "list_two_pools.txt")},
@@ -283,10 +283,11 @@ func TestCollectFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, o := range obs {
-		if o.Item == "rpool" || o.Item == "nope" {
+		if o.Item == "rpool" || (o.Item == "nope" && o.Metric != "zfs.state") {
 			t.Fatalf("filtered pool reported: %+v", o)
 		}
 	}
+	wantLabel(t, obs, "nope", "zfs.state", "MISSING")
 	n := 0
 	for _, o := range obs {
 		if o.Item == "tank" && o.Metric == "zfs.state" {
@@ -301,9 +302,10 @@ func TestCollectFilter(t *testing.T) {
 	// Nothing left after the filter: no zpool status.
 	f = newFake(t, map[string]reply{"zpool list": {stdout: load(t, "list_two_pools.txt")}})
 	obs, err = testPlugin(f).Collect(context.Background(), map[string]any{"pools": []string{"nope"}})
-	if err != nil || len(obs) != 1 {
+	if err != nil || len(obs) != 2 {
 		t.Fatalf("obs=%+v err=%v", obs, err)
 	}
+	wantLabel(t, obs, "nope", "zfs.state", "MISSING")
 	wantValue(t, obs, "", "zfs.pools", 0)
 }
 
