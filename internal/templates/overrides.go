@@ -149,26 +149,11 @@ func SecretFields(sc *schema.Schema) map[string]bool {
 		return out
 	}
 	for _, f := range sc.Fields {
-		if containsSecret(f) {
+		if schema.HoldsSecret(f) {
 			out[f.Name] = true
 		}
 	}
 	return out
-}
-
-func containsSecret(f schema.Field) bool {
-	if f.Type == schema.TypeSecret {
-		return true
-	}
-	if f.Item != nil && containsSecret(*f.Item) {
-		return true
-	}
-	for _, sub := range f.Fields {
-		if containsSecret(sub) {
-			return true
-		}
-	}
-	return false
 }
 
 func secretProblems(fields []schema.Field, vars map[string]any) []schema.Problem {

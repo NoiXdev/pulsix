@@ -491,7 +491,13 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		actor := scope.UserID
-		created, err := deps.Jobs.RetryFailed(ctx, scope.OrgID, id, &actor)
+		// A retry of a run an approved run request started repeats the
+		// request's extra vars (spec 2026-11-25 A), checked again.
+		repeated, err := deps.RunRequests.RetryOverrides(ctx, scope.OrgID, id)
+		if err != nil {
+			return nil, mapRunRequestErr(ctx, err)
+		}
+		created, err := deps.Jobs.RetryFailedWith(ctx, scope.OrgID, id, &actor, repeated)
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}

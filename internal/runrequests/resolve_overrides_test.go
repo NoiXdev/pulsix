@@ -93,9 +93,8 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 			is: runrequests.ErrInvalidInput, msg: "environment"},
 		{name: "pulsix name", ov: vars(map[string]any{"pulsix_agent_enroll_token": "x"}), prep: noSchema,
 			is: runrequests.ErrInvalidInput, msg: "pulsix_agent_enroll_token"},
-		{name: "template with a malformed marker", ov: vars(map[string]any{"release": "1"}),
+		{name: "template with a malformed marker", ov: vars(map[string]any{"version": "1"}),
 			prep: func(w *world) {
-				noSchema(w)
 				tmpl := w.tmpls.fakeTemplates[w.x]
 				tmpl.ExtraVars = map[string]any{"cfg": map[string]any{"__ansible_unsafe": float64(1)}}
 				w.tmpls.fakeTemplates[w.x] = tmpl
@@ -222,7 +221,7 @@ func TestRunEnqueuesTheOverrides(t *testing.T) {
 	res := runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: rec, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
-		Commits: w.commits, SyncJobs: w.syncs,
+		Commits: w.commits, SyncJobs: w.syncs, InventorySecrets: w.invSecrets, PlaybookVars: w.pbVars,
 	})
 	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, Overrides: &runrequests.Overrides{
 		Check: true, Diff: true, ExtraVars: map[string]any{"version": "1.2"}, HostIDs: []uuid.UUID{w.h3, w.h1}, Limit: strPtr("web-1"),

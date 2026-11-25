@@ -22,6 +22,10 @@ var errNoOverrideValidator = errors.New("run request overrides: no validator")
 // errNoHost refuses overrides that leave the run without a host.
 var errNoHost = fmt.Errorf("%w: the requested hosts and limit leave no host of the template's targets", ErrInvalidInput)
 
+// errNoDeclaredVars refuses extra vars on a template without an extra vars
+// schema (final review I2, controller ruling).
+var errNoDeclaredVars = errors.New("this template declares no extra variables, so a run request cannot set any; declare them on the template first")
+
 // errLimitRule refuses a limit override; it says exactly what a run
 // request's limit may hold.
 var errLimitRule = fmt.Errorf("%w: limit: only host names and * wildcards, joined by , or :, with ! before a name to exclude it", ErrInvalidInput)
@@ -54,7 +58,9 @@ var pulsixMarkers = []string{"$sealed", "$secret"}
 //     variables, template globals, and playbook keywords too), since
 //     Ansible executes some of them whatever their value;
 //   - no extra var is or holds a secret (an assistant never sets one, spec
-//     2026-11-25);
+//     2026-11-25), and a template without an extra vars schema takes none
+//     at all (errNoDeclaredVars): without declared names nothing tells
+//     which name a secret elsewhere hides under;
 //   - no value holds an "__ansible…" key or nests past
 //     ansiblevars.MaxUntrustedDepth (ansiblevars.CheckUntrusted), so the
 //     run can carry it marked unsafe for Ansible, and no value holds a
@@ -90,6 +96,9 @@ func (r *Resolver) checkOverrides(ctx context.Context, orgID uuid.UUID, tmpl tem
 		}
 	}
 	if len(ov.ExtraVars) > 0 {
+		if tmpl.ExtraVarsSchema == nil {
+			return fmt.Errorf("%w: extra var %s: %w", ErrInvalidInput, slices.Min(slices.Collect(maps.Keys(ov.ExtraVars))), errNoDeclaredVars)
+		}
 		if err := checkTemplateMarkers(tmpl); err != nil {
 			return err
 		}
@@ -156,6 +165,9 @@ func (r *Resolver) runOverrides(ctx context.Context, orgID uuid.UUID, req Reques
 	}
 	if len(hosts) == 0 {
 		return nil, nil, errNoHost
+	}
+	if err := r.checkSecretShadows(ctx, orgID, tmpl, ov, hosts); err != nil {
+		return nil, nil, err
 	}
 	return out, hosts, nil
 }

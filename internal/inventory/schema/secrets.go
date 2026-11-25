@@ -386,3 +386,20 @@ func splitSegment(seg string) (string, []int, bool) {
 	}
 	return name, idxs, true
 }
+
+// HoldsSecret reports whether f is a secret or contains one at any depth
+// (an object's fields, a list's item).
+func HoldsSecret(f Field) bool {
+	if f.Type == TypeSecret {
+		return true
+	}
+	if f.Item != nil && HoldsSecret(*f.Item) {
+		return true
+	}
+	for _, sub := range f.Fields {
+		if HoldsSecret(sub) {
+			return true
+		}
+	}
+	return false
+}

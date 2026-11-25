@@ -34,7 +34,7 @@ type (
 		CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string, overrides *jobs.RunOverrides) ([]jobs.Job, error)
 	}
 	// CommitSource is the commit of a repository's last successful sync
 	// and why a run cannot be pinned to it (repos.Service).
@@ -45,7 +45,7 @@ type (
 	// a job's pin (jobs.Service).
 	SyncJobSource interface {
 		HasActiveSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
-		PinnedCommit(ctx context.Context, orgID, jobID uuid.UUID) (string, error)
+		PinnedCommit(ctx context.Context, orgID, jobID uuid.UUID) (jobs.Pin, error)
 	}
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
@@ -70,6 +70,16 @@ type (
 	FollowUpRunSource interface {
 		ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
 		ClearUnstarted(ctx context.Context, orgID, groupID uuid.UUID) error
+	}
+	// InventorySecretSource names the variables the inventory holds a
+	// secret under for some hosts (inventory.Service).
+	InventorySecretSource interface {
+		SecretVarNames(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[string]bool, error)
+	}
+	// PlaybookVarSource is a playbook's recorded variable source, the
+	// variables it declares (playbooks.Service).
+	PlaybookVarSource interface {
+		VarSource(ctx context.Context, orgID, playbookID uuid.UUID) (playbooks.VarSource, error)
 	}
 	// RunVarsSource reads the variable values a run would receive, secrets
 	// in the clear. The resolver feeds them only into the keyed vars
@@ -108,4 +118,9 @@ type Sources struct {
 	SyncJobs SyncJobSource
 	// RepoSyncs starts the sync a sync_first request waits for.
 	RepoSyncs RepoSyncer
+	// InventorySecrets and PlaybookVars name the secrets a run's other
+	// variable sources hold, which a request's extra vars may not replace
+	// (checkSecretShadows).
+	InventorySecrets InventorySecretSource
+	PlaybookVars     PlaybookVarSource
 }

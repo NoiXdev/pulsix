@@ -46,14 +46,15 @@ func (f fakeFollowUpRuns) ClearUnstarted(context.Context, uuid.UUID, uuid.UUID) 
 }
 
 type fakeJobRunner struct {
-	calls       *[]string
-	group       uuid.UUID
-	retryErr    error
-	enqueued    *jobs.RunRequest
-	retryList   *[]uuid.UUID
-	retryKey    string
-	retryCalled bool
-	retryPin    string
+	calls          *[]string
+	group          uuid.UUID
+	retryErr       error
+	enqueued       *jobs.RunRequest
+	retryList      *[]uuid.UUID
+	retryKey       string
+	retryCalled    bool
+	retryPin       string
+	retryOverrides *jobs.RunOverrides
 	// targetCalls counts RetryTargets.
 	targetCalls int
 }
@@ -77,9 +78,9 @@ func (f *fakeJobRunner) EnqueueRunWith(_ context.Context, _, _ uuid.UUID, req jo
 	return nil, nil
 }
 
-func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, pin string) ([]jobs.Job, error) {
+func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, pin string, ov *jobs.RunOverrides) ([]jobs.Job, error) {
 	*f.calls = append(*f.calls, "retry")
-	f.retryList, f.retryKey, f.retryCalled, f.retryPin = fu, key, true, pin
+	f.retryList, f.retryKey, f.retryCalled, f.retryPin, f.retryOverrides = fu, key, true, pin, ov
 	return nil, nil
 }
 
@@ -102,6 +103,7 @@ func newResolverFx(tmpls fakeTemplates, on bool, rows []chain.FollowUp, clearErr
 	fx.res = runrequests.NewResolver(runrequests.Sources{
 		Templates: tmpls, Jobs: fx.jobs, Credentials: fakeCreds{}, Vars: &runVars{}, VarsKey: testVarsKey,
 		Settings: fakeSettings{on}, FollowUpRuns: fakeFollowUpRuns{rows: rows, clearErr: clearErr, calls: &fx.calls},
+		SyncJobs: &fakeSyncJobs{pins: map[uuid.UUID]string{}},
 	})
 	return fx
 }
@@ -167,6 +169,7 @@ func TestPictureReadsEachFollowUpTemplateOnce(t *testing.T) {
 	fx.res = runrequests.NewResolver(runrequests.Sources{
 		Templates: src, Jobs: fx.jobs, Credentials: fakeCreds{}, Vars: &runVars{}, VarsKey: testVarsKey,
 		Settings: fakeSettings{true}, FollowUpRuns: fakeFollowUpRuns{calls: &fx.calls},
+		SyncJobs: &fakeSyncJobs{pins: map[uuid.UUID]string{}},
 	})
 
 	p, err := fx.res.Picture(context.Background(), fx.org, runrequests.Request{Kind: runrequests.KindRun, TemplateID: x})
@@ -264,7 +267,7 @@ func TestRunClearsUnstartedFollowUpsFirst(t *testing.T) {
 		})
 		t.Run("retry "+tc.name, func(t *testing.T) {
 			fx := newResolverFx(nil, false, nil, nil)
-			if err := fx.res.RetryFailed(context.Background(), fx.org, id(), actor, "k", id(), tc.in, ""); err != nil {
+			if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), actor, "k", id(), tc.in, ""); err != nil {
 				t.Fatal(err)
 			}
 			if len(fx.calls) != 2 || fx.calls[0] != "clear" || fx.calls[1] != "retry" {
@@ -287,10 +290,15 @@ func TestClearErrorAbortsTheEnqueue(t *testing.T) {
 	if err := fx.res.Run(context.Background(), fx.org, runrequests.Request{TemplateID: id()}, id(), "k", id(), nil); !errors.Is(err, boom) {
 		t.Fatalf("run: %v", err)
 	}
-	if err := fx.res.RetryFailed(context.Background(), fx.org, id(), id(), "k", id(), nil, ""); !errors.Is(err, boom) {
+	if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), id(), "k", id(), nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("retry: %v", err)
 	}
 	if fx.jobs.enqueued != nil || fx.jobs.retryCalled {
 		t.Fatal("enqueued despite the clear error")
 	}
+}
+
+// retryOf is a retry request of job.
+func retryOf(job uuid.UUID) runrequests.Request {
+	return runrequests.Request{Kind: runrequests.KindRetryFailed, JobID: &job}
 }

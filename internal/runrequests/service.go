@@ -195,28 +195,6 @@ type Waiting struct {
 	SyncError  string
 }
 
-// Pictures resolves what a request would run now.
-type Pictures interface {
-	Picture(ctx context.Context, orgID uuid.UUID, r Request) (Picture, error)
-}
-
-// Enqueuer starts what an approval allows, through the existing run paths.
-type Enqueuer interface {
-	// Run and RetryFailed enqueue into the run group group; Run enqueues
-	// the run request r asks for, with its host, overrides and pinned
-	// commit. RetryFailed pins the retry to pinnedCommit when its original
-	// job has none ("" for no pin).
-	Run(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
-	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error
-}
-
-// Validator checks a request the way the run and retry routes would check
-// the run itself, so a request that could never run is refused early.
-type Validator interface {
-	ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, ov *Overrides) (revision int64, err error)
-	ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (templateID uuid.UUID, revision int64, err error)
-}
-
 // Service is the run request service.
 type Service struct {
 	store     Store
@@ -277,8 +255,11 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		if in.JobID == nil {
 			return Request{}, fmt.Errorf("%w: a retry names its job", ErrInvalidInput)
 		}
-		tpl, rev, err := s.validator.ValidateRetry(ctx, orgID, *in.JobID)
+		tpl, group, rev, err := s.validator.ValidateRetry(ctx, orgID, *in.JobID)
 		if err != nil {
+			return Request{}, err
+		}
+		if r.Overrides, err = s.repeatedOverrides(ctx, orgID, group); err != nil {
 			return Request{}, err
 		}
 		r.TemplateID, r.JobID, r.TemplateRevision = tpl, in.JobID, rev

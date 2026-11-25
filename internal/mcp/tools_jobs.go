@@ -196,7 +196,7 @@ func jobTools() []toolDef {
 			tenancy.AreaJobsRequest, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, in.body())
 			}),
-		define("request_retry", "Request a retry", "Ask for a retry of a failed run's failed hosts. Nothing runs until a person approves it in Pulsix.",
+		define("request_retry", "Request a retry", "Ask for a retry of a failed run's failed hosts. A retry of a run that a request started repeats that request's extra vars (the request detail shows them under extra_vars_override); its hosts and limit are not repeated, the retry runs on the failed hosts. Nothing runs until a person approves it in Pulsix.",
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in retryRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/jobs/%s/retry-requests", in.JobID, map[string]any{"reason": in.Reason})
 			}),

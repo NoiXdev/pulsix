@@ -158,8 +158,8 @@ func TestEnqueueSyncOnceUnderConcurrency(t *testing.T) {
 // recordingWaiters is a jobs.SyncWaiters that records what it was told
 // and what the job's status was inside the finish's transaction.
 type recordingWaiters struct {
-	d      *db.DB
-	err    error
+	d   *db.DB
+	err error
 	// broken makes the waiter run a failing statement first, which
 	// aborts the transaction it runs in unless it runs under a savepoint.
 	broken bool

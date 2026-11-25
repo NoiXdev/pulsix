@@ -83,7 +83,7 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	group := r.ID
 	r.PinnedCommit = pin
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, idempotencyKey(r.ID), group, list, pin)
+		err = s.enqueuer.RetryFailed(ctx, orgID, r, by, idempotencyKey(r.ID), group, list, pin)
 	} else {
 		err = s.enqueuer.Run(ctx, orgID, r, by, idempotencyKey(r.ID), group, list)
 	}

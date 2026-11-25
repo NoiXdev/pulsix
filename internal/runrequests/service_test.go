@@ -202,17 +202,19 @@ func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request
 	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.retries, f.retryKeys, f.actor, f.group, f.list, f.retryPin = append(f.retries, jobID), append(f.retryKeys, key), actor, group, followUps, pinnedCommit
+	f.retries, f.retryKeys, f.actor, f.group, f.list, f.retryPin = append(f.retries, *r.JobID), append(f.retryKeys, key), actor, group, followUps, pinnedCommit
+	f.request = r
 	return nil
 }
 
 type fakeValidator struct {
 	err       error
 	template  uuid.UUID
+	group     uuid.UUID              // the retried job's run group
 	overrides *runrequests.Overrides // what the last ValidateRun was given
 }
 
@@ -221,8 +223,15 @@ func (f *fakeValidator) ValidateRun(_ context.Context, _ uuid.UUID, _ uuid.UUID,
 	return 7, f.err
 }
 
-func (f *fakeValidator) ValidateRetry(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, int64, error) {
-	return f.template, 7, f.err
+func (f *fakeValidator) ValidateRetry(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, uuid.UUID, int64, error) {
+	return f.template, f.group, 7, f.err
+}
+
+func (f *fakeValidator) RetryRunOverrides(_ context.Context, _, _ uuid.UUID, ov *runrequests.Overrides) (*jobs.RunOverrides, error) {
+	if ov == nil {
+		return nil, nil
+	}
+	return &jobs.RunOverrides{ExtraVars: ov.ExtraVars, Untrusted: true}, nil
 }
 
 // fakeSyncer starts the sync of a sync_first request: job of repo, or

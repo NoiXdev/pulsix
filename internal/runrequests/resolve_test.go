@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/render"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
@@ -61,6 +62,8 @@ type (
 		retryErr     error
 		checkErr     error
 		checked      []*uuid.UUID
+		// retryOverrides is what the last RetryFailedInto was given.
+		retryOverrides *jobs.RunOverrides
 	}
 	switchable struct {
 		on  bool
@@ -151,7 +154,8 @@ func (r *targetRunner) EnqueueRunWith(context.Context, uuid.UUID, uuid.UUID, job
 	return nil, nil
 }
 
-func (r *targetRunner) RetryFailedInto(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, string, uuid.UUID, *[]uuid.UUID, string) ([]jobs.Job, error) {
+func (r *targetRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, _ string, _ uuid.UUID, _ *[]uuid.UUID, _ string, ov *jobs.RunOverrides) ([]jobs.Job, error) {
+	r.retryOverrides = ov
 	return nil, nil
 }
 
@@ -187,6 +191,8 @@ type world struct {
 	commits              *fakeCommits
 	syncs                *fakeSyncJobs
 	repoSyncs            *fakeRepoSyncer
+	invSecrets           *fakeInventorySecrets
+	pbVars               *fakePlaybookVars
 }
 
 func newWorld() *world {
@@ -196,6 +202,7 @@ func newWorld() *world {
 	w.tmpls = failingTemplates{fail: map[uuid.UUID]error{}, fakeTemplates: fakeTemplates{
 		w.x: {ID: w.x, Name: "X", Revision: 3, Limit: "web", PlaybookID: w.pb, CredentialID: &w.cred,
 			ExtraVars:        map[string]any{"tag": "v1"},
+			ExtraVarsSchema:  &schema.Schema{Fields: []schema.Field{{Name: "tag", Type: schema.TypeString}, {Name: "version", Type: schema.TypeString}}},
 			VaultCredentials: []templates.VaultCredential{{CredentialID: w.tmplVault, Label: "prod"}},
 			FollowUps:        []templates.FollowUp{{TemplateID: w.y, Name: "Y"}}},
 		w.y: {ID: w.y, Name: "Y", Revision: 5},
@@ -219,6 +226,8 @@ func newWorld() *world {
 	w.commits = &fakeCommits{synced: repos.SyncedCommit{Commit: commitX}}
 	w.syncs = &fakeSyncJobs{pins: map[uuid.UUID]string{}}
 	w.repoSyncs = &fakeRepoSyncer{job: id()}
+	w.invSecrets = &fakeInventorySecrets{names: map[string]bool{}}
+	w.pbVars = &fakePlaybookVars{}
 	return w
 }
 
@@ -227,6 +236,7 @@ func (w *world) resolver() *runrequests.Resolver {
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
 		Commits: w.commits, SyncJobs: w.syncs, RepoSyncs: w.repoSyncs,
+		InventorySecrets: w.invSecrets, PlaybookVars: w.pbVars,
 	})
 }
 
@@ -424,7 +434,7 @@ func TestValidateRun(t *testing.T) {
 func TestValidateRetry(t *testing.T) {
 	ctx, org, job := context.Background(), id(), id()
 	w := newWorld()
-	if tmpl, rev, err := w.resolver().ValidateRetry(ctx, org, job); err != nil || tmpl != w.x || rev != 3 {
+	if tmpl, _, rev, err := w.resolver().ValidateRetry(ctx, org, job); err != nil || tmpl != w.x || rev != 3 {
 		t.Fatalf("retry = %s %d %v", tmpl, rev, err)
 	}
 	for _, tc := range []struct {
@@ -438,13 +448,13 @@ func TestValidateRetry(t *testing.T) {
 		{"job gone", jobs.ErrNotFound, runrequests.ErrNotFound},
 	} {
 		w.jobs.retryErr = tc.err
-		if _, _, err := w.resolver().ValidateRetry(ctx, org, job); !errors.Is(err, tc.is) {
+		if _, _, _, err := w.resolver().ValidateRetry(ctx, org, job); !errors.Is(err, tc.is) {
 			t.Fatalf("%s = %v, want %v", tc.name, err, tc.is)
 		}
 	}
 	w.jobs.retryErr = nil
 	delete(w.tmpls.fakeTemplates, w.x)
-	if _, _, err := w.resolver().ValidateRetry(ctx, org, job); !errors.Is(err, runrequests.ErrNotFound) {
+	if _, _, _, err := w.resolver().ValidateRetry(ctx, org, job); !errors.Is(err, runrequests.ErrNotFound) {
 		t.Fatalf("template gone = %v", err)
 	}
 }

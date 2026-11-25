@@ -71,23 +71,27 @@ func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID,
 	if len(kept) == 0 {
 		return 0, errNoHost
 	}
+	if err := r.checkSecretShadows(ctx, orgID, tmpl, ov, kept); err != nil {
+		return 0, err
+	}
 	return tmpl.Revision, nil
 }
 
-// ValidateRetry implements Validator with the retry's own checks.
-func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (uuid.UUID, int64, error) {
-	templateID, _, _, err := r.src.Jobs.RetryTargets(ctx, orgID, jobID)
+// ValidateRetry implements Validator with the retry's own checks; it also
+// returns the retried job's run group.
+func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (uuid.UUID, uuid.UUID, int64, error) {
+	templateID, group, _, err := r.src.Jobs.RetryTargets(ctx, orgID, jobID)
 	if err != nil {
 		if errors.Is(err, jobs.ErrNothingToRetry) || errors.Is(err, jobs.ErrNotRunning) || errors.Is(err, jobs.ErrInvalidInput) {
-			return uuid.Nil, 0, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+			return uuid.Nil, uuid.Nil, 0, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
 		}
-		return uuid.Nil, 0, mapNotFound(err)
+		return uuid.Nil, uuid.Nil, 0, mapNotFound(err)
 	}
 	tmpl, err := r.src.Templates.Get(ctx, orgID, templateID)
 	if err != nil {
-		return uuid.Nil, 0, mapNotFound(err)
+		return uuid.Nil, uuid.Nil, 0, mapNotFound(err)
 	}
-	return templateID, tmpl.Revision, nil
+	return templateID, group, tmpl.Revision, nil
 }
 
 // Run implements Enqueuer through the manual run path. The follow-ups the
@@ -119,13 +123,18 @@ func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor 
 
 // RetryFailed implements Enqueuer through the retry path, with Run's
 // follow-up handling and idempotency key; pinnedCommit pins a retry of a
-// job that has no pin of its own.
-func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
+// job that has no pin of its own. The extra vars the retry repeats are
+// checked again (RetryRunOverrides).
+func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
+	ov, err := r.RetryRunOverrides(ctx, orgID, *req.JobID, req.Overrides)
+	if err != nil {
+		return err
+	}
 	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
 		return fmt.Errorf("clear unstarted follow-ups: %w", err)
 	}
 	list := nonNil(followUps)
-	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, key, group, &list, pinnedCommit)
+	_, err = r.src.Jobs.RetryFailedInto(ctx, orgID, *req.JobID, &actor, key, group, &list, pinnedCommit, ov)
 	return err
 }
 
@@ -187,8 +196,8 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		})
 	}
 
-	if repo != nil {
-		if p.Commit, err = r.commit(ctx, orgID, req, *repo); err != nil {
+	if repo != nil || req.Kind == KindRetryFailed {
+		if p.Commit, err = r.commit(ctx, orgID, req, repo); err != nil {
 			return Picture{}, err
 		}
 	}
@@ -210,7 +219,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		return p, nil
 	}
 	var pinRepo *uuid.UUID
-	if p.Commit != nil {
+	if p.Commit != nil && repo != nil {
 		pinRepo = &repo.ID
 	}
 	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry, pinRepo); err != nil {

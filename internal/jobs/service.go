@@ -211,6 +211,10 @@ type Job struct {
 	// enqueue from RunRequest.PinnedCommit and never changed after; "" for
 	// an unpinned run and every other job.
 	PinnedCommit string
+	// PinnedRepoID is the repository PinnedCommit belongs to: the
+	// template's playbook repository at the enqueue (migration 00126); nil
+	// without a pin and for a job pinned before the column existed.
+	PinnedRepoID *uuid.UUID
 	ClaimedAt    *time.Time
 	StartedAt    *time.Time
 	FinishedAt   *time.Time
@@ -701,6 +705,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
 			HostsExcluded: excluded, CheckMode: req.Overrides.check(), DryRun: req.Overrides.dryRun(), PinnedCommit: req.PinnedCommit,
+			PinnedRepoID: pinnedRepo(req.PinnedCommit, req.pinnedRepo),
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
@@ -1155,7 +1160,15 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, "")
+	return s.RetryFailedWith(ctx, orgID, id, actor, nil)
+}
+
+// RetryFailedWith is RetryFailed carrying overrides: the retry of a run an
+// approved run request started repeats that request's extra vars (spec
+// 2026-11-25 A, final review M1), which the run request service hands over
+// already checked (runrequests.Service.RetryOverrides).
+func (s *Service) RetryFailedWith(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, overrides *RunOverrides) ([]Job, error) {
+	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, "", overrides)
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:
@@ -1171,8 +1184,13 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 // A retry runs the commit its original job ran (spec 2026-11-25 A): the
 // original's pin wins; pinnedCommit pins a retry of an unpinned job (an
 // approved retry request passes the commit its picture showed), and ""
-// leaves it on the branch tip as before.
-func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string) ([]Job, error) {
+// leaves it on the branch tip as before. overrides, when not nil, are the
+// retry's own (an approved run request's extra vars it repeats); a retry
+// never runs in check mode.
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string, overrides *RunOverrides) ([]Job, error) {
+	if overrides.check() {
+		return nil, ErrDryRunNotRetryable
+	}
 	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
 		return nil, err
@@ -1190,10 +1208,14 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
-	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, pinnedCommit)}
+	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, pinnedCommit), Overrides: overrides}
 	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}
+	if err := checkRetryPinRepo(j, tmpl); err != nil {
+		return nil, err
+	}
+	req.pinnedRepo = tmpl.PlaybookRepo
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, req, group, alreadyDone)
 }
 

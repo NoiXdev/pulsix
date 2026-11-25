@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -247,6 +248,17 @@ func TestRunRequestShowsFollowUps(t *testing.T) {
 // picture then shows them, and the route's refusals reach the assistant.
 func TestRequestRunPassesTheOverrides(t *testing.T) {
 	f := newOrgFixture(t)
+	// A run request sets only the extra vars its template declares.
+	cur, err := f.s.Deps.Templates.Get(f.scoped, f.org, f.template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Deps.Templates.Update(f.scoped, f.org, f.template, templates.UpdateInput{
+		Name: cur.Name, PlaybookID: cur.PlaybookID, Scope: cur.Scope,
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{Name: "release", Type: schema.TypeString}, {Name: "build", Type: schema.TypeFloat}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	cs := mustConnect(t, f.s, f.token)
 	var req struct {
 		RequestID string          `json:"request_id"`
