@@ -753,10 +753,18 @@ and agents are not affected.
   error as before). While a disk reads `standby`, its other metrics are held: the
   evaluation leaves their states exactly as they were (no new judgement, never stale,
   no fresh start), an open alert on one stays open and unchanged (no close, no
-  severity change, no notification), and the host's roll-up counts their last states —
-  a disk at crit keeps the host crit while it sleeps. A held value that was already
-  unknown when the disk fell asleep (its reading had gone stale or failed) does not
-  keep the host unknown. The host page keeps showing a held value with its last
+  severity change, so no new opening or close notification; an open alert that is
+  not acknowledged still follows its escalation steps), and the host's roll-up counts
+  their last states — a disk at crit keeps the host crit while it sleeps. A held value
+  that was already unknown when the disk fell asleep (its reading had gone stale or
+  failed) does not keep the host unknown. A held warn or crit stands only on the rule
+  that judged it: when that rule is deleted, disabled or no longer the metric's
+  winner, the value is judged ok at once and its alert closes resolved, as an awake
+  disk's would; an edit of that rule reaches the value when the disk wakes. A reading
+  taken after the disk was last reported asleep (a disk that then fails to answer
+  reports an error) is judged as usual, not held. When the disk wakes, a rule duration
+  ("for N minutes") that was counting when it fell asleep counts anew from the first
+  new reading. The host page keeps showing a held value with its last
   verdict and a "waiting while standby" marker instead of a stale one, and the
   effective rules keep listing it. The hourly metric expiry leaves held metrics alone,
   so a disk asleep for longer than the item expiry period keeps its readings and

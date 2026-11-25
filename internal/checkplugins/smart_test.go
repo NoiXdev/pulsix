@@ -45,13 +45,13 @@ func TestSmartAsksForMetricOfASleepingDisk(t *testing.T) {
 	}
 }
 
-// TestHeldByItemState: a metric the item's current labels keep from being
-// asked — a sleeping disk's temperature, an exported pool's capacity —
-// is held, not unasked: its last state and alert wait for the item to
-// leave that state. A metric the parameters switch off is not held,
-// whatever the labels say, and neither is the metric that carries the
-// state, or any metric of an item in another state.
-func TestHeldByItemState(t *testing.T) {
+// TestHeldOn: a metric the item's current labels keep from being asked — a
+// sleeping disk's temperature, an exported pool's capacity — is held, not
+// unasked, and HeldOn names the state it waits on: its last state and
+// alert wait for the item to leave that state. A metric the parameters
+// switch off is not held, whatever the labels say, and neither is the
+// metric that carries the state, or any metric of an item in another state.
+func TestHeldOn(t *testing.T) {
 	standby := map[string]string{"smart.power_mode": checkplugins.SmartPowerModeStandby}
 	tests := []struct {
 		name   string
@@ -59,24 +59,38 @@ func TestHeldByItemState(t *testing.T) {
 		params map[string]any
 		labels map[string]string
 		metric string
-		want   bool
+		want   string
 	}{
-		{"sleeping disk's temperature", "smart", nil, standby, "smart.temperature_celsius", true},
-		{"sleeping disk's power mode", "smart", nil, standby, "smart.power_mode", false},
-		{"active disk's temperature", "smart", nil, map[string]string{"smart.power_mode": checkplugins.SmartPowerModeActive}, "smart.temperature_celsius", false},
-		{"nothing known", "smart", nil, nil, "smart.temperature_celsius", false},
-		{"exported pool's capacity", "zfs", nil, map[string]string{"zfs.state": checkplugins.ZFSStateExported}, "zfs.capacity_pct", true},
-		{"missing pool's errors", "zfs", nil, map[string]string{"zfs.state": checkplugins.ZFSStateMissing}, "zfs.errors_read", true},
-		{"online pool's capacity", "zfs", nil, map[string]string{"zfs.state": "ONLINE"}, "zfs.capacity_pct", false},
-		{"a plugin without a held state", "disk", nil, standby, "disk.used_pct", false},
-		{"a metric the parameters switch off", "http", nil, nil, "http.body_match", false},
+		{"sleeping disk's temperature", "smart", nil, standby, "smart.temperature_celsius", "standby"},
+		{"sleeping disk's power mode", "smart", nil, standby, "smart.power_mode", ""},
+		{"active disk's temperature", "smart", nil, map[string]string{"smart.power_mode": checkplugins.SmartPowerModeActive}, "smart.temperature_celsius", ""},
+		{"nothing known", "smart", nil, nil, "smart.temperature_celsius", ""},
+		{"exported pool's capacity", "zfs", nil, map[string]string{"zfs.state": checkplugins.ZFSStateExported}, "zfs.capacity_pct", "EXPORTED"},
+		{"missing pool's errors", "zfs", nil, map[string]string{"zfs.state": checkplugins.ZFSStateMissing}, "zfs.errors_read", "MISSING"},
+		{"online pool's capacity", "zfs", nil, map[string]string{"zfs.state": "ONLINE"}, "zfs.capacity_pct", ""},
+		{"a plugin without a held state", "disk", nil, standby, "disk.used_pct", ""},
+		{"a metric the parameters switch off", "http", nil, nil, "http.body_match", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := checkplugins.HeldByItemState(tc.plugin, tc.params, tc.labels, tc.metric); got != tc.want {
-				t.Fatalf("HeldByItemState(%s, %v, %q) = %v, want %v", tc.plugin, tc.labels, tc.metric, got, tc.want)
+			if got := checkplugins.HeldOn(tc.plugin, tc.params, tc.labels, tc.metric); got != tc.want {
+				t.Fatalf("HeldOn(%s, %v, %q) = %q, want %q", tc.plugin, tc.labels, tc.metric, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestNoPluginBothSwitchesOffAndHoldsMetrics: the metric expiry applies
+// HeldWhile in SQL from the state label alone (HeldStates), without the
+// check's parameters, so a plugin whose parameters also switch metrics off
+// (MetricAsked) would see a switched-off metric held for ever there while
+// the evaluation calls it unasked. Until the SQL learns the parameters, no
+// descriptor may set both.
+func TestNoPluginBothSwitchesOffAndHoldsMetrics(t *testing.T) {
+	for _, d := range checkplugins.All() {
+		if d.MetricAsked != nil && d.HeldWhile != nil {
+			t.Errorf("%s sets both MetricAsked and HeldWhile", d.Name)
+		}
 	}
 }
 

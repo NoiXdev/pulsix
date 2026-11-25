@@ -72,11 +72,15 @@ type TupleSnapshot struct {
 	At       time.Time     // when the agent measured it
 	Interval time.Duration // the check's resolved interval
 	// Held marks a tuple its check does not ask for only because of its
-	// item's current state (checkplugins.HeldByItemState: a sleeping
+	// item's current state (checkplugins.HeldOn: a sleeping
 	// disk's other metrics, an exported pool's): its Interval is zero like
 	// any tuple nobody asks for, but its stored state is held rather than
 	// left unmeasured (see the held skip in Evaluate).
 	Held bool
+	// Resumed marks a tuple asked again because its item left the state
+	// that held it (the item's previous labels would have held it): its
+	// stored candidate is not carried (the held skip in Evaluate).
+	Resumed bool
 }
 
 // WindowRequest is one window aggregate to fetch, addressed by item rather
@@ -294,35 +298,24 @@ func Evaluate(s Snapshot) Result {
 	)
 
 	for _, ts := range s.Tuples {
+		// held (held.go): a tuple waiting on its item's state is not
+		// judged unless the rule that judged it is gone.
+		resolved := false
 		if ts.Held {
-			// A tuple held on its item's state (TupleSnapshot.Held, backlog
-			// 3.9b ruling): the agent reports nothing but the item's state
-			// while the item is in it — a disk it leaves asleep, a pool
-			// that is exported — so the tuple's last reading is not stale
-			// and its stored state is still the last thing known about it.
-			// It is handled like a frozen client, one tuple at a time: no
-			// judgement, no write, not Unmeasured (its alert must neither
-			// close nor move), and its stored state stands in the roll-up
-			// as it is. When the item leaves the state, the tuple is
-			// measured again and judged on that same stored state — no
-			// fresh start, since nothing went unmeasured. Three things
-			// still apply: an operator's ignore governs the item whatever
-			// its state (Dropped, as below); a row marked unmeasured is no
-			// state to hold (backlog 4.42); and a stored unknown is nothing
-			// known — its reading went stale or failed before the item
-			// entered the state, the staleness a held tuple is exempt from —
-			// so it stands unwritten but keeps no host unknown.
-			if prev, seen := s.Previous[ts.Tuple]; seen {
-				switch {
-				case s.Ignored[itemKeyOf(ts.Tuple)]:
-					dropped = append(dropped, ts.Tuple)
-				case !prev.unmeasuredSinceJudged() && prev.State != StateUnknown:
-					standing = append(standing, prev)
-				}
+			switch heldFateOf(s, ts, byTuple[ts.Tuple]) {
+			case heldDropped:
+				dropped = append(dropped, ts.Tuple)
+				continue
+			case heldStanding:
+				standing = append(standing, s.Previous[ts.Tuple])
+				continue
+			case heldResolved:
+				resolved = true
+			case heldNothing:
+				continue
 			}
-			continue
 		}
-		if !measured(ts) {
+		if !resolved && !measured(ts) {
 			// A tuple whose check has no resolved interval is one nothing
 			// asks anyone to measure any more: its definition is gone, and
 			// the value on hand is frozen at whatever it was when it went.
@@ -359,7 +352,7 @@ func Evaluate(s Snapshot) Result {
 			continue
 		}
 
-		if s.Ignored[itemKeyOf(ts.Tuple)] {
+		if !resolved && s.Ignored[itemKeyOf(ts.Tuple)] {
 			// An operator's decision governs an item, so every metric of it
 			// shares the fate (Snapshot.Ignored's own doc comment): the
 			// tuple is skipped exactly like one with no resolved interval —
@@ -402,7 +395,16 @@ func Evaluate(s Snapshot) Result {
 			prev = TupleState{Tuple: ts.Tuple, State: StateOK, Since: s.Now}
 		}
 
-		next, ripensAt := decide(s, ts, inputs[itemKeyOf(ts.Tuple)], byTuple[ts.Tuple], prev)
+		if ts.Resumed {
+			prev = withoutCandidate(prev)
+		}
+		var next TupleState
+		var ripensAt *time.Time
+		if resolved {
+			next = resolveHeld(s, ts)
+		} else {
+			next, ripensAt = decide(s, ts, inputs[itemKeyOf(ts.Tuple)], byTuple[ts.Tuple], prev)
+		}
 
 		// Since marks when the current state started, so it moves only when
 		// the state does: a re-confirmed state keeps the moment it began.

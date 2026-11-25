@@ -50,7 +50,7 @@ type CheckContext struct {
 	// labels are the item's current discrete readings without an error,
 	// metric name to label (itemLabels), nil when it has none — and nil
 	// labels never keep a metric from being asked
-	// (checkplugins.HeldByItemState), which is how held tells the two
+	// (checkplugins.HeldOn), which is how held tells the two
 	// apart. It is consulted for every item, the whole-host item ""
 	// included. A key with no predicate asks for every metric.
 	AsksMetric map[string]func(labels map[string]string, metric string) bool
@@ -79,7 +79,7 @@ func (c CheckContext) interval(t Tuple, labels map[string]string) time.Duration 
 }
 
 // held reports whether tuple t, of an item that reads labels now, is
-// held on that state (TupleSnapshot.Held, checkplugins.HeldByItemState):
+// held on that state (TupleSnapshot.Held, checkplugins.HeldOn):
 // its check still resolves and still asks for its item, and for its
 // metric while nothing is known of the item's state, but not while the
 // item reads labels. A metric not asked for any other reason is not held.
@@ -177,13 +177,13 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 			// evaluation entirely (Evaluate's own skip). The current row
 			// itself is never deleted — that is v0.3b-1's ruling, and this
 			// is the read side of it.
-			Interval: checkCtx.interval(t, labels[itemKeyOf(t)]),
+			Interval: checkCtx.interval(t, labels.of(t, r.At)),
 		}
 		// A metric not asked only because of its item's present state (a
 		// sleeping disk's, an exported pool's) is held, not unmeasured: its
-		// stored state stands, its alert stays (the held skip in Evaluate).
+		// stored state stands, its alert stays (held.go).
 		if tuples[i].Interval == 0 {
-			tuples[i].Held = checkCtx.held(t, labels[itemKeyOf(t)])
+			tuples[i].Held = checkCtx.held(t, labels.of(t, r.At))
 		}
 		// Only a reading still asked for is evidence the check still
 		// reports on its item — the same set the host page measures
@@ -248,6 +248,7 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 		st := toTupleState(row)
 		previous[st.Tuple] = st
 	}
+	markResumed(tuples, previous, checkCtx)
 
 	countRows, err := q.CountStateChangesInFlappingWindow(ctx, gen.CountStateChangesInFlappingWindowParams{
 		OrgID: d.OrgID, HostID: d.HostID, FlappingWindow: toInterval(flappingWindow),
@@ -381,23 +382,50 @@ func textOf(s *string) string {
 
 // itemLabels is what each of a host's items reads now (backlog 3.74): the
 // labels of its current discrete readings without an error, metric name
-// to label — checks.CurrentLabels' rule over the rows Load reads, the one
-// the host page applies (GET /hosts/{id}/checks, stillAsked); keep both in
-// step (this package never imports internal/checks). An item with no such
-// reading has none.
-func itemLabels(current []gen.CheckCurrent) map[ItemKey]map[string]string {
-	out := map[ItemKey]map[string]string{}
+// to label, and when the newest of them was taken — checks.CurrentLabels'
+// rule over the rows Load reads, the one the host page applies (GET
+// /hosts/{id}/checks, stillAsked); keep both in step (this package never
+// imports internal/checks). An item with no such reading has none.
+func itemLabels(current []gen.CheckCurrent) itemStates {
+	out := itemStates{}
 	for _, r := range current {
 		if r.Label == nil || textOf(r.Error) != "" {
 			continue
 		}
 		k := ItemKey{CheckKey: r.CheckKey, Item: r.Item}
-		if out[k] == nil {
-			out[k] = map[string]string{}
+		st := out[k]
+		if st.labels == nil {
+			st.labels = map[string]string{}
 		}
-		out[k][r.Metric] = *r.Label
+		st.labels[r.Metric] = *r.Label
+		if r.At.After(st.at) {
+			st.at = r.At
+		}
+		out[k] = st
 	}
 	return out
+}
+
+// itemStates is itemLabels' result, per item.
+type itemStates map[ItemKey]itemState
+
+type itemState struct {
+	labels map[string]string
+	at     time.Time // the newest of the labels' readings
+}
+
+// of is the labels a reading of t taken at `at` is asked against: its
+// item's, unless the reading is newer than every one of them — a reading
+// taken after the item's state was last reported proves the item no
+// longer reports only its state (a disk last seen asleep that now fails to
+// answer), so its item's state does not hold it (backlog 3.9b review).
+// Readings of one round share their moment and are held as before.
+func (s itemStates) of(t Tuple, at time.Time) map[string]string {
+	st := s[itemKeyOf(t)]
+	if at.After(st.at) {
+		return nil
+	}
+	return st.labels
 }
 
 // seenItems derives Discover's own input from a host's reported tuples:

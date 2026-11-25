@@ -68,6 +68,14 @@ func TestHostChecksHoldsAnAbsentPoolsOtherMetrics(t *testing.T) {
 	if got := listed(t); !equalStrings(got, want) {
 		t.Fatalf("values after the pool is back = %v, want %v", got, want)
 	}
+
+	// A reading taken after the pool's MISSING state proves it reports
+	// more than its state: it is an ordinary value, not held.
+	f.record(t, obs("gone", "zfs.capacity_pct", now.Add(time.Second), floatPtr(13), nil))
+	want[2] = `gone zfs.capacity_pct "" false`
+	if got := listed(t); !equalStrings(got, want) {
+		t.Fatalf("values after a newer reading = %v, want %v", got, want)
+	}
 }
 
 // TestEffectiveRulesKeepsAnExportedPoolsOtherMetrics (backlog 3.74, 3.9b

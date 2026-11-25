@@ -52,7 +52,7 @@ type MetricNewest struct {
 	Metric, Item time.Time
 	Siblings     int
 	// Held reports that the metric is held on its item's current state
-	// (checkplugins.HeldByItemState: a sleeping disk's, an exported
+	// (checkplugins.HeldOn: a sleeping disk's, an exported
 	// pool's): the item's error-free reading of a HeldState's metric is one
 	// of its holding labels, and the metric is not that state's own.
 	Held bool

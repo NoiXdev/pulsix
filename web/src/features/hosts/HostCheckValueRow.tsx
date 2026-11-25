@@ -156,8 +156,9 @@ export function HostCheckValueRow({
         {/* backlog 3.9b: the item reads a state in which the agent reports
             nothing else (a disk left asleep, an exported pool); the server
             keeps this value and its verdict as they were and never calls
-            them stale, and the row says what they wait on. */}
-        {value.held_while && (
+            them stale, and the row says what they wait on — unless an
+            item decision ignores it, which its neighbours defer to too. */}
+        {!value.ignored && value.held_while && (
           <span title={t.hosts.value.heldWhileTitle}>
             <Pill tone="unknown">{t.hosts.value.heldWhile(value.held_while)}</Pill>
           </span>

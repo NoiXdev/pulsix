@@ -1,6 +1,10 @@
 package checks
 
-import "github.com/noixdev/pulsix/internal/checkplugins"
+import (
+	"time"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
+)
 
 // AsksForItem reports whether d still asks the host for `item`.
 //
@@ -76,17 +80,23 @@ func (r Resolved) HeldOn(labels map[string]string, metric string) string {
 }
 
 // ItemLabels is what each item reads now (CurrentLabels).
-type ItemLabels map[itemOfKey]map[string]string
+type ItemLabels map[itemOfKey]itemLabels
 
 // itemOfKey is one item of one check key.
 type itemOfKey struct{ checkKey, item string }
 
+// itemLabels is one item's labels and when the newest of them was taken.
+type itemLabels struct {
+	labels map[string]string
+	at     time.Time
+}
+
 // CurrentLabels collects, per check key and item, the labels of values'
 // current discrete readings without an error, metric name to label — the
-// item's present state AsksForMetric reads (backlog 3.74). A numeric
-// value or an error carries none. internal/rules' itemLabels applies the
-// same rule for the evaluation (rules never imports checks); keep both in
-// step.
+// item's present state AsksForMetric reads (backlog 3.74) — and when the
+// newest of them was taken (For). A numeric value or an error carries
+// none. internal/rules' itemLabels applies the same rule for the
+// evaluation (rules never imports checks); keep both in step.
 func CurrentLabels(values []Current) ItemLabels {
 	out := ItemLabels{}
 	for _, v := range values {
@@ -94,15 +104,33 @@ func CurrentLabels(values []Current) ItemLabels {
 			continue
 		}
 		k := itemOfKey{checkKey: v.CheckKey, item: v.Item}
-		if out[k] == nil {
-			out[k] = map[string]string{}
+		st := out[k]
+		if st.labels == nil {
+			st.labels = map[string]string{}
 		}
-		out[k][v.Metric] = *v.Label
+		st.labels[v.Metric] = *v.Label
+		if v.At.After(st.at) {
+			st.at = v.At
+		}
+		out[k] = st
 	}
 	return out
 }
 
+// For is the labels v is asked against: its item's (Of), unless v was
+// taken after every one of them — a reading newer than the item's state
+// proves the item no longer reports only its state (a disk last seen
+// asleep that now fails to answer), so that state holds nothing of it
+// (backlog 3.9b review). Readings of one round share their moment.
+func (l ItemLabels) For(v Current) map[string]string {
+	st := l[itemOfKey{checkKey: v.CheckKey, item: v.Item}]
+	if v.At.After(st.at) {
+		return nil
+	}
+	return st.labels
+}
+
 // Of is checkKey's item's labels, nil when it has none.
 func (l ItemLabels) Of(checkKey, item string) map[string]string {
-	return l[itemOfKey{checkKey: checkKey, item: item}]
+	return l[itemOfKey{checkKey: checkKey, item: item}].labels
 }

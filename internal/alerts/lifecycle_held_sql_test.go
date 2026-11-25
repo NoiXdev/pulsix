@@ -36,6 +36,8 @@ type heldRig struct {
 	d         *db.DB
 	org, host uuid.UUID
 	checks    *checks.Service
+	rules     *rules.Service
+	ruleID    uuid.UUID
 	ticker    *rules.Ticker
 	now       time.Time
 	scopedCtx context.Context //nolint:containedctx // the fixture's org-bound context
@@ -58,7 +60,7 @@ func newHeldRig(t *testing.T, plugin string, params map[string]any, item, metric
 		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
 	rulesSvc := rules.NewService(rules.NewSQLStore(d))
 	r := &heldRig{
-		d: d, org: org, host: host, checks: checksSvc, plugin: plugin,
+		d: d, org: org, host: host, checks: checksSvc, rules: rulesSvc, plugin: plugin,
 		now:     time.Now().UTC().Truncate(time.Microsecond),
 		subject: alerts.Subject{HostID: host, Scope: alerts.ScopeTuple, CheckKey: plugin, Item: item, Metric: metric},
 	}
@@ -77,13 +79,15 @@ func newHeldRig(t *testing.T, plugin string, params map[string]any, item, metric
 		t.Fatalf("create %s definition: %v", plugin, err)
 	}
 	r.defID = def.ID
-	if _, err := rulesSvc.Create(r.scopedCtx, org, rules.RuleInput{
+	rule, err := rulesSvc.Create(r.scopedCtx, org, rules.RuleInput{
 		Name: metric + " high", Enabled: true, Scope: rules.ScopeOrg,
 		Metric: metric, Severity: rules.SeverityCrit, Mode: "form",
 		Form: &rules.Form{Metric: metric, Op: ">", Value: threshold},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
+	r.ruleID = rule.ID
 	return r
 }
 
@@ -285,5 +289,33 @@ func TestASleepingDiskTakenOffTheListClosesItsAlertStale(t *testing.T) {
 	got := r.alertsOnSubject(t)
 	if len(got) != 1 || got[0].id != id || !got[0].closed || got[0].reason == nil || *got[0].reason != string(alerts.Stale) {
 		t.Fatalf("alerts after the disk left the list = %+v, want %s closed stale", got, id)
+	}
+}
+
+// A held crit whose rule the operator deletes is no longer held at crit:
+// its alert closes resolved, as an awake disk's would, and the roll-up
+// drops it, although the disk sleeps on.
+func TestASleepingDisksDeletedRuleResolvesItsAlert(t *testing.T) {
+	r := newHeldRig(t, checks.PluginSmart, nil, "/dev/sdd", "smart.reallocated_sectors", 0)
+	r.report(t, lbl("smart.power_mode", checkplugins.SmartPowerModeActive), num("smart.reallocated_sectors", 3))
+	r.tick(t)
+	id := r.oneOpenAlert(t, "opened")
+	r.advance(time.Minute)
+	r.report(t, lbl("smart.power_mode", checkplugins.SmartPowerModeStandby))
+	r.tick(t)
+	r.oneOpenAlert(t, "asleep")
+
+	if err := r.rules.Delete(r.scopedCtx, r.org, r.ruleID); err != nil {
+		t.Fatalf("delete rule: %v", err)
+	}
+	r.advance(time.Minute)
+	r.report(t, lbl("smart.power_mode", checkplugins.SmartPowerModeStandby))
+	r.tick(t)
+	got := r.alertsOnSubject(t)
+	if len(got) != 1 || got[0].id != id || !got[0].closed || got[0].reason == nil || *got[0].reason != string(alerts.Resolved) {
+		t.Fatalf("alerts after the rule was deleted = %+v, want %s closed resolved", got, id)
+	}
+	if state := r.hostState(t); state != string(rules.StateOK) {
+		t.Fatalf("roll-up = %s, want ok once nothing holds the crit", state)
 	}
 }

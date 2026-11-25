@@ -1,6 +1,9 @@
 package checks
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A current value survives an operator narrowing a check's parameters only
 // if the definition still asks for that item. Nothing ever deletes a
@@ -163,5 +166,31 @@ func TestCurrentLabels(t *testing.T) {
 	}
 	if l := got.Of("disk", "/"); l != nil {
 		t.Errorf("an unknown item = %v, want nil", l)
+	}
+}
+
+// TestCurrentLabelsFor (backlog 3.9b review): a reading is asked against
+// its item's labels unless it was taken after every one of them — a
+// reading newer than the item's state proves the item no longer reports
+// only its state. A reading of the same round shares their moment.
+func TestCurrentLabelsFor(t *testing.T) {
+	asleep := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	standby := "standby"
+	got := CurrentLabels([]Current{
+		{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.power_mode", Label: &standby, At: asleep},
+	})
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"an older reading", asleep.Add(-time.Hour), true},
+		{"a reading of the same round", asleep, true},
+		{"a newer reading", asleep.Add(time.Second), false},
+	} {
+		l := got.For(Current{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.passed", At: tc.at})
+		if (l["smart.power_mode"] == standby) != tc.want {
+			t.Errorf("%s: labels = %v, want the item's = %v", tc.name, l, tc.want)
+		}
 	}
 }

@@ -393,7 +393,7 @@ func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []r
 		if c.Item != "" && !r.AsksForItem(c.Item) {
 			continue
 		}
-		itemLabels := labels.Of(c.CheckKey, c.Item)
+		itemLabels := labels.For(c)
 		if !r.AsksForMetric(itemLabels, c.Metric) && r.HeldOn(itemLabels, c.Metric) == "" {
 			continue
 		}

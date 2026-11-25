@@ -172,6 +172,103 @@ func TestEvaluateHeld(t *testing.T) {
 				NextDue: at(90),
 			},
 		},
+		{
+			// The operator deleted or disabled the rule that put the held
+			// tuple at crit (its row's rule_id is set to NULL, or names a
+			// rule no longer in force): nothing holds it there any more, so
+			// it resolves as an awake tuple would — judged ok on no rule,
+			// a transition written, the alert closing resolved — and the
+			// roll-up drops the crit. From then on it holds that ok.
+			name: "a held crit whose rule is gone resolves to ok",
+			snap: rules.Snapshot{
+				Now:       at(60),
+				Tuples:    []rules.TupleSnapshot{held(sectorsT, 3, at(1))},
+				Effective: nil,
+				Previous:  prev(crit),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: sectorsT, State: rules.StateOK, Since: at(60), LastValue: ptr(3.0), EvaluatedAt: at(60),
+				}},
+				Changes: []rules.Change{{At: at(60), Tuple: sectorsT, From: rules.StateCrit, To: rules.StateOK, Value: ptr(3.0)}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(60), EvaluatedAt: at(60)},
+				NextDue: at(60).Add(15 * time.Second),
+			},
+		},
+		{
+			name: "a held crit whose rule_id was cleared resolves to ok",
+			snap: rules.Snapshot{
+				Now:       at(60),
+				Tuples:    []rules.TupleSnapshot{held(sectorsT, 3, at(1))},
+				Effective: []rules.Effective{eff(sectorsCrit, sectorsT)},
+				Previous:  prev(was(sectorsT, rules.StateCrit, at(0))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: sectorsT, State: rules.StateOK, Since: at(60), LastValue: ptr(3.0), EvaluatedAt: at(60),
+				}},
+				Changes: []rules.Change{{At: at(60), Tuple: sectorsT, From: rules.StateCrit, To: rules.StateOK, Value: ptr(3.0)}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(60), EvaluatedAt: at(60)},
+				NextDue: at(60).Add(15 * time.Second),
+			},
+		},
+		{
+			// Another rule now wins for the tuple: the one that judged it no
+			// longer applies, and the new one judges the next reading.
+			name: "a held crit whose rule was replaced resolves to ok",
+			snap: rules.Snapshot{
+				Now:       at(60),
+				Tuples:    []rules.TupleSnapshot{held(sectorsT, 3, at(1))},
+				Effective: []rules.Effective{eff(evalRule(warnID, sectorsT, rules.SeverityCrit, compare(">", metric("smart.reallocated_sectors"), number(10))), sectorsT)},
+				Previous:  prev(crit),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: sectorsT, State: rules.StateOK, Since: at(60), LastValue: ptr(3.0), EvaluatedAt: at(60),
+				}},
+				Changes: []rules.Change{{At: at(60), Tuple: sectorsT, From: rules.StateCrit, To: rules.StateOK, Value: ptr(3.0)}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(60), EvaluatedAt: at(60)},
+				NextDue: at(60).Add(15 * time.Second),
+			},
+		},
+		{
+			// A held ok needs no rule to stand on.
+			name: "a held ok stands without a rule",
+			snap: rules.Snapshot{
+				Now:      at(60),
+				Tuples:   []rules.TupleSnapshot{held(sectorsT, 0, at(1))},
+				Previous: prev(was(sectorsT, rules.StateOK, at(0))),
+			},
+			want: rules.Result{
+				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(60)},
+				NextDue: at(60).Add(15 * time.Second),
+			},
+		},
+		{
+			// Back from a hold (TupleSnapshot.Resumed), the first new reading
+			// decides: a for_duration wait that was ripening when the item
+			// entered its state starts over, even when the hold was shorter
+			// than the staleness window that would otherwise carry it.
+			name: "a candidate does not survive a hold",
+			snap: rules.Snapshot{
+				Now: at(60),
+				Tuples: []rules.TupleSnapshot{func() rules.TupleSnapshot {
+					ts := snap(sectorsT, 3, at(60), tenMin)
+					ts.Resumed = true
+					return ts
+				}()},
+				Effective: []rules.Effective{eff(withFor(sectorsCrit, tenMin), sectorsT)},
+				Previous:  prev(wasRipeningLastSeen(sectorsT, rules.StateOK, at(0), rules.StateCrit, at(50), at(55))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: sectorsT, State: rules.StateOK, Since: at(0), LastValue: ptr(3.0),
+					Candidate: rules.StateCrit, CandidateSince: ptr(at(60)), EvaluatedAt: at(60),
+				}},
+				Host:    rules.HostState{State: rules.StateOK, Since: at(0), EvaluatedAt: at(60)},
+				NextDue: at(70),
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertResult(t, rules.Evaluate(tc.snap), tc.want)

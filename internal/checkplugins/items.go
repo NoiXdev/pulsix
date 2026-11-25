@@ -60,9 +60,15 @@ func AsksForItem(plugin string, params map[string]any, item string) bool {
 // everything but zfs.state of a pool that reads EXPORTED or MISSING; smart:
 // everything but smart.power_mode of a disk that sleeps) is not asked
 // while the item reads that state (backlog 3.74, 3.9b: Descriptor.HeldWhile)
-// — it is held (HeldByItemState); once the item reads another state, it is
-// asked again. A plugin with neither, and an unknown plugin, asks for
-// every metric it reports.
+// — it is held (HeldOn); once the item reads another state, it is asked
+// again. A plugin with neither, and an unknown plugin, asks for every
+// metric it reports.
+//
+// HeldWhile is the only rule that reads labels, and nil labels never hold:
+// internal/rules tells a held metric from an unasked one by exactly that
+// (asked with nil labels, not asked with the item's — rules.CheckContext's
+// held). A new rule that reads labels must not be added here without
+// changing that, or it would turn into a hold.
 func AsksForMetric(plugin string, params map[string]any, labels map[string]string, metric string) bool {
 	d, ok := Get(plugin)
 	if !ok {
@@ -74,20 +80,15 @@ func AsksForMetric(plugin string, params map[string]any, labels map[string]strin
 	return !d.HeldWhile.holds(labels, metric)
 }
 
-// HeldByItemState reports whether metric is not asked only because of its
-// item's current state labels (Descriptor.HeldWhile): the parameters still
-// ask for it, the item reads a state in which the agent reports nothing
-// but the state itself. Such a metric is held rather than unasked — its
-// last state stays as it is, its alert stays open, it counts towards the
-// host's roll-up as it stood, it is not stale and the metric expiry does
-// not forget it — until the item reads another state and its next reading
-// is judged on that standing state.
-func HeldByItemState(plugin string, params map[string]any, labels map[string]string, metric string) bool {
-	return HeldOn(plugin, params, labels, metric) != ""
-}
-
 // HeldOn is the item's state label metric waits on — "standby",
-// "EXPORTED" — when it is held (HeldByItemState), and "" when it is not.
+// "EXPORTED" — when metric is not asked only because of its item's current
+// state labels (Descriptor.HeldWhile), and "" when it is not: the
+// parameters still ask for it, and the item reads a state in which the
+// agent reports nothing but the state itself. Such a metric is held rather
+// than unasked — its last state stays as it is, its alert stays open, it
+// counts towards the host's roll-up as it stood, it is not stale and the
+// metric expiry does not forget it — until the item reads another state
+// and its next reading is judged on that standing state.
 func HeldOn(plugin string, params map[string]any, labels map[string]string, metric string) string {
 	d, ok := Get(plugin)
 	if !ok || (d.MetricAsked != nil && !d.MetricAsked(params, metric)) || !d.HeldWhile.holds(labels, metric) {
@@ -98,7 +99,9 @@ func HeldOn(plugin string, params map[string]any, labels map[string]string, metr
 
 // HeldStates lists every plugin's HeldWhile, in the registry's order: what
 // the metric expiry, which runs in SQL across every check key, reads to
-// leave held metrics alone. A state's metric names its plugin.
+// leave held metrics alone. A state's metric names its plugin. The SQL
+// knows no parameters, so it cannot apply MetricAsked: no descriptor sets
+// both (TestNoPluginBothSwitchesOffAndHoldsMetrics).
 func HeldStates() []HeldState {
 	var out []HeldState
 	for _, d := range All() {

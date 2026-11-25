@@ -810,7 +810,7 @@ type ListExpiredMetricsRow struct {
 // for the re-check inside each metric's own forget transaction.
 //
 // A metric held on its item's state is never due (backlog 3.9b ruling,
-// checkplugins.HeldByItemState): every metric but the state's own of an
+// checkplugins.HeldOn): every metric but the state's own of an
 // item whose error-free reading of a held state's metric carries one of
 // its holding labels — a disk whose smart.power_mode reads standby, a pool
 // whose zfs.state reads EXPORTED or MISSING. It waits for the item to

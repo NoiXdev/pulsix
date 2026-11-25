@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/checkplugins"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -153,7 +156,19 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 			// intervals), not vanished behind the fresh reading (less
 			// than three).
 			insertCurrent(t, d, org, host, temp, ptr(34.0), nil, now.Add(-3*time.Minute-5*time.Second), "")
-			insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateWarn, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
+			// The stored warn stands on the rule that judged it (a held
+			// state whose rule is gone resolves, held.go).
+			trigger, err := rules.Parse("smart.temperature_celsius > 30")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rule := hostRule(org, host)
+			rule.Name, rule.CheckKey, rule.Metric, rule.Severity = "warm disk", "smart", "smart.temperature_celsius", rules.SeverityWarn
+			rule.Trigger, rule.Source = trigger, "smart.temperature_celsius > 30"
+			if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+				t.Fatal(err)
+			}
+			insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateWarn, ruleID: &rule.ID, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
 			markDirty(t, d, org, host)
 
 			checks := fixedChecks{
@@ -211,4 +226,110 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// smartTick runs one evaluation of the host with a one-minute smart
+// check, the descriptor's own metric rule and rule, and returns what the
+// sink was handed.
+func smartTick(t *testing.T, d *db.DB, org, host uuid.UUID, now time.Time) rules.AlertInput {
+	t.Helper()
+	markDirty(t, d, org, host)
+	checks := fixedChecks{
+		intervals: map[string]time.Duration{"smart": time.Minute},
+		asksMetric: map[string]func(map[string]string, string) bool{
+			"smart": func(labels map[string]string, metric string) bool {
+				return checkplugins.AsksForMetric("smart", nil, labels, metric)
+			},
+		},
+	}
+	sink := &fakeSink{}
+	tk := rules.NewTicker(rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard()), sink,
+		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
+	if n, err := tk.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; want one host evaluated", n, err)
+	}
+	if len(sink.calls) != 1 {
+		t.Fatalf("sink called %d times, want once", len(sink.calls))
+	}
+	return sink.calls[0]
+}
+
+// TestAReadingNewerThanTheSleepIsJudged (backlog 3.9b review): a reading
+// taken after the item's standby label — a disk that failed to answer
+// after it was last seen asleep reports an error on smart.passed and no
+// power mode — proves the item no longer only reports its state, so it is
+// judged as usual (here unknown, an error), while the older readings stay
+// held.
+func TestAReadingNewerThanTheSleepIsJudged(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "sleeping-disk-fresh")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	mode := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.power_mode"}
+	passed := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.passed"}
+	temp := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.temperature_celsius"}
+	insertCurrent(t, d, org, host, mode, nil, ptr(checkplugins.SmartPowerModeStandby), now.Add(-time.Minute), "")
+	insertCurrent(t, d, org, host, passed, nil, nil, now.Add(-10*time.Second), "smartctl could not open the device")
+	insertCurrent(t, d, org, host, temp, ptr(34.0), nil, now.Add(-time.Hour), "")
+	insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateOK, since: now.Add(-2 * time.Hour), evaluatedAt: now.Add(-time.Hour)})
+	insertCheckState(t, d, org, host, stateRow{tuple: passed, state: rules.StateOK, since: now.Add(-2 * time.Hour), evaluatedAt: now.Add(-time.Hour)})
+
+	got := smartTick(t, d, org, host, now)
+	byTuple := map[rules.Tuple]rules.State{}
+	for _, st := range got.States {
+		byTuple[st.Tuple] = st.State
+	}
+	if s, judged := byTuple[passed]; !judged || s != rules.StateUnknown {
+		t.Fatalf("states = %+v, want smart.passed judged unknown", got.States)
+	}
+	if _, judged := byTuple[temp]; judged || len(got.Unmeasured) != 0 {
+		t.Fatalf("states = %+v, unmeasured = %+v; want the older temperature held", got.States, got.Unmeasured)
+	}
+}
+
+// TestAWakingDisksCandidateStartsOver (backlog 3.9b review): a
+// for_duration wait that was ripening when the disk fell asleep does not
+// carry across the sleep — the item's previous power mode (the state row
+// of smart.power_mode) held the tuple, so it is back from a hold and the
+// first new reading starts the wait, even after a sleep shorter than the
+// staleness window.
+func TestAWakingDisksCandidateStartsOver(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "waking-disk-candidate")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	mode := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.power_mode"}
+	temp := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.temperature_celsius"}
+	insertCurrent(t, d, org, host, mode, nil, ptr(checkplugins.SmartPowerModeActive), now, "")
+	insertCurrent(t, d, org, host, temp, ptr(60.0), nil, now, "")
+	insertCheckState(t, d, org, host, stateRow{tuple: mode, state: rules.StateOK, since: now.Add(-time.Hour),
+		lastLabel: ptr(checkplugins.SmartPowerModeStandby), evaluatedAt: now.Add(-time.Minute)})
+	candidateSince := now.Add(-2 * time.Minute)
+	insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateOK, since: now.Add(-time.Hour),
+		candidateState: ptr(string(rules.StateWarn)), candidateSince: &candidateSince, evaluatedAt: now.Add(-2 * time.Minute)})
+
+	trigger, err := rules.Parse("smart.temperature_celsius > 50")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := hostRule(org, host)
+	rule.Name, rule.CheckKey, rule.Metric, rule.Severity, rule.For = "hot disk", "smart", "smart.temperature_celsius", rules.SeverityWarn, 10*time.Minute
+	rule.Trigger, rule.Source = trigger, "smart.temperature_celsius > 50"
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+
+	got := smartTick(t, d, org, host, now)
+	for _, st := range got.States {
+		if st.Tuple != temp {
+			continue
+		}
+		if st.State != rules.StateOK || st.Candidate != rules.StateWarn || st.CandidateSince == nil || !st.CandidateSince.Equal(now) {
+			t.Fatalf("temperature = %+v, want ok with a warn candidate since %v", st, now)
+		}
+		return
+	}
+	t.Fatalf("states = %+v, want the temperature judged", got.States)
 }

@@ -145,7 +145,7 @@ type Descriptor struct {
 	// zfs reports only zfs.state for an EXPORTED or MISSING pool, smart
 	// only smart.power_mode for a disk it leaves asleep. While the item's
 	// current reading of HeldWhile.Metric is one of HeldWhile.Labels, its
-	// other metrics are held (HeldByItemState): not asked, and their last
+	// other metrics are held (HeldOn): not asked, and their last
 	// state and alert wait unchanged for the item to leave that state,
 	// instead of turning stale. The state's own metric is always asked,
 	// or the item could never leave it. It is declared as data, not as a

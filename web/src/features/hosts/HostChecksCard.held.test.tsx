@@ -83,6 +83,13 @@ describe('held rows (3.9b)', () => {
     expect(within(row).queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
   });
 
+  it('shows no waiting marker on an ignored item, which is not judged at all', async () => {
+    mockApi(routes(smart(HELD.map((x) => ({ ...x, ignored: true })))));
+    await renderCard(true);
+    const row = (await screen.findByText('/dev/sdd smart.reallocated_sectors')).closest('li') as HTMLElement;
+    expect(within(row).queryByText('waiting while standby')).not.toBeInTheDocument();
+  });
+
   it('speaks German', async () => {
     mockApi(routes(smart(HELD)));
     await renderCard(false, 'de');
