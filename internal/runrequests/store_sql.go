@@ -71,12 +71,9 @@ func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
 			return fmt.Errorf("encode run request overrides: %w", err)
 		}
 	}
-	var payload []byte
-	if r.Schedule != nil {
-		var err error
-		if payload, err = json.Marshal(r.Schedule); err != nil {
-			return fmt.Errorf("encode schedule request: %w", err)
-		}
+	payload, err := encodePayload(r)
+	if err != nil {
+		return err
 	}
 	var expiresIn *int32
 	if r.ExpiresInMinutes > 0 {
@@ -84,7 +81,7 @@ func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
 		expiresIn = &v
 	}
 	return q.InsertRunRequest(ctx, gen.InsertRunRequestParams{
-		ID: r.ID, OrgID: r.OrgID, Kind: string(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
+		ID: r.ID, OrgID: r.OrgID, Kind: string(r.Kind), TemplateID: templateUUID(r.TemplateID), TemplateRevision: r.TemplateRevision,
 		HostID: pgUUID(r.HostID), JobID: pgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: pgUUID(r.RequestedByToken),
 		Status: string(cmp.Or(r.Status, StatusPending)), ExpiresAt: pgTime(r.ExpiresAt), CreatedAt: r.CreatedAt, Overrides: overrides,
@@ -256,7 +253,7 @@ func (s *SQLStore) EndWait(ctx context.Context, orgID, id uuid.UUID, to Status, 
 
 func fromRow(r gen.RunRequest) (Request, error) {
 	out := Request{
-		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
+		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: uuid.UUID(r.TemplateID.Bytes), TemplateRevision: r.TemplateRevision,
 		HostID: fromPgUUID(r.HostID), JobID: fromPgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: fromPgUUID(r.RequestedByToken),
 		Status: Status(r.Status), DecidedBy: fromPgUUID(r.DecidedBy), RunGroupID: fromPgUUID(r.RunGroupID),
@@ -291,16 +288,63 @@ func fromRow(r gen.RunRequest) (Request, error) {
 		}
 		out.Overrides = &ov
 	}
-	if len(r.Payload) > 0 && out.Kind == KindSchedule {
-		var ch ScheduleChange
-		dec := json.NewDecoder(bytes.NewReader(r.Payload))
-		dec.UseNumber() // extra vars keep their numbers exact
-		if err := dec.Decode(&ch); err != nil {
-			return Request{}, fmt.Errorf("decode schedule request %s: %w", r.ID, err)
-		}
-		out.Schedule = &ch
+	if err := decodePayload(r.Payload, &out); err != nil {
+		return Request{}, err
 	}
 	return out, nil
+}
+
+// encodePayload is the payload column of r: what a request of a kind other
+// than run and retry does; nil for those.
+func encodePayload(r Request) ([]byte, error) {
+	var v any
+	switch {
+	case r.Schedule != nil:
+		v = r.Schedule
+	case r.Trigger != nil:
+		v = r.Trigger
+	default:
+		return nil, nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encode %s request: %w", r.Kind, err)
+	}
+	return b, nil
+}
+
+// decodePayload fills out's change from payload by its kind. Numbers stay
+// json.Number, so extra vars keep them exact.
+func decodePayload(payload []byte, out *Request) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	var v any
+	switch out.Kind {
+	case KindSchedule:
+		out.Schedule = &ScheduleChange{}
+		v = out.Schedule
+	case KindTrigger:
+		out.Trigger = &TriggerChange{}
+		v = out.Trigger
+	default:
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("decode %s request %s: %w", out.Kind, out.ID, err)
+	}
+	return nil
+}
+
+// templateUUID is NULL for uuid.Nil: a repository sync trigger's request
+// names no template.
+func templateUUID(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 func pgUUID(id *uuid.UUID) pgtype.UUID {

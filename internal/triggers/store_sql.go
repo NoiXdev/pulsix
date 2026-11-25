@@ -31,8 +31,12 @@ func (st *SQLStore) Create(ctx context.Context, t Trigger, sealed []byte) (Trigg
 		return Trigger{}, err
 	}
 	var out Trigger
-	err = st.d.WithWriteTx(ctx, t.OrgID, func(ctx context.Context) error {
-		row, err := st.q.CreateTrigger(ctx, gen.CreateTriggerParams{
+	// WithOrg, not WithWriteTx: inside a bound write transaction (an
+	// approved trigger request's decision) it is a savepoint of that
+	// transaction, so the trigger commits with the decision or not at all.
+	err = st.d.WithOrg(ctx, t.OrgID, func(tx pgx.Tx) error {
+		q := st.q.WithTx(tx)
+		row, err := q.CreateTrigger(ctx, gen.CreateTriggerParams{
 			ID: t.ID, OrgID: t.OrgID, Kind: string(t.Kind), TemplateID: db.NullUUID(t.TemplateID), RepoID: db.NullUUID(t.RepoID),
 			Name: t.Name, Enabled: t.Enabled, Preset: string(t.Preset), Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(),
 			TimestampHeader: t.TimestampHeader, Secret: sealed, AllowCidrs: cidrsOrEmpty(t.AllowCIDRs), Mapping: mapping,
@@ -44,7 +48,7 @@ func (st *SQLStore) Create(ctx context.Context, t Trigger, sealed []byte) (Trigg
 		if out, err = toTrigger(row); err != nil {
 			return err
 		}
-		return st.fill(ctx, t.OrgID, t.ID, t.RateLimit)
+		return fill(ctx, q, t.OrgID, t.ID, t.RateLimit)
 	})
 	switch {
 	case db.IsUniqueViolation(err):
@@ -57,9 +61,9 @@ func (st *SQLStore) Create(ctx context.Context, t Trigger, sealed []byte) (Trigg
 	return out, nil
 }
 
-func (st *SQLStore) fill(ctx context.Context, orgID, id uuid.UUID, rl RateLimit) error {
+func fill(ctx context.Context, q *gen.Queries, orgID, id uuid.UUID, rl RateLimit) error {
 	capacity, _ := capacityAndRefill(rl)
-	return st.q.FillTriggerBucket(ctx, gen.FillTriggerBucketParams{TriggerID: id, OrgID: orgID, Tokens: capacity, At: time.Now()})
+	return q.FillTriggerBucket(ctx, gen.FillTriggerBucketParams{TriggerID: id, OrgID: orgID, Tokens: capacity, At: time.Now()})
 }
 
 func (st *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
@@ -107,16 +111,22 @@ func (st *SQLStore) Update(ctx context.Context, t Trigger, revision int64) (Trig
 		return Trigger{}, err
 	}
 	var out Trigger
-	err = st.d.WithWriteTx(ctx, t.OrgID, func(ctx context.Context) error {
+	// WithOrg nests in a bound write transaction, as in Create.
+	err = st.d.WithOrg(ctx, t.OrgID, func(tx pgx.Tx) error {
+		q := st.q.WithTx(tx)
 		// The stored row, read inside this transaction: whether the
 		// bucket is refilled below turns on whether the rate limit
 		// actually changed, and reading it here rather than taking the
 		// caller's word keeps that decision atomic with the write.
-		prev, err := st.Get(ctx, t.OrgID, t.ID)
+		prevRow, err := q.GetTrigger(ctx, gen.GetTriggerParams{OrgID: t.OrgID, ID: t.ID})
 		if err != nil {
 			return err
 		}
-		row, err := st.q.UpdateTrigger(ctx, gen.UpdateTriggerParams{
+		prev, err := toTrigger(prevRow)
+		if err != nil {
+			return err
+		}
+		row, err := q.UpdateTrigger(ctx, gen.UpdateTriggerParams{
 			OrgID: t.OrgID, ID: t.ID, Revision: revision, Name: t.Name, Enabled: t.Enabled, Preset: string(t.Preset),
 			Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(), TimestampHeader: t.TimestampHeader,
 			AllowCidrs: cidrsOrEmpty(t.AllowCIDRs), Mapping: mapping, OnActive: string(t.OnActive), RateLimit: rl,
@@ -136,7 +146,7 @@ func (st *SQLStore) Update(ctx context.Context, t Trigger, revision int64) (Trig
 		if prev.RateLimit == t.RateLimit {
 			return nil
 		}
-		return st.fill(ctx, t.OrgID, t.ID, t.RateLimit)
+		return fill(ctx, q, t.OrgID, t.ID, t.RateLimit)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gerr := st.Get(ctx, t.OrgID, t.ID); gerr != nil {
@@ -160,6 +170,34 @@ func (st *SQLStore) SetSecret(ctx context.Context, orgID, id uuid.UUID, sealed [
 	}
 	if err != nil {
 		return Trigger{}, fmt.Errorf("set trigger secret: %w", err)
+	}
+	return toTrigger(row)
+}
+
+// SetSecretAt replaces the secret of the trigger at revision:
+// ErrRevisionMismatch when it changed since, ErrNotFound when it is gone.
+func (st *SQLStore) SetSecretAt(ctx context.Context, orgID, id uuid.UUID, revision int64, sealed []byte) (Trigger, error) {
+	row, err := st.q.SetTriggerSecretAt(ctx, gen.SetTriggerSecretAtParams{OrgID: orgID, ID: id, Revision: revision, Secret: sealed})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := st.Get(ctx, orgID, id); gerr != nil {
+			return Trigger{}, gerr
+		}
+		return Trigger{}, ErrRevisionMismatch
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("set trigger secret: %w", err)
+	}
+	return toTrigger(row)
+}
+
+// Disable turns the trigger off; a disabled one is returned as it is.
+func (st *SQLStore) Disable(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
+	row, err := st.q.DisableTrigger(ctx, gen.DisableTriggerParams{OrgID: orgID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return st.Get(ctx, orgID, id)
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("disable trigger: %w", err)
 	}
 	return toTrigger(row)
 }

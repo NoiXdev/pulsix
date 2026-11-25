@@ -15,6 +15,7 @@ import (
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
+	"github.com/noixdev/pulsix/internal/triggers"
 )
 
 // The services the resolver reads, each narrowed to what it uses.
@@ -96,6 +97,17 @@ type (
 		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in schedules.Input) (schedules.Schedule, error)
 		ResumeAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error)
 	}
+	// TriggerSource reads, checks and writes webhook triggers for trigger
+	// requests (triggers.Service). Its writes return the new secret, which
+	// the resolver hands to the approval and nowhere else.
+	TriggerSource interface {
+		Get(ctx context.Context, orgID, id uuid.UUID) (triggers.Trigger, error)
+		Validate(ctx context.Context, orgID, id uuid.UUID, in triggers.Input) (triggers.Trigger, error)
+		CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in triggers.Input) (triggers.Created, error)
+		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in triggers.Input) (triggers.Trigger, error)
+		RotateSecretAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (triggers.Created, error)
+		URL(t triggers.Trigger) string
+	}
 	// RunVarsSource reads the variable values a run would receive, secrets
 	// in the clear. The resolver feeds them only into the keyed vars
 	// digest; they never enter a picture.
@@ -144,4 +156,7 @@ type Sources struct {
 	// Schedules checks, pictures and applies schedule requests (spec
 	// 2026-11-25 C).
 	Schedules ScheduleSource
+	// Triggers checks, pictures and applies trigger requests (spec
+	// 2026-11-25 C).
+	Triggers TriggerSource
 }

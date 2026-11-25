@@ -34,6 +34,20 @@ UPDATE job_triggers SET secret = sqlc.arg(secret), revision = revision + 1, upda
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
 RETURNING *;
 
+-- name: SetTriggerSecretAt :one
+-- An approved rotation request replaces the secret of exactly the revision
+-- the approving person saw.
+UPDATE job_triggers SET secret = sqlc.arg(secret), revision = revision + 1, updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(revision)
+RETURNING *;
+
+-- name: DisableTrigger :one
+-- Disabling only stops runs, so it needs no revision: an enabled trigger
+-- turns off (a new revision), a disabled one matches no row.
+UPDATE job_triggers SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND enabled
+RETURNING *;
+
 -- name: DeleteTrigger :execrows
 DELETE FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 

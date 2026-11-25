@@ -208,7 +208,7 @@ export const enRuns = {
    * or rejects against what the page shows. */
   requests: {
     title: 'Run requests',
-    summary: 'Runs and schedules an assistant asked for. Nothing runs and no schedule changes until someone approves it: a run needs the right to run jobs, a schedule also the right to change job templates.',
+    summary: 'Runs, schedules and webhook triggers an assistant asked for. Nothing runs and nothing changes until someone approves it: a run needs the right to run jobs, a schedule or a trigger also the right to change job templates (or, for a repository sync trigger, repositories).',
     pendingCount: (n: number) => `${n} pending`,
     label: 'Run requests',
     count: (n: number) => (n === 1 ? '1 request' : `${n} requests`),
@@ -243,6 +243,7 @@ export const enRuns = {
       run: 'run',
       retry_failed: 'retry of failed hosts',
       schedule: 'schedule',
+      trigger: 'webhook trigger',
     },
     /** `relative` is the formatted distance, e.g. "in 30 minutes". */
     expires: (relative: string) => `expires ${relative}`,

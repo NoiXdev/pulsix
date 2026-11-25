@@ -42,7 +42,7 @@ var (
 		"remove_group_member", "set_host_tags", "start_connection_test")
 	reposReadTools      = []string{"list_repos", "get_repo", "list_repo_files", "list_playbooks", "get_playbook"}
 	reposWriteTools     = append(slices.Clone(reposReadTools), "create_repo", "update_repo", "sync_repo", "create_playbook")
-	templatesReadTools  = []string{"list_job_templates", "get_job_template", "list_schedules", "get_schedule", "list_schedule_runs", "get_calendar"}
+	templatesReadTools  = []string{"list_job_templates", "get_job_template", "list_schedules", "get_schedule", "list_schedule_runs", "get_calendar", "list_triggers", "get_trigger"}
 	templatesWriteTools = append(slices.Clone(templatesReadTools), "create_job_template", "update_job_template")
 	jobsReadTools       = []string{"list_jobs", "get_job", "get_job_log", "list_run_requests", "get_run_request"}
 	jobsRequestTools    = append(slices.Clone(jobsReadTools), "request_run", "request_retry", "cancel_job")
@@ -70,7 +70,8 @@ var expectedTools = map[tenancy.Area][]string{
 	tenancy.AreaAlertsHandle:     alertsHandleTools,
 	tenancy.AreaActivityRead:     {"list_activity"},
 	// automation.request reads requests like jobs.request (jobs.read).
-	tenancy.AreaAutomationRequest: append(slices.Clone(jobsReadTools), "create_schedule", "update_schedule", "resume_schedule", "pause_schedule", "delete_schedule"),
+	tenancy.AreaAutomationRequest: append(slices.Clone(jobsReadTools), "create_schedule", "update_schedule", "resume_schedule", "pause_schedule", "delete_schedule",
+		"create_trigger", "update_trigger", "rotate_trigger_secret", "delete_trigger"),
 }
 
 // assistantSeed holds the ids the seed created.
@@ -97,6 +98,9 @@ type assistantSeed struct {
 	pemBody     []string
 	usedKeyPath string
 	usedKeyBody []string
+	// triggerSecrets are the secrets of the webhook triggers the
+	// automation phase seeds: no tool output may carry them.
+	triggerSecrets []string
 }
 
 // seed is phase 1: the switch on with approved follow-ups, template A with
@@ -292,6 +296,7 @@ func (a *assistantSuite) seedAgentAndAlert() {
 func (a *assistantSuite) secretMarkers() []string {
 	out := []string{asstOrgSecret, asstGroupSecret, asstMemberSecret, asstVaultPass}
 	out = append(out, a.seeded.pemBody...)
+	out = append(out, a.seeded.triggerSecrets...)
 	return append(out, a.seeded.usedKeyBody...)
 }
 

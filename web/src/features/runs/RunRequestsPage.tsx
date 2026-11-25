@@ -35,7 +35,8 @@ export function RunRequestsPage() {
   const templateNames = new Map((templates.data?.templates ?? []).map((tpl) => [tpl.id, tpl.name]));
   const columns = runRequestColumns({
     t,
-    templateName: (id) => templateNames.get(id) ?? shortId(id),
+    // A repository sync trigger's request names no template.
+    templateName: (id) => (id ? (templateNames.get(id) ?? shortId(id)) : '—'),
     dateTime: (iso) => fmt.dateTime(iso),
     relative: (iso) => fmt.relative(iso, now),
   });
@@ -56,7 +57,7 @@ export function RunRequestsPage() {
   const { rows, total } = view.view(view.ready ? shown : undefined);
   const f = r.filters;
   // Only templates a request asked for are offered; one only the URL names stays so it can be cleared.
-  const templateIds = [...new Set([...all.map((q) => q.template_id), ...(filters.template ? [filters.template] : [])])];
+  const templateIds = [...new Set([...all.map((q) => q.template_id), ...(filters.template ? [filters.template] : [])])].filter((id) => id !== '');
   const templateOptions = templateIds.map((id) => ({ value: id, label: templateNames.get(id) ?? shortId(id) })).sort((a, b) => a.label.localeCompare(b.label));
 
   return (

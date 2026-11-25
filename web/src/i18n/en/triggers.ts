@@ -86,4 +86,51 @@ export const enTriggers = {
     mapVariable: '+ Map a variable',
     limitPath: 'Limit path',
   },
+  /** A trigger request on the run request page (spec 2026-11-25 C): an
+   * assistant asks to create, change or rotate the secret of a webhook
+   * trigger; the approval does exactly that and shows a new secret once,
+   * to the approving person only. */
+  request: {
+    title: { create: 'Create a webhook trigger', update: 'Change a webhook trigger', rotate: "Rotate a webhook trigger's secret" },
+    section: 'Webhook trigger',
+    intro: {
+      create:
+        'Approving creates this webhook trigger. Every call to its URL then starts what it starts, without asking again. Its secret is shown to you once, right after the approval.',
+      update: 'Approving changes the trigger as shown. Unless the request sets it, the trigger stays enabled or disabled as it is.',
+      rotate:
+        'Approving gives the trigger a new secret, shown to you once right after the approval; senders using the old one fail until you update them. The trigger stays enabled or disabled as it is.',
+    },
+    url: 'URL',
+    field: 'Setting',
+    current: 'Now',
+    next: 'After the approval',
+    changedMark: 'changes',
+    target: 'Starts',
+    runs: (template: string) => `runs ${template}`,
+    syncs: (repo: string, url: string, branch: string) => `syncs ${repo} (${url}, ${branch})`,
+    name: 'Name',
+    state: 'State',
+    sender: 'Sender',
+    replay: 'Replay protection header',
+    sources: 'Allowed sources',
+    mapping: 'Payload mapping',
+    ifActive: 'If a run is active',
+    rate: 'Rate limit',
+    ratePer: (count: number, per: string) => `${count} per ${per}`,
+    none: '—',
+    mappingNote: 'Values the mapping takes from a call reach the run as untrusted text: never as a template, never as a name Ansible acts on.',
+    templateRevision: (n: number) => `Template revision ${n}`,
+    templateChanged: (n: number) => `The template changed since the request (it was at revision ${n}).`,
+    gone: 'The trigger, or what it starts, no longer exists. This request cannot be approved; reject it.',
+    approved: 'Request approved; the webhook trigger is saved',
+    secretTitle: "The trigger's secret",
+    secretHint: 'Put the URL and this secret into the sender. Nobody can show the secret again; a new one needs a rotation.',
+    decided: {
+      approved: 'Approved. The webhook trigger was saved.',
+      rejected: 'Rejected. The webhook trigger was not changed.',
+      expired: 'Expired before anyone decided. The webhook trigger was not changed.',
+    },
+    rejectConfirm: 'Reject this webhook trigger request? The trigger is not changed.',
+    noPermission: 'Operators, admins and owners can approve or reject webhook trigger requests.',
+  },
 };

@@ -3405,6 +3405,23 @@ export interface paths {
         patch: operations["updateToken"];
         trace?: never;
     };
+    "/api/v1/orgs/{org}/trigger-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org trigger requests */
+        post: operations["requestTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/triggers": {
         parameters: {
             query?: never;
@@ -3459,6 +3476,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/triggers/{id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID disable */
+        post: operations["disableTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/rotate-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID rotate requests */
+        post: operations["requestTriggerRotation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/triggers/{id}/rotate-secret": {
         parameters: {
             query?: never;
@@ -3487,6 +3538,23 @@ export interface paths {
         put?: never;
         /** Post API v1 orgs by org triggers by ID test */
         post: operations["testTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/update-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID update requests */
+        post: operations["requestTriggerUpdate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6387,6 +6455,12 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        Mapping: {
+            extra_vars?: {
+                [key: string]: string;
+            };
+            limit?: string;
+        };
         MeOutputBody: {
             /**
              * Format: uri
@@ -7416,6 +7490,8 @@ export interface components {
             template_name: string;
             /** Format: int64 */
             template_revision: number;
+            /** @description Set for a trigger request: the webhook trigger as the approval stores it and as it is now; never its secret */
+            trigger?: components["schemas"]["PictureTrigger"];
             vars_digest: string;
             vault_identities: components["schemas"]["PictureVault"][] | null;
         };
@@ -7506,6 +7582,23 @@ export interface components {
             new?: components["schemas"]["ScheduleState"];
             /** @description The schedule the request creates (its id is taken when the request is made), changes or resumes */
             schedule_id: string;
+        };
+        PictureTrigger: {
+            /**
+             * @description create a webhook trigger, change one, or replace its secret
+             * @enum {string}
+             */
+            action: "create" | "update" | "rotate";
+            /** @description The trigger as it is now (update and rotate) */
+            current?: components["schemas"]["TriggerState"];
+            /** @description The trigger, or what it would start, no longer exists; the request cannot be approved */
+            gone?: boolean;
+            /** @description The trigger as the approval stores it (create and update) */
+            new?: components["schemas"]["TriggerState"];
+            /** @description The trigger the request creates (its id is taken when the request is made), changes or rotates */
+            trigger_id: string;
+            /** @description Where senders post to */
+            url: string;
         };
         PictureVault: {
             credential: string;
@@ -7724,6 +7817,11 @@ export interface components {
         ProblemDTO: {
             message: string;
             path: string;
+        };
+        RateLimit: {
+            /** Format: int64 */
+            count: number;
+            per: string;
         };
         RateLimitDTO: {
             /** Format: int64 */
@@ -8143,6 +8241,19 @@ export interface components {
             readonly $schema?: string;
             rule: components["schemas"]["RuleDTO"];
         };
+        RunRequestApproveOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RunRequestApproveOutputBody.json
+             */
+            readonly $schema?: string;
+            request: components["schemas"]["RunRequestDTO"];
+            /** @description The webhook trigger's new secret after a trigger request that creates a trigger or rotates its secret: shown once, to the approving person only; store it in the sender */
+            trigger_secret?: string;
+            /** @description Where the trigger's senders post to (a trigger request) */
+            trigger_url?: string;
+        };
         RunRequestDTO: {
             /** Format: date-time */
             created_at: string;
@@ -8158,10 +8269,10 @@ export interface components {
             id: string;
             job_id?: string;
             /**
-             * @description run, retry_failed, or schedule (create, change or resume a schedule; the picture's schedule says which)
+             * @description run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which) or trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which)
              * @enum {string}
              */
-            kind: "run" | "retry_failed" | "schedule";
+            kind: "run" | "retry_failed" | "schedule" | "trigger";
             reason: string;
             requested_by_token_id?: string;
             /** @description The requesting token's name; empty when the token is gone or there is none */
@@ -8174,8 +8285,9 @@ export interface components {
             sync_error?: string;
             /** @description The repository sync a sync_first request waits or waited for */
             sync_job_id?: string;
-            /** @description A schedule request's schedule: the one it creates (its id is taken when the request is made), changes or resumes */
+            /** @description A schedule or trigger request's schedule or trigger: the one it creates (its id is taken when the request is made), changes, resumes or rotates */
             target_id?: string;
+            /** @description The template the request runs; empty for a repository sync trigger's request, which runs none */
             template_id: string;
             /**
              * Format: int64
@@ -9054,6 +9166,55 @@ export interface components {
             readonly $schema?: string;
             trigger: components["schemas"]["TriggerDTO"];
         };
+        TriggerRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerRequestBody.json
+             */
+            readonly $schema?: string;
+            /** @description Addresses senders may call from; empty allows any */
+            allow_cidrs?: string[] | null;
+            /** @description default true: the trigger takes calls once a person approves the request */
+            enabled?: boolean;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @enum {string} */
+            kind: "template_run" | "repo_sync";
+            /** @description Payload JSONPaths onto extra vars (never a secret field or a name Ansible or Pulsix acts on) and the limit; a run receives the values as untrusted text */
+            mapping?: components["schemas"]["TriggerMappingDTO"];
+            name: string;
+            /** @enum {string} */
+            on_active?: "queue" | "skip";
+            /** @enum {string} */
+            preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
+            rate_limit?: components["schemas"]["RateLimitDTO"];
+            /** @description Why the trigger is needed, shown to the person who approves it. The trigger's secret is drawn when a person approves the request and shown to that person only; it never appears here */
+            reason: string;
+            /** @description The repository a repo_sync trigger syncs */
+            repo_id?: string;
+            /** @description The job template a template_run trigger runs */
+            template_id?: string;
+            timestamp_header?: string;
+        };
+        TriggerRotateRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerRotateRequestBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @description Why the trigger needs a new secret, shown to the person who approves it. The new secret is drawn when a person approves the request and shown to that person only; it never appears here */
+            reason: string;
+        };
         TriggerSecretOutputBody: {
             /**
              * Format: uri
@@ -9065,6 +9226,32 @@ export interface components {
             secret: string;
             trigger: components["schemas"]["TriggerDTO"];
             url: string;
+        };
+        TriggerState: {
+            /** @description The addresses senders may call from; empty allows any */
+            allow_cidrs: string[] | null;
+            enabled: boolean;
+            /** @enum {string} */
+            kind: "template_run" | "repo_sync";
+            /** @description Payload JSONPaths mapped onto extra vars and the limit; a run receives the values as untrusted text */
+            mapping: components["schemas"]["Mapping"];
+            name: string;
+            /** @enum {string} */
+            on_active: "queue" | "skip";
+            /** @enum {string} */
+            preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
+            rate_limit: components["schemas"]["RateLimit"];
+            repo_branch?: string;
+            repo_id?: string;
+            repo_name?: string;
+            repo_url?: string;
+            /** Format: int64 */
+            revision?: number;
+            /** @description The header senders put the signature or token in */
+            signature_header: string;
+            template_id?: string;
+            template_name?: string;
+            timestamp_header?: string;
         };
         TriggerTestInputBody: {
             /**
@@ -9087,6 +9274,35 @@ export interface components {
             readonly $schema?: string;
             outcome: string;
             run_id?: string;
+        };
+        TriggerUpdateRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerUpdateRequestBody.json
+             */
+            readonly $schema?: string;
+            /** @description The complete new list (an empty list allows any address); left out keeps it */
+            allow_cidrs?: string[] | null;
+            /** @description Left out, the trigger stays as enabled or disabled as it is when the request is approved */
+            enabled?: boolean;
+            /**
+             * Format: int64
+             * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
+             */
+            expires_in?: number;
+            /** @description The complete new mapping; left out keeps it */
+            mapping?: components["schemas"]["TriggerMappingDTO"];
+            name?: string;
+            /** @enum {string} */
+            on_active?: "queue" | "skip";
+            /** @enum {string} */
+            preset?: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
+            rate_limit?: components["schemas"]["RateLimitDTO"];
+            /** @description Why the change is needed, shown to the person who approves it */
+            reason: string;
+            /** @description An empty text removes it */
+            timestamp_header?: string;
         };
         UnlockBody: {
             /**
@@ -17694,10 +17910,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunRequestOutputBody"];
+                    "application/json": components["schemas"]["RunRequestApproveOutputBody"];
                 };
             };
             /** @description Error */
@@ -18822,6 +19039,41 @@ export interface operations {
             };
         };
     };
+    requestTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-orgs-by-org-triggers": {
         parameters: {
             query?: {
@@ -19030,6 +19282,75 @@ export interface operations {
             };
         };
     };
+    disableTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    requestTriggerRotation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerRotateRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     rotateTriggerSecret: {
         parameters: {
             query?: never;
@@ -19085,6 +19406,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriggerTestOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    requestTriggerUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggerUpdateRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRequestDetailOutputBody"];
                 };
             };
             /** @description Error */

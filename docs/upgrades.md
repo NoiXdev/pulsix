@@ -899,7 +899,7 @@ affected: the token reaches the worker as an ordinary inventory variable.
 
 Schedule requests (spec 2026-11-25 assistant API gaps, C) add migration 00129. It
 widens the `run_requests.kind` CHECK by `schedule`, `trigger`, `schedule_review` and
-`trigger_review` (only `schedule` is used by this version) and adds the nullable
+`trigger_review` (`schedule` and `trigger` are used by this version) and adds the nullable
 `run_requests.payload` (jsonb: what a request of another kind than `run` and
 `retry_failed` creates or changes, never a secret) and `run_requests.target_id` (uuid,
 no foreign key), with a CHECK that a run or retry has no payload and every other kind
@@ -922,6 +922,28 @@ set. **An older manager alongside ignores the marks** and runs such a schedule's
 shows a schedule request as a run of its template, whose approval there would start
 that run instead of saving the schedule. Stop every manager instance before the new
 version starts, as 00123 requires. Workers and agents are not affected.
+
+Webhook trigger requests (same spec, C) extend 00129: `run_requests.template_id`
+drops NOT NULL, and a new CHECK `run_requests_template_check` keeps it required for
+every kind but `trigger` and `trigger_review` (a repository sync trigger runs no
+template). Dropping NOT NULL and adding a CHECK every existing row passes rewrite
+nothing. `automation.request` also asks for a webhook trigger to be created, changed or
+given a new secret (`create_trigger`, `update_trigger`, `rotate_trigger_secret`; REST
+`POST …/trigger-requests`, `POST …/triggers/{id}/update-requests`,
+`POST …/triggers/{id}/rotate-requests`) and disables or deletes one directly
+(`update_trigger` with only `enabled: false` → the new `POST …/triggers/{id}/disable`,
+`delete_trigger`; both routes accept `automation.request` beside `templates.write` /
+`repos.write`). The trigger routes now check a trigger's kind permission against an
+assistant token's areas as well as its role. `list_triggers` and `get_trigger` read
+with `templates.read` (`repos.read` for a repository sync trigger). Approving a trigger
+request needs `jobs.run` and `templates.write` (`repos.write` for a repository sync
+trigger); the approval creates, changes or rotates the trigger in the transaction that
+records the approval and returns a new secret once, in the approval's response only
+(`trigger_secret`, `Cache-Control: no-store`): the request, the activity log, the audit
+trail and every MCP answer never hold it. **An older manager alongside** cannot show or
+approve a trigger request (it refuses the unknown kind), and its request list fails
+while a repository sync trigger request exists (it cannot read the NULL template); stop
+every manager instance first, as above.
 
 ## Behaviour changes to check after an upgrade
 

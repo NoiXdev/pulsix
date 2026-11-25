@@ -112,7 +112,9 @@ function useInvalidateRunRequests(org: string) {
  * the fingerprint of the picture the page showed; the server refuses (409)
  * when the picture has changed since, when the request expired or when it
  * was already decided. followUps names the direct follow-ups to start; left
- * out, the server applies its default (all startable, or none). */
+ * out, the server applies its default (all startable, or none). An approved
+ * trigger request's answer can carry the trigger's secret, so the mutation
+ * keeps nothing in the cache (gcTime 0), like the trigger dialog's own. */
 export function useApproveRunRequest(org: string, id: string) {
   const invalidate = useInvalidateRunRequests(org);
   return useMutation({
@@ -124,6 +126,7 @@ export function useApproveRunRequest(org: string, id: string) {
         }),
       ),
     onSuccess: invalidate,
+    gcTime: 0,
   });
 }
 

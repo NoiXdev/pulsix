@@ -25,6 +25,15 @@ ALTER TABLE run_requests ADD COLUMN target_id uuid;
 ALTER TABLE run_requests ADD CONSTRAINT run_requests_payload_check
   CHECK ((kind IN ('run', 'retry_failed')) = (payload IS NULL));
 
+-- A webhook trigger that syncs a repository runs no template, so its
+-- request (and a review of it) has none: template_id becomes nullable for
+-- those two kinds only, and every other kind still names its template.
+-- Dropping NOT NULL and adding a CHECK every existing row passes touch no
+-- row but the check's scan.
+ALTER TABLE run_requests ALTER COLUMN template_id DROP NOT NULL;
+ALTER TABLE run_requests ADD CONSTRAINT run_requests_template_check
+  CHECK (template_id IS NOT NULL OR kind IN ('trigger', 'trigger_review'));
+
 -- The parts of a schedule's overrides an assistant set (an approved schedule
 -- request): the limit and the extra vars carry their own mark, so an
 -- assistant's limit leaves a person's extra vars as they are and the other
@@ -40,6 +49,8 @@ ALTER TABLE schedules ADD COLUMN untrusted_extra_vars boolean NOT NULL DEFAULT f
 ALTER TABLE schedules DROP COLUMN untrusted_extra_vars;
 ALTER TABLE schedules DROP COLUMN untrusted_limit;
 DELETE FROM run_requests WHERE kind NOT IN ('run', 'retry_failed');
+ALTER TABLE run_requests DROP CONSTRAINT run_requests_template_check;
+ALTER TABLE run_requests ALTER COLUMN template_id SET NOT NULL;
 ALTER TABLE run_requests DROP CONSTRAINT run_requests_payload_check;
 ALTER TABLE run_requests DROP COLUMN target_id;
 ALTER TABLE run_requests DROP COLUMN payload;

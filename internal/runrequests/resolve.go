@@ -139,12 +139,15 @@ func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request
 }
 
 // Picture implements Pictures: everything the run would use now.
-// A schedule request's picture is the schedule's (schedulePicture); a
-// kind this version does not know is refused.
+// A schedule request's picture is the schedule's (schedulePicture), a
+// trigger request's the trigger's (triggerPicture); a kind this version
+// does not know is refused.
 func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (Picture, error) {
 	switch req.Kind {
 	case KindSchedule:
 		return r.schedulePicture(ctx, orgID, req)
+	case KindTrigger:
+		return r.triggerPicture(ctx, orgID, req)
 	case KindRun, KindRetryFailed:
 	default:
 		// A kind a newer version wrote is no run: never shown as one.

@@ -97,10 +97,14 @@ func triggerPerm(kind triggers.Kind, write bool) tenancy.Permission {
 	return tenancy.PermTemplatesRead
 }
 
-// loadTrigger resolves the org (viewer level), loads the trigger and then
-// requires the permission its kind needs.
-func loadTrigger(ctx context.Context, deps Deps, org, rawID string, write bool) (Scope, triggers.Trigger, error) {
-	scope, err := requireOrg(ctx, deps, org, tenancy.PermTemplatesRead)
+// loadTrigger resolves the org, loads the trigger and then requires one of
+// the permissions perms names for the trigger's kind. The org is resolved
+// at the lowest level any trigger route admits (reading either kind, or
+// automation.request for the direct disable and delete); the kind's own
+// permission is then checked through requireOrg as well, so an assistant
+// token is held to its areas, not only to its role.
+func loadTrigger(ctx context.Context, deps Deps, org, rawID string, perms func(triggers.Kind) []tenancy.Permission) (Scope, triggers.Trigger, error) {
+	scope, err := requireOrgAny(ctx, deps, org, tenancy.PermTemplatesRead, tenancy.PermReposRead, tenancy.PermAutomationRequest)
 	if err != nil {
 		return Scope{}, triggers.Trigger{}, err
 	}
@@ -112,15 +116,32 @@ func loadTrigger(ctx context.Context, deps Deps, org, rawID string, write bool) 
 	if err != nil {
 		return Scope{}, triggers.Trigger{}, mapTriggersErr(ctx, err)
 	}
-	if !tenancy.Allows(scope.Role, triggerPerm(t.Kind, write)) {
-		return Scope{}, triggers.Trigger{}, huma.Error403Forbidden("insufficient role")
+	if scope, err = requireOrgAny(ctx, deps, org, perms(t.Kind)...); err != nil {
+		return Scope{}, triggers.Trigger{}, err
 	}
 	return scope, t, nil
 }
 
+// triggerRead, triggerWrite and triggerStop are loadTrigger's permission
+// sets: reading a trigger, changing it, and the changes that only stop
+// runs (disable, delete), which automation.request also grants (spec
+// 2026-11-25 assistant API gaps, D1).
+func triggerRead(k triggers.Kind) []tenancy.Permission {
+	return []tenancy.Permission{triggerPerm(k, false)}
+}
+func triggerWrite(k triggers.Kind) []tenancy.Permission {
+	return []tenancy.Permission{triggerPerm(k, true)}
+}
+func triggerStop(k triggers.Kind) []tenancy.Permission {
+	return []tenancy.Permission{triggerPerm(k, true), tenancy.PermAutomationRequest}
+}
+
 // registerTriggerRoutes wires spec §3's incoming webhook triggers:
 // templates.read/write for template_run triggers, repos.read/write for
-// repo_sync triggers, plus jobs.run for a template_run test call.
+// repo_sync triggers, plus jobs.run for a template_run test call. Disabling
+// and deleting only stop runs, so automation.request reaches them too
+// (spec 2026-11-25 assistant API gaps, D1); creating, changing and
+// rotating go through a trigger request (trigger_request_handlers.go).
 func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/triggers", func(ctx context.Context, in *triggerListInput) (*triggerListOutput, error) {
 		// The permission requireOrg checks depends on the filter, so the
@@ -181,7 +202,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createTrigger", "trigger"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/triggers/{id}", func(ctx context.Context, in *triggerIDInput) (*triggerOutput, error) {
-		_, t, err := loadTrigger(ctx, deps, in.Org, in.ID, false)
+		_, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerRead)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +210,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Put(hapi, "/api/v1/orgs/{org}/triggers/{id}", func(ctx context.Context, in *triggerUpdateInput) (*triggerOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, true)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerWrite)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +231,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("updateTrigger", "trigger"))
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/triggers/{id}", func(ctx context.Context, in *triggerIDInput) (*okOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, true)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerStop)
 		if err != nil {
 			return nil, err
 		}
@@ -221,8 +242,21 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		return &okOutput{}, nil
 	}, withAudit("deleteTrigger", "trigger"))
 
+	huma.Post(hapi, "/api/v1/orgs/{org}/triggers/{id}/disable", func(ctx context.Context, in *triggerIDInput) (*triggerOutput, error) {
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerStop)
+		if err != nil {
+			return nil, err
+		}
+		off, err := deps.Triggers.Disable(ctx, scope.OrgID, t.ID)
+		if err != nil {
+			return nil, mapTriggersErr(ctx, err)
+		}
+		setAuditObject(ctx, t.ID.String(), "disabled webhook trigger "+t.Name)
+		return triggerOut(deps, off), nil
+	}, withAudit("disableTrigger", "trigger"))
+
 	huma.Post(hapi, "/api/v1/orgs/{org}/triggers/{id}/rotate-secret", func(ctx context.Context, in *triggerIDInput) (*triggerSecretOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, true)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerWrite)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +269,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("rotateTriggerSecret", "trigger"))
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/triggers/{id}/test", func(ctx context.Context, in *triggerTestInput) (*triggerTestOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, true)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerWrite)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +296,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("testTrigger", "trigger"))
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/triggers/{id}/deliveries", func(ctx context.Context, in *triggerDeliveriesInput) (*triggerDeliveriesOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, false)
+		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerRead)
 		if err != nil {
 			return nil, err
 		}

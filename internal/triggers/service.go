@@ -26,6 +26,11 @@ type Store interface {
 	List(ctx context.Context, orgID uuid.UUID, f ListFilter) ([]Trigger, error)
 	Update(ctx context.Context, t Trigger, revision int64) (Trigger, error)
 	SetSecret(ctx context.Context, orgID, id uuid.UUID, sealed []byte) (Trigger, error)
+	// SetSecretAt is SetSecret at revision (ErrRevisionMismatch when the
+	// trigger changed since).
+	SetSecretAt(ctx context.Context, orgID, id uuid.UUID, revision int64, sealed []byte) (Trigger, error)
+	// Disable turns the trigger off; a disabled one is returned as it is.
+	Disable(ctx context.Context, orgID, id uuid.UUID) (Trigger, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	Deliveries(ctx context.Context, orgID, id uuid.UUID, limit int) ([]Delivery, error)
 	Resolve(ctx context.Context, id uuid.UUID) (Trigger, []byte, error)
@@ -135,7 +140,14 @@ func (s *Service) URL(t Trigger) string {
 
 // Create validates and stores a trigger; the secret is returned once.
 func (s *Service) Create(ctx context.Context, orgID, actor uuid.UUID, in Input) (Created, error) {
-	t, err := s.build(ctx, orgID, s.newID(), in)
+	return s.CreateAs(ctx, orgID, s.newID(), actor, in)
+}
+
+// CreateAs is Create under id: an approved trigger request creates the
+// trigger whose id it took when it was made, so the picture the person saw
+// and the trigger name the same URL.
+func (s *Service) CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in Input) (Created, error) {
+	t, err := s.build(ctx, orgID, id, in)
 	if err != nil {
 		return Created{}, err
 	}
@@ -158,7 +170,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 		return Trigger{}, err
 	}
 	if in.Kind != cur.Kind || !sameID(in.TemplateID, cur.TemplateID) || !sameID(in.RepoID, cur.RepoID) {
-		return Trigger{}, fmt.Errorf("%w: a trigger's kind and target cannot change; create a new trigger", ErrInvalidInput)
+		return Trigger{}, errTargetFixed
 	}
 	t, err := s.build(ctx, orgID, id, in)
 	if err != nil {
@@ -179,6 +191,56 @@ func (s *Service) RotateSecret(ctx context.Context, orgID, id uuid.UUID) (Create
 		return Created{}, err
 	}
 	return Created{Trigger: t, Secret: secret, URL: s.URL(t)}, nil
+}
+
+// RotateSecretAt is RotateSecret of the trigger at revision: an approved
+// rotation request replaces the secret of exactly the trigger the person
+// saw (ErrRevisionMismatch when it changed since).
+func (s *Service) RotateSecretAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Created, error) {
+	secret, sealed, err := s.sealNewSecret(orgID, id)
+	if err != nil {
+		return Created{}, err
+	}
+	t, err := s.d.Store.SetSecretAt(ctx, orgID, id, revision, sealed)
+	if err != nil {
+		return Created{}, err
+	}
+	return Created{Trigger: t, Secret: secret, URL: s.URL(t)}, nil
+}
+
+// Disable turns a trigger off at once, whatever its revision: it only
+// stops runs (spec 2026-11-25 assistant API gaps, D1).
+func (s *Service) Disable(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
+	return s.d.Store.Disable(ctx, orgID, id)
+}
+
+// Validate checks in as Create (a new id) or Update (an existing
+// trigger's id) would and writes nothing: it returns the trigger as it
+// would be stored, defaults filled in. A name another trigger of the
+// organization has is ErrNameTaken.
+func (s *Service) Validate(ctx context.Context, orgID, id uuid.UUID, in Input) (Trigger, error) {
+	cur, err := s.d.Store.Get(ctx, orgID, id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+	case err != nil:
+		return Trigger{}, err
+	case in.Kind != cur.Kind || !sameID(in.TemplateID, cur.TemplateID) || !sameID(in.RepoID, cur.RepoID):
+		return Trigger{}, errTargetFixed
+	}
+	t, err := s.build(ctx, orgID, id, in)
+	if err != nil {
+		return Trigger{}, err
+	}
+	all, err := s.d.Store.List(ctx, orgID, ListFilter{})
+	if err != nil {
+		return Trigger{}, err
+	}
+	for _, o := range all {
+		if o.ID != id && o.Name == t.Name {
+			return Trigger{}, ErrNameTaken
+		}
+	}
+	return t, nil
 }
 
 func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Trigger, error) {
@@ -305,6 +367,9 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 		Mapping: in.Mapping, OnActive: onActive, RateLimit: rl,
 	}, nil
 }
+
+// errTargetFixed refuses a change of a trigger's kind or target.
+var errTargetFixed = fmt.Errorf("%w: a trigger's kind and target cannot change; create a new trigger", ErrInvalidInput)
 
 func sameID(a, b *uuid.UUID) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)

@@ -109,6 +109,36 @@ func (f *fakeStore) SetSecret(_ context.Context, orgID, id uuid.UUID, sealed []b
 	return t, nil
 }
 
+func (f *fakeStore) SetSecretAt(_ context.Context, orgID, id uuid.UUID, revision int64, sealed []byte) (triggers.Trigger, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.byID[id]
+	if !ok || t.OrgID != orgID {
+		return triggers.Trigger{}, triggers.ErrNotFound
+	}
+	if t.Revision != revision {
+		return triggers.Trigger{}, triggers.ErrRevisionMismatch
+	}
+	t.Revision++
+	f.byID[id], f.secrets[id] = t, sealed
+	return t, nil
+}
+
+func (f *fakeStore) Disable(_ context.Context, orgID, id uuid.UUID) (triggers.Trigger, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.byID[id]
+	if !ok || t.OrgID != orgID {
+		return triggers.Trigger{}, triggers.ErrNotFound
+	}
+	if t.Enabled {
+		t.Enabled = false
+		t.Revision++
+		f.byID[id] = t
+	}
+	return t, nil
+}
+
 func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

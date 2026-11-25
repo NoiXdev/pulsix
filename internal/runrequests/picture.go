@@ -73,6 +73,13 @@ type Picture struct {
 	// TemplateRevision) and leaves every run field empty; nil for a run or
 	// a retry, so the canonical JSON of their pictures is unchanged.
 	Schedule *PictureSchedule `json:"schedule,omitempty" doc:"Set for a schedule request: the schedule as the approval stores it and as it is now"`
+
+	// Trigger is the picture of a trigger request (spec 2026-11-25 C): the
+	// webhook trigger as it will be and as it is, never its secret. A
+	// template run trigger's picture names its template like a schedule
+	// request's; a repository sync trigger's names none (the repository
+	// is in the trigger's states). nil for every other kind.
+	Trigger *PictureTrigger `json:"trigger,omitempty" doc:"Set for a trigger request: the webhook trigger as the approval stores it and as it is now; never its secret"`
 }
 
 // Why a run of a template with agent enrollment enrols no host

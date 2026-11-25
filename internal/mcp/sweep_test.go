@@ -128,6 +128,10 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheduleID := f.seedSchedule(t)
+	// A webhook trigger's secret is shown once at its creation; no tool
+	// returns it.
+	hook := f.seedTrigger(t)
+	markers = append(markers, hook.Secret)
 	curRepo, err := f.s.Deps.Repos.Get(f.scoped, f.org, f.repo)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +162,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"host_id": f.host.String(), "group_id": f.group.String(), "repo_id": f.repo.String(), "playbook_id": f.playbook.String(),
 		"template_id": f.template.String(), "job_id": job.String(), "request_id": req.RequestID,
 		"check_id": check.ID.String(), "alert_id": alert.String(), "window_id": firstNonEmpty(win.ID, win.Window.ID), "monitoring_group_id": firstNonEmpty(grp.ID, grp.Group.ID),
-		"schedule_id": scheduleID,
+		"schedule_id": scheduleID, "trigger_id": hook.Trigger.ID.String(),
 	}
 	var rules struct {
 		Rules []struct {
@@ -187,6 +191,10 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		// for a paused schedule.
 		"update_schedule": {"schedule_id": scheduleID, "cron": "0 4 * * *", "reason": "sweep"},
 		"resume_schedule": {"schedule_id": scheduleID, "reason": "sweep"},
+		// list_triggers takes a template or a repository, not both.
+		"list_triggers":         {"template_id": f.template.String()},
+		"update_trigger":        {"trigger_id": hook.Trigger.ID.String(), "name": "sweep hook", "reason": "sweep"},
+		"rotate_trigger_secret": {"trigger_id": hook.Trigger.ID.String(), "reason": "sweep"},
 	}
 	// Every swept tool must succeed with the seeded arguments, so an erroring
 	// tool cannot pass for "no secret in the output".
@@ -206,6 +214,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"set_host_ssh":        "rewires the host's SSH credential; the same view is read by get_host, which is swept",
 		"request_run":         "called above as setup, and its output is checked there",
 		"delete_schedule":     "would delete the schedule get_schedule and list_schedule_runs read",
+		"delete_trigger":      "would delete the trigger get_trigger and list_triggers read",
 	}
 	if text := callOK(t, cs, "get_check", map[string]any{"check_id": check.ID.String()}, nil); !strings.Contains(text, "sweep-api") {
 		t.Fatalf("get_check does not show the check's secret reference:\n%s", text)

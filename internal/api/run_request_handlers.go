@@ -23,9 +23,9 @@ import (
 
 type runRequestDTO struct {
 	ID                 string `json:"id"`
-	Kind               string `json:"kind" enum:"run,retry_failed,schedule" doc:"run, retry_failed, or schedule (create, change or resume a schedule; the picture's schedule says which)"`
+	Kind               string `json:"kind" enum:"run,retry_failed,schedule,trigger" doc:"run, retry_failed, schedule (create, change or resume a schedule; the picture's schedule says which) or trigger (create, change or give a new secret to a webhook trigger; the picture's trigger says which)"`
 	Status             string `json:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
-	TemplateID         string `json:"template_id"`
+	TemplateID         string `json:"template_id" doc:"The template the request runs; empty for a repository sync trigger's request, which runs none"`
 	TemplateRevision   int64  `json:"template_revision" doc:"The template's revision when the request was made; the picture's template_revision is the one an approval approves"`
 	HostID             string `json:"host_id,omitempty"`
 	JobID              string `json:"job_id,omitempty"`
@@ -42,13 +42,13 @@ type runRequestDTO struct {
 	ExpiresAt            *time.Time `json:"expires_at,omitempty" doc:"When a pending request expires; absent while it waits for its sync, whose success starts the expiry"`
 	SyncJobID            string     `json:"sync_job_id,omitempty" doc:"The repository sync a sync_first request waits or waited for"`
 	SyncError            string     `json:"sync_error,omitempty" doc:"Why a failed request's sync did not let it become pending"`
-	TargetID             string     `json:"target_id,omitempty" doc:"A schedule request's schedule: the one it creates (its id is taken when the request is made), changes or resumes"`
+	TargetID             string     `json:"target_id,omitempty" doc:"A schedule or trigger request's schedule or trigger: the one it creates (its id is taken when the request is made), changes, resumes or rotates"`
 	CreatedAt            time.Time  `json:"created_at"`
 }
 
 func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 	dto := runRequestDTO{
-		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateID: r.TemplateID.String(), TemplateRevision: r.TemplateRevision,
+		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateRevision: r.TemplateRevision,
 		Reason: r.Reason, RequestedByUserID: r.RequestedByUser.String(), DecidedAt: r.DecidedAt,
 		CreatedAt: r.CreatedAt, SyncError: r.SyncError,
 		RequestedByTokenName: r.TokenName, TokenState: string(r.TokenState),
@@ -61,6 +61,9 @@ func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 	dto.HostID, dto.JobID, dto.RequestedByTokenID = uuidString(r.HostID), uuidString(r.JobID), uuidString(r.RequestedByToken)
 	dto.DecidedByUserID, dto.RunGroupID = uuidString(r.DecidedBy), uuidString(r.RunGroupID)
 	dto.TargetID = uuidString(r.TargetID)
+	if r.TemplateID != uuid.Nil {
+		dto.TemplateID = r.TemplateID.String()
+	}
 	return dto
 }
 
@@ -83,6 +86,19 @@ type runRequestDetailOutput struct {
 type runRequestOutput struct {
 	Body struct {
 		Request runRequestDTO `json:"request"`
+	}
+}
+
+// runRequestApproveOutput is the approval's answer. After a trigger
+// request that creates a trigger or gives it a new secret it carries that
+// secret, once, to the approving person: no cache may keep the response,
+// and nothing else ever returns the secret again.
+type runRequestApproveOutput struct {
+	CacheControl string `header:"Cache-Control"`
+	Body         struct {
+		Request       runRequestDTO `json:"request"`
+		TriggerSecret string        `json:"trigger_secret,omitempty" doc:"The webhook trigger's new secret after a trigger request that creates a trigger or rotates its secret: shown once, to the approving person only; store it in the sender"`
+		TriggerURL    string        `json:"trigger_url,omitempty" doc:"Where the trigger's senders post to (a trigger request)"`
 	}
 }
 
@@ -227,7 +243,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 			// default, an empty list starts none.
 			FollowUps *[]string `json:"follow_ups,omitempty" maxItems:"10" doc:"Direct follow-ups to start, a subset of the picture's; omitted starts all of them when the organization allows follow-ups"`
 		}
-	}) (*runRequestOutput, error) {
+	}) (*runRequestApproveOutput, error) {
 		if _, err := requireInteractiveSession(ctx); err != nil {
 			return nil, err
 		}
@@ -249,21 +265,32 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 			}
 			selection = &ids
 		}
-		// Approving a schedule request also needs what the schedule
-		// routes need (templates.write); the service asks for it by kind.
-		may := runrequests.Approver{Enrol: mayEnrolAgents(scope), WriteTemplates: tenancy.Allows(scope.Role, tenancy.PermTemplatesWrite)}
+		// Approving a schedule or trigger request also needs what their
+		// routes need (templates.write, or repos.write for a repository
+		// sync trigger); the service asks for it by kind. Every approval
+		// needs jobs.run (above): it is the approvals page's permission,
+		// and every role that writes repositories holds it.
+		may := runrequests.Approver{Enrol: mayEnrolAgents(scope), WriteTemplates: tenancy.Allows(scope.Role, tenancy.PermTemplatesWrite),
+			WriteRepos: tenancy.Allows(scope.Role, tenancy.PermReposWrite)}
 		a, err := deps.RunRequests.ApproveWith(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection, may)
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
-		if a.Schedule != nil {
+		switch {
+		case a.Schedule != nil:
 			setAuditObject(ctx, a.Request.ID.String(), scheduleApprovalSummary(a))
 			auditAppliedSchedule(ctx, deps, scope, a)
-		} else {
+		case a.Trigger != nil:
+			setAuditObject(ctx, a.Request.ID.String(), triggerApprovalSummary(a))
+			auditAppliedTrigger(ctx, deps, scope, a)
+		default:
 			setAuditObject(ctx, a.Request.ID.String(), approvalSummary(a))
 		}
-		out := &runRequestOutput{}
+		out := &runRequestApproveOutput{CacheControl: "no-store"}
 		out.Body.Request = toRunRequestDTO(a.Request)
+		if a.Trigger != nil {
+			out.Body.TriggerSecret, out.Body.TriggerURL = a.TriggerSecret, a.Trigger.URL
+		}
 		return out, nil
 	}, withAudit("approveRunRequest", "run_request"))
 

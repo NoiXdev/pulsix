@@ -200,7 +200,7 @@ export const deRuns: Messages['runs'] = {
   },
   requests: {
     title: 'Laufanfragen',
-    summary: 'Läufe und Zeitpläne, die ein Assistent angefragt hat. Nichts läuft und kein Zeitplan ändert sich, bevor jemand es freigibt: ein Lauf braucht das Recht, Jobs auszuführen, ein Zeitplan zusätzlich das Recht, Vorlagen zu ändern.',
+    summary: 'Läufe, Zeitpläne und Webhook-Trigger, die ein Assistent angefragt hat. Nichts läuft und nichts ändert sich, bevor jemand es freigibt: ein Lauf braucht das Recht, Jobs auszuführen, ein Zeitplan oder Trigger zusätzlich das Recht, Vorlagen (bei einem Repository-Sync-Trigger: Repositories) zu ändern.',
     pendingCount: (n: number) => `${n} offen`,
     label: 'Laufanfragen',
     count: (n: number) => (n === 1 ? '1 Anfrage' : `${n} Anfragen`),
@@ -235,6 +235,7 @@ export const deRuns: Messages['runs'] = {
       run: 'Lauf',
       retry_failed: 'Wiederholung der fehlgeschlagenen Hosts',
       schedule: 'Zeitplan',
+      trigger: 'Webhook-Trigger',
     },
     expires: (relative: string) => `läuft ab ${relative}`,
     waitsForSync: 'wartet auf den Sync',

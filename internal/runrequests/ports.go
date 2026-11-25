@@ -40,7 +40,7 @@ type Validator interface {
 
 // Automation checks and applies the requests that create or change what
 // runs later (spec 2026-11-25 assistant API gaps, C): schedules now,
-// webhook triggers next.
+// webhook triggers.
 type Automation interface {
 	// ValidateSchedule checks a schedule request the way the schedule
 	// routes would check the schedule itself, against target (the id a
@@ -52,4 +52,17 @@ type Automation interface {
 	// ApplySchedule does what the approved schedule request r asks for,
 	// exactly as p (the approved picture) shows it, as actor.
 	ApplySchedule(ctx context.Context, orgID uuid.UUID, r Request, p PictureSchedule, actor uuid.UUID) error
+	// ValidateTrigger checks a trigger request the way the trigger routes
+	// would check the trigger itself, against target (the id a create
+	// takes, or the trigger an update or rotation names), and returns what
+	// the request stores: the change, with an update's patch merged into
+	// the trigger as it is now, and the template the trigger runs with its
+	// revision (uuid.Nil and 0 for a repository sync trigger).
+	ValidateTrigger(ctx context.Context, orgID, target uuid.UUID, in TriggerInput) (TriggerChange, uuid.UUID, int64, error)
+	// ApplyTrigger does what the approved trigger request r asks for,
+	// exactly as p (the approved picture) shows it, as actor, and returns
+	// the trigger's new secret for a create or a rotation ("" for an
+	// update): the approving person's to see once, never stored in the
+	// clear.
+	ApplyTrigger(ctx context.Context, orgID uuid.UUID, r Request, p PictureTrigger, actor uuid.UUID) (string, error)
 }

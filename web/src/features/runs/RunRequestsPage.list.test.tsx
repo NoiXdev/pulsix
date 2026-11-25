@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
@@ -121,6 +121,18 @@ describe('RunRequestsPage list', () => {
       await pickOption(screen, 'Filter by kind', { value: 'retry_failed' });
       await waitFor(() => expect(router.state.location.search).toEqual({ kind: 'retry_failed' }));
       expect(firstCells()).toEqual(['gamma']);
+    });
+
+    it('shows a repository sync trigger request, which names no template, without an empty template', async () => {
+      const user = userEvent.setup();
+      setup('/o/acme/runs/requests', [...rows, request({ id: 'id-d', reason: 'delta', kind: 'trigger', template_id: '' })]);
+      await screen.findByText('1–4 of 4 requests');
+      const row = screen.getAllByRole('row').find((r) => within(r).queryByRole('link', { name: 'delta' })) as HTMLElement;
+      expect(within(row).getByText('webhook trigger')).toBeInTheDocument();
+      expect(within(row).getByText('—')).toBeInTheDocument();
+      await user.click(screen.getByRole('combobox', { name: 'Filter by template' }));
+      const options = screen.getAllByRole('option').map((o) => o.textContent);
+      expect(options).not.toContain('');
     });
 
     it('says when no request matches', async () => {

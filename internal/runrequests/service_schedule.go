@@ -25,10 +25,12 @@ var errScheduleGone = fmt.Errorf("%w: the schedule no longer exists", ErrInvalid
 // Approver is what the approving person may do beyond approving runs
 // (jobs.run, which the transport checks): Enrol, mint agent enrollment
 // tokens (agents.write, spec 2026-11-25 B); WriteTemplates, write
-// schedules (templates.write, the schedule routes' permission).
+// schedules and template run triggers (templates.write, their routes'
+// permission); WriteRepos, write repository sync triggers (repos.write).
 type Approver struct {
 	Enrol          bool
 	WriteTemplates bool
+	WriteRepos     bool
 }
 
 // scheduleRequest fills r for a schedule request: the target (a create

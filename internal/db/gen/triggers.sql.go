@@ -106,6 +106,47 @@ func (q *Queries) DeleteTrigger(ctx context.Context, arg DeleteTriggerParams) (i
 	return result.RowsAffected(), nil
 }
 
+const disableTrigger = `-- name: DisableTrigger :one
+UPDATE job_triggers SET enabled = false, revision = revision + 1, updated_at = now()
+WHERE org_id = $1 AND id = $2 AND enabled
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+`
+
+type DisableTriggerParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// Disabling only stops runs, so it needs no revision: an enabled trigger
+// turns off (a new revision), a disabled one matches no row.
+func (q *Queries) DisableTrigger(ctx context.Context, arg DisableTriggerParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, disableTrigger, arg.OrgID, arg.ID)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
 const fillTriggerBucket = `-- name: FillTriggerBucket :exec
 INSERT INTO trigger_buckets (trigger_id, org_id, tokens, updated_at)
 VALUES ($1, $2, $3, $4)
@@ -410,6 +451,54 @@ type SetTriggerSecretParams struct {
 
 func (q *Queries) SetTriggerSecret(ctx context.Context, arg SetTriggerSecretParams) (JobTrigger, error) {
 	row := q.db.QueryRow(ctx, setTriggerSecret, arg.Secret, arg.OrgID, arg.ID)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+	)
+	return i, err
+}
+
+const setTriggerSecretAt = `-- name: SetTriggerSecretAt :one
+UPDATE job_triggers SET secret = $1, revision = revision + 1, updated_at = now()
+WHERE org_id = $2 AND id = $3 AND revision = $4
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision
+`
+
+type SetTriggerSecretAtParams struct {
+	Secret   []byte    `json:"secret"`
+	OrgID    uuid.UUID `json:"org_id"`
+	ID       uuid.UUID `json:"id"`
+	Revision int64     `json:"revision"`
+}
+
+// An approved rotation request replaces the secret of exactly the revision
+// the approving person saw.
+func (q *Queries) SetTriggerSecretAt(ctx context.Context, arg SetTriggerSecretAtParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, setTriggerSecretAt,
+		arg.Secret,
+		arg.OrgID,
+		arg.ID,
+		arg.Revision,
+	)
 	var i JobTrigger
 	err := row.Scan(
 		&i.ID,

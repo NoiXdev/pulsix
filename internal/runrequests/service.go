@@ -32,10 +32,10 @@ const MaxReasonLength = 300
 const MaxPendingPerToken = 20
 
 // Kind is what a request asks for: a run, a retry, or (spec 2026-11-25
-// assistant API gaps, C) a schedule. Every kind shares the lifecycle, the
+// assistant API gaps, C) a schedule or a webhook trigger. Every kind shares the lifecycle, the
 // expiry, the per-token cap and the approvals page; the picture and what
 // an approval does are the kind's. The table also admits the later kinds
-// trigger, schedule_review and trigger_review (migration 00129).
+// schedule_review and trigger_review (migration 00129).
 type Kind string
 
 // The request kinds.
@@ -44,6 +44,10 @@ const (
 	KindRetryFailed Kind = "retry_failed"
 	// KindSchedule creates, changes or resumes a schedule (ScheduleChange).
 	KindSchedule Kind = "schedule"
+	// KindTrigger creates, changes or rotates the secret of a webhook
+	// trigger (TriggerChange). A repository sync trigger's request has no
+	// template (TemplateID is uuid.Nil).
+	KindTrigger Kind = "trigger"
 )
 
 // Status is a request's state. StatusExpired is never stored: a pending
@@ -132,9 +136,13 @@ type Request struct {
 	// Schedule is what a KindSchedule request does (the payload column);
 	// nil for every other kind.
 	Schedule *ScheduleChange
+	// Trigger is what a KindTrigger request does (the payload column); nil
+	// for every other kind. It never holds a secret.
+	Trigger *TriggerChange
 	// TargetID is the object a request of a kind other than run and retry
-	// acts on: for a schedule request the schedule it creates (its id
-	// taken when the request is made), changes or resumes.
+	// acts on: for a schedule or trigger request the schedule or trigger it
+	// creates (its id taken when the request is made), changes, resumes or
+	// rotates.
 	TargetID *uuid.UUID
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
@@ -160,6 +168,8 @@ type CreateInput struct {
 	SyncFirst bool
 	// Schedule is what a KindSchedule request asks for.
 	Schedule *ScheduleInput
+	// Trigger is what a KindTrigger request asks for.
+	Trigger *TriggerInput
 }
 
 // Store persists requests.
@@ -265,7 +275,17 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if in.Kind != KindSchedule && in.Schedule != nil {
 		return Request{}, fmt.Errorf("%w: only a schedule request takes a schedule", ErrInvalidInput)
 	}
+	if in.Kind != KindTrigger && in.Trigger != nil {
+		return Request{}, fmt.Errorf("%w: only a trigger request takes a trigger", ErrInvalidInput)
+	}
 	switch in.Kind {
+	case KindTrigger:
+		if in.SyncFirst || ov != nil || in.HostID != nil || in.JobID != nil {
+			return Request{}, fmt.Errorf("%w: a trigger request takes no run options (sync_first, check_mode, hosts, limit or extra vars of a run)", ErrInvalidInput)
+		}
+		if err := s.triggerRequest(ctx, orgID, in.Trigger, &r); err != nil {
+			return Request{}, err
+		}
 	case KindSchedule:
 		if in.SyncFirst || ov != nil || in.HostID != nil || in.JobID != nil {
 			return Request{}, fmt.Errorf("%w: a schedule request takes no run options (sync_first, check_mode, hosts, limit or extra vars of a run)", ErrInvalidInput)

@@ -25,6 +25,12 @@ type Approved struct {
 	// Schedule is the approved picture of a schedule request; nil for a
 	// run or a retry.
 	Schedule *PictureSchedule
+	// Trigger is the approved picture of a trigger request, and
+	// TriggerSecret the trigger's new secret after a create or a rotation:
+	// the approval's response shows it to the approving person once; it is
+	// stored nowhere in the clear and never in the request.
+	Trigger       *PictureTrigger
+	TriggerSecret string
 }
 
 // Approve enqueues what the request asks for, if fingerprint still matches
@@ -59,7 +65,8 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 // ApproveWith is Approve for a request of any kind, with what the
 // approving person may do: a run or a retry is approved as Approve
 // describes; a schedule request needs may.WriteTemplates
-// (approveSchedule).
+// (approveSchedule); a trigger request may.WriteTemplates or, for a
+// repository sync trigger, may.WriteRepos (approveTrigger).
 func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID, may Approver) (Approved, error) {
 	r, p, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
@@ -79,6 +86,8 @@ func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fing
 	switch r.Kind {
 	case KindSchedule:
 		return s.approveSchedule(ctx, orgID, r, p, by, fingerprint, current, followUps, may)
+	case KindTrigger:
+		return s.approveTrigger(ctx, orgID, r, p, by, fingerprint, current, followUps, may)
 	case KindRun, KindRetryFailed:
 	default:
 		return Approved{}, fmt.Errorf("%w: requests of kind %q cannot be approved by this version", ErrInvalidInput, r.Kind)

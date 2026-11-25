@@ -15,6 +15,7 @@ import {
   useUpdateTrigger,
 } from '../../api/hooks/useTriggers.ts';
 import { Deliveries } from './Deliveries.tsx';
+import { SecretBox } from './SecretBox.tsx';
 import { TriggerForm } from './TriggerForm.tsx';
 import { presetLabel } from './presets.ts';
 import { outcomeLabel } from './outcome.ts';
@@ -75,26 +76,6 @@ export function TriggersDialog({ org, target, canWrite, canRun, onClose }: {
         )}
       </div>
     </Dialog>
-  );
-}
-
-/** SecretBox shows a trigger secret exactly once. */
-function SecretBox({ secret, onDone }: { secret: string; onDone: () => void }) {
-  const m = useT().triggers;
-  const copy = useCopy();
-  return (
-    <div className="flex flex-col gap-2 rounded-md border border-[var(--px-warn)] p-3">
-      <p className="text-xs font-semibold">{m.secretOnce}</p>
-      <div className="flex items-center gap-2">
-        <code className="flex-1 truncate font-mono text-xs">{secret}</code>
-        <Button type="button" variant="ghost" aria-label={m.copySecret} onClick={() => void copy(secret)}>
-          <Copy size={13} />
-        </Button>
-      </div>
-      <Button type="button" onClick={onDone}>
-        {m.stored}
-      </Button>
-    </div>
   );
 }
 

@@ -211,7 +211,7 @@ type InsertRunRequestParams struct {
 	ID               uuid.UUID          `json:"id"`
 	OrgID            uuid.UUID          `json:"org_id"`
 	Kind             string             `json:"kind"`
-	TemplateID       uuid.UUID          `json:"template_id"`
+	TemplateID       pgtype.UUID        `json:"template_id"`
 	TemplateRevision int64              `json:"template_revision"`
 	HostID           pgtype.UUID        `json:"host_id"`
 	JobID            pgtype.UUID        `json:"job_id"`

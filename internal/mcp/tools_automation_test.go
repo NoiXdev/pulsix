@@ -15,7 +15,8 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
-var automationTools = []string{"create_schedule", "update_schedule", "resume_schedule", "pause_schedule", "delete_schedule"}
+var automationTools = []string{"create_schedule", "update_schedule", "resume_schedule", "pause_schedule", "delete_schedule",
+	"create_trigger", "update_trigger", "rotate_trigger_secret", "delete_trigger"}
 
 // automation.request lists the schedule request tools and the direct
 // pause and delete; no other area does (spec 2026-11-25 C).

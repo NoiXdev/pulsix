@@ -183,7 +183,7 @@ func TestScheduleTrustPerPart(t *testing.T) {
 // A request of a kind this version does not know is no run picture.
 func TestPictureRefusesAnUnknownKind(t *testing.T) {
 	w := newScheduleWorld()
-	_, err := w.resolver().Picture(context.Background(), id(), runrequests.Request{ID: id(), Kind: "trigger", TemplateID: w.x})
+	_, err := w.resolver().Picture(context.Background(), id(), runrequests.Request{ID: id(), Kind: "schedule_review", TemplateID: w.x})
 	if !errors.Is(err, runrequests.ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
