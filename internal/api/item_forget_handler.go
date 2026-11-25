@@ -60,7 +60,9 @@ func (in *forgetItemInput) Resolve(ctx huma.Context) []error {
 // call"). Nor can the page offer it for an item its check no longer asks
 // for: GET /hosts/{id}/checks hides those values (stillAsked,
 // host_check_handlers.go), so on the host page only stale rows carry the
-// action and the not-asked ones are left to the automatic expiry.
+// action and the not-asked ones are left to the automatic expiry. A value
+// held on its item's state (held_while) is never stale, so it carries no
+// action either.
 //
 // With metric set (backlog 3.88) the route forgets that one metric of the
 // item instead (checks.ForgetMetric): its current value, rule state and

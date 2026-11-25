@@ -61,6 +61,20 @@ func (r Resolved) AsksForMetric(labels map[string]string, metric string) bool {
 	return checkplugins.AsksForMetric(r.Plugin, r.Params, labels, metric)
 }
 
+// HeldOn is the state label of an item that reads labels which metric
+// waits on while AsksForMetric says no only because of that state — a
+// sleeping disk's "standby", an exported pool's "EXPORTED" — and "" when
+// the metric is not held (checkplugins.HeldOn, backlog 3.9b ruling). A
+// held metric keeps its last value, state and alert.
+func (d Definition) HeldOn(labels map[string]string, metric string) string {
+	return checkplugins.HeldOn(d.Plugin, d.Params, labels, metric)
+}
+
+// HeldOn is Definition.HeldOn for a resolved check.
+func (r Resolved) HeldOn(labels map[string]string, metric string) string {
+	return checkplugins.HeldOn(r.Plugin, r.Params, labels, metric)
+}
+
 // ItemLabels is what each item reads now (CurrentLabels).
 type ItemLabels map[itemOfKey]map[string]string
 

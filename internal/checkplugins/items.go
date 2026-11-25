@@ -54,13 +54,14 @@ func AsksForItem(plugin string, params map[string]any, item string) bool {
 // Two rules decide. A metric a parameter switches on (http's
 // http.body_match, reported only while body_contains is set) is no longer
 // asked once the parameter is removed (backlog 3.88: the MetricAsked
-// hook), on every item. And a metric the agent stops reporting while its
-// item is in some state (zfs: everything but zfs.state of a pool that
-// reads EXPORTED or MISSING) is not asked while the item reads that state
-// (backlog 3.74: the MetricAskedForItem hook); once the item reads another
-// one, it is asked again. Either way the metric's last current value reads
-// as "you stopped asking" at once rather than as a reading that went
-// stale. A plugin without either hook, and an unknown plugin, asks for
+// hook), on every item; its last current value reads as "you stopped
+// asking" at once rather than as a reading that went stale. And a metric
+// the agent stops reporting while its item is in some state (zfs:
+// everything but zfs.state of a pool that reads EXPORTED or MISSING; smart:
+// everything but smart.power_mode of a disk that sleeps) is not asked
+// while the item reads that state (backlog 3.74, 3.9b: Descriptor.HeldWhile)
+// — it is held (HeldByItemState); once the item reads another state, it is
+// asked again. A plugin with neither, and an unknown plugin, asks for
 // every metric it reports.
 func AsksForMetric(plugin string, params map[string]any, labels map[string]string, metric string) bool {
 	d, ok := Get(plugin)
@@ -70,7 +71,42 @@ func AsksForMetric(plugin string, params map[string]any, labels map[string]strin
 	if d.MetricAsked != nil && !d.MetricAsked(params, metric) {
 		return false
 	}
-	return d.MetricAskedForItem == nil || d.MetricAskedForItem(params, labels, metric)
+	return !d.HeldWhile.holds(labels, metric)
+}
+
+// HeldByItemState reports whether metric is not asked only because of its
+// item's current state labels (Descriptor.HeldWhile): the parameters still
+// ask for it, the item reads a state in which the agent reports nothing
+// but the state itself. Such a metric is held rather than unasked — its
+// last state stays as it is, its alert stays open, it counts towards the
+// host's roll-up as it stood, it is not stale and the metric expiry does
+// not forget it — until the item reads another state and its next reading
+// is judged on that standing state.
+func HeldByItemState(plugin string, params map[string]any, labels map[string]string, metric string) bool {
+	return HeldOn(plugin, params, labels, metric) != ""
+}
+
+// HeldOn is the item's state label metric waits on — "standby",
+// "EXPORTED" — when it is held (HeldByItemState), and "" when it is not.
+func HeldOn(plugin string, params map[string]any, labels map[string]string, metric string) string {
+	d, ok := Get(plugin)
+	if !ok || (d.MetricAsked != nil && !d.MetricAsked(params, metric)) || !d.HeldWhile.holds(labels, metric) {
+		return ""
+	}
+	return labels[d.HeldWhile.Metric]
+}
+
+// HeldStates lists every plugin's HeldWhile, in the registry's order: what
+// the metric expiry, which runs in SQL across every check key, reads to
+// leave held metrics alone. A state's metric names its plugin.
+func HeldStates() []HeldState {
+	var out []HeldState
+	for _, d := range All() {
+		if d.HeldWhile != nil {
+			out = append(out, *d.HeldWhile)
+		}
+	}
+	return out
 }
 
 // smartItemPath is the device path of a smart item. A disk behind a RAID

@@ -267,8 +267,8 @@ func poolCount(n int) []checks.Observation {
 
 // Labels of a named pool that zpool list does not print, upper case like
 // zpool's own health values. They are the manager's descriptor constants:
-// its zfs hook stops asking for an absent pool's other metrics on exactly
-// these labels (backlog 3.74).
+// the zfs descriptor holds an absent pool's other metrics (HeldWhile) on
+// exactly these labels (backlog 3.74).
 const (
 	stateExported = checkplugins.ZFSStateExported // absent, and named in optional_pools
 	stateMissing  = checkplugins.ZFSStateMissing  // absent, and named only in pools

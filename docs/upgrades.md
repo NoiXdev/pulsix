@@ -727,7 +727,8 @@ Backlog 4.42: migration 00121 adds the nullable column `check_states.unmeasured_
 evaluation that finds a tuple unmeasured stamps it with its own moment (its check
 disabled or taken off the host, the host no longer monitored, a selector edited so the
 host drops out, a metric no longer asked for, or a metric the agent stopped reporting
-while its item still reports, backlog 3.88); an evaluation whose moment is not later
+while its item still reports, backlog 3.88; a metric held on its item's state, backlog
+3.9b, is never stamped); an evaluation whose moment is not later
 than the row's `evaluated_at` stamps nothing. While the mark is later than the row's
 `evaluated_at`, the tuple starts fresh when it is measured again; the flapping count
 leaves out the tuple's transitions at or before the mark, also after the tuple has been
@@ -741,33 +742,37 @@ and agents are not affected.
 
 ## Behaviour changes to check after an upgrade
 
-- **A sleeping disk reads `standby` (backlog 3.9b, no migration):** the `smart` check
-  leaves a disk in standby asleep, as before, but used to report nothing for it, so its
-  readings turned stale, the host read unknown, and a disk asleep for the item expiry
-  period (seven days by default) was forgotten with its open alerts. The updated agent
-  reports a new discrete metric `smart.power_mode` for every device it queried that
-  answered: `standby` for a disk it left asleep, `active` for one that answered with
-  its readings (a device without SMART data, such as a virtual disk, reports none, and
-  a device that could not be read reports its error as before). While a disk reads
-  `standby`, the manager does not ask for its other metrics: their last values leave
-  the host page, the evaluation and the effective rules the way an exported pool's do
-  (backlog 3.74), so the host stays ok and the disk is not forgotten; an open alert on
-  one of them closes as stale. They are judged again once the disk reports `active`,
-  starting fresh (backlog 4.42): a disk whose readings are bad therefore closes its
-  alert when it falls asleep and opens it again, notified, when it wakes (within the
-  hour the new alert takes over the acknowledgement, backlog 4.39). A disk asleep for
-  longer than the item expiry period has those last values forgotten by the metric
-  expiry (they trail its fresh power mode); its first readings after waking report
-  them anew. `smart.devices` still counts sleeping disks. To check after the upgrade:
-  on hosts whose disks spin down, the advice to list only the always-on disks in
-  `devices` or to ignore the sleeping ones is no longer needed once the agent is
-  updated. Version skew: an agent older than this release never reports
-  `smart.power_mode`, so its sleeping disks behave as before (stale, unknown,
+- **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
+  migration):** the `smart` check leaves a disk in standby asleep, as before, but used
+  to report nothing for it, so its readings turned stale, the host read unknown, and a
+  disk asleep for the item expiry period (seven days by default) was forgotten with
+  its open alerts. The updated agent reports a new discrete metric `smart.power_mode`
+  for every device it queried that answered: `standby` for a disk it left asleep,
+  `active` for one that answered with its readings (a device without SMART data, such
+  as a virtual disk, reports none, and a device that could not be read reports its
+  error as before). While a disk reads `standby`, its other metrics are held: the
+  evaluation leaves their states exactly as they were (no new judgement, never stale,
+  no fresh start), an open alert on one stays open and unchanged (no close, no
+  severity change, no notification), and the host's roll-up counts their last states —
+  a disk at crit keeps the host crit while it sleeps. A held value that was already
+  unknown when the disk fell asleep (its reading had gone stale or failed) does not
+  keep the host unknown. The host page keeps showing a held value with its last
+  verdict and a "waiting while standby" marker instead of a stale one, and the
+  effective rules keep listing it. The hourly metric expiry leaves held metrics alone,
+  so a disk asleep for longer than the item expiry period keeps its readings and
+  alerts. When the disk reports `active` again, its first readings are judged on the
+  states they held: the same alert continues, or closes resolved, rather than a new one
+  opening. A disk taken off the check's `devices` list, or a check disabled, is not
+  held: its alerts close stale as before. `smart.devices` still counts sleeping disks.
+  To check after the upgrade: on hosts whose disks spin down, the advice to list only
+  the always-on disks in `devices` or to ignore the sleeping ones is no longer needed
+  once the agent is updated. Version skew: an agent older than this release never
+  reports `smart.power_mode`, so its sleeping disks behave as before (stale, unknown,
   forgotten after the item expiry period) until it is updated. A manager older than
-  this release stores the new metric but refuses a rule on it (an unknown
-  metric) and keeps asking for a sleeping disk's other metrics: their readings fall
-  behind the power mode and read as vanished after three intervals (backlog 3.88)
-  rather than as not asked.
+  this release stores the new metric but refuses a rule on it (an unknown metric) and
+  keeps asking for a sleeping disk's other metrics: their readings fall behind the
+  power mode and read as vanished after three intervals (backlog 3.88) rather than as
+  held; stop every older manager instance before the new one starts if that matters.
 - **Item decisions on a plugin key reach copied checks (backlog 3.13g, no migration):**
   an item decision (ignore or watch) whose check key is a plugin name now applies to
   every check of that plugin, the way rules have since 3.13e. An existing org-wide or
@@ -783,7 +788,8 @@ and agents are not affected.
   a tuple that was not measured for a while (its check disabled or taken off the host,
   the host no longer monitored, a monitoring-group selector edited so the host drops
   out and back in, a metric or item no longer asked for, a metric the agent stopped
-  reporting while its item still reports) no longer resumes the state it
+  reporting while its item still reports; not a metric held on its item's state, such
+  as a sleeping disk's, backlog 3.9b) no longer resumes the state it
   had before the gap. Its state starts at the first evaluation after the gap: an alert
   that opens then is dated at that moment, after the previous episode's `stale` close,
   instead of at the moment the tuple first went bad before the gap; a rule's "for N
@@ -838,10 +844,11 @@ and agents are not affected.
   goes into the new list parameter `optional_pools` instead: absent, it reads
   `EXPORTED` (a rule meant to stay quiet then must exclude `EXPORTED` too, e.g.
   `zfs.state != "ONLINE" and zfs.state != "EXPORTED"`). While a pool reads `EXPORTED`
-  or `MISSING`, the manager does not ask for its other metrics: their last values
-  leave the host page, the evaluation and the effective rules the way an item taken
-  off a check's list does (an open alert on one closes as stale), and they are
-  judged again once the pool reports another state. To check after the upgrade:
+  or `MISSING`, its other metrics are held, like a sleeping disk's (backlog 3.9b,
+  above): their states and alerts stay as they were, the roll-up counts them, the host
+  page shows them with a "waiting while EXPORTED" (or `MISSING`) marker, the metric
+  expiry leaves them alone, and they are judged on those states again once the pool
+  reports another state. To check after the upgrade:
   listed pools that are not imported on purpose — move them to `optional_pools` or
   off the list. Version skew: an agent older than this release ignores
   `optional_pools` and reports nothing for an absent pool, as before. With `pools`

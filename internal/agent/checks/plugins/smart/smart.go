@@ -16,10 +16,10 @@
 // Every device that answered with readings also reports smart.power_mode
 // active. A disk in standby is left asleep and reports smart.power_mode
 // standby and nothing else that round (backlog 3.9b): the manager then
-// stops asking for its other metrics, so their last readings neither turn
-// stale nor let the disk be forgotten while it sleeps, and are judged
-// again once it reports active. A device without SMART data reports no
-// power mode.
+// holds its other metrics (checkplugins.Descriptor.HeldWhile) — their last
+// readings, states and alerts stand, never stale and never expired, while
+// it sleeps — and judges them again once it reports active. A device
+// without SMART data reports no power mode.
 //
 // Item "" carries smart.devices on every collection that got as far as
 // querying: the number of devices found (or configured) and not refused.

@@ -105,8 +105,9 @@ const (
 )
 
 // powerModeMetric says whether a device sleeps (backlog 3.9b). Its labels
-// are the manager's descriptor constants: its smart hook stops asking for
-// a sleeping disk's other metrics on exactly checkplugins.SmartPowerModeStandby.
+// are the manager's descriptor constants: the smart descriptor holds a
+// sleeping disk's other metrics (HeldWhile) on exactly
+// checkplugins.SmartPowerModeStandby.
 const powerModeMetric = "smart.power_mode"
 
 const (

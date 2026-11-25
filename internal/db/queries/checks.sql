@@ -315,11 +315,16 @@ LIMIT sqlc.arg(lim);
 -- reports (spec 2026-11-18 item 1): an item with nothing but errors has
 -- no item_newest. 'epoch' stands in for "no row" so the generated scan
 -- never meets a NULL; metric_rows says whether metric_at is real.
+-- item_holding is ListExpiredMetrics' held rule (backlog 3.9b ruling): the
+-- item's error-free reading of a held state's metric carries one of its
+-- holding labels (hold_keys, "<metric>\x1f<label>"); checks.forgetMetric
+-- leaves the state's own metric out (hold_metrics).
 SELECT
   count(*) FILTER (WHERE c.metric = sqlc.arg(metric)) AS metric_rows,
   COALESCE(max(c.at) FILTER (WHERE c.metric = sqlc.arg(metric)), 'epoch')::timestamptz AS metric_at,
   COALESCE(max(c.at) FILTER (WHERE c.error IS NULL), 'epoch')::timestamptz AS item_newest,
-  count(*) AS item_rows
+  count(*) AS item_rows,
+  COALESCE(bool_or(c.error IS NULL AND (c.metric || E'\x1f' || c.label) = ANY(sqlc.arg(hold_keys)::text[])), false)::boolean AS item_holding
 FROM check_current c
 WHERE c.org_id = sqlc.arg(org_id) AND c.host_id = sqlc.arg(host_id)
   AND c.check_key = sqlc.arg(check_key) AND c.item = sqlc.arg(item);
@@ -374,12 +379,26 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
 -- never due. Oldest first, one pass over check_current with a window per
 -- item. checks.metricExpired is the same rule in Go, over MetricNewest,
 -- for the re-check inside each metric's own forget transaction.
+--
+-- A metric held on its item's state is never due (backlog 3.9b ruling,
+-- checkplugins.HeldByItemState): every metric but the state's own of an
+-- item whose error-free reading of a held state's metric carries one of
+-- its holding labels — a disk whose smart.power_mode reads standby, a pool
+-- whose zfs.state reads EXPORTED or MISSING. It waits for the item to
+-- leave that state however far it trails the fresh state reading. The
+-- descriptors declare the states (checkplugins.HeldStates); hold_keys are
+-- their "<metric>\x1f<label>" pairs and hold_metrics their metrics. A
+-- state's metric is one of its plugin's own, so the pair names the plugin
+-- whatever check key runs it.
 SELECT m.org_id, m.host_id, m.check_key, m.item, m.metric
 FROM (
   SELECT org_id, host_id, check_key, item, metric, at,
-         max(at) FILTER (WHERE error IS NULL) OVER (PARTITION BY host_id, check_key, item) AS item_newest
+         max(at) FILTER (WHERE error IS NULL) OVER w AS item_newest,
+         COALESCE(bool_or(error IS NULL AND (metric || E'\x1f' || label) = ANY(sqlc.arg(hold_keys)::text[])) OVER w, false) AS item_holding
   FROM check_current
+  WINDOW w AS (PARTITION BY host_id, check_key, item)
 ) m
 WHERE m.at < m.item_newest - make_interval(secs => sqlc.arg(period_seconds)::double precision)
+  AND NOT (m.item_holding AND m.metric <> ALL(sqlc.arg(hold_metrics)::text[]))
 ORDER BY m.at, m.org_id, m.host_id, m.check_key, m.item, m.metric
 LIMIT sqlc.arg(lim);

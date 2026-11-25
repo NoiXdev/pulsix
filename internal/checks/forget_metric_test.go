@@ -300,6 +300,10 @@ func TestForgetExpiredMetricsRecheckBoundaries(t *testing.T) {
 		// Only errors besides it (the SMART disk smartctl cannot open):
 		// no error-free newest, which the store reads as 'epoch'.
 		{"an item with no error-free reading", checks.MetricNewest{Found: true, Metric: now.Add(-60 * 24 * time.Hour), Item: time.Unix(0, 0), Siblings: 1}, false},
+		// Held on its item's state (a sleeping disk's sector count, backlog
+		// 3.9b ruling): its last reading waits for the item to wake, however
+		// far behind the item's state it falls.
+		{"a held metric is never due", checks.MetricNewest{Found: true, Metric: itemNewest.Add(-period - time.Second), Item: itemNewest, Held: true}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

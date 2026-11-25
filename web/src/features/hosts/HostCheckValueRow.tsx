@@ -153,6 +153,15 @@ export function HostCheckValueRow({
             is lost by hiding them: an ignored item is not being judged,
             so how old its last verdict is, and how often it used to
             change, are both answers to a question nobody is asking. */}
+        {/* backlog 3.9b: the item reads a state in which the agent reports
+            nothing else (a disk left asleep, an exported pool); the server
+            keeps this value and its verdict as they were and never calls
+            them stale, and the row says what they wait on. */}
+        {value.held_while && (
+          <span title={t.hosts.value.heldWhileTitle}>
+            <Pill tone="unknown">{t.hosts.value.heldWhile(value.held_while)}</Pill>
+          </span>
+        )}
         {!value.ignored && !vanished && !frozen && value.state !== null && value.state_stale && (
           <span title={value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : undefined}>
             <Pill tone="warn">{t.hosts.value.staleVerdict}</Pill>

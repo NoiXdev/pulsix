@@ -51,6 +51,11 @@ type MetricNewest struct {
 	Found        bool
 	Metric, Item time.Time
 	Siblings     int
+	// Held reports that the metric is held on its item's current state
+	// (checkplugins.HeldByItemState: a sleeping disk's, an exported
+	// pool's): the item's error-free reading of a HeldState's metric is one
+	// of its holding labels, and the metric is not that state's own.
+	Held bool
 }
 
 // MetricForgetSteps are ForgetSteps for one metric: Proceed (optional)
@@ -68,8 +73,11 @@ type MetricForgetSteps struct {
 // item's newer reading is the proof that the check still reports the
 // item; a whole item that went quiet together has none, and is the item
 // expiry's to judge, and an item with nothing but errors has none either.
+// A metric held on its item's state (MetricNewest.Held: a sleeping disk's,
+// an exported pool's) is never expired: it waits for the item to leave
+// that state (backlog 3.9b ruling).
 func metricExpired(n MetricNewest, period time.Duration) bool {
-	return n.Found && n.Metric.Before(n.Item.Add(-period))
+	return n.Found && !n.Held && n.Metric.Before(n.Item.Add(-period))
 }
 
 // ForgetMetric forgets one metric of one item of hostID at once (the host

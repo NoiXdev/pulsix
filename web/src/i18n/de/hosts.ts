@@ -417,6 +417,8 @@ export const deHosts: Messages['hosts'] = {
     lastReading: (age: string) => `letzter Messwert ${age}`,
     staleVerdict: 'veraltete Bewertung',
     vanished: 'Wird nicht mehr gemeldet',
+    heldWhile: (state: string) => `wartet, solange ${state}`,
+    heldWhileTitle: 'Solange das Element in diesem Zustand ist, wird nichts anderes gemessen; der letzte Messwert und seine Bewertung bleiben bis dahin erhalten.',
     flapping: 'instabil',
     flappingTitle: 'hat in den letzten 30 Minuten fünfmal oder öfter den Zustand gewechselt',
     collectionFailed: 'Erfassung fehlgeschlagen',

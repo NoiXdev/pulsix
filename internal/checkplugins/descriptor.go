@@ -19,6 +19,8 @@
 // internal/agent/checks/plugins.
 package checkplugins
 
+import "slices"
+
 // Runs says where a plugin's check is executed.
 type Runs string
 
@@ -138,25 +140,42 @@ type Descriptor struct {
 	// It is consulted for every item, the whole-host item "" included. Nil
 	// means every metric is asked. See AsksForMetric.
 	MetricAsked func(params map[string]any, metric string) bool `json:"-"`
-	// MetricAskedForItem reports whether a check with params still asks
-	// for metric of an item whose current state is labels (backlog 3.74):
-	// the labels of the item's current discrete readings without an error,
-	// metric name to label — what the item reads now. It is for a plugin
-	// whose item can enter a state in which the agent reports only some of
-	// its metrics, so the others' last values read as not asked rather
-	// than as readings that went stale (zfs: an EXPORTED or MISSING pool
-	// reports only zfs.state; smart: a sleeping disk reports only
-	// smart.power_mode, backlog 3.9b).
-	// A hook must keep asking for the metrics that carry the state itself,
-	// or the item could never leave it. It is consulted for every item,
-	// "" included, after MetricAsked; labels is nil when nothing is known.
-	// Nil means the item's state never matters. See AsksForMetric.
-	MetricAskedForItem func(params map[string]any, labels map[string]string, metric string) bool `json:"-"`
+	// HeldWhile is for a plugin whose item can enter a state in which the
+	// agent reports only the metric carrying that state (backlog 3.74, 3.9b):
+	// zfs reports only zfs.state for an EXPORTED or MISSING pool, smart
+	// only smart.power_mode for a disk it leaves asleep. While the item's
+	// current reading of HeldWhile.Metric is one of HeldWhile.Labels, its
+	// other metrics are held (HeldByItemState): not asked, and their last
+	// state and alert wait unchanged for the item to leave that state,
+	// instead of turning stale. The state's own metric is always asked,
+	// or the item could never leave it. It is declared as data, not as a
+	// hook, because the metric expiry applies it in SQL (HeldStates). Nil
+	// means the item's state never matters.
+	HeldWhile *HeldState `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes
 	// with the plugin's name. Only snmp has one today.
 	Check func(params map[string]any) error `json:"-"`
+}
+
+// HeldState names the metric that carries an item's state and the labels
+// of it in which the item's other metrics are held (Descriptor.HeldWhile).
+// The metric is one of the plugin's own, so it names the plugin too.
+type HeldState struct {
+	Metric string
+	Labels []string
+}
+
+// holds reports whether metric of an item whose current state is labels
+// is held: the item reads one of the holding labels, and metric is not
+// the one that carries it. Nil labels hold nothing.
+func (h *HeldState) holds(labels map[string]string, metric string) bool {
+	if h == nil || metric == h.Metric {
+		return false
+	}
+	label, ok := labels[h.Metric]
+	return ok && slices.Contains(h.Labels, label)
 }
 
 // bound is a pointer to n, for ParamSpec.Min and Max.

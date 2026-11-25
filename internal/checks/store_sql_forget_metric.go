@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
@@ -47,14 +49,17 @@ func forgetMetric(ctx context.Context, tx pgx.Tx, ref MetricRef, steps MetricFor
 		return fmt.Errorf("lock host evaluation: %w", err)
 	}
 	if steps.Proceed != nil {
+		keys, metrics := heldStateKeys()
 		n, err := q.MetricNewest(ctx, gen.MetricNewestParams{
 			OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item, Metric: ref.Metric,
+			HoldKeys: keys,
 		})
 		if err != nil {
 			return fmt.Errorf("read metric newest: %w", err)
 		}
 		if !steps.Proceed(MetricNewest{
 			Found: n.MetricRows > 0, Metric: n.MetricAt, Item: n.ItemNewest, Siblings: int(n.ItemRows - n.MetricRows),
+			Held: n.ItemHolding && !slices.Contains(metrics, ref.Metric),
 		}) {
 			return errForgetDeclined
 		}
@@ -98,7 +103,9 @@ func forgetMetric(ctx context.Context, tx pgx.Tx, ref MetricRef, steps MetricFor
 // organization at once on the bare pool, with no organization bound; each
 // metric it returns names its own organization, which ForgetMetric binds.
 func (s *SQLStore) ExpiredMetrics(ctx context.Context, period time.Duration, limit int) ([]MetricRef, error) {
+	keys, metrics := heldStateKeys()
 	rows, err := gen.New(s.d.Pool()).ListExpiredMetrics(ctx, gen.ListExpiredMetricsParams{
+		HoldKeys: keys, HoldMetrics: metrics,
 		PeriodSeconds: period.Seconds(),
 		Lim:           int32(min(limit, maxExpiredBatch)), //nolint:gosec // bounded by maxExpiredBatch
 	})
@@ -110,4 +117,20 @@ func (s *SQLStore) ExpiredMetrics(ctx context.Context, period time.Duration, lim
 		out[i] = MetricRef{OrgID: r.OrgID, HostID: r.HostID, CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric}
 	}
 	return out, nil
+}
+
+// heldStateKeys is checkplugins.HeldStates as the expiry's statements read
+// it (ListExpiredMetrics, MetricNewest): every "<metric>\x1f<label>" pair
+// in which an item's other metrics are held, and the states' own metrics.
+// A metric name never carries a control character, so the separator
+// cannot be part of one. The descriptors are fixed data, read here rather
+// than handed in because the store's callers have no say in them.
+func heldStateKeys() (keys, metrics []string) {
+	for _, h := range checkplugins.HeldStates() {
+		metrics = append(metrics, h.Metric)
+		for _, l := range h.Labels {
+			keys = append(keys, h.Metric+"\x1f"+l)
+		}
+	}
+	return keys, metrics
 }

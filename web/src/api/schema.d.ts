@@ -5352,6 +5352,8 @@ export interface components {
             evaluated_at?: string;
             /** @description This tuple changed state five or more times in the last 30 minutes */
             flapping: boolean;
+            /** @description The state of this value's item it waits on, e.g. standby for a sleeping disk or EXPORTED for an exported pool: while the item reads it, the agent reports nothing else for the item, so this value and its verdict are kept as they were, not judged and never stale. Absent otherwise */
+            held_while?: string;
             /** @description An item decision currently keeps this tuple from being judged; measurement continues regardless */
             ignored: boolean;
             /** @description The mount or unit this value is for; empty for a whole-host metric */

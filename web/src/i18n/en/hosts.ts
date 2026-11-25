@@ -427,6 +427,11 @@ export const enHosts = {
     collectionFailed: 'collection failed',
     stale: 'stale',
     vanished: 'No longer reported',
+    /** Backlog 3.9b: the item reads a state (a sleeping disk, an exported
+     * pool) in which nothing else is measured; the value and its verdict
+     * wait as they were. */
+    heldWhile: (state: string) => `waiting while ${state}`,
+    heldWhileTitle: 'Nothing else is measured while the item is in this state; the last reading and its verdict are kept until it leaves it.',
     rules: 'Rules',
     rulesFor: (key: string, name: string) => `Rules for ${key} ${name}`,
     graph: 'Graph',

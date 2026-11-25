@@ -145,6 +145,12 @@ type hostCheckValueDTO struct {
 	// collection ran, not that the item's other metrics stopped. Never set
 	// on a disabled check, which nothing evaluates.
 	Vanished bool `json:"vanished" doc:"The check still reports on this value's item but no longer this metric: the item's newest reading without an error (a value or a label) is more than three of the check's intervals newer. Not judged any more; its state, if present, is a leftover. Always false on a disabled check"`
+	// HeldWhile is backlog 3.9b's ruling, additive like every field above:
+	// the item reads a state in which the agent reports nothing but that
+	// state (a disk it leaves asleep, an exported pool), so this metric is
+	// held — its last reading and verdict stand, unjudged, its alert stays
+	// as it was, and neither is stale — until the item leaves the state.
+	HeldWhile string `json:"held_while,omitempty" doc:"The state of this value's item it waits on, e.g. standby for a sleeping disk or EXPORTED for an exported pool: while the item reads it, the agent reports nothing else for the item, so this value and its verdict are kept as they were, not judged and never stale. Absent otherwise"`
 }
 
 type hostCheckDTO struct {
@@ -332,7 +338,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			if local[d.Key] {
 				continue
 			}
-			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, d.AsksForMetric, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
+			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, d.AsksForMetric, d.HeldOn, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, known)
 			if d.Enabled {
 				hostCheckVantages(&dto, vantages)
@@ -342,7 +348,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		// The checks defined in the host's agent.yaml (backlog 3.5a), after
 		// the definitions and in key order (Local's own).
 		for _, r := range resolved.Local {
-			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, r.AsksForMetric, byKey[r.Key]), now, statesByTuple, ignored)
+			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, r.AsksForMetric, r.HeldOn, byKey[r.Key]), now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, known)
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
@@ -496,18 +502,38 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // means every filesystem the host finds. Only the current view is
 // filtered; GET /hosts/{id}/metrics still serves the dropped item's
 // samples, because a graph of a mount dropped last week is a real graph.
-func stillAsked(asksItem func(item string) bool, asksMetric func(labels map[string]string, metric string) bool, values []checks.Current) []checks.Current {
+//
+// A metric not asked only because of its item's present state is kept,
+// held (heldOn, checks.Definition.HeldOn; backlog 3.9b ruling): the
+// evaluation holds its state and alert as they stood, so the page shows
+// its last value and verdict, marked with the state it waits on, rather
+// than hiding a verdict the host's roll-up still counts.
+func stillAsked(asksItem func(item string) bool, asksMetric func(labels map[string]string, metric string) bool,
+	heldOn func(labels map[string]string, metric string) string, values []checks.Current) []askedValue {
 	labels := checks.CurrentLabels(values)
-	kept := values[:0:0]
+	kept := make([]askedValue, 0, len(values))
 	for _, v := range values {
-		if asksItem(v.Item) && asksMetric(labels.Of(v.CheckKey, v.Item), v.Metric) {
-			kept = append(kept, v)
+		if !asksItem(v.Item) {
+			continue
+		}
+		itemLabels := labels.Of(v.CheckKey, v.Item)
+		if asksMetric(itemLabels, v.Metric) {
+			kept = append(kept, askedValue{Current: v})
+		} else if on := heldOn(itemLabels, v.Metric); on != "" {
+			kept = append(kept, askedValue{Current: v, heldOn: on})
 		}
 	}
 	return kept
 }
 
-func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
+// askedValue is a current value the check still asks for, or one held on
+// its item's state, heldOn naming that state (stillAsked).
+type askedValue struct {
+	checks.Current
+	heldOn string
+}
+
+func toHostCheckDTO(d checks.Definition, values []askedValue, groupNames map[string]string, hostName string, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
 	params := d.Params
 	if params == nil {
 		params = map[string]any{}
@@ -545,7 +571,7 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 // toLocalHostCheckDTO is a check defined in the host's agent.yaml (backlog
 // 3.5a): read-only, so no definition id, source or origin but "local", and
 // enabled — it runs whenever the agent does.
-func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
+func toLocalHostCheckDTO(r checks.Resolved, values []askedValue, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
 	params := r.Params
 	if params == nil {
 		params = map[string]any{}
@@ -567,10 +593,17 @@ func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Ti
 // ItemNewest counts only their error-free readings. vanishedInterval is
 // the interval rule loading would measure a vanished row with: the check's
 // own, or 0 for a disabled check, which nothing evaluates.
-func toHostCheckValues(key string, interval, vanishedInterval time.Duration, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
+//
+// A held value (askedValue.heldOn) is the evaluation's held tuple: neither
+// stale, nor vanished, nor a stale verdict — its reading and state wait,
+// unjudged, for its item to leave the state held_while names — and, like
+// rule loading, its reading is no evidence of the item's newest.
+func toHostCheckValues(key string, interval, vanishedInterval time.Duration, values []askedValue, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
 	newest := rules.ItemNewest{}
 	for _, c := range values {
-		newest.Observe(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, c.Err)
+		if c.heldOn == "" {
+			newest.Observe(rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}, c.At, c.Err)
+		}
 	}
 	out := make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
@@ -600,6 +633,9 @@ func toHostCheckValues(key string, interval, vanishedInterval time.Duration, val
 			// arrived: a stopped evaluator still has fresh samples flowing
 			// in (Stale stays false) but stops advancing EvaluatedAt.
 			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*interval
+		}
+		if c.heldOn != "" {
+			v.HeldWhile, v.Stale, v.StateStale, v.Vanished = c.heldOn, false, false, false
 		}
 		// Every tuple, item-less ones included (backlog 3.45): the filter
 		// that used to stand here was the second half of the same wrong

@@ -376,10 +376,12 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 // "" is always asked, every other item by checks.Resolved.AsksForItem. So
 // are metrics (backlog 3.88): one the check's parameters no longer switch
 // on (http.body_match without body_contains) is not judged, so not listed,
-// on any item, "" included, and neither is one the item's current labels
-// switch off (backlog 3.74: an exported pool's capacity) —
-// checks.Resolved.AsksForMetric over checks.CurrentLabels, the
-// evaluation's own metric predicate.
+// on any item, "" included — checks.Resolved.AsksForMetric over
+// checks.CurrentLabels, the evaluation's own metric predicate. One the
+// item's current state holds (backlog 3.74, 3.9b ruling: an exported
+// pool's capacity, a sleeping disk's temperature; checks.Resolved.HeldOn)
+// is listed: its stored state stands on the rule that judged it, and the
+// host page shows it.
 func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []rules.Tuple {
 	labels := checks.CurrentLabels(current)
 	out := make([]rules.Tuple, 0, len(current))
@@ -391,7 +393,8 @@ func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []r
 		if c.Item != "" && !r.AsksForItem(c.Item) {
 			continue
 		}
-		if !r.AsksForMetric(labels.Of(c.CheckKey, c.Item), c.Metric) {
+		itemLabels := labels.Of(c.CheckKey, c.Item)
+		if !r.AsksForMetric(itemLabels, c.Metric) && r.HeldOn(itemLabels, c.Metric) == "" {
 			continue
 		}
 		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})

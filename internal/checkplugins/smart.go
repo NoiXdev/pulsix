@@ -6,7 +6,9 @@ package checkplugins
 // reported whatever the list says, and a disk behind a RAID controller,
 // reported as "<path> [<type>]", is asked when its path is listed.
 // smart.power_mode (backlog 3.9b) says whether a disk sleeps; while it
-// does, the agent leaves it asleep and its other metrics are not asked.
+// does, the agent leaves it asleep and reports nothing else, so its other
+// metrics are held (HeldWhile): their last states and alerts wait for it
+// to wake.
 func smartPlugin() Descriptor {
 	return Descriptor{
 		Name:                "smart",
@@ -15,7 +17,7 @@ func smartPlugin() Descriptor {
 		ItemParam:           "devices",
 		HostItemAlwaysAsked: true,
 		ItemEntry:           smartItemPath,
-		MetricAskedForItem:  smartMetricAskedForItem,
+		HeldWhile:           &HeldState{Metric: smartPowerMode, Labels: []string{SmartPowerModeStandby}},
 		Metrics: []MetricSpec{
 			{Name: "smart.devices", Kind: Numeric},
 			{Name: "smart.passed", Kind: Numeric},
@@ -39,7 +41,7 @@ const smartPowerMode = "smart.power_mode"
 // The labels the agent's smart plugin reports as smart.power_mode for a
 // device it queried. The agent's plugin
 // (internal/agent/checks/plugins/smart) reports these very constants, so
-// the hook below cannot drift from what it reads.
+// HeldWhile cannot drift from what it reports.
 const (
 	// SmartPowerModeStandby: smartctl left the disk asleep and read
 	// nothing from it.
@@ -47,12 +49,3 @@ const (
 	// SmartPowerModeActive: the disk answered with its readings.
 	SmartPowerModeActive = "active"
 )
-
-// smartMetricAskedForItem: a sleeping disk reports smart.power_mode and
-// nothing else, so while its current power mode reads standby no other
-// metric of it is asked; smart.power_mode always is, which is how the disk
-// leaves standby again. Item "" carries no power mode, so smart.devices is
-// always asked.
-func smartMetricAskedForItem(_ map[string]any, labels map[string]string, metric string) bool {
-	return metric == smartPowerMode || labels[smartPowerMode] != SmartPowerModeStandby
-}

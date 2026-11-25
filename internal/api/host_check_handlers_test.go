@@ -49,6 +49,9 @@ type hostCheckValue struct {
 	// Vanished is backlog 3.88's: the item kept reporting, this metric did
 	// not — see host_check_vanished_test.go.
 	Vanished bool `json:"vanished"`
+	// HeldWhile is backlog 3.9b's: the item's state label the value waits
+	// on — see host_check_absent_pool_test.go.
+	HeldWhile string `json:"held_while"`
 }
 
 type hostCheck struct {

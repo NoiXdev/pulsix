@@ -82,8 +82,8 @@ func TestZFSAsksForMetricOfAnAbsentPool(t *testing.T) {
 	}
 }
 
-// TestAsksForMetricWithoutAnItemHook: a plugin without a
-// MetricAskedForItem hook ignores the item's labels — a disk's labels say
+// TestAsksForMetricWithoutAnItemHook: a plugin without a held state
+// (HeldWhile) ignores the item's labels — a disk's labels say
 // nothing about its metrics, and http's metric rule is its parameters'.
 func TestAsksForMetricWithoutAnItemHook(t *testing.T) {
 	labels := map[string]string{"zfs.state": "EXPORTED"}

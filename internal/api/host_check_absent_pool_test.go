@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"testing"
@@ -11,14 +12,16 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 )
 
-// TestHostChecksHidesAnAbsentPoolsOtherMetrics (backlog 3.74): a pool the
-// agent reports as EXPORTED (named in optional_pools) or MISSING (named in
-// pools) reports zfs.state and nothing else, so while that is what it
-// reads, the host page lists its zfs.state alone — its last capacity is
-// not asked, like a mount taken off a disk check's list (backlog 3.28) —
-// and an imported pool keeps every value. Once the pool reports ONLINE
-// again, its capacity is listed again.
-func TestHostChecksHidesAnAbsentPoolsOtherMetrics(t *testing.T) {
+// TestHostChecksHoldsAnAbsentPoolsOtherMetrics (backlog 3.74, 3.9b
+// ruling): a pool the agent reports as EXPORTED (named in optional_pools)
+// or MISSING (named in pools) reports zfs.state and nothing else, so while
+// that is what it reads, its last capacity is held: still listed, with
+// held_while naming the state it waits on, and never stale however old.
+// An imported pool's values carry no held_while. Once the pool reports
+// ONLINE again, its capacity is an ordinary value again — stale, here,
+// since nothing new arrived. A value of an item taken off the check's list
+// is still hidden (backlog 3.28): the disk "elsewhere" below.
+func TestHostChecksHoldsAnAbsentPoolsOtherMetrics(t *testing.T) {
 	f := newChecksFixture(t, "host-checks-absent-pool")
 	created := f.createCheck(t, f.operatorC, map[string]any{
 		"key": "zfs", "plugin": "zfs", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
@@ -30,7 +33,7 @@ func TestHostChecksHidesAnAbsentPoolsOtherMetrics(t *testing.T) {
 	obs := func(item, metric string, at time.Time, value *float64, label *string) checks.Observation {
 		return checks.Observation{HostID: f.web, CheckKey: "zfs", Item: item, Metric: metric, At: at, Value: value, Label: label}
 	}
-	earlier := now.Add(-2 * time.Minute)
+	earlier := now.Add(-10 * time.Minute)
 	f.record(t,
 		obs("tank", "zfs.state", now, nil, strPtr("ONLINE")),
 		obs("tank", "zfs.capacity_pct", now, floatPtr(40), nil),
@@ -38,33 +41,40 @@ func TestHostChecksHidesAnAbsentPoolsOtherMetrics(t *testing.T) {
 		obs("backup", "zfs.state", now, nil, strPtr("EXPORTED")),
 		obs("gone", "zfs.capacity_pct", earlier, floatPtr(12), nil),
 		obs("gone", "zfs.state", now, nil, strPtr("MISSING")),
+		obs("elsewhere", "zfs.capacity_pct", now, floatPtr(5), nil),
+		obs("elsewhere", "zfs.state", now, nil, strPtr("ONLINE")),
 	)
+	// Each value as "item metric held_while stale".
 	listed := func(t *testing.T) []string {
 		t.Helper()
 		var out []string
 		for _, v := range f.hostChecks(t, f.viewerC, f.web).byKey(t, "zfs").Values {
-			out = append(out, v.Item+" "+v.Metric)
+			out = append(out, fmt.Sprintf("%s %s %q %v", v.Item, v.Metric, v.HeldWhile, v.Stale))
 		}
 		sort.Strings(out)
 		return out
 	}
-	want := []string{"backup zfs.state", "gone zfs.state", "tank zfs.capacity_pct", "tank zfs.state"}
+	want := []string{
+		`backup zfs.capacity_pct "EXPORTED" false`, `backup zfs.state "" false`,
+		`gone zfs.capacity_pct "MISSING" false`, `gone zfs.state "" false`,
+		`tank zfs.capacity_pct "" false`, `tank zfs.state "" false`,
+	}
 	if got := listed(t); !equalStrings(got, want) {
 		t.Fatalf("values = %v, want %v", got, want)
 	}
 
 	f.record(t, obs("backup", "zfs.state", now.Add(time.Second), nil, strPtr("ONLINE")))
-	want = []string{"backup zfs.capacity_pct", "backup zfs.state", "gone zfs.state", "tank zfs.capacity_pct", "tank zfs.state"}
+	want[0] = `backup zfs.capacity_pct "" true`
 	if got := listed(t); !equalStrings(got, want) {
 		t.Fatalf("values after the pool is back = %v, want %v", got, want)
 	}
 }
 
-// TestEffectiveRulesHidesAnExportedPoolsOtherMetrics (backlog 3.74): the
-// effective-rules view reads the item's current state with the same
-// predicate as the host page and the evaluation, so an exported pool's
-// capacity has no winner while an imported pool's keeps its.
-func TestEffectiveRulesHidesAnExportedPoolsOtherMetrics(t *testing.T) {
+// TestEffectiveRulesKeepsAnExportedPoolsOtherMetrics (backlog 3.74, 3.9b
+// ruling): an exported pool's capacity is held, not unasked — its stored
+// state and alert wait on the rule that judged them — so the effective-rules
+// view keeps its winner, like an imported pool's.
+func TestEffectiveRulesKeepsAnExportedPoolsOtherMetrics(t *testing.T) {
 	f := newRulesFixture(t, "rules-exported-pool")
 	checksURL := f.s.HTTP.URL + "/api/v1/orgs/" + f.orgSlug + "/checks"
 	resp := postJSON(t, f.operatorC, checksURL, map[string]any{
@@ -104,7 +114,7 @@ func TestEffectiveRulesHidesAnExportedPoolsOtherMetrics(t *testing.T) {
 			capacity[e.Item] = true
 		}
 	}
-	if !capacity["tank"] || capacity["backup"] || len(capacity) != 1 {
-		t.Fatalf("capacity winners on %v, want tank only", capacity)
+	if !capacity["tank"] || !capacity["backup"] || len(capacity) != 2 {
+		t.Fatalf("capacity winners on %v, want tank and backup", capacity)
 	}
 }

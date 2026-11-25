@@ -45,11 +45,14 @@ type CheckContext struct {
 	// AsksMetric reports, per check key, whether the check still asks for a
 	// metric of an item whose current state is labels: http.body_match once
 	// body_contains is removed (backlog 3.88), any zfs metric but zfs.state
-	// of a pool that reads EXPORTED or MISSING (backlog 3.74). labels are
-	// the item's current discrete readings without an error, metric name
-	// to label (itemLabels), nil when it has none. It is consulted for
-	// every item, the whole-host item "" included. A key with no predicate
-	// asks for every metric.
+	// of a pool that reads EXPORTED or MISSING (backlog 3.74), any smart
+	// metric but smart.power_mode of a disk that sleeps (backlog 3.9b).
+	// labels are the item's current discrete readings without an error,
+	// metric name to label (itemLabels), nil when it has none — and nil
+	// labels never keep a metric from being asked
+	// (checkplugins.HeldByItemState), which is how held tells the two
+	// apart. It is consulted for every item, the whole-host item ""
+	// included. A key with no predicate asks for every metric.
 	AsksMetric map[string]func(labels map[string]string, metric string) bool
 	// Synthetic are the check keys the manager probes the host with
 	// (backlog 3.13): their readings are stamped by the manager's clock and
@@ -73,6 +76,24 @@ func (c CheckContext) interval(t Tuple, labels map[string]string) time.Duration 
 		return 0
 	}
 	return c.Intervals[t.CheckKey]
+}
+
+// held reports whether tuple t, of an item that reads labels now, is
+// held on that state (TupleSnapshot.Held, checkplugins.HeldByItemState):
+// its check still resolves and still asks for its item, and for its
+// metric while nothing is known of the item's state, but not while the
+// item reads labels. A metric not asked for any other reason is not held.
+func (c CheckContext) held(t Tuple, labels map[string]string) bool {
+	if c.Intervals[t.CheckKey] <= 0 {
+		return false
+	}
+	if t.Item != "" {
+		if asks, ok := c.Asks[t.CheckKey]; ok && !asks(t.Item) {
+			return false
+		}
+	}
+	asks, ok := c.AsksMetric[t.CheckKey]
+	return ok && asks(nil, t.Metric) && !asks(labels, t.Metric)
 }
 
 // HostChecks is the port into internal/checks. It is declared here, next
@@ -157,6 +178,12 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 			// itself is never deleted — that is v0.3b-1's ruling, and this
 			// is the read side of it.
 			Interval: checkCtx.interval(t, labels[itemKeyOf(t)]),
+		}
+		// A metric not asked only because of its item's present state (a
+		// sleeping disk's, an exported pool's) is held, not unmeasured: its
+		// stored state stands, its alert stays (the held skip in Evaluate).
+		if tuples[i].Interval == 0 {
+			tuples[i].Held = checkCtx.held(t, labels[itemKeyOf(t)])
 		}
 		// Only a reading still asked for is evidence the check still
 		// reports on its item — the same set the host page measures

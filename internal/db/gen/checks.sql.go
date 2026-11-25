@@ -767,17 +767,22 @@ const listExpiredMetrics = `-- name: ListExpiredMetrics :many
 SELECT m.org_id, m.host_id, m.check_key, m.item, m.metric
 FROM (
   SELECT org_id, host_id, check_key, item, metric, at,
-         max(at) FILTER (WHERE error IS NULL) OVER (PARTITION BY host_id, check_key, item) AS item_newest
+         max(at) FILTER (WHERE error IS NULL) OVER w AS item_newest,
+         COALESCE(bool_or(error IS NULL AND (metric || E'\x1f' || label) = ANY($1::text[])) OVER w, false) AS item_holding
   FROM check_current
+  WINDOW w AS (PARTITION BY host_id, check_key, item)
 ) m
-WHERE m.at < m.item_newest - make_interval(secs => $1::double precision)
+WHERE m.at < m.item_newest - make_interval(secs => $2::double precision)
+  AND NOT (m.item_holding AND m.metric <> ALL($3::text[]))
 ORDER BY m.at, m.org_id, m.host_id, m.check_key, m.item, m.metric
-LIMIT $2
+LIMIT $4
 `
 
 type ListExpiredMetricsParams struct {
-	PeriodSeconds float64 `json:"period_seconds"`
-	Lim           int32   `json:"lim"`
+	HoldKeys      []string `json:"hold_keys"`
+	PeriodSeconds float64  `json:"period_seconds"`
+	HoldMetrics   []string `json:"hold_metrics"`
+	Lim           int32    `json:"lim"`
 }
 
 type ListExpiredMetricsRow struct {
@@ -803,8 +808,24 @@ type ListExpiredMetricsRow struct {
 // never due. Oldest first, one pass over check_current with a window per
 // item. checks.metricExpired is the same rule in Go, over MetricNewest,
 // for the re-check inside each metric's own forget transaction.
+//
+// A metric held on its item's state is never due (backlog 3.9b ruling,
+// checkplugins.HeldByItemState): every metric but the state's own of an
+// item whose error-free reading of a held state's metric carries one of
+// its holding labels — a disk whose smart.power_mode reads standby, a pool
+// whose zfs.state reads EXPORTED or MISSING. It waits for the item to
+// leave that state however far it trails the fresh state reading. The
+// descriptors declare the states (checkplugins.HeldStates); hold_keys are
+// their "<metric>\x1f<label>" pairs and hold_metrics their metrics. A
+// state's metric is one of its plugin's own, so the pair names the plugin
+// whatever check key runs it.
 func (q *Queries) ListExpiredMetrics(ctx context.Context, arg ListExpiredMetricsParams) ([]ListExpiredMetricsRow, error) {
-	rows, err := q.db.Query(ctx, listExpiredMetrics, arg.PeriodSeconds, arg.Lim)
+	rows, err := q.db.Query(ctx, listExpiredMetrics,
+		arg.HoldKeys,
+		arg.PeriodSeconds,
+		arg.HoldMetrics,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -918,14 +939,16 @@ SELECT
   count(*) FILTER (WHERE c.metric = $1) AS metric_rows,
   COALESCE(max(c.at) FILTER (WHERE c.metric = $1), 'epoch')::timestamptz AS metric_at,
   COALESCE(max(c.at) FILTER (WHERE c.error IS NULL), 'epoch')::timestamptz AS item_newest,
-  count(*) AS item_rows
+  count(*) AS item_rows,
+  COALESCE(bool_or(c.error IS NULL AND (c.metric || E'\x1f' || c.label) = ANY($2::text[])), false)::boolean AS item_holding
 FROM check_current c
-WHERE c.org_id = $2 AND c.host_id = $3
-  AND c.check_key = $4 AND c.item = $5
+WHERE c.org_id = $3 AND c.host_id = $4
+  AND c.check_key = $5 AND c.item = $6
 `
 
 type MetricNewestParams struct {
 	Metric   string    `json:"metric"`
+	HoldKeys []string  `json:"hold_keys"`
 	OrgID    uuid.UUID `json:"org_id"`
 	HostID   uuid.UUID `json:"host_id"`
 	CheckKey string    `json:"check_key"`
@@ -933,10 +956,11 @@ type MetricNewestParams struct {
 }
 
 type MetricNewestRow struct {
-	MetricRows int64     `json:"metric_rows"`
-	MetricAt   time.Time `json:"metric_at"`
-	ItemNewest time.Time `json:"item_newest"`
-	ItemRows   int64     `json:"item_rows"`
+	MetricRows  int64     `json:"metric_rows"`
+	MetricAt    time.Time `json:"metric_at"`
+	ItemNewest  time.Time `json:"item_newest"`
+	ItemRows    int64     `json:"item_rows"`
+	ItemHolding bool      `json:"item_holding"`
 }
 
 // The metric forget's re-check inside its transaction (backlog 3.88),
@@ -949,9 +973,14 @@ type MetricNewestRow struct {
 // reports (spec 2026-11-18 item 1): an item with nothing but errors has
 // no item_newest. 'epoch' stands in for "no row" so the generated scan
 // never meets a NULL; metric_rows says whether metric_at is real.
+// item_holding is ListExpiredMetrics' held rule (backlog 3.9b ruling): the
+// item's error-free reading of a held state's metric carries one of its
+// holding labels (hold_keys, "<metric>\x1f<label>"); checks.forgetMetric
+// leaves the state's own metric out (hold_metrics).
 func (q *Queries) MetricNewest(ctx context.Context, arg MetricNewestParams) (MetricNewestRow, error) {
 	row := q.db.QueryRow(ctx, metricNewest,
 		arg.Metric,
+		arg.HoldKeys,
 		arg.OrgID,
 		arg.HostID,
 		arg.CheckKey,
@@ -963,6 +992,7 @@ func (q *Queries) MetricNewest(ctx context.Context, arg MetricNewestParams) (Met
 		&i.MetricAt,
 		&i.ItemNewest,
 		&i.ItemRows,
+		&i.ItemHolding,
 	)
 	return i, err
 }

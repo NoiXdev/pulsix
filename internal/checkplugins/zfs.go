@@ -19,7 +19,7 @@ func zfsPlugin() Descriptor {
 		ItemParam:           "pools",
 		HostItemAlwaysAsked: true,
 		ItemAsked:           zfsItemAsked,
-		MetricAskedForItem:  zfsMetricAskedForItem,
+		HeldWhile:           &HeldState{Metric: zfsState, Labels: []string{ZFSStateExported, ZFSStateMissing}},
 		Metrics: []MetricSpec{
 			{Name: "zfs.state", Kind: Discrete},
 			{Name: "zfs.capacity_pct", Kind: Numeric},
@@ -44,8 +44,8 @@ const zfsState = "zfs.state"
 
 // The labels the agent's zfs plugin reports as zfs.state for a named pool
 // zpool list does not print. The agent's plugin
-// (internal/agent/checks/plugins/zfs) reports these very constants, so the
-// hook below cannot drift from what it reads.
+// (internal/agent/checks/plugins/zfs) reports these very constants, so
+// HeldWhile cannot drift from what it reports.
 const (
 	// ZFSStateExported: absent, and named in optional_pools.
 	ZFSStateExported = "EXPORTED"
@@ -62,19 +62,4 @@ func zfsItemAsked(params map[string]any, entries []string, item string) bool {
 	}
 	optional, _ := stringList(params["optional_pools"])
 	return slices.Contains(entries, item) || slices.Contains(optional, item)
-}
-
-// zfsMetricAskedForItem: an EXPORTED or MISSING pool reports zfs.state and
-// nothing else, so while its current state reads either, no other metric
-// of it is asked; zfs.state always is, which is how the pool leaves that
-// state again.
-func zfsMetricAskedForItem(_ map[string]any, labels map[string]string, metric string) bool {
-	if metric == zfsState {
-		return true
-	}
-	switch labels[zfsState] {
-	case ZFSStateExported, ZFSStateMissing:
-		return false
-	}
-	return true
 }

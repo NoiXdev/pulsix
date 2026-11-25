@@ -601,3 +601,72 @@ func TestExpiryRoundForgetsItemsAndMetrics(t *testing.T) {
 		}
 	}
 }
+
+// putLabel is putCurrent for a discrete reading.
+func putLabel(t *testing.T, d *db.DB, org, host uuid.UUID, key, item, metric, label string, at time.Time) {
+	t.Helper()
+	if err := gen.New(d.Pool()).UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
+		OrgID: org, HostID: host, CheckKey: key, Item: item, Metric: metric, Label: &label, At: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExpiredMetricsLeavesHeldMetrics (backlog 3.9b ruling): a metric held
+// on its item's state — every smart metric of a disk whose current
+// smart.power_mode reads standby, every zfs metric of a pool whose
+// zfs.state reads EXPORTED or MISSING — is never selected, however far it
+// trails the fresh state reading, whatever the check key that runs the
+// plugin; the same metric of an item in another state, or whose state
+// reading is an error, is due as before. The forget's own re-check reads
+// the same verdict (MetricNewest.Held).
+func TestExpiredMetricsLeavesHeldMetrics(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-metric-expiry-held")
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	period := 168 * time.Hour
+	old := now.Add(-30 * 24 * time.Hour)
+
+	type tc struct {
+		name, key, item, state, label, metric string
+		stateFailed                           bool
+		due                                   bool
+	}
+	cases := []tc{
+		{"a sleeping disk", "smart", "/dev/sdd", "smart.power_mode", "standby", "smart.reallocated_sectors", false, false},
+		{"a sleeping disk on a copied check key", "smart-data", "/dev/sde", "smart.power_mode", "standby", "smart.temperature_celsius", false, false},
+		{"an exported pool", "zfs", "backup", "zfs.state", "EXPORTED", "zfs.capacity_pct", false, false},
+		{"a missing pool", "zfs", "gone", "zfs.state", "MISSING", "zfs.errors_read", false, false},
+		{"an active disk", "smart", "/dev/sda", "smart.power_mode", "active", "smart.reallocated_sectors", false, true},
+		{"an online pool", "zfs", "tank", "zfs.state", "ONLINE", "zfs.capacity_pct", false, true},
+		{"a state reading that failed", "smart", "/dev/sdf", "smart.power_mode", "", "smart.reallocated_sectors", true, false},
+	}
+	hosts := make([]uuid.UUID, len(cases))
+	for i, c := range cases {
+		hosts[i] = seedHost(t, d, org, "metric-expiry-held-"+uuid.NewString()[:8])
+		putCurrent(t, d, org, hosts[i], c.key, c.item, c.metric, old)
+		if c.stateFailed {
+			// No error-free reading at all: no item newest, nothing due.
+			putCurrentErr(t, d, org, hosts[i], c.key, c.item, c.state, now)
+			continue
+		}
+		putLabel(t, d, org, hosts[i], c.key, c.item, c.state, c.label, now)
+	}
+
+	got := expiredMetricSet(t, d, period, 100)
+	for i, c := range cases {
+		ref := checks.MetricRef{OrgID: org, HostID: hosts[i], CheckKey: c.key, Item: c.item, Metric: c.metric}
+		if got[ref] != c.due {
+			t.Errorf("%s: due = %v, want %v", c.name, got[ref], c.due)
+		}
+		var seen checks.MetricNewest
+		if _, err := checks.NewSQLStore(d).ForgetMetric(ctx, ref,
+			checks.MetricForgetSteps{Proceed: func(n checks.MetricNewest) bool { seen = n; return false }}); err != nil {
+			t.Fatal(err)
+		}
+		wantHeld := !c.due && !c.stateFailed
+		if seen.Held != wantHeld {
+			t.Errorf("%s: the re-check reads held = %v, want %v", c.name, seen.Held, wantHeld)
+		}
+	}
+}

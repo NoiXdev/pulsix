@@ -21,12 +21,13 @@ const documentedPoolRule = `zfs.state != "ONLINE" and zfs.state != "EXPORTED"`
 // agent reports as EXPORTED or MISSING reports zfs.state and nothing else,
 // so its last zfs.capacity_pct — old enough to be stale, but not so far
 // behind zfs.state that it vanished (rules.Vanished) — is not asked while
-// that state is current: unmeasured, no state of its own, no part in the
-// roll-up. The documented rule, parsed from its text (documentedPoolRule),
-// leaves the host ok on EXPORTED and ONLINE and fires on MISSING. Once the pool
-// reports ONLINE again, the same capacity reading is judged again: stale,
-// so unknown. A zfs.state carried by an error is no state, so it asks for
-// everything as before.
+// that state is current. It is held (backlog 3.9b ruling): not judged, not
+// unmeasured, its stored ok standing in the roll-up. The documented rule,
+// parsed from its text (documentedPoolRule), leaves the host ok on
+// EXPORTED and ONLINE and fires on MISSING. Once the pool reports ONLINE
+// again, the same capacity reading is judged again: stale, so unknown. A
+// zfs.state carried by an error is no state, so it asks for everything as
+// before.
 func TestAnAbsentPoolsOtherMetricsAreNotAsked(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -89,9 +90,8 @@ func TestAnAbsentPoolsOtherMetricsAreNotAsked(t *testing.T) {
 			}
 			got := sink.calls[0]
 
-			unmeasured := len(got.Unmeasured) == 1 && got.Unmeasured[0] == capacity
-			if unmeasured == tc.wantAsked || (tc.wantAsked && len(got.Unmeasured) != 0) {
-				t.Fatalf("unmeasured = %+v, want capacity asked = %v", got.Unmeasured, tc.wantAsked)
+			if len(got.Unmeasured) != 0 {
+				t.Fatalf("unmeasured = %+v, want none: a held capacity is not unmeasured", got.Unmeasured)
 			}
 			byTuple := map[rules.Tuple]rules.State{}
 			for _, st := range got.States {
@@ -117,11 +117,11 @@ func TestAnAbsentPoolsOtherMetricsAreNotAsked(t *testing.T) {
 // real store and ticker with the smart descriptor's own metric rule: a
 // disk the agent reports as smart.power_mode standby is left asleep and
 // reports nothing else, so its last smart.temperature_celsius — stale
-// against the clock, not vanished behind smart.power_mode — is not asked
-// while the disk sleeps: unmeasured, no state of its own, the host ok.
-// Once the disk reports active again, or with an older agent that reports
-// no power mode at all, the same reading is judged again: stale, so
-// unknown.
+// against the clock, not vanished behind smart.power_mode — is held while
+// the disk sleeps: not judged, not unmeasured, its stored row untouched
+// and its stored warn standing in the roll-up. Once the disk reports
+// active again, or with an older agent that reports no power mode at all,
+// the same reading is judged again: stale, so unknown.
 func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -129,7 +129,7 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 		wantAsked bool
 		wantHost  rules.State
 	}{
-		{name: "standby", mode: ptr(checkplugins.SmartPowerModeStandby), wantAsked: false, wantHost: rules.StateOK},
+		{name: "standby", mode: ptr(checkplugins.SmartPowerModeStandby), wantAsked: false, wantHost: rules.StateWarn},
 		{name: "active again", mode: ptr(checkplugins.SmartPowerModeActive), wantAsked: true, wantHost: rules.StateUnknown},
 		{name: "older agent without a power mode", wantAsked: true, wantHost: rules.StateUnknown},
 	} {
@@ -153,7 +153,7 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 			// intervals), not vanished behind the fresh reading (less
 			// than three).
 			insertCurrent(t, d, org, host, temp, ptr(34.0), nil, now.Add(-3*time.Minute-5*time.Second), "")
-			insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
+			insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateWarn, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
 			markDirty(t, d, org, host)
 
 			checks := fixedChecks{
@@ -175,9 +175,8 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 			}
 			got := sink.calls[0]
 
-			unmeasured := len(got.Unmeasured) == 1 && got.Unmeasured[0] == temp
-			if unmeasured == tc.wantAsked || (tc.wantAsked && len(got.Unmeasured) != 0) {
-				t.Fatalf("unmeasured = %+v, want temperature asked = %v", got.Unmeasured, tc.wantAsked)
+			if len(got.Unmeasured) != 0 {
+				t.Fatalf("unmeasured = %+v, want none: a held temperature is not unmeasured", got.Unmeasured)
 			}
 			byTuple := map[rules.Tuple]rules.State{}
 			for _, st := range got.States {
@@ -194,6 +193,21 @@ func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
 			}
 			if !tc.wantAsked && got.Host.Unknown != 0 {
 				t.Fatalf("roll-up = %+v, want nothing unknown", got.Host)
+			}
+			if !tc.wantAsked {
+				// Held: the stored row is exactly as it was, not re-stamped
+				// and not marked unmeasured.
+				var evaluatedAt time.Time
+				var unmeasuredAt *time.Time
+				var stored string
+				if err := d.Pool().QueryRow(context.Background(),
+					`SELECT state, evaluated_at, unmeasured_at FROM check_states WHERE host_id = $1 AND metric = $2`,
+					host, temp.Metric).Scan(&stored, &evaluatedAt, &unmeasuredAt); err != nil {
+					t.Fatal(err)
+				}
+				if stored != string(rules.StateWarn) || !evaluatedAt.Equal(now.Add(-4*time.Minute)) || unmeasuredAt != nil {
+					t.Fatalf("held row = %s evaluated %v unmeasured %v, want the stored warn untouched", stored, evaluatedAt, unmeasuredAt)
+				}
 			}
 		})
 	}
