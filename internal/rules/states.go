@@ -80,17 +80,17 @@ type TupleState struct {
 	// Result.Unmeasured with a moment later than EvaluatedAt stamps it,
 	// and Apply leaves it alone otherwise. It
 	// marks a gap only while it is later than EvaluatedAt — the next
-	// judgement supersedes it without clearing it (unmeasuredSinceJudged),
+	// judgement supersedes it without clearing it (UnmeasuredSinceJudged),
 	// so the flapping count can keep leaving out the transitions from
 	// before the gap. nil on a row that never went unmeasured, and on
 	// every state Evaluate produces.
 	UnmeasuredAt *time.Time
 }
 
-// unmeasuredSinceJudged reports whether the tuple went unmeasured after
+// UnmeasuredSinceJudged reports whether the tuple went unmeasured after
 // its last judgement: the row stood through a gap, and the tuple starts
 // fresh when it is measured again (Evaluate).
-func (t TupleState) unmeasuredSinceJudged() bool {
+func (t TupleState) UnmeasuredSinceJudged() bool {
 	return t.UnmeasuredAt != nil && t.UnmeasuredAt.After(t.EvaluatedAt)
 }
 

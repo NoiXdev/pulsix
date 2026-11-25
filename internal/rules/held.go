@@ -46,7 +46,7 @@ func heldFateOf(s Snapshot, ts TupleSnapshot, bySeverity map[Severity]Rule) held
 		return heldNothing
 	case s.Ignored[itemKeyOf(ts.Tuple)]:
 		return heldDropped
-	case prev.unmeasuredSinceJudged() || prev.State == StateUnknown:
+	case prev.UnmeasuredSinceJudged() || prev.State == StateUnknown:
 		return heldNothing
 	case isAlerting(prev.State) && !judgedByOneOf(prev, bySeverity):
 		return heldResolved

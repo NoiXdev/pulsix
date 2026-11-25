@@ -734,7 +734,13 @@ than the row's `evaluated_at` stamps nothing. While the mark is later than the r
 leaves out the tuple's transitions at or before the mark, also after the tuple has been
 judged again. Existing rows carry no mark, but a tuple still unmeasured at the upgrade
 is marked on the new manager's first evaluation of its host (within seconds); only a gap that ends before that evaluation, or one that only an older
-manager evaluated, resumes its old state once, as before. Skew: an older manager
+manager evaluated, resumes its old state once, as before. A metric held on its item's
+state is never marked, so one whose alert a build without the mark already closed
+stale — a sleeping disk's read as vanished by an older manager evaluating alongside, or
+an exported pool's by a build from the main branch between backlog 3.74 and this
+release — keeps its old severity in the roll-up while the item stays in its state, and
+when the item leaves it opens a new alert dated at the old, pre-sleep since; this
+affects only installations that ran such a build (no tagged release does). Skew: an older manager
 evaluating alongside neither stamps nor reads the column (its gaps resume as before,
 and it counts pre-gap transitions towards flapping); its state writes leave the column
 alone and supersede a mark through `evaluated_at`, as the new manager's own do. Workers
@@ -856,7 +862,11 @@ and agents are not affected.
   above): their states and alerts stay as they were, the roll-up counts them, the host
   page shows them with a "waiting while EXPORTED" (or `MISSING`) marker, the metric
   expiry leaves them alone, and they are judged on those states again once the pool
-  reports another state. To check after the upgrade:
+  reports another state. On an installation that ran a build from the main branch
+  between backlog 3.74 and this release (no tagged release), a pool exported under that
+  build already had its alerts closed stale: such a pool keeps its old severity in the
+  roll-up until it is imported again, and then opens a new alert dated at its old
+  since. To check after the upgrade:
   listed pools that are not imported on purpose — move them to `optional_pools` or
   off the list. Version skew: an agent older than this release ignores
   `optional_pools` and reports nothing for an absent pool, as before. With `pools`

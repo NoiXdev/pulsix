@@ -126,3 +126,59 @@ func TestEffectiveRulesKeepsAnExportedPoolsOtherMetrics(t *testing.T) {
 		t.Fatalf("capacity winners on %v, want tank and backup", capacity)
 	}
 }
+
+// TestHostChecksHoldsOnlyWhatTheEvaluationHolds (backlog 3.9b final
+// review): the page calls a value held only where the evaluation holds it.
+// A disabled check's values are unmeasured there (their alerts closed
+// stale), and a row marked unmeasured since its last judgement (backlog
+// 4.42: its check was off or the item off the list while the pool was
+// exported) holds nothing; either is not asked — hidden, like a value of
+// an item taken off the list — rather than shown as a verdict waiting
+// while EXPORTED.
+func TestHostChecksHoldsOnlyWhatTheEvaluationHolds(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	earlier := now.Add(-10 * time.Minute)
+	setup := func(t *testing.T, slug string, enabled bool) checksFixture {
+		t.Helper()
+		f := newChecksFixture(t, slug)
+		created := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "zfs", "plugin": "zfs", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
+			"enabled": enabled, "params": map[string]any{"optional_pools": []any{"backup"}},
+		})
+		t.Cleanup(func() { requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil) })
+		f.record(t,
+			checks.Observation{HostID: f.web, CheckKey: "zfs", Item: "backup", Metric: "zfs.capacity_pct", At: earlier, Value: floatPtr(91)},
+			checks.Observation{HostID: f.web, CheckKey: "zfs", Item: "backup", Metric: "zfs.state", At: now, Label: strPtr("EXPORTED")},
+		)
+		return f
+	}
+	listed := func(t *testing.T, f checksFixture) []string {
+		t.Helper()
+		var out []string
+		for _, v := range f.hostChecks(t, f.viewerC, f.web).byKey(t, "zfs").Values {
+			out = append(out, fmt.Sprintf("%s %s %q", v.Item, v.Metric, v.HeldWhile))
+		}
+		sort.Strings(out)
+		return out
+	}
+	want := []string{`backup zfs.state ""`}
+
+	t.Run("a disabled check", func(t *testing.T) {
+		f := setup(t, "host-checks-held-disabled", false)
+		if got := listed(t, f); !equalStrings(got, want) {
+			t.Fatalf("values = %v, want %v", got, want)
+		}
+	})
+	t.Run("a row marked unmeasured", func(t *testing.T) {
+		f := setup(t, "host-checks-held-marked", true)
+		if _, err := f.s.DB.Pool().Exec(context.Background(), `
+			INSERT INTO check_states (org_id, host_id, check_key, item, metric, state, since, evaluated_at, unmeasured_at)
+			VALUES ($1, $2, 'zfs', 'backup', 'zfs.capacity_pct', 'crit', $3, $3, $4)`,
+			f.orgID, f.web, earlier.Add(-time.Hour), earlier.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if got := listed(t, f); !equalStrings(got, want) {
+			t.Fatalf("values = %v, want %v", got, want)
+		}
+	})
+}

@@ -515,7 +515,7 @@ func toHostCheckDTO(d checks.Definition, values []askedValue, groupNames map[str
 	if !d.Enabled {
 		vanishedInterval = 0
 	}
-	dto.Values = toHostCheckValues(d.Key, d.Interval, vanishedInterval, values, now, states, ignored)
+	dto.Values = toHostCheckValues(d.Key, d.Interval, vanishedInterval, heldAsEvaluated(d.Key, d.Enabled, values, states), now, states, ignored)
 	return dto
 }
 
@@ -531,7 +531,7 @@ func toLocalHostCheckDTO(r checks.Resolved, values []askedValue, now time.Time, 
 		Key: r.Key, Plugin: checkPluginName(r.Plugin), Params: params,
 		IntervalSeconds: int(r.Interval / time.Second), Enabled: true,
 		Origin: string(checks.BindingLocal), Source: string(checks.BindingLocal),
-		Values: toHostCheckValues(r.Key, r.Interval, r.Interval, values, now, states, ignored),
+		Values: toHostCheckValues(r.Key, r.Interval, r.Interval, heldAsEvaluated(r.Key, true, values, states), now, states, ignored),
 	}
 }
 

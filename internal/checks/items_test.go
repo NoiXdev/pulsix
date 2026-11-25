@@ -152,19 +152,19 @@ func TestCurrentLabels(t *testing.T) {
 		{CheckKey: "zfs-2", Item: "tank", Metric: "zfs.state", Label: label("MISSING")},
 		{CheckKey: "zfs", Item: "rpool", Metric: "zfs.state", Err: "zpool status failed"},
 	})
-	if l := got.Of("zfs", "tank"); len(l) != 2 || l["zfs.state"] != "ONLINE" || l["zfs.scan"] != "none" {
+	if l := got.For(Current{CheckKey: "zfs", Item: "tank"}); len(l) != 2 || l["zfs.state"] != "ONLINE" || l["zfs.scan"] != "none" {
 		t.Errorf("zfs/tank = %v, want its state and scan", l)
 	}
-	if l := got.Of("zfs", "backup"); len(l) != 1 || l["zfs.state"] != "EXPORTED" {
+	if l := got.For(Current{CheckKey: "zfs", Item: "backup"}); len(l) != 1 || l["zfs.state"] != "EXPORTED" {
 		t.Errorf("zfs/backup = %v, want EXPORTED", l)
 	}
-	if l := got.Of("zfs-2", "tank"); l["zfs.state"] != "MISSING" {
+	if l := got.For(Current{CheckKey: "zfs-2", Item: "tank"}); l["zfs.state"] != "MISSING" {
 		t.Errorf("zfs-2/tank = %v, want its own key's MISSING", l)
 	}
-	if l := got.Of("zfs", "rpool"); len(l) != 0 {
+	if l := got.For(Current{CheckKey: "zfs", Item: "rpool"}); len(l) != 0 {
 		t.Errorf("zfs/rpool = %v, want no label from an error", l)
 	}
-	if l := got.Of("disk", "/"); l != nil {
+	if l := got.For(Current{CheckKey: "disk", Item: "/"}); l != nil {
 		t.Errorf("an unknown item = %v, want nil", l)
 	}
 }

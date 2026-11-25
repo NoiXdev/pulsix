@@ -48,7 +48,7 @@ func (r Resolved) AsksForItem(item string) bool {
 }
 
 // AsksForMetric reports whether d still asks the host for metric of an
-// item whose current state is labels (CurrentLabels.Of): http.body_match
+// item whose current state is labels (ItemLabels.For): http.body_match
 // only while body_contains is set (backlog 3.88), and no zfs metric but
 // zfs.state of a pool that reads EXPORTED or MISSING (backlog 3.74). It is
 // the metric-level companion of AsksForItem — a metric a parameter
@@ -117,7 +117,7 @@ func CurrentLabels(values []Current) ItemLabels {
 	return out
 }
 
-// For is the labels v is asked against: its item's (Of), unless v was
+// For is the labels v is asked against: its item's, unless v was
 // taken after every one of them — a reading newer than the item's state
 // proves the item no longer reports only its state (a disk last seen
 // asleep that now fails to answer), so that state holds nothing of it
@@ -128,9 +128,4 @@ func (l ItemLabels) For(v Current) map[string]string {
 		return nil
 	}
 	return st.labels
-}
-
-// Of is checkKey's item's labels, nil when it has none.
-func (l ItemLabels) Of(checkKey, item string) map[string]string {
-	return l[itemOfKey{checkKey: checkKey, item: item}].labels
 }

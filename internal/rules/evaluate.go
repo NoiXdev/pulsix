@@ -384,7 +384,7 @@ func Evaluate(s Snapshot) Result {
 		// hold a severity judged before the gap, and its flapping would
 		// count transitions from before it. So it is no previous state at
 		// all: the tuple is judged as if for the first time.
-		returning := seen && prev.unmeasuredSinceJudged()
+		returning := seen && prev.UnmeasuredSinceJudged()
 		if returning {
 			seen = false
 		}

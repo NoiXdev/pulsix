@@ -1,6 +1,9 @@
 package api
 
-import "github.com/noixdev/pulsix/internal/checks"
+import (
+	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/rules"
+)
 
 // stillAsked drops the current values whose item d no longer asks the host
 // for — a mount taken off a disk check's list, a unit taken off a service
@@ -51,4 +54,26 @@ func stillAsked(asksItem func(item string) bool, asksMetric func(labels map[stri
 type askedValue struct {
 	checks.Current
 	heldOn string
+}
+
+// heldAsEvaluated keeps a held value only where the evaluation holds it
+// (rules' held.go): a disabled check has no interval, so its values are
+// unmeasured there — their alerts closed stale — and a state row marked
+// unmeasured since its last judgement (backlog 4.42: the check was off, or
+// the item off its list, while the item was in its state) holds nothing.
+// Either is a value nobody asks for, so it is left out like one, rather
+// than shown as a verdict that waits for the item while the roll-up and
+// the alerts no longer count it.
+func heldAsEvaluated(key string, enabled bool, values []askedValue, states map[rules.Tuple]rules.TupleState) []askedValue {
+	kept := values[:0:0]
+	for _, v := range values {
+		if v.heldOn != "" {
+			st, ok := states[rules.Tuple{CheckKey: key, Item: v.Item, Metric: v.Metric}]
+			if !enabled || (ok && st.UnmeasuredSinceJudged()) {
+				continue
+			}
+		}
+		kept = append(kept, v)
+	}
+	return kept
 }
