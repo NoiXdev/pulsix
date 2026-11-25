@@ -47,9 +47,9 @@ func (q *Queries) ConsumeAgentEnrollmentUse(ctx context.Context, arg ConsumeAgen
 }
 
 const createAgentEnrollment = `-- name: CreateAgentEnrollment :one
-INSERT INTO agent_enrollments (id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, expires_at, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at
+INSERT INTO agent_enrollments (id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, expires_at, created_by, job_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at, job_id
 `
 
 type CreateAgentEnrollmentParams struct {
@@ -62,6 +62,7 @@ type CreateAgentEnrollmentParams struct {
 	MaxUses    int32       `json:"max_uses"`
 	ExpiresAt  time.Time   `json:"expires_at"`
 	CreatedBy  pgtype.UUID `json:"created_by"`
+	JobID      pgtype.UUID `json:"job_id"`
 }
 
 func (q *Queries) CreateAgentEnrollment(ctx context.Context, arg CreateAgentEnrollmentParams) (AgentEnrollment, error) {
@@ -75,6 +76,7 @@ func (q *Queries) CreateAgentEnrollment(ctx context.Context, arg CreateAgentEnro
 		arg.MaxUses,
 		arg.ExpiresAt,
 		arg.CreatedBy,
+		arg.JobID,
 	)
 	var i AgentEnrollment
 	err := row.Scan(
@@ -90,6 +92,7 @@ func (q *Queries) CreateAgentEnrollment(ctx context.Context, arg CreateAgentEnro
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.JobID,
 	)
 	return i, err
 }
@@ -122,6 +125,27 @@ type DeleteHostAgentParams struct {
 
 func (q *Queries) DeleteHostAgent(ctx context.Context, arg DeleteHostAgentParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteHostAgent, arg.OrgID, arg.HostID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteUnusedJobAgentEnrollments = `-- name: DeleteUnusedJobAgentEnrollments :execrows
+DELETE FROM agent_enrollments
+WHERE org_id = $1 AND job_id = $2 AND used_at IS NULL
+`
+
+type DeleteUnusedJobAgentEnrollmentsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	JobID pgtype.UUID `json:"job_id"`
+}
+
+// Revokes the tokens a run's claim minted (spec 2026-11-25 B, migration
+// 00128) that are still unused: on a re-claim, a requeue and every terminal
+// path of the job. A used token keeps its row (the run view counts it).
+func (q *Queries) DeleteUnusedJobAgentEnrollments(ctx context.Context, arg DeleteUnusedJobAgentEnrollmentsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnusedJobAgentEnrollments, arg.OrgID, arg.JobID)
 	if err != nil {
 		return 0, err
 	}
@@ -373,7 +397,7 @@ func (q *Queries) ListHostsWithAgent(ctx context.Context, arg ListHostsWithAgent
 }
 
 const listPendingAgentEnrollments = `-- name: ListPendingAgentEnrollments :many
-SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at FROM agent_enrollments
+SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at, job_id FROM agent_enrollments
 WHERE org_id = $1 AND used_at IS NULL AND expires_at > $2
 ORDER BY created_at
 `
@@ -405,6 +429,7 @@ func (q *Queries) ListPendingAgentEnrollments(ctx context.Context, arg ListPendi
 			&i.UsedAt,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.JobID,
 		); err != nil {
 			return nil, err
 		}
@@ -452,7 +477,7 @@ func (q *Queries) ListProbeCapableAgents(ctx context.Context, orgID uuid.UUID) (
 }
 
 const lockAgentEnrollment = `-- name: LockAgentEnrollment :one
-SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at FROM agent_enrollments WHERE org_id = $1 AND id = $2 FOR UPDATE
+SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at, job_id FROM agent_enrollments WHERE org_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LockAgentEnrollmentParams struct {
@@ -476,6 +501,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.JobID,
 	)
 	return i, err
 }

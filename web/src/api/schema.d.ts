@@ -6050,6 +6050,8 @@ export interface components {
             created_at: string;
             /** @description A dry run's options; absent for every other job */
             dry_run?: components["schemas"]["DryRunDTO"];
+            /** @description The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that enrols no agents */
+            enroll_tokens?: components["schemas"]["JobEnrollTokensDTO"];
             error?: string;
             /** Format: date-time */
             finished_at?: string;
@@ -6090,6 +6092,18 @@ export interface components {
              */
             readonly $schema?: string;
             job: components["schemas"]["JobDetailDTO"];
+        };
+        JobEnrollTokensDTO: {
+            /**
+             * Format: int64
+             * @description Tokens minted for the run's hosts without an agent, over all its claims (a re-claim mints afresh)
+             */
+            minted: number;
+            /**
+             * Format: int64
+             * @description Tokens an agent enrolled with; the unused ones are revoked when the run ends
+             */
+            used: number;
         };
         JobEventDTO: {
             /** Format: date-time */

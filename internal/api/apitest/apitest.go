@@ -731,6 +731,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Queue = jobsQueue
 	agentsSvc := agents.NewService(agents.NewSQLStore(d), agents.WithProvisioner(app.NewAgentHostProvisioner(hostsSvc)),
 		agents.WithCA(testCA))
+	jobsQueue.SetEnrollment(app.NewJobEnrollmentTokens(agentsSvc), auditRec)
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys), time.Now), TOTP: totp, Passkeys: passkeys,
 		Tokens:      auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),

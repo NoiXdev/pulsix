@@ -148,6 +148,17 @@ type jobDetailDTO struct {
 	Chain           chainDTO `json:"chain"`
 	CancelStopsPlay bool     `json:"cancel_stops_play" doc:"Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker"`
 	PinnedCommit    string   `json:"pinned_commit,omitempty" doc:"The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip"`
+	// EnrollTokens counts the agent enrollment tokens the run handed its
+	// hosts (spec 2026-11-25 B). Counts only: a token itself is never
+	// served.
+	EnrollTokens *jobEnrollTokensDTO `json:"enroll_tokens,omitempty" doc:"The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that enrols no agents"`
+}
+
+// jobEnrollTokensDTO is how many enrollment tokens a run's claims minted
+// and how many an agent enrolled with.
+type jobEnrollTokensDTO struct {
+	Minted int `json:"minted" doc:"Tokens minted for the run's hosts without an agent, over all its claims (a re-claim mints afresh)"`
+	Used   int `json:"used" doc:"Tokens an agent enrolled with; the unused ones are revoked when the run ends"`
 }
 
 // jobVaultIdentityDTO is one vault id the run detail shows, and whether it
@@ -171,6 +182,9 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()
+	}
+	if j.EnrollHostIDs != nil || j.EnrollTokensMinted > 0 {
+		out.EnrollTokens = &jobEnrollTokensDTO{Minted: j.EnrollTokensMinted, Used: j.EnrollTokensUsed}
 	}
 	out.Hosts = make([]string, len(j.HostIDs))
 	for i, h := range j.HostIDs {

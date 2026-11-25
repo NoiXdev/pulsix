@@ -1,6 +1,6 @@
 -- name: CreateAgentEnrollment :one
-INSERT INTO agent_enrollments (id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, expires_at, created_by)
-VALUES (sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(zone_id), sqlc.narg(host_id), sqlc.narg(name_hint), sqlc.arg(secret_hash), sqlc.arg(max_uses), sqlc.arg(expires_at), sqlc.narg(created_by))
+INSERT INTO agent_enrollments (id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, expires_at, created_by, job_id)
+VALUES (sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(zone_id), sqlc.narg(host_id), sqlc.narg(name_hint), sqlc.arg(secret_hash), sqlc.arg(max_uses), sqlc.arg(expires_at), sqlc.narg(created_by), sqlc.narg(job_id))
 RETURNING *;
 
 -- name: ListPendingAgentEnrollments :many
@@ -10,6 +10,13 @@ ORDER BY created_at;
 
 -- name: DeleteAgentEnrollment :execrows
 DELETE FROM agent_enrollments WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND used_at IS NULL;
+
+-- name: DeleteUnusedJobAgentEnrollments :execrows
+-- Revokes the tokens a run's claim minted (spec 2026-11-25 B, migration
+-- 00128) that are still unused: on a re-claim, a requeue and every terminal
+-- path of the job. A used token keeps its row (the run view counts it).
+DELETE FROM agent_enrollments
+WHERE org_id = sqlc.arg(org_id) AND job_id = sqlc.arg(job_id) AND used_at IS NULL;
 
 -- name: GetAgentEnrollmentOrg :one
 -- Claim's first step, org-unscoped: the id is the token's public half.

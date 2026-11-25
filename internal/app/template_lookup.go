@@ -113,7 +113,7 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 		PlaybookRepo: p.RepoID, PlaybookPath: playbookText(p.Path), PlaybookInline: playbookText(p.Inline),
 		Scope: scope, Limit: t.Limit,
 		ExtraVars: vars, ExtraVarsSchema: schemaRaw, CredentialID: t.CredentialID,
-		VaultIdentities: vaultIdentities, OpenedSecrets: secrets,
+		VaultIdentities: vaultIdentities, OpenedSecrets: secrets, AgentEnrollment: t.AgentEnrollment,
 	}, nil
 }
 

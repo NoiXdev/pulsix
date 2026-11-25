@@ -868,6 +868,30 @@ as changed, and it asks neither for `agents.write` nor for the confirmed list. S
 every manager instance before the new version starts, as 00123 requires. Workers and
 agents are not affected.
 
+Migration 00128 hands those runs their tokens: `agent_enrollments.job_id` (nullable,
+composite foreign key to `jobs (org_id, id)` with `ON DELETE SET NULL (job_id)`, and the
+partial index `agent_enrollments_job_idx`, empty at the upgrade) and
+`jobs.enroll_tokens_minted` (integer, NOT NULL DEFAULT 0); catalog changes plus a
+validation scan of the token table, and a backup carries both. The claim of a job with
+a confirmed list mints, for each listed host of the job that still has no agent, a
+host-bound single-use enrollment token in the job's zone, valid for 24 hours, and
+hands it over only as that host's inventory variables `pulsix_agent_enroll_token`
+(the token) and `pulsix_agent_enroll_tokens` (`{}`), which win over any group or
+membership value of those names; the token is in the claim's redact list, so the
+worker removes it from the run's events. A requeue (reaper or a revoked worker)
+revokes the claim's unused tokens in its own transaction, a re-claim mints fresh ones,
+and every end of the job (succeeded, failed, cancelled, error) revokes the unused ones
+in the transaction that ends it; a used one stays. A minting failure fails the job
+with "mint enrollment tokens: …" and hands nothing out. The activity log records
+"enrollment tokens minted for N hosts by job …" (with the host names) and "revoked N
+unused enrollment tokens of job …" as system entries. The job detail gains
+`enroll_tokens: {minted, used}` for an enrolling run (counts only), shown on the run
+page. **An older manager alongside mints nothing** for an enrolling run it claims (the
+role then stops the play for those hosts) and revokes nothing when its jobs end, so
+tokens a newer manager minted for a job an older one ends live out their 24 hours.
+Stop every manager instance before the new version starts. Workers and agents are not
+affected: the token reaches the worker as an ordinary inventory variable.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

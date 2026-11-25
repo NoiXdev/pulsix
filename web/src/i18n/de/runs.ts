@@ -156,6 +156,8 @@ export const deRuns: Messages['runs'] = {
     finished: 'Beendet',
     runGroup: 'Laufgruppe',
     pinnedCommit: 'Festgelegter Commit',
+    enrollTokens: 'Registrierungs-Tokens',
+    enrollTokenCounts: (minted: number, used: number) => `${minted} erstellt, ${used} verwendet`,
     pinnedWaiting:
       'Warte auf einen Worker, der einen festgelegten Commit ausführen kann. Ältere Worker übernehmen einen solchen Lauf nie: Bleibt er in der Warteschlange, aktualisiere die Worker der Zone.',
     groupCount: (n: number) => (n === 1 ? '1 Job' : `${n} Jobs`),

@@ -24,6 +24,11 @@ const (
 	leakPassword = "Sup3r-Secret-Become"
 	leakExtraVar = "extra-var-secret-7f1c"
 	leakKeyLine  = "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz"
+	// leakEnrollToken stands for the agent enrollment token an enrolling
+	// run's claim puts into one host's inventory variables (spec
+	// 2026-11-25 B): the manager names it in the redact list, so an install
+	// task that prints its host variables leaks nothing.
+	leakEnrollToken = "pxa1.01900000-0000-7000-8000-0000000000e1.c2VjcmV0LWVucm9sbC10b2tlbg.cGlu"
 )
 
 var leakKey = "-----BEGIN OPENSSH PRIVATE KEY-----\n" + leakKeyLine + "\nc2gtZWQyNTUxOQAAACBZwYmjjckHwNrA0ODDwuywdHhjLPs5j7kySXjBGmAIqwAA\n-----END OPENSSH PRIVATE KEY-----\n"
@@ -45,6 +50,7 @@ func secretFixture(t *testing.T) string {
 		line(map[string]any{"event": "runner_on_ok", "stdout": "ok: [app1] => " + leakPassword,
 			"event_data": map[string]any{"host": "app1", "task": "leak", "uuid": "noise", "res": map[string]any{
 				"msg": "password is " + leakPassword, "stdout": leakKey, "nested": []any{map[string]any{"v": leakExtraVar}},
+				"hostvars": map[string]any{"pulsix_agent_enroll_token": leakEnrollToken},
 			}}}),
 		line(map[string]any{"event": "playbook_on_stats", "stdout": "PLAY RECAP", "event_data": map[string]any{
 			"ok": map[string]any{"app1": 1}, "changed": map[string]any{}, "failures": map[string]any{}, "dark": map[string]any{}, "skipped": map[string]any{},
@@ -67,7 +73,14 @@ func TestRunRedactsSecretsAndForwardsEachEventOnce(t *testing.T) {
 	// The claim's credential for app1 carries the become password; the
 	// extra var and the key come in through the manager's redact list.
 	job.Credentials["cred-2"] = secretJSON(t, credentials.Secret{PrivateKey: "app-key-material", Password: leakPassword})
-	job.Redact = []string{leakExtraVar, leakKey}
+	// app1's enrollment token travels as the claim hands it: in its own
+	// host variables, and in the redact list.
+	job.InventoryDoc = strings.Replace(job.InventoryDoc, `"app1": {"ansible_host": "192.0.2.11", "ansible_user": "deploy"}`,
+		`"app1": {"ansible_host": "192.0.2.11", "ansible_user": "deploy", "pulsix_agent_enroll_token": "`+leakEnrollToken+`", "pulsix_agent_enroll_tokens": {}}`, 1)
+	if !strings.Contains(job.InventoryDoc, leakEnrollToken) {
+		t.Fatal("the fixture's inventory did not take the token")
+	}
+	job.Redact = []string{leakExtraVar, leakKey, leakEnrollToken}
 	c := &collector{}
 	if _, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), job, runEnv(t), c.sink); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -76,7 +89,7 @@ func TestRunRedactsSecretsAndForwardsEachEventOnce(t *testing.T) {
 	assertStates(t, c.states(), []string{"run_start", "stdout", "ok", "stdout", "run_end"})
 	for _, ev := range c.events {
 		p := ev.GetPayload()
-		for _, secret := range []string{leakPassword, leakExtraVar, leakKeyLine, "app-key-material"} {
+		for _, secret := range []string{leakPassword, leakExtraVar, leakKeyLine, "app-key-material", leakEnrollToken} {
 			if strings.Contains(p, secret) {
 				t.Errorf("%s event leaks %q: %s", ev.GetState(), secret, p)
 			}

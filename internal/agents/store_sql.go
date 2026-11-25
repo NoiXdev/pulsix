@@ -32,7 +32,7 @@ func (s *SQLStore) CreateToken(ctx context.Context, t Token, secretHash []byte) 
 	row, err := s.q.CreateAgentEnrollment(ctx, gen.CreateAgentEnrollmentParams{
 		ID: t.ID, OrgID: t.OrgID, ZoneID: t.ZoneID, HostID: db.NullUUID(t.HostID),
 		NameHint: nullText(t.NameHint), SecretHash: secretHash, MaxUses: int32(t.MaxUses), //nolint:gosec // 1..100, checked by the service
-		ExpiresAt: t.ExpiresAt, CreatedBy: db.NullUUID(t.CreatedBy),
+		ExpiresAt: t.ExpiresAt, CreatedBy: db.NullUUID(t.CreatedBy), JobID: db.NullUUID(t.JobID),
 	})
 	if err != nil {
 		if db.IsForeignKeyViolation(err) {
@@ -79,6 +79,17 @@ func (s *SQLStore) RevokeToken(ctx context.Context, orgID, id uuid.UUID) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RevokeJobTokens deletes the unused tokens minted for jobID.
+func (s *SQLStore) RevokeJobTokens(ctx context.Context, orgID, jobID uuid.UUID) (int, error) {
+	n, err := s.q.DeleteUnusedJobAgentEnrollments(ctx, gen.DeleteUnusedJobAgentEnrollmentsParams{
+		OrgID: orgID, JobID: pgtype.UUID{Bytes: jobID, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("revoke job enrollments: %w", err)
+	}
+	return int(n), nil
 }
 
 // EnrollmentOrg resolves the token's organization, org-unscoped (the id is
@@ -439,7 +450,7 @@ func toToken(r gen.AgentEnrollment) Token {
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, HostID: db.UUIDPtr(r.HostID),
 		NameHint: derefText(r.NameHint), MaxUses: int(r.MaxUses), Uses: int(r.Uses),
 		ExpiresAt: r.ExpiresAt, UsedAt: db.TimePtr(r.UsedAt),
-		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt,
+		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, JobID: db.UUIDPtr(r.JobID),
 	}
 }
 

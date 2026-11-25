@@ -1,9 +1,15 @@
 package mcp_test
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/enrolltoken"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -44,5 +50,59 @@ func TestTemplateToolsTakeAgentEnrollment(t *testing.T) {
 	text, isErr = call(t, cs, "update_job_template", map[string]any{"template_id": f.template.String(), "fields": map[string]any{"agent_enrollment": false}})
 	if !isErr || !strings.Contains(text, "agents.write") {
 		t.Fatalf("switching it off = %v %s, want a refusal", isErr, text)
+	}
+}
+
+// TestGetJobNeverShowsAnEnrollmentToken (spec 2026-11-25 B, the
+// acceptance): the assistant reads an enrolling run through get_job and
+// get_job_log and sees the token counts, never the token its claim handed
+// the host.
+func TestGetJobNeverShowsAnEnrollmentToken(t *testing.T) {
+	f := newOrgFixture(t)
+	cur, err := f.s.Deps.Templates.Get(f.scoped, f.org, f.template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	if _, err := f.s.Deps.Templates.Update(f.scoped, f.org, f.template, templates.UpdateInput{
+		Name: cur.Name, PlaybookID: cur.PlaybookID, Scope: cur.Scope, Limit: cur.Limit, ExtraVars: cur.ExtraVars,
+		ExtraVarsSchema: cur.ExtraVarsSchema, CredentialID: cur.CredentialID, VaultCredentials: cur.VaultCredentials,
+		AgentEnrollment: &on, MayEnrolAgents: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	started, err := f.s.Deps.Jobs.EnqueueRunWith(f.scoped, f.org, f.template, jobs.RunRequest{
+		Trigger: jobs.TriggerManual, Actor: &f.owner, EnrollHostIDs: []uuid.UUID{f.host},
+	})
+	if err != nil || len(started) != 1 {
+		t.Fatalf("enqueue = %+v, %v", started, err)
+	}
+	c, err := f.s.Queue.Claim(context.Background(), f.org, []uuid.UUID{f.zone}, "v1")
+	if err != nil || c == nil {
+		t.Fatalf("Claim = %+v, %v", c, err)
+	}
+	var doc struct {
+		Meta struct {
+			Hostvars map[string]map[string]any `json:"hostvars"`
+		} `json:"_meta"`
+	}
+	if err := json.Unmarshal([]byte(c.Job.GetInventoryDoc()), &doc); err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := doc.Meta.Hostvars["web-1"]["pulsix_agent_enroll_token"].(string)
+	if _, err := enrolltoken.ParseAgent(tok); err != nil {
+		t.Fatalf("web-1's hostvars = %v, want a token", doc.Meta.Hostvars["web-1"])
+	}
+	secret := strings.TrimPrefix(tok, enrolltoken.AgentPrefix)
+
+	cs := mustConnect(t, f.s, f.token)
+	for _, tool := range []string{"get_job", "get_job_log"} {
+		text := callOK(t, cs, tool, map[string]any{"job_id": started[0].ID.String()}, nil)
+		if strings.Contains(text, tok) || strings.Contains(text, secret) {
+			t.Fatalf("%s carries the token: %s", tool, text)
+		}
+		if tool == "get_job" && !strings.Contains(text, `"enroll_tokens"`) {
+			t.Fatalf("get_job = %s, want the token counts", text)
+		}
 	}
 }

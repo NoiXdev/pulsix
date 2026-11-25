@@ -135,6 +135,10 @@ type SQLQueue struct {
 	// for it (SetSyncWaiters, sync_waiters.go): run requests made with
 	// sync_first.
 	syncWaiters SyncWaiters
+	// enroll mints and revokes the enrollment tokens of a run that enrols
+	// agents, and activity reports both (SetEnrollment, enroll_tokens.go).
+	enroll   EnrollmentTokens
+	activity ActivityRecorder
 }
 
 // SetSyncSink injects the sink RecordSyncResult calls flow through on the
@@ -592,6 +596,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	var defaultCred *uuid.UUID
 	var redact redactSet
 	var check claimCheck
+	// enrol: the claim hands the run's confirmed hosts enrollment tokens
+	// (enroll_tokens.go), decided against the template as it is now.
+	enrol := false
 	if job.Kind == KindRun {
 		if job.TemplateID == nil {
 			return fmt.Errorf("run job %s carries no template", job.ID)
@@ -602,6 +609,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		}
 		playbook = playbookRef(tmpl)
 		templateVault = tmpl.VaultIdentities
+		enrol = enrols(job, tmpl)
 		// The template's limit stays an ansible host pattern applied on top
 		// of the job's rendered hosts: it can only narrow a job, never widen
 		// it past job.HostIDs (the inventory holds nothing else). A run
@@ -710,10 +718,6 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 			return fmt.Errorf("render snapshot: %w", err)
 		}
 	}
-	doc, err := json.Marshal(inv.Doc)
-	if err != nil {
-		return fmt.Errorf("encode inventory document: %w", err)
-	}
 	connections := make(map[string]string, len(inv.Connections))
 	credIDs := map[uuid.UUID]bool{}
 	if defaultCred != nil {
@@ -793,6 +797,17 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	pins, err := q.claimHostKeys(ctx, job, inv.Connections)
 	if err != nil {
 		return err
+	}
+	// Minted last, once nothing else can fail the build: each token goes
+	// into its own host's variables and inv.Secrets, nowhere else.
+	if enrol {
+		if err := q.handOverEnrollTokens(ctx, job, &inv); err != nil {
+			return err
+		}
+	}
+	doc, err := json.Marshal(inv.Doc)
+	if err != nil {
+		return fmt.Errorf("encode inventory document: %w", err)
 	}
 	for _, c := range credentials {
 		redact.addSecretJSON(c)

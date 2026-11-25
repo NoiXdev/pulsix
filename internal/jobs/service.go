@@ -225,11 +225,17 @@ type Job struct {
 	// with no host on it. The same list is on every job of the run; a job
 	// enrols only its own hosts of it.
 	EnrollHostIDs []uuid.UUID
-	ClaimedAt     *time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
-	Stats         map[string]any
-	Error         string
+	// EnrollTokensMinted is how many enrollment tokens the job's claims
+	// minted in all (migration 00128); EnrollTokensUsed how many of them
+	// an agent redeemed, read by SQLStore.GetJob only. Counts only: the
+	// tokens themselves are never read back.
+	EnrollTokensMinted int
+	EnrollTokensUsed   int
+	ClaimedAt          *time.Time
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	Stats              map[string]any
+	Error              string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
@@ -506,6 +512,10 @@ type TemplateRow struct {
 	// whatever the schema says about the field it sits under: what was
 	// sealed is a secret.
 	OpenedSecrets []string
+	// AgentEnrollment is the template's Enrol agents switch (migration
+	// 00127): a claim of its run with a confirmed list mints only while it
+	// is on (enroll_tokens.go).
+	AgentEnrollment bool
 }
 
 // TemplateSource looks one template up, ErrNotFound when it does not exist

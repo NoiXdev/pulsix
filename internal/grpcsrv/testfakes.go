@@ -356,6 +356,10 @@ func (f *fakeAgentStore) RevokeToken(context.Context, uuid.UUID, uuid.UUID) erro
 	return agents.ErrNotFound
 }
 
+func (f *fakeAgentStore) RevokeJobTokens(context.Context, uuid.UUID, uuid.UUID) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeAgentStore) EnrollmentOrg(context.Context, uuid.UUID) (uuid.UUID, error) {
 	return uuid.Nil, agents.ErrTokenInvalid
 }

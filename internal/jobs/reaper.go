@@ -84,31 +84,44 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 	if live == nil {
 		live = []uuid.UUID{}
 	}
-	tx, err := r.q.db.Pool().Begin(ctx)
-	if err != nil {
-		return 0, 0, fmt.Errorf("begin reaper transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	g := gen.New(tx)
-
-	stale, err := g.RequeueStaleJobs(ctx, gen.RequeueStaleJobsParams{
-		StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
+	// One transaction for the scan, org-unscoped (WithInstanceTx binds no
+	// organization), so the requeue and the revocation of the requeued
+	// runs' enrollment tokens commit together.
+	var stale []gen.RequeueStaleJobsRow
+	var exhausted []gen.ListExhaustedStaleJobsRow
+	var cancelling []gen.ListCancellingJobsRow
+	err = r.q.db.WithInstanceTx(ctx, func(ctx context.Context) error {
+		g := gen.New(r.q.db)
+		var err error
+		stale, err = g.RequeueStaleJobs(ctx, gen.RequeueStaleJobsParams{
+			StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
+		})
+		if err != nil {
+			return fmt.Errorf("requeue stale claims: %w", err)
+		}
+		// The tokens a requeued run's claim minted die with that claim
+		// (spec 2026-11-25 B): the next claim mints its own.
+		for _, s := range stale {
+			if err := r.q.revokeEnrollTokens(ctx, s.OrgID, s.ID); err != nil {
+				return fmt.Errorf("requeue job %s: %w", s.ID, err)
+			}
+		}
+		exhausted, err = g.ListExhaustedStaleJobs(ctx, gen.ListExhaustedStaleJobsParams{
+			StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
+		})
+		if err != nil {
+			return fmt.Errorf("list exhausted stale claims: %w", err)
+		}
+		cancelling, err = g.ListCancellingJobs(ctx)
+		if err != nil {
+			return fmt.Errorf("list cancelling jobs: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("requeue stale claims: %w", err)
+		return 0, 0, fmt.Errorf("reaper sweep: %w", err)
 	}
 	requeued = len(stale)
-	exhausted, err := g.ListExhaustedStaleJobs(ctx, gen.ListExhaustedStaleJobsParams{
-		StaleBefore: now.Add(-claimStaleAfter), Live: live, MaxAttempts: int32(r.maxAttempts),
-	})
-	if err != nil {
-		return 0, 0, fmt.Errorf("list exhausted stale claims: %w", err)
-	}
-
-	cancelling, err := g.ListCancellingJobs(ctx)
-	if err != nil {
-		return 0, 0, fmt.Errorf("list cancelling jobs: %w", err)
-	}
 	var expired []uuid.UUID
 	for _, c := range cancelling {
 		ref, ok := r.q.cancels.get(c.ID)
@@ -123,12 +136,9 @@ func (r *Reaper) Sweep(ctx context.Context) (requeued, failed int, err error) {
 			expired = append(expired, c.ID)
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, 0, fmt.Errorf("commit reaper sweep: %w", err)
-	}
-	for _, id := range stale {
-		r.q.streams.removeAll(id)
-		r.q.cancels.remove(id)
+	for _, s := range stale {
+		r.q.streams.removeAll(s.ID)
+		r.q.cancels.remove(s.ID)
 	}
 	// Exhausted stale claims fail through the one terminal transition, each
 	// in its own org-bound transaction: the sealed payload is wiped and the

@@ -133,6 +133,9 @@ type Token struct {
 	UsedAt    *time.Time
 	CreatedBy *uuid.UUID
 	CreatedAt time.Time
+	// JobID is the run whose claim minted the token (spec 2026-11-25 B,
+	// MintJobTokens); nil for a token a person created.
+	JobID *uuid.UUID
 }
 
 // TokenInput is the caller-supplied shape for creating an enrollment
@@ -201,6 +204,9 @@ type Store interface {
 	CreateToken(ctx context.Context, t Token, secretHash []byte) (Token, error)
 	ListTokens(ctx context.Context, orgID uuid.UUID, now time.Time) ([]Token, error)
 	RevokeToken(ctx context.Context, orgID, id uuid.UUID) error
+	// RevokeJobTokens deletes the unused tokens minted for jobID and
+	// reports how many (a used one keeps its row).
+	RevokeJobTokens(ctx context.Context, orgID, jobID uuid.UUID) (int, error)
 	// EnrollmentOrg resolves the token's organization, org-unscoped (the
 	// id is the token's public half). Task 7's unauthenticated Enroll
 	// resolves the org for its transaction and audit record with this;
@@ -350,6 +356,12 @@ func NewService(store Store, opts ...Option) *Service {
 // only SHA-256(secret) is stored. Zone must be validated by the caller
 // (the API layer holds the zone list, agents does not).
 func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInput) (enrolltoken.Token, error) {
+	return s.createToken(ctx, orgID, in, nil)
+}
+
+// createToken is CreateToken linked to the run that minted it (nil: a
+// person's token).
+func (s *Service) createToken(ctx context.Context, orgID uuid.UUID, in TokenInput, jobID *uuid.UUID) (enrolltoken.Token, error) {
 	if s.ca == nil {
 		return enrolltoken.Token{}, errors.New("agents: create token: service was built without WithCA")
 	}
@@ -388,7 +400,7 @@ func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInpu
 	pin := s.ca.CAPin()
 	t := Token{
 		ID: id, OrgID: orgID, ZoneID: in.ZoneID, HostID: in.HostID, NameHint: in.NameHint,
-		MaxUses: in.MaxUses, ExpiresAt: in.ExpiresAt, CreatedBy: in.CreatedBy, CreatedAt: s.now(),
+		MaxUses: in.MaxUses, ExpiresAt: in.ExpiresAt, CreatedBy: in.CreatedBy, CreatedAt: s.now(), JobID: jobID,
 	}
 	stored, err := s.store.CreateToken(ctx, t, hash[:])
 	if err != nil {

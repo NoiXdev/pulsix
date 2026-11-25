@@ -612,6 +612,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// Every enrollment token carries this manager's CA fingerprint:
 		// it is what the agent pins its very first connection against.
 		agents.WithCA(caInst))
+	// A run of a template with agent enrollment mints its hosts' tokens at
+	// the claim and revokes the unused ones when it is requeued or ends.
+	jobsQueue.SetEnrollment(NewJobEnrollmentTokens(agentsSvc), auditRec)
 	agentStreams := agentapi.NewStreamRegistry()
 	agentsSvc.SetRevokeHook(agentStreams)
 	agentSvc, err := agentapi.New(agentapi.Deps{

@@ -162,6 +162,8 @@ export const enRuns = {
     finished: 'Finished',
     runGroup: 'Run group',
     pinnedCommit: 'Pinned commit',
+    enrollTokens: 'Enrolment tokens',
+    enrollTokenCounts: (minted: number, used: number) => `${minted} minted, ${used} used`,
     pinnedWaiting:
       "Waiting for a worker that can run a pinned commit. Older workers never take such a run: if it stays queued, update the zone's workers.",
     groupCount: (n: number) => `${n} job${n === 1 ? '' : 's'}`,

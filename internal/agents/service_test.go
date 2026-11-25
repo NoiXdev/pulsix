@@ -193,6 +193,19 @@ func (f *fakeStore) RevokeToken(_ context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeStore) RevokeJobTokens(_ context.Context, orgID, jobID uuid.UUID) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for id, t := range f.tokens {
+		if t.OrgID == orgID && t.JobID != nil && *t.JobID == jobID && t.UsedAt == nil {
+			delete(f.tokens, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Claim mirrors the SQL store's shape: an unknown token is ErrTokenInvalid
 // directly (ErrNotFound stays reserved for the host-side failures), fn
 // runs, then one use is consumed with the same "0 rows → refusal"

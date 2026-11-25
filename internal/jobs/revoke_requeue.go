@@ -23,8 +23,24 @@ func (q *SQLQueue) RequeueWorkerJobs(ctx context.Context, orgID, workerID uuid.U
 	ctx = db.WithOrgScope(ctx, orgID)
 	g := gen.New(q.db)
 	worker := pgtype.UUID{Bytes: workerID, Valid: true}
-	ids, err := g.RequeueWorkerJobs(ctx, gen.RequeueWorkerJobsParams{
-		Reason: "requeued: " + reason, OrgID: orgID, WorkerID: worker, MaxAttempts: int32(maxAttempts), //nolint:gosec // a small configured count
+	// The requeue and the revocation of the requeued runs' enrollment
+	// tokens (spec 2026-11-25 B) commit together: the next claim mints its
+	// own.
+	var ids []uuid.UUID
+	err = q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		ids, err = g.RequeueWorkerJobs(ctx, gen.RequeueWorkerJobsParams{
+			Reason: "requeued: " + reason, OrgID: orgID, WorkerID: worker, MaxAttempts: int32(maxAttempts), //nolint:gosec // a small configured count
+		})
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := q.revokeEnrollTokens(ctx, orgID, id); err != nil {
+				return fmt.Errorf("job %s: %w", id, err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return 0, 0, fmt.Errorf("requeue worker jobs: %w", err)

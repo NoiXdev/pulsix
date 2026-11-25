@@ -166,6 +166,13 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		if err := q.recordRotation(ctx, t.jobID, t.status); err != nil {
 			return err
 		}
+		// A run's unused enrollment tokens end with it (spec 2026-11-25
+		// B); a used one was consumed by its agent's claim.
+		if Kind(kind) == KindRun {
+			if err := q.revokeEnrollTokens(ctx, orgID, t.jobID); err != nil {
+				return err
+			}
+		}
 		if Kind(kind) == KindRun {
 			if err := q.recordRunGroup(ctx, orgID, groupID); err != nil {
 				return err

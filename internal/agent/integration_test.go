@@ -116,6 +116,10 @@ func (f *integAgentStore) RevokeToken(context.Context, uuid.UUID, uuid.UUID) err
 	return agents.ErrNotFound
 }
 
+func (f *integAgentStore) RevokeJobTokens(context.Context, uuid.UUID, uuid.UUID) (int, error) {
+	return 0, nil
+}
+
 func (f *integAgentStore) EnrollmentOrg(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

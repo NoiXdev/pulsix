@@ -61,6 +61,7 @@ func toJob(r gen.Job) Job {
 		ActorID:    db.UUIDPtr(r.ActorID), CreatedAt: r.CreatedAt, Payload: json.RawMessage(r.Payload),
 		VaultIdentitiesRecorded: recorded, ResolvedVaultIdentities: identities,
 		PinnedCommit: deref(r.PinnedCommit), PinnedRepoID: db.UUIDPtr(r.PinnedRepoID), EnrollHostIDs: r.EnrollHostIds,
+		EnrollTokensMinted: int(r.EnrollTokensMinted),
 	}
 }
 
@@ -97,8 +98,10 @@ func toJobDetail(r gen.GetJobRow) Job {
 		CreatedAt: r.CreatedAt, Attempts: r.Attempts, DependsOn: r.DependsOn, RotationCredentialID: r.RotationCredentialID,
 		ResolvedVaultIdentities: r.ResolvedVaultIdentities, CancelStopsPlay: r.CancelStopsPlay, CheckMode: r.CheckMode, DryRun: r.DryRun,
 		PinnedCommit: r.PinnedCommit, PinnedRepoID: r.PinnedRepoID, EnrollHostIds: r.EnrollHostIds,
+		EnrollTokensMinted: r.EnrollTokensMinted,
 	})
 	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)
+	j.EnrollTokensUsed = int(r.EnrollTokensUsed)
 	return j
 }
 

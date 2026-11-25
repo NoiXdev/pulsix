@@ -82,6 +82,7 @@ type AgentEnrollment struct {
 	UsedAt     pgtype.Timestamptz `json:"used_at"`
 	CreatedBy  pgtype.UUID        `json:"created_by"`
 	CreatedAt  time.Time          `json:"created_at"`
+	JobID      pgtype.UUID        `json:"job_id"`
 }
 
 type Alert struct {
@@ -580,6 +581,7 @@ type Job struct {
 	PinnedCommit            *string            `json:"pinned_commit"`
 	PinnedRepoID            pgtype.UUID        `json:"pinned_repo_id"`
 	EnrollHostIds           []uuid.UUID        `json:"enroll_host_ids"`
+	EnrollTokensMinted      int32              `json:"enroll_tokens_minted"`
 }
 
 type JobEvent struct {

@@ -65,7 +65,9 @@ WHERE k.org_id = @org_id AND k.idempotency_key = @idempotency_key
 -- renders that as "(deleted)". All joins are LEFT: the job row must come
 -- back complete no matter what any of the three ids point at.
 SELECT j.*, u.display_name AS actor_name, w.name AS worker_name,
-       jt.name AS template_name
+       jt.name AS template_name,
+       (SELECT count(*) FROM agent_enrollments AS e
+        WHERE e.org_id = j.org_id AND e.job_id = j.id AND e.used_at IS NOT NULL)::integer AS enroll_tokens_used
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
 LEFT JOIN workers AS w ON w.id = j.worker_id
@@ -422,17 +424,18 @@ RETURNING *;
 UPDATE jobs SET resolved_vault_identities = sqlc.arg(identities)::jsonb WHERE id = sqlc.arg(id);
 
 -- name: RequeueStaleJobs :many
--- Reaper pass 1 (org-unscoped, raw pool): claims whose worker went away
+-- Reaper pass 1 (org-unscoped): claims whose worker went away
 -- go back to queued for the next claim round — but only while the job has
 -- attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
 -- rest). The live ids — the jobs whose bound stream still shows signs of
 -- life — are excluded; an empty array excludes nothing (id = ANY('{}') is
--- false for every row).
+-- false for every row). The organization comes back for the revocation of
+-- a requeued run's enrollment tokens in the same transaction.
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
   AND NOT (id = ANY(@live::uuid[]))
   AND attempts < @max_attempts::integer
-RETURNING id;
+RETURNING id, org_id;
 
 -- name: ListExhaustedStaleJobs :many
 -- Reaper pass 1b (org-unscoped, raw pool): stale claims that used up their
@@ -602,3 +605,19 @@ HAVING bool_and(status IN ('succeeded', 'failed', 'cancelled', 'error'))
    AND max(COALESCE(finished_at, created_at)) >= @since::timestamptz
 ORDER BY max(COALESCE(finished_at, created_at))
 LIMIT @lim;
+
+-- name: LockClaimedJob :execrows
+-- The enrollment hand-out's guard (spec 2026-11-25 B): the minting
+-- transaction locks the claimed row and finds it still on the claim that
+-- minted (running, or cancelling since; the same attempt). A requeue or a
+-- terminal write that got there first leaves 0 rows, and nothing is
+-- minted for a claim that is no longer the job's; one that comes later
+-- waits for the lock and then revokes what was minted.
+SELECT 1 FROM jobs
+WHERE id = sqlc.arg(id) AND status IN ('running', 'cancelling') AND attempts = sqlc.arg(attempts)
+FOR UPDATE;
+
+-- name: AddEnrollTokensMinted :exec
+-- Counts the enrollment tokens a claim of the job minted (migration 00128).
+UPDATE jobs SET enroll_tokens_minted = enroll_tokens_minted + sqlc.arg(minted)::integer
+WHERE id = sqlc.arg(id);

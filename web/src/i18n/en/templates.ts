@@ -75,7 +75,7 @@ export const enTemplates = {
     /** Agent enrollment inside a run (spec 2026-11-25 B). */
     enrol: 'Enrol agents',
     enrolHelp:
-      "Runs of this template enrol the Pulsix agent on their hosts that have none. For each such host Pulsix sets two host variables for the agent role: pulsix_agent_enroll_token, a single-use enrollment token valid for 24 hours, and pulsix_agent_enroll_tokens, left empty. It sets nothing else. Switching this needs the Agents permission, and so do starting, approving and scheduling the template's runs.",
+      "Runs of this template enrol the Pulsix agent on their hosts that have none. For each such host Pulsix sets two host variables for the agent role: pulsix_agent_enroll_token, a single-use enrollment token valid for 24 hours, and pulsix_agent_enroll_tokens, left empty. It sets nothing else. Only a run whose hosts a person confirmed enrols them. Switching this needs the Agents permission, and so do starting, retrying and approving the template's runs. Scheduled, webhook and follow-up runs enrol nothing.",
     credential: 'Default SSH credential',
     credentialNone: '— none —',
     newCredential: 'New credential…',

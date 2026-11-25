@@ -181,6 +181,19 @@ func (f *fakeAgentStore) RevokeToken(_ context.Context, orgID, id uuid.UUID) err
 	return nil
 }
 
+func (f *fakeAgentStore) RevokeJobTokens(_ context.Context, orgID, jobID uuid.UUID) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for id, t := range f.tokens {
+		if t.OrgID == orgID && t.JobID != nil && *t.JobID == jobID && t.UsedAt == nil {
+			delete(f.tokens, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (f *fakeAgentStore) EnrollmentOrg(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

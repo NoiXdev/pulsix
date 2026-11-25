@@ -13,6 +13,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addEnrollTokensMinted = `-- name: AddEnrollTokensMinted :exec
+UPDATE jobs SET enroll_tokens_minted = enroll_tokens_minted + $1::integer
+WHERE id = $2
+`
+
+type AddEnrollTokensMintedParams struct {
+	Minted int32     `json:"minted"`
+	ID     uuid.UUID `json:"id"`
+}
+
+// Counts the enrollment tokens a claim of the job minted (migration 00128).
+func (q *Queries) AddEnrollTokensMinted(ctx context.Context, arg AddEnrollTokensMintedParams) error {
+	_, err := q.db.Exec(ctx, addEnrollTokensMinted, arg.Minted, arg.ID)
+	return err
+}
+
 const cancelJob = `-- name: CancelJob :one
 UPDATE jobs
 SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancelling' END,
@@ -97,7 +113,7 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids, enroll_tokens_minted
 `
 
 type ClaimJobParams struct {
@@ -173,6 +189,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.PinnedCommit,
 		&i.PinnedRepoID,
 		&i.EnrollHostIds,
+		&i.EnrollTokensMinted,
 	)
 	return i, err
 }
@@ -354,13 +371,13 @@ WITH j AS (
                     depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode, dry_run, pinned_commit, pinned_repo_id,
                     enroll_host_ids)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids
+  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids, enroll_tokens_minted
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
   SELECT j.org_id, j.id, h.id, j.created_at
   FROM j, (SELECT id FROM hosts WHERE org_id = $2 AND id = ANY ($6::uuid[]) FOR KEY SHARE) AS h
 )
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids FROM j
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids, enroll_tokens_minted FROM j
 `
 
 type CreateJobParams struct {
@@ -418,6 +435,7 @@ type CreateJobRow struct {
 	PinnedCommit            *string            `json:"pinned_commit"`
 	PinnedRepoID            pgtype.UUID        `json:"pinned_repo_id"`
 	EnrollHostIds           []uuid.UUID        `json:"enroll_host_ids"`
+	EnrollTokensMinted      int32              `json:"enroll_tokens_minted"`
 }
 
 // Every insert path of a job goes through this one statement, which also
@@ -490,6 +508,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJob
 		&i.PinnedCommit,
 		&i.PinnedRepoID,
 		&i.EnrollHostIds,
+		&i.EnrollTokensMinted,
 	)
 	return i, err
 }
@@ -568,8 +587,10 @@ func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedSt
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, u.display_name AS actor_name, w.name AS worker_name,
-       jt.name AS template_name
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted, u.display_name AS actor_name, w.name AS worker_name,
+       jt.name AS template_name,
+       (SELECT count(*) FROM agent_enrollments AS e
+        WHERE e.org_id = j.org_id AND e.job_id = j.id AND e.used_at IS NOT NULL)::integer AS enroll_tokens_used
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
 LEFT JOIN workers AS w ON w.id = j.worker_id
@@ -614,9 +635,11 @@ type GetJobRow struct {
 	PinnedCommit            *string            `json:"pinned_commit"`
 	PinnedRepoID            pgtype.UUID        `json:"pinned_repo_id"`
 	EnrollHostIds           []uuid.UUID        `json:"enroll_host_ids"`
+	EnrollTokensMinted      int32              `json:"enroll_tokens_minted"`
 	ActorName               *string            `json:"actor_name"`
 	WorkerName              *string            `json:"worker_name"`
 	TemplateName            *string            `json:"template_name"`
+	EnrollTokensUsed        int32              `json:"enroll_tokens_used"`
 }
 
 // Scoped by org_id in the WHERE clause, not only relying on RLS (see
@@ -664,9 +687,11 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.PinnedCommit,
 		&i.PinnedRepoID,
 		&i.EnrollHostIds,
+		&i.EnrollTokensMinted,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
+		&i.EnrollTokensUsed,
 	)
 	return i, err
 }
@@ -861,7 +886,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids, enroll_tokens_minted FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -961,6 +986,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.PinnedCommit,
 			&i.PinnedRepoID,
 			&i.EnrollHostIds,
+			&i.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -973,7 +999,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listJobsForHost = `-- name: ListJobsForHost :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -1083,6 +1109,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 			&i.Job.PinnedCommit,
 			&i.Job.PinnedRepoID,
 			&i.Job.EnrollHostIds,
+			&i.Job.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1095,7 +1122,7 @@ func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams
 }
 
 const listJobsForHostPage = `-- name: ListJobsForHostPage :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 WHERE jh.org_id = $1
@@ -1191,6 +1218,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 			&i.Job.PinnedCommit,
 			&i.Job.PinnedRepoID,
 			&i.Job.EnrollHostIds,
+			&i.Job.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1203,7 +1231,7 @@ func (q *Queries) ListJobsForHostPage(ctx context.Context, arg ListJobsForHostPa
 }
 
 const listJobsForHostPageSorted = `-- name: ListJobsForHostPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted
 FROM job_hosts jh
 JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
@@ -1313,6 +1341,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 			&i.Job.PinnedCommit,
 			&i.Job.PinnedRepoID,
 			&i.Job.EnrollHostIds,
+			&i.Job.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1325,7 +1354,7 @@ func (q *Queries) ListJobsForHostPageSorted(ctx context.Context, arg ListJobsFor
 }
 
 const listJobsPage = `-- name: ListJobsPage :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play, check_mode, dry_run, pinned_commit, pinned_repo_id, enroll_host_ids, enroll_tokens_minted FROM jobs
 WHERE jobs.org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -1414,6 +1443,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 			&i.PinnedCommit,
 			&i.PinnedRepoID,
 			&i.EnrollHostIds,
+			&i.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1426,7 +1456,7 @@ func (q *Queries) ListJobsPage(ctx context.Context, arg ListJobsPageParams) ([]J
 }
 
 const listJobsPageSorted = `-- name: ListJobsPageSorted :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1530,6 +1560,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 			&i.PinnedCommit,
 			&i.PinnedRepoID,
 			&i.EnrollHostIds,
+			&i.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1542,7 +1573,7 @@ func (q *Queries) ListJobsPageSorted(ctx context.Context, arg ListJobsPageSorted
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids FROM jobs j
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, j.check_mode, j.dry_run, j.pinned_commit, j.pinned_repo_id, j.enroll_host_ids, j.enroll_tokens_minted FROM jobs j
 CROSS JOIN LATERAL (SELECT CASE j.status WHEN 'queued' THEN 0 WHEN 'claimed' THEN 1 WHEN 'running' THEN 2
   WHEN 'cancelling' THEN 3 WHEN 'succeeded' THEN 4 WHEN 'failed' THEN 5 WHEN 'cancelled' THEN 6 ELSE 7 END AS rank) r
 WHERE j.org_id = $1
@@ -1664,6 +1695,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]J
 			&i.PinnedCommit,
 			&i.PinnedRepoID,
 			&i.EnrollHostIds,
+			&i.EnrollTokensMinted,
 		); err != nil {
 			return nil, err
 		}
@@ -1799,6 +1831,31 @@ func (q *Queries) LockActiveWorker(ctx context.Context, id uuid.UUID) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const lockClaimedJob = `-- name: LockClaimedJob :execrows
+SELECT 1 FROM jobs
+WHERE id = $1 AND status IN ('running', 'cancelling') AND attempts = $2
+FOR UPDATE
+`
+
+type LockClaimedJobParams struct {
+	ID       uuid.UUID `json:"id"`
+	Attempts int32     `json:"attempts"`
+}
+
+// The enrollment hand-out's guard (spec 2026-11-25 B): the minting
+// transaction locks the claimed row and finds it still on the claim that
+// minted (running, or cancelling since; the same attempt). A requeue or a
+// terminal write that got there first leaves 0 rows, and nothing is
+// minted for a claim that is no longer the job's; one that comes later
+// waits for the lock and then revokes what was minted.
+func (q *Queries) LockClaimedJob(ctx context.Context, arg LockClaimedJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, lockClaimedJob, arg.ID, arg.Attempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pinRepoHostKey = `-- name: PinRepoHostKey :execrows
 UPDATE git_repos SET ssh_host_key = $1, ssh_host_public_key = $2, updated_at = now()
 WHERE org_id = $3 AND id = $4 AND ssh_host_key IS NULL
@@ -1885,7 +1942,7 @@ UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_
 WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
   AND NOT (id = ANY($2::uuid[]))
   AND attempts < $3::integer
-RETURNING id
+RETURNING id, org_id
 `
 
 type RequeueStaleJobsParams struct {
@@ -1894,25 +1951,31 @@ type RequeueStaleJobsParams struct {
 	MaxAttempts int32       `json:"max_attempts"`
 }
 
-// Reaper pass 1 (org-unscoped, raw pool): claims whose worker went away
+type RequeueStaleJobsRow struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// Reaper pass 1 (org-unscoped): claims whose worker went away
 // go back to queued for the next claim round — but only while the job has
 // attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
 // rest). The live ids — the jobs whose bound stream still shows signs of
 // life — are excluded; an empty array excludes nothing (id = ANY('{}') is
-// false for every row).
-func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsParams) ([]uuid.UUID, error) {
+// false for every row). The organization comes back for the revocation of
+// a requeued run's enrollment tokens in the same transaction.
+func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsParams) ([]RequeueStaleJobsRow, error) {
 	rows, err := q.db.Query(ctx, requeueStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []RequeueStaleJobsRow
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i RequeueStaleJobsRow
+		if err := rows.Scan(&i.ID, &i.OrgID); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
