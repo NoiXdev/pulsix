@@ -145,7 +145,8 @@ type Descriptor struct {
 	// whose item can enter a state in which the agent reports only some of
 	// its metrics, so the others' last values read as not asked rather
 	// than as readings that went stale (zfs: an EXPORTED or MISSING pool
-	// reports only zfs.state; smart's standby, backlog 3.9b, may follow).
+	// reports only zfs.state; smart: a sleeping disk reports only
+	// smart.power_mode, backlog 3.9b).
 	// A hook must keep asking for the metrics that carry the state itself,
 	// or the item could never leave it. It is consulted for every item,
 	// "" included, after MetricAsked; labels is nil when nothing is known.

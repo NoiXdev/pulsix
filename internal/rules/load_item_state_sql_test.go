@@ -112,3 +112,89 @@ func TestAnAbsentPoolsOtherMetricsAreNotAsked(t *testing.T) {
 		})
 	}
 }
+
+// TestASleepingDisksOtherMetricsAreNotAsked (backlog 3.9b), through the
+// real store and ticker with the smart descriptor's own metric rule: a
+// disk the agent reports as smart.power_mode standby is left asleep and
+// reports nothing else, so its last smart.temperature_celsius — stale
+// against the clock, not vanished behind smart.power_mode — is not asked
+// while the disk sleeps: unmeasured, no state of its own, the host ok.
+// Once the disk reports active again, or with an older agent that reports
+// no power mode at all, the same reading is judged again: stale, so
+// unknown.
+func TestASleepingDisksOtherMetricsAreNotAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mode      *string
+		wantAsked bool
+		wantHost  rules.State
+	}{
+		{name: "standby", mode: ptr(checkplugins.SmartPowerModeStandby), wantAsked: false, wantHost: rules.StateOK},
+		{name: "active again", mode: ptr(checkplugins.SmartPowerModeActive), wantAsked: true, wantHost: rules.StateUnknown},
+		{name: "older agent without a power mode", wantAsked: true, wantHost: rules.StateUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testdb.Open(t)
+			org := seedOrg(t, d, "sleeping-disk")
+			host := seedHost(t, d, org, "h")
+			now := time.Now().UTC().Truncate(time.Microsecond)
+
+			mode := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.power_mode"}
+			passed := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.passed"}
+			temp := rules.Tuple{CheckKey: "smart", Item: "/dev/sdd", Metric: "smart.temperature_celsius"}
+			if tc.mode != nil {
+				insertCurrent(t, d, org, host, mode, nil, tc.mode, now.Add(-10*time.Second), "")
+			} else {
+				// An older agent's disk: a fresh health reading keeps the
+				// item reporting, the temperature trails it.
+				insertCurrent(t, d, org, host, passed, ptr(1.0), nil, now.Add(-10*time.Second), "")
+			}
+			// Stale against the clock (more than three one-minute
+			// intervals), not vanished behind the fresh reading (less
+			// than three).
+			insertCurrent(t, d, org, host, temp, ptr(34.0), nil, now.Add(-3*time.Minute-5*time.Second), "")
+			insertCheckState(t, d, org, host, stateRow{tuple: temp, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
+			markDirty(t, d, org, host)
+
+			checks := fixedChecks{
+				intervals: map[string]time.Duration{"smart": time.Minute},
+				asksMetric: map[string]func(map[string]string, string) bool{
+					"smart": func(labels map[string]string, metric string) bool {
+						return checkplugins.AsksForMetric("smart", nil, labels, metric)
+					},
+				},
+			}
+			sink := &fakeSink{}
+			tk := rules.NewTicker(rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard()), sink,
+				rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
+			if n, err := tk.Tick(context.Background()); err != nil || n != 1 {
+				t.Fatalf("Tick = %d, %v; want one host evaluated", n, err)
+			}
+			if len(sink.calls) != 1 {
+				t.Fatalf("sink called %d times, want once", len(sink.calls))
+			}
+			got := sink.calls[0]
+
+			unmeasured := len(got.Unmeasured) == 1 && got.Unmeasured[0] == temp
+			if unmeasured == tc.wantAsked || (tc.wantAsked && len(got.Unmeasured) != 0) {
+				t.Fatalf("unmeasured = %+v, want temperature asked = %v", got.Unmeasured, tc.wantAsked)
+			}
+			byTuple := map[rules.Tuple]rules.State{}
+			for _, st := range got.States {
+				byTuple[st.Tuple] = st.State
+			}
+			if s, judged := byTuple[temp]; judged != tc.wantAsked || (judged && s != rules.StateUnknown) {
+				t.Fatalf("states = %+v, want temperature judged = %v (unknown, stale)", got.States, tc.wantAsked)
+			}
+			if tc.mode != nil && byTuple[mode] != rules.StateOK {
+				t.Fatalf("smart.power_mode = %q, want ok (states %+v)", byTuple[mode], got.States)
+			}
+			if got.Host.State != tc.wantHost {
+				t.Fatalf("roll-up = %+v, want %s", got.Host, tc.wantHost)
+			}
+			if !tc.wantAsked && got.Host.Unknown != 0 {
+				t.Fatalf("roll-up = %+v, want nothing unknown", got.Host)
+			}
+		})
+	}
+}

@@ -110,6 +110,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"smart.nvme_percentage_used":     {CheckKey: "smart", Kind: rules.MetricNumeric},
 		"smart.nvme_available_spare_pct": {CheckKey: "smart", Kind: rules.MetricNumeric},
 		"smart.nvme_media_errors":        {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.power_mode":               {CheckKey: "smart", Kind: rules.MetricDiscrete}, // backlog 3.9b
 		"raid.state":                     {CheckKey: "raid", Kind: rules.MetricDiscrete},
 		"raid.devices_total":             {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.devices_active":            {CheckKey: "raid", Kind: rules.MetricNumeric},

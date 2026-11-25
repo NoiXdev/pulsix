@@ -282,6 +282,10 @@
         {
           "name": "smart.nvme_media_errors",
           "kind": "numeric"
+        },
+        {
+          "name": "smart.power_mode",
+          "kind": "discrete"
         }
       ]
     },

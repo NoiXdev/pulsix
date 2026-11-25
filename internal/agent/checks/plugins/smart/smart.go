@@ -11,8 +11,15 @@
 // [-d <type>] <device>` reads each one. One item per device, named by the
 // path as configured or scanned — except a disk behind a RAID controller
 // (a megaraid, cciss, 3ware, areca, aacraid, sssraid or hpt -d type, where
-// disks share one path), which is named "<path> [<type>]" (devices.go). A
-// disk in standby is left asleep and reports nothing that round.
+// disks share one path), which is named "<path> [<type>]" (devices.go).
+//
+// Every device that answered with readings also reports smart.power_mode
+// active. A disk in standby is left asleep and reports smart.power_mode
+// standby and nothing else that round (backlog 3.9b): the manager then
+// stops asking for its other metrics, so their last readings neither turn
+// stale nor let the disk be forgotten while it sleeps, and are judged
+// again once it reports active. A device without SMART data reports no
+// power mode.
 //
 // Item "" carries smart.devices on every collection that got as far as
 // querying: the number of devices found (or configured) and not refused.
@@ -29,7 +36,9 @@
 // A field a device stated and no longer states (or states with another
 // type) while the device still reports is reported as "<metric> is no
 // longer reported" each round, for up to 24 h (checks.VanishedMetrics,
-// backlog 3.55); the plugin is a checks.StatefulPlugin for that memory.
+// backlog 3.55); the plugin is a checks.StatefulPlugin for that memory. A
+// sleeping disk does not report in that sense: its standby round bypasses
+// the memory (Collect).
 //
 // Bounds: at most maxParallel devices are queried at once, each within
 // deviceTimeout, the whole collection within collectTimeout; a device
@@ -117,6 +126,15 @@ func (p *smartPlugin) timeouts() (device, collect time.Duration) {
 // error for every field a device that still reports no longer states.
 // Item "" goes through it too, to no effect: its one metric,
 // smart.devices, is on every round as a count or an error.
+//
+// A sleeping disk's round (smart.power_mode standby, backlog 3.9b) is kept
+// out of the memory. Its label would otherwise count as the disk still
+// reporting, and every field it stated awake would be flagged as no longer
+// reported while it sleeps. Kept out, the round neither flags nor
+// refreshes anything: a disk that wakes within 24 h of its last readings
+// is held to the fields it stated then, and one that slept longer has
+// been forgotten by the memory's own 24 h rule and starts afresh — rather
+// than a stream of standby rounds keeping its memory alive indefinitely.
 func (p *smartPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
 	obs, err := p.collect(ctx, params)
 	if len(obs) == 0 {
@@ -126,7 +144,22 @@ func (p *smartPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 	if p.now != nil {
 		now = p.now
 	}
-	return p.vanished.Apply(now(), obs), err
+	awake, asleep := splitAsleep(obs)
+	return append(p.vanished.Apply(now(), awake), asleep...), err
+}
+
+// splitAsleep separates the sleeping disks' observations — each such disk
+// reports smart.power_mode standby and nothing else — from the rest,
+// keeping the order within each.
+func splitAsleep(obs []checks.Observation) (awake, asleep []checks.Observation) {
+	for _, o := range obs {
+		if o.Metric == powerModeMetric && o.Err == "" && o.Label != nil && *o.Label == powerModeStandby {
+			asleep = append(asleep, o)
+			continue
+		}
+		awake = append(awake, o)
+	}
+	return awake, asleep
 }
 
 func (p *smartPlugin) collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {

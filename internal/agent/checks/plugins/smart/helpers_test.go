@@ -135,6 +135,16 @@ func value(t *testing.T, obs []checks.Observation, item, metric string) float64 
 	return *o.Value
 }
 
+// label is item's metric label, failing the test when it carries none.
+func label(t *testing.T, obs []checks.Observation, item, metric string) string {
+	t.Helper()
+	o := findObs(t, obs, item, metric)
+	if o.Label == nil {
+		t.Fatalf("%s %s: no label (value %v, err %q)", item, metric, o.Value, o.Err)
+	}
+	return *o.Label
+}
+
 func itemObs(obs []checks.Observation, item string) []checks.Observation {
 	var out []checks.Observation
 	for _, o := range obs {

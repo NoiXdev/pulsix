@@ -741,6 +741,33 @@ and agents are not affected.
 
 ## Behaviour changes to check after an upgrade
 
+- **A sleeping disk reads `standby` (backlog 3.9b, no migration):** the `smart` check
+  leaves a disk in standby asleep, as before, but used to report nothing for it, so its
+  readings turned stale, the host read unknown, and a disk asleep for the item expiry
+  period (seven days by default) was forgotten with its open alerts. The updated agent
+  reports a new discrete metric `smart.power_mode` for every device it queried that
+  answered: `standby` for a disk it left asleep, `active` for one that answered with
+  its readings (a device without SMART data, such as a virtual disk, reports none, and
+  a device that could not be read reports its error as before). While a disk reads
+  `standby`, the manager does not ask for its other metrics: their last values leave
+  the host page, the evaluation and the effective rules the way an exported pool's do
+  (backlog 3.74), so the host stays ok and the disk is not forgotten; an open alert on
+  one of them closes as stale. They are judged again once the disk reports `active`,
+  starting fresh (backlog 4.42): a disk whose readings are bad therefore closes its
+  alert when it falls asleep and opens it again, notified, when it wakes (within the
+  hour the new alert takes over the acknowledgement, backlog 4.39). A disk asleep for
+  longer than the item expiry period has those last values forgotten by the metric
+  expiry (they trail its fresh power mode); its first readings after waking report
+  them anew. `smart.devices` still counts sleeping disks. To check after the upgrade:
+  on hosts whose disks spin down, the advice to list only the always-on disks in
+  `devices` or to ignore the sleeping ones is no longer needed once the agent is
+  updated. Version skew: an agent older than this release never reports
+  `smart.power_mode`, so its sleeping disks behave as before (stale, unknown,
+  forgotten after the item expiry period) until it is updated. A manager older than
+  this release stores the new metric but refuses a rule on it (an unknown
+  metric) and keeps asking for a sleeping disk's other metrics: their readings fall
+  behind the power mode and read as vanished after three intervals (backlog 3.88)
+  rather than as not asked.
 - **Item decisions on a plugin key reach copied checks (backlog 3.13g, no migration):**
   an item decision (ignore or watch) whose check key is a plugin name now applies to
   every check of that plugin, the way rules have since 3.13e. An existing org-wide or

@@ -37,8 +37,9 @@ func TestSmartName(t *testing.T) {
 // TestSmartScansAndReportsEveryDevice: without a devices parameter the
 // plugin scans, then queries every device with the type the scan named,
 // and reports each metric the device states — ATA attributes for the SATA
-// disk, the NVMe health log for the NVMe disk, nothing for the USB stick
-// that has no SMART at all.
+// disk, the NVMe health log for the NVMe disk, each with smart.power_mode
+// active (backlog 3.9b), nothing for the USB stick that has no SMART at
+// all.
 func TestSmartScansAndReportsEveryDevice(t *testing.T) {
 	f := newFakeRunner(t, map[string]reply{
 		"scan":               {stdout: fixture(t, "scan.json")},
@@ -77,8 +78,11 @@ func TestSmartScansAndReportsEveryDevice(t *testing.T) {
 		"smart.nvme_media_errors":        0,
 	}
 	for item, want := range map[string]map[string]float64{"/dev/sda": ata, "/dev/nvme0": nvme} {
-		if got := len(itemObs(obs, item)); got != len(want) {
-			t.Errorf("%s: %d observations, want %d: %+v", item, got, len(want), itemObs(obs, item))
+		if got := len(itemObs(obs, item)); got != len(want)+1 {
+			t.Errorf("%s: %d observations, want %d and the power mode: %+v", item, got, len(want), itemObs(obs, item))
+		}
+		if got := label(t, obs, item, "smart.power_mode"); got != "active" {
+			t.Errorf("%s smart.power_mode = %q, want active", item, got)
 		}
 		for metric, v := range want {
 			if got := value(t, obs, item, metric); got != v {
@@ -118,19 +122,23 @@ func TestSmartFailingDiskExitBitsAreData(t *testing.T) {
 					t.Errorf("%s = %v, want %v", metric, got, want)
 				}
 			}
-			if n := len(itemObs(obs, "/dev/sdc")); n != 6 {
-				t.Errorf("got %d observations for /dev/sdc, want 6: %+v", n, obs)
+			if n := len(itemObs(obs, "/dev/sdc")); n != 7 {
+				t.Errorf("got %d observations for /dev/sdc, want 6 and the power mode: %+v", n, obs)
+			}
+			if got := label(t, obs, "/dev/sdc", "smart.power_mode"); got != "active" {
+				t.Errorf("smart.power_mode = %q, want active", got)
 			}
 			deviceCount(t, obs, 1)
 		})
 	}
 }
 
-// TestSmartStandbyReportsNothing: -n standby,0 makes smartctl leave a
-// sleeping disk alone and exit 0 with JSON that carries no data blocks.
-// That disk reports nothing this round — no reading, no error — and the
-// others still report.
-func TestSmartStandbyReportsNothing(t *testing.T) {
+// TestSmartStandbyReportsItsPowerMode (backlog 3.9b): -n standby,0 makes
+// smartctl leave a sleeping disk alone and exit 0 with JSON that carries
+// no data blocks. That disk reports smart.power_mode standby this round
+// and nothing else — no reading, no error — while the disk that answered
+// reports its readings and active; both count as devices.
+func TestSmartStandbyReportsItsPowerMode(t *testing.T) {
 	f := newFakeRunner(t, map[string]reply{
 		"/dev/sdd": {stdout: fixture(t, "standby.json")},
 		"/dev/sda": {stdout: fixture(t, "ata.json")},
@@ -144,11 +152,20 @@ func TestSmartStandbyReportsNothing(t *testing.T) {
 			t.Errorf("argv %q: want -n standby,0", c)
 		}
 	}
-	if got := itemObs(obs, "/dev/sdd"); len(got) != 0 {
-		t.Errorf("standby disk reported %+v, want nothing", got)
+	if got := itemObs(obs, "/dev/sdd"); len(got) != 1 || got[0].Metric != "smart.power_mode" {
+		t.Errorf("standby disk reported %+v, want only smart.power_mode", got)
+	}
+	if got := label(t, obs, "/dev/sdd", "smart.power_mode"); got != "standby" {
+		t.Errorf("/dev/sdd smart.power_mode = %q, want standby", got)
 	}
 	if got := value(t, obs, "/dev/sda", "smart.passed"); got != 1 {
 		t.Errorf("/dev/sda passed = %v", got)
+	}
+	if got := label(t, obs, "/dev/sda", "smart.power_mode"); got != "active" {
+		t.Errorf("/dev/sda smart.power_mode = %q, want active", got)
+	}
+	for _, o := range obs {
+		encodesAsCheckResult(t, o)
 	}
 	deviceCount(t, obs, 2)
 }
@@ -241,30 +258,38 @@ func TestSmartNoDeviceWithSMARTData(t *testing.T) {
 // TestSmartStandbyIsNotNoSMART: a disk in standby answers without a
 // smart_support block (smartctl stops before identifying it); a disk
 // without SMART answers with one that says unavailable. Asleep is not a
-// fault, so a host whose disks all sleep reports the count and nothing
-// else, and one sleeping disk is enough to keep the error away.
+// fault, so a host whose disks all sleep reports the count and each
+// sleeping disk's power mode (backlog 3.9b) and nothing else, one
+// sleeping disk is enough to keep the error away, and the disk without
+// SMART reports no power mode.
 func TestSmartStandbyIsNotNoSMART(t *testing.T) {
 	for _, tc := range []struct {
 		desc    string
 		replies map[string]reply
 		want    float64
+		asleep  []string
 	}{
 		{"all asleep", map[string]reply{
 			"/dev/sda": {stdout: fixture(t, "standby.json")},
 			"/dev/sdb": {stdout: fixture(t, "standby.json")},
-		}, 2},
+		}, 2, []string{"/dev/sda", "/dev/sdb"}},
 		{"asleep and virtual", map[string]reply{
 			"/dev/sda": {stdout: fixture(t, "standby.json")},
 			"/dev/sdb": {stdout: fixture(t, "virtual-disk.json")},
-		}, 2},
+		}, 2, []string{"/dev/sda"}},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			obs, err := plugin(newFakeRunner(t, tc.replies)).Collect(context.Background(), map[string]any{"devices": []string{"/dev/sda", "/dev/sdb"}})
 			if err != nil {
 				t.Fatalf("Collect error = %v", err)
 			}
-			if len(obs) != 1 {
-				t.Fatalf("observations = %+v, want only smart.devices", obs)
+			if len(obs) != 1+len(tc.asleep) {
+				t.Fatalf("observations = %+v, want smart.devices and the power mode of %q", obs, tc.asleep)
+			}
+			for _, d := range tc.asleep {
+				if got := label(t, obs, d, "smart.power_mode"); got != "standby" {
+					t.Errorf("%s smart.power_mode = %q, want standby", d, got)
+				}
 			}
 			deviceCount(t, obs, tc.want)
 		})
@@ -286,8 +311,8 @@ func TestSmartPartialReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect error = %v", err)
 	}
-	if len(itemObs(obs, "/dev/sdx")) != 3 {
-		t.Fatalf("got %+v, want temperature, pending sectors and media errors only", obs)
+	if len(itemObs(obs, "/dev/sdx")) != 4 {
+		t.Fatalf("got %+v, want temperature, pending sectors, media errors and the power mode only", obs)
 	}
 	deviceCount(t, obs, 1)
 	for metric, want := range map[string]float64{
@@ -333,8 +358,8 @@ func TestSmartWrongFieldTypeIsAdvisory(t *testing.T) {
 	if err == nil {
 		t.Fatal("Collect error = nil, want the type mismatch named")
 	}
-	if len(itemObs(obs, "/dev/sdx")) != 1 || value(t, obs, "/dev/sdx", "smart.temperature_celsius") != 31 {
-		t.Fatalf("observations = %+v, want only the temperature", obs)
+	if len(itemObs(obs, "/dev/sdx")) != 2 || value(t, obs, "/dev/sdx", "smart.temperature_celsius") != 31 || label(t, obs, "/dev/sdx", "smart.power_mode") != "active" {
+		t.Fatalf("observations = %+v, want only the temperature and the power mode", obs)
 	}
 }
 

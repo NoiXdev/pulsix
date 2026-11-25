@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // smartctl's exit status is a bit mask (smartctl(8), EXIT STATUS). Bit 0:
@@ -42,6 +43,10 @@ const (
 //	nvme_smart_health_information_log.percentage_used → smart.nvme_percentage_used
 //	nvme_smart_health_information_log.available_spare → smart.nvme_available_spare_pct
 //	nvme_smart_health_information_log.media_errors    → smart.nvme_media_errors
+//
+// smart.power_mode (backlog 3.9b) comes from no field: it is active on
+// every run that stated a metric and standby for a disk smartctl left
+// asleep (see interpret).
 //
 // Numbers decode as float64: NVMe counters are 128-bit and smartctl prints
 // them whole. The leaves are optNum/optBool rather than pointers because
@@ -99,18 +104,30 @@ const (
 	answerNoData
 )
 
+// powerModeMetric says whether a device sleeps (backlog 3.9b). Its labels
+// are the manager's descriptor constants: its smart hook stops asking for
+// a sleeping disk's other metrics on exactly checkplugins.SmartPowerModeStandby.
+const powerModeMetric = "smart.power_mode"
+
+const (
+	powerModeStandby = checkplugins.SmartPowerModeStandby // left asleep, nothing read
+	powerModeActive  = checkplugins.SmartPowerModeActive  // answered with readings
+)
+
 // interpret turns one device's smartctl run into observations: one error
 // observation on smart.passed when the run failed (command line refused,
-// device not opened, no JSON); otherwise every metric the JSON states, plus
-// an advisory error when a field had an unexpected type.
+// device not opened, no JSON); otherwise every metric the JSON states and
+// smart.power_mode active, plus an advisory error when a field had an
+// unexpected type.
 //
 // A run that states no metric is either a disk in standby or a device
 // without SMART data, told apart without reading smartctl's messages:
 // with -n standby,0 smartctl exits 0 for a sleeping disk before it
 // identifies it, so that JSON has no smart_support block, while a device
 // smartctl did identify (a virtual disk, a USB bridge without SMART
-// pass-through) has one, typically {"available": false}. Neither reports
-// anything for the device itself.
+// pass-through) has one, typically {"available": false}. The sleeping
+// disk reports smart.power_mode standby and nothing else (backlog 3.9b);
+// the device without SMART data reports nothing.
 func interpret(d device, res runResult) ([]checks.Observation, answer, error) {
 	isJSON := isJSONObject(res.stdout)
 	var rep report
@@ -147,9 +164,9 @@ func interpret(d device, res runResult) ([]checks.Observation, answer, error) {
 	err := errors.Join(typeErr, badErr)
 	switch {
 	case len(obs) > 0:
-		return obs, answerData, err
+		return append(obs, checks.LabelObservation(d.item, powerModeMetric, powerModeActive)), answerData, err
 	case err == nil && !present(rep.SmartSupport):
-		return nil, answerStandby, nil
+		return []checks.Observation{checks.LabelObservation(d.item, powerModeMetric, powerModeStandby)}, answerStandby, nil
 	}
 	return obs, answerNoData, err
 }
