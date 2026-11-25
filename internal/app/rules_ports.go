@@ -50,7 +50,8 @@ func NewRulesHostChecks(svc *checks.Service) rules.HostChecks { return rulesHost
 
 // ContextForHost implements rules.HostChecks: the resolved interval per
 // check key, whether that check still asks for an item and for a metric
-// (checks.Resolved.AsksForMetric, the host page's own rule), and the
+// of an item that reads given labels now (checks.Resolved.AsksForMetric,
+// the host page's own rule), and the
 // monitoring groups whose selector currently matches
 // the host.
 //
@@ -75,7 +76,7 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	all := set.All()
 	intervals := make(map[string]time.Duration, len(all))
 	asks := make(map[string]func(item string) bool, len(all))
-	asksMetric := make(map[string]func(metric string) bool, len(all))
+	asksMetric := make(map[string]func(labels map[string]string, metric string) bool, len(all))
 	for _, c := range all {
 		intervals[c.Key] = c.Interval
 		asks[c.Key] = asksFor(c)

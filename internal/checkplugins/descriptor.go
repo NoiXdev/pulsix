@@ -138,6 +138,19 @@ type Descriptor struct {
 	// It is consulted for every item, the whole-host item "" included. Nil
 	// means every metric is asked. See AsksForMetric.
 	MetricAsked func(params map[string]any, metric string) bool `json:"-"`
+	// MetricAskedForItem reports whether a check with params still asks
+	// for metric of an item whose current state is labels (backlog 3.74):
+	// the labels of the item's current discrete readings without an error,
+	// metric name to label — what the item reads now. It is for a plugin
+	// whose item can enter a state in which the agent reports only some of
+	// its metrics, so the others' last values read as not asked rather
+	// than as readings that went stale (zfs: an EXPORTED or MISSING pool
+	// reports only zfs.state; smart's standby, backlog 3.9b, may follow).
+	// A hook must keep asking for the metrics that carry the state itself,
+	// or the item could never leave it. It is consulted for every item,
+	// "" included, after MetricAsked; labels is nil when nothing is known.
+	// Nil means the item's state never matters. See AsksForMetric.
+	MetricAskedForItem func(params map[string]any, labels map[string]string, metric string) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes

@@ -1,15 +1,25 @@
 package checkplugins
 
+import "slices"
+
 // zfsPlugin: ZFS pool health (backlog 3.9a). pools optionally limits the
 // check to the listed pools; the whole-host item "" (the pool count,
-// host-level errors) is reported whatever the list says.
+// host-level errors) is reported whatever the list says. optional_pools
+// (backlog 3.74) names pools that may be absent: one zpool list does not
+// print reports only zfs.state EXPORTED, while a pool only in pools that
+// is absent reports only zfs.state MISSING.
 func zfsPlugin() Descriptor {
 	return Descriptor{
-		Name:                "zfs",
-		Runs:                Agent,
-		Params:              []ParamSpec{hardwareList("pools", FormatNoControl)},
+		Name: "zfs",
+		Runs: Agent,
+		Params: []ParamSpec{
+			hardwareList("pools", FormatNoControl),
+			hardwareList("optional_pools", FormatNoControl),
+		},
 		ItemParam:           "pools",
 		HostItemAlwaysAsked: true,
+		ItemAsked:           zfsItemAsked,
+		MetricAskedForItem:  zfsMetricAskedForItem,
 		Metrics: []MetricSpec{
 			{Name: "zfs.state", Kind: Discrete},
 			{Name: "zfs.capacity_pct", Kind: Numeric},
@@ -27,4 +37,39 @@ func zfsPlugin() Descriptor {
 			{Name: "zfs.pools", Kind: Numeric},
 		},
 	}
+}
+
+// zfsState is the per-pool metric that carries the pool's state, and the
+// labels the agent's plugin reports for a named pool zpool list does not
+// print (internal/agent/checks/plugins/zfs).
+const (
+	zfsState         = "zfs.state"
+	zfsStateExported = "EXPORTED"
+	zfsStateMissing  = "MISSING"
+)
+
+// zfsItemAsked: the agent reports the imported pools named in either list,
+// or, while pools is empty, every imported pool besides the optional ones —
+// optional_pools never narrows. entries is pools.
+func zfsItemAsked(params map[string]any, entries []string, item string) bool {
+	if len(entries) == 0 {
+		return true
+	}
+	optional, _ := stringList(params["optional_pools"])
+	return slices.Contains(entries, item) || slices.Contains(optional, item)
+}
+
+// zfsMetricAskedForItem: an EXPORTED or MISSING pool reports zfs.state and
+// nothing else, so while its current state reads either, no other metric
+// of it is asked; zfs.state always is, which is how the pool leaves that
+// state again.
+func zfsMetricAskedForItem(_ map[string]any, labels map[string]string, metric string) bool {
+	if metric == zfsState {
+		return true
+	}
+	switch labels[zfsState] {
+	case zfsStateExported, zfsStateMissing:
+		return false
+	}
+	return true
 }

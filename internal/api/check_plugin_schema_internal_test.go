@@ -36,7 +36,8 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"temperature: sensors (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"smart: devices (list; at most 64 entries; each at most 255 bytes; each a /dev/... path). " +
 		"raid: arrays (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
-		"zfs: pools (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
+		"zfs: pools (list; at most 64 entries; each at most 255 bytes; each without control characters), " +
+		"optional_pools (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"postgres: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"databases (list; at most 64 entries; each at most 63 bytes; each without control characters). " +
 		"mysql: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +

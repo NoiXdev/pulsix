@@ -128,6 +128,9 @@ var listParamsNotItems = map[string]bool{
 	// http's assertions name items too, but json_values is the ItemParam;
 	// the ItemAsked hook reads both lists (backlog 3.13b).
 	"http.assertions": true,
+	// zfs's optional pools name items too, but pools is the ItemParam; the
+	// ItemAsked hook reads both lists (backlog 3.74).
+	"zfs.optional_pools": true,
 }
 
 // TestListParamsAreItemParams: a list parameter left out of ItemParam makes

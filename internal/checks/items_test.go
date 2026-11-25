@@ -100,30 +100,68 @@ func TestDefinitionAsksForItem(t *testing.T) {
 
 // TestAsksForMetric (backlog 3.88): http.body_match is asked only while
 // body_contains is set, for a definition and a resolved check alike; a
-// plugin without a metric rule asks for every metric.
+// plugin without a metric rule asks for every metric. Backlog 3.74: the
+// item's current labels decide too — no zfs metric but zfs.state of a pool
+// that reads EXPORTED or MISSING is asked.
 func TestAsksForMetric(t *testing.T) {
+	exported := map[string]string{"zfs.state": "EXPORTED"}
 	tests := []struct {
 		name   string
 		plugin string
 		params map[string]any
+		labels map[string]string
 		metric string
 		want   bool
 	}{
-		{"http body match with body_contains", PluginHTTP, map[string]any{"body_contains": "ok"}, "http.body_match", true},
-		{"http body match without body_contains", PluginHTTP, map[string]any{"url": "https://{address}/"}, "http.body_match", false},
-		{"http request metric without body_contains", PluginHTTP, nil, "http.dns_ms", true},
-		{"disk asks for every metric", PluginDisk, map[string]any{"mounts": []string{"/"}}, "disk.used_pct", true},
+		{"http body match with body_contains", PluginHTTP, map[string]any{"body_contains": "ok"}, nil, "http.body_match", true},
+		{"http body match without body_contains", PluginHTTP, map[string]any{"url": "https://{address}/"}, nil, "http.body_match", false},
+		{"http request metric without body_contains", PluginHTTP, nil, nil, "http.dns_ms", true},
+		{"disk asks for every metric", PluginDisk, map[string]any{"mounts": []string{"/"}}, nil, "disk.used_pct", true},
+		{"zfs exported pool's capacity", "zfs", nil, exported, "zfs.capacity_pct", false},
+		{"zfs exported pool's state", "zfs", nil, exported, "zfs.state", true},
+		{"zfs online pool's capacity", "zfs", nil, map[string]string{"zfs.state": "ONLINE"}, "zfs.capacity_pct", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			d := Definition{Plugin: tc.plugin, Params: tc.params}
-			if got := d.AsksForMetric(tc.metric); got != tc.want {
-				t.Fatalf("AsksForMetric(%q) = %v, want %v", tc.metric, got, tc.want)
+			if got := d.AsksForMetric(tc.labels, tc.metric); got != tc.want {
+				t.Fatalf("AsksForMetric(%v, %q) = %v, want %v", tc.labels, tc.metric, got, tc.want)
 			}
 			r := Resolved{Plugin: tc.plugin, Params: tc.params}
-			if got := r.AsksForMetric(tc.metric); got != tc.want {
-				t.Fatalf("Resolved.AsksForMetric(%q) = %v, want %v", tc.metric, got, tc.want)
+			if got := r.AsksForMetric(tc.labels, tc.metric); got != tc.want {
+				t.Fatalf("Resolved.AsksForMetric(%v, %q) = %v, want %v", tc.labels, tc.metric, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestCurrentLabels (backlog 3.74): what an item reads now is the labels of
+// its current discrete readings, per check key and item; a numeric value
+// and an error carry no label, and an item without one has none.
+func TestCurrentLabels(t *testing.T) {
+	label := func(s string) *string { return &s }
+	value := 3.0
+	got := CurrentLabels([]Current{
+		{CheckKey: "zfs", Item: "tank", Metric: "zfs.state", Label: label("ONLINE")},
+		{CheckKey: "zfs", Item: "tank", Metric: "zfs.scan", Label: label("none")},
+		{CheckKey: "zfs", Item: "tank", Metric: "zfs.capacity_pct", Value: &value},
+		{CheckKey: "zfs", Item: "backup", Metric: "zfs.state", Label: label("EXPORTED")},
+		{CheckKey: "zfs-2", Item: "tank", Metric: "zfs.state", Label: label("MISSING")},
+		{CheckKey: "zfs", Item: "rpool", Metric: "zfs.state", Err: "zpool status failed"},
+	})
+	if l := got.Of("zfs", "tank"); len(l) != 2 || l["zfs.state"] != "ONLINE" || l["zfs.scan"] != "none" {
+		t.Errorf("zfs/tank = %v, want its state and scan", l)
+	}
+	if l := got.Of("zfs", "backup"); len(l) != 1 || l["zfs.state"] != "EXPORTED" {
+		t.Errorf("zfs/backup = %v, want EXPORTED", l)
+	}
+	if l := got.Of("zfs-2", "tank"); l["zfs.state"] != "MISSING" {
+		t.Errorf("zfs-2/tank = %v, want its own key's MISSING", l)
+	}
+	if l := got.Of("zfs", "rpool"); len(l) != 0 {
+		t.Errorf("zfs/rpool = %v, want no label from an error", l)
+	}
+	if l := got.Of("disk", "/"); l != nil {
+		t.Errorf("an unknown item = %v, want nil", l)
 	}
 }

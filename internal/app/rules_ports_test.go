@@ -129,6 +129,7 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 			{Key: "disk", Plugin: checks.PluginDisk, Params: map[string]any{"mounts": []any{"/"}}, Interval: time.Minute},
 			{Key: "disk-all", Plugin: checks.PluginDisk, Interval: time.Minute},
 			{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute},
+			{Key: "zfs", Plugin: checks.PluginZFS, Params: map[string]any{"pools": []any{"tank"}, "optional_pools": []any{"backup"}}, Interval: time.Minute},
 		},
 		Synthetic: []checks.Resolved{
 			{Key: "web", Plugin: checks.PluginHTTP, Interval: 30 * time.Second},
@@ -156,6 +157,9 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 		{"api", "depth", false},
 		{"api-emptied", "", true},
 		{"api-emptied", "status", false},
+		{"zfs", "tank", true},
+		{"zfs", "backup", true},
+		{"zfs", "rpool", false},
 	} {
 		asks, ok := got.Asks[c.key]
 		if !ok {
@@ -172,9 +176,15 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 // on, with the very predicate the host page hides it by — an http check
 // asks for http.body_match only while body_contains is set; every other
 // metric, and every metric of a plugin without such a rule, is asked.
+// Backlog 3.74: the predicate reads the item's current labels too — a zfs
+// pool that reads EXPORTED or MISSING is asked for zfs.state and nothing
+// else.
 func TestRulesHostChecksContextForHostAsksPerMetric(t *testing.T) {
 	r := &fakeCheckResolver{set: checks.ResolvedSet{
-		Checks: []checks.Resolved{{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute}},
+		Checks: []checks.Resolved{
+			{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute},
+			{Key: "zfs", Plugin: checks.PluginZFS, Params: map[string]any{"optional_pools": []any{"backup"}}, Interval: time.Minute},
+		},
 		Synthetic: []checks.Resolved{
 			{Key: "web", Plugin: checks.PluginHTTP, Params: map[string]any{"url": "https://{address}/"}, Interval: 30 * time.Second},
 			{Key: "shop", Plugin: checks.PluginHTTP, Params: map[string]any{"body_contains": "Add to cart"}, Interval: 30 * time.Second},
@@ -184,21 +194,28 @@ func TestRulesHostChecksContextForHostAsksPerMetric(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	state := func(label string) map[string]string { return map[string]string{"zfs.state": label} }
 	for _, c := range []struct {
-		key, metric string
-		want        bool
+		key    string
+		labels map[string]string
+		metric string
+		want   bool
 	}{
-		{"cpu", "cpu.used_pct", true},
-		{"web", "http.up", true},
-		{"web", "http.body_match", false},
-		{"shop", "http.body_match", true},
+		{"cpu", nil, "cpu.used_pct", true},
+		{"web", nil, "http.up", true},
+		{"web", nil, "http.body_match", false},
+		{"shop", nil, "http.body_match", true},
+		{"zfs", state("ONLINE"), "zfs.capacity_pct", true},
+		{"zfs", state("EXPORTED"), "zfs.capacity_pct", false},
+		{"zfs", state("MISSING"), "zfs.scrub_age_days", false},
+		{"zfs", state("MISSING"), "zfs.state", true},
 	} {
 		asks, ok := got.AsksMetric[c.key]
 		if !ok {
 			t.Fatalf("no metric predicate for %q; AsksMetric = %v", c.key, got.AsksMetric)
 		}
-		if asks(c.metric) != c.want {
-			t.Errorf("AsksMetric[%q](%q) = %v, want %v", c.key, c.metric, !c.want, c.want)
+		if asks(c.labels, c.metric) != c.want {
+			t.Errorf("AsksMetric[%q](%v, %q) = %v, want %v", c.key, c.labels, c.metric, !c.want, c.want)
 		}
 	}
 }

@@ -287,7 +287,7 @@ func TestHTTPAsksForMetric(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := checkplugins.AsksForMetric("http", tc.params, tc.metric); got != tc.want {
+			if got := checkplugins.AsksForMetric("http", tc.params, nil, tc.metric); got != tc.want {
 				t.Fatalf("AsksForMetric(http, %v, %q) = %v, want %v", tc.params, tc.metric, got, tc.want)
 			}
 		})

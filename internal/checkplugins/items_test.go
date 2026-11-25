@@ -109,7 +109,7 @@ func TestAsksForMetric(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := checkplugins.AsksForMetric(tc.plugin, tc.params, tc.metric); got != tc.want {
+			if got := checkplugins.AsksForMetric(tc.plugin, tc.params, nil, tc.metric); got != tc.want {
 				t.Fatalf("AsksForMetric(%s, %v, %q) = %v, want %v", tc.plugin, tc.params, tc.metric, got, tc.want)
 			}
 		})

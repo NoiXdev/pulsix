@@ -42,10 +42,14 @@ type CheckContext struct {
 	// always asked — Load never consults the predicate for it.
 	Asks map[string]func(item string) bool
 	// AsksMetric reports, per check key, whether the check still asks for a
-	// metric (backlog 3.88): http.body_match once body_contains is removed.
-	// It is consulted for every item, the whole-host item "" included. A
-	// key with no predicate asks for every metric.
-	AsksMetric map[string]func(metric string) bool
+	// metric of an item whose current state is labels: http.body_match once
+	// body_contains is removed (backlog 3.88), any zfs metric but zfs.state
+	// of a pool that reads EXPORTED or MISSING (backlog 3.74). labels are
+	// the item's current discrete readings without an error, metric name
+	// to label (itemLabels), nil when it has none. It is consulted for
+	// every item, the whole-host item "" included. A key with no predicate
+	// asks for every metric.
+	AsksMetric map[string]func(labels map[string]string, metric string) bool
 	// Synthetic are the check keys the manager probes the host with
 	// (backlog 3.13): their readings are stamped by the manager's clock and
 	// never arrive in the agent's replay, so they neither end a replay nor
@@ -56,14 +60,15 @@ type CheckContext struct {
 
 // interval is the resolved interval tuple t is measured at, or zero —
 // which takes it out of the evaluation — when its check no longer
-// resolves or no longer asks for its item or its metric.
-func (c CheckContext) interval(t Tuple) time.Duration {
+// resolves or no longer asks for its item or for its metric of an item
+// that reads labels now.
+func (c CheckContext) interval(t Tuple, labels map[string]string) time.Duration {
 	if t.Item != "" {
 		if asks, ok := c.Asks[t.CheckKey]; ok && !asks(t.Item) {
 			return 0
 		}
 	}
-	if asks, ok := c.AsksMetric[t.CheckKey]; ok && !asks(t.Metric) {
+	if asks, ok := c.AsksMetric[t.CheckKey]; ok && !asks(labels, t.Metric) {
 		return 0
 	}
 	return c.Intervals[t.CheckKey]
@@ -124,6 +129,7 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 	}
 	tuples := make([]TupleSnapshot, len(current))
 	reported := make([]Tuple, len(current))
+	labels := itemLabels(current)
 	newest := ItemNewest{}
 	// agentNewest is the newest reading of a check the agent runs, an error
 	// or a metric nobody asks for any more included: any of them taken in
@@ -140,12 +146,13 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due, now time.Time) (HostLoad
 			Tuple: t, Value: r.Value, Label: r.Label, Err: textOf(r.Error), At: r.At,
 			// A check the manager no longer resolves for this host, or one
 			// that no longer asks for this item (backlog 3.55) or this
-			// metric (backlog 3.88), leaves the interval at zero, which is
-			// what takes the tuple out of the evaluation entirely
-			// (Evaluate's own skip). The current row itself is never
-			// deleted — that is v0.3b-1's ruling, and this is the read side
-			// of it.
-			Interval: checkCtx.interval(t),
+			// metric (backlog 3.88), or not while the item reads what it
+			// reads now (backlog 3.74: an exported pool), leaves the
+			// interval at zero, which is what takes the tuple out of the
+			// evaluation entirely (Evaluate's own skip). The current row
+			// itself is never deleted — that is v0.3b-1's ruling, and this
+			// is the read side of it.
+			Interval: checkCtx.interval(t, labels[itemKeyOf(t)]),
 		}
 		// Only a reading still asked for is evidence the check still
 		// reports on its item — the same set the host page measures
@@ -339,6 +346,26 @@ func textOf(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// itemLabels is what each of a host's items reads now (backlog 3.74): the
+// labels of its current discrete readings without an error, metric name
+// to label — checks.CurrentLabels' rule over the rows Load reads, the one
+// the host page applies (GET /hosts/{id}/checks, stillAsked). An item
+// with no such reading has none.
+func itemLabels(current []gen.CheckCurrent) map[ItemKey]map[string]string {
+	out := map[ItemKey]map[string]string{}
+	for _, r := range current {
+		if r.Label == nil || textOf(r.Error) != "" {
+			continue
+		}
+		k := ItemKey{CheckKey: r.CheckKey, Item: r.Item}
+		if out[k] == nil {
+			out[k] = map[string]string{}
+		}
+		out[k][r.Metric] = *r.Label
+	}
+	return out
 }
 
 // seenItems derives Discover's own input from a host's reported tuples:

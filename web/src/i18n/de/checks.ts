@@ -265,6 +265,11 @@ export const deChecks: Messages['checks'] = {
         hint: 'Pool-Namen wie tank; leer bedeutet jeder Pool. Nur Linux mit ZFS.',
         placeholder: 'tank\nbackup',
       },
+      optional_pools: {
+        label: 'Optionale Pools (einer pro Zeile)',
+        hint: 'Pools, die exportiert sein dürfen, etwa ein Backup-Pool auf Wechselplatten: solange einer nicht importiert ist, lautet er EXPORTED und sonst wird nichts gemessen. Ein Pool unter Pools, der nicht importiert ist, lautet MISSING.',
+        placeholder: 'backup',
+      },
     },
     postgres: {
       secret: {

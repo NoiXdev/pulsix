@@ -73,7 +73,7 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 type fixedChecks struct {
 	intervals  map[string]time.Duration
 	asks       map[string]func(item string) bool
-	asksMetric map[string]func(metric string) bool
+	asksMetric map[string]func(labels map[string]string, metric string) bool
 	groups     []rules.GroupRank
 	synthetic  map[string]bool
 	err        error

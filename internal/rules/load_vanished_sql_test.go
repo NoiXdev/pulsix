@@ -111,7 +111,7 @@ func TestLoadLeavesMetricsNobodyAsksForUnmeasured(t *testing.T) {
 	insertCurrent(t, d, org, host, match, ptr(1.0), nil, now, "")
 	checks := fixedChecks{
 		intervals:  map[string]time.Duration{"web": time.Minute},
-		asksMetric: map[string]func(string) bool{"web": func(metric string) bool { return metric != "http.body_match" }},
+		asksMetric: map[string]func(map[string]string, string) bool{"web": func(_ map[string]string, metric string) bool { return metric != "http.body_match" }},
 	}
 	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())

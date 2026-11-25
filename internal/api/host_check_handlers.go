@@ -480,7 +480,10 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // stillAsked drops the current values whose item d no longer asks the host
 // for — a mount taken off a disk check's list, a unit taken off a service
 // check's (backlog 3.28) — and those whose metric it no longer asks for,
-// http.body_match once body_contains is removed (backlog 3.88). Nothing
+// http.body_match once body_contains is removed (backlog 3.88), or not
+// while the item reads what its current labels say (backlog 3.74: every
+// zfs metric but zfs.state of a pool that reads EXPORTED or MISSING, back
+// once it reads another state; checks.CurrentLabels over values). Nothing
 // deletes a check_current row, deliberately (checks.Current's doc comment
 // and migration 00044 both say why), so without this the dropped item sits
 // on the host page for ever and is eventually badged stale — which reads
@@ -492,10 +495,11 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // means every filesystem the host finds. Only the current view is
 // filtered; GET /hosts/{id}/metrics still serves the dropped item's
 // samples, because a graph of a mount dropped last week is a real graph.
-func stillAsked(asksItem func(item string) bool, asksMetric func(metric string) bool, values []checks.Current) []checks.Current {
+func stillAsked(asksItem func(item string) bool, asksMetric func(labels map[string]string, metric string) bool, values []checks.Current) []checks.Current {
+	labels := checks.CurrentLabels(values)
 	kept := values[:0:0]
 	for _, v := range values {
-		if asksItem(v.Item) && asksMetric(v.Metric) {
+		if asksItem(v.Item) && asksMetric(labels.Of(v.CheckKey, v.Item), v.Metric) {
 			kept = append(kept, v)
 		}
 	}

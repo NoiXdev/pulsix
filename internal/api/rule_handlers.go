@@ -376,9 +376,12 @@ func toGroupRanks(groups []checks.Group) []rules.GroupRank {
 // "" is always asked, every other item by checks.Resolved.AsksForItem. So
 // are metrics (backlog 3.88): one the check's parameters no longer switch
 // on (http.body_match without body_contains) is not judged, so not listed,
-// on any item, "" included — checks.Resolved.AsksForMetric, the
+// on any item, "" included, and neither is one the item's current labels
+// switch off (backlog 3.74: an exported pool's capacity) —
+// checks.Resolved.AsksForMetric over checks.CurrentLabels, the
 // evaluation's own metric predicate.
 func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []rules.Tuple {
+	labels := checks.CurrentLabels(current)
 	out := make([]rules.Tuple, 0, len(current))
 	for _, c := range current {
 		r, ok := resolved[c.CheckKey]
@@ -388,7 +391,7 @@ func toTuples(current []checks.Current, resolved map[string]checks.Resolved) []r
 		if c.Item != "" && !r.AsksForItem(c.Item) {
 			continue
 		}
-		if !r.AsksForMetric(c.Metric) {
+		if !r.AsksForMetric(labels.Of(c.CheckKey, c.Item), c.Metric) {
 			continue
 		}
 		out = append(out, rules.Tuple{CheckKey: c.CheckKey, Item: c.Item, Metric: c.Metric})

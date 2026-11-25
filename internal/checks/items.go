@@ -43,17 +43,50 @@ func (r Resolved) AsksForItem(item string) bool {
 	return checkplugins.AsksForItem(r.Plugin, r.Params, item)
 }
 
-// AsksForMetric reports whether d still asks the host for metric (backlog
-// 3.88): http.body_match only while body_contains is set. It is the
-// metric-level companion of AsksForItem — whatever the item, a metric a
-// parameter switches on stops being a current value the moment that
-// parameter is removed — and the plugin's descriptor's business
-// (checkplugins.AsksForMetric).
-func (d Definition) AsksForMetric(metric string) bool {
-	return checkplugins.AsksForMetric(d.Plugin, d.Params, metric)
+// AsksForMetric reports whether d still asks the host for metric of an
+// item whose current state is labels (CurrentLabels.Of): http.body_match
+// only while body_contains is set (backlog 3.88), and no zfs metric but
+// zfs.state of a pool that reads EXPORTED or MISSING (backlog 3.74). It is
+// the metric-level companion of AsksForItem — a metric a parameter
+// switches on stops being a current value the moment that parameter is
+// removed, and one the agent does not report in the item's present state
+// stops being one while the item reads it — and the plugin's descriptor's
+// business (checkplugins.AsksForMetric).
+func (d Definition) AsksForMetric(labels map[string]string, metric string) bool {
+	return checkplugins.AsksForMetric(d.Plugin, d.Params, labels, metric)
 }
 
 // AsksForMetric is Definition.AsksForMetric for a resolved check.
-func (r Resolved) AsksForMetric(metric string) bool {
-	return checkplugins.AsksForMetric(r.Plugin, r.Params, metric)
+func (r Resolved) AsksForMetric(labels map[string]string, metric string) bool {
+	return checkplugins.AsksForMetric(r.Plugin, r.Params, labels, metric)
+}
+
+// ItemLabels is what each item reads now (CurrentLabels).
+type ItemLabels map[itemOfKey]map[string]string
+
+// itemOfKey is one item of one check key.
+type itemOfKey struct{ checkKey, item string }
+
+// CurrentLabels collects, per check key and item, the labels of values'
+// current discrete readings without an error, metric name to label — the
+// item's present state AsksForMetric reads (backlog 3.74). A numeric
+// value or an error carries none.
+func CurrentLabels(values []Current) ItemLabels {
+	out := ItemLabels{}
+	for _, v := range values {
+		if v.Label == nil || v.Err != "" {
+			continue
+		}
+		k := itemOfKey{checkKey: v.CheckKey, item: v.Item}
+		if out[k] == nil {
+			out[k] = map[string]string{}
+		}
+		out[k][v.Metric] = *v.Label
+	}
+	return out
+}
+
+// Of is checkKey's item's labels, nil when it has none.
+func (l ItemLabels) Of(checkKey, item string) map[string]string {
+	return l[itemOfKey{checkKey: checkKey, item: item}]
 }

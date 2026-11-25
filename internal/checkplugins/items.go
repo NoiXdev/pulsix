@@ -47,18 +47,30 @@ func AsksForItem(plugin string, params map[string]any, item string) bool {
 }
 
 // AsksForMetric reports whether a check of plugin with params still asks
-// for metric (backlog 3.88): a metric a parameter switches on (http's
+// for metric of an item whose current state is labels — the labels of the
+// item's current discrete readings without an error, metric name to label,
+// nil when none is known.
+//
+// Two rules decide. A metric a parameter switches on (http's
 // http.body_match, reported only while body_contains is set) is no longer
-// asked once the parameter is removed, so its last current value reads as
-// "you stopped asking" at once rather than as a reading that went stale.
-// A plugin without a MetricAsked hook, and an unknown plugin, asks for
+// asked once the parameter is removed (backlog 3.88: the MetricAsked
+// hook), on every item. And a metric the agent stops reporting while its
+// item is in some state (zfs: everything but zfs.state of a pool that
+// reads EXPORTED or MISSING) is not asked while the item reads that state
+// (backlog 3.74: the MetricAskedForItem hook); once the item reads another
+// one, it is asked again. Either way the metric's last current value reads
+// as "you stopped asking" at once rather than as a reading that went
+// stale. A plugin without either hook, and an unknown plugin, asks for
 // every metric it reports.
-func AsksForMetric(plugin string, params map[string]any, metric string) bool {
+func AsksForMetric(plugin string, params map[string]any, labels map[string]string, metric string) bool {
 	d, ok := Get(plugin)
-	if !ok || d.MetricAsked == nil {
+	if !ok {
 		return true
 	}
-	return d.MetricAsked(params, metric)
+	if d.MetricAsked != nil && !d.MetricAsked(params, metric) {
+		return false
+	}
+	return d.MetricAskedForItem == nil || d.MetricAskedForItem(params, labels, metric)
 }
 
 // smartItemPath is the device path of a smart item. A disk behind a RAID

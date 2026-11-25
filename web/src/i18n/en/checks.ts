@@ -298,6 +298,11 @@ export const enChecks = {
         hint: 'Pool names such as tank; empty means every pool. Linux with ZFS only.',
         placeholder: 'tank\nbackup',
       },
+      optional_pools: {
+        label: 'Optional pools (one per line)',
+        hint: 'Pools that may be exported, such as a backup pool on removable disks: while one is not imported it reads EXPORTED and nothing else is measured. A pool under Pools that is not imported reads MISSING.',
+        placeholder: 'backup',
+      },
     },
     postgres: {
       secret: {

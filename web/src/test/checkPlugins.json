@@ -336,6 +336,13 @@
           "max_entries": 64,
           "max_bytes": 255,
           "format": "noControl"
+        },
+        {
+          "name": "optional_pools",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 255,
+          "format": "noControl"
         }
       ],
       "item_param": "pools",

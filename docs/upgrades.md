@@ -716,6 +716,23 @@ targets no longer make another's checks report the manager too busy.
   well (or instead); a rule on `snmp.up` is unaffected. Also, a first request cut
   off by the poll's deadline after the discovery now reads as that deadline's down
   reason (`timeout` or `error`) instead of `auth`.
+- **A ZFS pool named in `pools` that is not imported now reads `MISSING` (backlog
+  3.74, no migration):** the `zfs` check used to report nothing for a listed pool
+  `zpool list` does not print, so its last readings turned stale and left the host
+  unknown. The updated agent reports `zfs.state` = `MISSING` for it, and nothing
+  else; an existing rule "`zfs.state` is not `ONLINE`" therefore fires on it, as it
+  should. A pool that may be exported on purpose (a backup pool on removable disks)
+  goes into the new list parameter `optional_pools` instead: absent, it reads
+  `EXPORTED` (a rule meant to stay quiet then must exclude `EXPORTED` too, e.g.
+  `zfs.state != "ONLINE" and zfs.state != "EXPORTED"`). While a pool reads `EXPORTED`
+  or `MISSING`, the manager does not ask for its other metrics: their last values
+  leave the host page, the evaluation and the effective rules the way an item taken
+  off a check's list does (an open alert on one closes as stale), and they are
+  judged again once the pool reports another state. To check after the upgrade:
+  listed pools that are not imported on purpose — move them to `optional_pools` or
+  off the list. Version skew: an agent older than this release ignores
+  `optional_pools` (with `pools` set it does not report a pool named only there) and
+  reports nothing for an absent pool, as before.
 - **Escalation steps wait after every maintenance window or silence that covered the
   alert (backlog 4.41, no migration):** the escalation follower used to look for
   covering windows at two sampled instants, so a window or silence that opened and
