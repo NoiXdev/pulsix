@@ -47,9 +47,9 @@ type runRequestArgs struct {
 	Reason     string         `json:"reason" jsonschema:"one line on why the run is needed; the person approving reads it"`
 	CheckMode  bool           `json:"check_mode,omitempty" jsonschema:"a dry run: check mode, changes nothing (tasks marked to run in check mode still run); needs approval like any run and starts no follow-ups"`
 	Diff       *bool          `json:"diff,omitempty" jsonschema:"show the changes a dry run would make; only with check_mode, on unless false"`
-	ExtraVars  map[string]any `json:"extra_vars,omitempty" jsonschema:"extra vars replacing the template's top-level ones of the same name; never secrets (a secret field is refused); the run takes every text in them literally, never as a template"`
+	ExtraVars  map[string]any `json:"extra_vars,omitempty" jsonschema:"extra vars replacing the template's top-level ones of the same name; never secrets, and never names Ansible or Pulsix act on (ansible_..., pulsix_..., magic variables, playbook keywords); the run takes every text in them literally, never as a template"`
 	HostIDs    []string       `json:"host_ids,omitempty" jsonschema:"run on these hosts only (at most 500), each among the template's targets"`
-	Limit      string         `json:"limit,omitempty" jsonschema:"host names and globs (* ?) joined by , or :, with ! for exclusions; the run keeps to the template's targets whose name matches"`
+	Limit      string         `json:"limit,omitempty" jsonschema:"host names and * wildcards, joined by , or :, with ! before a name to exclude it (no groups, no ? or other patterns); the run keeps to the template's targets whose host name matches"`
 	ExpiresIn  int            `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
 }
 

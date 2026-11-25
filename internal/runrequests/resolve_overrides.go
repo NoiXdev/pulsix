@@ -22,6 +22,24 @@ var errNoOverrideValidator = errors.New("run request overrides: no validator")
 // errNoHost refuses overrides that leave the run without a host.
 var errNoHost = fmt.Errorf("%w: the requested hosts and limit leave no host of the template's targets", ErrInvalidInput)
 
+// errLimitRule refuses a limit override; it says exactly what a run
+// request's limit may hold.
+var errLimitRule = fmt.Errorf("%w: limit: only host names and * wildcards, joined by , or :, with ! before a name to exclude it", ErrInvalidInput)
+
+// checkTemplateMarkers refuses a request with extra vars on a template
+// whose own extra vars hold an "__ansible" object that is not a
+// well-formed marker: the claim of a run with untrusted values refuses
+// such a document (jobs.checkWireMarkers), so the request could be
+// approved and still never run. The template's values are not echoed.
+func checkTemplateMarkers(tmpl templates.Template) error {
+	for _, name := range slices.Sorted(maps.Keys(tmpl.ExtraVars)) {
+		if err := ansiblevars.CheckMarkers(tmpl.ExtraVars[name]); err != nil {
+			return fmt.Errorf("%w: template extra var %s holds an object with an \"__ansible\" key that is not a well-formed marker; a run request with extra vars cannot run with it until the template is fixed", ErrInvalidInput, name)
+		}
+	}
+	return nil
+}
+
 // pulsixMarkers are the object keys Pulsix itself gives a meaning to in
 // variable values: a sealed secret and a masked or kept one. A request's
 // value holding one would read as a secret on the approval page while the
@@ -31,6 +49,10 @@ var pulsixMarkers = []string{"$sealed", "$secret"}
 // checkOverrides checks a request's limit and extra vars against tmpl as it
 // is now. They are an assistant's input, held to the rules a webhook
 // payload is held to:
+//   - no extra var is named for something Ansible or Pulsix acts on
+//     (ansiblevars.CheckUntrustedName: ansible_…, pulsix_…, magic
+//     variables, playbook keywords), since Ansible executes some of them
+//     whatever their value;
 //   - no extra var is or holds a secret (an assistant never sets one, spec
 //     2026-11-25);
 //   - no value holds an "__ansible…" key or nests past
@@ -40,8 +62,10 @@ var pulsixMarkers = []string{"$sealed", "$secret"}
 //   - the template's own override checks pass with secrets refused and the
 //     limit held to plain host patterns (templates.ValidateOverrides with
 //     RefuseSecrets and StrictLimit: no "@file", "~regex" or subscripts);
-//   - the limit is one the host-name matcher decides (names, globs, ",",
-//     ":" and "!"), since it is resolved into hosts (runTargets).
+//   - the limit is one the host-name matcher decides (errLimitRule), since
+//     it is resolved into hosts (runTargets);
+//   - with extra vars, the template's own vars hold no malformed
+//     "__ansible" object (checkTemplateMarkers).
 //
 // No refusal echoes a value. Hosts are checked against the targets by
 // ValidateRun only: one that left the scope since is simply not in the
@@ -52,6 +76,9 @@ func (r *Resolver) checkOverrides(ctx context.Context, orgID uuid.UUID, tmpl tem
 	}
 	secret := templates.SecretFields(tmpl.ExtraVarsSchema)
 	for _, name := range slices.Sorted(maps.Keys(ov.ExtraVars)) {
+		if err := ansiblevars.CheckUntrustedName(name); err != nil {
+			return fmt.Errorf("%w: extra var %s: %w", ErrInvalidInput, name, err)
+		}
 		if secret[name] {
 			return fmt.Errorf("%w: extra var %s is a secret (or holds one); a run request cannot set secrets, set it on the template", ErrInvalidInput, name)
 		}
@@ -62,12 +89,17 @@ func (r *Resolver) checkOverrides(ctx context.Context, orgID uuid.UUID, tmpl tem
 			return fmt.Errorf("%w: extra var %s holds a \"$sealed\" or \"$secret\" object, which only stands for a stored secret", ErrInvalidInput, name)
 		}
 	}
-	if ov.Limit != nil {
-		if err := ansiblevars.CheckUntrustedLimit(*ov.Limit); err != nil {
-			return fmt.Errorf("%w: limit: %w", ErrInvalidInput, err)
+	if len(ov.ExtraVars) > 0 {
+		if err := checkTemplateMarkers(tmpl); err != nil {
+			return err
 		}
-		if _, decided := jobs.MatchLimit(*ov.Limit, "x"); !decided {
-			return fmt.Errorf("%w: limit: only host names and globs (* ?) joined by , or :, with ! for exclusions", ErrInvalidInput)
+	}
+	if ov.Limit != nil {
+		// Both rules hold: the webhook rule refuses "@", "~", "[…]" and "?",
+		// the matcher "&"; what is left is exactly errLimitRule.
+		_, decided := jobs.MatchLimit(*ov.Limit, "x")
+		if ansiblevars.CheckUntrustedLimit(*ov.Limit) != nil || !decided {
+			return errLimitRule
 		}
 	}
 	if r.src.Overrides == nil {

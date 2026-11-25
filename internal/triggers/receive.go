@@ -289,6 +289,11 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	// extra-vars file fail and fall back to YAML, which drops every unsafe
 	// marker (final re-reviews 1 and 2). The claim checks again.
 	for _, name := range slices.Sorted(maps.Keys(ov.ExtraVars)) {
+		// A trigger saved before the reserved-name rule covered its target
+		// (checkMappingTargets) is refused here; the claim checks again.
+		if err := ansiblevars.CheckUntrustedName(name); err != nil {
+			return templates.Overrides{}, "extra_vars." + name, err
+		}
 		if err := ansiblevars.CheckUntrusted(ov.ExtraVars[name]); err != nil {
 			return templates.Overrides{}, "extra_vars." + name, err
 		}

@@ -77,9 +77,10 @@ func capacityAndRefill(rl RateLimit) (capacity, perSecond float64) {
 	return float64(rl.Count), float64(rl.Count) / per.Seconds()
 }
 
-// checkMappingTargets refuses targets a payload may not set: the 2.36
-// denylist, secret fields, and — when the template has a schema — names
-// it does not declare.
+// checkMappingTargets refuses targets a payload may not set: the names
+// ansiblevars.CheckUntrustedName reserves (the 2.36 denylist among them),
+// secret fields, and — when the template has a schema — names it does not
+// declare.
 func checkMappingTargets(m Mapping, t templates.Template) error {
 	secret := templates.SecretFields(t.ExtraVarsSchema)
 	declared := map[string]bool{}
@@ -101,8 +102,10 @@ func checkMappingTargets(m Mapping, t templates.Template) error {
 			// It is the SCHEMA's own rule, so a declared name
 			// satisfies it by construction.
 			return fmt.Errorf("%w: %q is not a usable variable name: start with a lowercase letter or underscore, then lowercase letters, digits and underscores", ErrInvalidInput, name)
-		case ansiblevars.Forbidden(name):
-			return fmt.Errorf("%w: %s is a reserved variable name (connection security or Ansible's own markers) and cannot be mapped", ErrInvalidInput, name)
+		case ansiblevars.CheckUntrustedName(name) != nil:
+			// The rule run request overrides share: a payload value may not
+			// set a name Ansible or Pulsix acts on, inert or not.
+			return fmt.Errorf("%w: %s is a reserved variable name (ansible_…, pulsix_…, an Ansible magic variable or playbook keyword) and cannot be mapped", ErrInvalidInput, name)
 		case secret[name]:
 			return fmt.Errorf("%w: %s is a secret field and cannot be set from a payload", ErrInvalidInput, name)
 		case t.ExtraVarsSchema != nil && !declared[name]:

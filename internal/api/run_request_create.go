@@ -53,9 +53,9 @@ type requestRunRequest struct {
 	Reason    string      `json:"reason" maxLength:"300" doc:"Why the run is needed, shown to the person who approves it"`
 	CheckMode bool        `json:"check_mode,omitempty" doc:"A dry run: the playbook runs in check mode and changes nothing (tasks marked to run in check mode still run). It needs an approval like any run, and starts no follow-ups"`
 	Diff      *bool       `json:"diff,omitempty" doc:"Show the changes a dry run would make; only with check_mode, where it is on unless set to false"`
-	ExtraVars exactObject `json:"extra_vars,omitempty" doc:"Extra vars replacing the template's top-level ones of the same name, checked against the template's schema. Secret fields cannot be set here; the run receives every text in them as literal text, never as a template"`
+	ExtraVars exactObject `json:"extra_vars,omitempty" doc:"Extra vars replacing the template's top-level ones of the same name, checked against the template's schema. Secret fields and names Ansible or Pulsix act on (ansible_…, pulsix_…, Ansible's magic variables and playbook keywords) cannot be set here; the run receives every text in them as literal text, never as a template"`
 	HostIDs   []string    `json:"host_ids,omitempty" maxItems:"500" doc:"Run on these hosts only; each must be among the template's targets"`
-	Limit     string      `json:"limit,omitempty" maxLength:"1000" doc:"Host names and globs (* ?) joined by , or :, with ! for exclusions: the run keeps to the template's targets whose name matches, under the template's own limit"`
+	Limit     string      `json:"limit,omitempty" maxLength:"1000" doc:"Host names and * wildcards, joined by , or :, with ! before a name to exclude it (no groups, no ? or other patterns): the run keeps to the template's targets whose host name matches, under the template's own limit"`
 	ExpiresIn int         `json:"expires_in,omitempty" minimum:"5" maximum:"1440" doc:"Minutes the request stays approvable, 5 to 1440; 60 when omitted"`
 }
 

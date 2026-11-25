@@ -73,6 +73,7 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 		{name: "limit as a regex", ov: limitOf("~.*"), is: runrequests.ErrInvalidInput, msg: "limit"},
 		{name: "limit with a subscript", ov: limitOf("web[0]"), is: runrequests.ErrInvalidInput, msg: "limit"},
 		{name: "limit with an intersection", ov: limitOf("web-*:&db"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit with a ? glob", ov: limitOf("web-?"), is: runrequests.ErrInvalidInput, msg: "only host names and * wildcards"},
 		{name: "limit matching no target", ov: limitOf("db-*"), is: runrequests.ErrInvalidInput, msg: "no host"},
 		{name: "hosts and a limit with nothing in common", ov: func(w *world) runrequests.Overrides {
 			l := "web-1"
@@ -83,6 +84,23 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 		{name: "too deep", ov: vars(map[string]any{"version": deep(40)}), is: runrequests.ErrInvalidInput, msg: "version"},
 		{name: "secret marker as a value", ov: vars(map[string]any{"version": map[string]any{"$secret": "keep"}}),
 			is: runrequests.ErrInvalidInput, msg: "version"},
+		{name: "interpreter on a template without a schema", ov: vars(map[string]any{"ansible_python_interpreter": "sh -c id #"}),
+			prep: noSchema, is: runrequests.ErrInvalidInput, msg: "ansible_python_interpreter"},
+		{name: "become executable, other case", ov: vars(map[string]any{"Ansible_Become_Exe": "x"}),
+			prep: noSchema, is: runrequests.ErrInvalidInput, msg: "Ansible_Become_Exe"},
+		{name: "magic variable", ov: vars(map[string]any{"hostvars": "x"}), prep: noSchema, is: runrequests.ErrInvalidInput, msg: "hostvars"},
+		{name: "playbook keyword", ov: vars(map[string]any{"environment": map[string]any{"PATH": "/tmp"}}), prep: noSchema,
+			is: runrequests.ErrInvalidInput, msg: "environment"},
+		{name: "pulsix name", ov: vars(map[string]any{"pulsix_agent_enroll_token": "x"}), prep: noSchema,
+			is: runrequests.ErrInvalidInput, msg: "pulsix_agent_enroll_token"},
+		{name: "template with a malformed marker", ov: vars(map[string]any{"release": "1"}),
+			prep: func(w *world) {
+				noSchema(w)
+				tmpl := w.tmpls.fakeTemplates[w.x]
+				tmpl.ExtraVars = map[string]any{"cfg": map[string]any{"__ansible_unsafe": float64(1)}}
+				w.tmpls.fakeTemplates[w.x] = tmpl
+			},
+			is: runrequests.ErrInvalidInput, msg: "template extra var cfg"},
 		{name: "sealed marker in a list", ov: vars(map[string]any{"version": []any{map[string]any{"$sealed": "x"}}}),
 			is: runrequests.ErrInvalidInput, msg: "version"},
 	} {
@@ -123,6 +141,13 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 	if len(w.ovr.opts) != 1 || !w.ovr.opts[0].RefuseSecrets || !w.ovr.opts[0].StrictLimit {
 		t.Fatalf("template validation options = %+v", w.ovr.opts)
 	}
+}
+
+// noSchema takes the schema off the world's template X.
+func noSchema(w *world) {
+	tmpl := w.tmpls.fakeTemplates[w.x]
+	tmpl.ExtraVarsSchema = nil
+	w.tmpls.fakeTemplates[w.x] = tmpl
 }
 
 // deep is a value nested n lists deep.

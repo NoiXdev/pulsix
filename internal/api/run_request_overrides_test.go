@@ -59,6 +59,7 @@ func TestRunRequestOverridesAreValidated(t *testing.T) {
 		{"limit reading a worker file", map[string]any{"limit": "@/etc/passwd"}, "limit"},
 		{"limit as a regex", map[string]any{"limit": "~.*"}, "limit"},
 		{"limit with a subscript", map[string]any{"limit": "web[0]"}, "limit"},
+		{"limit with a ? glob", map[string]any{"limit": "web-?"}, "only host names and * wildcards"},
 		{"limit matching no target", map[string]any{"limit": "db-*"}, "no host"},
 		{"vault marker in a var", map[string]any{"extra_vars": map[string]any{"version": map[string]any{"__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256"}}}, "version"},
 		{"secret marker as a value", map[string]any{"extra_vars": map[string]any{"version": map[string]any{"$secret": "set"}}}, "version"},
@@ -76,6 +77,23 @@ func TestRunRequestOverridesAreValidated(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRunRequestRefusesNamesAnsibleActsOn: on a template without a schema,
+// where no declared-names rule applies, a request still cannot set a
+// variable Ansible or Pulsix acts on; Ansible would run an interpreter
+// override whatever unsafe marker its value carries.
+func TestRunRequestRefusesNamesAnsibleActsOn(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-ov-names")
+	for _, name := range []string{"ansible_python_interpreter", "ANSIBLE_BECOME_EXE", "hostvars", "environment", "pulsix_agent_enroll_token"} {
+		resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{name: "sh -c id #"}})
+		if resp.Code != http.StatusUnprocessableEntity || !strings.Contains(resp.Body.String(), name) || !strings.Contains(resp.Body.String(), "reserved") {
+			t.Fatalf("%s = %d %s, want 422 naming it as reserved", name, resp.Code, resp.Body)
+		}
+	}
+	if resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"release": "1.2"}}); resp.Code != http.StatusCreated {
+		t.Fatalf("plain var = %d %s", resp.Code, resp.Body)
 	}
 }
 

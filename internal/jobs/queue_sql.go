@@ -588,7 +588,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err := ov.checkLimit(); err != nil {
 			return err
 		}
-		if err := ov.checkUntrusted(); err != nil {
+		if err := ov.checkUntrusted(job.Trigger); err != nil {
 			return err
 		}
 		varsRaw, err := mergeExtraVars(tmpl.ExtraVars, ov)
@@ -619,7 +619,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		// the template's own values included — would make it fall back to
 		// YAML and drop them (final re-review New Breakage 1).
 		if ov != nil && ov.Untrusted {
-			if err := checkWireMarkers(wireRaw); err != nil {
+			if err := checkWireMarkers(wireRaw, job.Trigger); err != nil {
 				return err
 			}
 		}

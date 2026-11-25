@@ -7754,7 +7754,7 @@ export interface components {
              * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
              */
             expires_in?: number;
-            /** @description Extra vars replacing the template's top-level ones of the same name, checked against the template's schema. Secret fields cannot be set here; the run receives every text in them as literal text, never as a template */
+            /** @description Extra vars replacing the template's top-level ones of the same name, checked against the template's schema. Secret fields and names Ansible or Pulsix act on (ansible_…, pulsix_…, Ansible's magic variables and playbook keywords) cannot be set here; the run receives every text in them as literal text, never as a template */
             extra_vars?: {
                 [key: string]: unknown;
             };
@@ -7762,7 +7762,7 @@ export interface components {
             host_id?: string;
             /** @description Run on these hosts only; each must be among the template's targets */
             host_ids?: string[] | null;
-            /** @description Host names and globs (* ?) joined by , or :, with ! for exclusions: the run keeps to the template's targets whose name matches, under the template's own limit */
+            /** @description Host names and * wildcards, joined by , or :, with ! before a name to exclude it (no groups, no ? or other patterns): the run keeps to the template's targets whose host name matches, under the template's own limit */
             limit?: string;
             /** @description Why the run is needed, shown to the person who approves it */
             reason: string;

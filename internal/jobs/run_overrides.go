@@ -85,24 +85,41 @@ func (o *RunOverrides) inert() *RunOverrides {
 }
 
 // checkUntrusted re-checks an untrusted override's extra vars at claim
-// time, the same rule the webhook mapping applies at receive time: no
-// object key starting with "__ansible" and no nesting past
-// ansiblevars.MaxUntrustedDepth. Either would make Ansible's JSON load of
-// the extra-vars file fail and fall back to YAML, dropping every unsafe
-// marker (final re-reviews 1 and 2). The failure reason names only the
-// variable — the mapping target an operator chose — never a key or value
-// from the payload.
-func (o *RunOverrides) checkUntrusted() error {
+// time, the same rules the webhook mapping and the run request apply when
+// the values arrive: no name Ansible or Pulsix acts on
+// (ansiblevars.CheckUntrustedName — inert values do not help when Ansible
+// executes the variable, as with ansible_python_interpreter), no object
+// key starting with "__ansible" and no nesting past
+// ansiblevars.MaxUntrustedDepth. The last two would make Ansible's JSON
+// load of the extra-vars file fail and fall back to YAML, dropping every
+// unsafe marker (final re-reviews 1 and 2). trigger is the job's, which
+// names the source in the reason (untrustedSource). The reason names only
+// the variable, never a key or value from the payload.
+func (o *RunOverrides) checkUntrusted(trigger string) error {
 	if o == nil || !o.Untrusted {
 		return nil
 	}
+	source := untrustedSource(trigger)
 	for _, name := range slices.Sorted(maps.Keys(o.ExtraVars)) {
+		if err := ansiblevars.CheckUntrustedName(name); err != nil {
+			return fmt.Errorf("%w: run override extra var %s: a %s may not set it: %w", ErrInvalidInput, name, source, err)
+		}
 		if err := ansiblevars.CheckUntrusted(o.ExtraVars[name]); err != nil {
-			return fmt.Errorf("%w: run override extra var %s: a webhook value may not hold an object key starting with \"__ansible\" or nest more than %d levels deep",
-				ErrInvalidInput, name, ansiblevars.MaxUntrustedDepth)
+			return fmt.Errorf("%w: run override extra var %s: a %s may not hold an object key starting with \"__ansible\" or nest more than %d levels deep",
+				ErrInvalidInput, name, source, ansiblevars.MaxUntrustedDepth)
 		}
 	}
 	return nil
+}
+
+// untrustedSource names where a run's untrusted overrides came from, by
+// the job's trigger: a webhook delivery, else an approved run request (the
+// only other caller that sets Untrusted).
+func untrustedSource(trigger string) string {
+	if trigger == TriggerWebhook {
+		return "webhook value"
+	}
+	return "run request value"
 }
 
 // checkLimit re-checks an untrusted override's limit at claim time, the
@@ -125,14 +142,14 @@ func (o *RunOverrides) checkLimit() error {
 // passed checkUntrusted, so a failure here names a template variable its
 // operator must fix. Top-level "__ansible" names are refused for every run
 // by the ansiblevars.Forbidden check that follows in buildPayload.
-func checkWireMarkers(raw json.RawMessage) error {
+func checkWireMarkers(raw json.RawMessage, trigger string) error {
 	var vars map[string]any
 	if err := json.Unmarshal(raw, &vars); err != nil {
 		return fmt.Errorf("%w: extra vars are not a JSON object", ErrInvalidInput)
 	}
 	for _, name := range slices.Sorted(maps.Keys(vars)) {
 		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
-			return fmt.Errorf("%w: template extra var %s cannot run with webhook values: %w", ErrInvalidInput, name, err)
+			return fmt.Errorf("%w: template extra var %s cannot run with %ss: %w", ErrInvalidInput, name, untrustedSource(trigger), err)
 		}
 	}
 	return nil
