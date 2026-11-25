@@ -127,8 +127,8 @@ func NewService(store Store, clock func() time.Time) *Service {
 // OpenForHost loads what is already open, Reconcile (pure) decides what
 // must change — again with what RecentlyClosedForHost says closed within
 // the last hour when a tuple alert opens, since a re-opening may continue
-// it (backlog 4.39) — captureDetails (detail.go) says why an alert opens or moves,
-// Execute carries it out — all on tx, the evaluator's own per-host
+// it (backlog 4.39) — captureDetails (detail.go) says why an alert opens
+// or moves, Execute carries it out — all on tx, the evaluator's own per-host
 // transaction (store_sql.go's own doc comment on why). It adds no decision
 // of its own, and does nothing at all when Reconcile returns no actions.
 func (s *Service) Apply(ctx context.Context, tx pgx.Tx, in rules.AlertInput) error {

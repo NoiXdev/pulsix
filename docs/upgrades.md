@@ -709,10 +709,11 @@ Backlog 4.39: migration 00120 adds the nullable column `alerts.continues_alert_i
 `(org_id, continues_alert_id) WHERE continues_alert_id IS NOT NULL` (empty at the
 upgrade) and `alerts_host_closed_idx` on `(host_id, closed_at) WHERE closed_at IS NOT
 NULL`, which the evaluation reads when a tuple alert opens. Both are built with a plain
-`CREATE INDEX` like 00079, which **blocks writes to `alerts` while they build** and reads
-the whole alert history: expect the manager's first start after the upgrade, which runs
+`CREATE INDEX` like 00079 and read the whole alert history. Adding the column locks
+`alerts` against **reads and writes** (as 00056 did), and the migration holds that lock
+until it ends, through both index builds and the foreign key's validation scan: expect the manager's first start after the upgrade, which runs
 the migration, to take correspondingly longer. A manager instance still running
-alongside during the migration has its evaluation held up for that time, since alerts
+alongside during the migration has its evaluation and its alert pages held up for that time, since alerts
 open and close in the evaluation's transaction; on a large history, upgrade in a quiet
 moment. The alert API gains `continues_alert_id` on an alert
 and `continues_alert_id`, `ack_carried_over` and `snooze_carried_over` on its `opened`
@@ -737,7 +738,8 @@ version starts if that matters. Workers and agents are not affected.
 - **A check switched off and on within an hour keeps its alert's acknowledgement
   (backlog 4.39, migration 00120):** an alert whose subject stops being measured (its
   check disabled or taken off the host, the host no longer monitored, a monitoring-group
-  selector edited so the host drops out) still closes as `stale`. When the same subject
+  selector edited so the host drops out, or the item ignored by a decision — a
+  plugin-key ignore can do that to many checks at once) still closes as `stale`. When the same subject
   opens again within one hour of that close, the new alert takes over the closed one's
   acknowledgement (when the new severity is not above the acknowledged one) and its
   snooze (a timed snooze still running, or one until the severity changes when the

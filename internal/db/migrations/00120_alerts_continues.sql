@@ -23,8 +23,10 @@
 -- latest closed episode of each subject closed in the last hour
 -- (ListRecentlyClosedAlertsForHost): without it every host evaluation
 -- would read its organization's whole alert history, which has no
--- retention. Both indexes are built with a plain CREATE INDEX, which
--- blocks writes to alerts while they build (docs/upgrades.md); the
+-- retention. Both indexes are built with a plain CREATE INDEX. The
+-- ALTER TABLE takes an ACCESS EXCLUSIVE lock on alerts that the migration
+-- holds to its end (both index builds and the foreign key's validation
+-- scan), so reads of alerts wait too, as in 00056 (docs/upgrades.md); the
 -- continuation index is empty at the upgrade.
 ALTER TABLE alerts ADD COLUMN continues_alert_id uuid;
 ALTER TABLE alerts ADD CONSTRAINT alerts_continues_alert_fkey
