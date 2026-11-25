@@ -723,14 +723,16 @@ without the acknowledgement or snooze; stop every manager instance before the ne
 version starts if that matters. Workers and agents are not affected.
 
 Backlog 4.42: migration 00121 adds the nullable column `check_states.unmeasured_at`
-(NULL for every existing row, a catalog change; a backup carries it). The evaluation
-stamps it on the first evaluation that finds a tuple unmeasured (its check disabled or
-taken off the host, the host no longer monitored, a selector edited so the host drops
-out, a metric no longer asked for) and later than the row's `evaluated_at` it makes the
-tuple start fresh when it is measured again; the flapping count leaves out the
-transitions at or before it. Existing rows carry no mark, but a tuple still unmeasured
-at the upgrade is marked on the new manager's first evaluation of its host (within
-seconds); only a gap that ends before that evaluation, or one that only an older
+(NULL for every existing row, a catalog change; a backup carries it). The first
+evaluation that finds a tuple unmeasured stamps it with its own moment (its check
+disabled or taken off the host, the host no longer monitored, a selector edited so the
+host drops out, a metric no longer asked for, or a metric the agent stopped reporting
+while its item still reports, backlog 3.88); an evaluation whose moment is not later
+than the row's `evaluated_at` stamps nothing. While the mark is later than the row's
+`evaluated_at`, the tuple starts fresh when it is measured again; the flapping count
+leaves out the tuple's transitions at or before the mark, also after the tuple has been
+judged again. Existing rows carry no mark, but a tuple still unmeasured at the upgrade
+is marked on the new manager's first evaluation of its host (within seconds); only a gap that ends before that evaluation, or one that only an older
 manager evaluated, resumes its old state once, as before. Skew: an older manager
 evaluating alongside neither stamps nor reads the column (its gaps resume as before,
 and it counts pre-gap transitions towards flapping); its state writes leave the column
@@ -753,7 +755,8 @@ and agents are not affected.
 - **A check measured again after a gap starts fresh (backlog 4.42, migration 00121):**
   a tuple that was not measured for a while (its check disabled or taken off the host,
   the host no longer monitored, a monitoring-group selector edited so the host drops
-  out and back in, a metric or item no longer asked for) no longer resumes the state it
+  out and back in, a metric or item no longer asked for, a metric the agent stopped
+  reporting while its item still reports) no longer resumes the state it
   had before the gap. Its state starts at the first evaluation after the gap: an alert
   that opens then is dated at that moment, after the previous episode's `stale` close,
   instead of at the moment the tuple first went bad before the gap; a rule's "for N

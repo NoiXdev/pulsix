@@ -755,6 +755,7 @@ FROM (
 WHERE s.org_id = $2 AND s.host_id = $3
   AND s.check_key = u.check_key AND s.item = u.item AND s.metric = u.metric
   AND (s.unmeasured_at IS NULL OR s.unmeasured_at <= s.evaluated_at)
+  AND $1::timestamptz > s.evaluated_at
 `
 
 type MarkCheckStatesUnmeasuredParams struct {
@@ -772,6 +773,12 @@ type MarkCheckStatesUnmeasuredParams struct {
 // than evaluated_at already dates this gap, and the reports that follow,
 // one per tick while the gap lasts, leave it alone. A mark from an earlier
 // gap (at or before evaluated_at: the tuple was judged since) is replaced.
+// Nothing is stamped by an evaluation whose moment is not later than the
+// row's evaluated_at (two evaluations at one instant, or a manager whose
+// clock is behind): such a mark would be inactive from birth, yet it would
+// still cut the flapping count of the state Evaluate carries. The next
+// evaluation with a later moment stamps instead, so every mark on a row was
+// active when it was stamped.
 // The three unnests in the select list expand in lockstep, one row per
 // tuple (InsertCheckItems' own shape, items.sql), so one statement marks
 // every tuple of the evaluation; Apply skips it when there is none.

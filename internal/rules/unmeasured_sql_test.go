@@ -145,3 +145,83 @@ func TestATupleMeasuredAgainAfterAGapStartsFresh(t *testing.T) {
 		t.Fatalf("unmeasured_at after a second gap = %v, want %v", got, t6)
 	}
 }
+
+// TestAMarkIsOnlyStampedLaterThanTheLastJudgement: an evaluation whose
+// moment is not later than the row's evaluated_at (two evaluations at one
+// instant, or a manager whose clock is behind) leaves the row unmarked, so
+// every mark on a row was active when it was stamped and the flapping
+// count never leaves out the history of a state Evaluate carries. The next
+// evaluation with a later moment stamps it.
+func TestAMarkIsOnlyStampedLaterThanTheLastJudgement(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "unmeasured-stamp")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	judged := time.Now().UTC().Truncate(time.Microsecond)
+	insertCheckState(t, d, org, host, stateRow{tuple: cpu, state: rules.StateCrit, since: judged, evaluatedAt: judged})
+
+	apply := func(at time.Time) {
+		t.Helper()
+		markDirty(t, d, org, host)
+		if _, err := store.ProcessDue(context.Background(), at, 10, func(ctx context.Context, due rules.Due) error {
+			return store.Apply(ctx, due, rules.Result{Unmeasured: []rules.Tuple{cpu}, At: at, NextDue: at.Add(time.Minute)})
+		}); err != nil {
+			t.Fatalf("ProcessDue at %v: %v", at, err)
+		}
+	}
+
+	apply(judged.Add(-time.Second))
+	apply(judged)
+	if got := unmeasuredAt(t, d, host, cpu); got != nil {
+		t.Fatalf("unmeasured_at after evaluations not later than the judgement = %v, want none", got)
+	}
+	later := judged.Add(time.Second)
+	apply(later)
+	if got := unmeasuredAt(t, d, host, cpu); got == nil || !got.Equal(later) {
+		t.Fatalf("unmeasured_at = %v, want %v", got, later)
+	}
+}
+
+// TestTheFlappingCountLeavesOutOnlyTheMarkedTuplesTransitionsUpToTheMark:
+// Load's flapping window drops the transitions at or before a tuple's mark
+// (one exactly at it included), keeps the one after it, and leaves every
+// other tuple's transitions alone — a sibling metric of the same item and
+// the same metric of another item, which a join missing a key column would
+// mix up.
+func TestTheFlappingCountLeavesOutOnlyTheMarkedTuplesTransitionsUpToTheMark(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "unmeasured-count")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	mark := now.Add(-10 * time.Minute)
+
+	marked := rules.Tuple{CheckKey: "disk", Item: "/", Metric: "disk.used_pct"}
+	otherMetric := rules.Tuple{CheckKey: "disk", Item: "/", Metric: "disk.free_bytes"}
+	otherItem := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
+	// The mark is superseded (judged since), as it is on every tick after
+	// the return: it still bounds the count.
+	insertCheckState(t, d, org, host, stateRow{tuple: marked, state: rules.StateOK, since: now.Add(-time.Minute), evaluatedAt: now.Add(-time.Minute)})
+	if _, err := d.Pool().Exec(context.Background(),
+		`UPDATE check_states SET unmeasured_at = $2 WHERE host_id = $1`, host, mark); err != nil {
+		t.Fatal(err)
+	}
+	for _, tu := range []rules.Tuple{marked, otherMetric, otherItem} {
+		insertStateChange(t, d, org, host, mark.Add(-time.Second), tu, rules.StateOK, rules.StateCrit)
+		insertStateChange(t, d, org, host, mark, tu, rules.StateCrit, rules.StateOK)
+		insertStateChange(t, d, org, host, mark.Add(time.Second), tu, rules.StateOK, rules.StateCrit)
+	}
+
+	store := rules.NewEvalSQLStore(d, fixedChecks{intervals: map[string]time.Duration{"disk": time.Minute}},
+		items.NewSQLStore(d), testAgentWindow, discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, now)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[rules.Tuple]int{marked: 1, otherMetric: 3, otherItem: 3}
+	for tu, n := range want {
+		if got := load.Changes30[tu]; got != n {
+			t.Errorf("Changes30[%+v] = %d, want %d", tu, got, n)
+		}
+	}
+}

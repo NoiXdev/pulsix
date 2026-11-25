@@ -116,6 +116,25 @@ func TestEvaluateUnmeasured(t *testing.T) {
 			},
 		},
 		{
+			// A mark at the very moment of the last judgement is no gap
+			// either: only a mark strictly later than it is.
+			name: "a mark at the last judgement's own moment is no gap",
+			snap: rules.Snapshot{
+				Now:       at(30),
+				Tuples:    []rules.TupleSnapshot{snap(cpuT, 95, at(30), tenMin)},
+				Effective: []rules.Effective{eff(cpuCrit(), cpuT)},
+				Previous:  prev(wasUnmeasured(wasBy(cpuT, rules.StateCrit, at(0), critID), at(29), at(29))),
+			},
+			want: rules.Result{
+				States: []rules.TupleState{{
+					Tuple: cpuT, State: rules.StateCrit, Since: at(0),
+					RuleID: &critID, LastValue: ptr(95.0), EvaluatedAt: at(30),
+				}},
+				Host:    rules.HostState{State: rules.StateCrit, Crit: 1, Since: at(0), EvaluatedAt: at(30)},
+				NextDue: at(60),
+			},
+		},
+		{
 			// While the tuple stays unmeasured it is reported every tick,
 			// marked or not: the alert sink's report is unchanged.
 			name: "a marked row still unmeasured is still reported",

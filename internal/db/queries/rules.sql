@@ -334,6 +334,12 @@ ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
 -- than evaluated_at already dates this gap, and the reports that follow,
 -- one per tick while the gap lasts, leave it alone. A mark from an earlier
 -- gap (at or before evaluated_at: the tuple was judged since) is replaced.
+-- Nothing is stamped by an evaluation whose moment is not later than the
+-- row's evaluated_at (two evaluations at one instant, or a manager whose
+-- clock is behind): such a mark would be inactive from birth, yet it would
+-- still cut the flapping count of the state Evaluate carries. The next
+-- evaluation with a later moment stamps instead, so every mark on a row was
+-- active when it was stamped.
 -- The three unnests in the select list expand in lockstep, one row per
 -- tuple (InsertCheckItems' own shape, items.sql), so one statement marks
 -- every tuple of the evaluation; Apply skips it when there is none.
@@ -345,7 +351,8 @@ FROM (
 ) u
 WHERE s.org_id = sqlc.arg(org_id) AND s.host_id = sqlc.arg(host_id)
   AND s.check_key = u.check_key AND s.item = u.item AND s.metric = u.metric
-  AND (s.unmeasured_at IS NULL OR s.unmeasured_at <= s.evaluated_at);
+  AND (s.unmeasured_at IS NULL OR s.unmeasured_at <= s.evaluated_at)
+  AND sqlc.arg(at)::timestamptz > s.evaluated_at;
 
 -- name: InsertCheckStateChange :exec
 -- Task 9: one transition appended to the history. Only actual transitions

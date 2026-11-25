@@ -77,7 +77,8 @@ type TupleState struct {
 	EvaluatedAt    time.Time
 	// UnmeasuredAt is when the tuple last went unmeasured after a
 	// judgement (backlog 4.42): the first evaluation that reported it in
-	// Result.Unmeasured stamps it, and Apply leaves it alone otherwise. It
+	// Result.Unmeasured with a moment later than EvaluatedAt stamps it,
+	// and Apply leaves it alone otherwise. It
 	// marks a gap only while it is later than EvaluatedAt — the next
 	// judgement supersedes it without clearing it (unmeasuredSinceJudged),
 	// so the flapping count can keep leaving out the transitions from
