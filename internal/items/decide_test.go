@@ -272,3 +272,62 @@ func bytesCompareUUID(a, b uuid.UUID) int {
 	}
 	return 0
 }
+
+// TestDecidePluginKey pins backlog 3.13g: a decision whose check key is a
+// plugin name reaches every check of that plugin, an exact check key beats
+// it within a scope, scope still ranks first, and a target of unknown
+// plugin matches exact keys only.
+func TestDecidePluginKey(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	hostScoped := func(d items.Decision) items.Decision {
+		d.Scope, d.HostID = items.ScopeHost, &host
+		return d
+	}
+	exact := func(d items.Decision) items.Decision { d.MatchKind = items.MatchExact; return d }
+
+	pluginIgnore := baseDecision("disk", "*", items.Ignore)
+	exactWatch := baseDecision("disk-data", "*", items.Watch)
+	hostPluginWatch := hostScoped(baseDecision("disk", "*", items.Watch))
+	orgExactIgnore := baseDecision("disk-data", "*", items.Ignore)
+	// A glob on the exact key against an exact match on the plugin key: the
+	// key outranks the match kind.
+	exactKeyGlob := baseDecision("disk-data", "/*", items.Watch)
+	pluginKeyExact := exact(baseDecision("disk", "/data", items.Ignore))
+
+	tests := []struct {
+		name   string
+		ds     []items.Decision
+		target items.Target
+		want   *items.Decision // nil: no decision governs
+	}{
+		{"plugin key reaches a copied check", []items.Decision{pluginIgnore},
+			items.Target{HostID: host, CheckKey: "disk-data", Plugin: "disk", Item: "/data"}, &pluginIgnore},
+		{"exact key beats plugin key in one scope", []items.Decision{pluginIgnore, exactWatch},
+			items.Target{HostID: host, CheckKey: "disk-data", Plugin: "disk", Item: "/data"}, &exactWatch},
+		{"exact key beats plugin key whatever the slice order", []items.Decision{exactWatch, pluginIgnore},
+			items.Target{HostID: host, CheckKey: "disk-data", Plugin: "disk", Item: "/data"}, &exactWatch},
+		{"host plugin key beats org exact key", []items.Decision{orgExactIgnore, hostPluginWatch},
+			items.Target{HostID: host, CheckKey: "disk-data", Plugin: "disk", Item: "/data"}, &hostPluginWatch},
+		{"exact key beats plugin key even when the plugin one is an exact match", []items.Decision{pluginKeyExact, exactKeyGlob},
+			items.Target{HostID: host, CheckKey: "disk-data", Plugin: "disk", Item: "/data"}, &exactKeyGlob},
+		{"plugin key does not reach another plugin's check", []items.Decision{pluginIgnore},
+			items.Target{HostID: host, CheckKey: "net-data", Plugin: "network", Item: "/data"}, nil},
+		{"empty plugin matches exact keys only", []items.Decision{pluginIgnore},
+			items.Target{HostID: host, CheckKey: "disk-data", Item: "/data"}, nil},
+		{"empty plugin still matches the exact key", []items.Decision{exactWatch},
+			items.Target{HostID: host, CheckKey: "disk-data", Item: "/data"}, &exactWatch},
+		{"a check keyed by its plugin name is the exact key", []items.Decision{pluginIgnore},
+			items.Target{HostID: host, CheckKey: "disk", Plugin: "disk", Item: "/data"}, &pluginIgnore},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := items.Decide(tt.ds, tt.target)
+			switch {
+			case tt.want == nil && got.Decision != nil:
+				t.Fatalf("Decide = %+v, want no decision", got.Decision)
+			case tt.want != nil && (got.Decision == nil || got.Decision.ID != tt.want.ID):
+				t.Fatalf("Decide = %+v, want decision %s", got.Decision, tt.want.ID)
+			}
+		})
+	}
+}

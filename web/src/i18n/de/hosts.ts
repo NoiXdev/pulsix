@@ -430,6 +430,7 @@ export const deHosts: Messages['hosts'] = {
     originUnknown: 'Herkunft unbekannt – das letzte Lesen dieses Werts nannte keine zugrunde liegende Entscheidung.',
     originOrg: (pattern: string) => `Durch das Organisationsmuster \`${pattern}\``,
     originHost: 'Für diesen Host festgelegt',
+    viaPlugin: 'über die Entscheidung des Plugins',
   },
   rules: {
     title: 'Regeln für entfernte Elemente',

@@ -777,3 +777,39 @@ func TestItemStoreCascadesOnHostDelete(t *testing.T) {
 		t.Fatalf("ListDecisions after host delete = %+v, %v, want empty", list, err)
 	}
 }
+
+// TestItemStoreViewPluginComesFromTheItemsMetric: a copied check keeps no
+// trace of its plugin in its key, so the view learns it from a metric the
+// item reports (backlog 3.13g); an item with no reading has none.
+func TestItemStoreViewPluginComesFromTheItemsMetric(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "view-plugin")
+	host := seedHost(t, d, org, "h1")
+	st := items.NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	if err := st.Discover(scoped, org, host, []items.Seen{
+		{CheckKey: "disk-data", Name: "/data"},
+		{CheckKey: "disk-data", Name: "/unread"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	insertCheckCurrent(t, d, org, host, "disk-data", "/data", "disk.used_pct", 50.0, time.Now().UTC().Truncate(time.Microsecond))
+
+	for name, list := range map[string]func() ([]items.View, error){
+		"ItemsForHost": func() ([]items.View, error) { return st.ItemsForHost(scoped, org, host) },
+		"ItemsForOrg":  func() ([]items.View, error) { return st.ItemsForOrg(scoped, org, items.Filter{}) },
+	} {
+		views, err := list()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := map[string]string{}
+		for _, v := range views {
+			got[v.Name] = v.Plugin
+		}
+		if got["/data"] != "disk" || got["/unread"] != "" {
+			t.Fatalf("%s plugins = %+v, want /data -> disk and /unread -> empty", name, got)
+		}
+	}
+}

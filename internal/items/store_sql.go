@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
@@ -53,6 +54,10 @@ type View struct {
 	Item
 	LastSeen time.Time
 	Reported bool
+	// Plugin is the plugin the item's check runs, learned from a metric the
+	// item reports; empty while it has no reading or its metric is no
+	// plugin's. A decision on a plugin key reaches the item through it.
+	Plugin string
 }
 
 // Filter narrows ItemsForOrg. The zero Filter matches every item in the
@@ -148,10 +153,11 @@ func (s *SQLStore) Discover(ctx context.Context, orgID, hostID uuid.UUID, seen [
 // unreported item (see queries/items.sql's own comment) is discarded here
 // in favour of the Go zero time.Time, so no SQL-only sentinel ever
 // reaches a caller.
-func toView(orgID, hostID uuid.UUID, checkKey, item string, firstSeen, lastSeen time.Time, reported bool) View {
+func toView(orgID, hostID uuid.UUID, checkKey, item string, firstSeen, lastSeen time.Time, reported bool, plugin string) View {
 	v := View{
 		Item:     Item{OrgID: orgID, HostID: hostID, CheckKey: checkKey, Name: item, FirstSeen: firstSeen},
 		Reported: reported,
+		Plugin:   plugin,
 	}
 	if reported {
 		v.LastSeen = lastSeen
@@ -164,9 +170,10 @@ func (s *SQLStore) ItemsForHost(ctx context.Context, orgID, hostID uuid.UUID) ([
 	if err != nil {
 		return nil, fmt.Errorf("list items for host: %w", err)
 	}
+	owners := checkplugins.MetricOwners()
 	out := make([]View, len(rows))
 	for i, r := range rows {
-		out[i] = toView(r.OrgID, r.HostID, r.CheckKey, r.Item, r.FirstSeen, r.LastSeen, r.Reported)
+		out[i] = toView(r.OrgID, r.HostID, r.CheckKey, r.Item, r.FirstSeen, r.LastSeen, r.Reported, owners[r.SampleMetric])
 	}
 	return out, nil
 }
@@ -231,9 +238,10 @@ func (s *SQLStore) ItemsForOrg(ctx context.Context, orgID uuid.UUID, f Filter) (
 	if err != nil {
 		return nil, fmt.Errorf("list items for org: %w", err)
 	}
+	owners := checkplugins.MetricOwners()
 	out := make([]View, len(rows))
 	for i, r := range rows {
-		out[i] = toView(r.OrgID, r.HostID, r.CheckKey, r.Item, r.FirstSeen, r.LastSeen, r.Reported)
+		out[i] = toView(r.OrgID, r.HostID, r.CheckKey, r.Item, r.FirstSeen, r.LastSeen, r.Reported, owners[r.SampleMetric])
 	}
 	return out, nil
 }

@@ -60,7 +60,12 @@ type Decision struct {
 type Target struct {
 	HostID   uuid.UUID
 	CheckKey string
-	Item     string
+	// Plugin is the plugin the check runs, which a decision may name instead
+	// of the check's own key (backlog 3.13g). Empty when it is not known, and
+	// then only a decision on the exact CheckKey can apply. A check keyed by
+	// its plugin's name has Plugin == CheckKey, and the two coincide.
+	Plugin string
+	Item   string
 }
 
 // Resolution is what Decide concluded, and the decision that concluded it.
@@ -95,17 +100,31 @@ func matchKindRank(m MatchKind) int {
 	return 0
 }
 
-// beats is a strict total order over Decision — host beats org, then (within
-// one scope) exact beats glob, then the older CreatedAt, then the smaller
-// id byte for byte — the same order rules.Resolve's own candidate.beats
+// keyRank orders how a decision's CheckKey meets t for the table exact check
+// key > plugin key: 1 when it names the target's own check key (a check keyed
+// by its plugin's name included), 0 when it names the plugin.
+func keyRank(d Decision, t Target) int {
+	if d.CheckKey == t.CheckKey {
+		return 1
+	}
+	return 0
+}
+
+// beats is a strict total order over the decisions that apply to t — host
+// beats org, then (within one scope) the exact check key beats the plugin
+// key, then exact match beats glob, then the older CreatedAt, then the
+// smaller id byte for byte — the same order rules.Resolve's own candidate.beats
 // implements and for the same reason: a winner that depended on slice or
 // map iteration order would flip between ticks, and the interface could
 // never explain itself. No two distinct decisions ever compare equal under
 // this order — CreatedAt ties still resolve on ID, which is unique — so a
 // maximum computed over it never depends on the order its candidates are
 // visited in.
-func (d Decision) beats(other Decision) bool {
+func (d Decision) beats(other Decision, t Target) bool {
 	if r, o := scopeRank(d.Scope), scopeRank(other.Scope); r != o {
+		return r > o
+	}
+	if r, o := keyRank(d, t), keyRank(other, t); r != o {
 		return r > o
 	}
 	if r, o := matchKindRank(d.MatchKind), matchKindRank(other.MatchKind); r != o {
@@ -117,13 +136,14 @@ func (d Decision) beats(other Decision) bool {
 	return bytes.Compare(d.ID[:], other.ID[:]) < 0
 }
 
-// applies reports whether d is even a candidate for t: its CheckKey matches,
-// and — for a ScopeHost decision — its HostID is t's own. A ScopeOrg
+// applies reports whether d is even a candidate for t: its CheckKey is t's
+// own check key or t's plugin (a decision on a plugin key covers every check
+// of that plugin, backlog 3.13g; an unknown, empty Plugin never matches), and — for a ScopeHost decision — its HostID is t's own. A ScopeOrg
 // decision applies to every host. Pattern matching is checked separately,
 // since it is the same cost either way but a distinct concern (applicability
 // vs. specificity).
 func (d Decision) applies(t Target) bool {
-	if d.CheckKey != t.CheckKey {
+	if d.CheckKey != t.CheckKey && (t.Plugin == "" || d.CheckKey != t.Plugin) {
 		return false
 	}
 	switch d.Scope {
@@ -136,14 +156,15 @@ func (d Decision) applies(t Target) bool {
 	}
 }
 
-// Decide picks the decision governing t. Host beats org; within a scope,
+// Decide picks the decision governing t. Host beats org; within a scope, a
+// decision on the exact check key beats one on the plugin key, and then
 // exact beats glob; a remaining tie goes to the older CreatedAt, then the
 // smaller ID byte for byte — the same strict total order rules.Resolve
 // implements, for the same reason. With no match the verdict is Watch and
 // Decision is nil — watch as a stored value only ever matters as an
 // overrule, since watching is already what happens by default.
 //
-// Decide filters by CheckKey and by scope applicability (ScopeHost
+// Decide filters by CheckKey (t's own or its plugin) and by scope applicability (ScopeHost
 // decisions only when HostID equals t's) before ranking, and never mutates
 // ds — it is called from inside the evaluation path, where the same slice
 // is reused across every item of a host.
@@ -154,7 +175,7 @@ func Decide(ds []Decision, t Target) Resolution {
 		if !d.applies(t) || !Match(d.Pattern, t.Item) {
 			continue
 		}
-		if winner == nil || d.beats(*winner) {
+		if winner == nil || d.beats(*winner, t) {
 			w := d
 			winner = &w
 		}

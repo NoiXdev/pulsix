@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/probes"
@@ -658,13 +659,14 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 		slog.ErrorContext(ctx, "host checks: item decisions", "org_id", orgID, "host_id", hostID, "err", err)
 		return nil, huma.Error500InternalServerError("internal error")
 	}
+	owners := checkplugins.MetricOwners()
 	out := make(map[ignoredKey]items.Resolution, len(current))
 	for _, c := range current {
 		k := ignoredKey{CheckKey: c.CheckKey, Item: c.Item}
 		if _, ok := out[k]; ok {
 			continue
 		}
-		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Item: c.Item})
+		out[k] = items.Decide(ds, items.Target{HostID: hostID, CheckKey: c.CheckKey, Plugin: owners[c.Metric], Item: c.Item})
 	}
 	return out, nil
 }

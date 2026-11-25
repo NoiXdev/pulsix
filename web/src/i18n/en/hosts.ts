@@ -436,6 +436,7 @@ export const enHosts = {
     originUnknown: 'Origin not known — the last read of this value named no decision behind it.',
     originOrg: (pattern: string) => `By the organization pattern \`${pattern}\``,
     originHost: 'Set on this host',
+    viaPlugin: 'via the plugin’s decision',
   },
   rules: {
     title: 'Rules on removed items',

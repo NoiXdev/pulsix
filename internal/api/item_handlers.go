@@ -216,7 +216,7 @@ func toItemDecisionDTO(d items.Decision) itemDecisionDTO {
 // per-host routes pass only the organization's plus that host's
 // (items.Service.Decisions) — the same answer from the narrower read.
 func toItemDTO(v items.View, ds []items.Decision) itemDTO {
-	res := items.Decide(ds, items.Target{HostID: v.HostID, CheckKey: v.CheckKey, Item: v.Name})
+	res := items.Decide(ds, items.Target{HostID: v.HostID, CheckKey: v.CheckKey, Plugin: v.Plugin, Item: v.Name})
 	dto := itemDTO{
 		CheckKey: v.CheckKey, Item: v.Name, FirstSeen: v.FirstSeen,
 		Reported: v.Reported, Verdict: string(res.Verdict),

@@ -10,7 +10,7 @@ import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts
 const clockSkewLabel = (offset: number | undefined) => checks.clockSkewLabel(offset, en);
 const stateLabel = (state: HostCheckValue['state']) => checks.stateLabel(state, en);
 const verdictLabel = (state: HostCheckValue['state'], ignored: boolean) => checks.verdictLabel(state, ignored, en);
-const decisionOriginLabel = (d: ItemDecision) => checks.decisionOriginLabel(d, en);
+const decisionOriginLabel = (d: ItemDecision, checkKey?: string) => checks.decisionOriginLabel(d, en, checkKey);
 const sourceLabel = (c: HostCheck) => checks.sourceLabel(c, en);
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
@@ -310,6 +310,20 @@ describe('decisionOriginLabel', () => {
     expect(decisionOriginLabel(decision({ scope: 'host', host_id: 'h1', match_kind: 'exact', pattern: '/var' }))).toBe(
       'Set on this host',
     );
+  });
+
+  it('marks a decision on the plugin key as reaching a copied check via the plugin', () => {
+    expect(decisionOriginLabel(decision({ check_key: 'disk' }), 'disk-data')).toBe(
+      'By the organization pattern `/mnt/scratch-*` (via the plugin’s decision)',
+    );
+    expect(decisionOriginLabel(decision({ scope: 'host', host_id: 'h1', check_key: 'disk' }), 'disk-data')).toBe(
+      'Set on this host (via the plugin’s decision)',
+    );
+    expect(checks.decisionOriginLabel(decision({ check_key: 'disk' }), de, 'disk-data')).toContain('über die Entscheidung des Plugins');
+  });
+
+  it('adds no marker when the decision names the item’s own check key', () => {
+    expect(decisionOriginLabel(decision({ check_key: 'disk-data' }), 'disk-data')).toBe('By the organization pattern `/mnt/scratch-*`');
   });
 });
 

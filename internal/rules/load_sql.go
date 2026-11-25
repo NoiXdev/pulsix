@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/items"
@@ -400,7 +401,12 @@ func seenItems(reported []Tuple) []items.Seen {
 // (Snapshot.Ignored's own doc comment), so a host with no matching
 // decision at all costs nothing beyond the lookup itself, and a host whose
 // decisions cover only some of its items marks exactly those.
+//
+// A tuple's plugin is the owner of its metric (checkplugins.MetricOwners),
+// so a decision on a plugin key reaches every check of that plugin
+// (backlog 3.13g), the way an item rule does.
 func resolveIgnored(hostID uuid.UUID, reported []Tuple, decisions []items.Decision) map[ItemKey]bool {
+	owners := checkplugins.MetricOwners()
 	ignored := make(map[ItemKey]bool)
 	seen := make(map[ItemKey]bool, len(reported))
 	for _, t := range reported {
@@ -409,7 +415,7 @@ func resolveIgnored(hostID uuid.UUID, reported []Tuple, decisions []items.Decisi
 			continue
 		}
 		seen[key] = true
-		target := items.Target{HostID: hostID, CheckKey: key.CheckKey, Item: key.Item}
+		target := items.Target{HostID: hostID, CheckKey: key.CheckKey, Plugin: owners[t.Metric], Item: key.Item}
 		if items.Decide(decisions, target).Ignored() {
 			ignored[key] = true
 		}

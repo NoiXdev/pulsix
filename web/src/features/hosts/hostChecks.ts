@@ -228,9 +228,14 @@ export function verdictLabel(state: HostCheckValue['state'], ignored: boolean, t
  * the pattern is the only thing that tells two org-scope decisions apart;
  * a host-scoped one does not repeat the pattern, since the operator
  * reading it is already standing on the one host it could possibly name.
+ * With checkKey (the item's own check), a decision on another key is marked
+ * as reaching the item via the plugin's decision.
  */
-export function decisionOriginLabel(decision: ItemDecision, t: Messages): string {
-  return decision.scope === 'org' ? t.hosts.value.originOrg(decision.pattern) : t.hosts.value.originHost;
+export function decisionOriginLabel(decision: ItemDecision, t: Messages, checkKey?: string): string {
+  const origin = decision.scope === 'org' ? t.hosts.value.originOrg(decision.pattern) : t.hosts.value.originHost;
+  // A decision whose check key is not the item's own names the plugin: it
+  // reaches this copied check through the plugin (backlog 3.13g).
+  return checkKey !== undefined && decision.check_key !== checkKey ? `${origin} (${t.hosts.value.viaPlugin})` : origin;
 }
 
 /** sourceLabel renders the scope a check was inherited from as the thing

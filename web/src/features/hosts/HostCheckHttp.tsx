@@ -79,7 +79,7 @@ export function HostCheckHttp({ org, hostId, canWrite, frozen = false, check, ef
         <p className="mt-1">
           {decidedBy ? (
             <>
-              {decisionOriginLabel(decidedBy, t)}
+              {decisionOriginLabel(decidedBy, t, check.key)}
               {decidedBy.note && ` — ${decidedBy.note}`}
             </>
           ) : (

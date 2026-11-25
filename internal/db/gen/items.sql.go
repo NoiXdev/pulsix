@@ -271,7 +271,13 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
          SELECT 1 FROM check_current cur
           WHERE cur.org_id = $1 AND cur.host_id = i.host_id
             AND cur.check_key = i.check_key AND cur.item = i.item
-       ) AS reported
+       ) AS reported,
+       COALESCE(
+         (SELECT min(cur.metric) FROM check_current cur
+           WHERE cur.org_id = $1 AND cur.host_id = i.host_id
+             AND cur.check_key = i.check_key AND cur.item = i.item),
+         ''
+       )::text AS sample_metric
 FROM check_items i
 WHERE i.org_id = $1 AND i.host_id = $2
 ORDER BY i.check_key, i.item
@@ -283,13 +289,14 @@ type ListItemsForHostParams struct {
 }
 
 type ListItemsForHostRow struct {
-	OrgID     uuid.UUID `json:"org_id"`
-	HostID    uuid.UUID `json:"host_id"`
-	CheckKey  string    `json:"check_key"`
-	Item      string    `json:"item"`
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
-	Reported  bool      `json:"reported"`
+	OrgID        uuid.UUID `json:"org_id"`
+	HostID       uuid.UUID `json:"host_id"`
+	CheckKey     string    `json:"check_key"`
+	Item         string    `json:"item"`
+	FirstSeen    time.Time `json:"first_seen"`
+	LastSeen     time.Time `json:"last_seen"`
+	Reported     bool      `json:"reported"`
+	SampleMetric string    `json:"sample_metric"`
 }
 
 // Store.ItemsForHost: one host's discovered items, each with its own "last
@@ -330,6 +337,7 @@ func (q *Queries) ListItemsForHost(ctx context.Context, arg ListItemsForHostPara
 			&i.FirstSeen,
 			&i.LastSeen,
 			&i.Reported,
+			&i.SampleMetric,
 		); err != nil {
 			return nil, err
 		}
@@ -353,7 +361,13 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
          SELECT 1 FROM check_current cur
           WHERE cur.org_id = $1 AND cur.host_id = i.host_id
             AND cur.check_key = i.check_key AND cur.item = i.item
-       ) AS reported
+       ) AS reported,
+       COALESCE(
+         (SELECT min(cur.metric) FROM check_current cur
+           WHERE cur.org_id = $1 AND cur.host_id = i.host_id
+             AND cur.check_key = i.check_key AND cur.item = i.item),
+         ''
+       )::text AS sample_metric
 FROM check_items i
 WHERE i.org_id = $1
   AND ($2::text IS NULL OR i.check_key = $2::text)
@@ -368,15 +382,19 @@ type ListItemsForOrgParams struct {
 }
 
 type ListItemsForOrgRow struct {
-	OrgID     uuid.UUID `json:"org_id"`
-	HostID    uuid.UUID `json:"host_id"`
-	CheckKey  string    `json:"check_key"`
-	Item      string    `json:"item"`
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
-	Reported  bool      `json:"reported"`
+	OrgID        uuid.UUID `json:"org_id"`
+	HostID       uuid.UUID `json:"host_id"`
+	CheckKey     string    `json:"check_key"`
+	Item         string    `json:"item"`
+	FirstSeen    time.Time `json:"first_seen"`
+	LastSeen     time.Time `json:"last_seen"`
+	Reported     bool      `json:"reported"`
+	SampleMetric string    `json:"sample_metric"`
 }
 
+// sample_metric (both statements) is one metric the item reports, ” when it
+// has no reading: a metric name belongs to exactly one plugin, which is how
+// the store learns the plugin a copied check runs (backlog 3.13g).
 // Store.ItemsForOrg: the same per-item "last reported" subquery as
 // ListItemsForHost, across every host in the organization, filtered by
 // check_key and/or an item glob that the caller (internal/items.SQLStore)
@@ -407,6 +425,7 @@ func (q *Queries) ListItemsForOrg(ctx context.Context, arg ListItemsForOrgParams
 			&i.FirstSeen,
 			&i.LastSeen,
 			&i.Reported,
+			&i.SampleMetric,
 		); err != nil {
 			return nil, err
 		}

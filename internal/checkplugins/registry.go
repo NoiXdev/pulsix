@@ -89,3 +89,17 @@ func (p plugin) descriptor() Descriptor {
 	}
 	return d
 }
+
+// MetricOwners maps every metric name to the plugin that reports it. A metric
+// name belongs to exactly one plugin (TestNoTwoPluginsShareAMetricName), so a
+// reading's metric tells which plugin a check of any key runs. Every call
+// builds a fresh map, like All.
+func MetricOwners() map[string]string {
+	out := map[string]string{}
+	for _, d := range All() {
+		for _, m := range d.Metrics {
+			out[m.Name] = d.Name
+		}
+	}
+	return out
+}

@@ -704,6 +704,16 @@ targets no longer make another's checks report the manager too busy.
 
 ## Behaviour changes to check after an upgrade
 
+- **Item decisions on a plugin key reach copied checks (backlog 3.13g, no migration):**
+  an item decision (ignore or watch) whose check key is a plugin name now applies to
+  every check of that plugin, the way rules have since 3.13e. An existing org-wide or
+  host ignore on `disk` starts silencing the items of copied checks such as
+  `disk-data`, and a watch on `disk` starts overruling an ignore there. A decision on
+  the exact check key still wins over one on the plugin key, whatever the scope order
+  (host before organization first, then exact key before plugin key). To check after
+  the upgrade: the item decisions on a plugin name (Items page) and whether they were
+  meant to cover your copied checks; where not, restate them on the exact check key.
+  The host page marks such items as decided "via the plugin's decision".
 - **A new SNMP failure label, `auth_or_lost` (backlog 3.70, no migration):** a SNMPv3
   poll whose first request is lost after a successful engine discovery now gets one
   more attempt before it is judged, and when that fails the same way `snmp.failure`

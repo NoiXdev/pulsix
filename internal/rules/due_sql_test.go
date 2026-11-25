@@ -1981,3 +1981,40 @@ func TestWindowBoundIsTheIngestBound(t *testing.T) {
 		t.Fatalf("rules.WindowValueBound = %g, checks.MaxAbsValue = %g", rules.WindowValueBound, checks.MaxAbsValue)
 	}
 }
+
+// TestIgnoredPluginKeyDecisionReachesACopiedCheck pins backlog 3.13g through
+// the evaluation: an org-wide ignore on the plugin key `disk` silences an
+// item of a copied `disk-data` check, and an item of another plugin's copied
+// check stays watched.
+func TestIgnoredPluginKeyDecisionReachesACopiedCheck(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "plugin-key")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	decision := items.Decision{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Scope: items.ScopeOrg,
+		CheckKey: "disk", MatchKind: items.MatchGlob, Pattern: "*", Verdict: items.Ignore,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := items.NewSQLStore(d).CreateDecision(context.Background(), decision); err != nil {
+		t.Fatal(err)
+	}
+
+	copied := rules.Tuple{CheckKey: "disk-data", Item: "/data", Metric: "disk.used_pct"}
+	other := rules.Tuple{CheckKey: "net-wan", Item: "eth0", Metric: "network.rx_bytes_per_s"}
+	insertCurrent(t, d, org, host, copied, ptr(90.0), nil, now, "")
+	insertCurrent(t, d, org, host, other, ptr(1.0), nil, now, "")
+
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
+	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}, time.Now())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if key := (rules.ItemKey{CheckKey: "disk-data", Item: "/data"}); !load.Ignored[key] {
+		t.Fatalf("Ignored = %+v, want %+v ignored through the plugin-key decision", load.Ignored, key)
+	}
+	if key := (rules.ItemKey{CheckKey: "net-wan", Item: "eth0"}); load.Ignored[key] {
+		t.Fatalf("Ignored = %+v, want %+v watched: another plugin's check", load.Ignored, key)
+	}
+}

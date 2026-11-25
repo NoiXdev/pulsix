@@ -169,7 +169,7 @@ func allIgnoredHosts(views []items.View, decisions []items.Decision) map[uuid.UU
 	for hostID, hostViews := range byHost {
 		all := true
 		for _, v := range hostViews {
-			target := items.Target{HostID: hostID, CheckKey: v.CheckKey, Item: v.Name}
+			target := items.Target{HostID: hostID, CheckKey: v.CheckKey, Plugin: v.Plugin, Item: v.Name}
 			if !items.Decide(decisions, target).Ignored() {
 				all = false
 				break

@@ -71,12 +71,21 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
          SELECT 1 FROM check_current cur
           WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
             AND cur.check_key = i.check_key AND cur.item = i.item
-       ) AS reported
+       ) AS reported,
+       COALESCE(
+         (SELECT min(cur.metric) FROM check_current cur
+           WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
+             AND cur.check_key = i.check_key AND cur.item = i.item),
+         ''
+       )::text AS sample_metric
 FROM check_items i
 WHERE i.org_id = sqlc.arg(org_id) AND i.host_id = sqlc.arg(host_id)
 ORDER BY i.check_key, i.item;
 
 -- name: ListItemsForOrg :many
+-- sample_metric (both statements) is one metric the item reports, '' when it
+-- has no reading: a metric name belongs to exactly one plugin, which is how
+-- the store learns the plugin a copied check runs (backlog 3.13g).
 -- Store.ItemsForOrg: the same per-item "last reported" subquery as
 -- ListItemsForHost, across every host in the organization, filtered by
 -- check_key and/or an item glob that the caller (internal/items.SQLStore)
@@ -101,7 +110,13 @@ SELECT i.org_id, i.host_id, i.check_key, i.item, i.first_seen,
          SELECT 1 FROM check_current cur
           WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
             AND cur.check_key = i.check_key AND cur.item = i.item
-       ) AS reported
+       ) AS reported,
+       COALESCE(
+         (SELECT min(cur.metric) FROM check_current cur
+           WHERE cur.org_id = sqlc.arg(org_id) AND cur.host_id = i.host_id
+             AND cur.check_key = i.check_key AND cur.item = i.item),
+         ''
+       )::text AS sample_metric
 FROM check_items i
 WHERE i.org_id = sqlc.arg(org_id)
   AND (sqlc.narg(check_key)::text IS NULL OR i.check_key = sqlc.narg(check_key)::text)
