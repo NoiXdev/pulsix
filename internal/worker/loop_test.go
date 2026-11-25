@@ -1474,3 +1474,24 @@ func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
 		t.Fatalf("the expired recovery must also offer enrolling under a new name as the immediate alternative:\n%s", expired)
 	}
 }
+
+// TestLoopClaimsAnnouncePinnedCommitSupport (spec 2026-11-25 A): every
+// claim says the worker checks out a run's pinned commit — the manager
+// hands a pinned run to no claim without it.
+func TestLoopClaimsAnnouncePinnedCommitSupport(t *testing.T) {
+	client := &fakeWorkerClient{}
+	l := NewLoop(cfgFor(t.TempDir()), client, &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		return StatusSucceeded, nil, nil
+	}})
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 2 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for i, c := range client.claimsNow() {
+		if !c.GetSupportsPinnedCommit() {
+			t.Fatalf("claim %d does not announce supports_pinned_commit", i)
+		}
+	}
+}

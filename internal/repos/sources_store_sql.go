@@ -68,7 +68,7 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 
 	n, err := q.UpsertRepoVarSources(ctx, gen.UpsertRepoVarSourcesParams{
 		CommitSha: rec.Commit, SyncedAt: rec.SyncedAt, Incomplete: rec.Incomplete,
-		LeftOut: leftOut, Notes: notes, OrgID: orgID, RepoID: repoID,
+		LeftOut: leftOut, Notes: notes, OrgID: orgID, RepoID: repoID, SyncedRef: nullString(rec.SyncedRef),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert repo variable sources: %w", err)
@@ -112,7 +112,7 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 		}
 		return SourcesRecord{}, fmt.Errorf("get repo variable sources: %w", err)
 	}
-	return decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes)
+	return decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
 }
 
 // GetPlaybookVarSource implements Store: the record and the row of one
@@ -127,7 +127,7 @@ func (s *SQLStore) GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.
 		}
 		return SourcesRecord{}, nil, fmt.Errorf("get playbook variable source: %w", err)
 	}
-	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes)
+	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
 	if err != nil {
 		return SourcesRecord{}, nil, err
 	}
@@ -142,8 +142,11 @@ func (s *SQLStore) GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.
 }
 
 // decodeSourcesRecord is a stored record's columns as a SourcesRecord.
-func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incomplete bool, leftOut, notes []byte) (SourcesRecord, error) {
+func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incomplete bool, leftOut, notes []byte, syncedRef *string) (SourcesRecord, error) {
 	rec := SourcesRecord{Commit: commit, SyncedAt: syncedAt, WorkerReads: workerReads, Incomplete: incomplete}
+	if syncedRef != nil {
+		rec.SyncedRef = *syncedRef
+	}
 	if err := json.Unmarshal(leftOut, &rec.LeftOut); err != nil {
 		return SourcesRecord{}, fmt.Errorf("decode left-out playbooks: %w", err)
 	}

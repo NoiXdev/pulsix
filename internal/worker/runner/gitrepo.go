@@ -48,7 +48,8 @@ import (
 // RepoSubpath is the repository's own subpath, normalised ("" for none),
 // where the requirements root is looked for (repoSubpath). HostKey/
 // HostPublicKey are the repository's git server key pin (backlog 2.41) —
-// empty while unpinned.
+// empty while unpinned. Commit is a pinned run's commit (spec 2026-11-25
+// A), "" for the branch tip.
 type gitRepoSpec struct {
 	OrgID         uuid.UUID
 	RepoID        uuid.UUID
@@ -58,6 +59,7 @@ type gitRepoSpec struct {
 	RepoSubpath   string
 	HostKey       string
 	HostPublicKey string
+	Commit        string
 }
 
 // gitCredential is one claim credential's revealed Secret, parsed for the
@@ -80,7 +82,7 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 	}
 	dir, _, err := r.FetchRepoDir(ctx, worker.RepoSpec{
 		OrgID: spec.OrgID, RepoID: spec.RepoID, URL: spec.URL, Branch: spec.Branch,
-		HostKey: spec.HostKey, HostPublicKey: spec.HostPublicKey,
+		HostKey: spec.HostKey, HostPublicKey: spec.HostPublicKey, Commit: spec.Commit,
 	}, secretJSON, cacheRoot, workDir)
 	if err != nil {
 		return "", err
@@ -97,7 +99,8 @@ func (r *Runner) fetchRepo(ctx context.Context, spec gitRepoSpec, secretJSON, ca
 // returns the clone's local directory — plus the git server key the fetch
 // observed (nil without one; backlog 2.41's TOFU capture): clone into
 // RepoCacheDir/<org-id>/<repo-id> when absent, fetch+reset to the branch
-// tip when present. It is the sync_repo executor's fetch too — a repo sync
+// tip when present, then a pinned run's commit (spec.Commit) checked out
+// in place of the tip. It is the sync_repo executor's fetch too — a repo sync
 // materializes the same directory a repo playbook's claim fetches, minus
 // the playbook-file resolution the run jobs need. secretJSON is the claim's
 // Secret JSON for `git:<repo-id>`; empty means the repo fetches without a
@@ -122,6 +125,11 @@ func (r *Runner) FetchRepoDir(ctx context.Context, spec worker.RepoSpec, secretJ
 	// option; the manager refuses such values, the worker defends again.
 	if strings.HasPrefix(spec.URL, "-") || strings.HasPrefix(spec.Branch, "-") {
 		return "", nil, errors.New(`repo url or branch must not start with "-"`)
+	}
+	// A pinned commit reaches git as an argument too: only a full commit
+	// id is one.
+	if spec.Commit != "" && !commitPattern.MatchString(spec.Commit) {
+		return "", nil, fmt.Errorf("the pinned commit %q is not a commit id", truncate(spec.Commit, 100))
 	}
 
 	var cred gitCredential
@@ -213,11 +221,49 @@ func (r *Runner) repoDir(cacheRoot string, spec worker.RepoSpec) string {
 
 // fetchGit runs the clone-or-update behind FetchRepoDir: fetch+reset into
 // an existing clone, a fresh clone otherwise (with a leftover that is not a
-// verifiable clone re-cloned rather than built on). A pinned fetch's
+// verifiable clone re-cloned rather than built on), then, for a pinned
+// run, the checkout of its commit (checkoutCommit). A pinned fetch's
 // failure is wrapped with the repository it refused — the error names the
 // repo, and the redacted stderr tail carries the key the server now
 // presented (backlog 2.41's changed-key message).
 func (r *Runner) fetchGit(ctx context.Context, gitBin string, spec worker.RepoSpec, env []string, cacheRoot string, pinned bool) error {
+	if err := r.fetchBranch(ctx, gitBin, spec, env, cacheRoot, pinned); err != nil {
+		return err
+	}
+	if spec.Commit == "" {
+		return nil
+	}
+	return r.checkoutCommit(ctx, gitBin, r.repoDir(cacheRoot, spec), spec, env)
+}
+
+// checkoutCommit puts the clone at target on a pinned run's commit (spec
+// 2026-11-25 A): the commit the approver saw, which the last sync fetched
+// from the branch, so the branch fetch normally brought it. One no longer
+// on the branch (a force-push) is asked for by id; a server that no
+// longer has it, or refuses to hand it out, fails the run rather than
+// running anything else.
+func (r *Runner) checkoutCommit(ctx context.Context, gitBin, target string, spec worker.RepoSpec, env []string) error {
+	has := func() bool {
+		return runGit(ctx, gitBin, target, env, spec.URL, "cat-file", "-e", spec.Commit+"^{commit}") == nil
+	}
+	if !has() {
+		if ctx.Err() != nil {
+			return fmt.Errorf("git cat-file stopped: %w", ctx.Err())
+		}
+		fetchErr := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "--", spec.URL, spec.Commit)
+		if ctx.Err() != nil {
+			return fetchErr
+		}
+		if fetchErr != nil || !has() {
+			return fmt.Errorf("commit %s is no longer in the repository", spec.Commit)
+		}
+	}
+	return runGit(ctx, gitBin, target, env, spec.URL, "reset", "--hard", spec.Commit)
+}
+
+// fetchBranch brings the clone at the repository's cache dir to the
+// branch tip: fetch+reset into an existing clone, a fresh clone otherwise.
+func (r *Runner) fetchBranch(ctx context.Context, gitBin string, spec worker.RepoSpec, env []string, cacheRoot string, pinned bool) error {
 	target := r.repoDir(cacheRoot, spec)
 	wrap := func(err error) error {
 		if !pinned {

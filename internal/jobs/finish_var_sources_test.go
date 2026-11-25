@@ -28,6 +28,7 @@ type sourceCall struct {
 	at            time.Time
 	raw           json.RawMessage
 	texts         json.RawMessage
+	syncedRef     string
 }
 
 // recordingSourceSink records every RecordVarSources call and reports a
@@ -38,13 +39,13 @@ type recordingSourceSink struct {
 	err   error
 }
 
-func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage) (bool, error) {
+func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return false, s.err
 	}
-	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw, texts})
+	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw, texts, syncedRef})
 	return raw != nil, nil
 }
 
@@ -405,4 +406,56 @@ func TestFinishSyncWithAnOverLongPlaybookPathSucceeds(t *testing.T) {
 	if len(paths) != 1 || paths[0] != "site.yml" {
 		t.Fatalf("stored playbooks = %v, want only site.yml", paths)
 	}
+}
+
+// fixedRepo is a RepoSource answering one repository.
+type fixedRepo struct{ ref jobs.RepoRef }
+
+func (r fixedRepo) Get(context.Context, uuid.UUID, uuid.UUID) (jobs.RepoRef, error) {
+	return r.ref, nil
+}
+
+// TestSyncRecordsWhatItFetched (spec 2026-11-25 A): a sync's claim records
+// the digest of the URL, branch and subpath it sends the worker, and its
+// finish hands that digest to the source sink with the report, so a pin
+// can tell when the repository changed after the sync. A sync claimed by
+// an older manager recorded nothing, and the sink gets no digest.
+func TestSyncRecordsWhatItFetched(t *testing.T) {
+	t.Run("claimed here", func(t *testing.T) {
+		f := newVarSourcesFixture(t, "jobs-sync-ref-org")
+		f.queue.SetRepoSource(fixedRepo{jobs.RepoRef{ID: f.repoID, URL: "https://git.example.com/acme/infra.git", Branch: "main", Subpath: "ansible"}})
+		j := newJob(f.org, f.zone, jobs.KindSyncRepo, jobs.StatusQueued)
+		payload := json.RawMessage(`{"repo_id":"` + f.repoID.String() + `"}`)
+		if err := f.store.CreateJob(db.WithOrgScope(ctx, f.org), j, payload); err != nil {
+			t.Fatal(err)
+		}
+		c, err := f.queue.Claim(ctx, f.org, []uuid.UUID{f.zone}, "v1")
+		if err != nil || c == nil {
+			t.Fatalf("Claim = %+v, %v", c, err)
+		}
+		// Edited after the claim: the record still says what the sync fetched.
+		if _, err := f.d.Exec(db.WithOrgScope(ctx, f.org), `UPDATE git_repos SET branch = 'dev' WHERE id = $1`, f.repoID); err != nil {
+			t.Fatal(err)
+		}
+		stats, _ := workerStats(t, f.repoID, testReport())
+		if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		calls := f.sink.all()
+		want := jobs.SyncedRef("https://git.example.com/acme/infra.git", "main", "ansible")
+		if len(calls) != 1 || calls[0].syncedRef != want {
+			t.Fatalf("sink calls = %+v, want the synced ref %s", calls, want)
+		}
+	})
+	t.Run("claimed by an older manager", func(t *testing.T) {
+		f := newVarSourcesFixture(t, "jobs-sync-ref-old-org")
+		j := f.runningJob(t, jobs.KindSyncRepo)
+		stats, _ := workerStats(t, f.repoID, testReport())
+		if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		if calls := f.sink.all(); len(calls) != 1 || calls[0].syncedRef != "" {
+			t.Fatalf("sink calls = %+v, want one without a synced ref", calls)
+		}
+	})
 }

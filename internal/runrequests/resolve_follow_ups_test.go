@@ -53,6 +53,7 @@ type fakeJobRunner struct {
 	retryList   *[]uuid.UUID
 	retryKey    string
 	retryCalled bool
+	retryPin    string
 	// targetCalls counts RetryTargets.
 	targetCalls int
 }
@@ -76,9 +77,9 @@ func (f *fakeJobRunner) EnqueueRunWith(_ context.Context, _, _ uuid.UUID, req jo
 	return nil, nil
 }
 
-func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID) ([]jobs.Job, error) {
+func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, pin string) ([]jobs.Job, error) {
 	*f.calls = append(*f.calls, "retry")
-	f.retryList, f.retryKey, f.retryCalled = fu, key, true
+	f.retryList, f.retryKey, f.retryCalled, f.retryPin = fu, key, true, pin
 	return nil, nil
 }
 
@@ -263,7 +264,7 @@ func TestRunClearsUnstartedFollowUpsFirst(t *testing.T) {
 		})
 		t.Run("retry "+tc.name, func(t *testing.T) {
 			fx := newResolverFx(nil, false, nil, nil)
-			if err := fx.res.RetryFailed(context.Background(), fx.org, id(), actor, "k", id(), tc.in); err != nil {
+			if err := fx.res.RetryFailed(context.Background(), fx.org, id(), actor, "k", id(), tc.in, ""); err != nil {
 				t.Fatal(err)
 			}
 			if len(fx.calls) != 2 || fx.calls[0] != "clear" || fx.calls[1] != "retry" {
@@ -286,7 +287,7 @@ func TestClearErrorAbortsTheEnqueue(t *testing.T) {
 	if err := fx.res.Run(context.Background(), fx.org, runrequests.Request{TemplateID: id()}, id(), "k", id(), nil); !errors.Is(err, boom) {
 		t.Fatalf("run: %v", err)
 	}
-	if err := fx.res.RetryFailed(context.Background(), fx.org, id(), id(), "k", id(), nil); !errors.Is(err, boom) {
+	if err := fx.res.RetryFailed(context.Background(), fx.org, id(), id(), "k", id(), nil, ""); !errors.Is(err, boom) {
 		t.Fatalf("retry: %v", err)
 	}
 	if fx.jobs.enqueued != nil || fx.jobs.retryCalled {

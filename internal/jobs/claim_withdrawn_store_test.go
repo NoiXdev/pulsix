@@ -16,7 +16,7 @@ import (
 // staticGuard refuses every run claim with err (nil lets it through).
 type staticGuard struct{ err error }
 
-func (g staticGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID) error { return g.err }
+func (g staticGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID, string) error { return g.err }
 
 // refuseAtClaim enqueues one run job of group in a zone of its own and has
 // the claim guard refuse it with reason at its first claim, the real path

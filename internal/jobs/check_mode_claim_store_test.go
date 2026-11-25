@@ -43,7 +43,7 @@ func TestClaimGivesACheckModeJobOnlyToAWorkerThatSupportsIt(t *testing.T) {
 
 	// An older worker: no announcement (and cancel_stops_play set, so the
 	// two answers cannot stand in for each other).
-	c, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true, false)
+	c, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", ClaimCaps{CancelStopsPlay: true})
 	if err != nil || c == nil {
 		t.Fatalf("ClaimFor without check mode support = %+v, %v; want the real job", c, err)
 	}
@@ -57,7 +57,7 @@ func TestClaimGivesACheckModeJobOnlyToAWorkerThatSupportsIt(t *testing.T) {
 		t.Fatalf("the dry run is %q after an older worker's claim, want it still queued", got)
 	}
 	// Nothing else is left for it: the dry run is never its job.
-	if again, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", true, false); err != nil || again != nil {
+	if again, err := w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", ClaimCaps{CancelStopsPlay: true}); err != nil || again != nil {
 		t.Fatalf("second ClaimFor without support = %+v, %v; want nothing", again, err)
 	}
 	// The manager's own in-process claim has nobody to honour the flag
@@ -70,7 +70,7 @@ func TestClaimGivesACheckModeJobOnlyToAWorkerThatSupportsIt(t *testing.T) {
 	}
 
 	// A worker that announces support takes it.
-	c, err = w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", false, true)
+	c, err = w.q.ClaimFor(ctx, worker.ID, worker.OrgID, []uuid.UUID{zone}, "v1", ClaimCaps{SupportsCheckMode: true})
 	if err != nil {
 		t.Fatal(err)
 	}

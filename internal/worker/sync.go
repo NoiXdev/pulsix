@@ -45,7 +45,9 @@ const kindSyncRepo = "sync_repo"
 // repo-playbook fetch shares. HostKey/HostPublicKey are the repository's
 // git server key pin (backlog 2.41) — the fingerprint plus the full key
 // the fetch's own known_hosts is pre-seeded with; empty means unpinned,
-// trust on first use.
+// trust on first use. Commit, when set, is the commit a pinned run checks
+// out after the fetch instead of the branch tip (spec 2026-11-25 A); a
+// sync never sets it.
 type RepoSpec struct {
 	OrgID         uuid.UUID
 	RepoID        uuid.UUID
@@ -54,6 +56,7 @@ type RepoSpec struct {
 	Subpath       string
 	HostKey       string
 	HostPublicKey string
+	Commit        string
 }
 
 // RepoFetcher materializes a repository into the worker's persistent cache

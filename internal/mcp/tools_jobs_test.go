@@ -295,3 +295,27 @@ func TestRequestRunPassesTheOverrides(t *testing.T) {
 		}
 	}
 }
+
+// TestGetJobShowsThePinnedCommit (spec 2026-11-25 A): an assistant reads
+// which commit an approved run runs.
+func TestGetJobShowsThePinnedCommit(t *testing.T) {
+	f := newOrgFixture(t)
+	created, err := f.s.Deps.Jobs.EnqueueRunWith(f.scoped, f.org, f.template, jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &f.owner})
+	if err != nil || len(created) != 1 {
+		t.Fatalf("enqueue: %v %v", created, err)
+	}
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE jobs SET pinned_commit = $2 WHERE id = $1`, created[0].ID, commit); err != nil {
+		t.Fatal(err)
+	}
+	cs := mustConnect(t, f.s, f.token)
+	var got struct {
+		Job struct {
+			PinnedCommit string `json:"pinned_commit"`
+		} `json:"job"`
+	}
+	callOK(t, cs, "get_job", map[string]any{"job_id": created[0].ID.String()}, &got)
+	if got.Job.PinnedCommit != commit {
+		t.Fatalf("get_job pinned_commit = %q, want %s", got.Job.PinnedCommit, commit)
+	}
+}

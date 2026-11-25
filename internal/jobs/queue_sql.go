@@ -179,8 +179,11 @@ func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 // A guard refuses with ErrApprovalWithdrawn when the run's approval was
 // withdrawn (claim_withdrawn.go); that refusal is always written as the
 // fixed WithdrawnAtClaimError, which starts with the same prefix.
+//
+// pinnedCommit is the commit the claimed job is pinned to ("" for none);
+// the guard compares it with the one its approval stored.
 type ClaimGuard interface {
-	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error
+	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, pinnedCommit string) error
 }
 
 // SetClaimGuard injects the claim guard of run jobs (see the claimGuard
@@ -236,25 +239,39 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 // claim reports an empty queue — the worker polls again and gets the next
 // job.
 //
-// An in-process claim never takes a check-mode job: nobody behind it has
-// said it honours the check flag.
+// An in-process claim never takes a check-mode or pinned job: nobody
+// behind it has said it honours the check flag or checks out a commit.
 func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version, nil, false)
+	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version, nil, ClaimCaps{})
+}
+
+// ClaimCaps is what a claiming worker announced about itself.
+type ClaimCaps struct {
+	// CancelStopsPlay is the worker's word that a cancel stops the play on
+	// it (jobs.cancel_stops_play, backlog 2.113).
+	CancelStopsPlay bool
+	// SupportsCheckMode says that it honours a job's check flag (backlog
+	// 3.126): without it the claim never takes a check-mode job.
+	SupportsCheckMode bool
+	// SupportsPinnedCommit says that it checks out a run's pinned commit
+	// instead of the branch tip (spec 2026-11-25 A): without it the claim
+	// never takes a pinned job.
+	SupportsPinnedCommit bool
 }
 
 // ClaimFor is Claim on behalf of an enrolled worker: the claimed row
 // records workerID (jobs.worker_id), and only that worker's FinishFor is
-// accepted for the job afterwards, and the worker's cancelStopsPlay
-// (jobs.cancel_stops_play, backlog 2.113). supportsCheckMode is the
-// worker's announcement that it honours a job's check flag (backlog
-// 3.126): without it the claim never takes a check-mode job. The gRPC
-// claim path uses this; Claim (no binding, and nobody to say whether a
-// cancel stops the play) remains for the manager's own in-process callers.
-func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string, cancelStopsPlay, supportsCheckMode bool) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version, &cancelStopsPlay, supportsCheckMode)
+// accepted for the job afterwards, and the worker's caps.CancelStopsPlay
+// (jobs.cancel_stops_play). A check-mode or pinned job goes only to a
+// worker whose caps say it honours it. The gRPC claim path uses this;
+// Claim (no binding, and nobody to say whether a cancel stops the play)
+// remains for the manager's own in-process callers.
+func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string, caps ClaimCaps) (*Claim, error) {
+	cancelStopsPlay := caps.CancelStopsPlay
+	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version, &cancelStopsPlay, caps)
 }
 
-func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string, cancelStopsPlay *bool, supportsCheckMode bool) (*Claim, error) {
+func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string, cancelStopsPlay *bool, caps ClaimCaps) (*Claim, error) {
 	if len(zones) == 0 {
 		return nil, nil
 	}
@@ -277,7 +294,8 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		}
 	}
 	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{
-		WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones, SupportsCheckMode: supportsCheckMode,
+		WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones,
+		SupportsCheckMode: caps.SupportsCheckMode, SupportsPinnedCommit: caps.SupportsPinnedCommit,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -296,7 +314,7 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	}
 	claim := &Claim{Token: ""}
 	if job.Kind == KindRun && q.claimGuard != nil {
-		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID); err != nil {
+		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID, job.PinnedCommit); err != nil {
 			if failErr := q.failJob(ctx, job.ID, claimRefusal(err)); failErr != nil {
 				return nil, fmt.Errorf("fail guarded job %s (guard: %v): %w", job.ID, err, failErr)
 			}
@@ -308,6 +326,14 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 			return nil, fmt.Errorf("fail unbuildable job %s (payload: %v): %w", job.ID, err, failErr)
 		}
 		return nil, nil
+	}
+	if job.Kind == KindSyncRepo {
+		if err := q.recordSyncedRef(db.WithOrgScope(ctx, job.OrgID), job, claim.Job.GetKindPayload()); err != nil {
+			if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
+				return nil, fmt.Errorf("fail sync job %s (record: %v): %w", job.ID, err, failErr)
+			}
+			return nil, nil
+		}
 	}
 	// A revocation that committed while the payload was being built
 	// already requeues this job (it locked the worker's row after the
@@ -447,6 +473,13 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// kind's claim has no check flag and would run for real.
 	if job.CheckMode && job.Kind != KindRun {
 		return invalidDryRun("%s job %s is marked check mode", job.Kind, job.ID)
+	}
+	// Likewise only a template run can be pinned to a commit; the run's
+	// own check (its playbook must come from a repository) follows below.
+	if job.Kind != KindRun {
+		if err := checkClaimPin(job, false); err != nil {
+			return err
+		}
 	}
 	// A connection_test job is also deliberately not snapshot-bound: the
 	// probe target is fully resolved into the kind payload at claim time —
@@ -729,11 +762,15 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		credentials[id.String()] = string(b)
 	}
 	kindPayload := ""
+	repoID, sub, isRepo := parsePlaybookRef(playbook)
+	if err := checkClaimPin(job, isRepo); err != nil {
+		return err
+	}
 	if job.Kind != KindRun {
 		if kindPayload, err = q.openKindPayload(job); err != nil {
 			return err
 		}
-	} else if repoID, sub, isRepo := parsePlaybookRef(playbook); isRepo {
+	} else if isRepo {
 		// A repo playbook's claim carries the repository the worker must
 		// fetch (the claim-time enrichment the Task 6 review flagged) and
 		// the repo's git credential as `git:<repo-id>`: the worker clones
@@ -1245,6 +1282,12 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	if repo.SSHHostKey != "" {
 		payload["repo"].(map[string]any)["host_key"] = repo.SSHHostKey
 		payload["repo"].(map[string]any)["host_public_key"] = repo.SSHHostPublicKey
+	}
+	// A pinned run (spec 2026-11-25 A): the worker checks this commit out
+	// after its fetch instead of running the branch tip. Only a worker
+	// that announced it does so claims the job (ClaimCaps).
+	if job.PinnedCommit != "" {
+		payload["repo"].(map[string]any)["commit"] = job.PinnedCommit
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

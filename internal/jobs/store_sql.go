@@ -143,8 +143,16 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 		Payload:   payload,
 		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
 		TriggerRef: db.NullUUID(j.TriggerRef), HostsExcluded: int32(j.HostsExcluded), //nolint:gosec // a host count, bounded by the scope
-		CheckMode: j.CheckMode, DryRun: encodeDryRun(j.DryRun),
+		CheckMode: j.CheckMode, DryRun: encodeDryRun(j.DryRun), PinnedCommit: nullText(j.PinnedCommit),
 	}
+}
+
+// nullText stores an empty string as NULL.
+func nullText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (s *SQLStore) CreateJob(ctx context.Context, j Job, payload json.RawMessage) error {

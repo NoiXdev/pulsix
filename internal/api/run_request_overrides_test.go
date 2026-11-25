@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -203,7 +204,7 @@ func TestRunRequestDryRunWithOverridesRunsAsPictured(t *testing.T) {
 		worker, f.orgID, f.zoneA, "w-overrides", "serial-"+worker.String()); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := f.s.Queue.ClaimFor(context.Background(), worker, f.orgID, []uuid.UUID{f.zoneA}, "v1", true, true)
+	claim, err := f.s.Queue.ClaimFor(context.Background(), worker, f.orgID, []uuid.UUID{f.zoneA}, "v1", jobs.ClaimCaps{CancelStopsPlay: true, SupportsCheckMode: true})
 	if err != nil || claim == nil {
 		t.Fatalf("claim = %+v %v", claim, err)
 	}

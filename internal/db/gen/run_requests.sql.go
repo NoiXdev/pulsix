@@ -36,9 +36,9 @@ func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingR
 
 const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
-  approved_fingerprint = $4,
+  approved_fingerprint = $4, pinned_commit = $5,
   run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END
-WHERE org_id = $5::uuid AND id = $6 AND status = 'pending'
+WHERE org_id = $6::uuid AND id = $7 AND status = 'pending'
 `
 
 type DecideRunRequestParams struct {
@@ -46,6 +46,7 @@ type DecideRunRequestParams struct {
 	DecidedBy           pgtype.UUID        `json:"decided_by"`
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
+	PinnedCommit        *string            `json:"pinned_commit"`
 	OrgID               uuid.UUID          `json:"org_id"`
 	ID                  uuid.UUID          `json:"id"`
 }
@@ -53,13 +54,15 @@ type DecideRunRequestParams struct {
 // Only a pending row moves; zero rows means it was already decided. An
 // approval records the fingerprint the person approved and takes the
 // request's own id as the run group, before anything is enqueued, so a
-// claim of one of its jobs always finds it (migration 00103).
+// claim of one of its jobs always finds it (migration 00103), and the
+// commit the run is pinned to (migration 00123; NULL for none).
 func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestParams) (int64, error) {
 	result, err := q.db.Exec(ctx, decideRunRequest,
 		arg.Status,
 		arg.DecidedBy,
 		arg.DecidedAt,
 		arg.ApprovedFingerprint,
+		arg.PinnedCommit,
 		arg.OrgID,
 		arg.ID,
 	)
@@ -70,7 +73,7 @@ func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestPara
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -100,12 +103,13 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.CreatedAt,
 		&i.ApprovedFingerprint,
 		&i.Overrides,
+		&i.PinnedCommit,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -135,6 +139,7 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.CreatedAt,
 		&i.ApprovedFingerprint,
 		&i.Overrides,
+		&i.PinnedCommit,
 	)
 	return i, err
 }
@@ -248,7 +253,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -294,6 +299,7 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.CreatedAt,
 			&i.ApprovedFingerprint,
 			&i.Overrides,
+			&i.PinnedCommit,
 		); err != nil {
 			return nil, err
 		}
@@ -306,7 +312,7 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 }
 
 const revertRunRequest = `-- name: RevertRunRequest :exec
-UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL
+UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL
 WHERE org_id = $1 AND id = $2
 `
 

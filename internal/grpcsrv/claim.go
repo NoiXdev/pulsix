@@ -45,11 +45,16 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 			"manager_version", s.deps.Version, "status", string(st))
 	}
 
-	// Both answers are the worker's own: whether a cancel stops its play
-	// (backlog 2.113), and whether it honours a dry run's check flag — an
-	// older worker never says so and never gets a dry run (backlog 3.126).
+	// The answers are the worker's own: whether a cancel stops its play
+	// (backlog 2.113), whether it honours a dry run's check flag — an
+	// older worker never says so and never gets a dry run (backlog 3.126)
+	// — and whether it checks out a pinned commit — an older worker never
+	// gets a pinned run (spec 2026-11-25 A).
 	claim, err := s.deps.Claims.Claim(ctx, ClaimScope{WorkerID: worker.ID, OrgID: worker.OrgID, ZoneIDs: zones},
-		req.GetVersion(), req.GetCancelStopsPlay(), req.GetSupportsCheckMode())
+		req.GetVersion(), ClaimCaps{
+			CancelStopsPlay: req.GetCancelStopsPlay(), SupportsCheckMode: req.GetSupportsCheckMode(),
+			SupportsPinnedCommit: req.GetSupportsPinnedCommit(),
+		})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim job: %v", err)
 	}

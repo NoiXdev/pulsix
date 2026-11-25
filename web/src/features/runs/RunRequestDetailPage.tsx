@@ -93,6 +93,10 @@ export function RunRequestDetailPage() {
   }
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const pending = request.status === 'pending';
+  // The run's commit cannot be pinned yet (spec 2026-11-25 A): the server
+  // refuses the approval, so the button waits too; the playbook section
+  // says why.
+  const commitBlocked = (picture.commit?.blocked ?? []).length > 0;
   const busy = approve.isPending || reject.isPending || detail.isFetching;
   const owner =
     (members.data?.members ?? []).find((m) => m.user_id === request.requested_by_user_id)?.display_name ??
@@ -216,14 +220,18 @@ export function RunRequestDetailPage() {
         canRun ? (
           <div className="flex flex-col items-start gap-2">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="primary" disabled={busy || changed} onClick={() => void onApprove()}>
+              <Button type="button" variant="primary" disabled={busy || changed || commitBlocked} onClick={() => void onApprove()}>
                 {d.approve}
               </Button>
               <Button type="button" variant="destructive" disabled={busy} onClick={() => void onReject()}>
                 {d.reject}
               </Button>
             </div>
-            <span className="text-[11px] text-muted-foreground">{d.approveHint}</span>
+            {commitBlocked ? (
+              <span className="text-[11px] text-[var(--px-warn)]">{d.commitBlocked.title}</span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground">{d.approveHint}</span>
+            )}
           </div>
         ) : (
           <span className="text-xs text-muted-foreground">{d.noPermission}</span>
@@ -243,7 +251,7 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
-      <RunPictureSections org={org} picture={picture} />
+      <RunPictureSections org={org} picture={picture} approved={request.status === 'approved'} />
       {picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}

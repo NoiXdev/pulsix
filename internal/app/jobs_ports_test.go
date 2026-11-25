@@ -129,14 +129,14 @@ func TestGRPCPortAdapters(t *testing.T) {
 		worker.ID, org.ID, zone); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false, false)
+	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", grpcsrv.ClaimCaps{})
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)
 	}
 	if claim.Token == "" || claim.Job.GetId() != j.ID.String() {
 		t.Fatalf("claim = %+v", claim)
 	}
-	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false, false)
+	empty, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", grpcsrv.ClaimCaps{})
 	if err != nil || empty != nil {
 		t.Fatalf("drained claim = %v, %v", empty, err)
 	}
@@ -247,7 +247,7 @@ func TestClaimerAdapterPassesCheckModeSupport(t *testing.T) {
 		return got.Status
 	}
 	scope := grpcsrv.ClaimScope{WorkerID: worker, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}
-	if c, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", true, false); err != nil || c != nil {
+	if c, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", grpcsrv.ClaimCaps{CancelStopsPlay: true}); err != nil || c != nil {
 		t.Fatalf("Claim without check mode support = %+v, %v; want nothing", c, err)
 	}
 	if got := status(); got != jobs.StatusQueued {
@@ -255,7 +255,7 @@ func TestClaimerAdapterPassesCheckModeSupport(t *testing.T) {
 	}
 	// With support the statement hands the row over (the stub template
 	// source then fails its payload, which is not what this test is about).
-	if _, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", false, true); err != nil {
+	if _, err := (jobsClaimer{queue}).Claim(ctx, scope, "v1", grpcsrv.ClaimCaps{SupportsCheckMode: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := status(); got == jobs.StatusQueued {

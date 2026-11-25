@@ -51,6 +51,15 @@ message ClaimJobRequest {
   // and run the play for real. Workers older than the field never send it,
   // which reads as false — their claims only ever get ordinary jobs.
   bool supports_check_mode = 4;
+  // supports_pinned_commit says that this worker checks out the commit a
+  // run's repository payload names (kind_payload's repo.commit) after its
+  // fetch, instead of running the branch tip, and fails the run when that
+  // commit is not in the repository (spec 2026-11-25 A). The manager never
+  // hands a pinned job (an approved run request's run) to a claim without
+  // it: a worker older than the field would run the branch tip. Workers
+  // older than the field never send it, which reads as false; a pinned job
+  // waits for an updated worker.
+  bool supports_pinned_commit = 5;
 }
 
 message ClaimJobResponse {

@@ -746,6 +746,35 @@ and it counts pre-gap transitions towards flapping); its state writes leave the 
 alone and supersede a mark through `evaluated_at`, as the new manager's own do. Workers
 and agents are not affected.
 
+Pinned commits of approved run requests (spec 2026-11-25 assistant API gaps, A)
+add migration 00123 and the additive proto field
+`ClaimJobRequest.supports_pinned_commit`. 00123 adds the nullable
+`run_requests.pinned_commit` and `jobs.pinned_commit` (NULL for every existing row:
+no existing run is pinned) and `repo_var_sources.synced_ref` (NULL for every existing
+record), all catalog changes that rewrite nothing; a backup carries them. A run
+request for a repository playbook shows the commit of the repository's last
+successful sync and is approvable only while that commit stands for the repository
+as it is configured now; the approval pins its jobs (and their retries) to it, and
+the worker checks that commit out instead of the branch tip. `synced_ref` is the
+digest of the URL, branch and subpath a sync's claim sent the worker; it is
+written by a sync claimed by the new manager. **Every repository's existing record
+has none, so every pending and new run request of a repository playbook waits for
+one sync of its repository after the upgrade** (its picture says "sync it, then
+approve"); a sync started by hand, a webhook or a schedule clears it. Requests
+approved before the upgrade are not pinned and keep running the branch tip; their
+approval stands (their picture has no commit, so its fingerprint is unchanged).
+Requests still pending show a commit now, which changes their picture: an approver
+with the page open is asked to review it again. **An older worker never gets a
+pinned run**: it does not announce support, so a pinned job waits queued while that
+worker keeps claiming the jobs behind it; update the zone's workers to run approved
+requests of repository playbooks. A worker that cannot find the commit (it was
+removed from the repository by a force-push and the server no longer hands it out)
+fails the run with "commit <sha> is no longer in the repository". **An older
+manager would hand a pinned job to any worker, which would run the branch tip**:
+stop every manager instance before the new version starts, as for 00115. Manual,
+schedule, webhook and chained runs are not pinned and are not affected. Agents are
+not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

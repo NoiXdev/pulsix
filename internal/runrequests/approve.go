@@ -35,6 +35,13 @@ type Approved struct {
 // the request; the enqueue carries an idempotency key for runs; a failing
 // enqueue puts the request back to pending. What runs stays bound to
 // fingerprint until the claim: see CheckRunClaim.
+//
+// A run of a repository playbook is pinned to the picture's commit (spec
+// 2026-11-25 A, D3): while the picture says why that commit cannot be
+// pinned (CommitBlockedError: the repository must be synced first, or a
+// sync of it is running), the approval is refused, before the fingerprint
+// check, so the person learns what to wait for. The commit is stored with
+// the decision and passed to the enqueue.
 func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID) (Approved, error) {
 	r, p, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
@@ -47,6 +54,13 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	default:
 		return Approved{}, ErrDecided
 	}
+	pin := ""
+	if p.Commit != nil {
+		if len(p.Commit.Blocked) > 0 {
+			return Approved{}, &CommitBlockedError{Reasons: p.Commit.Blocked}
+		}
+		pin = p.Commit.SHA
+	}
 	if fingerprint != current {
 		return Approved{}, ErrChanged
 	}
@@ -55,7 +69,7 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		return Approved{}, err
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, pin)
 	if err != nil {
 		return Approved{}, fmt.Errorf("decide run request: %w", err)
 	}
@@ -63,8 +77,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		return Approved{}, ErrDecided
 	}
 	group := r.ID
+	r.PinnedCommit = pin
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, idempotencyKey(r.ID), group, list)
+		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, idempotencyKey(r.ID), group, list, pin)
 	} else {
 		err = s.enqueuer.Run(ctx, orgID, r, by, idempotencyKey(r.ID), group, list)
 	}
@@ -97,11 +112,14 @@ var errNoApprovedPicture = errors.New("the run's approval recorded no run pictur
 
 // CheckRunClaim is the claim guard of approved runs (jobs.ClaimGuard): a
 // run group that belongs to no request passes; one that belongs to a
-// request passes only while that request is approved and its run picture
-// still has the fingerprint the person approved. Anything else, a failed
+// request passes only while that request is approved, the job is pinned
+// to the commit the approval stored (pinnedCommit is the job's), and its
+// run picture still has the fingerprint the person approved. The picture
+// of an approved request shows its stored commit (Resolver.commit), so a
+// sync after the approval does not fail the run. Anything else, a failed
 // lookup included, refuses the claim, and the queue fails the job with the
 // reason.
-func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID) error {
+func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, pinnedCommit string) error {
 	r, err := s.store.ByRunGroup(ctx, orgID, runGroupID)
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -114,6 +132,9 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	}
 	if r.ApprovedFingerprint == "" {
 		return errNoApprovedPicture
+	}
+	if pinnedCommit != r.PinnedCommit {
+		return fmt.Errorf("%w (the job is pinned to %s, the approval to %s)", ErrChangedAfterApproval, commitOrNone(pinnedCommit), commitOrNone(r.PinnedCommit))
 	}
 	p, err := s.pictures.Picture(ctx, orgID, r)
 	if err != nil {
@@ -131,3 +152,11 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 // attempt the claim guard refused in between (the request was pending
 // again) ran nothing, and the replay enqueues its zone anew.
 func idempotencyKey(id uuid.UUID) string { return "run-request:" + id.String() }
+
+// commitOrNone names a pin in a refusal.
+func commitOrNone(c string) string {
+	if c == "" {
+		return "no commit"
+	}
+	return "commit " + c
+}

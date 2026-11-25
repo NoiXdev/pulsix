@@ -124,7 +124,7 @@ func TestApproveRetryUsesRetryFailed(t *testing.T) {
 func TestCheckRunClaim(t *testing.T) {
 	w := newWiring()
 	ctx := context.Background()
-	if err := w.svc.CheckRunClaim(ctx, w.org, uuid.Must(uuid.NewV7())); err != nil {
+	if err := w.svc.CheckRunClaim(ctx, w.org, uuid.Must(uuid.NewV7()), ""); err != nil {
 		t.Fatalf("a run group of no request = %v, want nil", err)
 	}
 	r := w.create(t)
@@ -138,11 +138,11 @@ func TestCheckRunClaim(t *testing.T) {
 	if w.enq.group != r.ID {
 		t.Fatalf("enqueued into run group %s, want the request's id %s", w.enq.group, r.ID)
 	}
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); err != nil {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); err != nil {
 		t.Fatalf("an unchanged approved run = %v", err)
 	}
 	w.pics.p.Limit = "web-*"
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("a changed approved run = %v, want ErrChangedAfterApproval and not a withdrawn approval", err)
 	}
 	if err := w.store.RevertToPending(ctx, w.org, r.ID); err != nil {
@@ -151,16 +151,16 @@ func TestCheckRunClaim(t *testing.T) {
 	w.pics.p.Limit = "web"
 	// The queue leaves a job refused this way out of its run group's
 	// outcome (jobs.WithdrawnAtClaimError), and only this way.
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("a reverted request's job = %v, want jobs.ErrApprovalWithdrawn", err)
 	}
 	// Approved without a recorded fingerprint: the approval stands, so its
 	// refused job is an errored run, not a withdrawn one.
 	legacy := w.create(t)
-	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, ""); err != nil || !ok {
+	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, "", ""); err != nil || !ok {
 		t.Fatalf("decide = %v, %v", ok, err)
 	}
-	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID, ""); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("an approval without a fingerprint = %v, want a refusal that is not a withdrawn approval", err)
 	}
 
@@ -188,13 +188,13 @@ func TestCheckRunClaim(t *testing.T) {
 		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
 			t.Fatalf("%s: approve = %v", name, err)
 		}
-		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); err != nil {
+		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); err != nil {
 			t.Fatalf("%s: an unchanged approved run = %v", name, err)
 		}
 		f := modeA()
 		change(f)
 		w.pics.p.FollowUps = f
-		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
+		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
 			t.Fatalf("%s: claim = %v, want ErrChangedAfterApproval", name, err)
 		}
 	}

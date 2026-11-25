@@ -264,11 +264,14 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 }
 
 // approvalSummary is the audit summary of an approval: the template
-// revision the person approved, a dry run and the overrides by field (no
-// values, see overrideFields) and, when the template has follow-ups, the
-// ones that start.
+// revision the person approved, the commit the run is pinned to, a dry run
+// and the overrides by field (no values, see overrideFields) and, when the
+// template has follow-ups, the ones that start.
 func approvalSummary(a runrequests.Approved) string {
 	summary := "approved run request (template revision " + strconv.FormatInt(a.TemplateRevision, 10)
+	if a.Request.PinnedCommit != "" {
+		summary += "; commit " + a.Request.PinnedCommit
+	}
 	if ov := a.Request.Overrides; ov != nil {
 		if ov.Check {
 			summary += "; dry run"
@@ -311,6 +314,11 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 	case errors.Is(err, runrequests.ErrTooManyPending):
 		return huma.Error429TooManyRequests(err.Error())
 	case errors.Is(err, runrequests.ErrExpired), errors.Is(err, runrequests.ErrDecided), errors.Is(err, runrequests.ErrChanged):
+		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, runrequests.ErrCommitBlocked):
+		// The run's commit cannot be pinned yet: the repository must be
+		// synced first, or a sync of it is running. The message says
+		// which; it names no URL.
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, inventory.ErrUnrenderable):
 		// The run picture renders the targets' inventory as the claim does,

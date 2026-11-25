@@ -41,8 +41,17 @@ type ClaimJobRequest struct {
 	// and run the play for real. Workers older than the field never send it,
 	// which reads as false — their claims only ever get ordinary jobs.
 	SupportsCheckMode bool `protobuf:"varint,4,opt,name=supports_check_mode,json=supportsCheckMode,proto3" json:"supports_check_mode,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// supports_pinned_commit says that this worker checks out the commit a
+	// run's repository payload names (kind_payload's repo.commit) after its
+	// fetch, instead of running the branch tip, and fails the run when that
+	// commit is not in the repository (spec 2026-11-25 A). The manager never
+	// hands a pinned job (an approved run request's run) to a claim without
+	// it: a worker older than the field would run the branch tip. Workers
+	// older than the field never send it, which reads as false; a pinned job
+	// waits for an updated worker.
+	SupportsPinnedCommit bool `protobuf:"varint,5,opt,name=supports_pinned_commit,json=supportsPinnedCommit,proto3" json:"supports_pinned_commit,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ClaimJobRequest) Reset() {
@@ -99,6 +108,13 @@ func (x *ClaimJobRequest) GetCancelStopsPlay() bool {
 func (x *ClaimJobRequest) GetSupportsCheckMode() bool {
 	if x != nil {
 		return x.SupportsCheckMode
+	}
+	return false
+}
+
+func (x *ClaimJobRequest) GetSupportsPinnedCommit() bool {
+	if x != nil {
+		return x.SupportsPinnedCommit
 	}
 	return false
 }
@@ -1029,12 +1045,13 @@ var File_pulsix_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa2\x01\n" +
+	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd8\x01\n" +
 	"\x0fClaimJobRequest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
 	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\x12*\n" +
 	"\x11cancel_stops_play\x18\x03 \x01(\bR\x0fcancelStopsPlay\x12.\n" +
-	"\x13supports_check_mode\x18\x04 \x01(\bR\x11supportsCheckMode\";\n" +
+	"\x13supports_check_mode\x18\x04 \x01(\bR\x11supportsCheckMode\x124\n" +
+	"\x16supports_pinned_commit\x18\x05 \x01(\bR\x14supportsPinnedCommit\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x84\f\n" +
 	"\x03Job\x12\x0e\n" +

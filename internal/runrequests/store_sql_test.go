@@ -46,6 +46,9 @@ func newSQLFixture(t *testing.T, d *db.DB, slug string) sqlFixture {
 	return sqlFixture{d: d, org: org.ID, user: user, template: template, ctx: db.WithOrgScope(ctx, org.ID)}
 }
 
+// pinA is a commit an approval pins.
+const pinA = "0123456789abcdef0123456789abcdef01234567"
+
 func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 	d := testdb.Open(t)
 	f := newSQLFixture(t, d, "runreq-a")
@@ -64,25 +67,27 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 	if err != nil || got.TemplateRevision != 3 || got.RequestedByToken == nil || *got.RequestedByToken != tok || got.Status != runrequests.StatusPending || !got.ExpiresAt.Equal(r.ExpiresAt) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
-	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1")
+	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1", pinA)
 	if err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
-	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, ""); ok {
+	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, "", ""); ok {
 		t.Fatal("a decided request was decided again")
 	}
 	// An approval takes the request's own id as its run group and keeps
 	// the approved fingerprint.
 	byGroup, err := store.ByRunGroup(f.ctx, f.org, r.ID)
-	if err != nil || byGroup.ID != r.ID || byGroup.ApprovedFingerprint != "fp-1" || byGroup.RunGroupID == nil || *byGroup.RunGroupID != r.ID {
+	if err != nil || byGroup.ID != r.ID || byGroup.ApprovedFingerprint != "fp-1" || byGroup.RunGroupID == nil || *byGroup.RunGroupID != r.ID ||
+		byGroup.PinnedCommit != pinA {
 		t.Fatalf("ByRunGroup = %+v %v", byGroup, err)
 	}
 	if err := store.RevertToPending(f.ctx, f.org, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The run group stays (jobs may point at it), the fingerprint goes.
+	// The run group stays (jobs may point at it), the fingerprint and the
+	// pinned commit go.
 	got, _ = store.Get(f.ctx, f.org, r.ID)
-	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil {
+	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil || got.PinnedCommit != "" {
 		t.Fatalf("after revert = %+v", got)
 	}
 	list, err := store.List(f.ctx, f.org, nil, now)
@@ -171,7 +176,7 @@ func TestSQLStoreCountsPending(t *testing.T) {
 	f.insert(t, store, nil, now.Add(-time.Minute))
 	f.insert(t, store, &tok, now.Add(-runrequests.TTL)) // expires exactly now
 	decided := f.insert(t, store, &tok, now.Add(-time.Minute))
-	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, ""); err != nil || !ok {
+	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, "", ""); err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
 	other.insert(t, store, &tok, now.Add(-time.Minute))

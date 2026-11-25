@@ -22,17 +22,19 @@ type FakeClaimer struct {
 
 // FakeClaimCall is one recorded Claim invocation.
 type FakeClaimCall struct {
-	Scope             ClaimScope
-	Version           string
-	CancelStopsPlay   bool
-	SupportsCheckMode bool
+	Scope                ClaimScope
+	Version              string
+	CancelStopsPlay      bool
+	SupportsCheckMode    bool
+	SupportsPinnedCommit bool
 }
 
 // Claim implements Claimer.
-func (f *FakeClaimer) Claim(_ context.Context, scope ClaimScope, version string, cancelStopsPlay, supportsCheckMode bool) (*JobClaim, error) {
+func (f *FakeClaimer) Claim(_ context.Context, scope ClaimScope, version string, caps ClaimCaps) (*JobClaim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, FakeClaimCall{Scope: scope, Version: version, CancelStopsPlay: cancelStopsPlay, SupportsCheckMode: supportsCheckMode})
+	f.calls = append(f.calls, FakeClaimCall{Scope: scope, Version: version, CancelStopsPlay: caps.CancelStopsPlay,
+		SupportsCheckMode: caps.SupportsCheckMode, SupportsPinnedCommit: caps.SupportsPinnedCommit})
 	if len(f.claims) == 0 {
 		return nil, nil
 	}

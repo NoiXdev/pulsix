@@ -79,6 +79,10 @@ export const deRuns: Messages['runs'] = {
     diffOn: 'Unterschiede angezeigt',
     diffOff: 'Unterschiede nicht angezeigt',
   },
+  commit: {
+    copy: 'Commit-ID kopieren',
+    copied: 'Commit-ID kopiert',
+  },
   adhoc: {
     chooseHost: 'mindestens einen Host wählen',
     commandRequired: 'ein Befehl ist erforderlich',
@@ -145,6 +149,7 @@ export const deRuns: Messages['runs'] = {
     started: 'Gestartet',
     finished: 'Beendet',
     runGroup: 'Laufgruppe',
+    pinnedCommit: 'Festgelegter Commit',
     groupCount: (n: number) => (n === 1 ? '1 Job' : `${n} Jobs`),
     recordedTitle: 'Beim Übernehmen dieses Laufs festgehalten; spätere Änderungen an Repository oder Vorlage wirken sich nicht darauf aus.',
     computedTitle: 'Für diesen Lauf gibt es noch keinen Eintrag; daher wird die aktuelle Konfiguration von Repository und Vorlage gelesen.',
@@ -278,6 +283,21 @@ export const deRuns: Messages['runs'] = {
       branch: 'Branch',
       subpath: 'Unterpfad',
       gitCredential: 'Git-Zugangsdaten',
+      commit: 'Commit',
+      commitUnknown: 'noch nicht bekannt',
+      commitLive: 'Der Commit des letzten Syncs des Repositorys. Genau dieser Commit läuft.',
+      commitPinned: 'Bei der Freigabe festgelegt. Genau dieser Commit läuft.',
+      commitBlocked: {
+        title: 'Die Freigabe wartet auf das Repository',
+        reasons: {
+          never_synced: 'Das Repository wurde noch nie synchronisiert. Synchronisiere es, dann gib frei.',
+          not_reported:
+            'Der letzte Sync des Repositorys hat seinen Commit nicht gemeldet: Der Worker, der ihn ausgeführt hat, ist veraltet. Aktualisiere den Worker und synchronisiere das Repository, dann gib frei.',
+          sync_unrecorded: 'Der letzte Sync des Repositorys hat nicht festgehalten, was er abgerufen hat. Synchronisiere es erneut, dann gib frei.',
+          repo_changed: 'URL, Branch oder Unterpfad des Repositorys haben sich nach seinem letzten Sync geändert. Synchronisiere es, dann gib frei.',
+          sync_running: 'Ein Sync des Repositorys steht an oder läuft. Gib frei, sobald er fertig ist.',
+        },
+      },
       targetColumns: {
         host: 'Host',
         address: 'Adresse',

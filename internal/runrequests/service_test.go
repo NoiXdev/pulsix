@@ -91,12 +91,12 @@ func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[
 	return out, nil
 }
 
-func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string) (bool, error) {
+func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error) {
 	r, ok := m.rows[id]
 	if !ok || r.OrgID != orgID || r.Status != runrequests.StatusPending {
 		return false, nil
 	}
-	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint = to, &by, &at, fingerprint
+	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, pinnedCommit
 	if to == runrequests.StatusApproved {
 		group := r.ID
 		r.RunGroupID = &group
@@ -107,7 +107,7 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 
 func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {
 	r := m.rows[id]
-	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint = runrequests.StatusPending, nil, nil, ""
+	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = runrequests.StatusPending, nil, nil, "", ""
 	m.rows[id] = r
 	return nil
 }
@@ -136,6 +136,7 @@ type fakeEnqueuer struct {
 	group     uuid.UUID   // the run group the last enqueue was given
 	list      []uuid.UUID // the follow-up list the last enqueue was given
 	request   runrequests.Request
+	retryPin  string // the commit the last retry was pinned to
 }
 
 func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
@@ -146,11 +147,11 @@ func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request
 	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.retries, f.retryKeys, f.actor, f.group, f.list = append(f.retries, jobID), append(f.retryKeys, key), actor, group, followUps
+	f.retries, f.retryKeys, f.actor, f.group, f.list, f.retryPin = append(f.retries, jobID), append(f.retryKeys, key), actor, group, followUps, pinnedCommit
 	return nil
 }
 

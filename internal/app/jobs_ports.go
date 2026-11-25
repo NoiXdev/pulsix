@@ -29,8 +29,10 @@ type jobsClaimer struct{ q *jobs.SQLQueue }
 // Claim implements grpcsrv.Claimer. The payload moves with proto.Merge
 // because a protobuf message must never be copied by value (vet copylocks);
 // merging into a zero message is exactly a copy.
-func (a jobsClaimer) Claim(ctx context.Context, scope grpcsrv.ClaimScope, version string, cancelStopsPlay, supportsCheckMode bool) (*grpcsrv.JobClaim, error) {
-	c, err := a.q.ClaimFor(ctx, scope.WorkerID, scope.OrgID, scope.ZoneIDs, version, cancelStopsPlay, supportsCheckMode)
+func (a jobsClaimer) Claim(ctx context.Context, scope grpcsrv.ClaimScope, version string, caps grpcsrv.ClaimCaps) (*grpcsrv.JobClaim, error) {
+	c, err := a.q.ClaimFor(ctx, scope.WorkerID, scope.OrgID, scope.ZoneIDs, version, jobs.ClaimCaps{
+		CancelStopsPlay: caps.CancelStopsPlay, SupportsCheckMode: caps.SupportsCheckMode, SupportsPinnedCommit: caps.SupportsPinnedCommit,
+	})
 	if err != nil || c == nil {
 		return nil, err
 	}

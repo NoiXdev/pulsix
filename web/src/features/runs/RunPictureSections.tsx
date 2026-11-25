@@ -4,6 +4,7 @@ import { Section, SidebarFacts } from '../../ui/detail-layout.tsx';
 import type { RunPicture } from '../../api/hooks/useRunRequests.ts';
 import { useT } from '../../i18n/useT.ts';
 import { shortId } from './status.ts';
+import { CommitId } from './CommitId.tsx';
 
 const NONE = '—';
 
@@ -84,6 +85,24 @@ function DryRunBanner({ diff }: { diff: boolean }) {
   );
 }
 
+type CommitBlockedReason = NonNullable<NonNullable<RunPicture['commit']>['blocked']>[number];
+
+/** CommitBlockedNote says why the request cannot be approved yet: the
+ * repository needs a sync first, or one is running (spec 2026-11-25 A). */
+function CommitBlockedNote({ reasons }: { reasons: CommitBlockedReason[] }) {
+  const b = useT().runs.requests.detail.commitBlocked;
+  return (
+    <div role="alert" aria-label={b.title} className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs">
+      <p className="font-semibold text-[var(--px-warn)]">{b.title}</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {reasons.map((r) => (
+          <li key={r}>{Object.hasOwn(b.reasons, r) ? b.reasons[r] : r}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * RunPictureSections shows what a run request's run would use if it were
  * approved now, in the order a reviewer reads it: the template, the
@@ -94,7 +113,7 @@ function DryRunBanner({ diff }: { diff: boolean }) {
  * banner above all, its limit with the template's, the hosts it narrows to
  * over the targets and its extra vars (never secret) by value.
  */
-export function RunPictureSections({ org, picture }: { org: string; picture: RunPicture }) {
+export function RunPictureSections({ org, picture, approved }: { org: string; picture: RunPicture; approved?: boolean }) {
   const t = useT();
   const d = t.runs.requests.detail;
   const s = d.section;
@@ -107,6 +126,8 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
   const onlyHost = picture.only_host ? (targets.find((h) => h.id === picture.only_host)?.name ?? shortId(picture.only_host)) : undefined;
   const source = picture.playbook.source;
   const sourceLabel = Object.hasOwn(d.sources, source) ? d.sources[source as keyof typeof d.sources] : source;
+  const commit = picture.commit;
+  const blocked = commit?.blocked ?? [];
 
   return (
     <>
@@ -143,8 +164,26 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
                     : []),
                 ]
               : []),
+            ...(commit
+              ? [
+                  {
+                    label: d.commit,
+                    value: (
+                      <span className="flex flex-col gap-0.5">
+                        {commit.sha ? <CommitId sha={commit.sha} /> : <span className="text-muted-foreground">{d.commitUnknown}</span>}
+                        <span className="text-[11px] text-muted-foreground">{approved ? d.commitPinned : d.commitLive}</span>
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
           ]}
         />
+        {!approved && blocked.length > 0 && (
+          <div className="mt-3">
+            <CommitBlockedNote reasons={blocked} />
+          </div>
+        )}
       </Section>
 
       <Section id="targets" title={s.targets}>

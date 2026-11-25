@@ -18,10 +18,12 @@ import (
 type refuseGuard struct {
 	reason error
 	calls  int
+	pins   []string
 }
 
-func (g *refuseGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID) error {
+func (g *refuseGuard) CheckRunClaim(_ context.Context, _, _ uuid.UUID, pinnedCommit string) error {
 	g.calls++
+	g.pins = append(g.pins, pinnedCommit)
 	return g.reason
 }
 
@@ -83,5 +85,34 @@ func TestQueueClaimGuardRefusalMarksTheJob(t *testing.T) {
 	}
 	if got.Status != jobs.StatusError || got.Error == "" || strings.HasPrefix(got.Error, "refused at claim: ") {
 		t.Fatalf("unbuildable job = %s %q, want an error without the refusal's mark", got.Status, got.Error)
+	}
+}
+
+// TestQueueClaimGuardSeesTheJobsPin (spec 2026-11-25 A): the guard is
+// handed the commit the claimed job is pinned to, which it compares with
+// the one its approval stored.
+func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "jobs-claim-guard-pin")
+	scoped := db.WithOrgScope(ctx, org)
+	zone := seedZone(t, d, org)
+	worker := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, 'w', 'serial-pin')`,
+		worker, org, zone); err != nil {
+		t.Fatal(err)
+	}
+	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
+	j.PinnedCommit = "0123456789abcdef0123456789abcdef01234567"
+	if err := jobs.NewSQLStore(d).CreateJob(scoped, j, nil); err != nil {
+		t.Fatal(err)
+	}
+	queue := newTestQueue(d)
+	guard := &refuseGuard{reason: jobs.ErrApprovalWithdrawn}
+	queue.SetClaimGuard(guard)
+	if c, err := queue.ClaimFor(ctx, worker, org, []uuid.UUID{zone}, "v1", jobs.ClaimCaps{SupportsPinnedCommit: true}); err != nil || c != nil {
+		t.Fatalf("ClaimFor = %v, %v; want the guard's refusal", c, err)
+	}
+	if len(guard.pins) != 1 || guard.pins[0] != j.PinnedCommit {
+		t.Fatalf("guard saw pins %q, want [%s]", guard.pins, j.PinnedCommit)
 	}
 }

@@ -703,11 +703,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc,
 		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
+		Commits: reposSvc, SyncJobs: jobsSvc,
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
 		time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	// An approved run stays bound to what the person approved until a
-	// worker claims it: the claim recomputes the run picture.
+	// worker claims it: the claim recomputes the run picture and compares
+	// the job's pinned commit with the one the approval stored.
 	jobsQueue.SetClaimGuard(runRequestsSvc)
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment, ScreenLock: screenlock.NewService(screenlock.NewSQLStore(q)), Preferences: preferences.NewService(preferences.NewSQLStore(q)),

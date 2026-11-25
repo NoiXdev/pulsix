@@ -577,6 +577,7 @@ type Job struct {
 	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 	CheckMode               bool               `json:"check_mode"`
 	DryRun                  []byte             `json:"dry_run"`
+	PinnedCommit            *string            `json:"pinned_commit"`
 }
 
 type JobEvent struct {
@@ -941,6 +942,7 @@ type RepoVarSource struct {
 	Incomplete  bool      `json:"incomplete"`
 	LeftOut     []byte    `json:"left_out"`
 	Notes       []byte    `json:"notes"`
+	SyncedRef   *string   `json:"synced_ref"`
 }
 
 type RotationGroup struct {
@@ -993,6 +995,7 @@ type RunRequest struct {
 	CreatedAt           time.Time          `json:"created_at"`
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
 	Overrides           []byte             `json:"overrides"`
+	PinnedCommit        *string            `json:"pinned_commit"`
 }
 
 type Schedule struct {

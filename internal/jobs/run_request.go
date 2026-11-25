@@ -114,6 +114,11 @@ type RunRequest struct {
 	// enqueue fails with ErrInvalidDryRun: a dry run started from that
 	// playbook's page (spec 2026-11-22 §1).
 	PlaybookID *uuid.UUID
+	// PinnedCommit, when set, is the commit the run's jobs run instead of
+	// the repository's branch tip (spec 2026-11-25 A, decision D3): an
+	// approved run request passes the commit its approver saw. Only a
+	// manual run of a repository playbook takes one (checkPin).
+	PinnedCommit string
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -172,6 +177,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		return nil, err
 	}
 	if err := checkRunTemplate(tmpl, req); err != nil {
+		return nil, err
+	}
+	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}
 	scope, err := parseScope(tmpl.Scope)

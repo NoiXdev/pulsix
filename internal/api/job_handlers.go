@@ -51,7 +51,8 @@ type jobDTO struct {
 	DryRun     *dryRunDTO `json:"dry_run,omitempty" doc:"A dry run's options; absent for every other job"`
 	CreatedAt  time.Time  `json:"created_at"`
 
-	WithdrawnAtClaim bool `json:"withdrawn_at_claim" doc:"The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error"`
+	WithdrawnAtClaim bool   `json:"withdrawn_at_claim" doc:"The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error"`
+	PinnedCommit     string `json:"pinned_commit,omitempty" doc:"The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip"`
 }
 
 func toJobDTO(j jobs.Job) jobDTO {
@@ -59,7 +60,7 @@ func toJobDTO(j jobs.Job) jobDTO {
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(),
 		Trigger: j.Trigger, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun), CreatedAt: j.CreatedAt,
-		WithdrawnAtClaim: j.WithdrawnAtClaim(),
+		WithdrawnAtClaim: j.WithdrawnAtClaim(), PinnedCommit: j.PinnedCommit,
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()
@@ -146,6 +147,7 @@ type jobDetailDTO struct {
 	// follow-ups it is planned with.
 	Chain           chainDTO `json:"chain"`
 	CancelStopsPlay bool     `json:"cancel_stops_play" doc:"Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker"`
+	PinnedCommit    string   `json:"pinned_commit,omitempty" doc:"The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip"`
 }
 
 // jobVaultIdentityDTO is one vault id the run detail shows, and whether it
@@ -165,7 +167,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
 		CancelStopsPlay: j.CancelStopsPlay, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun),
-		WithdrawnAtClaim: j.WithdrawnAtClaim(),
+		WithdrawnAtClaim: j.WithdrawnAtClaim(), PinnedCommit: j.PinnedCommit,
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()

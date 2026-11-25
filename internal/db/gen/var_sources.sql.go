@@ -27,7 +27,7 @@ func (q *Queries) DeleteRepoPlaybookSources(ctx context.Context, arg DeleteRepoP
 }
 
 const getPlaybookVarSource = `-- name: GetPlaybookVarSource :one
-SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes,
+SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes, r.synced_ref,
        p.path, p.result
 FROM repo_var_sources r
 LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = $1
@@ -47,6 +47,7 @@ type GetPlaybookVarSourceRow struct {
 	Incomplete  bool      `json:"incomplete"`
 	LeftOut     []byte    `json:"left_out"`
 	Notes       []byte    `json:"notes"`
+	SyncedRef   *string   `json:"synced_ref"`
 	Path        *string   `json:"path"`
 	Result      []byte    `json:"result"`
 }
@@ -65,6 +66,7 @@ func (q *Queries) GetPlaybookVarSource(ctx context.Context, arg GetPlaybookVarSo
 		&i.Incomplete,
 		&i.LeftOut,
 		&i.Notes,
+		&i.SyncedRef,
 		&i.Path,
 		&i.Result,
 	)
@@ -112,7 +114,7 @@ func (q *Queries) GetRepoPlaybookText(ctx context.Context, arg GetRepoPlaybookTe
 }
 
 const getRepoVarSources = `-- name: GetRepoVarSources :one
-SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes
+SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref
 FROM repo_var_sources
 WHERE org_id = $1 AND repo_id = $2
 `
@@ -129,6 +131,7 @@ type GetRepoVarSourcesRow struct {
 	Incomplete  bool      `json:"incomplete"`
 	LeftOut     []byte    `json:"left_out"`
 	Notes       []byte    `json:"notes"`
+	SyncedRef   *string   `json:"synced_ref"`
 }
 
 func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesParams) (GetRepoVarSourcesRow, error) {
@@ -141,6 +144,7 @@ func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesPa
 		&i.Incomplete,
 		&i.LeftOut,
 		&i.Notes,
+		&i.SyncedRef,
 	)
 	return i, err
 }
@@ -294,13 +298,15 @@ func (q *Queries) MarkRepoVarSourcesUnread(ctx context.Context, arg MarkRepoVarS
 }
 
 const upsertRepoVarSources = `-- name: UpsertRepoVarSources :execrows
-INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes)
-SELECT r.id, r.org_id, $1::text, $2::timestamptz, true, $3::boolean, $4::jsonb, $5::jsonb
+INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref)
+SELECT r.id, r.org_id, $1::text, $2::timestamptz, true, $3::boolean, $4::jsonb, $5::jsonb,
+       $6::text
 FROM git_repos r
-WHERE r.org_id = $6 AND r.id = $7
+WHERE r.org_id = $7 AND r.id = $8
 ON CONFLICT (repo_id) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha, synced_at = EXCLUDED.synced_at, worker_reads = true,
-  incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes
+  incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes,
+  synced_ref = EXCLUDED.synced_ref
 `
 
 type UpsertRepoVarSourcesParams struct {
@@ -309,6 +315,7 @@ type UpsertRepoVarSourcesParams struct {
 	Incomplete bool      `json:"incomplete"`
 	LeftOut    []byte    `json:"left_out"`
 	Notes      []byte    `json:"notes"`
+	SyncedRef  *string   `json:"synced_ref"`
 	OrgID      uuid.UUID `json:"org_id"`
 	RepoID     uuid.UUID `json:"repo_id"`
 }
@@ -325,6 +332,7 @@ func (q *Queries) UpsertRepoVarSources(ctx context.Context, arg UpsertRepoVarSou
 		arg.Incomplete,
 		arg.LeftOut,
 		arg.Notes,
+		arg.SyncedRef,
 		arg.OrgID,
 		arg.RepoID,
 	)

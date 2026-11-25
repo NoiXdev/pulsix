@@ -40,7 +40,18 @@ type (
 		CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string) ([]jobs.Job, error)
+	}
+	// CommitSource is the commit of a repository's last successful sync
+	// and why a run cannot be pinned to it (repos.Service).
+	CommitSource interface {
+		SyncedCommit(ctx context.Context, orgID uuid.UUID, repo repos.Repo) (repos.SyncedCommit, error)
+	}
+	// SyncJobSource is what the queue says about a repository's syncs and
+	// a job's pin (jobs.Service).
+	SyncJobSource interface {
+		HasActiveSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
+		PinnedCommit(ctx context.Context, orgID, jobID uuid.UUID) (string, error)
 	}
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
@@ -97,6 +108,10 @@ type Sources struct {
 	FollowUpRuns FollowUpRunSource
 	// Overrides checks a run request's limit and extra vars.
 	Overrides OverrideValidator
+	// Commits and SyncJobs give a repository playbook's picture its
+	// commit (spec 2026-11-25 A, D3).
+	Commits  CommitSource
+	SyncJobs SyncJobSource
 }
 
 // Resolver implements Pictures, Enqueuer and Validator over the existing
@@ -176,7 +191,8 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 // overrides are checked again (runOverrides) and travel as the run's
 // jobs.RunOverrides; a dry run plans no follow-ups at all.
 func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
-	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group}
+	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group,
+		PinnedCommit: req.PinnedCommit}
 	if req.Overrides != nil {
 		// The run keeps to the picture's targets, its one host included.
 		run.OnlyHost = nil
@@ -197,13 +213,14 @@ func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor 
 }
 
 // RetryFailed implements Enqueuer through the retry path, with Run's
-// follow-up handling and idempotency key.
-func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+// follow-up handling and idempotency key; pinnedCommit pins a retry of a
+// job that has no pin of its own.
+func (r *Resolver) RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
 	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
 		return fmt.Errorf("clear unstarted follow-ups: %w", err)
 	}
 	list := nonNil(followUps)
-	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, key, group, &list)
+	_, err := r.src.Jobs.RetryFailedInto(ctx, orgID, jobID, &actor, key, group, &list, pinnedCommit)
 	return err
 }
 
@@ -228,6 +245,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		p.SSHCredentialID, p.SSHCredential = tmpl.CredentialID.String(), r.credentialName(ctx, orgID, *tmpl.CredentialID)
 	}
 	var repoVault []repos.VaultIdentity
+	var repo *repos.Repo
 	if tmpl.PlaybookID != uuid.Nil {
 		pb, err := r.src.Playbooks.Get(ctx, orgID, tmpl.PlaybookID)
 		if err != nil {
@@ -242,10 +260,11 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 			p.Playbook.InlineDigest = hex.EncodeToString(sum[:])
 		}
 		if pb.RepoID != nil {
-			repo, err := r.src.Repos.Get(ctx, orgID, *pb.RepoID)
+			got, err := r.src.Repos.Get(ctx, orgID, *pb.RepoID)
 			if err != nil {
 				return Picture{}, mapNotFound(err)
 			}
+			repo = &got
 			p.Repo = &PictureRepo{ID: repo.ID.String(), Name: repo.Name, URL: repo.URL, Branch: repo.Branch, Subpath: repo.Subpath}
 			if repo.CredentialID != nil {
 				p.Repo.GitCredentialID, p.Repo.GitCredential = repo.CredentialID.String(), r.credentialName(ctx, orgID, *repo.CredentialID)
@@ -263,6 +282,11 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		})
 	}
 
+	if repo != nil {
+		if p.Commit, err = r.commit(ctx, orgID, req, *repo); err != nil {
+			return Picture{}, err
+		}
+	}
 	retry := r.retryOf(ctx, orgID, req)
 	targets, err := r.targets(ctx, orgID, req, retry, &p)
 	if err != nil {

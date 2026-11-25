@@ -11,6 +11,7 @@ import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusT
 import { chainTemplateName } from './chainTemplateName.ts';
 import { triggerLabel } from './trigger.ts';
 import { useCancelRun } from './useCancelRun.ts';
+import { CommitId } from './CommitId.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 const NONE = '—';
@@ -131,7 +132,7 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
 }
 
 /** Zone, worker, who or what triggered the run, when it started and
- * finished, and how many jobs its run group has. */
+ * finished, how many jobs its run group has and the commit it is pinned to. */
 function RunFacts({ org, job }: { org: string; job: JobDetail }) {
   const t = useT();
   const zones = useZones(org);
@@ -159,6 +160,9 @@ function RunFacts({ org, job }: { org: string; job: JobDetail }) {
         { label: t.runs.detail.started, value: <span className="font-mono">{timestamp(job.started_at)}</span> },
         { label: t.runs.detail.finished, value: <span className="font-mono">{timestamp(job.finished_at)}</span> },
         { label: t.runs.detail.runGroup, value: t.runs.detail.groupCount(siblings.length + 1) },
+        // The commit an approved run runs instead of the branch tip (spec
+        // 2026-11-25 A).
+        ...(job.pinned_commit ? [{ label: t.runs.detail.pinnedCommit, value: <CommitId sha={job.pinned_commit} /> }] : []),
       ]}
     />
   );

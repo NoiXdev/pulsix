@@ -232,7 +232,7 @@ func TestFollowUpsErrorNamesTheProblem(t *testing.T) {
 
 type allowAllGuard struct{}
 
-func (allowAllGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (allowAllGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID, string) error { return nil }
 
 // TestSetClaimGuardAcceptsAGuard: wiring a guard into a fresh queue is
 // accepted and the queue still answers an empty claim with nothing.

@@ -32,6 +32,11 @@ type SourcesRecord struct {
 	Incomplete  bool
 	LeftOut     []string
 	Notes       []varsource.Note
+	// SyncedRef is what the sync that read Commit fetched (jobs.SyncedRef
+	// of the URL, branch and subpath its claim sent); empty when that sync
+	// recorded none (claimed before migration 00123, or by an older
+	// manager).
+	SyncedRef string
 }
 
 // SetLogger sets where RecordVarSources reports what it skips (a
@@ -86,7 +91,11 @@ const maxReportDepth = 64
 // whether the report's playbooks were stored: false for a nil raw, a
 // Failed or ignored report and a gone repository, the cases with no new
 // sources to apply.
-func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage) (bool, error) {
+//
+// syncedRef is what the sync fetched (jobs.SyncedRef, "" when its claim
+// recorded none). It is stored with the commit it fetched: a record that
+// keeps the previous commit keeps the previous one too (SyncedCommit).
+func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string) (bool, error) {
 	if raw == nil {
 		return false, s.store.MarkVarSourcesUnread(ctx, orgID, repoID, at)
 	}
@@ -105,7 +114,7 @@ func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID,
 	if err := s.store.LockVarSources(ctx, orgID, repoID); err != nil {
 		return false, s.skipGone(ctx, orgID, repoID, err)
 	}
-	next, err := s.nextSources(ctx, orgID, repoID, at, r, s.reportTexts(ctx, orgID, repoID, texts, r.Playbooks))
+	next, err := s.nextSources(ctx, orgID, repoID, at, r, s.reportTexts(ctx, orgID, repoID, texts, r.Playbooks), syncedRef)
 	if err != nil {
 		return false, err
 	}
@@ -136,7 +145,7 @@ type nextRecord struct {
 // nextSources is the record and playbook rows the report r, with the
 // texts of its playbooks, leaves, given what is stored. A row kept from
 // the previous record keeps its text.
-func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, r varsource.Report, texts map[string]PlaybookText) (nextRecord, error) {
+func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, r varsource.Report, texts map[string]PlaybookText, syncedRef string) (nextRecord, error) {
 	var prev SourcesRecord
 	if r.Failed || r.Commit == "" {
 		var err error
@@ -161,14 +170,15 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 			record: SourcesRecord{
 				Commit: prev.Commit, SyncedAt: at, WorkerReads: true,
 				Incomplete: prev.Incomplete, LeftOut: prev.LeftOut, Notes: r.Notes,
+				SyncedRef: prev.SyncedRef,
 			},
 			playbooks: prevPlaybooks,
 			texts:     keptTexts(nil, prevTexts, prevPlaybooks),
 		}, nil
 	}
-	commit := r.Commit
+	commit, ref := r.Commit, syncedRef
 	if commit == "" {
-		commit = prev.Commit
+		commit, ref = prev.Commit, prev.SyncedRef
 	}
 	playbooks := r.Playbooks
 	if len(r.LeftOut) > 0 {
@@ -197,6 +207,7 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 		record: SourcesRecord{
 			Commit: commit, SyncedAt: at, WorkerReads: true,
 			Incomplete: r.Incomplete, LeftOut: r.LeftOut, Notes: r.Notes,
+			SyncedRef: ref,
 		},
 		playbooks: playbooks,
 		texts:     texts,

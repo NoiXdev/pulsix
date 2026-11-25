@@ -5967,6 +5967,8 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";
+            /** @description The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip */
+            pinned_commit?: string;
             run_group_id: string;
             /** @enum {string} */
             status: "queued" | "claimed" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "error";
@@ -6004,6 +6006,8 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";
+            /** @description The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip */
+            pinned_commit?: string;
             run_group_id: string;
             /** Format: date-time */
             started_at?: string;
@@ -7246,6 +7250,7 @@ export interface components {
         };
         Picture: {
             check_mode?: boolean;
+            commit?: components["schemas"]["PictureCommit"];
             diff?: boolean;
             extra_vars: {
                 [key: string]: unknown;
@@ -7270,6 +7275,12 @@ export interface components {
             template_revision: number;
             vars_digest: string;
             vault_identities: components["schemas"]["PictureVault"][] | null;
+        };
+        PictureCommit: {
+            /** @description Why the request cannot be approved now: the repository needs a sync first, or a sync of it is queued or running. Absent when the commit can be pinned */
+            blocked?: ("never_synced" | "not_reported" | "sync_unrecorded" | "repo_changed" | "sync_running")[] | null;
+            /** @description The full commit id; absent when no sync recorded one */
+            sha?: string;
         };
         PictureFollowUp: {
             follow_ups?: components["schemas"]["PictureFollowUp"][] | null;

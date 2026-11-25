@@ -58,9 +58,10 @@ WHERE t.id = ANY(sqlc.arg(ids)::uuid[]);
 -- Only a pending row moves; zero rows means it was already decided. An
 -- approval records the fingerprint the person approved and takes the
 -- request's own id as the run group, before anything is enqueued, so a
--- claim of one of its jobs always finds it (migration 00103).
+-- claim of one of its jobs always finds it (migration 00103), and the
+-- commit the run is pinned to (migration 00123; NULL for none).
 UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
-  approved_fingerprint = sqlc.narg(approved_fingerprint),
+  approved_fingerprint = sqlc.narg(approved_fingerprint), pinned_commit = sqlc.narg(pinned_commit),
   run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' THEN id ELSE run_group_id END
 WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id) AND status = 'pending';
 
@@ -68,7 +69,7 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id) AND status = 'pendin
 -- A failed enqueue puts the request back to pending. run_group_id stays:
 -- jobs the enqueue did create keep pointing at this request, and its
 -- claim guard refuses them while the request is not approved.
-UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL
+UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetRunRequestByRunGroup :one

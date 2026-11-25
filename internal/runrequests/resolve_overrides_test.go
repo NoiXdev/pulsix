@@ -222,6 +222,7 @@ func TestRunEnqueuesTheOverrides(t *testing.T) {
 	res := runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: rec, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
+		Commits: w.commits, SyncJobs: w.syncs,
 	})
 	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, Overrides: &runrequests.Overrides{
 		Check: true, Diff: true, ExtraVars: map[string]any{"version": "1.2"}, HostIDs: []uuid.UUID{w.h3, w.h1}, Limit: strPtr("web-1"),

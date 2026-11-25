@@ -67,9 +67,11 @@ type SyncSink interface {
 // stored reports whether new sources were stored, the one case the
 // SourceApplier runs for. It returns an error only for a failure a
 // retried finish can fix; a malformed report or a repository gone
-// meanwhile is its own business to log and skip.
+// meanwhile is its own business to log and skip. syncedRef is what the
+// sync fetched (SyncedRef, recorded at its claim), "" for a sync claimed
+// by an older manager.
 type SourceSink interface {
-	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage) (stored bool, err error)
+	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string) (stored bool, err error)
 }
 
 // SourceApplier is the optional port called once a successful sync whose

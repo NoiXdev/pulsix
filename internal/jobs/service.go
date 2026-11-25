@@ -15,6 +15,7 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -204,12 +205,17 @@ type Job struct {
 	CheckMode bool
 	// DryRun is a check-mode run's non-secret options (migration 00116),
 	// set at enqueue together with CheckMode; nil for every other job.
-	DryRun     *DryRun
-	ClaimedAt  *time.Time
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	Stats      map[string]any
-	Error      string
+	DryRun *DryRun
+	// PinnedCommit is the commit an approved run runs instead of its
+	// repository's branch tip (spec 2026-11-25 A, migration 00123), set at
+	// enqueue from RunRequest.PinnedCommit and never changed after; "" for
+	// an unpinned run and every other job.
+	PinnedCommit string
+	ClaimedAt    *time.Time
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
+	Stats        map[string]any
+	Error        string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
@@ -689,7 +695,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Kind: KindRun, TemplateID: &tmplID, HostIDs: t.HostIDs,
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
-			HostsExcluded: excluded, CheckMode: req.Overrides.check(), DryRun: req.Overrides.dryRun(),
+			HostsExcluded: excluded, CheckMode: req.Overrides.check(), DryRun: req.Overrides.dryRun(), PinnedCommit: req.PinnedCommit,
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
@@ -986,6 +992,11 @@ func (s *Service) sealPayload(j Job, payload json.RawMessage) (json.RawMessage, 
 // worker needs. It carries no secret, so it is stored plain — never sealed.
 type syncPayload struct {
 	RepoID uuid.UUID `json:"repo_id"`
+	// SyncedRef is what the claim sent the worker to fetch (SyncedRef),
+	// written onto the stored payload at the claim and handed to the
+	// source sink at the finish; empty for a sync claimed by an older
+	// manager.
+	SyncedRef string `json:"synced_ref,omitempty"`
 }
 
 // syncResultPayload is the manager-side mirror of the worker's sync result
@@ -1121,7 +1132,7 @@ func (s *Service) Cancel(ctx context.Context, orgID, id uuid.UUID) error {
 // narrows the template's scope to them and enqueues a new run group. Only
 // terminal failed/error run jobs can be retried.
 func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil)
+	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, "")
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:
@@ -1133,7 +1144,12 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 // the key its run approval would (backlog 2.120), so approving it again
 // after a failed enqueue replays the jobs the first attempt created instead
 // of retrying twice. Empty (the retry route) reserves nothing.
-func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID) ([]Job, error) {
+//
+// A retry runs the commit its original job ran (spec 2026-11-25 A): the
+// original's pin wins; pinnedCommit pins a retry of an unpinned job (an
+// approved retry request passes the commit its picture showed), and ""
+// leaves it on the branch tip as before.
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string) ([]Job, error) {
 	j, retry, err := s.retryTarget(ctx, orgID, id)
 	if err != nil {
 		return nil, err
@@ -1151,7 +1167,11 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual, Actor: actor}, group, alreadyDone)
+	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, pinnedCommit)}
+	if err := checkPin(tmpl, req); err != nil {
+		return nil, err
+	}
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, render.Scope{HostIDs: retry}, tmpl.Limit, req, group, alreadyDone)
 }
 
 // RetryTargets is RetryFailed's checks without the enqueue: the template

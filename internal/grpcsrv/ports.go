@@ -50,13 +50,24 @@ type ClaimScope struct {
 type Claimer interface {
 	// Claim picks one queued job for any of the scope's zones inside the
 	// scope's organization, marks it claimed and returns its payload plus a
-	// fresh binding token. nil claim = queue empty. cancelStopsPlay is the
-	// worker's own word that a cancel stops the play on it (backlog
-	// 2.113); the claimed job records it. supportsCheckMode is the
-	// worker's announcement that it honours a job's check flag (backlog
+	// fresh binding token. nil claim = queue empty. caps is what the
+	// worker announced about itself (ClaimCaps).
+	Claim(ctx context.Context, scope ClaimScope, version string, caps ClaimCaps) (*JobClaim, error)
+}
+
+// ClaimCaps is what a worker's claim announced about the worker.
+type ClaimCaps struct {
+	// CancelStopsPlay is the worker's own word that a cancel stops the
+	// play on it (backlog 2.113); the claimed job records it.
+	CancelStopsPlay bool
+	// SupportsCheckMode says that it honours a job's check flag (backlog
 	// 3.126): without it an implementation must never return a check-mode
 	// job (a playbook dry run), which the worker would run for real.
-	Claim(ctx context.Context, scope ClaimScope, version string, cancelStopsPlay, supportsCheckMode bool) (*JobClaim, error)
+	SupportsCheckMode bool
+	// SupportsPinnedCommit says that it checks out a run's pinned commit
+	// (spec 2026-11-25 A): without it an implementation must never return
+	// a pinned job, which the worker would run on the branch tip.
+	SupportsPinnedCommit bool
 }
 
 // Event is one run event a worker streams in mid-run.

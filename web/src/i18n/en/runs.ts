@@ -83,6 +83,11 @@ export const enRuns = {
     diffOn: 'Differences shown',
     diffOff: 'Differences not shown',
   },
+  /** A pinned commit (spec 2026-11-25 A): its id, shortened, with a copy button. */
+  commit: {
+    copy: 'Copy commit id',
+    copied: 'Commit id copied',
+  },
   adhoc: {
     chooseHost: 'choose at least one host',
     commandRequired: 'a command is required',
@@ -149,6 +154,7 @@ export const enRuns = {
     started: 'Started',
     finished: 'Finished',
     runGroup: 'Run group',
+    pinnedCommit: 'Pinned commit',
     groupCount: (n: number) => `${n} job${n === 1 ? '' : 's'}`,
     recordedTitle: 'Recorded when this run was claimed; later changes to the repository or template do not affect it.',
     computedTitle: 'No record exists for this run yet, so this is read from the repository and template as they are configured right now.',
@@ -289,6 +295,22 @@ export const enRuns = {
       branch: 'Branch',
       subpath: 'Subpath',
       gitCredential: 'Git credential',
+      /** The commit a run of a repository playbook runs (spec 2026-11-25 A). */
+      commit: 'Commit',
+      commitUnknown: 'not known yet',
+      commitLive: "The commit of the repository's last sync. Exactly this commit runs.",
+      commitPinned: 'Pinned when the request was approved. Exactly this commit runs.',
+      commitBlocked: {
+        title: 'Approval waits for the repository',
+        reasons: {
+          never_synced: 'The repository has never been synced. Sync it, then approve.',
+          not_reported:
+            "The repository's last sync did not report its commit: the worker that ran it is out of date. Update the worker and sync the repository, then approve.",
+          sync_unrecorded: "The repository's last sync did not record what it fetched. Sync it again, then approve.",
+          repo_changed: "The repository's URL, branch or subpath changed after its last sync. Sync it, then approve.",
+          sync_running: 'A sync of the repository is queued or running. Approve once it has finished.',
+        },
+      },
       targetColumns: {
         host: 'Host',
         address: 'Address',

@@ -166,6 +166,37 @@ func TestClaimJobPassesOnWhetherTheWorkerSupportsCheckMode(t *testing.T) {
 	}
 }
 
+// TestClaimJobPassesOnWhetherTheWorkerSupportsPinnedCommits (spec
+// 2026-11-25 A): the announcement reaches the claim port unchanged and
+// apart from the other two, so the queue can keep a pinned run away from a
+// worker that would run the branch tip; an older worker reads as false.
+func TestClaimJobPassesOnWhetherTheWorkerSupportsPinnedCommits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  *workerpb.ClaimJobRequest
+		want bool
+	}{
+		{"announced", &workerpb.ClaimJobRequest{Version: "0.4.0", SupportsPinnedCommit: true}, true},
+		{"an older worker that supports check mode", &workerpb.ClaimJobRequest{Version: "0.3.0", SupportsCheckMode: true, CancelStopsPlay: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+			client := h.client(certPEM, keyPEM)
+			h.enqueueClaim(uuid.Must(uuid.NewV7()), orgID, zoneID)
+
+			if _, err := client.ClaimJob(t.Context(), tc.req); err != nil {
+				t.Fatal(err)
+			}
+			calls := h.claims.Calls()
+			if len(calls) != 1 || calls[0].SupportsPinnedCommit != tc.want ||
+				calls[0].SupportsCheckMode != tc.req.GetSupportsCheckMode() || calls[0].CancelStopsPlay != tc.req.GetCancelStopsPlay() {
+				t.Fatalf("Claim calls = %+v, want one with SupportsPinnedCommit %v and the other two as sent", calls, tc.want)
+			}
+		})
+	}
+}
+
 // TestClaimJobZoneAuthorization (fix round 1, Critical): a worker claims
 // only for the zone its certificate was enrolled for. A request naming any
 // other zone — another organization's zone (zone ids are visible through

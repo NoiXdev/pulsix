@@ -85,8 +85,12 @@ type Request struct {
 	// Overrides is what a run request changes about the run; nil for none
 	// and always nil for a retry.
 	Overrides *Overrides
-	ExpiresAt time.Time
-	CreatedAt time.Time
+	// PinnedCommit is the commit the approval pinned the run to (spec
+	// 2026-11-25 A): stored with the approval, "" for a run of no
+	// repository, a request not approved, and one approved before pins.
+	PinnedCommit string
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
 	TokenName  string
@@ -126,11 +130,11 @@ type Store interface {
 	// Tokens reads the tokens of ids that still exist (TokenRecord).
 	Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]TokenRecord, error)
 	// Decide moves a pending request to to; false when it was not pending.
-	// An approval records fingerprint and sets the run group to the
-	// request's own id, in the same write.
-	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string) (bool, error)
+	// An approval records fingerprint and the commit it pins ("" for none)
+	// and sets the run group to the request's own id, in the same write.
+	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error)
 	// RevertToPending undoes an approval whose enqueue failed; the run
-	// group stays, the fingerprint goes.
+	// group stays, the fingerprint and the pinned commit go.
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
@@ -144,9 +148,11 @@ type Pictures interface {
 // Enqueuer starts what an approval allows, through the existing run paths.
 type Enqueuer interface {
 	// Run and RetryFailed enqueue into the run group group; Run enqueues
-	// the run request r asks for, with its host and overrides.
+	// the run request r asks for, with its host, overrides and pinned
+	// commit. RetryFailed pins the retry to pinnedCommit when its original
+	// job has none ("" for no pin).
 	Run(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
-	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
+	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error
 }
 
 // Validator checks a request the way the run and retry routes would check
@@ -285,7 +291,7 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "")
+	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "", "")
 	if err != nil {
 		return Request{}, fmt.Errorf("decide run request: %w", err)
 	}

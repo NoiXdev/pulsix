@@ -233,10 +233,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		// (backlog 2.107); the claim says so, and the manager records it
 		// on the job for the run view (2.113). The runner honours a job's
 		// check, diff and tags (backlog 3.126); without the announcement
-		// the manager hands this worker no dry run.
+		// the manager hands this worker no dry run. The runner checks out a
+		// run's pinned commit (spec 2026-11-25 A); without the announcement
+		// the manager hands this worker no pinned run.
 		resp, err := l.client.ClaimJob(ctx, &workerpb.ClaimJobRequest{
 			Version: l.cfg.Version, ZoneIds: zoneIDs, CancelStopsPlay: l.cfg.PlaySupervisor != "",
-			SupportsCheckMode: true,
+			SupportsCheckMode: true, SupportsPinnedCommit: true,
 		})
 		if err != nil {
 			if ctx.Err() != nil {

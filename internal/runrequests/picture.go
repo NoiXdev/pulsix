@@ -55,6 +55,33 @@ type Picture struct {
 	LimitOverride     string         `json:"limit_override,omitempty"`
 	ExtraVarsOverride map[string]any `json:"extra_vars_override,omitempty"`
 	RequestedHostIDs  []string       `json:"requested_host_ids,omitempty"`
+
+	// Commit is the commit the run runs (spec 2026-11-25 A, decision D3):
+	// nil when the playbook comes from no repository, and for a request
+	// approved before pins existed, so the canonical JSON of its picture
+	// is unchanged and its approval still matches at the claim.
+	Commit *PictureCommit `json:"commit,omitempty"`
+}
+
+// BlockedSyncRunning is PictureCommit.Blocked's reason for a sync of the
+// repository that is queued or running: the commit it fetches may differ.
+// The other reasons are repos.SyncedCommit's Stale values.
+const BlockedSyncRunning = "sync_running"
+
+// PictureCommit is the commit a run of a repository playbook runs. While
+// the request is pending it is live: the commit of the repository's last
+// successful sync (a newer sync changes the picture). An approval stores
+// it on the request and the run's jobs; from then on the picture shows
+// the stored commit. A retry shows its original job's commit when that
+// job was pinned.
+type PictureCommit struct {
+	// SHA is the full commit id; empty when no sync recorded one.
+	SHA string `json:"sha,omitempty" doc:"The full commit id; absent when no sync recorded one"`
+	// Blocked says why an approval is refused now: one of the
+	// repos.Commit* reasons (sync the repository first) and
+	// BlockedSyncRunning, in that order. Empty when the commit can be
+	// pinned.
+	Blocked []string `json:"blocked,omitempty" enum:"never_synced,not_reported,sync_unrecorded,repo_changed,sync_running" doc:"Why the request cannot be approved now: the repository needs a sync first, or a sync of it is queued or running. Absent when the commit can be pinned"`
 }
 
 // PictureFollowUps is what an approval does about the template's follow-ups.

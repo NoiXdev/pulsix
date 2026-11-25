@@ -120,7 +120,7 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 	if status != StatusSucceeded || q.sources == nil {
 		return uuid.Nil, nil
 	}
-	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources, texts)
+	stored, err := q.sources.RecordVarSources(ctx, orgID, sp.RepoID, at, varSources, texts, sp.SyncedRef)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("record variable sources: %w", err)
 	}

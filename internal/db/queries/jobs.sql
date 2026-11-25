@@ -15,8 +15,8 @@
 -- foreign key check blocks anyway; a host edit is not held up.
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode, dry_run)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded, check_mode, dry_run, pinned_commit)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
   RETURNING *
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
@@ -388,12 +388,15 @@ SELECT EXISTS (SELECT 1 FROM workers WHERE id = sqlc.arg(id) AND status = 'activ
 -- handed to a claim without it — an older worker would run the play for
 -- real — so the filter sits in the statement, the dry run stays queued for
 -- a capable worker, and the jobs behind it are still claimed.
+-- supports_pinned_commit is the same for a run pinned to a commit
+-- (migration 00123): an older worker would run the branch tip instead.
 UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now(),
     attempts = attempts + 1, cancel_stops_play = sqlc.narg(cancel_stops_play)::boolean
 WHERE id = (
   SELECT j.id FROM jobs AS j
   WHERE j.status = 'queued' AND j.org_id = sqlc.arg(org_id)::uuid AND j.zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
     AND (NOT j.check_mode OR sqlc.arg(supports_check_mode)::boolean)
+    AND (j.pinned_commit IS NULL OR sqlc.arg(supports_pinned_commit)::boolean)
     -- A dependent job waits until its dependency SUCCEEDED (any other end
     -- cancels it in the dependency's terminal transition).
     AND (j.depends_on IS NULL OR EXISTS (

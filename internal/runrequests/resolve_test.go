@@ -151,7 +151,7 @@ func (r *targetRunner) EnqueueRunWith(context.Context, uuid.UUID, uuid.UUID, job
 	return nil, nil
 }
 
-func (r *targetRunner) RetryFailedInto(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, string, uuid.UUID, *[]uuid.UUID) ([]jobs.Job, error) {
+func (r *targetRunner) RetryFailedInto(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, string, uuid.UUID, *[]uuid.UUID, string) ([]jobs.Job, error) {
 	return nil, nil
 }
 
@@ -184,6 +184,8 @@ type world struct {
 	repoVault, tmplVault uuid.UUID
 	gitCred              uuid.UUID
 	ovr                  *overrideChecker
+	commits              *fakeCommits
+	syncs                *fakeSyncJobs
 }
 
 func newWorld() *world {
@@ -213,6 +215,8 @@ func newWorld() *world {
 	w.inv = &runVars{doc: map[string]any{"all": map[string]any{"vars": map[string]any{"env": "prod"}}}, extra: map[string]any{"tag": "v1"}}
 	w.key = runrequests.VarsDigestKey([32]byte{1, 2, 3})
 	w.jobs = &targetRunner{targets: []uuid.UUID{w.h1, w.h2, w.h3}, retryTmpl: w.x, failed: []uuid.UUID{w.h2}}
+	w.commits = &fakeCommits{synced: repos.SyncedCommit{Commit: commitX}}
+	w.syncs = &fakeSyncJobs{pins: map[uuid.UUID]string{}}
 	return w
 }
 
@@ -220,6 +224,7 @@ func (w *world) resolver() *runrequests.Resolver {
 	return runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
+		Commits: w.commits, SyncJobs: w.syncs,
 	})
 }
 

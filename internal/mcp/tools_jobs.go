@@ -158,7 +158,7 @@ func jobTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/jobs")
 			}),
-		define("get_job", "Get job", "One job: status, hosts, stats, error and its run group.",
+		define("get_job", "Get job", "One job: status, hosts, stats, error, its run group and, for an approved run, the commit it runs (pinned_commit).",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobArgs) (any, error) {
 				return passGet(ctx, c, nil, "/jobs/%s", in.JobID)
 			}),
@@ -188,7 +188,7 @@ func jobTools() []toolDef {
 				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
 				return map[string]any{"log": text, "next_after": next}, nil
 			}),
-		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
+		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says. A playbook from a repository runs exactly the commit of the repository's last successful sync, which the picture shows (commit); while commit.blocked names a reason (the repository needs a sync, or a sync is running) the request cannot be approved.",
 			tenancy.AreaJobsRequest, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, in.body())
 			}),
