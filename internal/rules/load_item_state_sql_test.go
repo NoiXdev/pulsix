@@ -11,14 +11,19 @@ import (
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
+// documentedPoolRule is the zfs example rule docs/upgrades.md (and the
+// user docs) give, verbatim: the rule form cannot say "not in", so it is an
+// expression.
+const documentedPoolRule = `zfs.state != "ONLINE" and zfs.state != "EXPORTED"`
+
 // TestAnAbsentPoolsOtherMetricsAreNotAsked (backlog 3.74), through the real
 // store and ticker with the zfs descriptor's own metric rule: a pool the
 // agent reports as EXPORTED or MISSING reports zfs.state and nothing else,
 // so its last zfs.capacity_pct — old enough to be stale, but not so far
 // behind zfs.state that it vanished (rules.Vanished) — is not asked while
 // that state is current: unmeasured, no state of its own, no part in the
-// roll-up. The documented rule "zfs.state is not ONLINE and not EXPORTED"
-// leaves the host ok on EXPORTED and fires on MISSING. Once the pool
+// roll-up. The documented rule, parsed from its text (documentedPoolRule),
+// leaves the host ok on EXPORTED and ONLINE and fires on MISSING. Once the pool
 // reports ONLINE again, the same capacity reading is judged again: stale,
 // so unknown. A zfs.state carried by an error is no state, so it asks for
 // everything as before.
@@ -50,12 +55,16 @@ func TestAnAbsentPoolsOtherMetricsAreNotAsked(t *testing.T) {
 			insertCurrent(t, d, org, host, capacity, ptr(91.0), nil, now.Add(-3*time.Minute-5*time.Second), "")
 			insertCheckState(t, d, org, host, stateRow{tuple: capacity, state: rules.StateOK, since: now.Add(-time.Hour), evaluatedAt: now.Add(-4 * time.Minute)})
 
+			trigger, err := rules.Parse(documentedPoolRule)
+			if err != nil {
+				t.Fatalf("Parse(%s): %v", documentedPoolRule, err)
+			}
+			if err := rules.TypeCheck(trigger); err != nil {
+				t.Fatalf("TypeCheck(%s): %v", documentedPoolRule, err)
+			}
 			rule := hostRule(org, host)
 			rule.Name, rule.CheckKey, rule.Metric, rule.Severity, rule.For = "pool not healthy", "zfs", "zfs.state", rules.SeverityCrit, 0
-			rule.Trigger = rules.Node{Kind: rules.KindAnd, Args: []rules.Node{
-				label("zfs.state", "!=", "ONLINE"), label("zfs.state", "!=", "EXPORTED"),
-			}}
-			rule.Source = `zfs.state != "ONLINE" and zfs.state != "EXPORTED"`
+			rule.Trigger, rule.Source = trigger, documentedPoolRule
 			if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
 				t.Fatal(err)
 			}

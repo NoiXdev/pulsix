@@ -104,6 +104,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 const (
@@ -265,10 +266,12 @@ func poolCount(n int) []checks.Observation {
 }
 
 // Labels of a named pool that zpool list does not print, upper case like
-// zpool's own health values.
+// zpool's own health values. They are the manager's descriptor constants:
+// its zfs hook stops asking for an absent pool's other metrics on exactly
+// these labels (backlog 3.74).
 const (
-	stateExported = "EXPORTED" // absent, and named in optional_pools
-	stateMissing  = "MISSING"  // absent, and named only in pools
+	stateExported = checkplugins.ZFSStateExported // absent, and named in optional_pools
+	stateMissing  = checkplugins.ZFSStateMissing  // absent, and named only in pools
 )
 
 // absentPool is a pool named in a parameter that zpool list does not print.

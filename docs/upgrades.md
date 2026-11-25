@@ -731,8 +731,12 @@ targets no longer make another's checks report the manager too busy.
   judged again once the pool reports another state. To check after the upgrade:
   listed pools that are not imported on purpose — move them to `optional_pools` or
   off the list. Version skew: an agent older than this release ignores
-  `optional_pools` (with `pools` set it does not report a pool named only there) and
-  reports nothing for an absent pool, as before.
+  `optional_pools` and reports nothing for an absent pool, as before. With `pools`
+  set it does not report a pool named only in `optional_pools`, which the manager
+  still asks for, so a pool moved from `pools` to `optional_pools` stops being
+  reported by such an agent and its last readings go stale (the host reads unknown)
+  until the agent is updated. An older agent also refuses a zfs check in its local
+  `agent.yaml` that sets `optional_pools` (an unknown parameter to it).
 - **Escalation steps wait after every maintenance window or silence that covered the
   alert (backlog 4.41, no migration):** the escalation follower used to look for
   covering windows at two sampled instants, so a window or silence that opened and

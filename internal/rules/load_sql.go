@@ -351,8 +351,9 @@ func textOf(s *string) string {
 // itemLabels is what each of a host's items reads now (backlog 3.74): the
 // labels of its current discrete readings without an error, metric name
 // to label — checks.CurrentLabels' rule over the rows Load reads, the one
-// the host page applies (GET /hosts/{id}/checks, stillAsked). An item
-// with no such reading has none.
+// the host page applies (GET /hosts/{id}/checks, stillAsked); keep both in
+// step (this package never imports internal/checks). An item with no such
+// reading has none.
 func itemLabels(current []gen.CheckCurrent) map[ItemKey]map[string]string {
 	out := map[ItemKey]map[string]string{}
 	for _, r := range current {

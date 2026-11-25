@@ -39,13 +39,18 @@ func zfsPlugin() Descriptor {
 	}
 }
 
-// zfsState is the per-pool metric that carries the pool's state, and the
-// labels the agent's plugin reports for a named pool zpool list does not
-// print (internal/agent/checks/plugins/zfs).
+// zfsState is the per-pool metric that carries the pool's state.
+const zfsState = "zfs.state"
+
+// The labels the agent's zfs plugin reports as zfs.state for a named pool
+// zpool list does not print. The agent's plugin
+// (internal/agent/checks/plugins/zfs) reports these very constants, so the
+// hook below cannot drift from what it reads.
 const (
-	zfsState         = "zfs.state"
-	zfsStateExported = "EXPORTED"
-	zfsStateMissing  = "MISSING"
+	// ZFSStateExported: absent, and named in optional_pools.
+	ZFSStateExported = "EXPORTED"
+	// ZFSStateMissing: absent, and named only in pools.
+	ZFSStateMissing = "MISSING"
 )
 
 // zfsItemAsked: the agent reports the imported pools named in either list,
@@ -68,7 +73,7 @@ func zfsMetricAskedForItem(_ map[string]any, labels map[string]string, metric st
 		return true
 	}
 	switch labels[zfsState] {
-	case zfsStateExported, zfsStateMissing:
+	case ZFSStateExported, ZFSStateMissing:
 		return false
 	}
 	return true

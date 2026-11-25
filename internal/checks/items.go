@@ -70,7 +70,9 @@ type itemOfKey struct{ checkKey, item string }
 // CurrentLabels collects, per check key and item, the labels of values'
 // current discrete readings without an error, metric name to label — the
 // item's present state AsksForMetric reads (backlog 3.74). A numeric
-// value or an error carries none.
+// value or an error carries none. internal/rules' itemLabels applies the
+// same rule for the evaluation (rules never imports checks); keep both in
+// step.
 func CurrentLabels(values []Current) ItemLabels {
 	out := ItemLabels{}
 	for _, v := range values {
