@@ -116,8 +116,9 @@ type RunRequest struct {
 	PlaybookID *uuid.UUID
 	// PinnedCommit, when set, is the commit the run's jobs run instead of
 	// the repository's branch tip (spec 2026-11-25 A, decision D3): an
-	// approved run request passes the commit its approver saw. Only a
-	// manual run of a repository playbook takes one (checkPin).
+	// approved run request passes the commit its approver saw; a chained
+	// run inherits its parent's (chainPin). Only a manual or chained run of
+	// a repository playbook takes one (checkPin).
 	PinnedCommit string
 }
 
@@ -177,6 +178,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		return nil, err
 	}
 	if err := checkRunTemplate(tmpl, req); err != nil {
+		return nil, err
+	}
+	if req.PinnedCommit, err = s.chainPin(ctx, orgID, tmpl, req); err != nil {
 		return nil, err
 	}
 	if err := checkPin(tmpl, req); err != nil {

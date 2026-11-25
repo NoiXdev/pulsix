@@ -82,7 +82,15 @@ type PictureCommit struct {
 	// BlockedSyncRunning, in that order. Empty when the commit can be
 	// pinned.
 	Blocked []string `json:"blocked,omitempty" enum:"never_synced,not_reported,sync_unrecorded,repo_changed,sync_running" doc:"Why the request cannot be approved now: the repository needs a sync first, or a sync of it is queued or running. Absent when the commit can be pinned"`
+	// Source is CommitFromOriginalRun for a retry that runs its original
+	// job's commit again; empty for the repository's last sync (or, once
+	// approved, the commit the approval stored).
+	Source string `json:"source,omitempty" enum:"original_run" doc:"original_run when a retry runs the commit its original run used; absent otherwise"`
 }
+
+// CommitFromOriginalRun is PictureCommit.Source for a retry of a pinned
+// job.
+const CommitFromOriginalRun = "original_run"
 
 // PictureFollowUps is what an approval does about the template's follow-ups.
 type PictureFollowUps struct {
@@ -104,9 +112,24 @@ type PictureFollowUp struct {
 	// Stop says why this follow-up would not start: "deleted" (the template
 	// is gone, retry only), "in_chain" (already on the chain's path),
 	// "too_deep" (past the chain's depth limit).
-	Stop      string            `json:"stop,omitempty"`
+	Stop string `json:"stop,omitempty"`
+	// Commit says what the follow-up runs when the requested run is pinned
+	// to a commit (the picture has a Commit; empty otherwise, so the JSON
+	// of an unpinned picture is unchanged): FollowUpPinned, the same commit
+	// (its playbook comes from the same repository, below pinned runs
+	// only); FollowUpCurrent, the state of Repo when it starts;
+	// FollowUpEditor, its editor playbook as saved when it starts.
+	Commit    string            `json:"commit,omitempty" enum:"pinned,current,editor"`
+	Repo      string            `json:"repo,omitempty"`
 	FollowUps []PictureFollowUp `json:"follow_ups,omitempty"`
 }
+
+// What a follow-up of a pinned run runs (PictureFollowUp.Commit).
+const (
+	FollowUpPinned  = "pinned"
+	FollowUpCurrent = "current"
+	FollowUpEditor  = "editor"
+)
 
 // PicturePlaybook names the playbook a run uses.
 type PicturePlaybook struct {

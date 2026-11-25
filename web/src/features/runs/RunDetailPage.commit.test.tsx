@@ -45,6 +45,18 @@ describe('RunDetailPage pinned commit (spec 2026-11-25 A)', () => {
     expect(screen.getByRole('button', { name: 'Copy commit id' })).toBeInTheDocument();
   });
 
+  it('says a queued pinned run waits for a worker that can run it', async () => {
+    render({ pinned_commit: SHA, status: 'queued', started_at: null, finished_at: null });
+    const note = await screen.findByRole('note', { name: 'Pinned commit' });
+    expect(note).toHaveTextContent('Waiting for a worker that can run a pinned commit');
+  });
+
+  it('says nothing of waiting once a worker took it', async () => {
+    render({ pinned_commit: SHA, status: 'running', finished_at: null });
+    await screen.findByText(SHA.slice(0, 12));
+    expect(screen.queryByText(/Waiting for a worker/)).not.toBeInTheDocument();
+  });
+
   it('shows nothing for a run of the branch tip', async () => {
     render({});
     await screen.findByText('deploy-site');
@@ -54,5 +66,10 @@ describe('RunDetailPage pinned commit (spec 2026-11-25 A)', () => {
   it('speaks German', async () => {
     render({ pinned_commit: SHA }, 'de');
     expect(await screen.findByText('Festgelegter Commit')).toBeInTheDocument();
+  });
+
+  it('speaks German while waiting', async () => {
+    render({ pinned_commit: SHA, status: 'queued', started_at: null, finished_at: null }, 'de');
+    expect(await screen.findByText(/Warte auf einen Worker, der einen festgelegten Commit ausführen kann/)).toBeInTheDocument();
   });
 });

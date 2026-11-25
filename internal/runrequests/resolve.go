@@ -304,7 +304,11 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		// A dry run starts no follow-ups (jobs.checkRunRequest).
 		return p, nil
 	}
-	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry); err != nil {
+	var pinRepo *uuid.UUID
+	if p.Commit != nil {
+		pinRepo = &repo.ID
+	}
+	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry, pinRepo); err != nil {
 		return Picture{}, err
 	}
 	return p, nil

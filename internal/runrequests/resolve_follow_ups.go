@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -21,7 +23,10 @@ func nonNil(ids []uuid.UUID) []uuid.UUID {
 // template's follow-ups, a retry's (retry not nil) are the rows its run
 // group holds, in every state, since the retry copies them all as fresh
 // pending rows (CopyRunFollowUps); they keep their depth and path.
-func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup) (*PictureFollowUps, error) {
+//
+// pinRepo is the repository the requested run is pinned to (nil: no pin);
+// the tree then says what each follow-up runs.
+func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup, pinRepo *uuid.UUID) (*PictureFollowUps, error) {
 	roots, err := r.followUpRoots(ctx, orgID, tmpl, retry)
 	if err != nil || len(roots) == 0 {
 		return nil, err
@@ -30,7 +35,7 @@ func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl template
 	if err != nil {
 		return nil, fmt.Errorf("read follow-up setting: %w", err)
 	}
-	return BuildFollowUps(ctx, start, roots, r.followUpLookup(orgID))
+	return buildFollowUps(ctx, start, roots, r.followUpLookup(orgID), pinRepo)
 }
 
 func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup) ([]FollowUpRoot, error) {
@@ -81,8 +86,39 @@ func (r *Resolver) followUpLookup(orgID uuid.UUID) FollowUpLookup {
 		for i, f := range t.FollowUps {
 			refs[i] = FollowUpRef{TemplateID: f.TemplateID, Name: f.Name}
 		}
-		e := entry{t: FollowUpTemplate{Name: t.Name, Revision: t.Revision, FollowUps: refs}, found: true}
+		ft := FollowUpTemplate{Name: t.Name, Revision: t.Revision, FollowUps: refs}
+		if ft.RepoID, ft.RepoName, err = r.playbookRepo(ctx, orgID, t.PlaybookID); err != nil {
+			return FollowUpTemplate{}, false, err
+		}
+		e := entry{t: ft, found: true}
 		seen[id] = e
 		return e.t, true, nil
 	}
+}
+
+// playbookRepo is the repository a template's playbook comes from, with
+// its name: nil for an editor playbook, none registered, or one gone.
+func (r *Resolver) playbookRepo(ctx context.Context, orgID, playbookID uuid.UUID) (*uuid.UUID, string, error) {
+	if playbookID == uuid.Nil || r.src.Playbooks == nil {
+		return nil, "", nil
+	}
+	pb, err := r.src.Playbooks.Get(ctx, orgID, playbookID)
+	if errors.Is(err, playbooks.ErrNotFound) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("read follow-up playbook: %w", err)
+	}
+	if pb.RepoID == nil {
+		return nil, "", nil
+	}
+	name := pb.RepoID.String()
+	repo, err := r.src.Repos.Get(ctx, orgID, *pb.RepoID)
+	switch {
+	case err == nil:
+		name = repo.Name
+	case !errors.Is(err, repos.ErrNotFound):
+		return nil, "", fmt.Errorf("read follow-up repository: %w", err)
+	}
+	return pb.RepoID, name, nil
 }

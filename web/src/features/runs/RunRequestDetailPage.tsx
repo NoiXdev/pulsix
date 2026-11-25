@@ -251,7 +251,7 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
-      <RunPictureSections org={org} picture={picture} approved={request.status === 'approved'} />
+      <RunPictureSections org={org} picture={picture} status={request.status} />
       {picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}

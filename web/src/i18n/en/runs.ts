@@ -155,6 +155,8 @@ export const enRuns = {
     finished: 'Finished',
     runGroup: 'Run group',
     pinnedCommit: 'Pinned commit',
+    pinnedWaiting:
+      "Waiting for a worker that can run a pinned commit. Older workers never take such a run: if it stays queued, update the zone's workers.",
     groupCount: (n: number) => `${n} job${n === 1 ? '' : 's'}`,
     recordedTitle: 'Recorded when this run was claimed; later changes to the repository or template do not affect it.',
     computedTitle: 'No record exists for this run yet, so this is read from the repository and template as they are configured right now.',
@@ -262,6 +264,12 @@ export const enRuns = {
         hint: 'Follow-ups start later, when this run succeeds, on the hosts it ran on. This page shows them by name and revision, not what they run.',
         truncated: 'More follow-ups than this page can show; approving starts none of them.',
         revision: (n: number) => `revision ${n}`,
+        /** What a follow-up of a pinned run runs (spec 2026-11-25 A). */
+        commit: {
+          pinned: 'runs the same commit',
+          current: (repo: string) => `runs the current state of ${repo}`,
+          editor: 'runs its playbook as saved when it starts',
+        },
         stop: {
           in_chain: 'already in this chain',
           too_deep: 'chain too long',
@@ -298,8 +306,9 @@ export const enRuns = {
       /** The commit a run of a repository playbook runs (spec 2026-11-25 A). */
       commit: 'Commit',
       commitUnknown: 'not known yet',
-      commitLive: "The commit of the repository's last sync. Exactly this commit runs.",
-      commitPinned: 'Pinned when the request was approved. Exactly this commit runs.',
+      commitLive: "The commit of the repository's last sync. The requested run runs exactly this commit.",
+      commitOriginal: 'The commit the original run used. The retry runs exactly this commit.',
+      commitPinned: 'The approved run ran this commit.',
       commitBlocked: {
         title: 'Approval waits for the repository',
         reasons: {

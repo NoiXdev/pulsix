@@ -21,12 +21,21 @@ function Tree({ nodes }: { nodes: FollowUp[] }) {
             <span className="font-mono">{nodeName(f)}</span>
             {f.template_revision ? <span className="text-muted-foreground"> · {d.revision(f.template_revision)}</span> : null}
             {f.stop && <span className="text-muted-foreground"> · {stopLabel(f.stop, d.stop)}</span>}
+            <CommitNote f={f} />
           </span>
           {(f.follow_ups ?? []).length > 0 && <Tree nodes={f.follow_ups ?? []} />}
         </li>
       ))}
     </ul>
   );
+}
+
+/** CommitNote says what a follow-up of a pinned run runs (spec 2026-11-25 A):
+ * the same commit, its repository's current state, or its editor playbook. */
+function CommitNote({ f }: { f: FollowUp }) {
+  const c = useT().runs.requests.detail.followUps.commit;
+  const text = f.commit === 'pinned' ? c.pinned : f.commit === 'current' ? c.current(f.repo ?? '') : f.commit === 'editor' ? c.editor : undefined;
+  return text ? <span className="text-muted-foreground"> · {text}</span> : null;
 }
 
 function stopLabel(stop: string, labels: Record<string, string>): string {
@@ -83,6 +92,7 @@ export function RunRequestFollowUps({
                       />
                       <span className="font-mono">{name}</span>
                       {f.template_revision ? <span className="text-muted-foreground">· {d.revision(f.template_revision)}</span> : null}
+                      <CommitNote f={f} />
                     </label>
                   ) : (
                     <span className="text-xs">
@@ -91,6 +101,7 @@ export function RunRequestFollowUps({
                         <span className="text-muted-foreground"> · {d.revision(f.template_revision)}</span>
                       ) : null}
                       {f.stop && <span className="text-muted-foreground"> · {stopLabel(f.stop, d.stop)}</span>}
+                      <CommitNote f={f} />
                     </span>
                   )}
                   {followUps.start && (f.follow_ups ?? []).length > 0 && <Tree nodes={f.follow_ups ?? []} />}

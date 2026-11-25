@@ -771,9 +771,12 @@ requests of repository playbooks. A worker that cannot find the commit (it was
 removed from the repository by a force-push and the server no longer hands it out)
 fails the run with "commit <sha> is no longer in the repository". **An older
 manager would hand a pinned job to any worker, which would run the branch tip**:
-stop every manager instance before the new version starts, as for 00115. Manual,
-schedule, webhook and chained runs are not pinned and are not affected. Agents are
-not affected.
+stop every manager instance before the new version starts, as for 00115. A
+follow-up started by a pinned run runs the same commit when its template's playbook
+comes from the same repository (and so also needs an updated worker); a follow-up of
+another repository or an editor playbook runs as before, and the request page says
+which. Manual, schedule and webhook runs are not pinned and are not affected. Agents
+are not affected.
 
 ## Behaviour changes to check after an upgrade
 
@@ -1580,6 +1583,14 @@ not affected.
     new host page that reaches an older instance forgets the **whole item**:
     every metric's current value, state and history, its discovery row, and its
     alerts closed as `forgotten`.
+- **Run requests of repository playbooks wait for one sync (spec 2026-11-25 A, migration 00123):**
+  every pending and new run request whose template runs a playbook from a repository
+  cannot be approved until that repository has been synced once by the new version
+  (the request page says "did not record what it fetched. Sync it again, then
+  approve."). To check after the upgrade: sync each repository that assistants request
+  runs for (the repository page's Sync, a webhook or a schedule), and update every
+  zone's workers, since a worker older than this release never takes an approved run
+  of a repository playbook (the run view says it waits for one).
 
 ## Roll order
 

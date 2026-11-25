@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -33,13 +34,47 @@ func checkPin(tmpl TemplateRow, req RunRequest) error {
 	if !commitPattern.MatchString(req.PinnedCommit) {
 		return fmt.Errorf("%w: %q is not a full commit id", ErrInvalidInput, req.PinnedCommit)
 	}
-	if req.Trigger != TriggerManual {
-		return fmt.Errorf("%w: only an approved run is pinned to a commit, not a %s run", ErrInvalidInput, req.Trigger)
+	if req.Trigger != TriggerManual && req.Trigger != TriggerChain {
+		return fmt.Errorf("%w: only an approved run and its follow-ups are pinned to a commit, not a %s run", ErrInvalidInput, req.Trigger)
 	}
 	if tmpl.PlaybookRepo == nil {
 		return fmt.Errorf("%w: the template's playbook comes from no repository, so there is no commit to pin", ErrInvalidInput)
 	}
 	return nil
+}
+
+// chainPin is the commit a chained run inherits (controller ruling, spec
+// 2026-11-25 A): its parent run group's pin when the parent ran a playbook
+// of the same repository as tmpl, so a follow-up of an approved run runs
+// the code its approver saw. A follow-up of another repository, an editor
+// playbook, or a parent without a pin is not pinned, as before. The
+// parent's repository is its template's as it is now; a parent template
+// that is gone pins nothing.
+func (s *Service) chainPin(ctx context.Context, orgID uuid.UUID, tmpl TemplateRow, req RunRequest) (string, error) {
+	if req.Trigger != TriggerChain || req.TriggerRef == nil || req.PinnedCommit != "" || tmpl.PlaybookRepo == nil {
+		return req.PinnedCommit, nil
+	}
+	parents, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: req.TriggerRef}, "", replayListLimit)
+	if err != nil {
+		return "", fmt.Errorf("list the parent run: %w", err)
+	}
+	for _, p := range parents {
+		if p.PinnedCommit == "" || p.TemplateID == nil {
+			continue
+		}
+		pt, err := s.templates.TemplateLookup(ctx, orgID, *p.TemplateID)
+		if errors.Is(err, ErrNotFound) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("look up the parent run's template: %w", err)
+		}
+		if pt.PlaybookRepo != nil && *pt.PlaybookRepo == *tmpl.PlaybookRepo {
+			return p.PinnedCommit, nil
+		}
+		return "", nil
+	}
+	return "", nil
 }
 
 // checkClaimPin refuses, at the claim, a pinned job that cannot run its
@@ -85,12 +120,13 @@ func SyncedRef(url, branch, subpath string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// recordSyncedRef writes what a sync's claim sends the worker to fetch,
-// the repository of its built kind payload, onto the job's stored payload:
-// the finish hands it to the source sink beside the commit the sync read,
-// so the record says which URL, branch and subpath that commit came from,
-// whatever is edited while the sync runs. A re-claim writes it again with
-// what that claim sends.
+// recordSyncedRef writes what a sync's claim sends the worker to fetch, the
+// repository of its built kind payload, as synced_ref onto the job's
+// stored payload: the finish hands it to the source sink beside the commit
+// the sync read, so the record says which URL, branch and subpath that
+// commit came from, whatever is edited while the sync runs. Only that key
+// is set (jsonb_set), so every other key of the stored payload stays as
+// it is. A re-claim writes it again with what that claim sends.
 func (q *SQLQueue) recordSyncedRef(ctx context.Context, job Job, kindPayload string) error {
 	var sent struct {
 		Repo struct {
@@ -102,20 +138,12 @@ func (q *SQLQueue) recordSyncedRef(ctx context.Context, job Job, kindPayload str
 	if err := json.Unmarshal([]byte(kindPayload), &sent); err != nil {
 		return fmt.Errorf("sync_repo job %s: read its claim's repository: %w", job.ID, err)
 	}
-	opened, err := q.openKindPayload(job)
-	if err != nil {
-		return err
-	}
-	var sp syncPayload
-	if err := json.Unmarshal([]byte(opened), &sp); err != nil {
-		return fmt.Errorf("sync_repo job %s: kind payload: %w", job.ID, err)
-	}
-	sp.SyncedRef = SyncedRef(sent.Repo.URL, sent.Repo.Branch, sent.Repo.Subpath)
-	b, err := json.Marshal(sp)
-	if err != nil {
-		return fmt.Errorf("encode sync payload: %w", err)
-	}
-	if _, err := q.db.Exec(ctx, `UPDATE jobs SET payload = $2 WHERE id = $1 AND status = 'running'`, job.ID, b); err != nil {
+	ref := SyncedRef(sent.Repo.URL, sent.Repo.Branch, sent.Repo.Subpath)
+	// A job no longer running (cancelled in between) records nothing: its
+	// finish stores no sources.
+	if _, err := q.db.Exec(ctx,
+		`UPDATE jobs SET payload = jsonb_set(payload, '{synced_ref}', to_jsonb($2::text))
+		 WHERE id = $1 AND status = 'running' AND jsonb_typeof(payload) = 'object'`, job.ID, ref); err != nil {
 		return fmt.Errorf("record what sync %s fetches: %w", job.ID, err)
 	}
 	return nil

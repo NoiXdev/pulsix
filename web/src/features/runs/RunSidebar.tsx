@@ -92,6 +92,13 @@ export function RunSidebar({ org, job, status, canRun }: { org: string; job: Job
         </p>
       )}
       <RunFacts org={org} job={job} />
+      {/* A pinned run waits for a worker that checks out its commit; an
+          older one never takes it (spec 2026-11-25 A). */}
+      {job.pinned_commit && status === 'queued' && (
+        <p role="note" aria-label={t.runs.detail.pinnedCommit} className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
+          {t.runs.detail.pinnedWaiting}
+        </p>
+      )}
       {dismissable && (
         <div>
           <Button type="button" onClick={() => void onDismiss()} disabled={dismiss.isPending}>

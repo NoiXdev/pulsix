@@ -113,7 +113,7 @@ function CommitBlockedNote({ reasons }: { reasons: CommitBlockedReason[] }) {
  * banner above all, its limit with the template's, the hosts it narrows to
  * over the targets and its extra vars (never secret) by value.
  */
-export function RunPictureSections({ org, picture, approved }: { org: string; picture: RunPicture; approved?: boolean }) {
+export function RunPictureSections({ org, picture, status }: { org: string; picture: RunPicture; status: string }) {
   const t = useT();
   const d = t.runs.requests.detail;
   const s = d.section;
@@ -127,7 +127,18 @@ export function RunPictureSections({ org, picture, approved }: { org: string; pi
   const source = picture.playbook.source;
   const sourceLabel = Object.hasOwn(d.sources, source) ? d.sources[source as keyof typeof d.sources] : source;
   const commit = picture.commit;
-  const blocked = commit?.blocked ?? [];
+  // What runs, and what holds the approval, only matter while the request
+  // can still be approved; an approved one ran its stored commit; a
+  // rejected or expired one shows the commit alone.
+  const pending = status === 'pending';
+  const blocked = pending ? (commit?.blocked ?? []) : [];
+  const commitNote = pending
+    ? commit?.source === 'original_run'
+      ? d.commitOriginal
+      : d.commitLive
+    : status === 'approved'
+      ? d.commitPinned
+      : undefined;
 
   return (
     <>
@@ -171,7 +182,7 @@ export function RunPictureSections({ org, picture, approved }: { org: string; pi
                     value: (
                       <span className="flex flex-col gap-0.5">
                         {commit.sha ? <CommitId sha={commit.sha} /> : <span className="text-muted-foreground">{d.commitUnknown}</span>}
-                        <span className="text-[11px] text-muted-foreground">{approved ? d.commitPinned : d.commitLive}</span>
+                        {commitNote && <span className="text-[11px] text-muted-foreground">{commitNote}</span>}
                       </span>
                     ),
                   },
@@ -179,7 +190,7 @@ export function RunPictureSections({ org, picture, approved }: { org: string; pi
               : []),
           ]}
         />
-        {!approved && blocked.length > 0 && (
+        {blocked.length > 0 && (
           <div className="mt-3">
             <CommitBlockedNote reasons={blocked} />
           </div>

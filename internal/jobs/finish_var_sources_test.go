@@ -425,13 +425,21 @@ func TestSyncRecordsWhatItFetched(t *testing.T) {
 		f := newVarSourcesFixture(t, "jobs-sync-ref-org")
 		f.queue.SetRepoSource(fixedRepo{jobs.RepoRef{ID: f.repoID, URL: "https://git.example.com/acme/infra.git", Branch: "main", Subpath: "ansible"}})
 		j := newJob(f.org, f.zone, jobs.KindSyncRepo, jobs.StatusQueued)
-		payload := json.RawMessage(`{"repo_id":"` + f.repoID.String() + `"}`)
+		// A field this version does not know survives the claim's write.
+		payload := json.RawMessage(`{"repo_id":"` + f.repoID.String() + `","later":{"n":1}}`)
 		if err := f.store.CreateJob(db.WithOrgScope(ctx, f.org), j, payload); err != nil {
 			t.Fatal(err)
 		}
 		c, err := f.queue.Claim(ctx, f.org, []uuid.UUID{f.zone}, "v1")
 		if err != nil || c == nil {
 			t.Fatalf("Claim = %+v, %v", c, err)
+		}
+		var later, ref string
+		if err := f.d.Pool().QueryRow(ctx, `SELECT payload->'later'->>'n', payload->>'synced_ref' FROM jobs WHERE id = $1`, j.ID).Scan(&later, &ref); err != nil {
+			t.Fatal(err)
+		}
+		if later != "1" || ref != jobs.SyncedRef("https://git.example.com/acme/infra.git", "main", "ansible") {
+			t.Fatalf("stored payload kept later.n %q, synced_ref %q", later, ref)
 		}
 		// Edited after the claim: the record still says what the sync fetched.
 		if _, err := f.d.Exec(db.WithOrgScope(ctx, f.org), `UPDATE git_repos SET branch = 'dev' WHERE id = $1`, f.repoID); err != nil {

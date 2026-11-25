@@ -11,8 +11,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/runrequests"
+	"github.com/noixdev/pulsix/internal/templates"
 )
 
 // fakeCommits answers the repository's last synced commit and records the
@@ -138,14 +140,22 @@ func TestPictureOfARetryShowsTheOriginalJobsCommit(t *testing.T) {
 	w := newWorld()
 	retry.TemplateID = w.x
 	w.syncs.pins[job], w.syncs.active = commitY, true
-	if p := w.picture(t, retry); p.Commit == nil || p.Commit.SHA != commitY || len(p.Commit.Blocked) != 0 {
-		t.Fatalf("a pinned job's retry shows %+v, want %s", p.Commit, commitY)
+	if p := w.picture(t, retry); p.Commit == nil || p.Commit.SHA != commitY || len(p.Commit.Blocked) != 0 ||
+		p.Commit.Source != runrequests.CommitFromOriginalRun {
+		t.Fatalf("a pinned job's retry shows %+v, want %s from the original run", p.Commit, commitY)
+	}
+	// Approved, it shows the same, so the claim's picture matches.
+	approved := retry
+	approved.Status, approved.PinnedCommit = runrequests.StatusApproved, commitY
+	if p := w.picture(t, approved); p.Commit == nil || p.Commit.SHA != commitY || p.Commit.Source != runrequests.CommitFromOriginalRun {
+		t.Fatalf("an approved retry of a pinned job shows %+v", p.Commit)
 	}
 
 	w = newWorld()
 	retry.TemplateID = w.x
 	w.syncs.active = true
-	if p := w.picture(t, retry); p.Commit == nil || p.Commit.SHA != commitX || !slices.Equal(p.Commit.Blocked, []string{runrequests.BlockedSyncRunning}) {
+	if p := w.picture(t, retry); p.Commit == nil || p.Commit.SHA != commitX || !slices.Equal(p.Commit.Blocked, []string{runrequests.BlockedSyncRunning}) ||
+		p.Commit.Source != "" {
 		t.Fatalf("an unpinned job's retry shows %+v, want the live commit", p.Commit)
 	}
 
@@ -208,5 +218,63 @@ func TestRunAndRetryEnqueueThePin(t *testing.T) {
 	}
 	if fx.jobs.retryPin != commitY {
 		t.Fatalf("retry pinned to %q, want %s", fx.jobs.retryPin, commitY)
+	}
+}
+
+// TestPictureSaysWhatEachFollowUpRuns (controller ruling, fix round 1): with
+// a pinned run, a follow-up whose playbook comes from the same repository
+// runs the same commit, one of another repository runs that repository's
+// state when it starts, and an editor playbook runs as saved; a follow-up
+// below one that is not pinned is not pinned either. A picture without a
+// commit says nothing of it, so its fingerprint is unchanged.
+func TestPictureSaysWhatEachFollowUpRuns(t *testing.T) {
+	w := newWorld()
+	w.settings.on = true
+	z, editor, otherRepo := id(), id(), id()
+	pbSame, pbOther, pbEditor := id(), id(), id()
+	path, inline := "db.yml", "- hosts: all"
+	w.pbs[pbSame] = playbooks.Playbook{ID: pbSame, Source: "repo", Path: &path, RepoID: &w.repo}
+	w.pbs[pbOther] = playbooks.Playbook{ID: pbOther, Source: "repo", Path: &path, RepoID: &otherRepo}
+	w.pbs[pbEditor] = playbooks.Playbook{ID: pbEditor, Source: "editor", Inline: &inline}
+	w.repos[otherRepo] = repos.Repo{ID: otherRepo, Name: "apps"}
+	// X → Y (same repository) → Z (another repository) → Y' (same as X, but
+	// below Z), and X → E (editor).
+	y2 := id()
+	w.tmpls.fakeTemplates[w.y] = templates.Template{ID: w.y, Name: "Y", Revision: 5, PlaybookID: pbSame,
+		FollowUps: []templates.FollowUp{{TemplateID: z, Name: "Z"}}}
+	w.tmpls.fakeTemplates[z] = templates.Template{ID: z, Name: "Z", Revision: 1, PlaybookID: pbOther,
+		FollowUps: []templates.FollowUp{{TemplateID: y2, Name: "Y2"}}}
+	w.tmpls.fakeTemplates[y2] = templates.Template{ID: y2, Name: "Y2", Revision: 1, PlaybookID: pbSame}
+	w.tmpls.fakeTemplates[editor] = templates.Template{ID: editor, Name: "E", Revision: 1, PlaybookID: pbEditor}
+	x := w.tmpls.fakeTemplates[w.x]
+	x.FollowUps = append(x.FollowUps, templates.FollowUp{TemplateID: editor, Name: "E"})
+	w.tmpls.fakeTemplates[w.x] = x
+
+	p := w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x, Status: runrequests.StatusPending})
+	if p.FollowUps == nil || len(p.FollowUps.Templates) != 2 {
+		t.Fatalf("follow-ups = %+v", p.FollowUps)
+	}
+	y, e := p.FollowUps.Templates[0], p.FollowUps.Templates[1]
+	if y.Commit != runrequests.FollowUpPinned || y.Repo != "" {
+		t.Fatalf("Y = %+v, want the pinned commit", y)
+	}
+	if e.Commit != runrequests.FollowUpEditor {
+		t.Fatalf("E = %+v, want an editor playbook", e)
+	}
+	if len(y.FollowUps) != 1 || y.FollowUps[0].Commit != runrequests.FollowUpCurrent || y.FollowUps[0].Repo != "apps" {
+		t.Fatalf("Z = %+v, want the current state of apps", y.FollowUps)
+	}
+	if zz := y.FollowUps[0].FollowUps; len(zz) != 1 || zz[0].Commit != runrequests.FollowUpCurrent || zz[0].Repo != "infra" {
+		t.Fatalf("Y2 = %+v, want the current state of infra", zz)
+	}
+
+	// Approved before pins: no commit, no follow-up annotations.
+	legacy := w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x, Status: runrequests.StatusApproved})
+	doc, err := json.Marshal(legacy.FollowUps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), `"commit"`) || strings.Contains(string(doc), `"repo"`) {
+		t.Fatalf("an unpinned picture's follow-ups say what they run: %s", doc)
 	}
 }

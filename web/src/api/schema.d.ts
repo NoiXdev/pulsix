@@ -7281,9 +7281,17 @@ export interface components {
             blocked?: ("never_synced" | "not_reported" | "sync_unrecorded" | "repo_changed" | "sync_running")[] | null;
             /** @description The full commit id; absent when no sync recorded one */
             sha?: string;
+            /**
+             * @description original_run when a retry runs the commit its original run used; absent otherwise
+             * @enum {string}
+             */
+            source?: "original_run";
         };
         PictureFollowUp: {
+            /** @enum {string} */
+            commit?: "pinned" | "current" | "editor";
             follow_ups?: components["schemas"]["PictureFollowUp"][] | null;
+            repo?: string;
             stop?: string;
             template_id: string;
             template_name: string;

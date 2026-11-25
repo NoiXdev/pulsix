@@ -7,6 +7,7 @@ package runner
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -109,5 +110,31 @@ func TestRepoSpecReadsThePinnedCommit(t *testing.T) {
 				t.Fatalf("Commit = %q, %v; want %q", spec.Commit, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestFetchRepoFetchesAPinnedCommitNoLongerOnTheBranch: the branch was
+// rewritten (a force-push) after the sync the approver saw, so the branch
+// fetch no longer brings the pinned commit; the server still has it under
+// another ref, and the worker fetches it by id and checks it out.
+func TestFetchRepoFetchesAPinnedCommitNoLongerOnTheBranch(t *testing.T) {
+	source := gitFixture(t)
+	base := headOf(t, source)
+	gitCommit(t, source, "- hosts: all\n  tasks: []\n# rewritten away\n")
+	pinned := headOf(t, source)
+	git := gitOnPATH(t)
+	for _, args := range [][]string{{"branch", "keep", pinned}, {"reset", "--hard", base}} {
+		if out, err := exec.Command(git, append([]string{"-C", source}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	r := &Runner{GitBin: git}
+	s := gitRepoSpec{OrgID: orgID, RepoID: uuid.Must(uuid.NewV7()), URL: source, Branch: "main", Subpath: "playbooks/site.yml", Commit: pinned}
+	path, err := r.fetchRepo(context.Background(), s, "", t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("fetchRepo: %v", err)
+	}
+	if got := headOf(t, strings.TrimSuffix(path, "/playbooks/site.yml")); got != pinned || !strings.Contains(playbookText(t, path), "rewritten away") {
+		t.Fatalf("clone at %s, want the pinned %s", got, pinned)
 	}
 }

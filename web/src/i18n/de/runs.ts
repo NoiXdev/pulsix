@@ -150,6 +150,8 @@ export const deRuns: Messages['runs'] = {
     finished: 'Beendet',
     runGroup: 'Laufgruppe',
     pinnedCommit: 'Festgelegter Commit',
+    pinnedWaiting:
+      'Warte auf einen Worker, der einen festgelegten Commit ausführen kann. Ältere Worker übernehmen einen solchen Lauf nie: Bleibt er in der Warteschlange, aktualisiere die Worker der Zone.',
     groupCount: (n: number) => (n === 1 ? '1 Job' : `${n} Jobs`),
     recordedTitle: 'Beim Übernehmen dieses Laufs festgehalten; spätere Änderungen an Repository oder Vorlage wirken sich nicht darauf aus.',
     computedTitle: 'Für diesen Lauf gibt es noch keinen Eintrag; daher wird die aktuelle Konfiguration von Repository und Vorlage gelesen.',
@@ -251,6 +253,11 @@ export const deRuns: Messages['runs'] = {
         hint: 'Folgeläufe starten später, wenn dieser Lauf erfolgreich ist, auf den Hosts, auf denen er lief. Diese Seite zeigt sie mit Name und Revision, nicht was sie ausführen.',
         truncated: 'Mehr Folgeläufe, als diese Seite anzeigen kann; die Freigabe startet keinen davon.',
         revision: (n: number) => `Revision ${n}`,
+        commit: {
+          pinned: 'führt denselben Commit aus',
+          current: (repo: string) => `führt den aktuellen Stand von ${repo} aus`,
+          editor: 'führt sein Playbook so aus, wie es beim Start gespeichert ist',
+        },
         stop: {
           in_chain: 'schon in dieser Kette',
           too_deep: 'Kette zu lang',
@@ -285,8 +292,9 @@ export const deRuns: Messages['runs'] = {
       gitCredential: 'Git-Zugangsdaten',
       commit: 'Commit',
       commitUnknown: 'noch nicht bekannt',
-      commitLive: 'Der Commit des letzten Syncs des Repositorys. Genau dieser Commit läuft.',
-      commitPinned: 'Bei der Freigabe festgelegt. Genau dieser Commit läuft.',
+      commitLive: 'Der Commit des letzten Syncs des Repositorys. Der angefragte Lauf führt genau diesen Commit aus.',
+      commitOriginal: 'Der Commit, den der ursprüngliche Lauf verwendet hat. Die Wiederholung führt genau diesen Commit aus.',
+      commitPinned: 'Der freigegebene Lauf hat diesen Commit ausgeführt.',
       commitBlocked: {
         title: 'Die Freigabe wartet auf das Repository',
         reasons: {

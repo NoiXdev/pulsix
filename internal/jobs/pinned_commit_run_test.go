@@ -104,3 +104,51 @@ func TestRetryRunsTheOriginalJobsCommit(t *testing.T) {
 		})
 	}
 }
+
+// TestFollowUpOfAPinnedRunOnTheSameRepositoryIsPinned (controller ruling,
+// fix round 1): a follow-up started by a pinned run runs the same commit
+// when its template's playbook comes from the same repository; a follow-up
+// of another repository or an editor playbook runs as before, and so does
+// every follow-up of an unpinned run.
+func TestFollowUpOfAPinnedRunOnTheSameRepositoryIsPinned(t *testing.T) {
+	f, inline := pinFixture(t)
+	sameRepo, otherRepo := id7(), id7()
+	parentRow := f.tmpl.byID[f.tpl]
+	f.tmpl.byID[sameRepo] = jobs.TemplateRow{ID: sameRepo, OrgID: f.org, Scope: json.RawMessage(`{}`), PlaybookRepo: parentRow.PlaybookRepo, PlaybookPath: "db.yml"}
+	other := id7()
+	f.tmpl.byID[otherRepo] = jobs.TemplateRow{ID: otherRepo, OrgID: f.org, Scope: json.RawMessage(`{}`), PlaybookRepo: &other, PlaybookPath: "site.yml"}
+
+	parent := func(t *testing.T, pinned string) uuid.UUID {
+		t.Helper()
+		got, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{Trigger: jobs.TriggerManual, PinnedCommit: pinned})
+		if err != nil || len(got) == 0 {
+			t.Fatalf("parent = %+v, %v", got, err)
+		}
+		return got[0].RunGroupID
+	}
+	chainRun := func(t *testing.T, tmpl, group uuid.UUID) string {
+		t.Helper()
+		got, err := f.svc.EnqueueRunWith(ctx, f.org, tmpl, jobs.RunRequest{
+			Trigger: jobs.TriggerChain, TriggerRef: &group, IdempotencyKey: "chain:" + id7().String(),
+			Chain: &jobs.ChainContext{RootTrigger: jobs.TriggerManual, Depth: 1, Path: []uuid.UUID{f.tpl}},
+		})
+		if err != nil || len(got) == 0 {
+			t.Fatalf("follow-up = %+v, %v", got, err)
+		}
+		return f.store.jobs[got[0].ID].j.PinnedCommit
+	}
+
+	pinnedGroup := parent(t, pin)
+	if got := chainRun(t, sameRepo, pinnedGroup); got != pin {
+		t.Fatalf("same repository follow-up pinned to %q, want %s", got, pin)
+	}
+	if got := chainRun(t, otherRepo, pinnedGroup); got != "" {
+		t.Fatalf("other repository follow-up pinned to %q, want none", got)
+	}
+	if got := chainRun(t, inline, pinnedGroup); got != "" {
+		t.Fatalf("editor playbook follow-up pinned to %q, want none", got)
+	}
+	if got := chainRun(t, sameRepo, parent(t, "")); got != "" {
+		t.Fatalf("follow-up of an unpinned run pinned to %q, want none", got)
+	}
+}

@@ -34,6 +34,10 @@ type FollowUpTemplate struct {
 	Name      string
 	Revision  int64
 	FollowUps []FollowUpRef
+	// RepoID and RepoName are the repository its playbook comes from, nil
+	// and "" for an editor playbook.
+	RepoID   *uuid.UUID
+	RepoName string
 }
 
 // FollowUpLookup reads a template's current follow-up data; found is false
@@ -57,6 +61,14 @@ type FollowUpRoot struct {
 // path, then deleted. Stop-marked nodes are leaves. Every emitted node
 // counts toward MaxPictureFollowUps; past it the walk ends with Truncated.
 func BuildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, lookup FollowUpLookup) (*PictureFollowUps, error) {
+	return buildFollowUps(ctx, start, roots, lookup, nil)
+}
+
+// buildFollowUps is BuildFollowUps for a run pinned to a commit of
+// repository pinRepo (nil: not pinned). Each node then says what it runs
+// (PictureFollowUp.Commit): a follow-up of the same repository under
+// pinned runs only runs the same commit (jobs.Service.chainPin).
+func buildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, lookup FollowUpLookup, pinRepo *uuid.UUID) (*PictureFollowUps, error) {
 	if len(roots) == 0 {
 		return nil, nil
 	}
@@ -67,9 +79,9 @@ func BuildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, looku
 		}
 		return out, nil
 	}
-	w := walker{lookup: lookup}
+	w := walker{lookup: lookup, pinRepo: pinRepo}
 	for _, r := range roots {
-		n, ok, err := w.node(ctx, r.TemplateID, r.Name, r.Depth, r.Path)
+		n, ok, err := w.node(ctx, r.TemplateID, r.Name, r.Depth, r.Path, true)
 		if err != nil {
 			return nil, err
 		}
@@ -84,13 +96,15 @@ func BuildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, looku
 
 type walker struct {
 	lookup    FollowUpLookup
+	pinRepo   *uuid.UUID
 	emitted   int
 	truncated bool
 }
 
 // node emits id at the row depth and path of its parent run; ok is false
-// when the cap stopped the walk before it.
-func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int, path []uuid.UUID) (PictureFollowUp, bool, error) {
+// when the cap stopped the walk before it. parentPinned says that the run
+// starting it is pinned.
+func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int, path []uuid.UUID, parentPinned bool) (PictureFollowUp, bool, error) {
 	if w.emitted >= MaxPictureFollowUps {
 		w.truncated = true
 		return PictureFollowUp{}, false, nil
@@ -114,9 +128,20 @@ func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int,
 		return n, true, nil
 	}
 	n.TemplateName, n.TemplateRevision = t.Name, t.Revision
+	pinned := false
+	if w.pinRepo != nil {
+		switch {
+		case parentPinned && t.RepoID != nil && *t.RepoID == *w.pinRepo:
+			n.Commit, pinned = FollowUpPinned, true
+		case t.RepoID != nil:
+			n.Commit, n.Repo = FollowUpCurrent, t.RepoName
+		default:
+			n.Commit = FollowUpEditor
+		}
+	}
 	childPath := append(slices.Clone(path), id)
 	for _, c := range t.FollowUps {
-		child, ok, err := w.node(ctx, c.TemplateID, c.Name, depth+1, childPath)
+		child, ok, err := w.node(ctx, c.TemplateID, c.Name, depth+1, childPath, pinned)
 		if err != nil {
 			return PictureFollowUp{}, false, err
 		}
