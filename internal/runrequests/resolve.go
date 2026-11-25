@@ -112,9 +112,11 @@ type Sources struct {
 	// commit (spec 2026-11-25 A, D3).
 	Commits  CommitSource
 	SyncJobs SyncJobSource
+	// RepoSyncs starts the sync a sync_first request waits for.
+	RepoSyncs RepoSyncer
 }
 
-// Resolver implements Pictures, Enqueuer and Validator over the existing
+// Resolver implements Pictures, Enqueuer, Validator and Syncer over the existing
 // domain services, so the manager and the API tests wire the same code.
 type Resolver struct{ src Sources }
 

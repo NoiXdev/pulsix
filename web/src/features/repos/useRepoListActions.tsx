@@ -37,8 +37,8 @@ export function useRepoListActions(org: string, opts: RepoListActionsOptions): {
     if (syncing.has(repo.id)) return;
     setSyncing((p) => new Set(p).add(repo.id));
     try {
-      const { job } = await sync.mutateAsync(repo.id);
-      toast.show(t.repos.list.syncStarted(repo.name));
+      const { job, already_running: already } = await sync.mutateAsync(repo.id);
+      toast.show(already ? t.repos.list.syncAlreadyRunning(repo.name) : t.repos.list.syncStarted(repo.name));
       void navigate({ to: '/o/$org/runs/$id', params: { org, id: job.id } });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : t.repos.list.syncError, 'destructive');

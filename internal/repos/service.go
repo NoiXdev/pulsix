@@ -170,7 +170,9 @@ type CredentialSource interface {
 // here so this package stays decoupled from the queue's construction; the
 // concrete jobs.Service implements it directly.
 type JobEnqueuer interface {
-	EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (jobs.Job, error)
+	// EnqueueSync queues a sync of the repository, or returns the one
+	// queued or running with alreadyRunning true.
+	EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (job jobs.Job, alreadyRunning bool, err error)
 }
 
 // Store persists repositories. Lookups that find nothing return
@@ -459,16 +461,17 @@ func (s *Service) ClearHostKey(ctx context.Context, orgID, id uuid.UUID) error {
 // Sync enqueues one sync_repo job for the repository (jobs.Service's
 // EnqueueSync, through the local port). The repo must exist; the job is
 // enqueued into the organization's default zone, which the jobs service
-// resolves.
-func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) (jobs.Job, error) {
+// resolves. A sync of the repository already queued or running is
+// returned instead, with alreadyRunning true (spec 2026-11-25 G).
+func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID) (job jobs.Job, alreadyRunning bool, err error) {
 	if _, err := s.store.Get(ctx, orgID, id); err != nil {
-		return jobs.Job{}, err
+		return jobs.Job{}, false, err
 	}
-	job, err := s.jobs.EnqueueSync(ctx, orgID, id, actor)
+	job, alreadyRunning, err = s.jobs.EnqueueSync(ctx, orgID, id, actor)
 	if err != nil {
-		return jobs.Job{}, fmt.Errorf("enqueue sync_repo: %w", err)
+		return jobs.Job{}, false, fmt.Errorf("enqueue sync_repo: %w", err)
 	}
-	return job, nil
+	return job, alreadyRunning, nil
 }
 
 // validate checks every editable field, resolving the credential (when

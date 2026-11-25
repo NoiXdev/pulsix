@@ -397,7 +397,7 @@ func TestQueueClaimSyncRepoCarriesPlainPayload(t *testing.T) {
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
 	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
 
-	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
+	job, _, err := svc.EnqueueSync(scoped, org, repoID, nil)
 	if err != nil {
 		t.Fatalf("EnqueueSync: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestQueueClaimSyncRepoCarriesTheGitServerPin(t *testing.T) {
 	reposSvc := repos.NewService(repos.NewSQLStore(d), credsSvc, svc)
 	queue.SetRepoSource(repoRefAdapter{reposSvc: reposSvc})
 
-	job, err := svc.EnqueueSync(scoped, org, repoID, nil)
+	job, _, err := svc.EnqueueSync(scoped, org, repoID, nil)
 	if err != nil {
 		t.Fatalf("EnqueueSync: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestQueueClaimSyncRepoCarriesTheGitServerPin(t *testing.T) {
 		unpinnedID, org); err != nil {
 		t.Fatal(err)
 	}
-	job, err = svc.EnqueueSync(scoped, org, unpinnedID, nil)
+	job, _, err = svc.EnqueueSync(scoped, org, unpinnedID, nil)
 	if err != nil {
 		t.Fatalf("EnqueueSync (unpinned): %v", err)
 	}

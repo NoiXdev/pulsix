@@ -538,6 +538,16 @@ SELECT EXISTS (
     AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
 );
 
+-- name: ActiveRepoSyncJob :one
+-- The oldest sync_repo job of the repository that is not terminal: the one
+-- a sync of it returns instead of queuing another (spec 2026-11-25 G).
+SELECT id FROM jobs
+WHERE org_id = sqlc.arg(org_id) AND kind = 'sync_repo'
+  AND payload->>'repo_id' = sqlc.arg(repo_id)::text
+  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+ORDER BY created_at, id
+LIMIT 1;
+
 -- name: RequeueWorkerJobs :many
 -- A revoked worker's claimed and running jobs go back to the queue while
 -- attempts remain (the claim already counted the attempt); the reason

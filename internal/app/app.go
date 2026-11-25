@@ -107,6 +107,9 @@ type App struct {
 	// stopChain stops the follow-up starter (job chaining), waiting for a
 	// batch in flight.
 	stopChain func()
+	// stopRunRequests stops the run request sweep (sync_first), waiting
+	// for a pass in flight.
+	stopRunRequests func()
 	// stopAuthReaper stops the expired-ceremony and expired-session reaper
 	// (backlog 1.21), waiting until its goroutine has returned.
 	stopAuthReaper func()
@@ -217,6 +220,9 @@ func (a *App) Close() {
 	}
 	if a.stopChain != nil {
 		a.stopChain()
+	}
+	if a.stopRunRequests != nil {
+		a.stopRunRequests()
 	}
 	if a.stopDispatch != nil {
 		a.stopDispatch()
@@ -703,10 +709,13 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc,
 		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
-		Commits: reposSvc, SyncJobs: jobsSvc,
+		Commits: reposSvc, SyncJobs: jobsSvc, RepoSyncs: reposSvc,
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
-		time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+		runRequestResolver, time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	// A request made with sync_first waits for its repository's sync: the
+	// sync's terminal transition moves it, in the same transaction.
+	jobsQueue.SetSyncWaiters(runRequestsSvc)
 	// An approved run stays bound to what the person approved until a
 	// worker claims it: the claim recomputes the run picture and compares
 	// the job's pinned commit with the one the approval stored.
@@ -841,6 +850,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	chainStarter := chain.NewStarter(chainStore, jobsSvc, NewChainTemplateNames(templatesSvc), maintenanceSvc, NewChainScheduleGuards(schedulesSvc), auditRec, time.Now, slog.Default(), chain.WithTick(o.chainTick))
 	chainStarter.SetNotifier(NewChainNotifier(outbox))
 	chainStop := startLoop(chainStarter.Run)
+	// The run request sweep: catches up on requests waiting for a sync
+	// whose finish did not move them (a queued sync cancelled outright, a
+	// sync that ended before its request was stored, one that never ends,
+	// a manager stopped in between). Several managers sweeping are safe:
+	// a request only moves while it still waits.
+	runRequestStop := startLoop(func(ctx context.Context) { runRequestsSvc.RunSweeper(ctx, runrequests.SweepInterval) })
 
 	// The notification dispatcher (spec §5): one per manager; the claim's
 	// SKIP LOCKED and lease make several safe. Stopped in Close and on
@@ -928,6 +943,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			inviteReaperStop()
 			tickerStop()
 			chainStop()
+			runRequestStop()
 			dispatchStop()
 			digestStop()
 			evalStop()
@@ -957,6 +973,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				inviteReaperStop()
 				tickerStop()
 				chainStop()
+				runRequestStop()
 				dispatchStop()
 				digestStop()
 				evalStop()
@@ -981,7 +998,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, locks: lockDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopRunRequests: runRequestStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

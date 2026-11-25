@@ -19,9 +19,10 @@ export interface RunRequestColumnsContext {
  * `run-requests`), sorted in the browser. The reason is the name column and
  * its row link, named by the reason too, opens the request (DataRow leaves
  * the link undescribed, as the cell repeats its label). A pending request
- * keeps its pill and its expiry countdown in the status column; the list's
- * own order (the pending ones first, soonest to expire on top) is what an
- * unsorted list shows.
+ * keeps its pill and its expiry countdown in the status column, one waiting
+ * for its sync says so; the list's own order (the pending ones first,
+ * soonest to expire on top, then the waiting ones) is what an unsorted list
+ * shows.
  */
 export function runRequestColumns({ t, templateName, dateTime, relative }: RunRequestColumnsContext): DataListColumn<RunRequest>[] {
   const r = t.runs.requests;
@@ -46,7 +47,10 @@ export function runRequestColumns({ t, templateName, dateTime, relative }: RunRe
       render: (q) => (
         <span className="flex flex-col items-start gap-1">
           <Pill tone={requestTone(q.status)}>{r.status[q.status]}</Pill>
-          {q.status === 'pending' && <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.expires(relative(q.expires_at))}</span>}
+          {q.status === 'pending' && q.expires_at && (
+            <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.expires(relative(q.expires_at))}</span>
+          )}
+          {q.status === 'waiting_for_sync' && <span className={`text-muted-foreground ${CELL_MINOR}`}>{r.waitsForSync}</span>}
         </span>
       ),
     },

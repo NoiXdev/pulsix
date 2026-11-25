@@ -32,6 +32,8 @@ export const enRepos = {
     synced: (date: string) => `synced ${date}`,
     neverSynced: 'never synced',
     syncStarted: (name: string) => `Sync of ${name} started`,
+    /** The repository's sync was already queued or running; that one opens. */
+    syncAlreadyRunning: (name: string) => `A sync of ${name} was already running`,
     syncError: 'Sync failed',
     sync: 'Sync',
     empty: 'No repositories yet.',

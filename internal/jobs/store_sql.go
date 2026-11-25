@@ -266,6 +266,46 @@ func (s *SQLStore) HasActiveTemplateJob(ctx context.Context, orgID, templateID u
 	return ok, nil
 }
 
+// CreateSyncJobOnce implements Store: under a per-repository advisory
+// transaction lock, the oldest sync of the repository that is not terminal
+// is returned when there is one, and j is inserted otherwise.
+func (s *SQLStore) CreateSyncJobOnce(ctx context.Context, j Job, payload json.RawMessage, repoID uuid.UUID) (Job, bool, error) {
+	if err := checkTrigger(j); err != nil {
+		return Job{}, false, err
+	}
+	out, existing := j, false
+	err := s.d.WithOrg(ctx, j.OrgID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, repoSyncLockKeyPrefix+repoID.String()); err != nil {
+			return fmt.Errorf("lock repository sync: %w", err)
+		}
+		q := gen.New(tx)
+		id, err := q.ActiveRepoSyncJob(ctx, gen.ActiveRepoSyncJobParams{OrgID: j.OrgID, RepoID: repoID.String()})
+		switch {
+		case err == nil:
+			row, err := q.GetJob(ctx, gen.GetJobParams{OrgID: j.OrgID, ID: id})
+			if err != nil {
+				return mapErr(err)
+			}
+			out, existing = toJobDetail(row), true
+			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("look up the repository's sync: %w", err)
+		}
+		if _, err := q.CreateJob(ctx, createJobParams(j, payload)); err != nil {
+			return fmt.Errorf("create job: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Job{}, false, err
+	}
+	return out, existing, nil
+}
+
+// repoSyncLockKeyPrefix namespaces the per-repository sync lock within
+// hashtext's key space.
+const repoSyncLockKeyPrefix = "repo-sync:"
+
 func (s *SQLStore) HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error) {
 	ok, err := s.q.HasActiveRepoSync(ctx, gen.HasActiveRepoSyncParams{OrgID: orgID, RepoID: repoID.String()})
 	if err != nil {

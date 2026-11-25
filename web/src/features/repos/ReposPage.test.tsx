@@ -265,6 +265,23 @@ describe('ReposPage', () => {
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
   });
 
+  it('says when the sync was already running and opens that sync', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/repos': { repos: [repo()] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [gitKey] },
+      'POST /api/v1/orgs/acme/repos/r1/sync': {
+        job: { id: 'job-1', zone_id: 'z1', kind: 'sync_repo', status: 'running', run_group_id: 'g1', trigger: 'manual', created_at: '' },
+        already_running: true,
+      },
+    });
+    renderPage();
+    await chooseRowAction(user, 'infra', 'Sync');
+    expect(await screen.findByText('A sync of infra was already running')).toBeInTheDocument();
+    expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
+  });
+
   it('keeps Sync usable on other rows while one sync is running', async () => {
     const user = userEvent.setup();
     mockApi({

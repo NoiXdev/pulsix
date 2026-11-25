@@ -50,6 +50,10 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	switch r.Status {
 	case StatusExpired:
 		return Approved{}, ErrExpired
+	case StatusWaitingForSync:
+		return Approved{}, ErrWaitingForSync
+	case StatusFailed:
+		return Approved{}, ErrSyncFailed
 	case StatusPending:
 	default:
 		return Approved{}, ErrDecided

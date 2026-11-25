@@ -349,6 +349,7 @@ func WithRunRequestClock(now func() time.Time) Option {
 	return func(s *Server) {
 		s.Deps.RunRequests = newRunRequests(s.DB, s.Deps, now)
 		s.Queue.SetClaimGuard(s.Deps.RunRequests)
+		s.Queue.SetSyncWaiters(s.Deps.RunRequests)
 	}
 }
 
@@ -368,9 +369,9 @@ func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.
 		Vars:     app.NewRunRequestVars(templates.NewSQLStore(d), deps.Renderer, crypto.NewBox(testMasterKey)),
 		VarsKey:  runrequests.VarsDigestKey(testMasterKey),
 		Settings: deps.Assistant, FollowUpRuns: chain.NewSQLStore(d), Overrides: deps.Templates,
-		Commits: deps.Repos, SyncJobs: deps.Jobs,
+		Commits: deps.Repos, SyncJobs: deps.Jobs, RepoSyncs: deps.Repos,
 	})
-	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 }
 
 // WithRetentionMaxDays sets the instance retention maximum the monitoring
@@ -809,6 +810,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	// Personal tokens (backlog 3.100), wired as app.Build wires them.
 	s.Deps.PersonalTokens = personaltokens.NewService(s.PersonalTokens, tenancySvc, time.Now, personaltokens.WithSessionCheck(s.Sessions))
 	s.Queue.SetClaimGuard(s.Deps.RunRequests)
+	// A sync's finish moves the run requests waiting for it, as in
+	// production; the sweep is not started here (tests call Sweep).
+	s.Queue.SetSyncWaiters(s.Deps.RunRequests)
 	for _, opt := range opts {
 		opt(s)
 	}

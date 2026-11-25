@@ -227,6 +227,8 @@ export const enRuns = {
       approved: 'approved',
       rejected: 'rejected',
       expired: 'expired',
+      waiting_for_sync: 'waiting for sync',
+      failed: 'failed',
     },
     kind: {
       run: 'run',
@@ -234,6 +236,8 @@ export const enRuns = {
     },
     /** `relative` is the formatted distance, e.g. "in 30 minutes". */
     expires: (relative: string) => `expires ${relative}`,
+    /** Under a request waiting for its repository's sync (spec 2026-11-25 A). */
+    waitsForSync: 'waits for the sync',
     detail: {
       title: 'Run request',
       reason: 'Reason',
@@ -249,6 +253,15 @@ export const enRuns = {
       },
       requestedAt: 'Requested',
       expiresAt: 'Expires',
+      /** The expiry of a request waiting for its sync (spec 2026-11-25 A). */
+      expiryAfterSync: 'starts once the sync has finished',
+      endedAt: 'Ended',
+      waiting: {
+        title: "Waiting for the repository's sync",
+        body: 'This request asked to sync its repository first. It can be approved once the sync has finished; its expiry starts then. If the sync fails, the request fails.',
+      },
+      syncFailed: "The repository's sync failed",
+      openSync: 'Open the sync',
       decidedAt: 'Decided',
       section: {
         template: 'Template',
@@ -353,6 +366,7 @@ export const enRuns = {
         approved: 'Approved. The run was started.',
         rejected: 'Rejected. The run was not started.',
         expired: 'Expired before anyone decided. The run was not started.',
+        failed: 'Failed: the sync it waited for did not succeed. The run was not started.',
       },
       openRun: 'Open the run',
       noPermission: 'Operators, admins and owners can approve or reject run requests.',

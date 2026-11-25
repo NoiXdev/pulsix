@@ -61,8 +61,9 @@ export function useClearRepoKey(org: string, id: string) {
   });
 }
 
-/** useSyncRepo starts a repo sync (a sync_repo job) and returns its 202
- * body — { job } — so the page can point at the run view. */
+/** useSyncRepo starts a repo sync (a sync_repo job) and returns its body —
+ * { job, already_running } — so the page can point at the run view: a sync
+ * already queued or running is returned instead of a new one (200). */
 export function useSyncRepo(org: string) {
   const invalidate = useInvalidate(org);
   const watch = useWatchSync();

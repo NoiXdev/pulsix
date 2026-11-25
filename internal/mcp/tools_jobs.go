@@ -51,6 +51,7 @@ type runRequestArgs struct {
 	HostIDs    []string       `json:"host_ids,omitempty" jsonschema:"run on these hosts only (at most 500), each among the template's targets"`
 	Limit      string         `json:"limit,omitempty" jsonschema:"host names and * wildcards, joined by , or :, with ! before a name to exclude it (no groups, no ? or other patterns); the run keeps to the template's targets whose host name matches"`
 	ExpiresIn  int            `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
+	SyncFirst  bool           `json:"sync_first,omitempty" jsonschema:"sync the template's repository first and ask for its fresh head (needs the repos write area): the request waits for the sync (status waiting_for_sync) and becomes pending once it succeeded, its expiry starting then; if the sync fails the request fails (sync_error)"`
 }
 
 // boundExpiresIn gives request_run's expires_in its bounds in the schema.
@@ -82,6 +83,9 @@ func (in runRequestArgs) body() map[string]any {
 	if in.ExpiresIn != 0 {
 		body["expires_in"] = in.ExpiresIn
 	}
+	if in.SyncFirst {
+		body["sync_first"] = true
+	}
 	return body
 }
 
@@ -91,7 +95,7 @@ type retryRequestArgs struct {
 }
 
 type runRequestListArgs struct {
-	Status string `json:"status,omitempty" jsonschema:"pending, approved, rejected or expired"`
+	Status string `json:"status,omitempty" jsonschema:"pending, approved, rejected, expired, waiting_for_sync or failed"`
 }
 
 type runRequestGetArgs struct {
@@ -188,7 +192,7 @@ func jobTools() []toolDef {
 				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
 				return map[string]any{"log": text, "next_after": next}, nil
 			}),
-		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says. A playbook from a repository runs exactly the commit of the repository's last successful sync, which the picture shows (commit); while commit.blocked names a reason (the repository needs a sync, or a sync is running) the request cannot be approved. Follow-ups whose playbook comes from the same repository run the same commit; the others run their current state (each follow-up's commit says which).",
+		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says. A playbook from a repository runs exactly the commit of the repository's last successful sync, which the picture shows (commit); while commit.blocked names a reason (the repository needs a sync, or a sync is running) the request cannot be approved. Follow-ups whose playbook comes from the same repository run the same commit; the others run their current state (each follow-up's commit says which). With sync_first the repository is synced first (a sync already queued or running is the one used): the request waits for it (status waiting_for_sync, sync_job_id) and becomes pending with the new commit once the sync succeeded, its expiry starting then; it fails (status failed, sync_error) when the sync fails or does not finish within an hour.",
 			tenancy.AreaJobsRequest, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, in.body())
 			}),
@@ -231,6 +235,7 @@ func (c *caller) requestResult(ctx context.Context, format, id string, body map[
 			ID        string `json:"id"`
 			Status    string `json:"status"`
 			ExpiresAt string `json:"expires_at"`
+			SyncJobID string `json:"sync_job_id"`
 		} `json:"request"`
 		Picture      json.RawMessage `json:"picture"`
 		ApprovalPath string          `json:"approval_path"`
@@ -238,10 +243,20 @@ func (c *caller) requestResult(ctx context.Context, format, id string, body map[
 	if err := json.Unmarshal(res.Body, &out); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return map[string]any{
-		"request_id": out.Request.ID, "status": out.Request.Status, "expires_at": out.Request.ExpiresAt,
+	result := map[string]any{
+		"request_id": out.Request.ID, "status": out.Request.Status,
 		"approval_url": c.publicURL + out.ApprovalPath,
 		"note":         "Nothing runs until a person approves this request at approval_url. Give them the link.",
 		"picture":      out.Picture,
-	}, nil
+	}
+	if out.Request.ExpiresAt != "" {
+		result["expires_at"] = out.Request.ExpiresAt
+	}
+	if out.Request.SyncJobID != "" {
+		result["sync_job_id"] = out.Request.SyncJobID
+	}
+	if out.Request.Status == "waiting_for_sync" {
+		result["note"] = "The request waits for the repository's sync (sync_job_id) and cannot be approved before; once the sync succeeded it is pending and its expiry starts. Check it with get_run_request. Nothing runs until a person approves it at approval_url. Give them the link."
+	}
+	return result, nil
 }

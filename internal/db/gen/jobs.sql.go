@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activeRepoSyncJob = `-- name: ActiveRepoSyncJob :one
+SELECT id FROM jobs
+WHERE org_id = $1 AND kind = 'sync_repo'
+  AND payload->>'repo_id' = $2::text
+  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'error')
+ORDER BY created_at, id
+LIMIT 1
+`
+
+type ActiveRepoSyncJobParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	RepoID string    `json:"repo_id"`
+}
+
+// The oldest sync_repo job of the repository that is not terminal: the one
+// a sync of it returns instead of queuing another (spec 2026-11-25 G).
+func (q *Queries) ActiveRepoSyncJob(ctx context.Context, arg ActiveRepoSyncJobParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, activeRepoSyncJob, arg.OrgID, arg.RepoID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const cancelJob = `-- name: CancelJob :one
 UPDATE jobs
 SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE 'cancelling' END,

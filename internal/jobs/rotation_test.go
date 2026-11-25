@@ -164,6 +164,10 @@ func (s *rotationOnlyStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.U
 	return false, nil
 }
 
+func (s *rotationOnlyStore) CreateSyncJobOnce(context.Context, Job, json.RawMessage, uuid.UUID) (Job, bool, error) {
+	return Job{}, false, errors.New("rotationOnlyStore: CreateSyncJobOnce not supported")
+}
+
 // ReserveRunGroup is unused by every test built on this fake: rotation,
 // bastion-key-claim and host-key-enforcement enqueues never set
 // RunRequest.IdempotencyKey, so EnqueueRunWith never calls it.
@@ -571,6 +575,10 @@ func (plainRotationStore) HasActiveTemplateJob(context.Context, uuid.UUID, uuid.
 
 func (plainRotationStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	return false, nil
+}
+
+func (plainRotationStore) CreateSyncJobOnce(_ context.Context, j Job, _ json.RawMessage, _ uuid.UUID) (Job, bool, error) {
+	return j, false, nil
 }
 
 func (plainRotationStore) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {

@@ -2836,7 +2836,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post API v1 orgs by org repos by ID sync */
+        /**
+         * Post API v1 orgs by org repos by ID sync
+         * @description Queues a sync of the repository (202). While a sync of it is queued or running, that job is returned instead with already_running true (200), and nothing new is queued.
+         */
         post: operations["syncRepo"];
         delete?: never;
         options?: never;
@@ -7731,6 +7734,8 @@ export interface components {
              * @example https://example.com/schemas/RepoSyncOutputBody.json
              */
             readonly $schema?: string;
+            /** @description The repository's sync was already queued or running; job is that sync and nothing new was queued */
+            already_running: boolean;
             job: components["schemas"]["JobRefDTO"];
         };
         RepoUpdateInputBody: {
@@ -7785,6 +7790,8 @@ export interface components {
             limit?: string;
             /** @description Why the run is needed, shown to the person who approves it */
             reason: string;
+            /** @description Sync the template's repository first (needs repos.write): the request waits for the sync (status waiting_for_sync, sync_job_id; a sync already queued or running is the one it waits for). When the sync succeeds the request becomes pending with the new commit and its expiry starts; when it fails, is cancelled or does not finish within an hour, the request fails (status failed, sync_error). A playbook from no repository has nothing to sync and the request is pending at once */
+            sync_first?: boolean;
         };
         ResetAvailableOutputBody: {
             /**
@@ -7972,8 +7979,11 @@ export interface components {
             /** Format: date-time */
             decided_at?: string;
             decided_by_user_id?: string;
-            /** Format: date-time */
-            expires_at: string;
+            /**
+             * Format: date-time
+             * @description When a pending request expires; absent while it waits for its sync, whose success starts the expiry
+             */
+            expires_at?: string;
             host_id?: string;
             id: string;
             job_id?: string;
@@ -7986,7 +7996,11 @@ export interface components {
             requested_by_user_id: string;
             run_group_id?: string;
             /** @enum {string} */
-            status: "pending" | "approved" | "rejected" | "expired";
+            status: "pending" | "approved" | "rejected" | "expired" | "waiting_for_sync" | "failed";
+            /** @description Why a failed request's sync did not let it become pending */
+            sync_error?: string;
+            /** @description The repository sync a sync_first request waits or waited for */
+            sync_job_id?: string;
             template_id: string;
             /**
              * @description Whether the requesting token can still ask for runs; approving starts the run either way
@@ -17193,7 +17207,7 @@ export interface operations {
     "get-api-v1-orgs-by-org-run-requests": {
         parameters: {
             query?: {
-                status?: "pending" | "approved" | "rejected" | "expired";
+                status?: "pending" | "approved" | "rejected" | "expired" | "waiting_for_sync" | "failed";
             };
             header?: never;
             path: {

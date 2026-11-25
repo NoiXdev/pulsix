@@ -57,6 +57,7 @@ type requestRunRequest struct {
 	HostIDs   []string    `json:"host_ids,omitempty" maxItems:"500" doc:"Run on these hosts only; each must be among the template's targets"`
 	Limit     string      `json:"limit,omitempty" maxLength:"1000" doc:"Host names and * wildcards, joined by , or :, with ! before a name to exclude it (no groups, no ? or other patterns): the run keeps to the template's targets whose host name matches, under the template's own limit"`
 	ExpiresIn int         `json:"expires_in,omitempty" minimum:"5" maximum:"1440" doc:"Minutes the request stays approvable, 5 to 1440; 60 when omitted"`
+	SyncFirst bool        `json:"sync_first,omitempty" doc:"Sync the template's repository first (needs repos.write): the request waits for the sync (status waiting_for_sync, sync_job_id; a sync already queued or running is the one it waits for). When the sync succeeds the request becomes pending with the new commit and its expiry starts; when it fails, is cancelled or does not finish within an hour, the request fails (status failed, sync_error). A playbook from no repository has nothing to sync and the request is pending at once"`
 }
 
 // input is the body as runrequests.CreateInput, without the template and
@@ -67,7 +68,7 @@ func (b requestRunRequest) input() (runrequests.CreateInput, error) {
 		return runrequests.CreateInput{}, err
 	}
 	in := runrequests.CreateInput{
-		Kind: runrequests.KindRun, Reason: b.Reason, ExpiresInMinutes: b.ExpiresIn,
+		Kind: runrequests.KindRun, Reason: b.Reason, ExpiresInMinutes: b.ExpiresIn, SyncFirst: b.SyncFirst,
 		Overrides: runrequests.OverridesInput{CheckMode: b.CheckMode, Diff: b.Diff, ExtraVars: vars},
 	}
 	if b.HostID != "" {
@@ -101,6 +102,9 @@ func requestSummary(r runrequests.Request) string {
 	summary := "requested " + what + " of job template " + r.TemplateID.String()
 	if fields := overrideFields(r.Overrides); fields != "" {
 		summary += " (overrides: " + fields + ")"
+	}
+	if r.SyncJobID != nil {
+		summary += " after sync job " + r.SyncJobID.String()
 	}
 	return summary + ": " + r.Reason
 }

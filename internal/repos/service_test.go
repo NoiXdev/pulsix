@@ -175,9 +175,10 @@ func (f *fakeCreds) Get(_ context.Context, _, id uuid.UUID) (credentials.Credent
 }
 
 type fakeEnqueuer struct {
-	mu    sync.Mutex
-	calls []fakeSyncCall
-	err   error
+	mu      sync.Mutex
+	calls   []fakeSyncCall
+	err     error
+	already bool // the next syncs find one running
 }
 
 type fakeSyncCall struct {
@@ -185,14 +186,14 @@ type fakeSyncCall struct {
 	actor         *uuid.UUID
 }
 
-func (f *fakeEnqueuer) EnqueueSync(_ context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (jobs.Job, error) {
+func (f *fakeEnqueuer) EnqueueSync(_ context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (jobs.Job, bool, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, fakeSyncCall{orgID, repoID, actor})
 	f.mu.Unlock()
 	if f.err != nil {
-		return jobs.Job{}, f.err
+		return jobs.Job{}, false, f.err
 	}
-	return jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Kind: jobs.KindSyncRepo}, nil
+	return jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Kind: jobs.KindSyncRepo}, f.already, nil
 }
 
 func newFakeCreds(byID map[uuid.UUID]credentials.Credential) *fakeCreds {
@@ -599,9 +600,9 @@ func TestSyncEnqueuesThroughPort(t *testing.T) {
 	enq := &fakeEnqueuer{}
 	svc := newService(store, &fakeCreds{}, enq)
 
-	job, err := svc.Sync(ctx, org, created.ID, &actor)
-	if err != nil {
-		t.Fatalf("Sync: %v", err)
+	job, already, err := svc.Sync(ctx, org, created.ID, &actor)
+	if err != nil || already {
+		t.Fatalf("Sync: %v (already running %v)", err, already)
 	}
 	if len(enq.calls) != 1 || enq.calls[0].orgID != org || enq.calls[0].repoID != created.ID ||
 		enq.calls[0].actor == nil || *enq.calls[0].actor != actor {
@@ -610,14 +611,20 @@ func TestSyncEnqueuesThroughPort(t *testing.T) {
 	if job.Kind != jobs.KindSyncRepo {
 		t.Fatalf("job = %+v", job)
 	}
-	if _, err := svc.Sync(ctx, org, uuid.Must(uuid.NewV7()), &actor); !errors.Is(err, repos.ErrNotFound) {
+	if _, _, err := svc.Sync(ctx, org, uuid.Must(uuid.NewV7()), &actor); !errors.Is(err, repos.ErrNotFound) {
 		t.Fatalf("sync unknown = %v, want ErrNotFound", err)
 	}
 	if len(enq.calls) != 1 {
 		t.Fatalf("a failed lookup must not enqueue: %d calls", len(enq.calls))
 	}
+	// A sync already queued or running is handed back as such (spec
+	// 2026-11-25 G).
+	enq.already = true
+	if _, already, err := svc.Sync(ctx, org, created.ID, &actor); err != nil || !already {
+		t.Fatalf("sync while one runs = %v %v, want already running", already, err)
+	}
 	enq.err = repos.ErrNotFound // any error surfaces wrapped
-	if _, err := svc.Sync(ctx, org, created.ID, &actor); !errors.Is(err, repos.ErrNotFound) {
+	if _, _, err := svc.Sync(ctx, org, created.ID, &actor); !errors.Is(err, repos.ErrNotFound) {
 		t.Fatalf("enqueuer failure = %v, want wrapped", err)
 	}
 }

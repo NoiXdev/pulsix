@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/runrequests"
 )
 
@@ -15,10 +16,18 @@ type memStore struct {
 	rows      map[uuid.UUID]runrequests.Request
 	tokens    map[uuid.UUID]runrequests.TokenRecord
 	tokensErr error
+	// syncs is what the queue says about each sync job; a job missing
+	// here is gone.
+	syncs map[uuid.UUID]memSync
+}
+
+type memSync struct {
+	status jobs.Status
+	err    string
 }
 
 func newMemStore() *memStore {
-	return &memStore{rows: map[uuid.UUID]runrequests.Request{}, tokens: map[uuid.UUID]runrequests.TokenRecord{}}
+	return &memStore{rows: map[uuid.UUID]runrequests.Request{}, tokens: map[uuid.UUID]runrequests.TokenRecord{}, syncs: map[uuid.UUID]memSync{}}
 }
 
 // effective is the SQL store's status filter: a pending row at or past its
@@ -67,7 +76,8 @@ func (m *memStore) List(_ context.Context, orgID uuid.UUID, status *runrequests.
 func (m *memStore) CountPending(_ context.Context, orgID uuid.UUID, token *uuid.UUID, now time.Time) (int, error) {
 	n := 0
 	for _, r := range m.rows {
-		if r.OrgID != orgID || effective(r, now) != runrequests.StatusPending {
+		waits := token != nil && r.Status == runrequests.StatusWaitingForSync
+		if r.OrgID != orgID || (effective(r, now) != runrequests.StatusPending && !waits) {
 			continue
 		}
 		if token != nil && (r.RequestedByToken == nil || *r.RequestedByToken != *token) {
@@ -93,8 +103,12 @@ func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[
 
 func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error) {
 	r, ok := m.rows[id]
-	if !ok || r.OrgID != orgID || r.Status != runrequests.StatusPending {
+	rejectWaiting := r.Status == runrequests.StatusWaitingForSync && to == runrequests.StatusRejected
+	if !ok || r.OrgID != orgID || (r.Status != runrequests.StatusPending && !rejectWaiting) {
 		return false, nil
+	}
+	if r.ExpiresAt.IsZero() {
+		r.ExpiresAt = at
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, pinnedCommit
 	if to == runrequests.StatusApproved {
@@ -119,6 +133,29 @@ func (m *memStore) ByRunGroup(_ context.Context, orgID, group uuid.UUID) (runreq
 		}
 	}
 	return runrequests.Request{}, runrequests.ErrNotFound
+}
+
+func (m *memStore) ListWaiting(_ context.Context, syncJob *uuid.UUID) ([]runrequests.Waiting, error) {
+	var out []runrequests.Waiting
+	for _, r := range m.rows {
+		if r.Status != runrequests.StatusWaitingForSync || (syncJob != nil && *r.SyncJobID != *syncJob) {
+			continue
+		}
+		job := m.syncs[*r.SyncJobID]
+		out = append(out, runrequests.Waiting{OrgID: r.OrgID, ID: r.ID, CreatedAt: r.CreatedAt, ExpiresInMinutes: r.ExpiresInMinutes,
+			SyncJobID: *r.SyncJobID, SyncStatus: job.status, SyncError: job.err})
+	}
+	return out, nil
+}
+
+func (m *memStore) EndWait(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, expiresAt time.Time, syncError string) (bool, error) {
+	r, ok := m.rows[id]
+	if !ok || r.OrgID != orgID || r.Status != runrequests.StatusWaitingForSync {
+		return false, nil
+	}
+	r.Status, r.ExpiresAt, r.SyncError = to, expiresAt, syncError
+	m.rows[id] = r
+	return true, nil
 }
 
 type fakePictures struct{ p runrequests.Picture }
@@ -170,12 +207,29 @@ func (f *fakeValidator) ValidateRetry(context.Context, uuid.UUID, uuid.UUID) (uu
 	return f.template, 7, f.err
 }
 
+// fakeSyncer starts the sync of a sync_first request: job, or nil for a
+// template without a repository.
+type fakeSyncer struct {
+	job      *uuid.UUID
+	err      error
+	calls    int
+	template uuid.UUID
+	actor    uuid.UUID
+}
+
+func (f *fakeSyncer) SyncFirst(_ context.Context, _, templateID, actor uuid.UUID) (*uuid.UUID, error) {
+	f.calls++
+	f.template, f.actor = templateID, actor
+	return f.job, f.err
+}
+
 type wiring struct {
 	svc   *runrequests.Service
 	store *memStore
 	pics  *fakePictures
 	enq   *fakeEnqueuer
 	val   *fakeValidator
+	syncs *fakeSyncer
 	now   time.Time
 	org   uuid.UUID
 }
@@ -183,10 +237,10 @@ type wiring struct {
 func newWiring() *wiring {
 	w := &wiring{
 		store: newMemStore(), pics: &fakePictures{p: runrequests.Picture{TemplateName: "deploy", Limit: "web"}},
-		enq: &fakeEnqueuer{group: uuid.Must(uuid.NewV7())}, val: &fakeValidator{template: uuid.Must(uuid.NewV7())},
+		enq: &fakeEnqueuer{group: uuid.Must(uuid.NewV7())}, val: &fakeValidator{template: uuid.Must(uuid.NewV7())}, syncs: &fakeSyncer{},
 		now: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC), org: uuid.Must(uuid.NewV7()),
 	}
-	w.svc = runrequests.NewService(w.store, w.pics, w.enq, w.val, func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	w.svc = runrequests.NewService(w.store, w.pics, w.enq, w.val, w.syncs, func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
 

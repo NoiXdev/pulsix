@@ -2,7 +2,7 @@ import { param, validateFilters, type FilterSearch } from '../lists/filterSearch
 import { validateListSearch, type ListSearch } from '../lists/listSearch.ts';
 import type { RunRequest } from '../../api/hooks/useRunRequests.ts';
 
-export const REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'expired'] as const;
+export const REQUEST_STATUSES = ['pending', 'waiting_for_sync', 'approved', 'rejected', 'expired', 'failed'] as const;
 export const REQUEST_KINDS = ['run', 'retry_failed'] as const;
 
 /** The run requests list's filters in the URL: status, kind and the job template asked for. */

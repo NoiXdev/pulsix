@@ -403,8 +403,8 @@ func TestARepositoryAndItsVaultIdentitiesLandTogetherOrNotAtAll(t *testing.T) {
 // noSync satisfies repos.JobEnqueuer for a test that never syncs.
 type noSync struct{}
 
-func (noSync) EnqueueSync(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (jobs.Job, error) {
-	return jobs.Job{}, nil
+func (noSync) EnqueueSync(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (jobs.Job, bool, error) {
+	return jobs.Job{}, false, nil
 }
 
 // credentialsSource is the real credential store, so the service's own

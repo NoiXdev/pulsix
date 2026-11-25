@@ -15,7 +15,9 @@ import (
 
 const countPendingRunRequests = `-- name: CountPendingRunRequests :one
 SELECT count(*)::int AS n FROM run_requests
-WHERE org_id = $1 AND status = 'pending' AND expires_at > $2::timestamptz
+WHERE org_id = $1
+  AND ((status = 'pending' AND expires_at > $2::timestamptz)
+    OR ($3::uuid IS NOT NULL AND status = 'waiting_for_sync'))
   AND ($3::uuid IS NULL OR requested_by_token = $3::uuid)
 `
 
@@ -26,7 +28,9 @@ type CountPendingRunRequestsParams struct {
 }
 
 // The pending, unexpired requests of the organization (the approval badge)
-// or, when token is given, of that one token (the per-token cap).
+// or, when token is given, of that one token (the per-token cap), which
+// also counts the token's requests waiting for their sync (migration
+// 00124): they become pending without asking again.
 func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingRunRequestsParams) (int32, error) {
 	row := q.db.QueryRow(ctx, countPendingRunRequests, arg.OrgID, arg.Now, arg.Token)
 	var n int32
@@ -37,8 +41,10 @@ func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingR
 const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
   approved_fingerprint = $4, pinned_commit = $5,
-  run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END
-WHERE org_id = $6::uuid AND id = $7 AND status = 'pending'
+  run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END,
+  expires_at = COALESCE(expires_at, $3)
+WHERE org_id = $6::uuid AND id = $7
+  AND (status = 'pending' OR (status = 'waiting_for_sync' AND $1::text = 'rejected'))
 `
 
 type DecideRunRequestParams struct {
@@ -51,11 +57,13 @@ type DecideRunRequestParams struct {
 	ID                  uuid.UUID          `json:"id"`
 }
 
-// Only a pending row moves; zero rows means it was already decided. An
-// approval records the fingerprint the person approved and takes the
-// request's own id as the run group, before anything is enqueued, so a
-// claim of one of its jobs always finds it (migration 00103), and the
-// commit the run is pinned to (migration 00123; NULL for none).
+// Only a pending row moves, and a rejection also moves one waiting for its
+// sync (whose expiry, never started, becomes the decision's time);
+// zero rows means it was already decided. An approval records the
+// fingerprint the person approved and takes the request's own id as the
+// run group, before anything is enqueued, so a claim of one of its jobs
+// always finds it (migration 00103), and the commit the run is pinned to
+// (migration 00123; NULL for none).
 func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestParams) (int64, error) {
 	result, err := q.db.Exec(ctx, decideRunRequest,
 		arg.Status,
@@ -72,8 +80,38 @@ func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestPara
 	return result.RowsAffected(), nil
 }
 
+const endRunRequestWait = `-- name: EndRunRequestWait :execrows
+UPDATE run_requests SET status = $1, expires_at = $2, sync_error = $3
+WHERE org_id = $4 AND id = $5 AND status = 'waiting_for_sync'
+`
+
+type EndRunRequestWaitParams struct {
+	Status    string             `json:"status"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	SyncError *string            `json:"sync_error"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	ID        uuid.UUID          `json:"id"`
+}
+
+// A waiting request becomes pending (its expiry starts) or failed (the
+// expiry is the failure's time, sync_error the reason); zero rows means it
+// no longer waits.
+func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitParams) (int64, error) {
+	result, err := q.db.Exec(ctx, endRunRequestWait,
+		arg.Status,
+		arg.ExpiresAt,
+		arg.SyncError,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -104,12 +142,15 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.ApprovedFingerprint,
 		&i.Overrides,
 		&i.PinnedCommit,
+		&i.SyncJobID,
+		&i.ExpiresInMinutes,
+		&i.SyncError,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -140,6 +181,9 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.ApprovedFingerprint,
 		&i.Overrides,
 		&i.PinnedCommit,
+		&i.SyncJobID,
+		&i.ExpiresInMinutes,
+		&i.SyncError,
 	)
 	return i, err
 }
@@ -147,28 +191,33 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 const insertRunRequest = `-- name: InsertRunRequest :exec
 
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,
-  requested_by_user, requested_by_token, status, expires_at, created_at, overrides)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $13)
+  requested_by_user, requested_by_token, status, expires_at, created_at, overrides, sync_job_id, expires_in_minutes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 `
 
 type InsertRunRequestParams struct {
-	ID               uuid.UUID   `json:"id"`
-	OrgID            uuid.UUID   `json:"org_id"`
-	Kind             string      `json:"kind"`
-	TemplateID       uuid.UUID   `json:"template_id"`
-	TemplateRevision int64       `json:"template_revision"`
-	HostID           pgtype.UUID `json:"host_id"`
-	JobID            pgtype.UUID `json:"job_id"`
-	Reason           string      `json:"reason"`
-	RequestedByUser  uuid.UUID   `json:"requested_by_user"`
-	RequestedByToken pgtype.UUID `json:"requested_by_token"`
-	ExpiresAt        time.Time   `json:"expires_at"`
-	CreatedAt        time.Time   `json:"created_at"`
-	Overrides        []byte      `json:"overrides"`
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	Kind             string             `json:"kind"`
+	TemplateID       uuid.UUID          `json:"template_id"`
+	TemplateRevision int64              `json:"template_revision"`
+	HostID           pgtype.UUID        `json:"host_id"`
+	JobID            pgtype.UUID        `json:"job_id"`
+	Reason           string             `json:"reason"`
+	RequestedByUser  uuid.UUID          `json:"requested_by_user"`
+	RequestedByToken pgtype.UUID        `json:"requested_by_token"`
+	Status           string             `json:"status"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	Overrides        []byte             `json:"overrides"`
+	SyncJobID        pgtype.UUID        `json:"sync_job_id"`
+	ExpiresInMinutes *int32             `json:"expires_in_minutes"`
 }
 
 // Run requests (spec 2026-11-16 assistant access). Org-scoped like every
 // store query; each statement also names org_id.
+// A request is pending (expires_at set) or, made with sync_first, waiting
+// for its sync (expires_at NULL, sync_job_id set; migration 00124).
 func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestParams) error {
 	_, err := q.db.Exec(ctx, insertRunRequest,
 		arg.ID,
@@ -181,9 +230,12 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 		arg.Reason,
 		arg.RequestedByUser,
 		arg.RequestedByToken,
+		arg.Status,
 		arg.ExpiresAt,
 		arg.CreatedAt,
 		arg.Overrides,
+		arg.SyncJobID,
+		arg.ExpiresInMinutes,
 	)
 	return err
 }
@@ -253,7 +305,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -300,6 +352,63 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.ApprovedFingerprint,
 			&i.Overrides,
 			&i.PinnedCommit,
+			&i.SyncJobID,
+			&i.ExpiresInMinutes,
+			&i.SyncError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWaitingRunRequests = `-- name: ListWaitingRunRequests :many
+SELECT r.org_id, r.id, r.created_at, r.expires_in_minutes, r.sync_job_id,
+  j.status AS sync_status, j.error AS sync_error
+FROM run_requests r
+LEFT JOIN jobs j ON j.org_id = r.org_id AND j.id = r.sync_job_id
+WHERE r.status = 'waiting_for_sync'
+  AND ($1::uuid IS NULL OR r.sync_job_id = $1::uuid)
+ORDER BY r.created_at, r.id
+LIMIT 1000
+`
+
+type ListWaitingRunRequestsRow struct {
+	OrgID            uuid.UUID   `json:"org_id"`
+	ID               uuid.UUID   `json:"id"`
+	CreatedAt        time.Time   `json:"created_at"`
+	ExpiresInMinutes *int32      `json:"expires_in_minutes"`
+	SyncJobID        pgtype.UUID `json:"sync_job_id"`
+	SyncStatus       *string     `json:"sync_status"`
+	SyncError        *string     `json:"sync_error"`
+}
+
+// The requests waiting for their sync (migration 00124) with the sync
+// job's status and error, both NULL when the job is gone: those of one
+// sync job, or, without one, every one the caller sees (the manager's
+// sweep runs without an organization scope and sees all of them), the
+// oldest first.
+func (q *Queries) ListWaitingRunRequests(ctx context.Context, syncJobID pgtype.UUID) ([]ListWaitingRunRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listWaitingRunRequests, syncJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWaitingRunRequestsRow
+	for rows.Next() {
+		var i ListWaitingRunRequestsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ID,
+			&i.CreatedAt,
+			&i.ExpiresInMinutes,
+			&i.SyncJobID,
+			&i.SyncStatus,
+			&i.SyncError,
 		); err != nil {
 			return nil, err
 		}

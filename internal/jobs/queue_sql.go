@@ -131,6 +131,10 @@ type SQLQueue struct {
 	// runGroups is the optional port a completed run group is reported
 	// through (SetRunGroupSink, run_group.go): the notification outbox.
 	runGroups RunGroupSink
+	// syncWaiters is the optional port a finished sync tells what waits
+	// for it (SetSyncWaiters, sync_waiters.go): run requests made with
+	// sync_first.
+	syncWaiters SyncWaiters
 }
 
 // SetSyncSink injects the sink RecordSyncResult calls flow through on the

@@ -186,6 +186,7 @@ type world struct {
 	ovr                  *overrideChecker
 	commits              *fakeCommits
 	syncs                *fakeSyncJobs
+	repoSyncs            *fakeRepoSyncer
 }
 
 func newWorld() *world {
@@ -217,6 +218,7 @@ func newWorld() *world {
 	w.jobs = &targetRunner{targets: []uuid.UUID{w.h1, w.h2, w.h3}, retryTmpl: w.x, failed: []uuid.UUID{w.h2}}
 	w.commits = &fakeCommits{synced: repos.SyncedCommit{Commit: commitX}}
 	w.syncs = &fakeSyncJobs{pins: map[uuid.UUID]string{}}
+	w.repoSyncs = &fakeRepoSyncer{job: id()}
 	return w
 }
 
@@ -224,7 +226,7 @@ func (w *world) resolver() *runrequests.Resolver {
 	return runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
-		Commits: w.commits, SyncJobs: w.syncs,
+		Commits: w.commits, SyncJobs: w.syncs, RepoSyncs: w.repoSyncs,
 	})
 }
 

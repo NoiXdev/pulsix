@@ -348,18 +348,29 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		actor := scope.UserID
-		job, err := deps.Repos.Sync(ctx, scope.OrgID, id, &actor)
+		job, already, err := deps.Repos.Sync(ctx, scope.OrgID, id, &actor)
 		if err != nil {
 			return nil, mapReposErr(ctx, err)
 		}
-		setAuditObject(ctx, id.String(), "requested sync of repo")
-		return repoSync(job), nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("syncRepo", "repo"))
+		if already {
+			setAuditObject(ctx, id.String(), "requested sync of repo; sync job "+job.ID.String()+" was already queued or running")
+		} else {
+			setAuditObject(ctx, id.String(), "requested sync of repo")
+		}
+		return repoSync(job, already), nil
+	}, func(o *huma.Operation) {
+		o.DefaultStatus = http.StatusAccepted
+		o.Description = "Queues a sync of the repository (202). While a sync of it is queued or running, that job is returned instead with already_running true (200), and nothing new is queued."
+	}, withAudit("syncRepo", "repo"))
 }
 
+// repoSyncOutput is 202 with a new sync, 200 with the one already queued
+// or running (spec 2026-11-25 G).
 type repoSyncOutput struct {
-	Body struct {
-		Job jobRefDTO `json:"job"`
+	Status int
+	Body   struct {
+		Job            jobRefDTO `json:"job"`
+		AlreadyRunning bool      `json:"already_running" doc:"The repository's sync was already queued or running; job is that sync and nothing new was queued"`
 	}
 }
 
@@ -369,9 +380,12 @@ func repoDetail(r repos.Repo) *repoDetailOutput {
 	return out
 }
 
-func repoSync(j jobs.Job) *repoSyncOutput {
-	out := &repoSyncOutput{}
-	out.Body.Job = toJobRefDTO(j)
+func repoSync(j jobs.Job, already bool) *repoSyncOutput {
+	out := &repoSyncOutput{Status: http.StatusAccepted}
+	if already {
+		out.Status = http.StatusOK
+	}
+	out.Body.Job, out.Body.AlreadyRunning = toJobRefDTO(j), already
 	return out
 }
 

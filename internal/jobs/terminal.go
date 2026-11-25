@@ -53,8 +53,9 @@ type terminalTransition struct {
 }
 
 // terminate applies t in ONE transaction bound to the job's organization:
-// the status write, every finish-path sink (the repository's sync state,
-// the connection-test row, the rotation group's finalize) and the wipe of
+// the status write, every finish-path sink (the repository's sync state and
+// what waits for the sync, the connection-test row, the rotation group's
+// finalize) and the wipe of
 // the sealed payload. A sink failure rolls everything back and returns the
 // error — the job keeps its status and payload, and a retry completes all
 // of it. applied reports whether the status was written. After a commit
@@ -156,6 +157,11 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 			return err
 		}
 		applyRepo = repoID
+		if Kind(kind) == KindSyncRepo {
+			if err := q.tellSyncWaiters(ctx, orgID, t.jobID); err != nil {
+				return err
+			}
+		}
 		if err := q.recordTest(ctx, t.jobID, t.status); err != nil {
 			return err
 		}

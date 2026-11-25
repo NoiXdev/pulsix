@@ -220,12 +220,15 @@ export const deRuns: Messages['runs'] = {
       approved: 'freigegeben',
       rejected: 'abgelehnt',
       expired: 'abgelaufen',
+      waiting_for_sync: 'wartet auf Sync',
+      failed: 'fehlgeschlagen',
     },
     kind: {
       run: 'Lauf',
       retry_failed: 'Wiederholung der fehlgeschlagenen Hosts',
     },
     expires: (relative: string) => `läuft ab ${relative}`,
+    waitsForSync: 'wartet auf den Sync',
     detail: {
       title: 'Laufanfrage',
       reason: 'Grund',
@@ -238,6 +241,14 @@ export const deRuns: Messages['runs'] = {
       },
       requestedAt: 'Angefragt',
       expiresAt: 'Läuft ab',
+      expiryAfterSync: 'beginnt, sobald der Sync beendet ist',
+      endedAt: 'Beendet',
+      waiting: {
+        title: 'Wartet auf den Sync des Repositorys',
+        body: 'Diese Anfrage wollte ihr Repository zuerst synchronisieren. Sie kann freigegeben werden, sobald der Sync beendet ist; erst dann beginnt ihre Ablaufzeit. Schlägt der Sync fehl, schlägt auch die Anfrage fehl.',
+      },
+      syncFailed: 'Der Sync des Repositorys ist fehlgeschlagen',
+      openSync: 'Sync öffnen',
       decidedAt: 'Entschieden',
       section: {
         template: 'Vorlage',
@@ -339,6 +350,7 @@ export const deRuns: Messages['runs'] = {
         approved: 'Freigegeben. Der Lauf wurde gestartet.',
         rejected: 'Abgelehnt. Der Lauf wurde nicht gestartet.',
         expired: 'Abgelaufen, bevor jemand entschieden hat. Der Lauf wurde nicht gestartet.',
+        failed: 'Fehlgeschlagen: Der Sync, auf den sie gewartet hat, war nicht erfolgreich. Der Lauf wurde nicht gestartet.',
       },
       openRun: 'Lauf öffnen',
       noPermission: 'Operatoren, Admins und Inhaber können Laufanfragen freigeben oder ablehnen.',

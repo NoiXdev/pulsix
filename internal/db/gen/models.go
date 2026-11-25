@@ -991,11 +991,14 @@ type RunRequest struct {
 	DecidedBy           pgtype.UUID        `json:"decided_by"`
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	RunGroupID          pgtype.UUID        `json:"run_group_id"`
-	ExpiresAt           time.Time          `json:"expires_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt           time.Time          `json:"created_at"`
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
 	Overrides           []byte             `json:"overrides"`
 	PinnedCommit        *string            `json:"pinned_commit"`
+	SyncJobID           pgtype.UUID        `json:"sync_job_id"`
+	ExpiresInMinutes    *int32             `json:"expires_in_minutes"`
+	SyncError           *string            `json:"sync_error"`
 }
 
 type Schedule struct {

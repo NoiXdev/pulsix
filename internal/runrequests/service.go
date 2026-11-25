@@ -16,6 +16,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // TTL is how long a request stays approvable unless it asks for another
@@ -39,15 +41,19 @@ const (
 )
 
 // Status is a request's state. StatusExpired is never stored: a pending
-// request past its expiry reads as expired.
+// request past its expiry reads as expired. A request made with sync_first
+// waits for its repository's sync (StatusWaitingForSync), then becomes
+// pending, or failed when the sync does not let it (spec 2026-11-25 A).
 type Status string
 
 // The statuses.
 const (
-	StatusPending  Status = "pending"
-	StatusApproved Status = "approved"
-	StatusRejected Status = "rejected"
-	StatusExpired  Status = "expired"
+	StatusPending        Status = "pending"
+	StatusApproved       Status = "approved"
+	StatusRejected       Status = "rejected"
+	StatusExpired        Status = "expired"
+	StatusWaitingForSync Status = "waiting_for_sync"
+	StatusFailed         Status = "failed"
 )
 
 // Sentinel errors the transport maps.
@@ -57,6 +63,10 @@ var (
 	ErrDecided      = errors.New("the request was already decided")
 	ErrChanged      = errors.New("changed since you looked at it; review it again")
 	ErrInvalidInput = errors.New("invalid run request")
+	// ErrWaitingForSync refuses the approval of a request still waiting
+	// for its sync; ErrSyncFailed that of one whose sync failed.
+	ErrWaitingForSync = errors.New("the request waits for its repository's sync; approve it once the sync has finished")
+	ErrSyncFailed     = errors.New("the request failed: the repository's sync it waited for did not succeed; ask for the run again")
 	// ErrTooManyPending refuses a request of a token that already has
 	// MaxPendingPerToken pending ones.
 	ErrTooManyPending = fmt.Errorf("this token already has %d pending run requests; wait until a person decides on them, or they expire, before asking again", MaxPendingPerToken)
@@ -89,8 +99,19 @@ type Request struct {
 	// 2026-11-25 A): stored with the approval, "" for a run of no
 	// repository, a request not approved, and one approved before pins.
 	PinnedCommit string
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
+	// ExpiresAt is when a pending request expires; zero while the request
+	// waits for its sync, whose success starts the expiry.
+	ExpiresAt time.Time
+	// ExpiresInMinutes is the expiry the request asked for (0: TTL), which
+	// a waiting request starts once it becomes pending.
+	ExpiresInMinutes int
+	// SyncJobID is the sync a request made with sync_first waits or waited
+	// for; nil for any other request.
+	SyncJobID *uuid.UUID
+	// SyncError is why a failed request's sync did not let it become
+	// pending; empty for any other request.
+	SyncError string
+	CreatedAt time.Time
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
 	TokenName  string
@@ -110,6 +131,9 @@ type CreateInput struct {
 	Overrides OverridesInput
 	// ExpiresInMinutes is the request's time to live; zero is TTL.
 	ExpiresInMinutes int
+	// SyncFirst syncs the template's repository first (KindRun only): the
+	// request waits for the sync and becomes pending once it succeeded.
+	SyncFirst bool
 }
 
 // Store persists requests.
@@ -125,19 +149,43 @@ type Store interface {
 	// matches, before the cap.
 	List(ctx context.Context, orgID uuid.UUID, status *Status, now time.Time) ([]Request, error)
 	// CountPending counts orgID's requests pending and unexpired at now;
-	// token, when given, only that token's.
+	// token, when given, only that token's, and then also those waiting
+	// for their sync, which count against the token's cap.
 	CountPending(ctx context.Context, orgID uuid.UUID, token *uuid.UUID, now time.Time) (int, error)
 	// Tokens reads the tokens of ids that still exist (TokenRecord).
 	Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]TokenRecord, error)
-	// Decide moves a pending request to to; false when it was not pending.
-	// An approval records fingerprint and the commit it pins ("" for none)
-	// and sets the run group to the request's own id, in the same write.
+	// Decide moves a pending request to to, and a rejection also one
+	// waiting for its sync (its expiry becomes at); false when it was
+	// neither. An approval records fingerprint and the commit it pins (""
+	// for none) and sets the run group to the request's own id, in the same
+	// write.
 	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error)
 	// RevertToPending undoes an approval whose enqueue failed; the run
 	// group stays, the fingerprint and the pinned commit go.
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
+	// ListWaiting lists the requests waiting for their sync, with the
+	// sync job's state: those of syncJob, or with nil every one the
+	// context sees (an unscoped context sees every organization's).
+	ListWaiting(ctx context.Context, syncJob *uuid.UUID) ([]Waiting, error)
+	// EndWait moves a waiting request to to (pending or failed) with
+	// expiresAt and, for a failure, syncError; false when it no longer
+	// waits.
+	EndWait(ctx context.Context, orgID, id uuid.UUID, to Status, expiresAt time.Time, syncError string) (bool, error)
+}
+
+// Waiting is a request waiting for its sync, with what the queue says
+// about that sync.
+type Waiting struct {
+	OrgID            uuid.UUID
+	ID               uuid.UUID
+	CreatedAt        time.Time
+	ExpiresInMinutes int
+	SyncJobID        uuid.UUID
+	// SyncStatus is the sync job's status; empty when the job is gone.
+	SyncStatus jobs.Status
+	SyncError  string
 }
 
 // Pictures resolves what a request would run now.
@@ -162,23 +210,35 @@ type Validator interface {
 	ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (templateID uuid.UUID, revision int64, err error)
 }
 
+// Syncer starts the sync a sync_first request waits for.
+type Syncer interface {
+	// SyncFirst starts a sync of the repository the template's playbook
+	// comes from as actor, or finds the one queued or running, and returns
+	// its job; nil when the playbook comes from no repository.
+	SyncFirst(ctx context.Context, orgID, templateID, actor uuid.UUID) (*uuid.UUID, error)
+}
+
 // Service is the run request service.
 type Service struct {
 	store     Store
 	pictures  Pictures
 	enqueuer  Enqueuer
 	validator Validator
+	syncer    Syncer
 	now       func() time.Time
 	newID     func() uuid.UUID
 }
 
 // NewService wires the service.
-func NewService(store Store, pictures Pictures, enqueuer Enqueuer, validator Validator, now func() time.Time, newID func() uuid.UUID) *Service {
-	return &Service{store: store, pictures: pictures, enqueuer: enqueuer, validator: validator, now: now, newID: newID}
+func NewService(store Store, pictures Pictures, enqueuer Enqueuer, validator Validator, syncer Syncer, now func() time.Time, newID func() uuid.UUID) *Service {
+	return &Service{store: store, pictures: pictures, enqueuer: enqueuer, validator: validator, syncer: syncer, now: now, newID: newID}
 }
 
 // Create records a pending request. A token's request is refused with
-// ErrTooManyPending while the token has MaxPendingPerToken pending ones.
+// ErrTooManyPending while the token has MaxPendingPerToken pending ones
+// (waiting ones included). A request made with SyncFirst starts its sync
+// (syncFirst) and is stored waiting for it, without an expiry; a template
+// with nothing to sync makes it pending at once.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Request, error) {
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" || utf8.RuneCountInString(reason) > MaxReasonLength {
@@ -195,7 +255,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	r := Request{
 		ID: s.newID(), OrgID: orgID, Kind: in.Kind, Reason: reason,
 		RequestedByUser: in.RequestedByUser, RequestedByToken: in.RequestedByToken,
-		Status: StatusPending, CreatedAt: s.now(),
+		Status: StatusPending, CreatedAt: s.now(), ExpiresInMinutes: in.ExpiresInMinutes,
 	}
 	r.ExpiresAt = r.CreatedAt.Add(ttl)
 	switch in.Kind {
@@ -209,6 +269,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		}
 		r.TemplateID, r.HostID, r.TemplateRevision, r.Overrides = in.TemplateID, in.HostID, rev, ov
 	case KindRetryFailed:
+		if in.SyncFirst {
+			return Request{}, fmt.Errorf("%w: a retry takes no sync_first; it runs its original run's commit", ErrInvalidInput)
+		}
 		if ov != nil {
 			return Request{}, fmt.Errorf("%w: a retry takes no overrides; it repeats its run on the failed hosts", ErrInvalidInput)
 		}
@@ -223,6 +286,11 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	default:
 		return Request{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidInput, in.Kind)
 	}
+	if in.SyncFirst {
+		if err := s.syncFirst(ctx, &r); err != nil {
+			return Request{}, err
+		}
+	}
 	// A token's request is capped; the store counts and inserts atomically.
 	// A request without a token is not capped.
 	if r.RequestedByToken == nil {
@@ -235,6 +303,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	}
 	if err != nil {
 		return Request{}, fmt.Errorf("store run request: %w", err)
+	}
+	if r.Status == StatusWaitingForSync {
+		s.endWaitAtCreate(ctx, &r)
 	}
 	s.withTokensAfterWrite(ctx, orgID, &r)
 	return r, nil
@@ -277,7 +348,7 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]
 	return rows, nil
 }
 
-// Reject refuses a pending request.
+// Reject refuses a pending request, or one waiting for its sync.
 func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request, error) {
 	r, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
@@ -286,7 +357,7 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 	switch s.effective(r) {
 	case StatusExpired:
 		return Request{}, ErrExpired
-	case StatusPending:
+	case StatusPending, StatusWaitingForSync:
 	default:
 		return Request{}, ErrDecided
 	}
@@ -299,6 +370,9 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	r.Status, r.DecidedBy, r.DecidedAt = StatusRejected, &by, &at
+	if r.ExpiresAt.IsZero() {
+		r.ExpiresAt = at
+	}
 	s.withTokensAfterWrite(ctx, orgID, &r)
 	return r, nil
 }

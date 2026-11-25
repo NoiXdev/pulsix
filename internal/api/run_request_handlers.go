@@ -23,7 +23,7 @@ import (
 type runRequestDTO struct {
 	ID                 string `json:"id"`
 	Kind               string `json:"kind" enum:"run,retry_failed"`
-	Status             string `json:"status" enum:"pending,approved,rejected,expired"`
+	Status             string `json:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
 	TemplateID         string `json:"template_id"`
 	HostID             string `json:"host_id,omitempty"`
 	JobID              string `json:"job_id,omitempty"`
@@ -37,7 +37,9 @@ type runRequestDTO struct {
 	DecidedByUserID      string     `json:"decided_by_user_id,omitempty"`
 	DecidedAt            *time.Time `json:"decided_at,omitempty"`
 	RunGroupID           string     `json:"run_group_id,omitempty"`
-	ExpiresAt            time.Time  `json:"expires_at"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty" doc:"When a pending request expires; absent while it waits for its sync, whose success starts the expiry"`
+	SyncJobID            string     `json:"sync_job_id,omitempty" doc:"The repository sync a sync_first request waits or waited for"`
+	SyncError            string     `json:"sync_error,omitempty" doc:"Why a failed request's sync did not let it become pending"`
 	CreatedAt            time.Time  `json:"created_at"`
 }
 
@@ -45,9 +47,14 @@ func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 	dto := runRequestDTO{
 		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateID: r.TemplateID.String(),
 		Reason: r.Reason, RequestedByUserID: r.RequestedByUser.String(), DecidedAt: r.DecidedAt,
-		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		CreatedAt: r.CreatedAt, SyncError: r.SyncError,
 		RequestedByTokenName: r.TokenName, TokenState: string(r.TokenState),
 	}
+	if !r.ExpiresAt.IsZero() {
+		at := r.ExpiresAt
+		dto.ExpiresAt = &at
+	}
+	dto.SyncJobID = uuidString(r.SyncJobID)
 	dto.HostID, dto.JobID, dto.RequestedByTokenID = uuidString(r.HostID), uuidString(r.JobID), uuidString(r.RequestedByToken)
 	dto.DecidedByUserID, dto.RunGroupID = uuidString(r.DecidedBy), uuidString(r.RunGroupID)
 	return dto
@@ -111,6 +118,13 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if create.SyncFirst {
+			// Syncing first starts a sync of the repository, which the
+			// sync route allows only with repos.write.
+			if _, err := requireOrg(ctx, deps, in.Org, tenancy.PermReposWrite); err != nil {
+				return nil, err
+			}
+		}
 		create.TemplateID, create.RequestedByUser, create.RequestedByToken = templateID, scope.UserID, scope.TokenID
 		r, err := deps.RunRequests.Create(ctx, scope.OrgID, create)
 		if err != nil {
@@ -148,7 +162,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 
 	huma.Get(hapi, "/api/v1/orgs/{org}/run-requests", func(ctx context.Context, in *struct {
 		Org    string `path:"org"`
-		Status string `query:"status" enum:"pending,approved,rejected,expired"`
+		Status string `query:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
 	}) (*runRequestListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRead)
 		if err != nil {
@@ -313,7 +327,8 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, runrequests.ErrTooManyPending):
 		return huma.Error429TooManyRequests(err.Error())
-	case errors.Is(err, runrequests.ErrExpired), errors.Is(err, runrequests.ErrDecided), errors.Is(err, runrequests.ErrChanged):
+	case errors.Is(err, runrequests.ErrExpired), errors.Is(err, runrequests.ErrDecided), errors.Is(err, runrequests.ErrChanged),
+		errors.Is(err, runrequests.ErrWaitingForSync), errors.Is(err, runrequests.ErrSyncFailed):
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, runrequests.ErrCommitBlocked):
 		// The run's commit cannot be pinned yet: the repository must be

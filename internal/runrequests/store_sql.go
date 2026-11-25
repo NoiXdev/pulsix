@@ -2,6 +2,7 @@ package runrequests
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/jobs"
 )
 
 // SQLStore implements Store with sqlc queries.
@@ -69,11 +71,17 @@ func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
 			return fmt.Errorf("encode run request overrides: %w", err)
 		}
 	}
+	var expiresIn *int32
+	if r.ExpiresInMinutes > 0 {
+		v := int32(min(r.ExpiresInMinutes, MaxExpiresInMinutes)) //nolint:gosec // bounded just now
+		expiresIn = &v
+	}
 	return q.InsertRunRequest(ctx, gen.InsertRunRequestParams{
 		ID: r.ID, OrgID: r.OrgID, Kind: string(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
 		HostID: pgUUID(r.HostID), JobID: pgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: pgUUID(r.RequestedByToken),
-		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt, Overrides: overrides,
+		Status: string(cmp.Or(r.Status, StatusPending)), ExpiresAt: pgTime(r.ExpiresAt), CreatedAt: r.CreatedAt, Overrides: overrides,
+		SyncJobID: pgUUID(r.SyncJobID), ExpiresInMinutes: expiresIn,
 	})
 }
 
@@ -176,13 +184,63 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 	return fromRow(row)
 }
 
+// ListWaiting implements Store.
+func (s *SQLStore) ListWaiting(ctx context.Context, syncJob *uuid.UUID) ([]Waiting, error) {
+	rows, err := s.q.ListWaitingRunRequests(ctx, pgUUID(syncJob))
+	if err != nil {
+		return nil, fmt.Errorf("list run requests waiting for their sync: %w", err)
+	}
+	out := make([]Waiting, len(rows))
+	for i, row := range rows {
+		w := Waiting{OrgID: row.OrgID, ID: row.ID, CreatedAt: row.CreatedAt}
+		if row.SyncJobID.Valid {
+			w.SyncJobID = row.SyncJobID.Bytes
+		}
+		if row.ExpiresInMinutes != nil {
+			w.ExpiresInMinutes = int(*row.ExpiresInMinutes)
+		}
+		if row.SyncStatus != nil {
+			w.SyncStatus = jobs.Status(*row.SyncStatus)
+		}
+		if row.SyncError != nil {
+			w.SyncError = *row.SyncError
+		}
+		out[i] = w
+	}
+	return out, nil
+}
+
+// EndWait implements Store.
+func (s *SQLStore) EndWait(ctx context.Context, orgID, id uuid.UUID, to Status, expiresAt time.Time, syncError string) (bool, error) {
+	var reason *string
+	if syncError != "" {
+		reason = &syncError
+	}
+	n, err := s.q.EndRunRequestWait(ctx, gen.EndRunRequestWaitParams{
+		OrgID: orgID, ID: id, Status: string(to), ExpiresAt: pgTime(expiresAt), SyncError: reason,
+	})
+	if err != nil {
+		return false, fmt.Errorf("end a run request's wait for its sync: %w", err)
+	}
+	return n == 1, nil
+}
+
 func fromRow(r gen.RunRequest) (Request, error) {
 	out := Request{
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
 		HostID: fromPgUUID(r.HostID), JobID: fromPgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: fromPgUUID(r.RequestedByToken),
 		Status: Status(r.Status), DecidedBy: fromPgUUID(r.DecidedBy), RunGroupID: fromPgUUID(r.RunGroupID),
-		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		CreatedAt: r.CreatedAt, SyncJobID: fromPgUUID(r.SyncJobID),
+	}
+	if r.ExpiresAt.Valid {
+		out.ExpiresAt = r.ExpiresAt.Time
+	}
+	if r.ExpiresInMinutes != nil {
+		out.ExpiresInMinutes = int(*r.ExpiresInMinutes)
+	}
+	if r.SyncError != nil {
+		out.SyncError = *r.SyncError
 	}
 	if r.DecidedAt.Valid {
 		at := r.DecidedAt.Time
@@ -219,4 +277,13 @@ func fromPgUUID(id pgtype.UUID) *uuid.UUID {
 	}
 	v := uuid.UUID(id.Bytes)
 	return &v
+}
+
+// pgTime is NULL for the zero time: a request waiting for its sync has no
+// expiry yet.
+func pgTime(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}
 }

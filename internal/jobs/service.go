@@ -398,6 +398,11 @@ type Store interface {
 	// HasActiveRepoSync reports whether a sync_repo job of the repository
 	// is not terminal yet — the on_active guard a repo webhook asks.
 	HasActiveRepoSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
+	// CreateSyncJobOnce creates j, a sync_repo job of repoID, unless a
+	// sync of the repository is queued or running: then it returns that
+	// job and existing true. The check and the insert are atomic against
+	// concurrent calls for the same repository.
+	CreateSyncJobOnce(ctx context.Context, j Job, payload json.RawMessage, repoID uuid.UUID) (job Job, existing bool, err error)
 	// GroupSummaries aggregates the run jobs of each given run group
 	// (groups without run jobs are absent from the map).
 	GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs []uuid.UUID) (map[uuid.UUID]GroupSummary, error)
@@ -1010,25 +1015,44 @@ type syncResultPayload struct {
 	HostPublicKey string `json:"host_public_key"`
 }
 
-// EnqueueSync enqueues one sync_repo job for the repository. sync_repo is
-// deliberately NOT host-bound: it runs once, in the organization's default
-// zone (resolved through the DefaultZoneSource port), so the git fetch
-// happens regardless of how many hosts the org manages and without
+// EnqueueSync enqueues one sync_repo job for the repository, unless a sync
+// of it is queued or running: then it returns that job and alreadyRunning
+// true (spec 2026-11-25 G), so asking twice never fetches twice. sync_repo
+// is deliberately NOT host-bound: it runs once, in the organization's
+// default zone (resolved through the DefaultZoneSource port), so the git
+// fetch happens regardless of how many hosts the org manages and without
 // rendering any inventory snapshot. The payload is plain JSON — nothing in
 // it is secret — so the claim path passes it through unsealed.
-func (s *Service) EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (Job, error) {
-	return s.enqueueSync(ctx, orgID, repoID, RunRequest{Trigger: TriggerManual, Actor: actor})
+func (s *Service) EnqueueSync(ctx context.Context, orgID, repoID uuid.UUID, actor *uuid.UUID) (job Job, alreadyRunning bool, err error) {
+	j, payload, err := s.syncJob(ctx, orgID, repoID, RunRequest{Trigger: TriggerManual, Actor: actor})
+	if err != nil {
+		return Job{}, false, err
+	}
+	return s.store.CreateSyncJobOnce(ctx, j, payload, repoID)
 }
 
-// enqueueSync is EnqueueSync's core, shared with EnqueueSyncWith.
+// enqueueSync enqueues a sync_repo job whatever else runs (EnqueueSyncWith:
+// a repo_sync webhook has its own on_active rule).
 func (s *Service) enqueueSync(ctx context.Context, orgID, repoID uuid.UUID, req RunRequest) (Job, error) {
-	zoneID, err := s.defaultZone(ctx, orgID)
+	j, payload, err := s.syncJob(ctx, orgID, repoID, req)
 	if err != nil {
 		return Job{}, err
 	}
+	if err := s.store.CreateJob(ctx, j, payload); err != nil {
+		return Job{}, err
+	}
+	return j, nil
+}
+
+// syncJob is a new sync_repo job of the repository and its payload.
+func (s *Service) syncJob(ctx context.Context, orgID, repoID uuid.UUID, req RunRequest) (Job, json.RawMessage, error) {
+	zoneID, err := s.defaultZone(ctx, orgID)
+	if err != nil {
+		return Job{}, nil, err
+	}
 	payload, err := json.Marshal(syncPayload{RepoID: repoID})
 	if err != nil {
-		return Job{}, fmt.Errorf("encode sync payload: %w", err)
+		return Job{}, nil, fmt.Errorf("encode sync payload: %w", err)
 	}
 	j := Job{
 		ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
@@ -1036,10 +1060,7 @@ func (s *Service) enqueueSync(ctx context.Context, orgID, repoID uuid.UUID, req 
 		Status: StatusQueued, RunGroupID: s.newID(), Trigger: req.Trigger,
 		TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: s.now(),
 	}
-	if err := s.store.CreateJob(ctx, j, payload); err != nil {
-		return Job{}, err
-	}
-	return j, nil
+	return j, payload, nil
 }
 
 // defaultZone resolves the organization's "default" zone; ErrNoZone when it

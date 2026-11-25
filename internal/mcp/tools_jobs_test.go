@@ -319,3 +319,42 @@ func TestGetJobShowsThePinnedCommit(t *testing.T) {
 		t.Fatalf("get_job pinned_commit = %q, want %s", got.Job.PinnedCommit, commit)
 	}
 }
+
+// TestRequestRunSyncsFirst (spec 2026-11-25 A and G): request_run with
+// sync_first answers at once with a request waiting for the sync it
+// started, and sync_repo hands that same sync back as already running.
+func TestRequestRunSyncsFirst(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	pb, err := f.s.Deps.Playbooks.CreateRepo(f.scoped, f.org, f.repo, "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := f.s.Deps.Templates.Create(f.scoped, f.org, templates.CreateInput{
+		Name: "deploy-repo", PlaybookID: pb.ID, Scope: templates.Scope{HostIDs: []uuid.UUID{f.host}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req struct {
+		RequestID string `json:"request_id"`
+		Status    string `json:"status"`
+		ExpiresAt string `json:"expires_at"`
+		SyncJobID string `json:"sync_job_id"`
+		Note      string `json:"note"`
+	}
+	callOK(t, cs, "request_run", map[string]any{"template_id": tmpl.ID.String(), "reason": "deploy the fix", "sync_first": true}, &req)
+	if req.Status != "waiting_for_sync" || req.ExpiresAt != "" || req.SyncJobID == "" || !strings.Contains(req.Note, "sync") {
+		t.Fatalf("request_run = %+v", req)
+	}
+	var sync struct {
+		Job struct {
+			ID string `json:"id"`
+		} `json:"job"`
+		AlreadyRunning bool `json:"already_running"`
+	}
+	callOK(t, cs, "sync_repo", map[string]any{"repo_id": f.repo.String()}, &sync)
+	if !sync.AlreadyRunning || sync.Job.ID != req.SyncJobID {
+		t.Fatalf("sync_repo = %+v, want the request's sync %s already running", sync, req.SyncJobID)
+	}
+}

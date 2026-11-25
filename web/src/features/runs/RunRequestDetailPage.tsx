@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { DetailLayout, SidebarFacts, SidebarHeading, type SectionNavItem } from '../../ui/detail-layout.tsx';
@@ -43,6 +43,10 @@ import { shortId } from './status.ts';
  * "Requested by" names the token that asked and, under it, its owner. A
  * token that can no longer ask for runs (revoked, expired, deleted) gets a
  * hint, not a block: the approver decides the run themselves.
+ *
+ * A request made with sync_first waits for its repository's sync first:
+ * the page says so and links the sync, offers only Reject, and once the
+ * sync failed shows its error (spec 2026-11-25 A).
  */
 export function RunRequestDetailPage() {
   const t = useT();
@@ -93,6 +97,11 @@ export function RunRequestDetailPage() {
   }
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const pending = request.status === 'pending';
+  // A sync_first request waits for its repository's sync, then is pending,
+  // or fails with the sync's error (spec 2026-11-25 A). While it waits a
+  // person can reject it, not approve it.
+  const waiting = request.status === 'waiting_for_sync';
+  const failed = request.status === 'failed';
   // The run's commit cannot be pinned yet (spec 2026-11-25 A): the server
   // refuses the approval, so the button waits too; the playbook section
   // says why.
@@ -113,7 +122,25 @@ export function RunRequestDetailPage() {
   );
   // Absent when the server could not read the token: no hint then.
   const tokenState = request.token_state;
-  const tokenWarning = pending && tokenState && tokenState !== 'active' ? d.tokenState[tokenState] : undefined;
+  const tokenWarning = (pending || waiting) && tokenState && tokenState !== 'active' ? d.tokenState[tokenState] : undefined;
+  const syncLink = request.sync_job_id ? (
+    <Link to="/o/$org/runs/$id" params={{ org, id: request.sync_job_id }} className="text-xs font-medium hover:text-primary">
+      {d.openSync}
+    </Link>
+  ) : undefined;
+  let expiry: { label: string; value: ReactNode };
+  if (pending && request.expires_at) {
+    expiry = {
+      label: d.expiresAt,
+      value: <span title={fmt.dateTime(request.expires_at)}>{t.runs.requests.expires(fmt.relative(request.expires_at, now))}</span>,
+    };
+  } else if (waiting) {
+    expiry = { label: d.expiresAt, value: d.expiryAfterSync };
+  } else if (failed) {
+    expiry = { label: d.endedAt, value: <span className="font-mono">{request.expires_at ? fmt.dateTime(request.expires_at) : '—'}</span> };
+  } else {
+    expiry = { label: d.decidedAt, value: <span className="font-mono">{request.decided_at ? fmt.dateTime(request.decided_at) : '—'}</span> };
+  }
 
   // An approval starts one job per zone involved, all in one run group; the
   // page opens the first of them, or the runs list while none is listed yet.
@@ -186,19 +213,23 @@ export function RunRequestDetailPage() {
           { label: d.reason, value: request.reason },
           { label: d.requestedBy, value: requestedBy },
           { label: d.requestedAt, value: <span className="font-mono">{fmt.dateTime(request.created_at)}</span> },
-          pending
-            ? {
-                label: d.expiresAt,
-                value: (
-                  <span title={fmt.dateTime(request.expires_at)}>{t.runs.requests.expires(fmt.relative(request.expires_at, now))}</span>
-                ),
-              }
-            : {
-                label: d.decidedAt,
-                value: <span className="font-mono">{request.decided_at ? fmt.dateTime(request.decided_at) : '—'}</span>,
-              },
+          expiry,
         ]}
       />
+      {waiting && (
+        <div role="note" aria-label={d.waiting.title} className="flex flex-col items-start gap-1 rounded-md border border-border px-3 py-2 text-xs">
+          <p className="font-semibold">{d.waiting.title}</p>
+          <p className="text-muted-foreground">{d.waiting.body}</p>
+          {syncLink}
+        </div>
+      )}
+      {failed && (
+        <div role="alert" aria-label={d.syncFailed} className="flex flex-col items-start gap-1 rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs">
+          <p className="font-semibold text-[var(--px-warn)]">{d.syncFailed}</p>
+          {request.sync_error && <p className="break-words font-mono text-muted-foreground">{request.sync_error}</p>}
+          {syncLink}
+        </div>
+      )}
       {tokenWarning && (
         <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
           {tokenWarning}
@@ -233,6 +264,14 @@ export function RunRequestDetailPage() {
               <span className="text-[11px] text-muted-foreground">{d.approveHint}</span>
             )}
           </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">{d.noPermission}</span>
+        )
+      ) : waiting ? (
+        canRun ? (
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => void onReject()}>
+            {d.reject}
+          </Button>
         ) : (
           <span className="text-xs text-muted-foreground">{d.noPermission}</span>
         )

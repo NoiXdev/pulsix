@@ -124,6 +124,33 @@ func (f *fakeStore) CreateJob(_ context.Context, j jobs.Job, payload json.RawMes
 	return nil
 }
 
+// CreateSyncJobOnce returns the repository's oldest stored sync that is
+// not terminal, and stores j otherwise.
+func (f *fakeStore) CreateSyncJobOnce(ctx context.Context, j jobs.Job, payload json.RawMessage, repoID uuid.UUID) (jobs.Job, bool, error) {
+	f.mu.Lock()
+	var found *jobs.Job
+	for _, sj := range f.jobs {
+		var p struct {
+			RepoID uuid.UUID `json:"repo_id"`
+		}
+		if sj.j.OrgID != j.OrgID || sj.j.Kind != jobs.KindSyncRepo || sj.j.Status.Terminal() || json.Unmarshal(sj.payload, &p) != nil || p.RepoID != repoID {
+			continue
+		}
+		if found == nil || sj.j.CreatedAt.Before(found.CreatedAt) {
+			got := sj.j
+			found = &got
+		}
+	}
+	f.mu.Unlock()
+	if found != nil {
+		return *found, true, nil
+	}
+	if err := f.CreateJob(ctx, j, payload); err != nil {
+		return jobs.Job{}, false, err
+	}
+	return j, false, nil
+}
+
 func (f *fakeStore) GetJob(_ context.Context, orgID, id uuid.UUID) (jobs.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -773,7 +800,7 @@ func TestEnqueueSyncEnqueuesIntoTheDefaultZone(t *testing.T) {
 	store := newFakeStore()
 	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
 
-	job, err := svc.EnqueueSync(ctx, org, repoID, &actor)
+	job, _, err := svc.EnqueueSync(ctx, org, repoID, &actor)
 	if err != nil {
 		t.Fatalf("EnqueueSync: %v", err)
 	}
@@ -809,7 +836,7 @@ func TestEnqueueSyncFailsClosed(t *testing.T) {
 		zs := &fakeZones{}
 		zs.add(org, uuid.Must(uuid.NewV7()), "edge")
 		svc := newService(newFakeStore(), &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
-		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, jobs.ErrNoZone) {
+		if _, _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, jobs.ErrNoZone) {
 			t.Fatalf("err = %v, want ErrNoZone", err)
 		}
 	})
@@ -817,7 +844,7 @@ func TestEnqueueSyncFailsClosed(t *testing.T) {
 		boom := errors.New("boom")
 		zs := &fakeZones{err: boom}
 		svc := newService(newFakeStore(), &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
-		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
+		if _, _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
 			t.Fatalf("err = %v, want wrapped boom", err)
 		}
 	})
@@ -828,7 +855,7 @@ func TestEnqueueSyncFailsClosed(t *testing.T) {
 		store := newFakeStore()
 		store.nextErr = boom
 		svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
-		if _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
+		if _, _, err := svc.EnqueueSync(ctx, org, repoID, &actor); !errors.Is(err, boom) {
 			t.Fatalf("err = %v, want wrapped boom", err)
 		}
 	})
