@@ -72,6 +72,10 @@ export const enTemplates = {
     reload: 'Reload',
     pickFailed: 'Registering the playbook failed',
     varsProblems: (list: string) => `The extra vars need attention on the variables page: ${list}`,
+    /** Agent enrollment inside a run (spec 2026-11-25 B). */
+    enrol: 'Enrol agents',
+    enrolHelp:
+      "Runs of this template enrol the Pulsix agent on their hosts that have none. For each such host Pulsix sets two host variables for the agent role: pulsix_agent_enroll_token, a single-use enrollment token valid for 24 hours, and pulsix_agent_enroll_tokens, left empty. It sets nothing else. Switching this needs the Agents permission, and so do starting, approving and scheduling the template's runs.",
     credential: 'Default SSH credential',
     credentialNone: '— none —',
     newCredential: 'New credential…',

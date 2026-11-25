@@ -123,6 +123,28 @@ type RunRequest struct {
 	// pinnedRepo is the repository PinnedCommit belongs to, set by the
 	// enqueue from the template it resolved (Job.PinnedRepoID).
 	pinnedRepo *uuid.UUID
+	// EnrollHostIDs, when not nil, is the list of hosts an approval enrols
+	// agents on (spec 2026-11-25 B), stored on every job of the run
+	// (Job.EnrollHostIDs); an empty list is an approved list with no host
+	// on it. Only an approval stores one, so only a manual run takes it
+	// (checkEnrollList).
+	EnrollHostIDs []uuid.UUID
+}
+
+// ApprovedRun is what an approval stored on a run's jobs, which the claim
+// guard compares with what the approval stored on its request: the
+// commit (spec 2026-11-25 A) and the hosts it enrols agents on (B).
+type ApprovedRun struct {
+	PinnedCommit  string
+	EnrollHostIDs []uuid.UUID
+}
+
+// checkEnrollList refuses an enroll list on a run no approval started.
+func checkEnrollList(req RunRequest) error {
+	if req.EnrollHostIDs != nil && req.Trigger != TriggerManual {
+		return fmt.Errorf("%w: only an approved run enrols agents on a stored list of hosts, not a %s run", ErrInvalidInput, req.Trigger)
+	}
+	return nil
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -166,6 +188,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		return nil, err
 	}
 	if err := checkRunRequest(req); err != nil {
+		return nil, err
+	}
+	if err := checkEnrollList(req); err != nil {
 		return nil, err
 	}
 	group := s.newID()

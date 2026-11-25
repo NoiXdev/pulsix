@@ -541,3 +541,30 @@ func TestConcurrentSavesCannotCloseACycle(t *testing.T) {
 		}
 	}
 }
+
+// The agent enrollment flag (migration 00127) is stored on insert and
+// replaced by an update, like every other editable field.
+func TestSQLStoreAgentEnrollment(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedTemplatesOrg(t, q, "tmpl-enrol-org")
+	scoped := db.WithOrgScope(ctx, org)
+	playbookID := seedEditorPlaybook(t, d, org)
+	store := templates.NewSQLStore(d)
+
+	created, err := store.Create(scoped, templates.Template{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: playbookID, Name: "enrol", AgentEnrollment: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.Get(scoped, org, created.ID); err != nil || !got.AgentEnrollment {
+		t.Fatalf("Get = %+v, %v; want the flag on", got, err)
+	}
+	off := created
+	off.AgentEnrollment = false
+	updated, err := store.Update(scoped, off, &created.Revision)
+	if err != nil || updated.AgentEnrollment || updated.Revision != created.Revision+1 {
+		t.Fatalf("Update = %+v, %v; want the flag off at the next revision", updated, err)
+	}
+}

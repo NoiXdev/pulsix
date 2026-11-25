@@ -103,6 +103,29 @@ function CommitBlockedNote({ reasons }: { reasons: CommitBlockedReason[] }) {
   );
 }
 
+/** EnrollmentSection says which hosts the run enrols agents on (spec
+ * 2026-11-25 B): live while pending, as approved afterwards; a dry run
+ * enrols none. */
+function EnrollmentSection({ enrollment, status }: { enrollment: NonNullable<RunPicture['agent_enrollment']>; status: string }) {
+  const d = useT().runs.requests.detail;
+  const e = d.enrollment;
+  const hosts = enrollment.hosts ?? [];
+  const pending = status === 'pending';
+  let line: string;
+  if (enrollment.none_reason === 'dry_run') line = e.dryRun;
+  else if (hosts.length === 0) line = e.none;
+  else line = pending ? e.willEnrol(hosts.join(', ')) : e.enrolled(hosts.join(', '));
+  return (
+    <Section id="enrollment" title={d.section.enrollment}>
+      <div className="flex flex-col gap-1 text-xs">
+        <p className="font-semibold">{line}</p>
+        {hosts.length > 0 && <p className="text-muted-foreground">{e.how}</p>}
+        {pending && hosts.length > 0 && <p className="text-muted-foreground">{e.live}</p>}
+      </div>
+    </Section>
+  );
+}
+
 /**
  * RunPictureSections shows what a run request's run would use if it were
  * approved now, in the order a reviewer reads it: the template, the
@@ -245,6 +268,8 @@ export function RunPictureSections({ org, picture, status }: { org: string; pict
           )}
         </Card>
       </Section>
+
+      {picture.agent_enrollment && <EnrollmentSection enrollment={picture.agent_enrollment} status={status} />}
 
       <Section id="credentials" title={s.credentials}>
         <SidebarFacts

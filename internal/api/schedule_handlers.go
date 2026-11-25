@@ -164,6 +164,9 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if err := requireEnrolment(ctx, deps, scope, input.TemplateID); err != nil {
+			return nil, err
+		}
 		s, err := deps.Schedules.Create(ctx, scope.OrgID, scope.UserID, input)
 		if err != nil {
 			return nil, mapSchedulesErr(ctx, err)
@@ -231,6 +234,9 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if err := requireEnrolment(ctx, deps, scope, input.TemplateID); err != nil {
+			return nil, err
+		}
 		s, err := deps.Schedules.Update(ctx, scope.OrgID, id, rev, input)
 		if err != nil {
 			return nil, mapSchedulesErr(ctx, err)
@@ -267,6 +273,9 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 			if action.pause {
 				s, err = deps.Schedules.Pause(ctx, scope.OrgID, id)
 			} else {
+				if err := requireScheduleEnrolment(ctx, deps, scope, id); err != nil {
+					return nil, err
+				}
 				s, err = deps.Schedules.Resume(ctx, scope.OrgID, id)
 			}
 			if err != nil {
@@ -284,6 +293,9 @@ func registerScheduleRoutes(hapi huma.API, deps Deps) {
 		}
 		if !tenancy.Allows(scope.Role, tenancy.PermJobsRun) {
 			return nil, huma.Error403Forbidden("insufficient role")
+		}
+		if err := requireScheduleEnrolment(ctx, deps, scope, id); err != nil {
+			return nil, err
 		}
 		created, err := deps.Schedules.RunNow(ctx, scope.OrgID, id, scope.UserID)
 		if err != nil {

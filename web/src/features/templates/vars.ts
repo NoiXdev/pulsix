@@ -164,4 +164,6 @@ export const TEMPLATE_BODY_FIELDS: Record<Exclude<TemplateBodyKey, TemplateBodyI
   vault_identities: true,
   // Always sent: the form's list is authoritative, [] clears.
   follow_ups: true,
+  // Sent when switched; omitted keeps the stored flag (spec 2026-11-25 B).
+  agent_enrollment: true,
 };

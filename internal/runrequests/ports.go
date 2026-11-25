@@ -16,12 +16,13 @@ type Pictures interface {
 // Enqueuer starts what an approval allows, through the existing run paths.
 type Enqueuer interface {
 	// Run and RetryFailed enqueue into the run group group; Run enqueues
-	// the run request r asks for, with its host, overrides and pinned
-	// commit. RetryFailed pins the retry to pinnedCommit when its original
-	// job has none ("" for no pin).
+	// the run request r asks for, with its host, overrides, pinned commit
+	// and enroll list. RetryFailed pins the retry to approved.PinnedCommit
+	// when its original job has none ("" for no pin), and stores
+	// approved.EnrollHostIDs on its jobs.
 	Run(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
 	// RetryFailed retries the failed hosts of r's job with r's overrides.
-	RetryFailed(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error
+	RetryFailed(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID, approved jobs.ApprovedRun) error
 }
 
 // Validator checks a request the way the run and retry routes would check

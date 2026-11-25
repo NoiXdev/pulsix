@@ -397,6 +397,10 @@ func (f *fakeAgentStore) LocalChecksByHosts(context.Context, uuid.UUID, []uuid.U
 	return map[uuid.UUID]agents.LocalChecksReport{}, nil
 }
 
+func (f *fakeAgentStore) HostsWithAgent(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 func (f *fakeAgentStore) RecordConfigCheck(context.Context, string, string, string) error {
 	return nil
 }

@@ -54,6 +54,7 @@ type fakeJobRunner struct {
 	retryKey       string
 	retryCalled    bool
 	retryPin       string
+	retryEnroll    []uuid.UUID
 	retryOverrides *jobs.RunOverrides
 	// targetCalls counts RetryTargets.
 	targetCalls int
@@ -78,9 +79,10 @@ func (f *fakeJobRunner) EnqueueRunWith(_ context.Context, _, _ uuid.UUID, req jo
 	return nil, nil
 }
 
-func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, pin string, ov *jobs.RunOverrides) ([]jobs.Job, error) {
+func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, approved jobs.ApprovedRun, ov *jobs.RunOverrides) ([]jobs.Job, error) {
 	*f.calls = append(*f.calls, "retry")
-	f.retryList, f.retryKey, f.retryCalled, f.retryPin, f.retryOverrides = fu, key, true, pin, ov
+	f.retryList, f.retryKey, f.retryCalled, f.retryPin, f.retryOverrides = fu, key, true, approved.PinnedCommit, ov
+	f.retryEnroll = approved.EnrollHostIDs
 	return nil, nil
 }
 
@@ -267,7 +269,7 @@ func TestRunClearsUnstartedFollowUpsFirst(t *testing.T) {
 		})
 		t.Run("retry "+tc.name, func(t *testing.T) {
 			fx := newResolverFx(nil, false, nil, nil)
-			if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), actor, "k", id(), tc.in, ""); err != nil {
+			if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), actor, "k", id(), tc.in, jobs.ApprovedRun{}); err != nil {
 				t.Fatal(err)
 			}
 			if len(fx.calls) != 2 || fx.calls[0] != "clear" || fx.calls[1] != "retry" {
@@ -290,7 +292,7 @@ func TestClearErrorAbortsTheEnqueue(t *testing.T) {
 	if err := fx.res.Run(context.Background(), fx.org, runrequests.Request{TemplateID: id()}, id(), "k", id(), nil); !errors.Is(err, boom) {
 		t.Fatalf("run: %v", err)
 	}
-	if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), id(), "k", id(), nil, ""); !errors.Is(err, boom) {
+	if err := fx.res.RetryFailed(context.Background(), fx.org, retryOf(id()), id(), "k", id(), nil, jobs.ApprovedRun{}); !errors.Is(err, boom) {
 		t.Fatalf("retry: %v", err)
 	}
 	if fx.jobs.enqueued != nil || fx.jobs.retryCalled {

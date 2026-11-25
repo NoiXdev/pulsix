@@ -841,6 +841,27 @@ failure telling the waiting `sync_first` requests about a finished sync no longe
 rolls the sync's finish back: it is logged and the sweep moves them. An older manager
 alongside writes neither column, which only leaves the older behaviour in place.
 
+Agent enrollment inside an approved run (spec 2026-11-25 assistant API gaps, B) adds
+migration 00127: `job_templates.agent_enrollment` (boolean, NOT NULL DEFAULT false,
+so every existing template has it off) and the nullable `run_requests.enroll_host_ids`
+and `jobs.enroll_host_ids` (uuid arrays, NULL for every existing row); all catalog
+changes that rewrite nothing, and a backup carries them. A template's **Enrol agents**
+switch (`agent_enrollment` in the template API and `create_job_template` /
+`update_job_template`; an update that leaves it out keeps it) is part of its revision.
+Switching it needs `agents.write` besides `templates.write`, which no assistant area
+grants; so do approving a run request of such a template, starting, retrying or
+dry-running one by hand, and creating, changing, resuming or running a schedule of
+one (403 naming the enrollment). A webhook trigger of such a template is not refused.
+A run request picture of such a template carries `agent_enrollment`: the targets
+without an agent (`hosts`, `host_ids`; `none_reason: dry_run` for a dry run), live
+while pending; the approval stores that list on the request and its jobs, the
+approved picture shows the stored list, and the claim refuses a job whose list
+differs from the approval's. A picture of any other template is unchanged, so its
+fingerprint is. **An older manager ignores the flag**: it computes a picture without
+the enrollment, which a newer manager's claim refuses as changed, and it does not
+ask for `agents.write`. Stop every manager instance before the new version starts,
+as 00123 requires. Workers and agents are not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

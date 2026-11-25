@@ -44,6 +44,7 @@ export function PlaybookUsedByTab({
     canRun: may(role, 'jobs.run'),
     canReadCredentials: may(role, 'credentials.read'),
     canCreateCredential: may(role, 'credentials.write'),
+    canEnrolAgents: may(role, 'agents.write'),
   });
   const columns = usedByColumns(t, org);
   const view = useListView('playbook-templates', columns, { mode: 'client', urlState: false, rowKey: (tpl) => tpl.id });

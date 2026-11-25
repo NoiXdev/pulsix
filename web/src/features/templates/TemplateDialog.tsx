@@ -6,6 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Pill } from '../../ui/badge.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -38,6 +39,9 @@ export interface TemplateDialogProps {
    * credentials.write is admin, stricter than templates.write (v0.4g
    * Task 7 fix round). */
   canCreateCredential: boolean;
+  /** Gates the Enrol agents switch: changing it needs agents.write (spec
+   * 2026-11-25 B). Without it the switch shows the stored value. */
+  canEnrolAgents?: boolean;
   /** Create only: the playbook the new template starts with (the playbook
    * page's "Create template…"). */
   initialPlaybookId?: string;
@@ -54,7 +58,7 @@ export interface TemplateDialogProps {
  * keep marker (templates/vars.ts) — under If-Match, and a stale revision
  * (someone saved, or a sync applied the playbook's variables) answers 412.
  */
-export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, initialPlaybookId, onClose }: TemplateDialogProps) {
+export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, canEnrolAgents = false, initialPlaybookId, onClose }: TemplateDialogProps) {
   const detail = useTemplate(org, template?.id ?? '');
   const playbooks = usePlaybooks(org);
   const credentials = useCredentials(org, { enabled: canReadCredentials });
@@ -89,6 +93,7 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
         credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
         vaultCredentials={allCredentials}
         canCreateCredential={canCreateCredential}
+        canEnrolAgents={canEnrolAgents}
         onClose={onClose}
       />
     );
@@ -101,6 +106,7 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
       credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
       vaultCredentials={allCredentials}
       canCreateCredential={canCreateCredential}
+      canEnrolAgents={canEnrolAgents}
       initialPlaybookId={initialPlaybookId}
       onClose={onClose}
     />
@@ -108,7 +114,7 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
 }
 
 function TemplateForm({
-  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, initialPlaybookId, onClose,
+  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, canEnrolAgents, initialPlaybookId, onClose,
 }: {
   org: string;
   existing?: Existing;
@@ -122,6 +128,7 @@ function TemplateForm({
    * Vault identities list below needs to offer. */
   vaultCredentials: readonly Credential[];
   canCreateCredential: boolean;
+  canEnrolAgents: boolean;
   initialPlaybookId?: string;
   onClose: () => void;
 }) {
@@ -153,6 +160,7 @@ function TemplateForm({
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
   const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(existing?.vaultIdentities ?? []);
   const [followUps, setFollowUps] = useState<string[]>(existing?.followUps ?? []);
+  const [agentEnrollment, setAgentEnrollment] = useState(existing?.agentEnrollment ?? false);
   const [followUpsError, setFollowUpsError] = useState<string | null>(null);
   const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
   // null = closed. One mount point for the Default SSH credential field and
@@ -194,6 +202,7 @@ function TemplateForm({
     setCredentialId((d) => mergeSetting(d, base.credentialId, fresh.credentialId));
     setVaultRows((d) => mergeVaultRows(d, base.vaultIdentities, fresh.vaultIdentities));
     setFollowUps((d) => mergeSetting(d, base.followUps, fresh.followUps));
+    setAgentEnrollment((d) => mergeSetting(d, base.agentEnrollment, fresh.agentEnrollment));
     setLoaded(fresh);
     setStale(false);
   }
@@ -217,6 +226,9 @@ function TemplateForm({
       credential_id: credentialId || undefined,
       vault_identities: identitiesForBody(vaultRows),
       follow_ups: followUps.map((template_id) => ({ template_id })),
+      // Sent only when switched: an omitted flag keeps the stored one, so a
+      // save by someone who may not change it never touches it.
+      ...(agentEnrollment !== (loaded?.agentEnrollment ?? false) ? { agent_enrollment: agentEnrollment } : {}),
     };
     try {
       if (loaded) await update.mutateAsync({ body, revision: loaded.revision });
@@ -325,6 +337,22 @@ function TemplateForm({
               {followUpsError}
             </p>
           )}
+        </div>
+        <div className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="template-enrol">{t.templates.dialog.enrol}</Label>
+            <span id="template-enrol-help" className="text-[11px] text-muted-foreground">
+              {t.templates.dialog.enrolHelp}
+            </span>
+          </div>
+          <Switch
+            id="template-enrol"
+            aria-label={t.templates.dialog.enrol}
+            aria-describedby="template-enrol-help"
+            checked={agentEnrollment}
+            disabled={!canEnrolAgents}
+            onCheckedChange={setAgentEnrollment}
+          />
         </div>
         {error && (
           <p role="alert" className="text-xs text-destructive">

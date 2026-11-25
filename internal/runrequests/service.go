@@ -99,6 +99,13 @@ type Request struct {
 	// 2026-11-25 A): stored with the approval, "" for a run of no
 	// repository, a request not approved, and one approved before pins.
 	PinnedCommit string
+	// EnrollHostIDs are the hosts the approval enrols agents on (spec
+	// 2026-11-25 B): stored with the approval from the picture's
+	// AgentEnrollment; nil for a template without agent enrollment, a
+	// request not approved and one approved before the column, an empty
+	// list for an approved one that enrols no host (a dry run, every
+	// target with an agent).
+	EnrollHostIDs []uuid.UUID
 	// ExpiresAt is when a pending request expires; zero while the request
 	// waits for its sync, whose success starts the expiry.
 	ExpiresAt time.Time
@@ -163,7 +170,7 @@ type Store interface {
 	// neither. An approval records fingerprint and the commit it pins (""
 	// for none) and sets the run group to the request's own id, in the same
 	// write.
-	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error)
+	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error)
 	// RevertToPending undoes an approval whose enqueue failed; the run
 	// group stays, the fingerprint and the pinned commit go.
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
@@ -350,7 +357,7 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "", "")
+	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "", jobs.ApprovedRun{})
 	if err != nil {
 		return Request{}, fmt.Errorf("decide run request: %w", err)
 	}

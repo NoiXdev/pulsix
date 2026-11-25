@@ -7252,6 +7252,8 @@ export interface components {
             token: components["schemas"]["PersonalTokenDTO"];
         };
         Picture: {
+            /** @description Set when the template enrols agents: the hosts the run enrols the agent on */
+            agent_enrollment?: components["schemas"]["PictureAgentEnrollment"];
             check_mode?: boolean;
             commit?: components["schemas"]["PictureCommit"];
             diff?: boolean;
@@ -7278,6 +7280,17 @@ export interface components {
             template_revision: number;
             vars_digest: string;
             vault_identities: components["schemas"]["PictureVault"][] | null;
+        };
+        PictureAgentEnrollment: {
+            /** @description The ids of those hosts, in the same order */
+            host_ids: string[] | null;
+            /** @description The names of the hosts the run enrols the agent on: the targets without an agent */
+            hosts: string[] | null;
+            /**
+             * @description Why the run enrols nothing: dry_run, a dry run mints no enrollment token
+             * @enum {string}
+             */
+            none_reason?: "dry_run";
         };
         PictureCommit: {
             /** @description Why the request cannot be approved now: the repository needs a sync first, a sync of it is queued or running, or (a retry) the template no longer runs the repository the original run's commit belongs to. Absent when the commit can be pinned */
@@ -8314,6 +8327,8 @@ export interface components {
              * @example https://example.com/schemas/TemplateCreateInputBody.json
              */
             readonly $schema?: string;
+            /** @description Runs of the template enrol the agent on the hosts they run on that have none; needs agents.write */
+            agent_enrollment?: boolean;
             /** @description The default SSH credential for hosts without one of their own */
             credential_id?: string;
             /** @description Validated against extra_vars_schema when one is set; secrets read back as {"$secret": "set"} */
@@ -8331,6 +8346,8 @@ export interface components {
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         TemplateDTO: {
+            /** @description Runs of the template enrol the agent on the hosts they run on that have none; changing it needs agents.write */
+            agent_enrollment: boolean;
             /** Format: date-time */
             created_at: string;
             credential_id?: string;
@@ -8461,6 +8478,8 @@ export interface components {
              * @example https://example.com/schemas/TemplateUpdateInputBody.json
              */
             readonly $schema?: string;
+            /** @description Runs of the template enrol the agent on the hosts they run on that have none; omitted keeps it, changing it needs agents.write */
+            agent_enrollment?: boolean;
             /** @description The default SSH credential for hosts without one of their own */
             credential_id?: string;
             /** @description Validated against extra_vars_schema when one is set; secrets read back as {"$secret": "set"} */

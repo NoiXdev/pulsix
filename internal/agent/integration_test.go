@@ -217,6 +217,11 @@ func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string,
 	return f.Touch(ctx, serial, version)
 }
 
+// HostsWithAgent reports no host: enrollment runs are not exercised here.
+func (f *integAgentStore) HostsWithAgent(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 // LocalChecksByHosts reports no host: the manager's view of local checks
 // belongs to the host page and the rule evaluation, which this harness
 // does not exercise.

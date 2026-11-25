@@ -198,6 +198,7 @@ export function RunRequestDetailPage() {
     { id: 'template', label: s.template },
     { id: 'playbook', label: s.playbook },
     { id: 'targets', label: s.targets, count: (picture.targets ?? []).length },
+    ...(picture.agent_enrollment ? [{ id: 'enrollment', label: s.enrollment }] : []),
     { id: 'credentials', label: s.credentials },
     { id: 'vars', label: s.vars },
     ...(picture.retry ? [{ id: 'retry', label: s.retry }] : []),

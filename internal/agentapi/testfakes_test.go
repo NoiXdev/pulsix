@@ -363,6 +363,19 @@ func (f *fakeAgentStore) LocalChecksByHosts(_ context.Context, orgID uuid.UUID, 
 	return out, nil
 }
 
+// HostsWithAgent names the listed hosts that run an agent.
+func (f *fakeAgentStore) HostsWithAgent(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]bool{}
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && slices.Contains(hostIDs, a.HostID) {
+			out[a.HostID] = true
+		}
+	}
+	return out, nil
+}
+
 // configCheckCall is one RecordConfigCheck call.
 type configCheckCall struct {
 	serial, reported, expected string

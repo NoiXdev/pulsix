@@ -61,6 +61,31 @@ type Picture struct {
 	// approved before pins existed, so the canonical JSON of its picture
 	// is unchanged and its approval still matches at the claim.
 	Commit *PictureCommit `json:"commit,omitempty"`
+
+	// AgentEnrollment is set for a template with agent enrollment (spec
+	// 2026-11-25 B): the hosts the run enrols the agent on. nil for every
+	// other template, so the canonical JSON of its picture is unchanged.
+	AgentEnrollment *PictureAgentEnrollment `json:"agent_enrollment,omitempty" doc:"Set when the template enrols agents: the hosts the run enrols the agent on"`
+}
+
+// EnrollNoneDryRun is PictureAgentEnrollment.NoneReason for a dry run,
+// which enrols nothing.
+const EnrollNoneDryRun = "dry_run"
+
+// PictureAgentEnrollment is what a run of a template with agent enrollment
+// enrols. While the request is pending it is live: the targets that have
+// no agent now (a host enrolled meanwhile changes the picture). An
+// approval stores the list on the request and the run's jobs; from then on
+// the picture shows the stored list, so an agent enrolled after the
+// approval does not fail the claim.
+type PictureAgentEnrollment struct {
+	// Hosts are the hosts' names in the order of HostIDs, by name; a
+	// stored host that is no longer a target shows by id.
+	Hosts   []string `json:"hosts" doc:"The names of the hosts the run enrols the agent on: the targets without an agent"`
+	HostIDs []string `json:"host_ids" doc:"The ids of those hosts, in the same order"`
+	// NoneReason says why the run enrols no host although the template
+	// enrols agents: EnrollNoneDryRun. Empty otherwise.
+	NoneReason string `json:"none_reason,omitempty" enum:"dry_run" doc:"Why the run enrols nothing: dry_run, a dry run mints no enrollment token"`
 }
 
 // BlockedSyncRunning is PictureCommit.Blocked's reason for a sync of the
@@ -187,8 +212,9 @@ type PictureRetry struct {
 // Fingerprint is the SHA-256 (hex) over the request id and the canonical
 // JSON of p. encoding/json writes struct fields in declaration order and
 // map keys sorted, so the only order left to fix is the slices': targets by
-// id, vault identities by label then credential id then name, failed hosts
-// and the requested hosts as given sorted.
+// id, vault identities by label then credential id then name, failed
+// hosts, the requested hosts and the enrolled hosts' names and ids as
+// given sorted.
 func Fingerprint(requestID uuid.UUID, p Picture) string {
 	p.Targets = slices.Clone(p.Targets)
 	slices.SortFunc(p.Targets, func(a, b PictureHost) int { return cmp.Compare(a.ID, b.ID) })
@@ -198,6 +224,13 @@ func Fingerprint(requestID uuid.UUID, p Picture) string {
 	})
 	p.RequestedHostIDs = slices.Clone(p.RequestedHostIDs)
 	slices.Sort(p.RequestedHostIDs)
+	if p.AgentEnrollment != nil {
+		e := *p.AgentEnrollment
+		e.Hosts, e.HostIDs = slices.Clone(e.Hosts), slices.Clone(e.HostIDs)
+		slices.Sort(e.Hosts)
+		slices.Sort(e.HostIDs)
+		p.AgentEnrollment = &e
+	}
 	if p.Retry != nil {
 		r := *p.Retry
 		r.FailedHosts = slices.Clone(r.FailedHosts)

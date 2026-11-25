@@ -44,8 +44,9 @@ export function TemplatesPage() {
   // credentials.write is admin, stricter than templates.write (v0.4g
   // Task 7 fix round).
   const canCreateCredential = may(orgInfo.data?.org.role, 'credentials.write');
+  const canEnrolAgents = may(orgInfo.data?.org.role, 'agents.write');
   const credentials = useCredentials(org, { enabled: canReadCredentials });
-  const actions = useTemplateListActions(org, { canWrite, canRun, canReadCredentials, canCreateCredential });
+  const actions = useTemplateListActions(org, { canWrite, canRun, canReadCredentials, canCreateCredential, canEnrolAgents });
 
   const credentialName = (id: string) => (credentials.data?.credentials ?? []).find((c) => c.id === id)?.name;
   const groupName = (id: string) => (groups.data?.groups ?? []).find((g) => g.id === id)?.name ?? id.slice(0, 8);
@@ -134,6 +135,7 @@ export function TemplatesPage() {
           org={org}
           canReadCredentials={canReadCredentials}
           canCreateCredential={canCreateCredential}
+          canEnrolAgents={canEnrolAgents}
           initialPlaybookId={preset}
           onClose={() => void navigate({ to: '/o/$org/templates', params: { org }, search: (prev) => ({ ...prev, create: undefined }), replace: true })}
         />

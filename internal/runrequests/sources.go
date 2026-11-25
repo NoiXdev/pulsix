@@ -34,7 +34,7 @@ type (
 		CheckRunScope(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) error
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
-		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string, overrides *jobs.RunOverrides) ([]jobs.Job, error)
+		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, approved jobs.ApprovedRun, overrides *jobs.RunOverrides) ([]jobs.Job, error)
 	}
 	// CommitSource is the commit of a repository's last successful sync
 	// and why a run cannot be pinned to it (repos.Service).
@@ -75,6 +75,11 @@ type (
 	// secret under for some hosts (inventory.Service).
 	InventorySecretSource interface {
 		SecretVarNames(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[string]bool, error)
+	}
+	// AgentSource names the hosts that run an agent (agents.Service): a
+	// run of a template with agent enrollment enrols the others.
+	AgentSource interface {
+		HostsWithAgent(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 	}
 	// PlaybookVarSource is a playbook's recorded variable source, the
 	// variables it declares (playbooks.Service).
@@ -123,4 +128,7 @@ type Sources struct {
 	// (checkSecretShadows).
 	InventorySecrets InventorySecretSource
 	PlaybookVars     PlaybookVarSource
+	// Agents gives a template with agent enrollment its picture's hosts
+	// (spec 2026-11-25 B).
+	Agents AgentSource
 }

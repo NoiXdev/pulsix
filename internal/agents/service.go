@@ -246,6 +246,8 @@ type Store interface {
 	// LocalChecksByHosts reads the local checks reports of the listed
 	// hosts' agents, org-scoped; a host without an agent has no entry.
 	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]LocalChecksReport, error)
+	// HostsWithAgent names the listed hosts of orgID that run an agent.
+	HostsWithAgent(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 	// RecordConfigCheck stores one configuration comparison by serial,
 	// org-unscoped: the row changes only when reported or expected differ
 	// from the stored ones or the stored check is older than
@@ -709,6 +711,17 @@ func (s *Service) LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostI
 		return map[uuid.UUID]LocalChecksReport{}, nil
 	}
 	return s.store.LocalChecksByHosts(ctx, orgID, hostIDs)
+}
+
+// HostsWithAgent names the listed hosts that run an agent; a host without
+// one, or of another organization, has no entry. A run of a template with
+// agent enrollment enrols the others (spec 2026-11-25 assistant API gaps,
+// B).
+func (s *Service) HostsWithAgent(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	if len(hostIDs) == 0 {
+		return map[uuid.UUID]bool{}, nil
+	}
+	return s.store.HostsWithAgent(ctx, orgID, hostIDs)
 }
 
 // GetByHost is the host detail card's read: the host's active agent, or

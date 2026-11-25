@@ -94,3 +94,16 @@ func (s *SQLStore) LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, host
 	}
 	return out, nil
 }
+
+// HostsWithAgent names the listed hosts of orgID that run an agent.
+func (s *SQLStore) HostsWithAgent(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	ids, err := s.q.ListHostsWithAgent(ctx, gen.ListHostsWithAgentParams{OrgID: orgID, HostIds: hostIDs})
+	if err != nil {
+		return nil, fmt.Errorf("list hosts with an agent: %w", err)
+	}
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}

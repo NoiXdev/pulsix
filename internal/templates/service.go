@@ -136,6 +136,10 @@ type Template struct {
 	// FollowUps are the templates started, in this order, after a
 	// successful run of this one (backlog 2.121).
 	FollowUps []FollowUp
+	// AgentEnrollment makes the template's runs enrol the Pulsix agent on
+	// the hosts they run on (spec 2026-11-25 B, migration 00127). Part of
+	// the revision; changing it needs agents.write (ErrEnrollmentNotAllowed).
+	AgentEnrollment bool
 	// Revision moves on with every write (If-Match / ETag at the API).
 	Revision int64
 	// VarsMode, VarsSourceRev and VarsAppliedAt say whether and how the
@@ -260,6 +264,10 @@ type CreateInput struct {
 	CredentialID     *uuid.UUID
 	VaultCredentials []VaultCredential
 	FollowUps        []uuid.UUID
+	// AgentEnrollment switches agent enrollment on; MayEnrolAgents is the
+	// caller's leave to (agents.write, checked by the REST layer).
+	AgentEnrollment bool
+	MayEnrolAgents  bool
 }
 
 // UpdateInput fully replaces a template's fields (PUT semantics).
@@ -279,6 +287,11 @@ type UpdateInput struct {
 	// FollowUps nil keeps the stored list; an empty slice clears it.
 	FollowUps  *[]uuid.UUID
 	IfRevision *int64
+	// AgentEnrollment nil keeps the stored flag. Changing it needs
+	// MayEnrolAgents, the caller's agents.write; naming the stored value
+	// does not.
+	AgentEnrollment *bool
+	MayEnrolAgents  bool
 }
 
 // Create validates the input and stores a new template, then its own
@@ -290,10 +303,14 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	// written directly by internal/shared's store, never through this
 	// service (ProjectedTemplateColumns' own doc comment) — so the
 	// playbook lookup always runs (skipPlaybookCheck=false).
+	if in.AgentEnrollment && !in.MayEnrolAgents {
+		return Template{}, ErrEnrollmentNotAllowed
+	}
 	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, false, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, Template{}, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
+	t.AgentEnrollment = in.AgentEnrollment
 	var created Template
 	// One transaction for both writes: a template and the vault passwords
 	// its request named are one fact, and half of it is worse than none
@@ -343,6 +360,10 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		return Template{}, err
 	}
 	isProjection := cur.SharedTemplateID != nil
+	enrol, err := enrollmentAfter(cur.AgentEnrollment, in.AgentEnrollment, in.MayEnrolAgents)
+	if err != nil {
+		return Template{}, err
+	}
 	// Normalized the same way build() normalizes its own incoming vars
 	// (vars == nil -> {}), but BEFORE refuseSharedFieldChange compares
 	// against cur.ExtraVars (never nil once stored): a client that omits
@@ -365,6 +386,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		}
 	}
 	t.SharedTemplateID = cur.SharedTemplateID
+	t.AgentEnrollment = enrol
 	var updated Template
 	var followUps []FollowUp
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {

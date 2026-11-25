@@ -51,6 +51,7 @@ func (s *SQLStore) Create(ctx context.Context, t Template) (Template, error) {
 		ID: t.ID, OrgID: t.OrgID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
 		Scope: scope, Limit: t.Limit, ExtraVars: vars,
 		ExtraVarsSchema: schemaRaw, CredentialID: db.NullUUID(t.CredentialID),
+		AgentEnrollment: t.AgentEnrollment,
 	})
 	if err != nil {
 		return Template{}, mapWriteErr(err, "create template")
@@ -103,7 +104,7 @@ func (s *SQLStore) Update(ctx context.Context, t Template, ifRevision *int64) (T
 		OrgID: t.OrgID, ID: t.ID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
 		Scope: scope, Lim: t.Limit, ExtraVars: vars,
 		ExtraVarsSchema: schemaRaw, CredentialID: db.NullUUID(t.CredentialID),
-		IfRevision: ifRevision,
+		AgentEnrollment: t.AgentEnrollment, IfRevision: ifRevision,
 	})
 	if err != nil {
 		return Template{}, s.guardedWriteErr(ctx, err, t, "update template")
@@ -335,8 +336,8 @@ func toTemplate(row gen.JobTemplate) (Template, error) {
 		SharedTemplateID: db.UUIDPtr(row.SharedTemplateID),
 		Limit:            row.Limit, CredentialID: db.UUIDPtr(row.CredentialID),
 		Revision: row.Revision, VarsMode: SourceMode(row.VarsMode), VarsSourceRev: row.VarsSourceRev,
-		VarsAppliedAt: db.TimePtr(row.VarsAppliedAt),
-		CreatedAt:     row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		VarsAppliedAt: db.TimePtr(row.VarsAppliedAt), AgentEnrollment: row.AgentEnrollment,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if len(row.Scope) > 0 {
 		if err := json.Unmarshal(row.Scope, &t.Scope); err != nil {

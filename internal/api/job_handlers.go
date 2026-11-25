@@ -420,6 +420,9 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if err := requireEnrolment(ctx, deps, scope, id); err != nil {
+			return nil, err
+		}
 		var onlyHost *uuid.UUID
 		if in.Body != nil && in.Body.HostID != "" {
 			hostID, err := parseUUID(in.Body.HostID, "host_id")
@@ -488,6 +491,9 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		}
 		id, err := parseUUID(in.ID, "job id")
 		if err != nil {
+			return nil, err
+		}
+		if err := requireRetryEnrolment(ctx, deps, scope, id); err != nil {
 			return nil, err
 		}
 		actor := scope.UserID

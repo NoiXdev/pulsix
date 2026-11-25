@@ -67,9 +67,11 @@ WHERE t.id = ANY(sqlc.arg(ids)::uuid[]);
 -- fingerprint the person approved and takes the request's own id as the
 -- run group, before anything is enqueued, so a claim of one of its jobs
 -- always finds it (migration 00103), and the commit the run is pinned to
--- (migration 00123; NULL for none).
+-- (migration 00123; NULL for none) and the hosts it enrols agents on
+-- (migration 00127; NULL for no list).
 UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
   approved_fingerprint = sqlc.narg(approved_fingerprint), pinned_commit = sqlc.narg(pinned_commit),
+  enroll_host_ids = sqlc.narg(enroll_host_ids)::uuid[],
   run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, sqlc.arg(decided_at))
 WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id)
@@ -79,7 +81,8 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id)
 -- A failed enqueue puts the request back to pending. run_group_id stays:
 -- jobs the enqueue did create keep pointing at this request, and its
 -- claim guard refuses them while the request is not approved.
-UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL
+UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL,
+  enroll_host_ids = NULL
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetRunRequestByRunGroup :one

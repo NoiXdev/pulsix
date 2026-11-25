@@ -103,7 +103,7 @@ func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[
 	return out, nil
 }
 
-func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error) {
+func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error) {
 	r, ok := m.rows[id]
 	rejectWaiting := r.Status == runrequests.StatusWaitingForSync && to == runrequests.StatusRejected
 	if !ok || r.OrgID != orgID || (r.Status != runrequests.StatusPending && !rejectWaiting) {
@@ -112,7 +112,8 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 	if r.ExpiresAt.IsZero() {
 		r.ExpiresAt = at
 	}
-	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, pinnedCommit
+	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, approved.PinnedCommit
+	r.EnrollHostIDs = approved.EnrollHostIDs
 	if to == runrequests.StatusApproved {
 		group := r.ID
 		r.RunGroupID = &group
@@ -124,6 +125,7 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {
 	r := m.rows[id]
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = runrequests.StatusPending, nil, nil, "", ""
+	r.EnrollHostIDs = nil
 	m.rows[id] = r
 	return nil
 }
@@ -192,6 +194,8 @@ type fakeEnqueuer struct {
 	list      []uuid.UUID // the follow-up list the last enqueue was given
 	request   runrequests.Request
 	retryPin  string // the commit the last retry was pinned to
+	// retryApproved is what the last retry was given from its approval.
+	retryApproved jobs.ApprovedRun
 }
 
 func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
@@ -202,11 +206,12 @@ func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request
 	return nil
 }
 
-func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
+func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, approved jobs.ApprovedRun) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.retries, f.retryKeys, f.actor, f.group, f.list, f.retryPin = append(f.retries, *r.JobID), append(f.retryKeys, key), actor, group, followUps, pinnedCommit
+	f.retries, f.retryKeys, f.actor, f.group, f.list, f.retryPin = append(f.retries, *r.JobID), append(f.retryKeys, key), actor, group, followUps, approved.PinnedCommit
+	f.retryApproved = approved
 	f.request = r
 	return nil
 }
@@ -333,7 +338,7 @@ func TestCreatedByToken(t *testing.T) {
 	w := newWiring()
 	r := w.create(t)
 	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := w.svc.CreatedByToken(context.Background(), w.org, w.enq.group, *r.RequestedByToken); err != nil || !ok {

@@ -246,7 +246,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 			}
 			selection = &ids
 		}
-		a, err := deps.RunRequests.Approve(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection)
+		a, err := deps.RunRequests.Approve(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection, mayEnrolAgents(scope))
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
@@ -280,13 +280,17 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 }
 
 // approvalSummary is the audit summary of an approval: the template
-// revision the person approved, the commit the run is pinned to, a dry run
-// and the overrides by field (no values, see overrideFields) and, when the
-// template has follow-ups, the ones that start.
+// revision the person approved, the commit the run is pinned to, how many
+// hosts it enrols agents on, a dry run and the overrides by field (no
+// values, see overrideFields) and, when the template has follow-ups, the
+// ones that start.
 func approvalSummary(a runrequests.Approved) string {
 	summary := "approved run request (template revision " + strconv.FormatInt(a.TemplateRevision, 10)
 	if a.Request.PinnedCommit != "" {
 		summary += "; commit " + a.Request.PinnedCommit
+	}
+	if a.Request.EnrollHostIDs != nil {
+		summary += "; enrols agents on " + strconv.Itoa(len(a.Request.EnrollHostIDs)) + " host(s)"
 	}
 	if ov := a.Request.Overrides; ov != nil {
 		if ov.Check {
@@ -340,6 +344,8 @@ func mapRunRequestErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, runrequests.ErrNotFound):
 		return huma.Error404NotFound("not found")
+	case errors.Is(err, runrequests.ErrEnrollmentNotAllowed):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, runrequests.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, runrequests.ErrTooManyPending):

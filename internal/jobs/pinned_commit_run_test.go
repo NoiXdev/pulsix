@@ -138,7 +138,7 @@ func TestRetryRunsTheOriginalJobsCommit(t *testing.T) {
 				TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: id7(), PinnedCommit: tc.original,
 				Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
 			}}
-			got, err := f.svc.RetryFailedInto(ctx, f.org, orig, nil, "", id7(), nil, tc.given, nil)
+			got, err := f.svc.RetryFailedInto(ctx, f.org, orig, nil, "", id7(), nil, jobs.ApprovedRun{PinnedCommit: tc.given}, nil)
 			if err != nil || len(got) != 1 {
 				t.Fatalf("retry = %+v, %v", got, err)
 			}

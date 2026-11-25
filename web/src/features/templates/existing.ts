@@ -19,6 +19,7 @@ export function existingOf(tpl: Template): Existing {
     credentialId: tpl.credential_id ?? '',
     vaultIdentities: rowsFromIdentities(tpl.vault_identities),
     followUps: followUpIds(tpl),
+    agentEnrollment: tpl.agent_enrollment,
     sharedTemplateId: tpl.shared_template_id,
   };
 }
@@ -38,6 +39,8 @@ export interface Existing {
   vaultIdentities: VaultIdentityRow[];
   /** The ids of the templates started after a successful run, in order. */
   followUps: string[];
+  /** Whether the template's runs enrol agents (spec 2026-11-25 B). */
+  agentEnrollment: boolean;
   /** Set when this template is a projection of an installation-owned
    * definition (spec v0.2f decisions 1, 2). Its presence, not its value, is
    * what the form acts on: name, playbook, limit and the extra-vars schema

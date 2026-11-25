@@ -579,6 +579,7 @@ type Job struct {
 	DryRun                  []byte             `json:"dry_run"`
 	PinnedCommit            *string            `json:"pinned_commit"`
 	PinnedRepoID            pgtype.UUID        `json:"pinned_repo_id"`
+	EnrollHostIds           []uuid.UUID        `json:"enroll_host_ids"`
 }
 
 type JobEvent struct {
@@ -624,6 +625,7 @@ type JobTemplate struct {
 	VarsMode         string             `json:"vars_mode"`
 	VarsSourceRev    string             `json:"vars_source_rev"`
 	VarsAppliedAt    pgtype.Timestamptz `json:"vars_applied_at"`
+	AgentEnrollment  bool               `json:"agent_enrollment"`
 }
 
 type JobTemplateFollowUp struct {
@@ -1001,6 +1003,7 @@ type RunRequest struct {
 	SyncJobID           pgtype.UUID        `json:"sync_job_id"`
 	ExpiresInMinutes    *int32             `json:"expires_in_minutes"`
 	SyncError           *string            `json:"sync_error"`
+	EnrollHostIds       []uuid.UUID        `json:"enroll_host_ids"`
 }
 
 type Schedule struct {

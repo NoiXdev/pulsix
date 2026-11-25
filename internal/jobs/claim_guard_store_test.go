@@ -3,6 +3,7 @@ package jobs_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,12 +19,12 @@ import (
 type refuseGuard struct {
 	reason error
 	calls  int
-	pins   []string
+	runs   []jobs.ApprovedRun
 }
 
-func (g *refuseGuard) CheckRunClaim(_ context.Context, _, _ uuid.UUID, pinnedCommit string) error {
+func (g *refuseGuard) CheckRunClaim(_ context.Context, _, _ uuid.UUID, run jobs.ApprovedRun) error {
 	g.calls++
-	g.pins = append(g.pins, pinnedCommit)
+	g.runs = append(g.runs, run)
 	return g.reason
 }
 
@@ -88,9 +89,9 @@ func TestQueueClaimGuardRefusalMarksTheJob(t *testing.T) {
 	}
 }
 
-// TestQueueClaimGuardSeesTheJobsPin (spec 2026-11-25 A): the guard is
-// handed the commit the claimed job is pinned to, which it compares with
-// the one its approval stored.
+// TestQueueClaimGuardSeesTheJobsPin (spec 2026-11-25 A, B): the guard is
+// handed the commit the claimed job is pinned to and the hosts it enrols
+// agents on, which it compares with what its approval stored.
 func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, gen.New(d.Pool()), "jobs-claim-guard-pin")
@@ -103,6 +104,7 @@ func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	}
 	j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 	j.PinnedCommit = "0123456789abcdef0123456789abcdef01234567"
+	j.EnrollHostIDs = []uuid.UUID{uuid.Must(uuid.NewV7())}
 	if err := jobs.NewSQLStore(d).CreateJob(scoped, j, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	if c, err := queue.ClaimFor(ctx, worker, org, []uuid.UUID{zone}, "v1", jobs.ClaimCaps{SupportsPinnedCommit: true}); err != nil || c != nil {
 		t.Fatalf("ClaimFor = %v, %v; want the guard's refusal", c, err)
 	}
-	if len(guard.pins) != 1 || guard.pins[0] != j.PinnedCommit {
-		t.Fatalf("guard saw pins %q, want [%s]", guard.pins, j.PinnedCommit)
+	if len(guard.runs) != 1 || guard.runs[0].PinnedCommit != j.PinnedCommit || !slices.Equal(guard.runs[0].EnrollHostIDs, j.EnrollHostIDs) {
+		t.Fatalf("guard saw %+v, want [{%s %v}]", guard.runs, j.PinnedCommit, j.EnrollHostIDs)
 	}
 }

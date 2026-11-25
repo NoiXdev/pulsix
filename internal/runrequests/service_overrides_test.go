@@ -129,7 +129,7 @@ func TestApproveEnqueuesTheRequestWithItsOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	got := w.enq.request

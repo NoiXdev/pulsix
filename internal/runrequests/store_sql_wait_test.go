@@ -141,11 +141,11 @@ func TestSQLStoreWaitingSchema(t *testing.T) {
 	if err := store.Insert(f.ctx, w); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := store.Decide(f.ctx, f.org, w.ID, runrequests.StatusApproved, f.user, now, "fp", ""); err != nil || ok {
+	if ok, err := store.Decide(f.ctx, f.org, w.ID, runrequests.StatusApproved, f.user, now, "fp", jobs.ApprovedRun{}); err != nil || ok {
 		t.Fatalf("approve a waiting request = %v %v, want false", ok, err)
 	}
 	at := now.Add(time.Minute)
-	if ok, err := store.Decide(f.ctx, f.org, w.ID, runrequests.StatusRejected, f.user, at, "", ""); err != nil || !ok {
+	if ok, err := store.Decide(f.ctx, f.org, w.ID, runrequests.StatusRejected, f.user, at, "", jobs.ApprovedRun{}); err != nil || !ok {
 		t.Fatalf("reject a waiting request = %v %v", ok, err)
 	}
 	if got, err := store.Get(f.ctx, f.org, w.ID); err != nil || got.Status != runrequests.StatusRejected || !got.ExpiresAt.Equal(at) {

@@ -339,6 +339,39 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 	return items, nil
 }
 
+const listHostsWithAgent = `-- name: ListHostsWithAgent :many
+SELECT host_id FROM host_agents
+WHERE org_id = $1 AND host_id = ANY($2::uuid[])
+`
+
+type ListHostsWithAgentParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	HostIds []uuid.UUID `json:"host_ids"`
+}
+
+// The listed hosts that run an agent (spec 2026-11-25 assistant API gaps,
+// B): a run of a template with agent enrollment enrols the others. A host
+// without an agent has no row.
+func (q *Queries) ListHostsWithAgent(ctx context.Context, arg ListHostsWithAgentParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listHostsWithAgent, arg.OrgID, arg.HostIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var host_id uuid.UUID
+		if err := rows.Scan(&host_id); err != nil {
+			return nil, err
+		}
+		items = append(items, host_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingAgentEnrollments = `-- name: ListPendingAgentEnrollments :many
 SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at FROM agent_enrollments
 WHERE org_id = $1 AND used_at IS NULL AND expires_at > $2

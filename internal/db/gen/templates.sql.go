@@ -47,7 +47,7 @@ func (q *Queries) DeleteTemplateFollowUps(ctx context.Context, arg DeleteTemplat
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates WHERE org_id = $1 AND id = $2
 `
 
 type GetTemplateParams struct {
@@ -78,14 +78,15 @@ func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (JobTe
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
 
 const insertTemplate = `-- name: InsertTemplate :one
-INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, agent_enrollment)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type InsertTemplateParams struct {
@@ -98,6 +99,7 @@ type InsertTemplateParams struct {
 	ExtraVars       []byte      `json:"extra_vars"`
 	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
 	CredentialID    pgtype.UUID `json:"credential_id"`
+	AgentEnrollment bool        `json:"agent_enrollment"`
 }
 
 // The referenced playbook and credential are validated by the service
@@ -115,6 +117,7 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		arg.ExtraVars,
 		arg.ExtraVarsSchema,
 		arg.CredentialID,
+		arg.AgentEnrollment,
 	)
 	var i JobTemplate
 	err := row.Scan(
@@ -134,6 +137,7 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
@@ -161,7 +165,7 @@ func (q *Queries) InsertTemplateFollowUp(ctx context.Context, arg InsertTemplate
 }
 
 const listAutomaticTemplatesForPlaybook = `-- name: ListAutomaticTemplatesForPlaybook :many
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates
 WHERE org_id = $1 AND playbook_id = $2 AND vars_mode = 'automatic'
 ORDER BY name
 `
@@ -199,6 +203,7 @@ func (q *Queries) ListAutomaticTemplatesForPlaybook(ctx context.Context, arg Lis
 			&i.VarsMode,
 			&i.VarsSourceRev,
 			&i.VarsAppliedAt,
+			&i.AgentEnrollment,
 		); err != nil {
 			return nil, err
 		}
@@ -211,7 +216,7 @@ func (q *Queries) ListAutomaticTemplatesForPlaybook(ctx context.Context, arg Lis
 }
 
 const listAutomaticTemplatesForRepo = `-- name: ListAutomaticTemplatesForRepo :many
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates
 WHERE job_templates.org_id = $1 AND job_templates.vars_mode = 'automatic'
   AND job_templates.playbook_id IN (
     SELECT p.id FROM playbooks p WHERE p.org_id = $1 AND p.repo_id = $2)
@@ -251,6 +256,7 @@ func (q *Queries) ListAutomaticTemplatesForRepo(ctx context.Context, arg ListAut
 			&i.VarsMode,
 			&i.VarsSourceRev,
 			&i.VarsAppliedAt,
+			&i.AgentEnrollment,
 		); err != nil {
 			return nil, err
 		}
@@ -413,7 +419,7 @@ func (q *Queries) ListTemplateFollowUps(ctx context.Context, arg ListTemplateFol
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment FROM job_templates WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemplate, error) {
@@ -442,6 +448,7 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemp
 			&i.VarsMode,
 			&i.VarsSourceRev,
 			&i.VarsAppliedAt,
+			&i.AgentEnrollment,
 		); err != nil {
 			return nil, err
 		}
@@ -458,7 +465,7 @@ UPDATE job_templates SET
   vars_source_rev = $1, vars_applied_at = $2
 WHERE org_id = $3 AND id = $4
   AND revision = $5 AND vars_source_rev = $6
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type RecordTemplateSourceRevParams struct {
@@ -502,6 +509,7 @@ func (q *Queries) RecordTemplateSourceRev(ctx context.Context, arg RecordTemplat
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
@@ -510,7 +518,7 @@ const setTemplateVarsLink = `-- name: SetTemplateVarsLink :one
 UPDATE job_templates SET
   vars_mode = $1, vars_source_rev = $2, vars_applied_at = $3
 WHERE org_id = $4 AND id = $5 AND revision = $6
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type SetTemplateVarsLinkParams struct {
@@ -554,6 +562,7 @@ func (q *Queries) SetTemplateVarsLink(ctx context.Context, arg SetTemplateVarsLi
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
@@ -562,10 +571,11 @@ const updateTemplate = `-- name: UpdateTemplate :one
 UPDATE job_templates SET
   name = $1, playbook_id = $2, scope = $3, "limit" = $4,
   extra_vars = $5, extra_vars_schema = $6, credential_id = $7,
+  agent_enrollment = $8,
   revision = revision + 1, updated_at = now()
-WHERE org_id = $8 AND id = $9
-  AND ($10::bigint IS NULL OR revision = $10)
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+WHERE org_id = $9 AND id = $10
+  AND ($11::bigint IS NULL OR revision = $11)
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type UpdateTemplateParams struct {
@@ -576,6 +586,7 @@ type UpdateTemplateParams struct {
 	ExtraVars       []byte      `json:"extra_vars"`
 	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
 	CredentialID    pgtype.UUID `json:"credential_id"`
+	AgentEnrollment bool        `json:"agent_enrollment"`
 	OrgID           uuid.UUID   `json:"org_id"`
 	ID              uuid.UUID   `json:"id"`
 	IfRevision      *int64      `json:"if_revision"`
@@ -596,6 +607,7 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		arg.ExtraVars,
 		arg.ExtraVarsSchema,
 		arg.CredentialID,
+		arg.AgentEnrollment,
 		arg.OrgID,
 		arg.ID,
 		arg.IfRevision,
@@ -618,6 +630,7 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
@@ -629,7 +642,7 @@ UPDATE job_templates SET
   revision = revision + 1, updated_at = now()
 WHERE org_id = $6 AND id = $7
   AND ($8::bigint IS NULL OR revision = $8)
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type UpdateTemplateVariablesParams struct {
@@ -675,6 +688,7 @@ func (q *Queries) UpdateTemplateVariables(ctx context.Context, arg UpdateTemplat
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }
@@ -687,7 +701,7 @@ UPDATE job_templates SET
 WHERE org_id = $5 AND id = $6
   AND ($7::bigint IS NULL OR revision = $7)
   AND ($8::text IS NULL OR vars_source_rev = $8)
-RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at, agent_enrollment
 `
 
 type UpdateTemplateVarsSourceParams struct {
@@ -736,6 +750,7 @@ func (q *Queries) UpdateTemplateVarsSource(ctx context.Context, arg UpdateTempla
 		&i.VarsMode,
 		&i.VarsSourceRev,
 		&i.VarsAppliedAt,
+		&i.AgentEnrollment,
 	)
 	return i, err
 }

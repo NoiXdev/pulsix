@@ -41,9 +41,10 @@ func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingR
 const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
   approved_fingerprint = $4, pinned_commit = $5,
+  enroll_host_ids = $6::uuid[],
   run_group_id = CASE WHEN $1::text = 'approved' THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, $3)
-WHERE org_id = $6::uuid AND id = $7
+WHERE org_id = $7::uuid AND id = $8
   AND (status = 'pending' OR (status = 'waiting_for_sync' AND $1::text = 'rejected'))
 `
 
@@ -53,6 +54,7 @@ type DecideRunRequestParams struct {
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
 	PinnedCommit        *string            `json:"pinned_commit"`
+	EnrollHostIds       []uuid.UUID        `json:"enroll_host_ids"`
 	OrgID               uuid.UUID          `json:"org_id"`
 	ID                  uuid.UUID          `json:"id"`
 }
@@ -63,7 +65,8 @@ type DecideRunRequestParams struct {
 // fingerprint the person approved and takes the request's own id as the
 // run group, before anything is enqueued, so a claim of one of its jobs
 // always finds it (migration 00103), and the commit the run is pinned to
-// (migration 00123; NULL for none).
+// (migration 00123; NULL for none) and the hosts it enrols agents on
+// (migration 00127; NULL for no list).
 func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestParams) (int64, error) {
 	result, err := q.db.Exec(ctx, decideRunRequest,
 		arg.Status,
@@ -71,6 +74,7 @@ func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestPara
 		arg.DecidedAt,
 		arg.ApprovedFingerprint,
 		arg.PinnedCommit,
+		arg.EnrollHostIds,
 		arg.OrgID,
 		arg.ID,
 	)
@@ -111,7 +115,7 @@ func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitPa
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -145,12 +149,13 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.SyncJobID,
 		&i.ExpiresInMinutes,
 		&i.SyncError,
+		&i.EnrollHostIds,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -184,6 +189,7 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.SyncJobID,
 		&i.ExpiresInMinutes,
 		&i.SyncError,
+		&i.EnrollHostIds,
 	)
 	return i, err
 }
@@ -361,7 +367,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -411,6 +417,7 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.SyncJobID,
 			&i.ExpiresInMinutes,
 			&i.SyncError,
+			&i.EnrollHostIds,
 		); err != nil {
 			return nil, err
 		}
@@ -472,7 +479,8 @@ func (q *Queries) ListWaitingRunRequestsForSync(ctx context.Context, syncJobID u
 }
 
 const revertRunRequest = `-- name: RevertRunRequest :exec
-UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL
+UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL,
+  enroll_host_ids = NULL
 WHERE org_id = $1 AND id = $2
 `
 

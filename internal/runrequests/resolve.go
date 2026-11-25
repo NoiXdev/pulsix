@@ -101,7 +101,7 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 // jobs.RunOverrides; a dry run plans no follow-ups at all.
 func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group,
-		PinnedCommit: req.PinnedCommit}
+		PinnedCommit: req.PinnedCommit, EnrollHostIDs: req.EnrollHostIDs}
 	if req.Overrides != nil {
 		// The run keeps to the picture's targets, its one host included.
 		run.OnlyHost = nil
@@ -122,10 +122,10 @@ func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor 
 }
 
 // RetryFailed implements Enqueuer through the retry path, with Run's
-// follow-up handling and idempotency key; pinnedCommit pins a retry of a
-// job that has no pin of its own. The extra vars the retry repeats are
-// checked again (RetryRunOverrides).
-func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, pinnedCommit string) error {
+// follow-up handling and idempotency key; approved is what the approval
+// stored (its commit pins a retry of a job that has no pin of its own).
+// The extra vars the retry repeats are checked again (RetryRunOverrides).
+func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID, approved jobs.ApprovedRun) error {
 	ov, err := r.RetryRunOverrides(ctx, orgID, *req.JobID, req.Overrides)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request
 		return fmt.Errorf("clear unstarted follow-ups: %w", err)
 	}
 	list := nonNil(followUps)
-	_, err = r.src.Jobs.RetryFailedInto(ctx, orgID, *req.JobID, &actor, key, group, &list, pinnedCommit, ov)
+	_, err = r.src.Jobs.RetryFailedInto(ctx, orgID, *req.JobID, &actor, key, group, &list, approved, ov)
 	return err
 }
 
@@ -208,6 +208,11 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 	}
 	if err := r.describeHosts(ctx, orgID, targets, &p); err != nil {
 		return Picture{}, err
+	}
+	if tmpl.AgentEnrollment {
+		if p.AgentEnrollment, err = r.agentEnrollment(ctx, orgID, req, p); err != nil {
+			return Picture{}, err
+		}
 	}
 	digest, err := r.varsDigest(ctx, orgID, req.ID, tmpl.ID, targets)
 	if err != nil {

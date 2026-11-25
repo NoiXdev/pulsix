@@ -68,8 +68,11 @@ type templateDTO struct {
 	// FollowUps are the templates started after a successful run of this
 	// one, in start order.
 	FollowUps []templateFollowUpDTO `json:"follow_ups"`
-	Revision  int64                 `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
-	VarsMode  string                `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
+	// AgentEnrollment makes the template's runs enrol the agent on the
+	// hosts they run on (spec 2026-11-25 B).
+	AgentEnrollment bool   `json:"agent_enrollment" doc:"Runs of the template enrol the agent on the hosts they run on that have none; changing it needs agents.write"`
+	Revision        int64  `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
+	VarsMode        string `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
 	// VariablesReview is set by the list for a linked template.
 	VariablesReview *templateVariablesReviewDTO `json:"variables_review,omitempty" doc:"What a linked template's variables leave for a person to review (the list only)"`
 	CreatedAt       time.Time                   `json:"created_at"`
@@ -160,6 +163,7 @@ func toTemplateDTO(t templates.Template) templateDTO {
 		ExtraVars: t.ExtraVars, ExtraVarsSchema: t.ExtraVarsSchema,
 		VaultIdentities: toTemplateVaultCredentialDTOs(t.VaultCredentials),
 		FollowUps:       toTemplateFollowUpDTOs(t.FollowUps),
+		AgentEnrollment: t.AgentEnrollment,
 		Revision:        t.Revision, VarsMode: string(t.VarsMode),
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
@@ -223,6 +227,8 @@ type templateCreateInput struct {
 		PlaybookID string `json:"playbook_id"`
 		// FollowUps are started, in this order, after a successful run.
 		FollowUps []templateFollowUpInput `json:"follow_ups,omitempty" maxItems:"10" nullable:"false"`
+		// AgentEnrollment switches agent enrollment on (agents.write).
+		AgentEnrollment bool `json:"agent_enrollment,omitempty" doc:"Runs of the template enrol the agent on the hosts they run on that have none; needs agents.write"`
 		TemplateBody
 	}
 }
@@ -237,6 +243,8 @@ type templateUpdateInput struct {
 		// FollowUps replaces the follow-ups: omitted keeps them, an empty
 		// list clears them.
 		FollowUps *[]templateFollowUpInput `json:"follow_ups,omitempty" maxItems:"10" nullable:"false"`
+		// AgentEnrollment: omitted keeps it; changing it needs agents.write.
+		AgentEnrollment *bool `json:"agent_enrollment,omitempty" doc:"Runs of the template enrol the agent on the hosts they run on that have none; omitted keeps it, changing it needs agents.write"`
 		TemplateBody
 	}
 }
@@ -290,6 +298,7 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 			Name:      in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
 			VaultCredentials: vaultCredentials,
+			AgentEnrollment:  in.Body.AgentEnrollment, MayEnrolAgents: mayEnrolAgents(scope),
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
@@ -369,6 +378,7 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 			Name:      in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
 			VaultCredentials: vaultCredentials, IfRevision: ifRevision,
+			AgentEnrollment: in.Body.AgentEnrollment, MayEnrolAgents: mayEnrolAgents(scope),
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
@@ -435,6 +445,8 @@ func mapTemplatesErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(inUse.Error())
 	}
 	switch {
+	case errors.Is(err, templates.ErrEnrollmentNotAllowed):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, templates.ErrUnmanagedHost):
 		return huma.Error422UnprocessableEntity("only managed hosts can be targeted by a job template")
 	case errors.Is(err, templates.ErrNotSSH):

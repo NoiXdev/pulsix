@@ -62,8 +62,10 @@ type (
 		retryErr     error
 		checkErr     error
 		checked      []*uuid.UUID
-		// retryOverrides is what the last RetryFailedInto was given.
+		// retryOverrides and retryApproved are what the last
+		// RetryFailedInto was given.
 		retryOverrides *jobs.RunOverrides
+		retryApproved  jobs.ApprovedRun
 	}
 	switchable struct {
 		on  bool
@@ -154,7 +156,8 @@ func (r *targetRunner) EnqueueRunWith(context.Context, uuid.UUID, uuid.UUID, job
 	return nil, nil
 }
 
-func (r *targetRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, _ string, _ uuid.UUID, _ *[]uuid.UUID, _ string, ov *jobs.RunOverrides) ([]jobs.Job, error) {
+func (r *targetRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, _ string, _ uuid.UUID, _ *[]uuid.UUID, approved jobs.ApprovedRun, ov *jobs.RunOverrides) ([]jobs.Job, error) {
+	r.retryApproved = approved
 	r.retryOverrides = ov
 	return nil, nil
 }
@@ -193,6 +196,7 @@ type world struct {
 	repoSyncs            *fakeRepoSyncer
 	invSecrets           *fakeInventorySecrets
 	pbVars               *fakePlaybookVars
+	agents               *fakeAgents
 }
 
 func newWorld() *world {
@@ -228,6 +232,7 @@ func newWorld() *world {
 	w.repoSyncs = &fakeRepoSyncer{job: id()}
 	w.invSecrets = &fakeInventorySecrets{names: map[string]bool{}}
 	w.pbVars = &fakePlaybookVars{}
+	w.agents = &fakeAgents{with: map[uuid.UUID]bool{}}
 	return w
 }
 
@@ -236,7 +241,7 @@ func (w *world) resolver() *runrequests.Resolver {
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
 		Commits: w.commits, SyncJobs: w.syncs, RepoSyncs: w.repoSyncs,
-		InventorySecrets: w.invSecrets, PlaybookVars: w.pbVars,
+		InventorySecrets: w.invSecrets, PlaybookVars: w.pbVars, Agents: w.agents,
 	})
 }
 

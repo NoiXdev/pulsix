@@ -3,8 +3,8 @@
 -- first; the composite foreign keys are the second guard — a reference
 -- vanishing between check and insert surfaces as a foreign-key violation
 -- the store maps to ErrNotFound.
-INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO job_templates (id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, agent_enrollment)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: GetTemplate :one
@@ -26,6 +26,7 @@ SELECT * FROM job_templates WHERE org_id = $1 ORDER BY name;
 UPDATE job_templates SET
   name = @name, playbook_id = @playbook_id, scope = @scope, "limit" = @lim,
   extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema, credential_id = @credential_id,
+  agent_enrollment = @agent_enrollment,
   revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id
   AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))

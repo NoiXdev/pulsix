@@ -258,6 +258,7 @@ export const deRuns: Messages['runs'] = {
         vars: 'Extra-Variablen',
         retry: 'Wiederholung',
         followUps: 'Folgeläufe',
+        enrollment: 'Agent-Registrierung',
       },
       followUps: {
         offNote: 'Die Freigabe startet keinen dieser Folgeläufe. Deine Organisation hat das unter Einstellungen → Allgemein ausgeschaltet.',
@@ -306,6 +307,14 @@ export const deRuns: Messages['runs'] = {
       commitLive: 'Der Commit des letzten Syncs des Repositorys. Der angefragte Lauf führt genau diesen Commit aus.',
       commitOriginal: 'Der Commit, den der ursprüngliche Lauf verwendet hat. Die Wiederholung führt genau diesen Commit aus.',
       commitPinned: 'Der freigegebene Lauf hat diesen Commit ausgeführt.',
+      enrollment: {
+        willEnrol: (hosts: string) => `Wird Agents registrieren auf: ${hosts}`,
+        enrolled: (hosts: string) => `Registriert Agents auf: ${hosts}`,
+        none: 'Jedes Ziel hat schon einen Agent: Der Lauf registriert keinen.',
+        dryRun: 'Ein Probelauf registriert keinen Agent.',
+        how: 'Beim Start des Laufs bekommt jeder dieser Hosts, der noch keinen Agent hat, ein einmal nutzbares Registrierungs-Token, 24 Stunden gültig, das die Agent-Rolle liest. Niemand sieht das Token.',
+        live: 'Die Hosts, die jetzt keinen Agent haben; die Liste ändert sich, wenn sich vor der Freigabe ein Agent registriert.',
+      },
       commitBlocked: {
         title: 'Die Freigabe wartet auf das Repository',
         reasons: {

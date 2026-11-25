@@ -271,6 +271,7 @@ export const enRuns = {
         vars: 'Extra vars',
         retry: 'Retry',
         followUps: 'Follow-ups',
+        enrollment: 'Agent enrollment',
       },
       followUps: {
         offNote: 'Approving starts none of these follow-ups. Your organization has turned that off in Settings → General.',
@@ -322,6 +323,15 @@ export const enRuns = {
       commitLive: "The commit of the repository's last sync. The requested run runs exactly this commit.",
       commitOriginal: 'The commit the original run used. The retry runs exactly this commit.',
       commitPinned: 'The approved run ran this commit.',
+      /** Agent enrollment inside the run (spec 2026-11-25 B). */
+      enrollment: {
+        willEnrol: (hosts: string) => `Will enrol agents on: ${hosts}`,
+        enrolled: (hosts: string) => `Enrols agents on: ${hosts}`,
+        none: 'Every target already has an agent: the run enrols none.',
+        dryRun: 'A dry run enrols no agent.',
+        how: 'When the run starts, each of these hosts that still has no agent gets a single-use enrollment token, valid for 24 hours, which the agent role reads. Nobody sees the token.',
+        live: 'The hosts without an agent now; this list changes when an agent enrols before you approve.',
+      },
       commitBlocked: {
         title: 'Approval waits for the repository',
         reasons: {

@@ -354,6 +354,18 @@ func (f *fakeStore) LocalChecksByHosts(_ context.Context, orgID uuid.UUID, hostI
 	return out, nil
 }
 
+func (f *fakeStore) HostsWithAgent(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]bool{}
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && slices.Contains(hostIDs, a.HostID) {
+			out[a.HostID] = true
+		}
+	}
+	return out, nil
+}
+
 // RecordConfigCheck stores the check on the agent row unconditionally;
 // the write-only-on-change rule is the SQL store's (store_config_test.go).
 func (f *fakeStore) RecordConfigCheck(_ context.Context, serial, reported, expected string) error {

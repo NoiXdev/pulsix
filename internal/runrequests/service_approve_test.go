@@ -25,7 +25,7 @@ func TestApproveReportsTheApprovedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+	a, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestApproveEnqueuesAsTheApprover(t *testing.T) {
 		t.Fatal(err)
 	}
 	approver := uuid.Must(uuid.NewV7())
-	approved, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp, nil)
+	approved, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestApproveEnqueuesAsTheApprover(t *testing.T) {
 	if len(w.enq.runs) != 1 || w.enq.runs[0] != "run-request:"+r.ID.String() || w.enq.actor != approver {
 		t.Fatalf("enqueue = %+v", w.enq)
 	}
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp, nil); !errors.Is(err, runrequests.ErrDecided) {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, approver, fp, nil, false); !errors.Is(err, runrequests.ErrDecided) {
 		t.Fatalf("second approve = %v, want ErrDecided", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestApproveRefusesAChangedPicture(t *testing.T) {
 	r := w.create(t)
 	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
 	w.pics.p.Limit = "db"
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); !errors.Is(err, runrequests.ErrChanged) {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); !errors.Is(err, runrequests.ErrChanged) {
 		t.Fatalf("approve after a change = %v, want ErrChanged", err)
 	}
 	if len(w.enq.runs) != 0 {
@@ -80,7 +80,7 @@ func TestApproveRefusesAnExpiredRequest(t *testing.T) {
 	r := w.create(t)
 	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
 	w.now = w.now.Add(time.Hour)
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); !errors.Is(err, runrequests.ErrExpired) {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); !errors.Is(err, runrequests.ErrExpired) {
 		t.Fatalf("approve after expiry = %v, want ErrExpired", err)
 	}
 }
@@ -90,7 +90,7 @@ func TestApproveRevertsWhenTheEnqueueFails(t *testing.T) {
 	r := w.create(t)
 	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
 	w.enq.err = errors.New("no worker zone")
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err == nil {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err == nil {
 		t.Fatal("approve with a failing enqueue succeeded")
 	}
 	got, _, _, _ := w.svc.Get(context.Background(), w.org, r.ID)
@@ -110,7 +110,7 @@ func TestApproveRetryUsesRetryFailed(t *testing.T) {
 		t.Fatalf("retry request template = %s, want the job's", r.TemplateID)
 	}
 	_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
-	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.enq.retries) != 1 || w.enq.retries[0] != job || w.enq.retryKeys[0] != "run-request:"+r.ID.String() {
@@ -124,7 +124,7 @@ func TestApproveRetryUsesRetryFailed(t *testing.T) {
 func TestCheckRunClaim(t *testing.T) {
 	w := newWiring()
 	ctx := context.Background()
-	if err := w.svc.CheckRunClaim(ctx, w.org, uuid.Must(uuid.NewV7()), ""); err != nil {
+	if err := w.svc.CheckRunClaim(ctx, w.org, uuid.Must(uuid.NewV7()), jobs.ApprovedRun{}); err != nil {
 		t.Fatalf("a run group of no request = %v, want nil", err)
 	}
 	r := w.create(t)
@@ -132,17 +132,17 @@ func TestCheckRunClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if w.enq.group != r.ID {
 		t.Fatalf("enqueued into run group %s, want the request's id %s", w.enq.group, r.ID)
 	}
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); err != nil {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{}); err != nil {
 		t.Fatalf("an unchanged approved run = %v", err)
 	}
 	w.pics.p.Limit = "web-*"
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{}); !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("a changed approved run = %v, want ErrChangedAfterApproval and not a withdrawn approval", err)
 	}
 	if err := w.store.RevertToPending(ctx, w.org, r.ID); err != nil {
@@ -151,16 +151,16 @@ func TestCheckRunClaim(t *testing.T) {
 	w.pics.p.Limit = "web"
 	// The queue leaves a job refused this way out of its run group's
 	// outcome (jobs.WithdrawnAtClaimError), and only this way.
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{}); !errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("a reverted request's job = %v, want jobs.ErrApprovalWithdrawn", err)
 	}
 	// Approved without a recorded fingerprint: the approval stands, so its
 	// refused job is an errored run, not a withdrawn one.
 	legacy := w.create(t)
-	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, "", ""); err != nil || !ok {
+	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, "", jobs.ApprovedRun{}); err != nil || !ok {
 		t.Fatalf("decide = %v, %v", ok, err)
 	}
-	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID, ""); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
+	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID, jobs.ApprovedRun{}); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("an approval without a fingerprint = %v, want a refusal that is not a withdrawn approval", err)
 	}
 
@@ -185,16 +185,16 @@ func TestCheckRunClaim(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 			t.Fatalf("%s: approve = %v", name, err)
 		}
-		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); err != nil {
+		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{}); err != nil {
 			t.Fatalf("%s: an unchanged approved run = %v", name, err)
 		}
 		f := modeA()
 		change(f)
 		w.pics.p.FollowUps = f
-		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, ""); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
+		if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{}); !errors.Is(err, runrequests.ErrChangedAfterApproval) {
 			t.Fatalf("%s: claim = %v, want ErrChangedAfterApproval", name, err)
 		}
 	}
@@ -246,7 +246,7 @@ func TestApproveSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, tc.selection)
+			got, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, tc.selection, false)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("approve = %v, want %v", err, tc.wantErr)
@@ -294,7 +294,7 @@ func TestApproveSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+			_, err = w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false)
 			if err == nil || errors.Is(err, runrequests.ErrInvalidInput) || !strings.Contains(err.Error(), "not-a-uuid") {
 				t.Fatalf("approve = %v, want an internal error naming the id", err)
 			}
@@ -313,7 +313,7 @@ func TestApproveSelection(t *testing.T) {
 		r := w.create(t)
 		_, _, fp, _ := w.svc.Get(context.Background(), w.org, r.ID)
 		w.pics.p.FollowUps = modeA
-		if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, sel(foreign)); !errors.Is(err, runrequests.ErrChanged) {
+		if _, err := w.svc.Approve(context.Background(), w.org, r.ID, uuid.Must(uuid.NewV7()), fp, sel(foreign), false); !errors.Is(err, runrequests.ErrChanged) {
 			t.Fatalf("approve = %v, want ErrChanged", err)
 		}
 	})

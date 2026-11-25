@@ -15,6 +15,8 @@ export interface TemplateListActionsOptions {
   canRun: boolean;
   canReadCredentials: boolean;
   canCreateCredential: boolean;
+  /** agents.write: switching a template's agent enrollment needs it. */
+  canEnrolAgents: boolean;
 }
 
 /**
@@ -69,7 +71,13 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
           />
         )}
         {dialog?.kind === 'new' && (
-          <TemplateDialog org={org} canReadCredentials={opts.canReadCredentials} canCreateCredential={opts.canCreateCredential} onClose={close} />
+          <TemplateDialog
+            org={org}
+            canReadCredentials={opts.canReadCredentials}
+            canCreateCredential={opts.canCreateCredential}
+            canEnrolAgents={opts.canEnrolAgents}
+            onClose={close}
+          />
         )}
         {dialog?.kind === 'edit' && (
           <TemplateDialog
@@ -77,6 +85,7 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
             template={{ id: dialog.template.id, name: dialog.template.name }}
             canReadCredentials={opts.canReadCredentials}
             canCreateCredential={opts.canCreateCredential}
+            canEnrolAgents={opts.canEnrolAgents}
             onClose={close}
           />
         )}

@@ -710,7 +710,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
 		Commits: reposSvc, SyncJobs: jobsSvc, RepoSyncs: reposSvc,
-		InventorySecrets: inventorySvc, PlaybookVars: playbooksSvc,
+		InventorySecrets: inventorySvc, PlaybookVars: playbooksSvc, Agents: agentsSvc,
 	})
 	runRequestsSvc := runrequests.NewService(runrequests.NewSQLStore(appDB), runRequestResolver, runRequestResolver, runRequestResolver,
 		runRequestResolver, time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })

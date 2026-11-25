@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/runrequests"
 )
 
@@ -40,7 +41,7 @@ func TestRetryRequestRepeatsTheRunsExtraVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.enq.request; got.ID != r.ID || got.Overrides == nil || got.Overrides.ExtraVars["version"] != "1.2" {
@@ -87,7 +88,7 @@ func TestRetryCarriesItsCheckedExtraVars(t *testing.T) {
 	if p.ExtraVarsOverride["version"] != "1.2" || p.Retry == nil {
 		t.Fatalf("retry picture = %+v", p)
 	}
-	if err := w.resolver().RetryFailed(ctx, org, req, id(), "k", id(), nil, ""); err != nil {
+	if err := w.resolver().RetryFailed(ctx, org, req, id(), "k", id(), nil, jobs.ApprovedRun{}); err != nil {
 		t.Fatal(err)
 	}
 	if ov := w.jobs.retryOverrides; ov == nil || !ov.Untrusted || ov.ExtraVars["version"] != "1.2" || ov.Check {
@@ -98,7 +99,7 @@ func TestRetryCarriesItsCheckedExtraVars(t *testing.T) {
 	}
 	w.invSecrets.names["version"] = true
 	w.jobs.retryOverrides = nil
-	if err := w.resolver().RetryFailed(ctx, org, req, id(), "k", id(), nil, ""); !errors.Is(err, runrequests.ErrInvalidInput) || w.jobs.retryOverrides != nil {
+	if err := w.resolver().RetryFailed(ctx, org, req, id(), "k", id(), nil, jobs.ApprovedRun{}); !errors.Is(err, runrequests.ErrInvalidInput) || w.jobs.retryOverrides != nil {
 		t.Fatalf("retry over an inventory secret = %v (enqueued %+v)", err, w.jobs.retryOverrides)
 	}
 }

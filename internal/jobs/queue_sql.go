@@ -184,10 +184,11 @@ func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 // withdrawn (claim_withdrawn.go); that refusal is always written as the
 // fixed WithdrawnAtClaimError, which starts with the same prefix.
 //
-// pinnedCommit is the commit the claimed job is pinned to ("" for none);
-// the guard compares it with the one its approval stored.
+// run is what the claimed job stored from its approval (its pinned
+// commit, "" for none, and its enroll list, nil for none); the guard
+// compares it with what the approval stored on its request.
 type ClaimGuard interface {
-	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, pinnedCommit string) error
+	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, run ApprovedRun) error
 }
 
 // SetClaimGuard injects the claim guard of run jobs (see the claimGuard
@@ -318,7 +319,8 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	}
 	claim := &Claim{Token: ""}
 	if job.Kind == KindRun && q.claimGuard != nil {
-		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID, job.PinnedCommit); err != nil {
+		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID,
+			ApprovedRun{PinnedCommit: job.PinnedCommit, EnrollHostIDs: job.EnrollHostIDs}); err != nil {
 			if failErr := q.failJob(ctx, job.ID, claimRefusal(err)); failErr != nil {
 				return nil, fmt.Errorf("fail guarded job %s (guard: %v): %w", job.ID, err, failErr)
 			}

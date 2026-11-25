@@ -75,6 +75,9 @@ export const deTemplates: Messages['templates'] = {
     reload: 'Neu laden',
     pickFailed: 'Das Playbook konnte nicht registriert werden',
     varsProblems: (list: string) => `Die Extra-Variablen brauchen Aufmerksamkeit auf der Variablenseite: ${list}`,
+    enrol: 'Agents registrieren',
+    enrolHelp:
+      'Läufe dieser Vorlage registrieren den Pulsix-Agent auf ihren Hosts, die noch keinen haben. Für jeden solchen Host setzt Pulsix zwei Host-Variablen für die Agent-Rolle: pulsix_agent_enroll_token, ein einmal nutzbares Registrierungs-Token, 24 Stunden gültig, und pulsix_agent_enroll_tokens, leer. Sonst setzt es nichts. Zum Umschalten braucht es die Agents-Berechtigung, ebenso zum Starten, Freigeben und Planen der Läufe dieser Vorlage.',
     credential: 'Standard-SSH-Zugangsdaten',
     credentialNone: '— keine —',
     newCredential: 'Neue Zugangsdaten…',

@@ -209,20 +209,21 @@ func TestRunAndRetryEnqueueThePin(t *testing.T) {
 		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
 		Commits: w.commits, SyncJobs: w.syncs,
 	})
-	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, PinnedCommit: commitX}
+	enrol := []uuid.UUID{w.h2}
+	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, PinnedCommit: commitX, EnrollHostIDs: enrol}
 	if err := res.Run(ctx, org, req, actor, "k", group, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
-	if rec.enqueued == nil || rec.enqueued.PinnedCommit != commitX {
-		t.Fatalf("enqueued = %+v, want the pin %s", rec.enqueued, commitX)
+	if rec.enqueued == nil || rec.enqueued.PinnedCommit != commitX || !slices.Equal(rec.enqueued.EnrollHostIDs, enrol) {
+		t.Fatalf("enqueued = %+v, want the pin %s and the enroll list %v", rec.enqueued, commitX, enrol)
 	}
 
 	fx := newResolverFx(fakeTemplates{}, false, nil, nil)
-	if err := fx.res.RetryFailed(ctx, fx.org, retryOf(id()), actor, "k", id(), nil, commitY); err != nil {
+	if err := fx.res.RetryFailed(ctx, fx.org, retryOf(id()), actor, "k", id(), nil, jobs.ApprovedRun{PinnedCommit: commitY, EnrollHostIDs: enrol}); err != nil {
 		t.Fatal(err)
 	}
-	if fx.jobs.retryPin != commitY {
-		t.Fatalf("retry pinned to %q, want %s", fx.jobs.retryPin, commitY)
+	if fx.jobs.retryPin != commitY || !slices.Equal(fx.jobs.retryEnroll, enrol) {
+		t.Fatalf("retry pinned to %q enrolling %v, want %s and %v", fx.jobs.retryPin, fx.jobs.retryEnroll, commitY, enrol)
 	}
 }
 

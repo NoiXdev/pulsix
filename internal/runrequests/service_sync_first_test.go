@@ -75,7 +75,7 @@ func TestSyncFirstWaitsThenBecomesPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); !errors.Is(err, runrequests.ErrWaitingForSync) {
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); !errors.Is(err, runrequests.ErrWaitingForSync) {
 		t.Fatalf("approve while waiting = %v, want ErrWaitingForSync", err)
 	}
 	if n, err := w.svc.PendingCount(ctx, w.org); err != nil || n != 0 {
@@ -100,7 +100,7 @@ func TestSyncFirstWaitsThenBecomesPending(t *testing.T) {
 		t.Fatalf("after the sync = %+v, want pending until %v", got, w.now.Add(15*time.Minute))
 	}
 	_, _, fp, _ = w.svc.Get(ctx, w.org, r.ID)
-	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatalf("approve after the sync = %v", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestSyncFirstFailsWithTheSync(t *testing.T) {
 				t.Fatalf("after the sync = %+v, want failed with %q", got, tc.want)
 			}
 			_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-			if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); !errors.Is(err, runrequests.ErrSyncFailed) {
+			if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); !errors.Is(err, runrequests.ErrSyncFailed) {
 				t.Fatalf("approve a failed request = %v, want ErrSyncFailed", err)
 			}
 			if _, err := w.svc.Reject(ctx, w.org, r.ID, uuid.Must(uuid.NewV7())); !errors.Is(err, runrequests.ErrDecided) {

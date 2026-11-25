@@ -45,7 +45,7 @@ func TestApproveRefusesWhileTheCommitIsBlocked(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+			_, err = w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false)
 			if !errors.Is(err, runrequests.ErrCommitBlocked) {
 				t.Fatalf("Approve = %v, want ErrCommitBlocked", err)
 			}
@@ -56,7 +56,7 @@ func TestApproveRefusesWhileTheCommitIsBlocked(t *testing.T) {
 			}
 			// A stale fingerprint is answered with the block too: it says
 			// what to do.
-			if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), "stale", nil); !errors.Is(err, runrequests.ErrCommitBlocked) {
+			if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), "stale", nil, false); !errors.Is(err, runrequests.ErrCommitBlocked) {
 				t.Fatalf("Approve with a stale fingerprint = %v, want ErrCommitBlocked", err)
 			}
 			if got := w.store.rows[r.ID]; got.Status != runrequests.StatusPending || len(w.enq.runs) != 0 {
@@ -76,7 +76,7 @@ func TestApprovePinsTheCommitItShowed(t *testing.T) {
 		w.pics.p.Commit = &runrequests.PictureCommit{SHA: commitX}
 		r := w.create(t)
 		_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-		got, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+		got, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +93,7 @@ func TestApprovePinsTheCommitItShowed(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 			t.Fatal(err)
 		}
 		if w.enq.retryPin != commitX || w.store.rows[r.ID].PinnedCommit != commitX {
@@ -104,7 +104,7 @@ func TestApprovePinsTheCommitItShowed(t *testing.T) {
 		w := newWiring()
 		r := w.create(t)
 		_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+		if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 			t.Fatal(err)
 		}
 		if w.store.rows[r.ID].PinnedCommit != "" || w.enq.request.PinnedCommit != "" {
@@ -121,14 +121,14 @@ func TestCheckRunClaimComparesTheStoredCommit(t *testing.T) {
 	w.pics.p.Commit = &runrequests.PictureCommit{SHA: commitX}
 	r := w.create(t)
 	_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil); err != nil {
+	if _, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, commitX); err != nil {
+	if err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{PinnedCommit: commitX}); err != nil {
 		t.Fatalf("the pinned job's claim = %v", err)
 	}
 	for _, other := range []string{"", commitY} {
-		err := w.svc.CheckRunClaim(ctx, w.org, r.ID, other)
+		err := w.svc.CheckRunClaim(ctx, w.org, r.ID, jobs.ApprovedRun{PinnedCommit: other})
 		if !errors.Is(err, runrequests.ErrChangedAfterApproval) || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 			t.Fatalf("a job pinned to %q = %v, want ErrChangedAfterApproval", other, err)
 		}

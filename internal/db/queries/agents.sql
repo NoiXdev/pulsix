@@ -312,3 +312,10 @@ WHERE cert_serial = sqlc.arg(serial)
 SELECT host_id, last_seen, heartbeat_interval_s FROM host_agents
 WHERE org_id = sqlc.arg(org_id) AND probes_supported
 ORDER BY host_id;
+
+-- name: ListHostsWithAgent :many
+-- The listed hosts that run an agent (spec 2026-11-25 assistant API gaps,
+-- B): a run of a template with agent enrollment enrols the others. A host
+-- without an agent has no row.
+SELECT host_id FROM host_agents
+WHERE org_id = sqlc.arg(org_id) AND host_id = ANY(sqlc.arg(host_ids)::uuid[]);

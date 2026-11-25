@@ -148,18 +148,18 @@ func (s *SQLStore) Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID)
 }
 
 // Decide implements Store.
-func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint, pinnedCommit string) (bool, error) {
+func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error) {
 	var fp, pin *string
 	if fingerprint != "" {
 		fp = &fingerprint
 	}
-	if pinnedCommit != "" {
-		pin = &pinnedCommit
+	if approved.PinnedCommit != "" {
+		pin = &approved.PinnedCommit
 	}
 	n, err := s.q.DecideRunRequest(ctx, gen.DecideRunRequestParams{
 		OrgID: orgID, ID: id, Status: string(to),
 		DecidedBy: pgtype.UUID{Bytes: by, Valid: true}, DecidedAt: pgtype.Timestamptz{Time: at, Valid: true},
-		ApprovedFingerprint: fp, PinnedCommit: pin,
+		ApprovedFingerprint: fp, PinnedCommit: pin, EnrollHostIds: approved.EnrollHostIDs,
 	})
 	if err != nil {
 		return false, err
@@ -269,6 +269,7 @@ func fromRow(r gen.RunRequest) (Request, error) {
 	if r.PinnedCommit != nil {
 		out.PinnedCommit = *r.PinnedCommit
 	}
+	out.EnrollHostIDs = r.EnrollHostIds
 	if len(r.Overrides) > 0 {
 		var ov Overrides
 		dec := json.NewDecoder(bytes.NewReader(r.Overrides))

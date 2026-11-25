@@ -215,11 +215,17 @@ type Job struct {
 	// template's playbook repository at the enqueue (migration 00126); nil
 	// without a pin and for a job pinned before the column existed.
 	PinnedRepoID *uuid.UUID
-	ClaimedAt    *time.Time
-	StartedAt    *time.Time
-	FinishedAt   *time.Time
-	Stats        map[string]any
-	Error        string
+	// EnrollHostIDs are the hosts an approval enrols agents on (spec
+	// 2026-11-25 B, migration 00127): the approved list, set at enqueue
+	// from RunRequest.EnrollHostIDs and never changed after. nil is no
+	// list (every run not started by an approval of a template with agent
+	// enrollment); an empty list is an approved list with no host on it.
+	EnrollHostIDs []uuid.UUID
+	ClaimedAt     *time.Time
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+	Stats         map[string]any
+	Error         string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID
@@ -705,7 +711,7 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 			Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 			TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: now,
 			HostsExcluded: excluded, CheckMode: req.Overrides.check(), DryRun: req.Overrides.dryRun(), PinnedCommit: req.PinnedCommit,
-			PinnedRepoID: pinnedRepo(req.PinnedCommit, req.pinnedRepo),
+			PinnedRepoID: pinnedRepo(req.PinnedCommit, req.pinnedRepo), EnrollHostIDs: req.EnrollHostIDs,
 		}
 		payload, err := s.runPayload(j, req.Overrides)
 		if err != nil {
@@ -1168,7 +1174,7 @@ func (s *Service) RetryFailed(ctx context.Context, orgID, id uuid.UUID, actor *u
 // 2026-11-25 A, final review M1), which the run request service hands over
 // already checked (runrequests.Service.RetryOverrides).
 func (s *Service) RetryFailedWith(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, overrides *RunOverrides) ([]Job, error) {
-	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, "", overrides)
+	return s.RetryFailedInto(ctx, orgID, id, actor, "", s.newID(), nil, ApprovedRun{}, overrides)
 }
 
 // RetryFailedInto is RetryFailed with the run group the retry's jobs join:
@@ -1181,13 +1187,15 @@ func (s *Service) RetryFailedWith(ctx context.Context, orgID, id uuid.UUID, acto
 // after a failed enqueue replays the jobs the first attempt created instead
 // of retrying twice. Empty (the retry route) reserves nothing.
 //
-// A retry runs the commit its original job ran (spec 2026-11-25 A): the
-// original's pin wins; pinnedCommit pins a retry of an unpinned job (an
-// approved retry request passes the commit its picture showed), and ""
-// leaves it on the branch tip as before. overrides, when not nil, are the
+// approved is what an approved retry request stored (spec 2026-11-25 A,
+// B); the zero value for a person's retry. A retry runs the commit its
+// original job ran: the original's pin wins; approved.PinnedCommit pins a
+// retry of an unpinned job (an approved retry request passes the commit
+// its picture showed), and "" leaves it on the branch tip as before. Its
+// jobs store approved.EnrollHostIDs. overrides, when not nil, are the
 // retry's own (an approved run request's extra vars it repeats); a retry
 // never runs in check mode.
-func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, pinnedCommit string, overrides *RunOverrides) ([]Job, error) {
+func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, approved ApprovedRun, overrides *RunOverrides) ([]Job, error) {
 	if overrides.check() {
 		return nil, ErrDryRunNotRetryable
 	}
@@ -1208,7 +1216,8 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
-	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, pinnedCommit), Overrides: overrides}
+	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, approved.PinnedCommit), Overrides: overrides,
+		EnrollHostIDs: approved.EnrollHostIDs}
 	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}

@@ -153,7 +153,7 @@ func TestRequestsCarryTheirTokensState(t *testing.T) {
 	}
 	r := byToken[runrequests.TokenExpired]
 	_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
-	approved, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil)
+	approved, err := w.svc.Approve(ctx, w.org, r.ID, uuid.Must(uuid.NewV7()), fp, nil, false)
 	if err != nil || approved.Request.TokenState != runrequests.TokenExpired {
 		t.Fatalf("Approve = %q %v", approved.Request.TokenState, err)
 	}

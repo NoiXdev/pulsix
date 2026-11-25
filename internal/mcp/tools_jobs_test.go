@@ -162,7 +162,7 @@ func TestRequestRunAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approved, err := f.s.Deps.RunRequests.Approve(f.scoped, f.org, rid, f.owner, fp, nil)
+	approved, err := f.s.Deps.RunRequests.Approve(f.scoped, f.org, rid, f.owner, fp, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

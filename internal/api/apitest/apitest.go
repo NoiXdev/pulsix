@@ -370,7 +370,7 @@ func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.
 		VarsKey:  runrequests.VarsDigestKey(testMasterKey),
 		Settings: deps.Assistant, FollowUpRuns: chain.NewSQLStore(d), Overrides: deps.Templates,
 		Commits: deps.Repos, SyncJobs: deps.Jobs, RepoSyncs: deps.Repos,
-		InventorySecrets: deps.Inventory, PlaybookVars: deps.Playbooks,
+		InventorySecrets: deps.Inventory, PlaybookVars: deps.Playbooks, Agents: deps.Agents,
 	})
 	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 }

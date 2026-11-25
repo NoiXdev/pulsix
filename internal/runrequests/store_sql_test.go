@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/runrequests"
 )
 
@@ -67,28 +69,37 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 	if err != nil || got.TemplateRevision != 3 || got.RequestedByToken == nil || *got.RequestedByToken != tok || got.Status != runrequests.StatusPending || !got.ExpiresAt.Equal(r.ExpiresAt) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
-	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1", pinA)
+	enrol := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
+	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1", jobs.ApprovedRun{PinnedCommit: pinA, EnrollHostIDs: enrol})
 	if err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
-	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, "", ""); ok {
+	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}); ok {
 		t.Fatal("a decided request was decided again")
 	}
 	// An approval takes the request's own id as its run group and keeps
 	// the approved fingerprint.
 	byGroup, err := store.ByRunGroup(f.ctx, f.org, r.ID)
 	if err != nil || byGroup.ID != r.ID || byGroup.ApprovedFingerprint != "fp-1" || byGroup.RunGroupID == nil || *byGroup.RunGroupID != r.ID ||
-		byGroup.PinnedCommit != pinA {
+		byGroup.PinnedCommit != pinA || !slices.Equal(byGroup.EnrollHostIDs, enrol) {
 		t.Fatalf("ByRunGroup = %+v %v", byGroup, err)
 	}
 	if err := store.RevertToPending(f.ctx, f.org, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The run group stays (jobs may point at it), the fingerprint and the
-	// pinned commit go.
+	// The run group stays (jobs may point at it), the fingerprint, the
+	// pinned commit and the enroll list go.
 	got, _ = store.Get(f.ctx, f.org, r.ID)
-	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil || got.PinnedCommit != "" {
+	if got.Status != runrequests.StatusPending || got.DecidedBy != nil || got.ApprovedFingerprint != "" || got.RunGroupID == nil || got.PinnedCommit != "" ||
+		got.EnrollHostIDs != nil {
 		t.Fatalf("after revert = %+v", got)
+	}
+	// An approved empty list is stored as such, not as no list.
+	if ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-2", jobs.ApprovedRun{EnrollHostIDs: []uuid.UUID{}}); err != nil || !ok {
+		t.Fatalf("Decide = %v %v", ok, err)
+	}
+	if got, _ = store.Get(f.ctx, f.org, r.ID); got.EnrollHostIDs == nil || len(got.EnrollHostIDs) != 0 {
+		t.Fatalf("an approved empty list read back %#v", got.EnrollHostIDs)
 	}
 	list, err := store.List(f.ctx, f.org, nil, now)
 	if err != nil || len(list) != 1 {
@@ -176,7 +187,7 @@ func TestSQLStoreCountsPending(t *testing.T) {
 	f.insert(t, store, nil, now.Add(-time.Minute))
 	f.insert(t, store, &tok, now.Add(-runrequests.TTL)) // expires exactly now
 	decided := f.insert(t, store, &tok, now.Add(-time.Minute))
-	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, "", ""); err != nil || !ok {
+	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}); err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
 	other.insert(t, store, &tok, now.Add(-time.Minute))

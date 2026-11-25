@@ -42,7 +42,14 @@ type Approved struct {
 // sync of it is running), the approval is refused, before the fingerprint
 // check, so the person learns what to wait for. The commit is stored with
 // the decision and passed to the enqueue.
-func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID) (Approved, error) {
+//
+// A run of a template with agent enrollment (spec 2026-11-25 B: the
+// picture has AgentEnrollment, a dry run's included) is approved only by
+// a person who may enrol agents (mayEnrol, agents.write, which the REST
+// layer checks); otherwise ErrEnrollmentNotAllowed, before anything else
+// about the picture. The hosts it enrols are stored with the decision and
+// passed to the enqueue like the commit.
+func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID, mayEnrol bool) (Approved, error) {
 	r, p, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
 		return Approved{}, err
@@ -58,6 +65,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	default:
 		return Approved{}, ErrDecided
 	}
+	if p.AgentEnrollment != nil && !mayEnrol {
+		return Approved{}, ErrEnrollmentNotAllowed
+	}
 	pin := ""
 	if p.Commit != nil {
 		if len(p.Commit.Blocked) > 0 {
@@ -72,8 +82,13 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	if err != nil {
 		return Approved{}, err
 	}
+	enrol, err := enrollList(p)
+	if err != nil {
+		return Approved{}, err
+	}
+	approved := jobs.ApprovedRun{PinnedCommit: pin, EnrollHostIDs: enrol}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, pin)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, approved)
 	if err != nil {
 		return Approved{}, fmt.Errorf("decide run request: %w", err)
 	}
@@ -81,9 +96,9 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 		return Approved{}, ErrDecided
 	}
 	group := r.ID
-	r.PinnedCommit = pin
+	r.PinnedCommit, r.EnrollHostIDs = pin, enrol
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, r, by, idempotencyKey(r.ID), group, list, pin)
+		err = s.enqueuer.RetryFailed(ctx, orgID, r, by, idempotencyKey(r.ID), group, list, approved)
 	} else {
 		err = s.enqueuer.Run(ctx, orgID, r, by, idempotencyKey(r.ID), group, list)
 	}
@@ -96,6 +111,10 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	r.Status, r.DecidedBy, r.DecidedAt, r.RunGroupID, r.ApprovedFingerprint = StatusApproved, &by, &at, &group, fingerprint
 	return Approved{Request: r, TemplateRevision: p.TemplateRevision, FollowUps: p.FollowUps, Started: started}, nil
 }
+
+// ErrEnrollmentNotAllowed refuses the approval of a run that enrols agents
+// by a person who may not enrol them (agents.write).
+var ErrEnrollmentNotAllowed = errors.New("this run enrols agents on its hosts; approving it needs the agents.write permission")
 
 // ErrChangedAfterApproval fails the claim of an approved run whose run
 // picture no longer matches the one the person approved.
@@ -116,14 +135,15 @@ var errNoApprovedPicture = errors.New("the run's approval recorded no run pictur
 
 // CheckRunClaim is the claim guard of approved runs (jobs.ClaimGuard): a
 // run group that belongs to no request passes; one that belongs to a
-// request passes only while that request is approved, the job is pinned
-// to the commit the approval stored (pinnedCommit is the job's), and its
-// run picture still has the fingerprint the person approved. The picture
-// of an approved request shows its stored commit (Resolver.commit), so a
-// sync after the approval does not fail the run. Anything else, a failed
+// request passes only while that request is approved, the job carries
+// what the approval stored (run is the job's: its pinned commit and its
+// enroll list), and its run picture still has the fingerprint the person
+// approved. The picture of an approved request shows its stored commit
+// (Resolver.commit) and enroll list (Resolver.agentEnrollment), so a sync
+// or an agent enrolled after the approval does not fail the run. Anything else, a failed
 // lookup included, refuses the claim, and the queue fails the job with the
 // reason.
-func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, pinnedCommit string) error {
+func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, run jobs.ApprovedRun) error {
 	r, err := s.store.ByRunGroup(ctx, orgID, runGroupID)
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -137,8 +157,11 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	if r.ApprovedFingerprint == "" {
 		return errNoApprovedPicture
 	}
-	if pinnedCommit != r.PinnedCommit {
-		return fmt.Errorf("%w (the job is pinned to %s, the approval to %s)", ErrChangedAfterApproval, commitOrNone(pinnedCommit), commitOrNone(r.PinnedCommit))
+	if run.PinnedCommit != r.PinnedCommit {
+		return fmt.Errorf("%w (the job is pinned to %s, the approval to %s)", ErrChangedAfterApproval, commitOrNone(run.PinnedCommit), commitOrNone(r.PinnedCommit))
+	}
+	if !sameEnrollList(run.EnrollHostIDs, r.EnrollHostIDs) {
+		return fmt.Errorf("%w (the job enrols agents on other hosts than the approval stored)", ErrChangedAfterApproval)
 	}
 	p, err := s.pictures.Picture(ctx, orgID, r)
 	if err != nil {

@@ -27,7 +27,7 @@ var (
 	hostKeys     = []string{"name", "zone_id", "address", "managed", "monitored", "kind"}
 	groupKeys    = []string{"name", "description", "parent_id", "bastion_id"}
 	repoKeys     = []string{"name", "url", "branch", "subpath", "credential_id", "vault_credential_id", "vault_identities"}
-	templateKeys = []string{"name", "playbook_id", "scope", "limit", "extra_vars", "extra_vars_schema", "credential_id", "vault_identities"}
+	templateKeys = []string{"name", "playbook_id", "scope", "limit", "extra_vars", "extra_vars_schema", "credential_id", "vault_identities", "agent_enrollment"}
 )
 
 type hostCreateArgs struct {
@@ -142,6 +142,7 @@ type templateCreateArgs struct {
 	ExtraVarsSchema map[string]any  `json:"extra_vars_schema,omitempty" jsonschema:"the typed schema the extra vars must satisfy, as {\"fields\": [...]}: fields with name, type (string, int, float, bool, enum, secret, list, repeater, object) and more"`
 	CredentialID    string          `json:"credential_id,omitempty" jsonschema:"the default SSH credential"`
 	VaultIdentities []vaultIdentity `json:"vault_identities,omitempty" jsonschema:"added vault passwords by label, e.g. noidee"`
+	AgentEnrollment bool            `json:"agent_enrollment,omitempty" jsonschema:"runs enrol the agent on their hosts that have none; switching it needs a person with the agents permission"`
 }
 
 type templateUpdateArgs struct {
@@ -319,7 +320,7 @@ func writeTools() []toolDef {
 				}
 				return send(ctx, c, http.MethodPost, in, "", "/job-templates")
 			}),
-		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type. The extra_vars_schema field is {\"fields\": [...]}: "+schemaFieldWords+".",
+		define("update_job_template", "Update job template", "Change a job template. Fields: "+strings.Join(templateKeys, ", ")+". Secret extra vars take only {\"$secret\": \"keep\"}; secret schema fields keep their type. Switching agent_enrollment needs a person with the agents permission; saving keeps it as it is. The extra_vars_schema field is {\"fields\": [...]}: "+schemaFieldWords+".",
 			tenancy.AreaTemplatesWrite, writeTool, func(ctx context.Context, c *caller, in templateUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPut, "template", templateKeys, in.updateArgs, templateSecrets, true, "/job-templates/%s", in.TemplateID)
 			}),
