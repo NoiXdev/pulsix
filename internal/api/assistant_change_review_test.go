@@ -504,6 +504,15 @@ func TestAReviewOfWhatAPersonPausedKeepsItPaused(t *testing.T) {
 	if paused, reason := f.scheduleState(t, sch.ID); !paused || reason != "" {
 		t.Fatalf("after approval = %v %q, want paused without the reason", paused, reason)
 	}
+	// The acceptance is no resume (re-review N4): the next change's review
+	// still names the person who paused it.
+	if ev := f.events(t, "POST acceptScheduleReview"); len(ev) != 1 || !strings.Contains(ev[0], "stays paused") {
+		t.Fatalf("accept events = %v", ev)
+	}
+	f.putTemplateAsAssistant(t, map[string]any{"limit": "db*"})
+	if by, _, _, ok := f.reviewPausedBefore(t, reviewID(f.reviews(t)[sch.ID])); !ok || by != admin.String() {
+		t.Fatalf("next review: paused before %v by %q", ok, by)
+	}
 }
 
 // Fix round 1: an assistant's edit of an inline playbook's text pauses
@@ -650,7 +659,7 @@ func TestPausedBeforeSurvivesARejectionAndDeleteClosesTheReview(t *testing.T) {
 	auto := f.s.AssistantDo(t, http.MethodPost, f.tok, f.orgPath()+"/schedule-requests", "", map[string]any{
 		"template_id": f.templateID.String(), "name": "hourly", "mode": "cron", "cron": "0 * * * *", "timezone": "UTC", "reason": "more often",
 	})
-	if auto.Code != http.StatusCreated || !strings.Contains(auto.Body.String(), `"open_change_reviews":["`) {
+	if auto.Code != http.StatusCreated || !strings.Contains(auto.Body.String(), `"item":"schedule","name":"monthly"`) {
 		t.Fatalf("schedule request = %d %s", auto.Code, auto.Body)
 	}
 	if r := f.approve(t, f.adminC, second, fp); r.StatusCode != http.StatusOK {

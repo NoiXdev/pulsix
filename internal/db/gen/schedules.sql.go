@@ -459,7 +459,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 const listSchedulesOfTemplates = `-- name: ListSchedulesOfTemplates :many
 SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason FROM schedules
 WHERE org_id = $1 AND template_id = ANY($2::uuid[])
-ORDER BY name, id
+ORDER BY id
 `
 
 type ListSchedulesOfTemplatesParams struct {
@@ -467,7 +467,8 @@ type ListSchedulesOfTemplatesParams struct {
 	TemplateIds []uuid.UUID `json:"template_ids"`
 }
 
-// The schedules that run any of the templates, oldest name first.
+// The schedules that run any of the templates, by id: the order the
+// reviewer locks them in, stable whatever is renamed meanwhile.
 func (q *Queries) ListSchedulesOfTemplates(ctx context.Context, arg ListSchedulesOfTemplatesParams) ([]Schedule, error) {
 	rows, err := q.db.Query(ctx, listSchedulesOfTemplates, arg.OrgID, arg.TemplateIds)
 	if err != nil {
@@ -574,7 +575,7 @@ func (q *Queries) LockDueSchedules(ctx context.Context, arg LockDueSchedulesPara
 }
 
 const lockScheduleForReview = `-- name: LockScheduleForReview :one
-SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason FROM schedules WHERE org_id = $1 AND id = $2 FOR UPDATE
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason FROM schedules WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE
 `
 
 type LockScheduleForReviewParams struct {
@@ -585,6 +586,8 @@ type LockScheduleForReviewParams struct {
 // The schedule, its row locked until the transaction ends: an assistant's
 // change decides pause or refresh on the row as it is committed, so a
 // person's concurrent resume is either seen or waits (final review 3).
+// FOR NO KEY UPDATE, the house lock (LockDueSchedules): no key changes,
+// so it does not block the foreign key checks of schedule_runs inserts.
 func (q *Queries) LockScheduleForReview(ctx context.Context, arg LockScheduleForReviewParams) (Schedule, error) {
 	row := q.db.QueryRow(ctx, lockScheduleForReview, arg.OrgID, arg.ID)
 	var i Schedule

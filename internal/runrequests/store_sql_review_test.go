@@ -1,6 +1,7 @@
 package runrequests_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func TestSQLStoreReviews(t *testing.T) {
 	if err := store.Insert(f.ctx, r2); err != nil {
 		t.Fatal(err)
 	}
-	if open, err := store.OpenChangeReviews(f.ctx, f.org, &f.template, nil); err != nil || len(open) != 1 || open[0] != r2.ID {
+	if open, err := store.OpenChangeReviews(f.ctx, f.org, &f.template, nil); err != nil || len(open) != 1 || open[0].ID != r2.ID {
 		t.Fatalf("open change reviews = %v %v", open, err)
 	}
 	other := uuid.Must(uuid.NewV7())
@@ -110,5 +111,55 @@ func TestSQLStoreReviews(t *testing.T) {
 	// Closing again, or without a person (uuid.Nil), is harmless.
 	if err := store.CloseReviews(f.ctx, f.org, runrequests.KindScheduleReview, target, runrequests.StatusApproved, uuid.Nil, later); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Re-review N6: the open change reviews of a template include those whose
+// changes name a template it starts through follow-ups, and those naming
+// its editor playbook; each carries its item's name.
+func TestSQLStoreOpenChangeReviewsFollowTheTemplate(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-open-reviews")
+	store := runrequests.NewSQLStore(d)
+	ctx := context.Background()
+	follow := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO job_templates (id, org_id, name, playbook_id, scope)
+		SELECT $1, org_id, 'cleanup', playbook_id, '{}' FROM job_templates WHERE id = $2`, follow, f.template); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO job_template_follow_ups (org_id, template_id, follow_up_template_id) VALUES ($1, $2, $3)`,
+		f.org, f.template, follow); err != nil {
+		t.Fatal(err)
+	}
+	var playbook uuid.UUID
+	if err := d.Pool().QueryRow(ctx, `SELECT playbook_id FROM job_templates WHERE id = $1`, f.template).Scan(&playbook); err != nil {
+		t.Fatal(err)
+	}
+	sched := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO schedules (id, org_id, template_id, name, mode, cron, timezone, guards, paused, paused_reason)
+		VALUES ($1, $2, $3, 'nightly', 'cron', '0 3 * * *', 'UTC', '{}', true, 'assistant_change')`, sched, f.org, follow); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	byFollowUp := f.review(sched, nil, now)
+	byFollowUp.TemplateID = follow
+	byFollowUp.Review.Changes[0].ID = follow
+	byPlaybook := f.review(uuid.Must(uuid.NewV7()), nil, now)
+	byPlaybook.TemplateID = follow
+	byPlaybook.Review.Changes[0].Subject, byPlaybook.Review.Changes[0].ID = assistantchange.SubjectPlaybook, playbook
+	for _, r := range []runrequests.Request{byFollowUp, byPlaybook} {
+		if err := store.Insert(f.ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open, err := store.OpenChangeReviews(f.ctx, f.org, &f.template, nil)
+	if err != nil || len(open) != 2 || open[0].ID != byFollowUp.ID || open[0].Name != "nightly" || open[0].Item != runrequests.ReviewItemSchedule {
+		t.Fatalf("open = %+v %v", open, err)
+	}
+	// From the follow-up's side, the template that starts it is no change
+	// of what it runs.
+	other := uuid.Must(uuid.NewV7())
+	if open, err := store.OpenChangeReviews(f.ctx, f.org, &other, nil); err != nil || len(open) != 0 {
+		t.Fatalf("none = %+v %v", open, err)
 	}
 }

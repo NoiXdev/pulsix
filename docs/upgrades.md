@@ -978,12 +978,17 @@ resumes it; its picture names who had stopped it (the last `POST pauseSchedule` 
 `POST pauseAllSchedules` after its last `POST resumeSchedule`, or the last
 `POST disableTrigger` / `PUT updateTrigger` / `POST createTrigger` after its last
 `POST enableTrigger`, in the activity log; a stop made with an assistant token names the
-token), and approving it accepts the changes and leaves it stopped without the reason.
+token), and approving it accepts the changes and leaves it stopped without the reason
+(logged as `POST acceptScheduleReview` / `POST acceptTriggerReview`, which do not count as a
+resume or enable for that lookup).
 That fact carries over to a later review of the item after one was rejected or expired.
 The reviewer locks each item's row before deciding, so a person's concurrent resume is
 either seen or waits. Deleting a schedule or trigger rejects its open review. A schedule
-or trigger request's picture lists the open change reviews of the template (repository)
-it would run (`open_change_reviews`). A person's change pauses nothing; inventory changes never do. A review
+or trigger request's picture lists the open change reviews of what it would run
+(`open_change_reviews`, each with its item's kind and name): those of the template's
+items and those whose changes name the template, a template it starts through
+follow-ups, the playbook of one of them or that playbook's repository (for a
+repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing; inventory changes never do. A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
 repository sync trigger) and resumes (enables) the item at the revision shown (one a

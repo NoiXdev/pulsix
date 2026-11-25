@@ -45,10 +45,14 @@ func (s *Service) approveReview(ctx context.Context, orgID uuid.UUID, r Request,
 		return Approved{}, errReviewGone
 	}
 	at := s.now()
-	// The item first, then the decision: the order every writer of both
-	// takes (a person's resume, a delete, the reviewer), so two of them
-	// never wait on each other. A concurrent second approval waits on the
-	// item and then finds its revision moved (ErrChanged).
+	// The item first, then the decision: the order every writer of an
+	// item and its review row takes (a person's resume, a delete, the
+	// reviewer), so two of them never wait on each other. A concurrent
+	// second approval waits on the item and then finds its revision moved
+	// (ErrChanged). Schedule and trigger *request* approvals lock their
+	// request row, then the item, the other way round, but they never
+	// touch a review row and nothing locks an item and then a request
+	// row, so no cycle forms.
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		if err := s.auto.ApplyReview(ctx, orgID, r, *p.Review, by); err != nil {
 			return err

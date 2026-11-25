@@ -128,10 +128,12 @@ SELECT id, name FROM personal_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);
 -- all), after the newest of start_actions on it (a resume or an enable).
 -- The token it was made with, by name, and whether that is an assistant
 -- token (the line then names the assistant, not the token's owner).
+-- Only events since the object was created count (since), which also
+-- bounds the walk through the organization's history.
 WITH last_start AS (
   SELECT max(at) AS at FROM audit_events
   WHERE org_id = sqlc.arg(org_id)::uuid AND object_type = sqlc.arg(object_type) AND object_id = sqlc.arg(object_id)
-    AND action = ANY(sqlc.arg(start_actions)::text[])
+    AND action = ANY(sqlc.arg(start_actions)::text[]) AND at >= sqlc.arg(since)::timestamptz
 )
 SELECT e.actor_id, e.actor_token_id, e.at,
   COALESCE(t.name, p.name, '')::text AS token_name,
@@ -142,5 +144,6 @@ LEFT JOIN personal_tokens p ON p.id = e.actor_token_id
 WHERE e.org_id = sqlc.arg(org_id)::uuid AND e.object_type = sqlc.arg(object_type)
   AND ((e.object_id = sqlc.arg(object_id) AND e.action = ANY(sqlc.arg(stop_actions)::text[]))
     OR e.action = ANY(sqlc.arg(all_actions)::text[]))
+  AND e.at >= sqlc.arg(since)::timestamptz
   AND e.at > COALESCE((SELECT at FROM last_start), '-infinity'::timestamptz)
 ORDER BY e.at DESC, e.id DESC LIMIT 1;

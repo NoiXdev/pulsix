@@ -130,14 +130,18 @@ func TestAPersonsResumeClosesTheReview(t *testing.T) {
 	if len(reviews.closed) != 1 || reviews.closed[0] != s.ID || reviews.by != person {
 		t.Fatalf("closed = %+v by %v", reviews.closed, reviews.by)
 	}
+	// A schedule read as a person's pause is resumed through the review
+	// hook too (re-review N1): an assistant's mark landing between the
+	// read and the write cannot leave its review open. Closing is a no-op
+	// when there is none.
 	if _, err := w.svc.Pause(ctx, w.org, s.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.svc.Resume(ctx, w.org, s.ID, person); err != nil {
 		t.Fatal(err)
 	}
-	if len(reviews.closed) != 1 {
-		t.Fatalf("a person's pause closed a review: %+v", reviews.closed)
+	if len(reviews.closed) != 2 {
+		t.Fatalf("closed = %+v, want the hook called for a person's pause too", reviews.closed)
 	}
 	// Closing fails: the resume fails with it.
 	if _, _, err := w.svc.PauseForReview(ctx, w.org, s.ID); err != nil {

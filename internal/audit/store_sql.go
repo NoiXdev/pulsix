@@ -305,12 +305,13 @@ type Stopper struct {
 
 // LastActor is who stopped the object (objectType, objectID) of the
 // organization: the newest event of actions.Stop on it, or of actions.All,
-// after its newest actions.Start; nil when there is none. The schedule and
+// after its newest actions.Start, all since since (the object's creation,
+// which also bounds the walk through the history); nil when there is none. The schedule and
 // trigger reviews of spec 2026-11-25 C2 name who had paused or disabled an
 // item before an assistant's change.
-func (s *SQLStore) LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions StopActions) (*Stopper, error) {
+func (s *SQLStore) LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, since time.Time, actions StopActions) (*Stopper, error) {
 	row, err := s.q.LastAuditActor(ctx, gen.LastAuditActorParams{
-		OrgID: orgID, ObjectType: objectType, ObjectID: objectID,
+		OrgID: orgID, ObjectType: objectType, ObjectID: objectID, Since: since,
 		StopActions: nonNil(actions.Stop), AllActions: nonNil(actions.All), StartActions: nonNil(actions.Start),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

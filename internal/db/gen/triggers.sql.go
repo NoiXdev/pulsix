@@ -505,7 +505,7 @@ const listTriggersForReview = `-- name: ListTriggersForReview :many
 SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers
 WHERE org_id = $1
   AND (template_id = ANY($2::uuid[]) OR repo_id = $3::uuid)
-ORDER BY name, id
+ORDER BY id
 `
 
 type ListTriggersForReviewParams struct {
@@ -514,7 +514,8 @@ type ListTriggersForReviewParams struct {
 	RepoID      pgtype.UUID `json:"repo_id"`
 }
 
-// The triggers that run any of the templates or sync the repository.
+// The triggers that run any of the templates or sync the repository, by
+// id: the order the reviewer locks them in.
 func (q *Queries) ListTriggersForReview(ctx context.Context, arg ListTriggersForReviewParams) ([]JobTrigger, error) {
 	rows, err := q.db.Query(ctx, listTriggersForReview, arg.OrgID, arg.TemplateIds, arg.RepoID)
 	if err != nil {
@@ -558,7 +559,7 @@ func (q *Queries) ListTriggersForReview(ctx context.Context, arg ListTriggersFor
 }
 
 const lockTriggerForReview = `-- name: LockTriggerForReview :one
-SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers WHERE org_id = $1 AND id = $2 FOR UPDATE
+SELECT id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason FROM job_triggers WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE
 `
 
 type LockTriggerForReviewParams struct {

@@ -116,7 +116,7 @@ func (q *Queries) GetRepo(ctx context.Context, arg GetRepoParams) (GitRepo, erro
 }
 
 const getRepoForUpdate = `-- name: GetRepoForUpdate :one
-SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id, shared_repo_id FROM git_repos WHERE org_id = $1 AND id = $2 FOR UPDATE
+SELECT id, org_id, name, url, branch, subpath, credential_id, last_sync, last_sync_error, created_at, updated_at, ssh_host_key, ssh_host_public_key, vault_credential_id, shared_repo_id FROM git_repos WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE
 `
 
 type GetRepoForUpdateParams struct {
@@ -126,7 +126,9 @@ type GetRepoForUpdateParams struct {
 
 // GetRepo with the row locked until the transaction ends: an update diffs
 // against the row it overwrites (repositories have no revision; final
-// review 7).
+// review 7). FOR NO KEY UPDATE (the house lock, LockRepoForVarSources): no
+// key changes, so it does not block the foreign key checks of playbooks,
+// triggers and jobs that name the repository.
 func (q *Queries) GetRepoForUpdate(ctx context.Context, arg GetRepoForUpdateParams) (GitRepo, error) {
 	row := q.db.QueryRow(ctx, getRepoForUpdate, arg.OrgID, arg.ID)
 	var i GitRepo

@@ -493,14 +493,32 @@ func (q *Queries) ListDueWaitingRunRequests(ctx context.Context, staleBefore tim
 }
 
 const listOpenChangeReviews = `-- name: ListOpenChangeReviews :many
-SELECT id FROM run_requests
-WHERE org_id = $1 AND kind IN ('schedule_review', 'trigger_review')
-  AND status = 'pending' AND expires_at > now()
-  AND (($2::uuid IS NOT NULL AND (template_id = $2::uuid
-         OR payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'job_template', 'id', $2::uuid))))
-    OR ($3::uuid IS NOT NULL
-         AND payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', 'repo', 'id', $3::uuid))))
-ORDER BY created_at, id
+WITH RECURSIVE reached(id) AS (
+  SELECT $2::uuid WHERE $2::uuid IS NOT NULL
+  UNION
+  SELECT f.follow_up_template_id FROM job_template_follow_ups f JOIN reached r ON f.template_id = r.id
+  WHERE f.org_id = $1
+), subjects(subject, id) AS (
+  SELECT 'job_template'::text, id FROM reached
+  UNION
+  SELECT 'playbook', t.playbook_id FROM job_templates t JOIN reached r ON t.id = r.id
+  WHERE t.org_id = $1 AND t.playbook_id IS NOT NULL
+  UNION
+  SELECT 'repo', p.repo_id FROM job_templates t JOIN reached r ON t.id = r.id
+  JOIN playbooks p ON p.org_id = t.org_id AND p.id = t.playbook_id
+  WHERE t.org_id = $1 AND p.repo_id IS NOT NULL
+  UNION
+  SELECT 'repo', $3::uuid WHERE $3::uuid IS NOT NULL
+)
+SELECT rr.id, rr.kind, COALESCE(s.name, j.name, '')::text AS item_name FROM run_requests rr
+LEFT JOIN schedules s ON rr.kind = 'schedule_review' AND s.org_id = rr.org_id AND s.id = rr.target_id
+LEFT JOIN job_triggers j ON rr.kind = 'trigger_review' AND j.org_id = rr.org_id AND j.id = rr.target_id
+WHERE rr.org_id = $1 AND rr.kind IN ('schedule_review', 'trigger_review')
+  AND rr.status = 'pending' AND rr.expires_at > now()
+  AND (rr.template_id = $2::uuid
+    OR EXISTS (SELECT 1 FROM subjects sb
+               WHERE rr.payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', sb.subject, 'id', sb.id))))
+ORDER BY rr.created_at, rr.id
 `
 
 type ListOpenChangeReviewsParams struct {
@@ -509,22 +527,31 @@ type ListOpenChangeReviewsParams struct {
 	RepoID     pgtype.UUID `json:"repo_id"`
 }
 
-// The open reviews an assistant's change of the template, or of the
-// repository, opened: those of the items that run the template, and those
-// whose changes name it (a schedule or trigger request's picture says so).
-func (q *Queries) ListOpenChangeReviews(ctx context.Context, arg ListOpenChangeReviewsParams) ([]uuid.UUID, error) {
+type ListOpenChangeReviewsRow struct {
+	ID       uuid.UUID `json:"id"`
+	Kind     string    `json:"kind"`
+	ItemName string    `json:"item_name"`
+}
+
+// The open reviews an assistant's change of what the template runs opened
+// (a schedule or trigger request's picture names them): those of the
+// items that run the template, and those whose changes name the template,
+// a template it starts through follow-ups (along any chain), the playbook
+// of one of them or that playbook's repository; for a repository sync
+// trigger, those naming the repository. Each with its item's name.
+func (q *Queries) ListOpenChangeReviews(ctx context.Context, arg ListOpenChangeReviewsParams) ([]ListOpenChangeReviewsRow, error) {
 	rows, err := q.db.Query(ctx, listOpenChangeReviews, arg.OrgID, arg.TemplateID, arg.RepoID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []ListOpenChangeReviewsRow
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ListOpenChangeReviewsRow
+		if err := rows.Scan(&i.ID, &i.Kind, &i.ItemName); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

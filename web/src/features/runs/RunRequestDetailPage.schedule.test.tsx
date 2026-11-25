@@ -113,9 +113,17 @@ describe('RunRequestDetailPage schedule requests (spec 2026-11-25 C)', () => {
   });
 
   it('says the template carries open change reviews and links them', async () => {
-    renderSchedule({ action: 'resume', current, open_change_reviews: ['0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01'] });
+    renderSchedule({
+      action: 'resume',
+      current,
+      open_change_reviews: [
+        { request_id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01', item: 'schedule', name: 'Nightly' },
+        { request_id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02', item: 'trigger', name: 'deploy-hook' },
+      ],
+    });
     const note = await screen.findByRole('note', { name: /unreviewed changes/ });
-    expect(within(note).getByRole('link', { name: 'Open the review' })).toHaveAttribute('href', '/o/acme/runs/requests/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01');
+    expect(within(note).getByRole('link', { name: 'Review of schedule Nightly' })).toHaveAttribute('href', '/o/acme/runs/requests/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01');
+    expect(within(note).getByRole('link', { name: 'Review of trigger deploy-hook' })).toHaveAttribute('href', '/o/acme/runs/requests/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02');
   });
 
   it('shows the template revision and says when the template changed since the request', async () => {

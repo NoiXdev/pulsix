@@ -67,17 +67,17 @@ func (r *Resolver) schedulePicture(ctx context.Context, orgID uuid.UUID, req Req
 // openChangeReviews names the open reviews of an assistant's changes to
 // the template or repository a requested schedule or trigger would run
 // (final review 5); none without a source.
-func (r *Resolver) openChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]string, error) {
+func (r *Resolver) openChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]PictureOpenReview, error) {
 	if r.src.ChangeReviews == nil || (templateID == nil && repoID == nil) {
 		return nil, nil
 	}
-	ids, err := r.src.ChangeReviews.OpenChangeReviews(ctx, orgID, templateID, repoID)
+	list, err := r.src.ChangeReviews.OpenChangeReviews(ctx, orgID, templateID, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list open change reviews: %w", err)
 	}
-	var out []string
-	for _, id := range ids {
-		out = append(out, id.String())
+	var out []PictureOpenReview
+	for _, o := range list {
+		out = append(out, PictureOpenReview{RequestID: o.ID.String(), Item: o.Item, Name: o.Name})
 	}
 	return out, nil
 }

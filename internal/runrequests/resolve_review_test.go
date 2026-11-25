@@ -208,13 +208,14 @@ func TestReviewOfAnItemAPersonStopped(t *testing.T) {
 // fakeChangeReviews answers the open change reviews by template or repo.
 type fakeChangeReviews map[uuid.UUID][]uuid.UUID
 
-func (f fakeChangeReviews) OpenChangeReviews(_ context.Context, _ uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error) {
-	var out []uuid.UUID
-	if templateID != nil {
-		out = append(out, f[*templateID]...)
-	}
-	if repoID != nil {
-		out = append(out, f[*repoID]...)
+func (f fakeChangeReviews) OpenChangeReviews(_ context.Context, _ uuid.UUID, templateID, repoID *uuid.UUID) ([]runrequests.OpenChangeReview, error) {
+	var out []runrequests.OpenChangeReview
+	for _, key := range []*uuid.UUID{templateID, repoID} {
+		if key != nil {
+			for _, id := range f[*key] {
+				out = append(out, runrequests.OpenChangeReview{ID: id, Item: runrequests.ReviewItemSchedule, Name: "nightly"})
+			}
+		}
 	}
 	return out, nil
 }
@@ -238,7 +239,7 @@ func TestRequestPicturesNameOpenChangeReviews(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Schedule.OpenChangeReviews) != 1 || p.Schedule.OpenChangeReviews[0] != review.String() {
+	if o := p.Schedule.OpenChangeReviews; len(o) != 1 || o[0].RequestID != review.String() || o[0].Name != "nightly" {
 		t.Fatalf("schedule picture = %+v", p.Schedule)
 	}
 

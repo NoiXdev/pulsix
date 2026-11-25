@@ -188,7 +188,7 @@ func (w worldTriggers) DisableForReview(_ context.Context, _, id uuid.UUID) (tri
 	return t, true, nil
 }
 
-func (w *reviewWorld) LastActor(_ context.Context, _ uuid.UUID, objectType, objectID string, actions audit.StopActions) (*audit.Stopper, error) {
+func (w *reviewWorld) LastActor(_ context.Context, _ uuid.UUID, objectType, objectID string, _ time.Time, actions audit.StopActions) (*audit.Stopper, error) {
 	w.asked = append(w.asked, objectType+" "+objectID+" "+strings.Join(actions.Stop, ","))
 	return w.pausedBy, nil
 }

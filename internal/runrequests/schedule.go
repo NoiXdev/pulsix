@@ -96,7 +96,7 @@ type PictureSchedule struct {
 	// OpenChangeReviews are the open reviews an assistant's change of the
 	// template (repository) it runs opened (final review 5): a note to the
 	// approver that it carries unreviewed changes.
-	OpenChangeReviews []string `json:"open_change_reviews,omitempty" doc:"Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet"`
+	OpenChangeReviews []PictureOpenReview `json:"open_change_reviews,omitempty" doc:"Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet"`
 }
 
 // ScheduleState is one schedule in a picture. Secrets appear as the

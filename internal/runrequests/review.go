@@ -68,6 +68,21 @@ type PicturePausedBefore struct {
 	ByAssistantToken string `json:"by_assistant_token,omitempty" doc:"The assistant token it was paused (disabled) with, when an assistant did it"`
 }
 
+// OpenChangeReview is an open review a schedule or trigger request's
+// picture names: the review, its item's kind and name.
+type OpenChangeReview struct {
+	ID   uuid.UUID
+	Item string
+	Name string
+}
+
+// PictureOpenReview is an OpenChangeReview in a picture.
+type PictureOpenReview struct {
+	RequestID string `json:"request_id"`
+	Item      string `json:"item" enum:"schedule,trigger"`
+	Name      string `json:"name" doc:"The paused schedule's or disabled trigger's name; empty when it is gone"`
+}
+
 // Review items.
 const (
 	ReviewItemSchedule = "schedule"

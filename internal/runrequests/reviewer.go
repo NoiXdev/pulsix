@@ -47,7 +47,7 @@ type (
 	// ReviewHistory names who last did one of actions to an object (the
 	// activity log, audit.SQLStore): who had paused an item before.
 	ReviewHistory interface {
-		LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions audit.StopActions) (*audit.Stopper, error)
+		LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, since time.Time, actions audit.StopActions) (*audit.Stopper, error)
 	}
 	// ReviewSchedules lists and pauses schedules (schedules.Service).
 	ReviewSchedules interface {
@@ -178,7 +178,7 @@ func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assis
 		}
 		var before *PausedBefore
 		if paused && wasPaused {
-			if before, err = rv.pausedBefore(ctx, orgID, "schedule", s.ID, schedulePauseActions); err != nil {
+			if before, err = rv.pausedBefore(ctx, orgID, "schedule", s.ID, s.CreatedAt, schedulePauseActions); err != nil {
 				return err
 			}
 		}
@@ -225,7 +225,7 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 		}
 		var before *PausedBefore
 		if disabled && wasDisabled {
-			if before, err = rv.pausedBefore(ctx, orgID, "trigger", t.ID, triggerDisableActions); err != nil {
+			if before, err = rv.pausedBefore(ctx, orgID, "trigger", t.ID, t.CreatedAt, triggerDisableActions); err != nil {
 				return err
 			}
 		}
@@ -256,12 +256,14 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 // pausedBefore records who had stopped the item (objectType id) before:
 // who did the last stop after the last start in the activity log, if any;
 // a stop made with an assistant token names the token (final review 6).
-func (rv *Reviewer) pausedBefore(ctx context.Context, orgID uuid.UUID, objectType string, id uuid.UUID, actions audit.StopActions) (*PausedBefore, error) {
+func (rv *Reviewer) pausedBefore(ctx context.Context, orgID uuid.UUID, objectType string, id uuid.UUID, created time.Time, actions audit.StopActions) (*PausedBefore, error) {
 	before := &PausedBefore{}
 	if rv.src.History == nil {
 		return before, nil
 	}
-	who, err := rv.src.History.LastActor(ctx, orgID, objectType, id.String(), actions)
+	// Bounded by the item's creation: older events are another object's,
+	// and the walk through the history stays short (re-review N7).
+	who, err := rv.src.History.LastActor(ctx, orgID, objectType, id.String(), created, actions)
 	if err != nil {
 		return nil, fmt.Errorf("find who stopped %s %s: %w", objectType, id, err)
 	}

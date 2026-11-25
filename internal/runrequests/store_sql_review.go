@@ -60,13 +60,22 @@ func (s *SQLStore) LatestReview(ctx context.Context, orgID uuid.UUID, kind Kind,
 }
 
 // OpenChangeReviews implements ChangeReviews: the open reviews an
-// assistant's change of the template (or the repository) opened.
-func (s *SQLStore) OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error) {
-	ids, err := s.q.ListOpenChangeReviews(ctx, gen.ListOpenChangeReviewsParams{OrgID: orgID, TemplateID: pgUUID(templateID), RepoID: pgUUID(repoID)})
+// assistant's change of what the template (or the repository) runs opened,
+// with their items' names.
+func (s *SQLStore) OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]OpenChangeReview, error) {
+	rows, err := s.q.ListOpenChangeReviews(ctx, gen.ListOpenChangeReviewsParams{OrgID: orgID, TemplateID: pgUUID(templateID), RepoID: pgUUID(repoID)})
 	if err != nil {
 		return nil, fmt.Errorf("list open change reviews: %w", err)
 	}
-	return ids, nil
+	out := make([]OpenChangeReview, len(rows))
+	for i, r := range rows {
+		item := ReviewItemSchedule
+		if Kind(r.Kind) == KindTriggerReview {
+			item = ReviewItemTrigger
+		}
+		out[i] = OpenChangeReview{ID: r.ID, Item: item, Name: r.ItemName}
+	}
+	return out, nil
 }
 
 // CloseReviews implements ReviewStore: the open reviews of kind for target

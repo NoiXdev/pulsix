@@ -450,7 +450,8 @@ export const enRuns = {
         title: 'What this would run has unreviewed changes',
         body: (n: number) =>
           `An assistant changed the template or repository it runs, and ${n === 1 ? 'a review waits' : `${n} reviews wait`} for a person. Approving this request does not wait for ${n === 1 ? 'it' : 'them'}.`,
-        link: 'Open the review',
+        /** A link to one review, by its item: `item` is schedule or trigger. */
+        link: (item: string, name: string) => `Review of ${item === 'trigger' ? 'trigger' : 'schedule'} ${name || '(deleted)'}`,
       },
       review: {
         title: { schedule: 'Review a paused schedule', trigger: 'Review a disabled webhook trigger' } as Record<string, string>,

@@ -58,7 +58,9 @@ RETURNING *;
 -- The schedule, its row locked until the transaction ends: an assistant's
 -- change decides pause or refresh on the row as it is committed, so a
 -- person's concurrent resume is either seen or waits (final review 3).
-SELECT * FROM schedules WHERE org_id = @org_id AND id = @id FOR UPDATE;
+-- FOR NO KEY UPDATE, the house lock (LockDueSchedules): no key changes,
+-- so it does not block the foreign key checks of schedule_runs inserts.
+SELECT * FROM schedules WHERE org_id = @org_id AND id = @id FOR NO KEY UPDATE;
 
 -- name: ClearSchedulePausedReasonAt :one
 -- An approved review of a schedule a person had paused before the change:
@@ -69,10 +71,11 @@ WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
 -- name: ListSchedulesOfTemplates :many
--- The schedules that run any of the templates, oldest name first.
+-- The schedules that run any of the templates, by id: the order the
+-- reviewer locks them in, stable whatever is renamed meanwhile.
 SELECT * FROM schedules
 WHERE org_id = @org_id AND template_id = ANY(@template_ids::uuid[])
-ORDER BY name, id;
+ORDER BY id;
 
 -- name: PauseAllSchedules :execrows
 UPDATE schedules SET paused = true, next_run_at = NULL, revision = revision + 1, updated_at = now()

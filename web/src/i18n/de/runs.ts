@@ -426,7 +426,7 @@ export const deRuns: Messages['runs'] = {
         title: 'Was dies ausführen würde, hat ungeprüfte Änderungen',
         body: (n: number) =>
           `Ein Assistent hat die Vorlage oder das Repository geändert, das es ausführt, und ${n === 1 ? 'eine Prüfung wartet' : `${n} Prüfungen warten`} auf eine Person. Die Freigabe dieser Anfrage wartet nicht darauf.`,
-        link: 'Prüfung öffnen',
+        link: (item: string, name: string) => `Prüfung von ${item === 'trigger' ? 'Trigger' : 'Zeitplan'} ${name || '(gelöscht)'}`,
       },
       review: {
         title: { schedule: 'Pausierten Zeitplan prüfen', trigger: 'Deaktivierten Webhook-Trigger prüfen' } as Record<string, string>,

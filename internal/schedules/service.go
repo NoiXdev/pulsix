@@ -338,7 +338,10 @@ func (s *Service) Resume(ctx context.Context, orgID, id, by uuid.UUID) (Schedule
 		return Schedule{}, err
 	}
 	next := tt.expr.Next(s.now(), tt.loc)
-	if cur.PausedReason == "" || s.reviews == nil {
+	// With a review hook, every resume of a paused schedule closes its
+	// review, whatever this read said (re-review N1): an assistant's mark
+	// may land between this read and the write; closing none is a no-op.
+	if s.reviews == nil {
 		return s.store.SetPaused(ctx, orgID, id, false, &next)
 	}
 	var out Schedule

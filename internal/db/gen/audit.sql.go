@@ -102,7 +102,7 @@ const lastAuditActor = `-- name: LastAuditActor :one
 WITH last_start AS (
   SELECT max(at) AS at FROM audit_events
   WHERE org_id = $1::uuid AND object_type = $2 AND object_id = $3
-    AND action = ANY($6::text[])
+    AND action = ANY($7::text[]) AND at >= $6::timestamptz
 )
 SELECT e.actor_id, e.actor_token_id, e.at,
   COALESCE(t.name, p.name, '')::text AS token_name,
@@ -113,6 +113,7 @@ LEFT JOIN personal_tokens p ON p.id = e.actor_token_id
 WHERE e.org_id = $1::uuid AND e.object_type = $2
   AND ((e.object_id = $3 AND e.action = ANY($4::text[]))
     OR e.action = ANY($5::text[]))
+  AND e.at >= $6::timestamptz
   AND e.at > COALESCE((SELECT at FROM last_start), '-infinity'::timestamptz)
 ORDER BY e.at DESC, e.id DESC LIMIT 1
 `
@@ -123,6 +124,7 @@ type LastAuditActorParams struct {
 	ObjectID     string    `json:"object_id"`
 	StopActions  []string  `json:"stop_actions"`
 	AllActions   []string  `json:"all_actions"`
+	Since        time.Time `json:"since"`
 	StartActions []string  `json:"start_actions"`
 }
 
@@ -140,6 +142,8 @@ type LastAuditActorRow struct {
 // all), after the newest of start_actions on it (a resume or an enable).
 // The token it was made with, by name, and whether that is an assistant
 // token (the line then names the assistant, not the token's owner).
+// Only events since the object was created count (since), which also
+// bounds the walk through the organization's history.
 func (q *Queries) LastAuditActor(ctx context.Context, arg LastAuditActorParams) (LastAuditActorRow, error) {
 	row := q.db.QueryRow(ctx, lastAuditActor,
 		arg.OrgID,
@@ -147,6 +151,7 @@ func (q *Queries) LastAuditActor(ctx context.Context, arg LastAuditActorParams) 
 		arg.ObjectID,
 		arg.StopActions,
 		arg.AllActions,
+		arg.Since,
 		arg.StartActions,
 	)
 	var i LastAuditActorRow

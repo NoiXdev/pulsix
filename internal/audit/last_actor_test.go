@@ -41,17 +41,17 @@ func TestSQLStoreLastActor(t *testing.T) {
 	insert(first, nil, "POST pauseSchedule", target)
 	insert(second, nil, "PUT updateSchedule", target)
 	insert(second, nil, "POST pauseSchedule", uuid.Must(uuid.NewV7()).String())
-	got, err := store.LastActor(ctx, org, "schedule", target, pauses)
+	got, err := store.LastActor(ctx, org, "schedule", target, at, pauses)
 	if err != nil || got == nil || got.UserID == nil || *got.UserID != first || got.Assistant {
 		t.Fatalf("last actor = %+v, %v", got, err)
 	}
 	// Resumed, then paused for all: the pause-all's actor.
 	insert(first, nil, "POST resumeSchedule", target)
-	if got, err = store.LastActor(ctx, org, "schedule", target, pauses); err != nil || got != nil {
+	if got, err = store.LastActor(ctx, org, "schedule", target, at, pauses); err != nil || got != nil {
 		t.Fatalf("after a resume = %+v, %v", got, err)
 	}
 	insert(third, nil, "POST pauseAllSchedules", "")
-	if got, err = store.LastActor(ctx, org, "schedule", target, pauses); err != nil || got == nil || *got.UserID != third {
+	if got, err = store.LastActor(ctx, org, "schedule", target, at, pauses); err != nil || got == nil || *got.UserID != third {
 		t.Fatalf("pause all = %+v, %v", got, err)
 	}
 	// Paused with an assistant token: the token is named.
@@ -61,7 +61,11 @@ func TestSQLStoreLastActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	insert(second, &tok, "POST pauseSchedule", target)
-	if got, err = store.LastActor(ctx, org, "schedule", target, pauses); err != nil || got == nil || !got.Assistant || got.TokenName != "claude-ops" {
+	if got, err = store.LastActor(ctx, org, "schedule", target, at, pauses); err != nil || got == nil || !got.Assistant || got.TokenName != "claude-ops" {
 		t.Fatalf("assistant = %+v, %v", got, err)
+	}
+	// Nothing before the object's creation counts.
+	if got, err = store.LastActor(ctx, org, "schedule", target, at.Add(time.Hour), pauses); err != nil || got != nil {
+		t.Fatalf("since later = %+v, %v", got, err)
 	}
 }

@@ -377,7 +377,7 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
-      <OpenChangeReviewsNote org={org} ids={schedule?.open_change_reviews ?? trigger?.open_change_reviews} />
+      <OpenChangeReviewsNote org={org} reviews={schedule?.open_change_reviews ?? trigger?.open_change_reviews} />
       {schedule ? (
         <ScheduleRequestSections schedule={schedule} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
       ) : trigger ? (

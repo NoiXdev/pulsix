@@ -103,7 +103,7 @@ type (
 	// ChangeReviews lists the open reviews an assistant's change of a
 	// template or repository opened (runrequests.SQLStore).
 	ChangeReviews interface {
-		OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]uuid.UUID, error)
+		OpenChangeReviews(ctx context.Context, orgID uuid.UUID, templateID, repoID *uuid.UUID) ([]OpenChangeReview, error)
 	}
 	// TriggerSource reads, checks and writes webhook triggers for trigger
 	// requests (triggers.Service). Its writes return the new secret, which

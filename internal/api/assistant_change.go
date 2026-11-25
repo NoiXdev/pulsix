@@ -46,12 +46,21 @@ func reviewApprovalSummary(a runrequests.Approved) string {
 
 // auditAppliedReview records what an approved review did to its item in
 // the item's own feed, as the resume and update routes would, attributed
-// to the approver: nothing when the item was no longer paused for review.
+// to the approver: nothing when the item was no longer paused for review,
+// an acceptance (no resume) when a person had stopped it before.
 func auditAppliedReview(ctx context.Context, deps Deps, scope Scope, a runrequests.Approved) {
 	pr := a.Review
 	suffix := " (approved review " + a.Request.ID.String() + ")"
 	switch {
 	case !pr.PausedForReview:
+	case pr.PausedBefore != nil && pr.Schedule != nil:
+		// Accepted, not resumed: no resume action, so who had paused it
+		// stays the answer for the next review (re-review N4).
+		recordOrgEvent(ctx, deps, scope.OrgID, scope.UserID, http.MethodPost+" acceptScheduleReview", "schedule", pr.ItemID,
+			"accepted the assistant's changes to schedule "+pr.Schedule.Name+"; it stays paused"+suffix)
+	case pr.PausedBefore != nil && pr.Trigger != nil:
+		recordOrgEvent(ctx, deps, scope.OrgID, scope.UserID, http.MethodPost+" acceptTriggerReview", "trigger", pr.ItemID,
+			"accepted the assistant's changes to webhook trigger "+pr.Trigger.Name+"; it stays disabled"+suffix)
 	case pr.Schedule != nil:
 		recordOrgEvent(ctx, deps, scope.OrgID, scope.UserID, http.MethodPost+" resumeSchedule", "schedule", pr.ItemID,
 			"resumed schedule "+pr.Schedule.Name+suffix)

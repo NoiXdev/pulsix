@@ -60,7 +60,7 @@ RETURNING *;
 -- name: LockTriggerForReview :one
 -- The trigger, its row locked until the transaction ends (as
 -- LockScheduleForReview).
-SELECT * FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) FOR UPDATE;
+SELECT * FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) FOR NO KEY UPDATE;
 
 -- name: ClearTriggerDisabledReasonAt :one
 -- An approved review of a trigger a person had disabled before the change:
@@ -79,11 +79,12 @@ WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(re
 RETURNING *;
 
 -- name: ListTriggersForReview :many
--- The triggers that run any of the templates or sync the repository.
+-- The triggers that run any of the templates or sync the repository, by
+-- id: the order the reviewer locks them in.
 SELECT * FROM job_triggers
 WHERE org_id = sqlc.arg(org_id)
   AND (template_id = ANY(sqlc.arg(template_ids)::uuid[]) OR repo_id = sqlc.narg(repo_id)::uuid)
-ORDER BY name, id;
+ORDER BY id;
 
 -- name: DeleteTrigger :execrows
 DELETE FROM job_triggers WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);

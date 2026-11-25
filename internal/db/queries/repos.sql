@@ -12,8 +12,10 @@ SELECT * FROM git_repos WHERE org_id = $1 AND id = $2;
 -- name: GetRepoForUpdate :one
 -- GetRepo with the row locked until the transaction ends: an update diffs
 -- against the row it overwrites (repositories have no revision; final
--- review 7).
-SELECT * FROM git_repos WHERE org_id = $1 AND id = $2 FOR UPDATE;
+-- review 7). FOR NO KEY UPDATE (the house lock, LockRepoForVarSources): no
+-- key changes, so it does not block the foreign key checks of playbooks,
+-- triggers and jobs that name the repository.
+SELECT * FROM git_repos WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE;
 
 -- name: ListRepos :many
 SELECT * FROM git_repos WHERE org_id = $1 ORDER BY name;

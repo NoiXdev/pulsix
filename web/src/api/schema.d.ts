@@ -7569,6 +7569,13 @@ export interface components {
             ssh_port?: number;
             ssh_user?: string;
         };
+        PictureOpenReview: {
+            /** @enum {string} */
+            item: "schedule" | "trigger";
+            /** @description The paused schedule's or disabled trigger's name; empty when it is gone */
+            name: string;
+            request_id: string;
+        };
         PicturePausedBefore: {
             /** @description The assistant token it was paused (disabled) with, when an assistant did it */
             by_assistant_token?: string;
@@ -7630,7 +7637,7 @@ export interface components {
             /** @description The schedule as the approval stores it (create and update) */
             new?: components["schemas"]["ScheduleState"];
             /** @description Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet */
-            open_change_reviews?: string[] | null;
+            open_change_reviews?: components["schemas"]["PictureOpenReview"][] | null;
             /** @description The schedule the request creates (its id is taken when the request is made), changes or resumes */
             schedule_id: string;
         };
@@ -7647,7 +7654,7 @@ export interface components {
             /** @description The trigger as the approval stores it (create and update) */
             new?: components["schemas"]["TriggerState"];
             /** @description Open review requests of an assistant's changes to the template (or repository) this would run: it carries changes no person has reviewed yet */
-            open_change_reviews?: string[] | null;
+            open_change_reviews?: components["schemas"]["PictureOpenReview"][] | null;
             /** @description The trigger the request creates (its id is taken when the request is made), changes or rotates */
             trigger_id: string;
             /** @description Where senders post to */
