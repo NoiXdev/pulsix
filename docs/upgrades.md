@@ -827,10 +827,12 @@ requires. Workers and agents are not affected.
 
 The final review of part A adds migrations 00125 and 00126, both nullable columns
 (catalog changes; a backup carries them). 00125 adds `repo_var_sources.sync_queued_at`:
-when the sync behind a repository's recorded read was queued. Two syncs of one
-repository can finish in either order; the read of the one queued earlier, finishing
-last, no longer overwrites the newer one's commit (a record from before the column has
-none and is replaced by any sync). 00126 adds `jobs.pinned_repo_id`: the repository a
+when the sync behind a repository's recorded read was last claimed by a worker (when
+it was queued, for one never claimed), which approximates when it fetched; a sync the
+reaper requeued fetches again at its new claim. Two syncs of one repository can finish
+in either order; the read of the one that fetched earlier, finishing last, no longer
+overwrites the newer one's commit (a record from before the column has none and is
+replaced by any sync). 00126 adds `jobs.pinned_repo_id`: the repository a
 pinned job's commit belongs to. A retry of a pinned run whose template has since moved
 to another repository or to an editor playbook is refused (the retry route answers
 422; a retry request's picture says so and its approval is refused) instead of failing

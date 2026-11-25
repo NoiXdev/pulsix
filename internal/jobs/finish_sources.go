@@ -100,7 +100,10 @@ func (q *SQLQueue) recordSync(ctx context.Context, jobID uuid.UUID, status Statu
 	var payload json.RawMessage
 	var queuedAt time.Time
 	if err := q.db.QueryRow(ctx,
-		`SELECT org_id, kind, payload, created_at FROM jobs WHERE id = $1`, jobID,
+		// The sync's fetch order: its last claim (a requeued sync fetches
+		// again when a worker claims it anew), its queueing for a sync
+		// never claimed (final re-review N2).
+		`SELECT org_id, kind, payload, COALESCE(claimed_at, created_at) FROM jobs WHERE id = $1`, jobID,
 	).Scan(&orgID, &kind, &payload, &queuedAt); err != nil {
 		return uuid.Nil, fmt.Errorf("record sync result: look up finished job: %w", err)
 	}

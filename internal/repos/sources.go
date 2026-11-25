@@ -37,9 +37,11 @@ type SourcesRecord struct {
 	// recorded none (claimed before migration 00123, or by an older
 	// manager).
 	SyncedRef string
-	// SyncQueuedAt is when the sync that read Commit was queued; zero when
-	// unknown (recorded before migration 00125). RecordVarSources keeps
-	// the record of the sync queued later.
+	// SyncQueuedAt orders the sync that read Commit among the repository's
+	// syncs: when it was last claimed (a requeued sync fetches again at its
+	// new claim), when it was queued if never claimed; zero when unknown
+	// (recorded before migration 00125). RecordVarSources keeps the record
+	// of the sync that fetched last.
 	SyncQueuedAt time.Time
 }
 
@@ -100,10 +102,11 @@ const maxReportDepth = 64
 // recorded none). It is stored with the commit it fetched: a record that
 // keeps the previous commit keeps the previous one too (SyncedCommit).
 //
-// queuedAt is when the reporting sync was queued (zero when unknown). Two
-// syncs of one repository can finish in either order: a report of a sync
-// queued before the one whose read is recorded is logged and ignored, so
-// the record always holds the newest sync's read (final review M2 of spec
+// queuedAt orders the reporting sync: its last claim, approximating when it
+// fetched (zero when unknown). Two syncs of one repository can finish in
+// either order: a report of a sync ordered before the one whose read is
+// recorded is logged and ignored, so the record always holds the newest
+// fetch (final review M2 of spec
 // 2026-11-25 A: a sync_first request must get the fresh head).
 func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string, queuedAt time.Time) (bool, error) {
 	if err := s.store.LockVarSources(ctx, orgID, repoID); err != nil {

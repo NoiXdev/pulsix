@@ -397,3 +397,46 @@ func TestRetryRepeatsTheRunsExtraVars(t *testing.T) {
 	}
 	claimAndFail("the person's retry")
 }
+
+// TestRetryOfVarsNoLongerAllowed (final re-review N3, N4): once the extra
+// vars a retry would repeat are no longer allowed (here the template made
+// the variable secret), a retry request is refused when it is made, and a
+// person's retry is refused naming the original run's variables.
+func TestRetryOfVarsNoLongerAllowed(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-ov-retry-refused")
+	f.overridesTemplate(t)
+	created := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"version": "1.2"}, "host_ids": []string{f.hostA.String()}})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	var out runRequestDetail
+	if err := json.Unmarshal(created.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	d := f.detail(t, out.Request.ID)
+	if resp := f.approve(t, f.adminC, out.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	list, _, err := f.s.Deps.Jobs.List(f.scoped, f.orgID, jobs.Filter{RunGroupID: &[]uuid.UUID{uuid.MustParse(out.Request.ID)}[0]}, "", 10)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("jobs = %v %v", list, err)
+	}
+	finishJob(t, f.s, f.zoneA, list[0].ID, jobs.StatusFailed, map[string]any{
+		jobs.StatsFailedHosts: []any{f.hostA.String()}, jobs.StatsUnreachableHosts: []any{},
+	}, "playbook failed")
+	updateTemplate(t, f, func(in *templates.UpdateInput) {
+		in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{{Name: "version", Type: schema.TypeSecret}, {Name: "api_key", Type: schema.TypeSecret}}}
+		in.ExtraVars = map[string]any{"version": "9.9", "api_key": "tmpl-s3cret-77aa"}
+	})
+
+	resp := f.s.AssistantDo(t, http.MethodPost, f.tok, f.orgPath()+"/jobs/"+list[0].ID.String()+"/retry-requests", "", map[string]any{"reason": "retry"})
+	if resp.Code != http.StatusUnprocessableEntity || !strings.Contains(resp.Body.String(), "version") {
+		t.Fatalf("retry request = %d %s, want 422 at create naming version", resp.Code, resp.Body)
+	}
+	person := postJSON(t, f.adminC, f.baseURL()+"/"+list[0].ID.String()+"/retry-failed", nil)
+	body := mustReadBody(t, person)
+	if person.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "the extra variables of the run this retries are no longer allowed") ||
+		!strings.Contains(body, "version") || strings.Contains(body, "run request") || strings.Contains(body, "1.2") {
+		t.Fatalf("person's retry = %d %s", person.StatusCode, body)
+	}
+}

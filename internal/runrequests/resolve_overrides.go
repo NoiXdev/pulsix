@@ -24,7 +24,7 @@ var errNoHost = fmt.Errorf("%w: the requested hosts and limit leave no host of t
 
 // errNoDeclaredVars refuses extra vars on a template without an extra vars
 // schema (final review I2, controller ruling).
-var errNoDeclaredVars = errors.New("this template declares no extra variables, so a run request cannot set any; declare them on the template first")
+var errNoDeclaredVars = errors.New("this template declares no extra variables, so none can be set here; declare them on the template first")
 
 // errLimitRule refuses a limit override; it says exactly what a run
 // request's limit may hold.
@@ -38,7 +38,7 @@ var errLimitRule = fmt.Errorf("%w: limit: only host names and * wildcards, joine
 func checkTemplateMarkers(tmpl templates.Template) error {
 	for _, name := range slices.Sorted(maps.Keys(tmpl.ExtraVars)) {
 		if err := ansiblevars.CheckMarkers(tmpl.ExtraVars[name]); err != nil {
-			return fmt.Errorf("%w: template extra var %s holds an object with an \"__ansible\" key that is not a well-formed marker; a run request with extra vars cannot run with it until the template is fixed", ErrInvalidInput, name)
+			return fmt.Errorf("%w: template extra var %s holds an object with an \"__ansible\" key that is not a well-formed marker; extra vars cannot be set here until the template is fixed", ErrInvalidInput, name)
 		}
 	}
 	return nil
@@ -86,7 +86,7 @@ func (r *Resolver) checkOverrides(ctx context.Context, orgID uuid.UUID, tmpl tem
 			return fmt.Errorf("%w: extra var %s: %w", ErrInvalidInput, name, err)
 		}
 		if secret[name] {
-			return fmt.Errorf("%w: extra var %s is a secret (or holds one); a run request cannot set secrets, set it on the template", ErrInvalidInput, name)
+			return fmt.Errorf("%w: extra var %s is a secret (or holds one), which cannot be set here; set it on the template", ErrInvalidInput, name)
 		}
 		if err := ansiblevars.CheckUntrusted(ov.ExtraVars[name]); err != nil {
 			return fmt.Errorf("%w: extra var %s: %w", ErrInvalidInput, name, err)

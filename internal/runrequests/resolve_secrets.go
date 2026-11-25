@@ -48,7 +48,7 @@ func (r *Resolver) checkSecretShadows(ctx context.Context, orgID uuid.UUID, tmpl
 	}
 	for _, name := range names {
 		if inv[name] {
-			return fmt.Errorf("%w: extra var %s: the inventory holds a secret of that name for a target host; a run request cannot replace it", ErrInvalidInput, name)
+			return fmt.Errorf("%w: extra var %s: the inventory holds a secret of that name for a target host, which an extra var must not replace", ErrInvalidInput, name)
 		}
 	}
 	if tmpl.PlaybookID == uuid.Nil {
@@ -66,7 +66,7 @@ func (r *Resolver) checkSecretShadows(ctx context.Context, orgID uuid.UUID, tmpl
 	}
 	for _, name := range names {
 		if declared[name] {
-			return fmt.Errorf("%w: extra var %s: the playbook declares a secret of that name; a run request cannot replace it", ErrInvalidInput, name)
+			return fmt.Errorf("%w: extra var %s: the playbook declares a secret of that name, which an extra var must not replace", ErrInvalidInput, name)
 		}
 	}
 	return nil

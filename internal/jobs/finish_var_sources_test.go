@@ -488,3 +488,22 @@ func TestFinishSyncPassesWhenTheSyncWasQueued(t *testing.T) {
 		t.Fatalf("sink calls = %+v, want queued at %v", calls, created)
 	}
 }
+
+// TestFinishSyncOrdersByItsLastClaim (final re-review N2): a sync the
+// reaper requeued and a worker claimed again fetched at that claim, so the
+// sink orders it by its last claim, not by when it was first queued.
+func TestFinishSyncOrdersByItsLastClaim(t *testing.T) {
+	f := newVarSourcesFixture(t, "jobs-var-sources-claimed-org")
+	j := f.runningJob(t, jobs.KindSyncRepo)
+	reclaimed := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	if _, err := f.d.Exec(ctx, `UPDATE jobs SET claimed_at = $2 WHERE id = $1`, j.ID, reclaimed); err != nil {
+		t.Fatal(err)
+	}
+	stats, _ := workerStats(t, f.repoID, testReport())
+	if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+		t.Fatal(err)
+	}
+	if calls := f.sink.all(); len(calls) != 1 || !calls[0].queuedAt.Equal(reclaimed) {
+		t.Fatalf("sink calls = %+v, want ordered at the last claim %v", calls, reclaimed)
+	}
+}

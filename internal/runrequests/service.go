@@ -262,6 +262,12 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		if r.Overrides, err = s.repeatedOverrides(ctx, orgID, group); err != nil {
 			return Request{}, err
 		}
+		// What it repeats is checked now as at the approval, so a retry
+		// whose vars are no longer allowed is refused, not left to fail
+		// every approval.
+		if _, err := s.validator.RetryRunOverrides(ctx, orgID, *in.JobID, r.Overrides); err != nil {
+			return Request{}, err
+		}
 		r.TemplateID, r.JobID, r.TemplateRevision = tpl, in.JobID, rev
 	default:
 		return Request{}, fmt.Errorf("%w: unknown kind %q", ErrInvalidInput, in.Kind)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -47,8 +48,24 @@ func (s *Service) RetryOverrides(ctx context.Context, orgID, jobID uuid.UUID) (*
 	if err != nil || ov == nil {
 		return nil, err
 	}
-	return s.validator.RetryRunOverrides(ctx, orgID, jobID, ov)
+	run, err := s.validator.RetryRunOverrides(ctx, orgID, jobID, ov)
+	if errors.Is(err, ErrInvalidInput) {
+		return nil, &RetryVarsError{Reason: strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": ")}
+	}
+	return run, err
 }
+
+// RetryVarsError refuses a person's retry whose repeated extra vars (the
+// original run's, RetryOverrides) are no longer allowed; Reason names the
+// variable and the rule, never a value. It is an ErrInvalidInput.
+type RetryVarsError struct{ Reason string }
+
+func (e *RetryVarsError) Error() string {
+	return "the extra variables of the run this retries are no longer allowed: " + e.Reason
+}
+
+// Is makes errors.Is(err, ErrInvalidInput) hold.
+func (e *RetryVarsError) Is(target error) bool { return target == ErrInvalidInput }
 
 // RetryRunOverrides implements Validator: ov's extra vars pass the checks a
 // run's do (checkOverrides, checkSecretShadows on the retry's failed hosts)
