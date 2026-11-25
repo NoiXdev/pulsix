@@ -19,7 +19,7 @@ import (
 )
 
 // TTL is how long a request stays approvable unless it asks for another
-// expiry (CreateInput.ExpiresIn).
+// expiry (CreateInput.ExpiresInMinutes).
 const TTL = time.Hour
 
 // MaxReasonLength caps the assistant's one-line reason.
@@ -104,8 +104,8 @@ type CreateInput struct {
 	RequestedByToken *uuid.UUID
 	// Overrides are KindRun only; a retry with any is refused.
 	Overrides OverridesInput
-	// ExpiresIn is the request's time to live; zero is TTL.
-	ExpiresIn time.Duration
+	// ExpiresInMinutes is the request's time to live; zero is TTL.
+	ExpiresInMinutes int
 }
 
 // Store persists requests.
@@ -178,7 +178,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if reason == "" || utf8.RuneCountInString(reason) > MaxReasonLength {
 		return Request{}, fmt.Errorf("%w: a reason of 1 to %d characters is required", ErrInvalidInput, MaxReasonLength)
 	}
-	ttl, err := expiresIn(in.ExpiresIn)
+	ttl, err := expiresIn(in.ExpiresInMinutes)
 	if err != nil {
 		return Request{}, err
 	}

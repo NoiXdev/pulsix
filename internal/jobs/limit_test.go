@@ -105,3 +105,19 @@ func TestNarrowLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchLimitIsTheMatcher(t *testing.T) {
+	for _, tc := range []struct {
+		limit, name      string
+		matched, decided bool
+	}{
+		{"web-*:!web-2", "web-1", true, true},
+		{"web-*:!web-2", "web-2", false, true},
+		{"web-*:&db", "web-1", false, false},
+		{"@/etc/passwd", "web-1", false, false},
+	} {
+		if m, d := MatchLimit(tc.limit, tc.name); m != tc.matched || d != tc.decided {
+			t.Errorf("MatchLimit(%q, %q) = %v %v, want %v %v", tc.limit, tc.name, m, d, tc.matched, tc.decided)
+		}
+	}
+}

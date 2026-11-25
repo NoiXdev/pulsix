@@ -13,7 +13,7 @@ const OVERRIDES = {
   diff: true,
   limit_override: 'web-0*',
   extra_vars_override: { nginx_workers: 8, release: { tag: 'v2' } },
-  hosts: ['h1', 'h-gone'],
+  requested_host_ids: ['h1', 'h-gone'],
   targets: [{ id: 'h1', name: 'web-01', address: '10.0.0.11', ssh_user: 'deploy', ssh_port: 22 }],
 };
 

@@ -7254,12 +7254,12 @@ export interface components {
                 [key: string]: unknown;
             };
             follow_ups?: components["schemas"]["PictureFollowUps"];
-            hosts?: string[] | null;
             limit: string;
             limit_override?: string;
             only_host?: string;
             playbook: components["schemas"]["PicturePlaybook"];
             repo?: components["schemas"]["PictureRepo"];
+            requested_host_ids?: string[] | null;
             retry?: components["schemas"]["PictureRetry"];
             ssh_credential?: string;
             ssh_credential_id?: string;
@@ -7754,7 +7754,7 @@ export interface components {
              * @description Minutes the request stays approvable, 5 to 1440; 60 when omitted
              */
             expires_in?: number;
-            /** @description Extra vars replacing the template's top-level ones of the same name, checked against the template's schema; secret fields cannot be set here */
+            /** @description Extra vars replacing the template's top-level ones of the same name, checked against the template's schema. Secret fields cannot be set here; the run receives every text in them as literal text, never as a template */
             extra_vars?: {
                 [key: string]: unknown;
             };
@@ -7762,7 +7762,7 @@ export interface components {
             host_id?: string;
             /** @description Run on these hosts only; each must be among the template's targets */
             host_ids?: string[] | null;
-            /** @description A host pattern narrowing the template's own limit: with a template limit, one pattern (a host, group or glob, or one !exclusion) */
+            /** @description Host names and globs (* ?) joined by , or :, with ! for exclusions: the run keeps to the template's targets whose name matches, under the template's own limit */
             limit?: string;
             /** @description Why the run is needed, shown to the person who approves it */
             reason: string;

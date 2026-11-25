@@ -2,6 +2,7 @@ package runrequests_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -393,7 +394,7 @@ func TestSQLStoreKeepsTheOverrides(t *testing.T) {
 	with := runrequests.Request{
 		ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Kind: runrequests.KindRun, TemplateID: f.template, TemplateRevision: 1,
 		Reason: "dry run", RequestedByUser: f.user, Status: runrequests.StatusPending, ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now,
-		Overrides: &runrequests.Overrides{Check: true, Diff: true, ExtraVars: map[string]any{"version": "1.2", "n": float64(3)},
+		Overrides: &runrequests.Overrides{Check: true, Diff: true, ExtraVars: map[string]any{"version": "1.2", "n": json.Number("3"), "big": json.Number("9007199254740993")},
 			HostIDs: []uuid.UUID{host}, Limit: &limit},
 	}
 	without := with
@@ -408,7 +409,9 @@ func TestSQLStoreKeepsTheOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	ov := got.Overrides
-	if ov == nil || !ov.Check || !ov.Diff || ov.ExtraVars["version"] != "1.2" || ov.ExtraVars["n"] != float64(3) ||
+	// Numbers come back exact (2^53+1 does not survive a float64).
+	if ov == nil || !ov.Check || !ov.Diff || ov.ExtraVars["version"] != "1.2" || ov.ExtraVars["n"] != json.Number("3") ||
+		ov.ExtraVars["big"] != json.Number("9007199254740993") ||
 		len(ov.HostIDs) != 1 || ov.HostIDs[0] != host || ov.Limit == nil || *ov.Limit != limit || !got.ExpiresAt.Equal(with.ExpiresAt) {
 		t.Fatalf("overrides = %+v (expires %v)", ov, got.ExpiresAt)
 	}

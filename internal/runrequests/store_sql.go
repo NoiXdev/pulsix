@@ -1,6 +1,7 @@
 package runrequests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -189,7 +190,9 @@ func fromRow(r gen.RunRequest) (Request, error) {
 	}
 	if len(r.Overrides) > 0 {
 		var ov Overrides
-		if err := json.Unmarshal(r.Overrides, &ov); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(r.Overrides))
+		dec.UseNumber() // extra vars keep their numbers exact
+		if err := dec.Decode(&ov); err != nil {
 			return Request{}, fmt.Errorf("decode run request %s overrides: %w", r.ID, err)
 		}
 		out.Overrides = &ov

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 )
@@ -33,8 +34,12 @@ func (q *SQLQueue) runOverrides(job Job) (*RunOverrides, error) {
 	if plain == "" {
 		return nil, nil
 	}
+	// Numbers stay exact (json.Number): an integer past 2^53 an override
+	// carries reaches the worker as it was given, not rounded to a float64.
 	var ov RunOverrides
-	if err := json.Unmarshal([]byte(plain), &ov); err != nil {
+	dec := json.NewDecoder(strings.NewReader(plain))
+	dec.UseNumber()
+	if err := dec.Decode(&ov); err != nil {
 		return nil, fmt.Errorf("decode run overrides: %w", err)
 	}
 	return &ov, nil
@@ -52,7 +57,9 @@ func mergeExtraVars(base json.RawMessage, ov *RunOverrides) (json.RawMessage, er
 	// nil for a null source even when it started non-nil, and maps.Copy
 	// panics ("assignment to entry in nil map") on that nil destination.
 	if len(base) > 0 && !bytes.Equal(bytes.TrimSpace(base), []byte("null")) {
-		if err := json.Unmarshal(base, &merged); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(base))
+		dec.UseNumber()
+		if err := dec.Decode(&merged); err != nil {
 			return nil, fmt.Errorf("%w: template extra vars are not a JSON object", ErrInvalidInput)
 		}
 	}

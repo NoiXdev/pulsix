@@ -80,6 +80,15 @@ func (p limitPattern) matches(name string) (matched, decided bool) {
 	return positive || !hasPositive, true
 }
 
+// MatchLimit reports whether the host name matches limit, and whether the
+// limit is one the matcher decides at all (see limitPattern.matches): an
+// undecidable limit — Ansible's "&", "~", "@", braces and the rest — never
+// decides, whatever the name. A run request resolves its own limit into
+// hosts with it, and refuses a limit it cannot decide.
+func MatchLimit(limit, name string) (matched, decided bool) {
+	return parseLimit(limit).matches(name)
+}
+
 // validGlob reports whether pat is a pattern path.Match can carry the
 // fnmatch semantics of: name characters (a-z A-Z 0-9 . _ -), the '*'/ '?'
 // wildcards and plain '[...]'-classes. Ansible's remaining operators and

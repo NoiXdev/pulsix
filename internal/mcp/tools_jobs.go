@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -45,10 +47,16 @@ type runRequestArgs struct {
 	Reason     string         `json:"reason" jsonschema:"one line on why the run is needed; the person approving reads it"`
 	CheckMode  bool           `json:"check_mode,omitempty" jsonschema:"a dry run: check mode, changes nothing (tasks marked to run in check mode still run); needs approval like any run and starts no follow-ups"`
 	Diff       *bool          `json:"diff,omitempty" jsonschema:"show the changes a dry run would make; only with check_mode, on unless false"`
-	ExtraVars  map[string]any `json:"extra_vars,omitempty" jsonschema:"extra vars replacing the template's top-level ones of the same name; never secrets (a secret field is refused)"`
+	ExtraVars  map[string]any `json:"extra_vars,omitempty" jsonschema:"extra vars replacing the template's top-level ones of the same name; never secrets (a secret field is refused); the run takes every text in them literally, never as a template"`
 	HostIDs    []string       `json:"host_ids,omitempty" jsonschema:"run on these hosts only (at most 500), each among the template's targets"`
-	Limit      string         `json:"limit,omitempty" jsonschema:"a host pattern narrowing the template's limit; with a template limit one pattern only"`
+	Limit      string         `json:"limit,omitempty" jsonschema:"host names and globs (* ?) joined by , or :, with ! for exclusions; the run keeps to the template's targets whose name matches"`
 	ExpiresIn  int            `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
+}
+
+// boundExpiresIn gives request_run's expires_in its bounds in the schema.
+func boundExpiresIn(s *jsonschema.Schema) {
+	lo, hi := float64(5), float64(1440)
+	s.Properties["expires_in"].Minimum, s.Properties["expires_in"].Maximum = &lo, &hi
 }
 
 // body is the REST body of a run request.
@@ -180,8 +188,8 @@ func jobTools() []toolDef {
 				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
 				return map[string]any{"log": text, "next_after": next}, nil
 			}),
-		define("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
-			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
+		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
+			tenancy.AreaJobsRequest, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
 				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, in.body())
 			}),
 		define("request_retry", "Request a retry", "Ask for a retry of a failed run's failed hosts. Nothing runs until a person approves it in Pulsix.",

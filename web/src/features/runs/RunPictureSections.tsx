@@ -102,7 +102,7 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
   const vault = picture.vault_identities ?? [];
   const vars = Object.entries(picture.extra_vars ?? {});
   const ownVars = picture.extra_vars_override;
-  const requested = picture.hosts ?? [];
+  const requested = picture.requested_host_ids ?? [];
   const gone = requested.filter((id) => !targets.some((h) => h.id === id));
   const onlyHost = picture.only_host ? (targets.find((h) => h.id === picture.only_host)?.name ?? shortId(picture.only_host)) : undefined;
   const source = picture.playbook.source;

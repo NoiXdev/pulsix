@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -254,20 +255,24 @@ func TestRequestRunPassesTheOverrides(t *testing.T) {
 	}
 	callOK(t, cs, "request_run", map[string]any{
 		"template_id": f.template.String(), "reason": "dry run first", "check_mode": true, "diff": false,
-		"extra_vars": map[string]any{"release": "1.2"}, "host_ids": []string{f.host.String()}, "limit": "web-1", "expires_in": 30,
+		"extra_vars": json.RawMessage(`{"release":"1.2","build":9007199254740993}`), "host_ids": []string{f.host.String()}, "limit": "web-1", "expires_in": 30,
 	}, &req)
 	var p struct {
 		CheckMode         bool           `json:"check_mode"`
 		Diff              bool           `json:"diff"`
 		LimitOverride     string         `json:"limit_override"`
 		ExtraVarsOverride map[string]any `json:"extra_vars_override"`
-		Hosts             []string       `json:"hosts"`
+		RequestedHostIDs  []string       `json:"requested_host_ids"`
 	}
 	if err := json.Unmarshal(req.Picture, &p); err != nil {
 		t.Fatal(err)
 	}
-	if !p.CheckMode || p.Diff || p.LimitOverride != "web-1" || p.ExtraVarsOverride["release"] != "1.2" || len(p.Hosts) != 1 || p.Hosts[0] != f.host.String() {
+	if !p.CheckMode || p.Diff || p.LimitOverride != "web-1" || p.ExtraVarsOverride["release"] != "1.2" || len(p.RequestedHostIDs) != 1 || p.RequestedHostIDs[0] != f.host.String() {
 		t.Fatalf("picture = %s", req.Picture)
+	}
+	// An integer past 2^53 reaches the request with every digit.
+	if !regexp.MustCompile(`"build":\s*9007199254740993\b`).Match(req.Picture) {
+		t.Fatalf("picture lost digits: %s", req.Picture)
 	}
 	r, _, _, err := f.s.Deps.RunRequests.Get(f.scoped, f.org, uuid.MustParse(req.RequestID))
 	if err != nil {
@@ -282,5 +287,11 @@ func TestRequestRunPassesTheOverrides(t *testing.T) {
 	})
 	if !isErr || !strings.Contains(text, "not among the template's targets") {
 		t.Fatalf("foreign host = %v %s, want the refusal", isErr, text)
+	}
+	// expires_in carries its bounds in the tool's schema.
+	for _, n := range []int{4, 1441} {
+		if text, isErr := call(t, cs, "request_run", map[string]any{"template_id": f.template.String(), "reason": "x", "expires_in": n}); !isErr || !strings.Contains(text, "expires_in") {
+			t.Fatalf("expires_in %d = %v %s, want the schema's refusal", n, isErr, text)
+		}
 	}
 }

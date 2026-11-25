@@ -25,7 +25,8 @@ type RunOverrides struct {
 	Limit     *string        `json:"limit,omitempty"`
 	ExtraVars map[string]any `json:"extra_vars,omitempty"`
 	// Untrusted marks values an unauthenticated sender supplied (a webhook
-	// payload): the claim marks every string in them unsafe for Ansible and
+	// payload) or an assistant asked for (a run request's extra vars, spec
+	// 2026-11-25 A): the claim marks every string in them unsafe for Ansible and
 	// re-checks the limit (ansiblevars.Inert, CheckUntrustedLimit). It is
 	// sealed together with the values, so it cannot be dropped on its own.
 	Untrusted bool `json:"untrusted,omitempty"`

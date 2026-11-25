@@ -68,8 +68,23 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 				w.ovr.err = &schema.ValidationError{Problems: []schema.Problem{{Path: "version", Message: "must be a string"}}}
 			},
 			is: runrequests.ErrInvalidInput, msg: "must be a string"},
-		{name: "limit under the template's", ov: limitOf("web-1")},
-		{name: "limit of several terms under the template's", ov: limitOf("web-1:web-2"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit of names and globs", ov: limitOf("web-1:web-*:!web-3")},
+		{name: "limit reading a file", ov: limitOf("@/etc/passwd"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit as a regex", ov: limitOf("~.*"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit with a subscript", ov: limitOf("web[0]"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit with an intersection", ov: limitOf("web-*:&db"), is: runrequests.ErrInvalidInput, msg: "limit"},
+		{name: "limit matching no target", ov: limitOf("db-*"), is: runrequests.ErrInvalidInput, msg: "no host"},
+		{name: "hosts and a limit with nothing in common", ov: func(w *world) runrequests.Overrides {
+			l := "web-1"
+			return runrequests.Overrides{HostIDs: []uuid.UUID{w.h2}, Limit: &l}
+		}, is: runrequests.ErrInvalidInput, msg: "no host"},
+		{name: "reserved ansible key", ov: vars(map[string]any{"version": map[string]any{"__ansible_vault": "$ANSIBLE_VAULT;1.1"}}),
+			is: runrequests.ErrInvalidInput, msg: "version"},
+		{name: "too deep", ov: vars(map[string]any{"version": deep(40)}), is: runrequests.ErrInvalidInput, msg: "version"},
+		{name: "secret marker as a value", ov: vars(map[string]any{"version": map[string]any{"$secret": "keep"}}),
+			is: runrequests.ErrInvalidInput, msg: "version"},
+		{name: "sealed marker in a list", ov: vars(map[string]any{"version": []any{map[string]any{"$sealed": "x"}}}),
+			is: runrequests.ErrInvalidInput, msg: "version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld()
@@ -90,17 +105,33 @@ func TestValidateRunChecksTheOverrides(t *testing.T) {
 			if !errors.Is(err, tc.is) || !strings.Contains(err.Error(), tc.msg) {
 				t.Fatalf("validate = %v, want %v naming %q", err, tc.is, tc.msg)
 			}
+			// A refusal never echoes the value it refused.
+			for _, v := range []string{"ANSIBLE_VAULT", "/etc/passwd", "keep"} {
+				if strings.Contains(err.Error(), v) && v != tc.msg {
+					t.Fatalf("validate = %v echoes %q", err, v)
+				}
+			}
 		})
 	}
 
-	// The template validation is asked with secrets refused.
+	// The template validation is asked with secrets refused and the
+	// limit held to the webhook rules.
 	w := newWorld()
 	if _, err := w.resolver().ValidateRun(ctx, org, w.x, nil, &runrequests.Overrides{ExtraVars: map[string]any{"version": "1"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.ovr.opts) != 1 || !w.ovr.opts[0].RefuseSecrets {
+	if len(w.ovr.opts) != 1 || !w.ovr.opts[0].RefuseSecrets || !w.ovr.opts[0].StrictLimit {
 		t.Fatalf("template validation options = %+v", w.ovr.opts)
 	}
+}
+
+// deep is a value nested n lists deep.
+func deep(n int) any {
+	var v any = "x"
+	for range n {
+		v = []any{v}
+	}
+	return v
 }
 
 // foreignHost is no host of any world.
@@ -124,25 +155,37 @@ func TestPictureShowsTheOverrides(t *testing.T) {
 	if !p.CheckMode || !p.Diff || p.LimitOverride != "web-1" || p.ExtraVarsOverride["version"] != "1.2" || p.Limit != "web" {
 		t.Fatalf("overrides in the picture = %+v", p)
 	}
-	if want := []string{w.h3.String(), w.h1.String()}; !slices.Equal(p.Hosts, want) {
-		t.Fatalf("hosts = %v, want %v", p.Hosts, want)
+	if want := []string{w.h3.String(), w.h1.String()}; !slices.Equal(p.RequestedHostIDs, want) {
+		t.Fatalf("requested hosts = %v, want %v", p.RequestedHostIDs, want)
 	}
-	// The targets are the template's narrowed to the requested hosts.
-	var targets []string
-	for _, h := range p.Targets {
-		targets = append(targets, h.ID)
-	}
-	if !slices.Equal(targets, []string{w.h1.String(), w.h3.String()}) {
-		t.Fatalf("targets = %v, want h1 and h3", targets)
+	// The targets are the template's narrowed to the requested hosts and
+	// to the request's limit: web-3 is requested, but the limit drops it.
+	if got := targetIDs(p); !slices.Equal(got, []string{w.h1.String()}) {
+		t.Fatalf("targets = %v, want h1", got)
 	}
 	// A dry run starts no follow-ups, so the picture offers none.
 	if p.FollowUps != nil {
 		t.Fatalf("follow-ups of a dry run = %+v", p.FollowUps)
 	}
 
+	// A limit on its own narrows the targets too.
+	p = w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x, Overrides: &runrequests.Overrides{Limit: strPtr("web-*:!web-2")}})
+	if got := targetIDs(p); !slices.Equal(got, []string{w.h1.String(), w.h3.String()}) {
+		t.Fatalf("targets under a limit = %v, want h1 and h3", got)
+	}
+
+	// The one host of host_id is held to the limit too.
+	if _, err := w.resolver().ValidateRun(context.Background(), id(), w.x, &w.h2, &runrequests.Overrides{Limit: strPtr("web-1")}); !errors.Is(err, runrequests.ErrInvalidInput) {
+		t.Fatalf("host_id outside the limit = %v, want ErrInvalidInput", err)
+	}
+	p = w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x, HostID: &w.h2, Overrides: &runrequests.Overrides{Limit: strPtr("web-1")}})
+	if got := targetIDs(p); len(got) != 0 {
+		t.Fatalf("targets of host_id outside the limit = %v, want none", got)
+	}
+
 	// Without overrides nothing of it shows.
 	p = w.picture(t, runrequests.Request{Kind: runrequests.KindRun, TemplateID: w.x})
-	if p.CheckMode || p.Diff || p.LimitOverride != "" || p.ExtraVarsOverride != nil || p.Hosts != nil || p.FollowUps == nil {
+	if p.CheckMode || p.Diff || p.LimitOverride != "" || p.ExtraVarsOverride != nil || p.RequestedHostIDs != nil || p.FollowUps == nil {
 		t.Fatalf("picture without overrides = %+v", p)
 	}
 }
@@ -166,13 +209,14 @@ func TestRunEnqueuesTheOverrides(t *testing.T) {
 		t.Fatalf("enqueued = %+v", got)
 	}
 	ov := got.Overrides
-	// The template's limit "web" is intersected with the request's, so the
-	// override only narrows.
-	if ov == nil || !ov.Check || !ov.Diff || ov.ExtraVars["version"] != "1.2" || ov.Limit == nil || *ov.Limit != "web:&web-1" {
+	// The vars travel untrusted (inert at the claim); the request's limit
+	// never reaches Ansible: it is resolved into the hosts the run keeps
+	// to, and the template's own limit applies on top as for any run.
+	if ov == nil || !ov.Check || !ov.Diff || ov.ExtraVars["version"] != "1.2" || !ov.Untrusted || ov.Limit != nil {
 		t.Fatalf("run overrides = %+v", ov)
 	}
-	if !slices.Equal(got.OnlyHosts, []uuid.UUID{w.h1, w.h3}) {
-		t.Fatalf("only hosts = %v, want h1 and h3", got.OnlyHosts)
+	if !slices.Equal(got.OnlyHosts, []uuid.UUID{w.h1}) || got.OnlyHost != nil {
+		t.Fatalf("only hosts = %v (only host %v), want h1", got.OnlyHosts, got.OnlyHost)
 	}
 	// A dry run carries no follow-up list: the enqueue refuses one.
 	if got.FollowUps != nil {
@@ -181,6 +225,16 @@ func TestRunEnqueuesTheOverrides(t *testing.T) {
 	// The overrides are checked again at the approval.
 	if len(w.ovr.calls) != 1 {
 		t.Fatalf("template validation calls = %d, want 1", len(w.ovr.calls))
+	}
+
+	// One host and a dry run: the host becomes the run's host list.
+	rec.enqueued = nil
+	one := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: w.x, HostID: &w.h2, Overrides: &runrequests.Overrides{Check: true}}
+	if err := res.Run(ctx, org, one, actor, "k1", group, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.enqueued; got.OnlyHost != nil || !slices.Equal(got.OnlyHosts, []uuid.UUID{w.h2}) || got.Overrides.Untrusted {
+		t.Fatalf("one-host dry run = %+v", got)
 	}
 
 	// A request without overrides enqueues exactly as before.
@@ -202,28 +256,10 @@ func TestRunEnqueuesTheOverrides(t *testing.T) {
 	}
 }
 
-func TestRunLimit(t *testing.T) {
-	for _, tc := range []struct {
-		tmpl, override, want string
-		bad                  bool
-	}{
-		{"", "web-1:web-2", "web-1:web-2", false},
-		{"web", "web-1", "web:&web-1", false},
-		{"web", "!web-1", "web:!web-1", false},
-		{"web", "&db", "web:&db", false},
-		{"web,db", "web-1", "web,db,&web-1", false},
-		{"web", "web-1:web-2", "", true},
-		{"web", "web-1,web-2", "", true},
-	} {
-		got, err := runrequests.RunLimit(tc.tmpl, tc.override)
-		if tc.bad {
-			if !errors.Is(err, runrequests.ErrInvalidInput) {
-				t.Errorf("RunLimit(%q, %q) = %q %v, want ErrInvalidInput", tc.tmpl, tc.override, got, err)
-			}
-			continue
-		}
-		if err != nil || got != tc.want {
-			t.Errorf("RunLimit(%q, %q) = %q %v, want %q", tc.tmpl, tc.override, got, err, tc.want)
-		}
+func targetIDs(p runrequests.Picture) []string {
+	var out []string
+	for _, h := range p.Targets {
+		out = append(out, h.ID)
 	}
+	return out
 }

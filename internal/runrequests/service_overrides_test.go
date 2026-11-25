@@ -85,9 +85,12 @@ func TestCreateRefusesInvalidOverrides(t *testing.T) {
 		{"host_id and host_ids", runrequests.CreateInput{HostID: &host, Overrides: runrequests.OverridesInput{HostIDs: []uuid.UUID{host}}}, "host_ids"},
 		{"too many hosts", runrequests.CreateInput{Overrides: runrequests.OverridesInput{HostIDs: many}}, "500"},
 		{"retry with overrides", runrequests.CreateInput{Kind: runrequests.KindRetryFailed, JobID: &job, Overrides: runrequests.OverridesInput{CheckMode: true}}, "retry"},
-		{"expiry too short", runrequests.CreateInput{ExpiresIn: 4 * time.Minute}, "5"},
-		{"expiry too long", runrequests.CreateInput{ExpiresIn: 1441 * time.Minute}, "1440"},
-		{"expiry negative", runrequests.CreateInput{ExpiresIn: -time.Minute}, "5"},
+		{"expiry too short", runrequests.CreateInput{ExpiresInMinutes: 4}, "5"},
+		{"expiry too long", runrequests.CreateInput{ExpiresInMinutes: 1441}, "1440"},
+		{"expiry negative", runrequests.CreateInput{ExpiresInMinutes: -1}, "5"},
+		// Far past what minutes times a Duration can hold: refused, not
+		// wrapped around into a valid expiry.
+		{"expiry overflowing", runrequests.CreateInput{ExpiresInMinutes: 1 << 62}, "1440"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWiring()
@@ -104,13 +107,13 @@ func TestCreateRefusesInvalidOverrides(t *testing.T) {
 
 func TestCreateTakesAnExpiry(t *testing.T) {
 	for _, tc := range []struct {
-		in   time.Duration
+		in   int
 		want time.Duration
-	}{{0, time.Hour}, {5 * time.Minute, 5 * time.Minute}, {1440 * time.Minute, 24 * time.Hour}} {
+	}{{0, time.Hour}, {5, 5 * time.Minute}, {1440, 24 * time.Hour}} {
 		w := newWiring()
-		r, err := w.createWith(runrequests.CreateInput{ExpiresIn: tc.in})
+		r, err := w.createWith(runrequests.CreateInput{ExpiresInMinutes: tc.in})
 		if err != nil || !r.ExpiresAt.Equal(w.now.Add(tc.want)) {
-			t.Fatalf("expires_in %s = %v %v, want now+%s", tc.in, r.ExpiresAt, err, tc.want)
+			t.Fatalf("expires_in %d = %v %v, want now+%s", tc.in, r.ExpiresAt, err, tc.want)
 		}
 	}
 }

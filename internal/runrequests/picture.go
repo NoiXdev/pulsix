@@ -44,15 +44,17 @@ type Picture struct {
 	// for a request without them, so the canonical JSON of a picture of a
 	// request made before they existed is unchanged and so is its
 	// fingerprint. CheckMode makes the run a dry run, Diff shows its
-	// changes; LimitOverride narrows Limit; ExtraVarsOverride replaces the
+	// changes; LimitOverride is the request's limit, which narrows Targets
+	// (Limit applies on top at the run); ExtraVarsOverride replaces the
 	// template's top-level extra vars of the same name and is shown by
-	// value (it never holds a secret); Hosts are the host ids the request
-	// narrows the run to (Targets are the hosts of those it reaches).
+	// value (it never holds a secret; the run gets it marked unsafe for
+	// Ansible); RequestedHostIDs are the host ids the request asked for.
+	// Targets are always exactly the hosts the run is kept to.
 	CheckMode         bool           `json:"check_mode,omitempty"`
 	Diff              bool           `json:"diff,omitempty"`
 	LimitOverride     string         `json:"limit_override,omitempty"`
 	ExtraVarsOverride map[string]any `json:"extra_vars_override,omitempty"`
-	Hosts             []string       `json:"hosts,omitempty"`
+	RequestedHostIDs  []string       `json:"requested_host_ids,omitempty"`
 }
 
 // PictureFollowUps is what an approval does about the template's follow-ups.
@@ -139,8 +141,8 @@ func Fingerprint(requestID uuid.UUID, p Picture) string {
 	slices.SortFunc(p.VaultIdentities, func(a, b PictureVault) int {
 		return cmp.Or(cmp.Compare(a.Label, b.Label), cmp.Compare(a.CredentialID, b.CredentialID), cmp.Compare(a.Credential, b.Credential))
 	})
-	p.Hosts = slices.Clone(p.Hosts)
-	slices.Sort(p.Hosts)
+	p.RequestedHostIDs = slices.Clone(p.RequestedHostIDs)
+	slices.Sort(p.RequestedHostIDs)
 	if p.Retry != nil {
 		r := *p.Retry
 		r.FailedHosts = slices.Clone(r.FailedHosts)

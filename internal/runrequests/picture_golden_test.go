@@ -43,20 +43,20 @@ func TestFingerprintCoversTheOverrides(t *testing.T) {
 	base := goldenPicture()
 	base.CheckMode, base.Diff, base.LimitOverride = true, true, "web-1"
 	base.ExtraVarsOverride = map[string]any{"version": "1.2"}
-	base.Hosts = []string{"h2", "h1"}
+	base.RequestedHostIDs = []string{"h2", "h1"}
 	fp := runrequests.Fingerprint(goldenRequest, base)
 
 	reordered := base
-	reordered.Hosts = []string{"h1", "h2"}
+	reordered.RequestedHostIDs = []string{"h1", "h2"}
 	if runrequests.Fingerprint(goldenRequest, reordered) != fp {
 		t.Fatal("the order of the requested hosts changes the fingerprint")
 	}
 	for name, mutate := range map[string]func(p *runrequests.Picture){
-		"check mode":     func(p *runrequests.Picture) { p.CheckMode = false },
-		"diff":           func(p *runrequests.Picture) { p.Diff = false },
-		"limit override": func(p *runrequests.Picture) { p.LimitOverride = "web-2" },
-		"extra vars":     func(p *runrequests.Picture) { p.ExtraVarsOverride = map[string]any{"version": "1.3"} },
-		"hosts":          func(p *runrequests.Picture) { p.Hosts = []string{"h1"} },
+		"check mode":      func(p *runrequests.Picture) { p.CheckMode = false },
+		"diff":            func(p *runrequests.Picture) { p.Diff = false },
+		"limit override":  func(p *runrequests.Picture) { p.LimitOverride = "web-2" },
+		"extra vars":      func(p *runrequests.Picture) { p.ExtraVarsOverride = map[string]any{"version": "1.3"} },
+		"requested hosts": func(p *runrequests.Picture) { p.RequestedHostIDs = []string{"h1"} },
 	} {
 		p := base
 		mutate(&p)

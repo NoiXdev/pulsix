@@ -116,7 +116,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
-		setAuditObject(ctx, r.ID.String(), "requested a run of job template "+templateID.String()+": "+r.Reason)
+		setAuditObject(ctx, r.ID.String(), requestSummary(r))
 		return runRequestDetail(ctx, deps, scope, r.ID)
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("requestRun", "run_request"))
 
@@ -264,10 +264,19 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 }
 
 // approvalSummary is the audit summary of an approval: the template
-// revision the person approved and, when the template has follow-ups, the
+// revision the person approved, a dry run and the overrides by field (no
+// values, see overrideFields) and, when the template has follow-ups, the
 // ones that start.
 func approvalSummary(a runrequests.Approved) string {
 	summary := "approved run request (template revision " + strconv.FormatInt(a.TemplateRevision, 10)
+	if ov := a.Request.Overrides; ov != nil {
+		if ov.Check {
+			summary += "; dry run"
+		}
+		if fields := overrideFields(ov); fields != "" {
+			summary += "; overrides: " + fields
+		}
+	}
 	if a.FollowUps != nil {
 		if len(a.Started) == 0 {
 			summary += "; no follow-ups"

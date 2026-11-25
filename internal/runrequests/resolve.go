@@ -132,16 +132,24 @@ func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID,
 	if err := r.checkOverrides(ctx, orgID, tmpl, ov); err != nil {
 		return 0, err
 	}
-	if len(ov.HostIDs) > 0 {
-		targets, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, templateID)
-		if err != nil {
-			return 0, mapNotFound(err)
+	targets, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, templateID)
+	if err != nil {
+		return 0, mapNotFound(err)
+	}
+	for _, h := range ov.HostIDs {
+		if !slices.Contains(targets, h) {
+			return 0, fmt.Errorf("%w: host %s is not among the template's targets", ErrInvalidInput, h)
 		}
-		for _, h := range ov.HostIDs {
-			if !slices.Contains(targets, h) {
-				return 0, fmt.Errorf("%w: host %s is not among the template's targets", ErrInvalidInput, h)
-			}
-		}
+	}
+	if onlyHost != nil {
+		targets = []uuid.UUID{*onlyHost}
+	}
+	kept, err := r.narrowTargets(ctx, orgID, ov, targets)
+	if err != nil {
+		return 0, err
+	}
+	if len(kept) == 0 {
+		return 0, errNoHost
 	}
 	return tmpl.Revision, nil
 }
@@ -170,6 +178,8 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group}
 	if req.Overrides != nil {
+		// The run keeps to the picture's targets, its one host included.
+		run.OnlyHost = nil
 		var err error
 		if run.Overrides, run.OnlyHosts, err = r.runOverrides(ctx, orgID, req); err != nil {
 			return err
@@ -316,26 +326,22 @@ func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, re
 }
 
 // runTargets is the hosts a run request's run reaches: its one host, or
-// the template's scope under its own limit (LimitedRunTargets), narrowed to
-// the request's hosts when it names some.
+// the template's scope under its own limit (LimitedRunTargets), narrowed
+// by the request's overrides (narrowTargets) when it has any.
 func (r *Resolver) runTargets(ctx context.Context, orgID uuid.UUID, req Request) ([]uuid.UUID, error) {
+	ids := []uuid.UUID{}
 	if req.HostID != nil {
-		return []uuid.UUID{*req.HostID}, nil
-	}
-	ids, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, req.TemplateID)
-	if err != nil {
-		return nil, mapNotFound(err)
-	}
-	if req.Overrides == nil || len(req.Overrides.HostIDs) == 0 {
-		return ids, nil
-	}
-	kept := []uuid.UUID{}
-	for _, id := range ids {
-		if slices.Contains(req.Overrides.HostIDs, id) {
-			kept = append(kept, id)
+		ids = append(ids, *req.HostID)
+	} else {
+		var err error
+		if ids, err = r.src.Jobs.LimitedRunTargets(ctx, orgID, req.TemplateID); err != nil {
+			return nil, mapNotFound(err)
 		}
 	}
-	return kept, nil
+	if req.Overrides == nil {
+		return ids, nil
+	}
+	return r.narrowTargets(ctx, orgID, req.Overrides, ids)
 }
 
 func (r *Resolver) describeHosts(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID, p *Picture) error {

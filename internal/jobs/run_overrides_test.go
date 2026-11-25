@@ -330,3 +330,17 @@ func TestBuildPayloadRefusesTopLevelAnsibleMarkerNames(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeExtraVarsKeepsNumbersExact: an integer past 2^53, in the
+// template's vars or in an override, reaches the merged document with
+// every digit (a float64 would round 2^53+1 down).
+func TestMergeExtraVarsKeepsNumbersExact(t *testing.T) {
+	base := json.RawMessage(`{"a":9007199254740993,"b":1}`)
+	got, err := mergeExtraVars(base, &RunOverrides{ExtraVars: map[string]any{"b": json.Number("9007199254740995")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"a":9007199254740993`) || !strings.Contains(string(got), `"b":9007199254740995`) {
+		t.Fatalf("merged = %s", got)
+	}
+}

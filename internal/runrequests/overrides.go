@@ -14,11 +14,11 @@ import (
 // MaxHostIDs caps the hosts one run request narrows its run to.
 const MaxHostIDs = 500
 
-// The bounds of a request's own expiry (spec 2026-11-25 A, "Expiry"); TTL is
-// the default.
+// The bounds of a request's own expiry in minutes (spec 2026-11-25 A,
+// "Expiry"); TTL is the default.
 const (
-	MinExpiresIn = 5 * time.Minute
-	MaxExpiresIn = 24 * time.Hour
+	MinExpiresInMinutes = 5
+	MaxExpiresInMinutes = 24 * 60
 )
 
 // Overrides is what a run request changes about its template's run (spec
@@ -26,9 +26,12 @@ const (
 // vars that replace the template's top-level ones, the hosts the run is
 // narrowed to and a limit that narrows the template's own. They are stored
 // on the request as they were asked for and never change after; the
-// picture shows them and the approval enqueues them (Resolver.Run). Extra
-// vars are never secret: a secret key is refused when the request is made
-// and again at the approval.
+// picture shows them and the approval enqueues them (Resolver.Run). They
+// are an assistant's input and treated as such: extra vars are never
+// secret, never an Ansible marker or a Pulsix secret marker, and reach the
+// run marked unsafe for Ansible; the limit is a plain host pattern that
+// is resolved into the hosts the run keeps to and never reaches Ansible.
+// Numbers in ExtraVars are json.Number, so they stay exact.
 type Overrides struct {
 	Check     bool           `json:"check,omitempty"`
 	Diff      bool           `json:"diff,omitempty"`
@@ -81,42 +84,15 @@ func (in OverridesInput) overrides() (*Overrides, error) {
 	return &out, nil
 }
 
-// expiresIn is the request's time to live: TTL when not given, else between
-// MinExpiresIn and MaxExpiresIn.
-func expiresIn(d time.Duration) (time.Duration, error) {
-	if d == 0 {
+// expiresIn is the request's time to live: TTL when minutes is 0, else
+// between MinExpiresInMinutes and MaxExpiresInMinutes, checked before the
+// conversion so no value can overflow into a valid one.
+func expiresIn(minutes int) (time.Duration, error) {
+	if minutes == 0 {
 		return TTL, nil
 	}
-	if d < MinExpiresIn || d > MaxExpiresIn {
-		return 0, fmt.Errorf("%w: expires_in must be between %d and %d minutes", ErrInvalidInput,
-			int(MinExpiresIn/time.Minute), int(MaxExpiresIn/time.Minute))
+	if minutes < MinExpiresInMinutes || minutes > MaxExpiresInMinutes {
+		return 0, fmt.Errorf("%w: expires_in must be between %d and %d minutes", ErrInvalidInput, MinExpiresInMinutes, MaxExpiresInMinutes)
 	}
-	return d, nil
-}
-
-// runLimit is the limit a run request's run ships when the request has a
-// limit override: the override alone when the template has no limit, else
-// the template's limit intersected with it, so an override only ever
-// narrows. Ansible unions a pattern's plain terms and then intersects the
-// "&" terms and removes the "!" terms, so the intersection is exact only
-// for an override of one term: with a template limit, an override of
-// several terms is refused. The template's terms keep their separator (a
-// pattern holding a comma splits on commas only, see jobs.narrowLimit).
-func runLimit(tmplLimit, override string) (string, error) {
-	if tmplLimit == "" {
-		return override, nil
-	}
-	if strings.ContainsAny(override, ":,") {
-		return "", fmt.Errorf("%w: the template has its own limit (%s); a limit override narrows it and may name one pattern only (a host, a group or a glob, or one !exclusion)",
-			ErrInvalidInput, tmplLimit)
-	}
-	term := override
-	if !strings.HasPrefix(term, "!") && !strings.HasPrefix(term, "&") {
-		term = "&" + term
-	}
-	sep := ":"
-	if strings.Contains(tmplLimit, ",") {
-		sep = ","
-	}
-	return tmplLimit + sep + term, nil
+	return time.Duration(minutes) * time.Minute, nil
 }
