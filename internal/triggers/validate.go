@@ -105,7 +105,7 @@ func checkMappingTargets(m Mapping, t templates.Template) error {
 		case ansiblevars.CheckUntrustedName(name) != nil:
 			// The rule run request overrides share: a payload value may not
 			// set a name Ansible or Pulsix acts on, inert or not.
-			return fmt.Errorf("%w: %s is a reserved variable name (ansible_…, pulsix_…, an Ansible magic variable or playbook keyword) and cannot be mapped", ErrInvalidInput, name)
+			return fmt.Errorf("%w: %s is a reserved variable name (ansible_…, pulsix_…, an Ansible magic variable or template global) and cannot be mapped", ErrInvalidInput, name)
 		case secret[name]:
 			return fmt.Errorf("%w: %s is a secret field and cannot be set from a payload", ErrInvalidInput, name)
 		case t.ExtraVarsSchema != nil && !declared[name]:

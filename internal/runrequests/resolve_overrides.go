@@ -50,9 +50,9 @@ var pulsixMarkers = []string{"$sealed", "$secret"}
 // is now. They are an assistant's input, held to the rules a webhook
 // payload is held to:
 //   - no extra var is named for something Ansible or Pulsix acts on
-//     (ansiblevars.CheckUntrustedName: ansible_…, pulsix_…, magic
-//     variables, playbook keywords), since Ansible executes some of them
-//     whatever their value;
+//     (ansiblevars.CheckRequestedName: ansible_…, pulsix_…, magic
+//     variables, template globals, and playbook keywords too), since
+//     Ansible executes some of them whatever their value;
 //   - no extra var is or holds a secret (an assistant never sets one, spec
 //     2026-11-25);
 //   - no value holds an "__ansible…" key or nests past
@@ -76,7 +76,7 @@ func (r *Resolver) checkOverrides(ctx context.Context, orgID uuid.UUID, tmpl tem
 	}
 	secret := templates.SecretFields(tmpl.ExtraVarsSchema)
 	for _, name := range slices.Sorted(maps.Keys(ov.ExtraVars)) {
-		if err := ansiblevars.CheckUntrustedName(name); err != nil {
+		if err := ansiblevars.CheckRequestedName(name); err != nil {
 			return fmt.Errorf("%w: extra var %s: %w", ErrInvalidInput, name, err)
 		}
 		if secret[name] {

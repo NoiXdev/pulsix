@@ -87,7 +87,8 @@ func (o *RunOverrides) inert() *RunOverrides {
 // checkUntrusted re-checks an untrusted override's extra vars at claim
 // time, the same rules the webhook mapping and the run request apply when
 // the values arrive: no name Ansible or Pulsix acts on
-// (ansiblevars.CheckUntrustedName — inert values do not help when Ansible
+// (ansiblevars.CheckUntrustedName for a webhook, CheckRequestedName with
+// the playbook keywords for a run request — inert values do not help when Ansible
 // executes the variable, as with ansible_python_interpreter), no object
 // key starting with "__ansible" and no nesting past
 // ansiblevars.MaxUntrustedDepth. The last two would make Ansible's JSON
@@ -100,8 +101,14 @@ func (o *RunOverrides) checkUntrusted(trigger string) error {
 		return nil
 	}
 	source := untrustedSource(trigger)
+	// A webhook keeps mapping onto keyword-named variables; a run request
+	// is held to the keywords too, as when it was made.
+	checkName := ansiblevars.CheckRequestedName
+	if trigger == TriggerWebhook {
+		checkName = ansiblevars.CheckUntrustedName
+	}
 	for _, name := range slices.Sorted(maps.Keys(o.ExtraVars)) {
-		if err := ansiblevars.CheckUntrustedName(name); err != nil {
+		if err := checkName(name); err != nil {
 			return fmt.Errorf("%w: run override extra var %s: a %s may not set it: %w", ErrInvalidInput, name, source, err)
 		}
 		if err := ansiblevars.CheckUntrusted(o.ExtraVars[name]); err != nil {

@@ -418,12 +418,13 @@ func TestMappingTargetIsSyntaxCheckedWithoutASchema(t *testing.T) {
 // TestMappingTargetsAnsibleActsOnAreRefused: a payload value may not be
 // mapped onto a variable Ansible or Pulsix acts on, even on a template
 // without a schema (where no declared-names rule applies): Ansible runs
-// ansible_python_interpreter whatever unsafe marker its value carries. The
-// same rule holds for run request overrides (ansiblevars.CheckUntrustedName).
+// ansible_python_interpreter whatever unsafe marker its value carries. A
+// playbook keyword such as tags or name stays mappable: a variable of that
+// name changes no keyword (run requests refuse those too, a new surface).
 func TestMappingTargetsAnsibleActsOnAreRefused(t *testing.T) {
 	w := newWorld(t)
 	w.tmpls.byID[w.template] = templates.Template{ID: w.template, OrgID: w.org}
-	for _, name := range []string{"ansible_python_interpreter", "ansible_become_exe", "hostvars", "environment", "omit", "pulsix_agent_enroll_token"} {
+	for _, name := range []string{"ansible_python_interpreter", "ansible_become_exe", "hostvars", "lookup", "omit", "pulsix_agent_enroll_token"} {
 		in := w.templateInput()
 		in.Mapping.ExtraVars = map[string]string{name: "$.v"}
 		_, err := w.svc.Create(ctx, w.org, w.actor, in)
@@ -431,9 +432,12 @@ func TestMappingTargetsAnsibleActsOnAreRefused(t *testing.T) {
 			t.Errorf("mapping onto %s = %v, want a refusal naming it as reserved", name, err)
 		}
 	}
-	in := w.templateInput()
-	in.Mapping.ExtraVars = map[string]string{"release": "$.v"}
-	if _, err := w.svc.Create(ctx, w.org, w.actor, in); err != nil {
-		t.Fatalf("mapping onto release = %v", err)
+	for _, name := range []string{"release", "tags", "name", "environment"} {
+		in := w.templateInput()
+		in.Name = "maps-" + name
+		in.Mapping.ExtraVars = map[string]string{name: "$.v"}
+		if _, err := w.svc.Create(ctx, w.org, w.actor, in); err != nil {
+			t.Fatalf("mapping onto %s = %v", name, err)
+		}
 	}
 }
