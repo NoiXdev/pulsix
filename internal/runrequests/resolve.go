@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -55,6 +56,11 @@ type (
 	FollowUpSettings interface {
 		StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error)
 	}
+	// OverrideValidator checks per-run overrides against a template the way
+	// schedules and webhook triggers are checked (templates.Service).
+	OverrideValidator interface {
+		ValidateOverrides(ctx context.Context, orgID, templateID uuid.UUID, in templates.Overrides, opt templates.OverrideOptions) (templates.Overrides, error)
+	}
 	// FollowUpRunSource reads and clears the follow-up rows of a run group.
 	FollowUpRunSource interface {
 		ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
@@ -89,6 +95,8 @@ type Sources struct {
 	VarsKey      []byte
 	Settings     FollowUpSettings
 	FollowUpRuns FollowUpRunSource
+	// Overrides checks a run request's limit and extra vars.
+	Overrides OverrideValidator
 }
 
 // Resolver implements Pictures, Enqueuer and Validator over the existing
@@ -102,8 +110,9 @@ func NewResolver(src Sources) *Resolver { return &Resolver{src: src} }
 // started now would reach a host: its scope under its own limit selects
 // one, and the one-host narrowing names a host of those (jobs.CheckRunScope,
 // the enqueue's own check). The approval checks again: things can change
-// in between.
-func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) (int64, error) {
+// in between. Overrides, when given, pass checkOverrides, and every host
+// they narrow to is one of those targets.
+func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, ov *Overrides) (int64, error) {
 	tmpl, err := r.src.Templates.Get(ctx, orgID, templateID)
 	if err != nil {
 		return 0, mapNotFound(err)
@@ -116,6 +125,23 @@ func (r *Resolver) ValidateRun(ctx context.Context, orgID, templateID uuid.UUID,
 			return 0, fmt.Errorf("%w: %s", ErrInvalidInput, jobs.ErrHostNotInScope)
 		}
 		return 0, mapNotFound(err)
+	}
+	if ov == nil {
+		return tmpl.Revision, nil
+	}
+	if err := r.checkOverrides(ctx, orgID, tmpl, ov); err != nil {
+		return 0, err
+	}
+	if len(ov.HostIDs) > 0 {
+		targets, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, templateID)
+		if err != nil {
+			return 0, mapNotFound(err)
+		}
+		for _, h := range ov.HostIDs {
+			if !slices.Contains(targets, h) {
+				return 0, fmt.Errorf("%w: host %s is not among the template's targets", ErrInvalidInput, h)
+			}
+		}
 	}
 	return tmpl.Revision, nil
 }
@@ -138,15 +164,25 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 
 // Run implements Enqueuer through the manual run path. The follow-ups the
 // group holds unstarted are cleared first; followUps is then the whole list
-// the run plans (empty, never nil, so nothing is inherited).
-func (r *Resolver) Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+// the run plans (empty, never nil, so nothing is inherited). A request's
+// overrides are checked again (runOverrides) and travel as the run's
+// jobs.RunOverrides; a dry run plans no follow-ups at all.
+func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group}
+	if req.Overrides != nil {
+		var err error
+		if run.Overrides, run.OnlyHosts, err = r.runOverrides(ctx, orgID, req); err != nil {
+			return err
+		}
+	}
 	if err := r.src.FollowUpRuns.ClearUnstarted(ctx, orgID, group); err != nil {
 		return fmt.Errorf("clear unstarted follow-ups: %w", err)
 	}
-	list := nonNil(followUps)
-	_, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, templateID, jobs.RunRequest{
-		Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost, IdempotencyKey: key, RunGroupID: group, FollowUps: &list,
-	})
+	if req.Overrides == nil || !req.Overrides.Check {
+		list := nonNil(followUps)
+		run.FollowUps = &list
+	}
+	_, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, req.TemplateID, run)
 	return err
 }
 
@@ -177,6 +213,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 	if req.HostID != nil {
 		p.OnlyHost = req.HostID.String()
 	}
+	pictureOverrides(req.Overrides, &p)
 	if tmpl.CredentialID != nil {
 		p.SSHCredentialID, p.SSHCredential = tmpl.CredentialID.String(), r.credentialName(ctx, orgID, *tmpl.CredentialID)
 	}
@@ -229,6 +266,10 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		return Picture{}, err
 	}
 	p.VarsDigest = digest
+	if p.CheckMode {
+		// A dry run starts no follow-ups (jobs.checkRunRequest).
+		return p, nil
+	}
 	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry); err != nil {
 		return Picture{}, err
 	}
@@ -269,15 +310,32 @@ func (r *Resolver) targets(ctx context.Context, orgID uuid.UUID, req Request, re
 			p.Retry.FailedHosts = append(p.Retry.FailedHosts, id.String())
 		}
 		return retry.failed, nil
-	case req.HostID != nil:
-		return []uuid.UUID{*req.HostID}, nil
 	default:
-		ids, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, req.TemplateID)
-		if err != nil {
-			return nil, mapNotFound(err)
-		}
+		return r.runTargets(ctx, orgID, req)
+	}
+}
+
+// runTargets is the hosts a run request's run reaches: its one host, or
+// the template's scope under its own limit (LimitedRunTargets), narrowed to
+// the request's hosts when it names some.
+func (r *Resolver) runTargets(ctx context.Context, orgID uuid.UUID, req Request) ([]uuid.UUID, error) {
+	if req.HostID != nil {
+		return []uuid.UUID{*req.HostID}, nil
+	}
+	ids, err := r.src.Jobs.LimitedRunTargets(ctx, orgID, req.TemplateID)
+	if err != nil {
+		return nil, mapNotFound(err)
+	}
+	if req.Overrides == nil || len(req.Overrides.HostIDs) == 0 {
 		return ids, nil
 	}
+	kept := []uuid.UUID{}
+	for _, id := range ids {
+		if slices.Contains(req.Overrides.HostIDs, id) {
+			kept = append(kept, id)
+		}
+	}
+	return kept, nil
 }
 
 func (r *Resolver) describeHosts(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID, p *Picture) error {

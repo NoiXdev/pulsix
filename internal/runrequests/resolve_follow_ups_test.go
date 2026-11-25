@@ -250,7 +250,7 @@ func TestRunClearsUnstartedFollowUpsFirst(t *testing.T) {
 	}{{"nil", nil, []uuid.UUID{}}, {"chosen", []uuid.UUID{y}, []uuid.UUID{y}}} {
 		t.Run("run "+tc.name, func(t *testing.T) {
 			fx := newResolverFx(nil, false, nil, nil)
-			if err := fx.res.Run(context.Background(), fx.org, tpl, nil, actor, "k", id(), tc.in); err != nil {
+			if err := fx.res.Run(context.Background(), fx.org, runrequests.Request{TemplateID: tpl}, actor, "k", id(), tc.in); err != nil {
 				t.Fatal(err)
 			}
 			if len(fx.calls) != 2 || fx.calls[0] != "clear" || fx.calls[1] != "enqueue" {
@@ -283,7 +283,7 @@ func TestRunClearsUnstartedFollowUpsFirst(t *testing.T) {
 func TestClearErrorAbortsTheEnqueue(t *testing.T) {
 	boom := errors.New("boom")
 	fx := newResolverFx(nil, false, nil, boom)
-	if err := fx.res.Run(context.Background(), fx.org, id(), nil, id(), "k", id(), nil); !errors.Is(err, boom) {
+	if err := fx.res.Run(context.Background(), fx.org, runrequests.Request{TemplateID: id()}, id(), "k", id(), nil); !errors.Is(err, boom) {
 		t.Fatalf("run: %v", err)
 	}
 	if err := fx.res.RetryFailed(context.Background(), fx.org, id(), id(), "k", id(), nil); !errors.Is(err, boom) {

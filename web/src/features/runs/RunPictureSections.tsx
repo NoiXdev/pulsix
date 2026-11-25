@@ -35,12 +35,64 @@ const TABLE = 'w-full text-xs';
 const TH = 'px-4 py-2 text-left text-[11px] font-semibold tracking-wide text-muted-foreground uppercase';
 const TD = 'border-t border-border px-4 py-2';
 
+/** VarsTable lists extra vars by name and value; `replaced` marks the names
+ * this request sets itself. */
+function VarsTable({
+  vars,
+  label,
+  replaced,
+}: {
+  vars: [string, unknown][];
+  label?: string;
+  replaced?: Record<string, unknown>;
+}) {
+  const d = useT().runs.requests.detail;
+  return (
+    <table className={TABLE} aria-label={label}>
+      <thead>
+        <tr>
+          <th className={TH}>{d.varName}</th>
+          <th className={TH}>{d.varValue}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {vars.map(([name, value]) => (
+          <tr key={name}>
+            <td className={`${TD} font-mono`}>{name}</td>
+            <td className={`${TD} font-mono break-all ${isMaskedSecret(value) ? 'text-muted-foreground italic' : ''}`}>
+              {varText(value, d.secret)}
+              {replaced && Object.hasOwn(replaced, name) && (
+                <span className="ml-2 font-sans text-[11px] text-[var(--px-warn)] not-italic">{d.varReplaced}</span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** DryRunBanner says, above everything else, that the run is a dry run. */
+function DryRunBanner({ diff }: { diff: boolean }) {
+  const d = useT().runs.requests.detail.dryRun;
+  const title = d.title(diff);
+  return (
+    <div role="note" aria-label={title} className="mb-4 rounded-md border border-[var(--px-warn)] px-4 py-3 text-xs">
+      <p className="font-semibold text-[var(--px-warn)]">{title}</p>
+      <p className="mt-1 text-muted-foreground">{d.body}</p>
+    </div>
+  );
+}
+
 /**
  * RunPictureSections shows what a run request's run would use if it were
  * approved now, in the order a reviewer reads it: the template, the
  * playbook and its repository, the target hosts, the credentials by name
  * (never their contents) and the extra vars with secrets masked, and for a
- * retry the run it repeats and the hosts that failed there.
+ * retry the run it repeats and the hosts that failed there. What the request
+ * changes about the template's run shows with each part: a dry run as a
+ * banner above all, its limit with the template's, the hosts it narrows to
+ * over the targets and its extra vars (never secret) by value.
  */
 export function RunPictureSections({ org, picture }: { org: string; picture: RunPicture }) {
   const t = useT();
@@ -49,18 +101,23 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
   const targets = picture.targets ?? [];
   const vault = picture.vault_identities ?? [];
   const vars = Object.entries(picture.extra_vars ?? {});
+  const ownVars = picture.extra_vars_override;
+  const requested = picture.hosts ?? [];
+  const gone = requested.filter((id) => !targets.some((h) => h.id === id));
   const onlyHost = picture.only_host ? (targets.find((h) => h.id === picture.only_host)?.name ?? shortId(picture.only_host)) : undefined;
   const source = picture.playbook.source;
   const sourceLabel = Object.hasOwn(d.sources, source) ? d.sources[source as keyof typeof d.sources] : source;
 
   return (
     <>
+      {picture.check_mode && <DryRunBanner diff={!!picture.diff} />}
       <Section id="template" title={s.template}>
         <SidebarFacts
           items={[
             { label: d.templateName, value: <Mono>{picture.template_name}</Mono> },
             { label: d.revision, value: <Mono>{picture.template_revision}</Mono> },
             { label: d.limit, value: picture.limit ? <Mono>{picture.limit}</Mono> : d.wholeScope },
+            ...(picture.limit_override ? [{ label: d.limitOverride, value: <Mono>{picture.limit_override}</Mono> }] : []),
             ...(onlyHost ? [{ label: d.onlyHost, value: <Mono>{onlyHost}</Mono> }] : []),
           ]}
         />
@@ -91,6 +148,12 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
       </Section>
 
       <Section id="targets" title={s.targets}>
+        {requested.length > 0 && (
+          <div className="mb-2 flex flex-col gap-1 text-xs">
+            <p>{d.narrowedHosts(requested.length)}</p>
+            {gone.length > 0 && <p className="text-[var(--px-warn)]">{d.hostsGone(gone.join(', '))}</p>}
+          </div>
+        )}
         <Card>
           {targets.length === 0 ? (
             <p className="px-4 py-3 text-xs text-muted-foreground">{d.noTargets}</p>
@@ -159,28 +222,19 @@ export function RunPictureSections({ org, picture }: { org: string; picture: Run
       </Section>
 
       <Section id="vars" title={s.vars}>
+        {ownVars && Object.keys(ownVars).length > 0 && (
+          <div className="mb-3 flex flex-col gap-1">
+            <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{d.varsOverride}</span>
+            <Card>
+              <VarsTable vars={Object.entries(ownVars)} label={d.varsOverride} />
+            </Card>
+          </div>
+        )}
         <Card>
           {vars.length === 0 ? (
             <p className="px-4 py-3 text-xs text-muted-foreground">{d.noVars}</p>
           ) : (
-            <table className={TABLE}>
-              <thead>
-                <tr>
-                  <th className={TH}>{d.varName}</th>
-                  <th className={TH}>{d.varValue}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vars.map(([name, value]) => (
-                  <tr key={name}>
-                    <td className={`${TD} font-mono`}>{name}</td>
-                    <td className={`${TD} font-mono break-all ${isMaskedSecret(value) ? 'text-muted-foreground italic' : ''}`}>
-                      {varText(value, d.secret)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <VarsTable vars={vars} replaced={ownVars} />
           )}
         </Card>
       </Section>

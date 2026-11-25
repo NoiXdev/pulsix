@@ -97,10 +97,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs/{org}/job-templates/{id}/run-requests", func(ctx context.Context, in *struct {
 		Org  string `path:"org"`
 		ID   string `path:"id"`
-		Body struct {
-			HostID string `json:"host_id,omitempty" doc:"Run on this one host only; it must be among the template's targets"`
-			Reason string `json:"reason" maxLength:"300" doc:"Why the run is needed, shown to the person who approves it"`
-		}
+		Body requestRunRequest
 	}) (*runRequestDetailOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRequest)
 		if err != nil {
@@ -110,18 +107,12 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		var host *uuid.UUID
-		if in.Body.HostID != "" {
-			id, err := parseUUID(in.Body.HostID, "host_id")
-			if err != nil {
-				return nil, err
-			}
-			host = &id
+		create, err := in.Body.input()
+		if err != nil {
+			return nil, err
 		}
-		r, err := deps.RunRequests.Create(ctx, scope.OrgID, runrequests.CreateInput{
-			Kind: runrequests.KindRun, TemplateID: templateID, HostID: host, Reason: in.Body.Reason,
-			RequestedByUser: scope.UserID, RequestedByToken: scope.TokenID,
-		})
+		create.TemplateID, create.RequestedByUser, create.RequestedByToken = templateID, scope.UserID, scope.TokenID
+		r, err := deps.RunRequests.Create(ctx, scope.OrgID, create)
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}

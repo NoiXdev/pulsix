@@ -40,9 +40,41 @@ type jobLogArgs struct {
 }
 
 type runRequestArgs struct {
-	TemplateID string `json:"template_id"`
-	HostID     string `json:"host_id,omitempty" jsonschema:"run on this one host only"`
-	Reason     string `json:"reason" jsonschema:"one line on why the run is needed; the person approving reads it"`
+	TemplateID string         `json:"template_id"`
+	HostID     string         `json:"host_id,omitempty" jsonschema:"run on this one host only (or give host_ids)"`
+	Reason     string         `json:"reason" jsonschema:"one line on why the run is needed; the person approving reads it"`
+	CheckMode  bool           `json:"check_mode,omitempty" jsonschema:"a dry run: check mode, changes nothing (tasks marked to run in check mode still run); needs approval like any run and starts no follow-ups"`
+	Diff       *bool          `json:"diff,omitempty" jsonschema:"show the changes a dry run would make; only with check_mode, on unless false"`
+	ExtraVars  map[string]any `json:"extra_vars,omitempty" jsonschema:"extra vars replacing the template's top-level ones of the same name; never secrets (a secret field is refused)"`
+	HostIDs    []string       `json:"host_ids,omitempty" jsonschema:"run on these hosts only (at most 500), each among the template's targets"`
+	Limit      string         `json:"limit,omitempty" jsonschema:"a host pattern narrowing the template's limit; with a template limit one pattern only"`
+	ExpiresIn  int            `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
+}
+
+// body is the REST body of a run request.
+func (in runRequestArgs) body() map[string]any {
+	body := map[string]any{"reason": in.Reason}
+	for k, v := range map[string]string{"host_id": in.HostID, "limit": in.Limit} {
+		if v != "" {
+			body[k] = v
+		}
+	}
+	if in.CheckMode {
+		body["check_mode"] = true
+	}
+	if in.Diff != nil {
+		body["diff"] = *in.Diff
+	}
+	if len(in.ExtraVars) > 0 {
+		body["extra_vars"] = in.ExtraVars
+	}
+	if len(in.HostIDs) > 0 {
+		body["host_ids"] = in.HostIDs
+	}
+	if in.ExpiresIn != 0 {
+		body["expires_in"] = in.ExpiresIn
+	}
+	return body
 }
 
 type retryRequestArgs struct {
@@ -148,13 +180,9 @@ func jobTools() []toolDef {
 				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
 				return map[string]any{"log": text, "next_after": next}, nil
 			}),
-		define("request_run", "Request a run", "Ask for a run of a job template. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them. Requests expire after an hour. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
+		define("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
-				body := map[string]any{"reason": in.Reason}
-				if in.HostID != "" {
-					body["host_id"] = in.HostID
-				}
-				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, body)
+				return c.requestResult(ctx, "/job-templates/%s/run-requests", in.TemplateID, in.body())
 			}),
 		define("request_retry", "Request a retry", "Ask for a retry of a failed run's failed hosts. Nothing runs until a person approves it in Pulsix.",
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in retryRequestArgs) (any, error) {

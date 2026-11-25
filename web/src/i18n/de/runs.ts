@@ -257,6 +257,15 @@ export const deRuns: Messages['runs'] = {
       limit: 'Limit',
       wholeScope: 'der ganze Geltungsbereich',
       onlyHost: 'Nur auf Host',
+      dryRun: {
+        title: (diff: boolean) => (diff ? 'Probelauf (Check-Modus, Diff)' : 'Probelauf (Check-Modus)'),
+        body: 'Das Playbook läuft im Check-Modus: Ansible zeigt, was es ändern würde, und ändert nichts, außer Tasks, die trotzdem laufen sollen (check_mode: false). Ein Probelauf startet keine Folgeläufe.',
+      },
+      limitOverride: 'Limit dieser Anfrage',
+      narrowedHosts: (n: number) => `Diese Anfrage beschränkt den Lauf auf ${n} ${n === 1 ? 'Host' : 'Hosts'}.`,
+      hostsGone: (ids: string) => `Angefragt, aber nicht mehr unter den Zielen der Vorlage: ${ids}`,
+      varsOverride: 'Von dieser Anfrage gesetzt',
+      varReplaced: 'durch diese Anfrage ersetzt',
       playbookSource: 'Quelle',
       sources: {
         repo: 'Datei im Repository',

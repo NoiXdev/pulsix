@@ -992,6 +992,7 @@ type RunRequest struct {
 	ExpiresAt           time.Time          `json:"expires_at"`
 	CreatedAt           time.Time          `json:"created_at"`
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
+	Overrides           []byte             `json:"overrides"`
 }
 
 type Schedule struct {

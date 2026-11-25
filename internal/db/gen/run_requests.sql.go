@@ -70,7 +70,7 @@ func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestPara
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -99,12 +99,13 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ApprovedFingerprint,
+		&i.Overrides,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -133,6 +134,7 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ApprovedFingerprint,
+		&i.Overrides,
 	)
 	return i, err
 }
@@ -140,8 +142,8 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 const insertRunRequest = `-- name: InsertRunRequest :exec
 
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,
-  requested_by_user, requested_by_token, status, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12)
+  requested_by_user, requested_by_token, status, expires_at, created_at, overrides)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $13)
 `
 
 type InsertRunRequestParams struct {
@@ -157,6 +159,7 @@ type InsertRunRequestParams struct {
 	RequestedByToken pgtype.UUID `json:"requested_by_token"`
 	ExpiresAt        time.Time   `json:"expires_at"`
 	CreatedAt        time.Time   `json:"created_at"`
+	Overrides        []byte      `json:"overrides"`
 }
 
 // Run requests (spec 2026-11-16 assistant access). Org-scoped like every
@@ -175,6 +178,7 @@ func (q *Queries) InsertRunRequest(ctx context.Context, arg InsertRunRequestPara
 		arg.RequestedByToken,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+		arg.Overrides,
 	)
 	return err
 }
@@ -244,7 +248,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -289,6 +293,7 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.ApprovedFingerprint,
+			&i.Overrides,
 		); err != nil {
 			return nil, err
 		}

@@ -3,8 +3,8 @@
 
 -- name: InsertRunRequest :exec
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,
-  requested_by_user, requested_by_token, status, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12);
+  requested_by_user, requested_by_token, status, expires_at, created_at, overrides)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $13);
 
 -- name: GetRunRequest :one
 SELECT * FROM run_requests WHERE org_id = $1 AND id = $2;

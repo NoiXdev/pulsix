@@ -18,7 +18,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// TTL is how long a request stays approvable.
+// TTL is how long a request stays approvable unless it asks for another
+// expiry (CreateInput.ExpiresIn).
 const TTL = time.Hour
 
 // MaxReasonLength caps the assistant's one-line reason.
@@ -81,8 +82,11 @@ type Request struct {
 	// empty unless the request is approved. The claim of one of its jobs
 	// recomputes the fingerprint and compares (CheckRunClaim).
 	ApprovedFingerprint string
-	ExpiresAt           time.Time
-	CreatedAt           time.Time
+	// Overrides is what a run request changes about the run; nil for none
+	// and always nil for a retry.
+	Overrides *Overrides
+	ExpiresAt time.Time
+	CreatedAt time.Time
 	// TokenName and TokenState describe RequestedByToken as it is now,
 	// filled on every read (see TokenState); both empty without a token.
 	TokenName  string
@@ -98,6 +102,10 @@ type CreateInput struct {
 	Reason           string
 	RequestedByUser  uuid.UUID
 	RequestedByToken *uuid.UUID
+	// Overrides are KindRun only; a retry with any is refused.
+	Overrides OverridesInput
+	// ExpiresIn is the request's time to live; zero is TTL.
+	ExpiresIn time.Duration
 }
 
 // Store persists requests.
@@ -135,15 +143,16 @@ type Pictures interface {
 
 // Enqueuer starts what an approval allows, through the existing run paths.
 type Enqueuer interface {
-	// Run and RetryFailed enqueue into the run group group.
-	Run(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
+	// Run and RetryFailed enqueue into the run group group; Run enqueues
+	// the run request r asks for, with its host and overrides.
+	Run(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
 	RetryFailed(ctx context.Context, orgID, jobID, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
 }
 
 // Validator checks a request the way the run and retry routes would check
 // the run itself, so a request that could never run is refused early.
 type Validator interface {
-	ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID) (revision int64, err error)
+	ValidateRun(ctx context.Context, orgID, templateID uuid.UUID, onlyHost *uuid.UUID, ov *Overrides) (revision int64, err error)
 	ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (templateID uuid.UUID, revision int64, err error)
 }
 
@@ -169,20 +178,34 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if reason == "" || utf8.RuneCountInString(reason) > MaxReasonLength {
 		return Request{}, fmt.Errorf("%w: a reason of 1 to %d characters is required", ErrInvalidInput, MaxReasonLength)
 	}
+	ttl, err := expiresIn(in.ExpiresIn)
+	if err != nil {
+		return Request{}, err
+	}
+	ov, err := in.Overrides.overrides()
+	if err != nil {
+		return Request{}, err
+	}
 	r := Request{
 		ID: s.newID(), OrgID: orgID, Kind: in.Kind, Reason: reason,
 		RequestedByUser: in.RequestedByUser, RequestedByToken: in.RequestedByToken,
 		Status: StatusPending, CreatedAt: s.now(),
 	}
-	r.ExpiresAt = r.CreatedAt.Add(TTL)
+	r.ExpiresAt = r.CreatedAt.Add(ttl)
 	switch in.Kind {
 	case KindRun:
-		rev, err := s.validator.ValidateRun(ctx, orgID, in.TemplateID, in.HostID)
+		if in.HostID != nil && ov != nil && len(ov.HostIDs) > 0 {
+			return Request{}, fmt.Errorf("%w: give host_id or host_ids, not both", ErrInvalidInput)
+		}
+		rev, err := s.validator.ValidateRun(ctx, orgID, in.TemplateID, in.HostID, ov)
 		if err != nil {
 			return Request{}, err
 		}
-		r.TemplateID, r.HostID, r.TemplateRevision = in.TemplateID, in.HostID, rev
+		r.TemplateID, r.HostID, r.TemplateRevision, r.Overrides = in.TemplateID, in.HostID, rev, ov
 	case KindRetryFailed:
+		if ov != nil {
+			return Request{}, fmt.Errorf("%w: a retry takes no overrides; it repeats its run on the failed hosts", ErrInvalidInput)
+		}
 		if in.JobID == nil {
 			return Request{}, fmt.Errorf("%w: a retry names its job", ErrInvalidInput)
 		}
@@ -196,7 +219,6 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	}
 	// A token's request is capped; the store counts and inserts atomically.
 	// A request without a token is not capped.
-	var err error
 	if r.RequestedByToken == nil {
 		err = s.store.Insert(ctx, r)
 	} else {

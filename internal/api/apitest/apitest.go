@@ -367,7 +367,7 @@ func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.
 		Hosts: deps.Hosts, SSH: deps.SSH, Credentials: deps.Credentials,
 		Vars:     app.NewRunRequestVars(templates.NewSQLStore(d), deps.Renderer, crypto.NewBox(testMasterKey)),
 		VarsKey:  runrequests.VarsDigestKey(testMasterKey),
-		Settings: deps.Assistant, FollowUpRuns: chain.NewSQLStore(d),
+		Settings: deps.Assistant, FollowUpRuns: chain.NewSQLStore(d), Overrides: deps.Templates,
 	})
 	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 }

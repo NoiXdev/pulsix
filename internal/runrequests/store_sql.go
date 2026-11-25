@@ -2,6 +2,7 @@ package runrequests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -60,11 +61,18 @@ func (s *SQLStore) InsertCapped(ctx context.Context, r Request, limit int, now t
 }
 
 func insertRow(ctx context.Context, q *gen.Queries, r Request) error {
+	var overrides []byte
+	if r.Overrides != nil {
+		var err error
+		if overrides, err = json.Marshal(r.Overrides); err != nil {
+			return fmt.Errorf("encode run request overrides: %w", err)
+		}
+	}
 	return q.InsertRunRequest(ctx, gen.InsertRunRequestParams{
 		ID: r.ID, OrgID: r.OrgID, Kind: string(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
 		HostID: pgUUID(r.HostID), JobID: pgUUID(r.JobID), Reason: r.Reason,
 		RequestedByUser: r.RequestedByUser, RequestedByToken: pgUUID(r.RequestedByToken),
-		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt, Overrides: overrides,
 	})
 }
 
@@ -77,7 +85,7 @@ func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Request, error
 	if err != nil {
 		return Request{}, fmt.Errorf("get run request: %w", err)
 	}
-	return fromRow(row), nil
+	return fromRow(row)
 }
 
 // List implements Store.
@@ -93,7 +101,9 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID, status *Status, no
 	}
 	out := make([]Request, len(rows))
 	for i, row := range rows {
-		out[i] = fromRow(row)
+		if out[i], err = fromRow(row); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -159,10 +169,10 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 	if err != nil {
 		return Request{}, fmt.Errorf("get run request by run group: %w", err)
 	}
-	return fromRow(row), nil
+	return fromRow(row)
 }
 
-func fromRow(r gen.RunRequest) Request {
+func fromRow(r gen.RunRequest) (Request, error) {
 	out := Request{
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: r.TemplateID, TemplateRevision: r.TemplateRevision,
 		HostID: fromPgUUID(r.HostID), JobID: fromPgUUID(r.JobID), Reason: r.Reason,
@@ -177,7 +187,14 @@ func fromRow(r gen.RunRequest) Request {
 	if r.ApprovedFingerprint != nil {
 		out.ApprovedFingerprint = *r.ApprovedFingerprint
 	}
-	return out
+	if len(r.Overrides) > 0 {
+		var ov Overrides
+		if err := json.Unmarshal(r.Overrides, &ov); err != nil {
+			return Request{}, fmt.Errorf("decode run request %s overrides: %w", r.ID, err)
+		}
+		out.Overrides = &ov
+	}
+	return out, nil
 }
 
 func pgUUID(id *uuid.UUID) pgtype.UUID {

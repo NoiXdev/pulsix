@@ -66,7 +66,7 @@ func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerpr
 	if r.Kind == KindRetryFailed {
 		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, idempotencyKey(r.ID), group, list)
 	} else {
-		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, idempotencyKey(r.ID), group, list)
+		err = s.enqueuer.Run(ctx, orgID, r, by, idempotencyKey(r.ID), group, list)
 	}
 	if err != nil {
 		if rerr := s.store.RevertToPending(ctx, orgID, id); rerr != nil {

@@ -135,13 +135,14 @@ type fakeEnqueuer struct {
 	err       error
 	group     uuid.UUID   // the run group the last enqueue was given
 	list      []uuid.UUID // the follow-up list the last enqueue was given
+	request   runrequests.Request
 }
 
-func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
+func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.runs, f.actor, f.group, f.list = append(f.runs, key), actor, group, followUps
+	f.runs, f.actor, f.group, f.list, f.request = append(f.runs, key), actor, group, followUps, r
 	return nil
 }
 
@@ -154,11 +155,13 @@ func (f *fakeEnqueuer) RetryFailed(_ context.Context, _ uuid.UUID, jobID, actor 
 }
 
 type fakeValidator struct {
-	err      error
-	template uuid.UUID
+	err       error
+	template  uuid.UUID
+	overrides *runrequests.Overrides // what the last ValidateRun was given
 }
 
-func (f *fakeValidator) ValidateRun(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID) (int64, error) {
+func (f *fakeValidator) ValidateRun(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ *uuid.UUID, ov *runrequests.Overrides) (int64, error) {
+	f.overrides = ov
 	return 7, f.err
 }
 

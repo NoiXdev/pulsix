@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,8 +100,15 @@ func (m credMap) Get(_ context.Context, _, id uuid.UUID) (credentials.Credential
 	return credentials.Credential{}, errors.New("no such credential")
 }
 
-func (h hostList) ListHostsByIDs(context.Context, uuid.UUID, []uuid.UUID) ([]hosts.Host, error) {
-	return h.hs, h.err
+// ListHostsByIDs returns the hosts of ids it knows, in its own order.
+func (h hostList) ListHostsByIDs(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error) {
+	var out []hosts.Host
+	for _, host := range h.hs {
+		if slices.Contains(ids, host.ID) {
+			out = append(out, host)
+		}
+	}
+	return out, h.err
 }
 
 func (s sshMap) HostSSH(_ context.Context, _, id uuid.UUID) (sshconf.HostSSH, error) {
@@ -175,11 +183,12 @@ type world struct {
 	bastion, lostBastion uuid.UUID
 	repoVault, tmplVault uuid.UUID
 	gitCred              uuid.UUID
+	ovr                  *overrideChecker
 }
 
 func newWorld() *world {
 	w := &world{x: id(), y: id(), pb: id(), repo: id(), h1: id(), h2: id(), h3: id(), cred: id(),
-		bastion: id(), lostBastion: id(), repoVault: id(), tmplVault: id(), gitCred: id()}
+		bastion: id(), lostBastion: id(), repoVault: id(), tmplVault: id(), gitCred: id(), ovr: &overrideChecker{}}
 	path := "site.yml"
 	w.tmpls = failingTemplates{fail: map[uuid.UUID]error{}, fakeTemplates: fakeTemplates{
 		w.x: {ID: w.x, Name: "X", Revision: 3, Limit: "web", PlaybookID: w.pb, CredentialID: &w.cred,
@@ -210,7 +219,7 @@ func newWorld() *world {
 func (w *world) resolver() *runrequests.Resolver {
 	return runrequests.NewResolver(runrequests.Sources{
 		Templates: w.tmpls, Playbooks: w.pbs, Repos: w.repos, Jobs: w.jobs, Hosts: w.hosts, SSH: w.ssh,
-		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows,
+		Credentials: w.creds, Vars: w.inv, VarsKey: w.key, Settings: w.settings, FollowUpRuns: w.rows, Overrides: w.ovr,
 	})
 }
 
@@ -373,10 +382,10 @@ func TestPictureErrors(t *testing.T) {
 func TestValidateRun(t *testing.T) {
 	w := newWorld()
 	ctx, org := context.Background(), id()
-	if rev, err := w.resolver().ValidateRun(ctx, org, w.x, nil); err != nil || rev != 3 {
+	if rev, err := w.resolver().ValidateRun(ctx, org, w.x, nil, nil); err != nil || rev != 3 {
 		t.Fatalf("whole run = %d %v", rev, err)
 	}
-	if rev, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2); err != nil || rev != 3 {
+	if rev, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2, nil); err != nil || rev != 3 {
 		t.Fatalf("one target = %d %v", rev, err)
 	}
 	// The check is the enqueue's own scope check under the template's
@@ -384,7 +393,7 @@ func TestValidateRun(t *testing.T) {
 	if len(w.jobs.checked) != 2 || w.jobs.checked[0] != nil || w.jobs.checked[1] == nil || *w.jobs.checked[1] != w.h2 {
 		t.Fatalf("checked = %v, want the whole run, then h2", w.jobs.checked)
 	}
-	if _, err := w.resolver().ValidateRun(ctx, org, id(), nil); !errors.Is(err, runrequests.ErrNotFound) {
+	if _, err := w.resolver().ValidateRun(ctx, org, id(), nil, nil); !errors.Is(err, runrequests.ErrNotFound) {
 		t.Fatalf("unknown template = %v", err)
 	}
 	for _, tc := range []struct {
@@ -398,7 +407,7 @@ func TestValidateRun(t *testing.T) {
 		{"scope group gone", jobs.ErrNotFound, runrequests.ErrNotFound, ""},
 	} {
 		w.jobs.checkErr = tc.err
-		_, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2)
+		_, err := w.resolver().ValidateRun(ctx, org, w.x, &w.h2, nil)
 		if !errors.Is(err, tc.is) || !strings.Contains(err.Error(), tc.msg) {
 			t.Fatalf("%s = %v, want %v with %q", tc.name, err, tc.is, tc.msg)
 		}

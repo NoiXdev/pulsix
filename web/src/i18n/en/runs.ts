@@ -267,6 +267,16 @@ export const enRuns = {
       limit: 'Limit',
       wholeScope: 'the whole scope',
       onlyHost: 'Only on host',
+      /** The overrides a run request carries (spec 2026-11-25, A). */
+      dryRun: {
+        title: (diff: boolean): string => (diff ? 'Dry run (check mode, diff)' : 'Dry run (check mode)'),
+        body: 'The playbook runs in check mode: Ansible shows what it would change and changes nothing, except tasks marked to run anyway (check_mode: false). A dry run starts no follow-ups.',
+      },
+      limitOverride: 'Limit of this request',
+      narrowedHosts: (n: number) => `This request narrows the run to ${n} ${n === 1 ? 'host' : 'hosts'}.`,
+      hostsGone: (ids: string) => `Requested, but no longer among the template's targets: ${ids}`,
+      varsOverride: 'Set by this request',
+      varReplaced: 'replaced by this request',
       playbookSource: 'Source',
       sources: {
         repo: 'repository file',

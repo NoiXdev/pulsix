@@ -36,8 +36,23 @@ type Picture struct {
 	// included, and reveals none.
 	VarsDigest string `json:"vars_digest"`
 	// FollowUps is nil when the request has no direct follow-ups, so the
-	// canonical JSON of such a picture is unchanged.
+	// canonical JSON of such a picture is unchanged. A dry run starts none,
+	// so its picture has none either.
 	FollowUps *PictureFollowUps `json:"follow_ups,omitempty"`
+
+	// The request's overrides (Overrides, spec 2026-11-25 A). Each is empty
+	// for a request without them, so the canonical JSON of a picture of a
+	// request made before they existed is unchanged and so is its
+	// fingerprint. CheckMode makes the run a dry run, Diff shows its
+	// changes; LimitOverride narrows Limit; ExtraVarsOverride replaces the
+	// template's top-level extra vars of the same name and is shown by
+	// value (it never holds a secret); Hosts are the host ids the request
+	// narrows the run to (Targets are the hosts of those it reaches).
+	CheckMode         bool           `json:"check_mode,omitempty"`
+	Diff              bool           `json:"diff,omitempty"`
+	LimitOverride     string         `json:"limit_override,omitempty"`
+	ExtraVarsOverride map[string]any `json:"extra_vars_override,omitempty"`
+	Hosts             []string       `json:"hosts,omitempty"`
 }
 
 // PictureFollowUps is what an approval does about the template's follow-ups.
@@ -116,7 +131,7 @@ type PictureRetry struct {
 // JSON of p. encoding/json writes struct fields in declaration order and
 // map keys sorted, so the only order left to fix is the slices': targets by
 // id, vault identities by label then credential id then name, failed hosts
-// as given sorted.
+// and the requested hosts as given sorted.
 func Fingerprint(requestID uuid.UUID, p Picture) string {
 	p.Targets = slices.Clone(p.Targets)
 	slices.SortFunc(p.Targets, func(a, b PictureHost) int { return cmp.Compare(a.ID, b.ID) })
@@ -124,6 +139,8 @@ func Fingerprint(requestID uuid.UUID, p Picture) string {
 	slices.SortFunc(p.VaultIdentities, func(a, b PictureVault) int {
 		return cmp.Or(cmp.Compare(a.Label, b.Label), cmp.Compare(a.CredentialID, b.CredentialID), cmp.Compare(a.Credential, b.Credential))
 	})
+	p.Hosts = slices.Clone(p.Hosts)
+	slices.Sort(p.Hosts)
 	if p.Retry != nil {
 		r := *p.Retry
 		r.FailedHosts = slices.Clone(r.FailedHosts)

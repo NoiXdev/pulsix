@@ -382,3 +382,41 @@ func TestSQLStoreInsertCappedIsExact(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLStoreKeepsTheOverrides(t *testing.T) {
+	d := testdb.Open(t)
+	f := newSQLFixture(t, d, "runreq-overrides")
+	store := runrequests.NewSQLStore(d)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	host := uuid.Must(uuid.NewV7())
+	limit := "web-1"
+	with := runrequests.Request{
+		ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Kind: runrequests.KindRun, TemplateID: f.template, TemplateRevision: 1,
+		Reason: "dry run", RequestedByUser: f.user, Status: runrequests.StatusPending, ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now,
+		Overrides: &runrequests.Overrides{Check: true, Diff: true, ExtraVars: map[string]any{"version": "1.2", "n": float64(3)},
+			HostIDs: []uuid.UUID{host}, Limit: &limit},
+	}
+	without := with
+	without.ID, without.Overrides = uuid.Must(uuid.NewV7()), nil
+	for _, r := range []runrequests.Request{with, without} {
+		if err := store.Insert(f.ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.Get(f.ctx, f.org, with.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ov := got.Overrides
+	if ov == nil || !ov.Check || !ov.Diff || ov.ExtraVars["version"] != "1.2" || ov.ExtraVars["n"] != float64(3) ||
+		len(ov.HostIDs) != 1 || ov.HostIDs[0] != host || ov.Limit == nil || *ov.Limit != limit || !got.ExpiresAt.Equal(with.ExpiresAt) {
+		t.Fatalf("overrides = %+v (expires %v)", ov, got.ExpiresAt)
+	}
+	if got, err := store.Get(f.ctx, f.org, without.ID); err != nil || got.Overrides != nil {
+		t.Fatalf("request without overrides = %+v %v", got.Overrides, err)
+	}
+	var raw *string
+	if err := d.Pool().QueryRow(context.Background(), `SELECT overrides::text FROM run_requests WHERE id = $1`, without.ID).Scan(&raw); err != nil || raw != nil {
+		t.Fatalf("stored overrides of a plain request = %v %v, want NULL", raw, err)
+	}
+}
