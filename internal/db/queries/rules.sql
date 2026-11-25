@@ -287,11 +287,21 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 -- managers would count different windows for the same host and the flag
 -- would depend on who got there first. Same index, same shape as
 -- CountStateChangesSince (see its comment).
-SELECT check_key, item, metric, count(*)::bigint AS change_count
-FROM check_state_changes
-WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
-  AND at >= now() - sqlc.arg(flapping_window)::interval
-GROUP BY check_key, item, metric;
+--
+-- A transition from before the tuple's latest unmeasured gap is left out
+-- (backlog 4.42): a tuple measured again starts fresh, and its flapping
+-- with it. check_states.unmeasured_at is that gap's first moment and stays
+-- on the row after the tuple is judged again, so every transition at or
+-- before it predates the gap and every one after it is the fresh start's
+-- own. The join is one primary-key probe per counted tuple.
+SELECT c.check_key, c.item, c.metric, count(*)::bigint AS change_count
+FROM check_state_changes c
+LEFT JOIN check_states s
+  ON s.host_id = c.host_id AND s.check_key = c.check_key AND s.item = c.item AND s.metric = c.metric
+WHERE c.org_id = sqlc.arg(org_id) AND c.host_id = sqlc.arg(host_id)
+  AND c.at >= now() - sqlc.arg(flapping_window)::interval
+  AND (s.unmeasured_at IS NULL OR c.at > s.unmeasured_at)
+GROUP BY c.check_key, c.item, c.metric;
 
 -- name: UpsertCheckState :exec
 -- Task 9: one tuple's state, written in place on every evaluation — the
@@ -299,7 +309,10 @@ GROUP BY check_key, item, metric;
 -- column except the key is replaced, candidate_state/candidate_since
 -- included: a candidate that stopped ripening has to be cleared by the
 -- same statement that would have set it, or a stale one would ripen later
--- against a wait that has long since ended.
+-- against a wait that has long since ended. The one exception is
+-- unmeasured_at (backlog 4.42, MarkCheckStatesUnmeasured): the evaluated_at
+-- written here supersedes it, and it stays as the lower bound the flapping
+-- count reads (CountStateChangesInFlappingWindow).
 INSERT INTO check_states (
   org_id, host_id, check_key, item, metric, state, since, rule_id,
   last_value, last_label, candidate_state, candidate_since, flapping, evaluated_at
@@ -313,6 +326,26 @@ ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
   last_value = excluded.last_value, last_label = excluded.last_label,
   candidate_state = excluded.candidate_state, candidate_since = excluded.candidate_since,
   flapping = excluded.flapping, evaluated_at = excluded.evaluated_at;
+
+-- name: MarkCheckStatesUnmeasured :exec
+-- Backlog 4.42: the tuples an evaluation reported unmeasured
+-- (internal/rules.Result.Unmeasured) keep their rows, stamped with that
+-- evaluation's moment — on the gap's first evaluation only: a mark later
+-- than evaluated_at already dates this gap, and the reports that follow,
+-- one per tick while the gap lasts, leave it alone. A mark from an earlier
+-- gap (at or before evaluated_at: the tuple was judged since) is replaced.
+-- The three unnests in the select list expand in lockstep, one row per
+-- tuple (InsertCheckItems' own shape, items.sql), so one statement marks
+-- every tuple of the evaluation; Apply skips it when there is none.
+UPDATE check_states s SET unmeasured_at = sqlc.arg(at)::timestamptz
+FROM (
+  SELECT unnest(sqlc.arg(check_keys)::text[]) AS check_key,
+         unnest(sqlc.arg(items)::text[]) AS item,
+         unnest(sqlc.arg(metrics)::text[]) AS metric
+) u
+WHERE s.org_id = sqlc.arg(org_id) AND s.host_id = sqlc.arg(host_id)
+  AND s.check_key = u.check_key AND s.item = u.item AND s.metric = u.metric
+  AND (s.unmeasured_at IS NULL OR s.unmeasured_at <= s.evaluated_at);
 
 -- name: InsertCheckStateChange :exec
 -- Task 9: one transition appended to the history. Only actual transitions

@@ -78,3 +78,28 @@ func TestACheckSwitchedBackOnAfterTheHourStartsUnacknowledged(t *testing.T) {
 		t.Fatalf("new episode continues %v with ack %v, want a plain opening", second.ContinuesAlertID, second.AckAt)
 	}
 }
+
+// TestACheckSwitchedOffAndOnOpensItsNewEpisodeAfterTheClose (backlog 4.42):
+// the tuple measured again starts fresh, so the new episode opens at the
+// re-enabled evaluation, after the previous one closed — not at the
+// moment the tuple first went crit, before the gap — and still continues
+// the closed episode's acknowledgement.
+func TestACheckSwitchedOffAndOnOpensItsNewEpisodeAfterTheClose(t *testing.T) {
+	r := newLifecycleRig(t)
+	first, second := r.toggleDisk(t, 10*time.Minute)
+
+	var closedAt time.Time
+	if err := r.d.Pool().QueryRow(context.Background(),
+		`SELECT closed_at FROM alerts WHERE id = $1`, first.ID).Scan(&closedAt); err != nil {
+		t.Fatalf("read closed_at: %v", err)
+	}
+	if !second.OpenedAt.After(closedAt) {
+		t.Fatalf("new episode opened at %v, not after the previous close at %v", second.OpenedAt, closedAt)
+	}
+	if !second.OpenedAt.Equal(r.now) {
+		t.Fatalf("new episode opened at %v, want the re-enabled evaluation %v", second.OpenedAt, r.now)
+	}
+	if second.ContinuesAlertID == nil || *second.ContinuesAlertID != first.ID || second.AckAt == nil {
+		t.Fatalf("new episode continues %v with ack %v, want it to continue %s acknowledged", second.ContinuesAlertID, second.AckAt, first.ID)
+	}
+}

@@ -371,6 +371,7 @@ type CheckState struct {
 	CandidateSince pgtype.Timestamptz `json:"candidate_since"`
 	Flapping       bool               `json:"flapping"`
 	EvaluatedAt    time.Time          `json:"evaluated_at"`
+	UnmeasuredAt   pgtype.Timestamptz `json:"unmeasured_at"`
 }
 
 type CheckStateChange struct {

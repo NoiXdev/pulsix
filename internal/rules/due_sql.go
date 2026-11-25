@@ -403,6 +403,12 @@ func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
 		}
 	}
 
+	// Unmeasured rows stand, marked (backlog 4.42); no state is written
+	// for them either, so this and the loop below never meet.
+	if err := markUnmeasured(ctx, q, d, res); err != nil {
+		return err
+	}
+
 	for _, st := range res.States {
 		// candidate_state and candidate_since are set together or not at
 		// all — the table's own CHECK. Evaluate never produces one without

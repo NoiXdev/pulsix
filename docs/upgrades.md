@@ -722,6 +722,21 @@ Skew: an older manager that keeps evaluating alongside opens a re-opened alert p
 without the acknowledgement or snooze; stop every manager instance before the new
 version starts if that matters. Workers and agents are not affected.
 
+Backlog 4.42: migration 00121 adds the nullable column `check_states.unmeasured_at`
+(NULL for every existing row, a catalog change; a backup carries it). The evaluation
+stamps it on the first evaluation that finds a tuple unmeasured (its check disabled or
+taken off the host, the host no longer monitored, a selector edited so the host drops
+out, a metric no longer asked for) and later than the row's `evaluated_at` it makes the
+tuple start fresh when it is measured again; the flapping count leaves out the
+transitions at or before it. Existing rows carry no mark, but a tuple still unmeasured
+at the upgrade is marked on the new manager's first evaluation of its host (within
+seconds); only a gap that ends before that evaluation, or one that only an older
+manager evaluated, resumes its old state once, as before. Skew: an older manager
+evaluating alongside neither stamps nor reads the column (its gaps resume as before,
+and it counts pre-gap transitions towards flapping); its state writes leave the column
+alone and supersede a mark through `evaluated_at`, as the new manager's own do. Workers
+and agents are not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **Item decisions on a plugin key reach copied checks (backlog 3.13g, no migration):**
@@ -735,6 +750,22 @@ version starts if that matters. Workers and agents are not affected.
   also reaches every check of the `tcp` plugin. To check after the upgrade: the item decisions on a plugin name (Items page) and whether they were
   meant to cover your copied checks; where not, restate them on the exact check key.
   The host page marks such items as decided "via the plugin's decision".
+- **A check measured again after a gap starts fresh (backlog 4.42, migration 00121):**
+  a tuple that was not measured for a while (its check disabled or taken off the host,
+  the host no longer monitored, a monitoring-group selector edited so the host drops
+  out and back in, a metric or item no longer asked for) no longer resumes the state it
+  had before the gap. Its state starts at the first evaluation after the gap: an alert
+  that opens then is dated at that moment, after the previous episode's `stale` close,
+  instead of at the moment the tuple first went bad before the gap; a rule's "for N
+  minutes" duration counts anew, so a deterioration has to hold that long again before
+  the state and its alert follow; a rule's clear condition no longer holds a warn or
+  crit across the gap; and the flapping flag and its count start afresh. No state
+  transition is recorded for the gap itself (the history shows the last transition
+  before it and the next one after). A re-opened alert still takes over the closed
+  episode's acknowledgement and snooze within the hour (backlog 4.39). A client host
+  whose agent is offline is not unmeasured: its states stay frozen and resume as
+  before. To check after the upgrade: nothing to change; expect a check switched back
+  on with a duration rule to alert only after that duration again.
 - **A check switched off and on within an hour keeps its alert's acknowledgement
   (backlog 4.39, migration 00120):** an alert whose subject stops being measured (its
   check disabled or taken off the host, the host no longer monitored, a monitoring-group

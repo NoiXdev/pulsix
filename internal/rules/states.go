@@ -75,6 +75,22 @@ type TupleState struct {
 	CandidateSince *time.Time
 	Flapping       bool
 	EvaluatedAt    time.Time
+	// UnmeasuredAt is when the tuple last went unmeasured after a
+	// judgement (backlog 4.42): the first evaluation that reported it in
+	// Result.Unmeasured stamps it, and Apply leaves it alone otherwise. It
+	// marks a gap only while it is later than EvaluatedAt — the next
+	// judgement supersedes it without clearing it (unmeasuredSinceJudged),
+	// so the flapping count can keep leaving out the transitions from
+	// before the gap. nil on a row that never went unmeasured, and on
+	// every state Evaluate produces.
+	UnmeasuredAt *time.Time
+}
+
+// unmeasuredSinceJudged reports whether the tuple went unmeasured after
+// its last judgement: the row stood through a gap, and the tuple starts
+// fresh when it is measured again (Evaluate).
+func (t TupleState) unmeasuredSinceJudged() bool {
+	return t.UnmeasuredAt != nil && t.UnmeasuredAt.After(t.EvaluatedAt)
 }
 
 // Change is one row of check_state_changes: an actual transition, not a

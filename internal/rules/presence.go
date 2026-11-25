@@ -133,6 +133,7 @@ func (p HostPresence) absentDeadline() (time.Time, bool) {
 // host dirty.
 func evaluateFrozen(s Snapshot) Result {
 	res := Result{
+		At:            s.Now,
 		Frozen:        true,
 		AgentLastSeen: s.Presence.AgentLastSeen,
 		NextDue:       s.Now.Add(silentHeartbeat),

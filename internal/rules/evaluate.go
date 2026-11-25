@@ -86,8 +86,11 @@ type WindowRequest struct {
 // clock: nothing below calls time.Now.
 //
 // Previous is the state of every tuple as the last evaluation left it; a
-// tuple absent from it has never been evaluated. Changes30 is how often
-// each tuple changed inside the flapping window as the caller loaded it —
+// tuple absent from it has never been evaluated, and one marked unmeasured
+// since its last judgement (TupleState.UnmeasuredAt) is treated as such
+// (backlog 4.42). Changes30 is how often each tuple changed inside the
+// flapping window as the caller loaded it, without the transitions from
+// before a tuple's latest unmeasured gap —
 // the changes this evaluation is about to write are added on top of it
 // here, so a tuple whose fifth change is the one happening right now is
 // flagged on this tick rather than the next one.
@@ -154,6 +157,10 @@ type Result struct {
 	Changes []Change
 	Host    HostState
 	NextDue time.Time
+	// At is the evaluation's moment, Snapshot.Now: what Apply stamps the
+	// rows of the Unmeasured tuples with (TupleState.UnmeasuredAt), on the
+	// same clock as every state's EvaluatedAt it is compared against.
+	At time.Time
 	// Dropped lists the tuples whose stored check_states row must be
 	// deleted because nothing judges them any more: an ignored tuple that
 	// still has a Previous entry. Evaluate decides this; Apply deletes the
@@ -169,14 +176,16 @@ type Result struct {
 	Dropped []Tuple
 	// Unmeasured lists the tuples this evaluation left out because their
 	// check has no resolved interval any more, and which had a stored
-	// state to leave standing. Unlike Dropped it is NOT an instruction to
-	// the store: nothing deletes these rows (see the skip in Evaluate for
-	// why). It exists for one consumer, v0.4a's alert sink: the sweep
-	// recognises a vanished subject by the absence of a check_states row,
-	// and this is the one path that stops judging a tuple while keeping
-	// one, so without this report an alert open on a check an operator
-	// deleted or disabled could never close at all (v0.4a final review,
-	// Critical). Reported every tick the tuple stays unmeasured, not only
+	// state to leave standing. Unlike Dropped it is not an instruction to
+	// delete: nothing deletes these rows (see the skip in Evaluate for
+	// why). Apply only marks them (TupleState.UnmeasuredAt, backlog 4.42),
+	// so that a tuple measured again starts fresh instead of resuming the
+	// state it had before the gap. The report itself is for v0.4a's alert
+	// sink: the sweep recognises a vanished subject by the absence of a
+	// check_states row, and this is the one path that stops judging a
+	// tuple while keeping one, so without this report an alert open on a
+	// check an operator deleted or disabled could never close at all
+	// (v0.4a final review, Critical). Reported every tick the tuple stays unmeasured, not only
 	// the first: the consumer is idempotent (there is no alert left to
 	// close on the second pass), and a once-only report would need state
 	// this pure function deliberately does not keep.
@@ -301,6 +310,11 @@ func Evaluate(s Snapshot) Result {
 			// transaction this evaluation already holds. Only a tuple with
 			// a stored state can hold an alert, which is why this mirrors
 			// the Previous test the Ignored skip below already makes.
+			//
+			// The standing row is not a state to resume, though (backlog
+			// 4.42): Apply marks it with this moment, and once the tuple is
+			// measured again the marked row counts as no previous state at
+			// all (returning, below).
 			if _, seen := s.Previous[ts.Tuple]; seen {
 				unmeasured = append(unmeasured, ts.Tuple)
 			}
@@ -330,6 +344,19 @@ func Evaluate(s Snapshot) Result {
 		}
 
 		prev, seen := s.Previous[ts.Tuple]
+		// returning is a tuple back from an unmeasured gap (backlog 4.42,
+		// owner decision: it starts fresh). Its row stood through the gap
+		// only for the alert sink's sake (see the unmeasured skip above);
+		// nothing in it describes the tuple now. Its since would date a
+		// new alert before the previous episode closed, its candidate
+		// would ripen on a wait nobody watched, its clear condition would
+		// hold a severity judged before the gap, and its flapping would
+		// count transitions from before it. So it is no previous state at
+		// all: the tuple is judged as if for the first time.
+		returning := seen && prev.unmeasuredSinceJudged()
+		if returning {
+			seen = false
+		}
 		if !seen {
 			// A tuple evaluated for the first time is judged against ok:
 			// nothing yet attests that a deterioration held before this
@@ -373,6 +400,12 @@ func Evaluate(s Snapshot) Result {
 		if changed && seen {
 			count++
 		}
+		if returning {
+			// Load already leaves the transitions from before the gap out
+			// of the window (CountStateChangesInFlappingWindow); a fresh
+			// start has none of its own yet, whatever it is handed.
+			count = 0
+		}
 		switch {
 		case count >= flappingSet:
 			next.Flapping = true
@@ -399,6 +432,7 @@ func Evaluate(s Snapshot) Result {
 		States:     states,
 		Changes:    changes,
 		Host:       host,
+		At:         s.Now,
 		NextDue:    graceDue(host, s.Presence, s.Now, nextDue(pending, states, len(changes) > 0, s.Now)),
 		Dropped:    dropped,
 		Unmeasured: unmeasured,
@@ -504,7 +538,10 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 // since three days ago" for a span in which nothing was measured. A
 // manager restart does not reach this, because the staleness deadline
 // fires first and step 1 discards the candidate on its way through
-// unknown; a disabled check never runs that path at all.
+// unknown; a disabled check never runs that path at all. Since backlog
+// 4.42 such a row is marked unmeasured and starts fresh before this is
+// ever asked (returning, in Evaluate); the guard still covers a row that
+// went unmeasured before the mark existed, which carries none.
 func continuous(s Snapshot, ts TupleSnapshot, prev TupleState) bool {
 	return !s.Now.After(prev.EvaluatedAt.Add(stalenessFactor * ts.Interval))
 }

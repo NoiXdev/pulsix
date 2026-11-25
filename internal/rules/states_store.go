@@ -34,6 +34,7 @@ func toTupleState(r gen.CheckState) TupleState {
 		CandidateSince: db.TimePtr(r.CandidateSince),
 		Flapping:       r.Flapping,
 		EvaluatedAt:    r.EvaluatedAt,
+		UnmeasuredAt:   db.TimePtr(r.UnmeasuredAt),
 	}
 }
 

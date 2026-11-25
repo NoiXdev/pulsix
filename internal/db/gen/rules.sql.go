@@ -134,11 +134,14 @@ func (q *Queries) ClaimDueEvalCursors(ctx context.Context, lim int32) ([]ClaimDu
 }
 
 const countStateChangesInFlappingWindow = `-- name: CountStateChangesInFlappingWindow :many
-SELECT check_key, item, metric, count(*)::bigint AS change_count
-FROM check_state_changes
-WHERE org_id = $1 AND host_id = $2
-  AND at >= now() - $3::interval
-GROUP BY check_key, item, metric
+SELECT c.check_key, c.item, c.metric, count(*)::bigint AS change_count
+FROM check_state_changes c
+LEFT JOIN check_states s
+  ON s.host_id = c.host_id AND s.check_key = c.check_key AND s.item = c.item AND s.metric = c.metric
+WHERE c.org_id = $1 AND c.host_id = $2
+  AND c.at >= now() - $3::interval
+  AND (s.unmeasured_at IS NULL OR c.at > s.unmeasured_at)
+GROUP BY c.check_key, c.item, c.metric
 `
 
 type CountStateChangesInFlappingWindowParams struct {
@@ -161,6 +164,13 @@ type CountStateChangesInFlappingWindowRow struct {
 // managers would count different windows for the same host and the flag
 // would depend on who got there first. Same index, same shape as
 // CountStateChangesSince (see its comment).
+//
+// A transition from before the tuple's latest unmeasured gap is left out
+// (backlog 4.42): a tuple measured again starts fresh, and its flapping
+// with it. check_states.unmeasured_at is that gap's first moment and stays
+// on the row after the tuple is judged again, so every transition at or
+// before it predates the gap and every one after it is the fresh start's
+// own. The join is one primary-key probe per counted tuple.
 func (q *Queries) CountStateChangesInFlappingWindow(ctx context.Context, arg CountStateChangesInFlappingWindowParams) ([]CountStateChangesInFlappingWindowRow, error) {
 	rows, err := q.db.Query(ctx, countStateChangesInFlappingWindow, arg.OrgID, arg.HostID, arg.FlappingWindow)
 	if err != nil {
@@ -573,7 +583,7 @@ func (q *Queries) InsertCheckStateChange(ctx context.Context, arg InsertCheckSta
 }
 
 const listCheckStates = `-- name: ListCheckStates :many
-SELECT org_id, host_id, check_key, item, metric, state, since, rule_id, last_value, last_label, candidate_state, candidate_since, flapping, evaluated_at FROM check_states
+SELECT org_id, host_id, check_key, item, metric, state, since, rule_id, last_value, last_label, candidate_state, candidate_since, flapping, evaluated_at, unmeasured_at FROM check_states
 WHERE org_id = $1 AND host_id = $2
 ORDER BY check_key, item, metric
 `
@@ -613,6 +623,7 @@ func (q *Queries) ListCheckStates(ctx context.Context, arg ListCheckStatesParams
 			&i.CandidateSince,
 			&i.Flapping,
 			&i.EvaluatedAt,
+			&i.UnmeasuredAt,
 		); err != nil {
 			return nil, err
 		}
@@ -732,6 +743,48 @@ func (q *Queries) LockOneEvalCursor(ctx context.Context, hostID uuid.UUID) (Lock
 	var i LockOneEvalCursorRow
 	err := row.Scan(&i.OrgID, &i.HostID)
 	return i, err
+}
+
+const markCheckStatesUnmeasured = `-- name: MarkCheckStatesUnmeasured :exec
+UPDATE check_states s SET unmeasured_at = $1::timestamptz
+FROM (
+  SELECT unnest($4::text[]) AS check_key,
+         unnest($5::text[]) AS item,
+         unnest($6::text[]) AS metric
+) u
+WHERE s.org_id = $2 AND s.host_id = $3
+  AND s.check_key = u.check_key AND s.item = u.item AND s.metric = u.metric
+  AND (s.unmeasured_at IS NULL OR s.unmeasured_at <= s.evaluated_at)
+`
+
+type MarkCheckStatesUnmeasuredParams struct {
+	At        time.Time `json:"at"`
+	OrgID     uuid.UUID `json:"org_id"`
+	HostID    uuid.UUID `json:"host_id"`
+	CheckKeys []string  `json:"check_keys"`
+	Items     []string  `json:"items"`
+	Metrics   []string  `json:"metrics"`
+}
+
+// Backlog 4.42: the tuples an evaluation reported unmeasured
+// (internal/rules.Result.Unmeasured) keep their rows, stamped with that
+// evaluation's moment — on the gap's first evaluation only: a mark later
+// than evaluated_at already dates this gap, and the reports that follow,
+// one per tick while the gap lasts, leave it alone. A mark from an earlier
+// gap (at or before evaluated_at: the tuple was judged since) is replaced.
+// The three unnests in the select list expand in lockstep, one row per
+// tuple (InsertCheckItems' own shape, items.sql), so one statement marks
+// every tuple of the evaluation; Apply skips it when there is none.
+func (q *Queries) MarkCheckStatesUnmeasured(ctx context.Context, arg MarkCheckStatesUnmeasuredParams) error {
+	_, err := q.db.Exec(ctx, markCheckStatesUnmeasured,
+		arg.At,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKeys,
+		arg.Items,
+		arg.Metrics,
+	)
+	return err
 }
 
 const markHostDirty = `-- name: MarkHostDirty :exec
@@ -958,7 +1011,10 @@ type UpsertCheckStateParams struct {
 // column except the key is replaced, candidate_state/candidate_since
 // included: a candidate that stopped ripening has to be cleared by the
 // same statement that would have set it, or a stale one would ripen later
-// against a wait that has long since ended.
+// against a wait that has long since ended. The one exception is
+// unmeasured_at (backlog 4.42, MarkCheckStatesUnmeasured): the evaluated_at
+// written here supersedes it, and it stays as the lower bound the flapping
+// count reads (CountStateChangesInFlappingWindow).
 func (q *Queries) UpsertCheckState(ctx context.Context, arg UpsertCheckStateParams) error {
 	_, err := q.db.Exec(ctx, upsertCheckState,
 		arg.OrgID,
