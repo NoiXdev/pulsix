@@ -187,8 +187,67 @@ func TestPollV3AnswerNotAcceptedIsRefusedCredentials(t *testing.T) {
 			probetest.WantDown(t, obs, "snmp", probe.FailureError)
 			continue
 		}
-		probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuthOrLost)
 	}
+}
+
+// The first request of a v3 session lost after a successful discovery
+// gets one more request before the poll judges (backlog 3.70).
+func TestPollV3LostFirstRequestGetsOneMoreAttempt(t *testing.T) {
+	v3 := map[string]string{"username": "u", "auth_protocol": "SHA", "auth_password": "auth-pass-value"}
+	p := params(map[string]any{"version": "v3", "oids": []any{"x=1.3.6.1.9.1"}})
+	lostErr := errors.New("incoming packet is not authentic, discarding")
+
+	t.Run("second attempt answers", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100))
+		dev.set(".1.3.6.1.9.1", gosnmp.Integer, 7)
+		dev.getErr, dev.lost, dev.replied = lostErr, 1, true
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		m := byKey(t, obs)
+		wantValue(t, m, "snmp.up", "", 1)
+		wantValue(t, m, "snmp.value", "x", 7)
+		if len(dev.gets) != 2 {
+			t.Fatalf("gets = %d, want 2", len(dev.gets))
+		}
+	})
+	t.Run("both lost", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.getErr, dev.replied = lostErr, true
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuthOrLost)
+		if len(dev.gets) != 2 {
+			t.Fatalf("gets = %d, want 2", len(dev.gets))
+		}
+	})
+	t.Run("explicit refusal stays auth with one get", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.getErr, dev.replied = gosnmp.ErrWrongDigest, true
+		obs, _ := poll(newFakePoller(dev), p, v3)
+		probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
+		if len(dev.gets) != 1 {
+			t.Fatalf("gets = %d, want 1", len(dev.gets))
+		}
+	})
+	t.Run("v2c timeout is one get", func(t *testing.T) {
+		dev := newFakeDevice()
+		dev.getErr, dev.replied = errFakeTimeout, true
+		obs, _ := poll(newFakePoller(dev), params(map[string]any{"oids": []any{"x=1.3.6.1.9.1"}}), v2cSecret)
+		probetest.WantDown(t, obs, "snmp", probe.FailureTimeout)
+		if len(dev.gets) != 1 {
+			t.Fatalf("gets = %d, want 1", len(dev.gets))
+		}
+	})
+	t.Run("no attempt once the context is done", func(t *testing.T) {
+		dev := newFakeDevice()
+		ctx, cancel := context.WithCancel(context.Background())
+		dev.getErr, dev.replied, dev.onGet = lostErr, true, cancel
+		obs, _ := newFakePoller(dev).Poll(ctx, probetest.LoopbackGuard(), p, "127.0.0.1", v3)
+		probetest.WantDown(t, obs, "snmp", probe.FailureError)
+		if len(dev.gets) != 1 {
+			t.Fatalf("gets = %d, want 1", len(dev.gets))
+		}
+	})
 }
 
 func TestPollLaterRequestUnansweredIsAnErrorOnItsItems(t *testing.T) {

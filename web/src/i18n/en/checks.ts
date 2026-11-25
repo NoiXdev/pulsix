@@ -180,6 +180,7 @@ export const enChecks = {
       nxdomain: 'name does not exist',
       servfail: 'DNS server answered with an error',
       auth: 'credentials refused',
+      auth_or_lost: 'credentials refused, or the requests were lost',
       error: 'other failure',
     },
   },

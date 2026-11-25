@@ -704,6 +704,15 @@ targets no longer make another's checks report the manager too busy.
 
 ## Behaviour changes to check after an upgrade
 
+- **A new SNMP failure label, `auth_or_lost` (backlog 3.70, no migration):** a SNMPv3
+  poll whose first request is lost after a successful engine discovery now gets one
+  more attempt before it is judged, and when that fails the same way `snmp.failure`
+  is `auth_or_lost` ("credentials refused, or the requests were lost": a wrong
+  privacy or authentication password, or lost requests) where it used to read `auth`.
+  `auth` stays for the refusals the SNMP library names explicitly (unknown user,
+  wrong digest, unknown security level, decryption failure). To check after the
+  upgrade: a rule on `snmp.failure` that lists `auth` should list `auth_or_lost`
+  too. A rule on `snmp.up` is unaffected.
 - **Escalation steps wait after every maintenance window or silence that covered the
   alert (backlog 4.41, no migration):** the escalation follower used to look for
   covering windows at two sampled instants, so a window or silence that opened and

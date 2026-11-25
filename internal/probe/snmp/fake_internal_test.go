@@ -27,6 +27,10 @@ type fakeDevice struct {
 	// getErr fails every Get from the getOK+1st on.
 	getErr error
 	getOK  int
+	// lost fails the first lost Gets with getErr and answers the rest.
+	lost int
+	// onGet, when set, runs at the start of every Get.
+	onGet func()
 	// pduError is the error status of every Get answer.
 	pduError gosnmp.SNMPError
 	// walkErr fails the walk of a root.
@@ -51,7 +55,13 @@ func (f *fakeDevice) get(oids []string) (*gosnmp.SnmpPacket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.gets = append(f.gets, oids)
-	if f.getErr != nil && len(f.gets) > f.getOK {
+	if f.onGet != nil {
+		f.onGet()
+	}
+	if f.getErr != nil && f.lost > 0 && len(f.gets) <= f.lost {
+		return nil, f.getErr
+	}
+	if f.getErr != nil && f.lost == 0 && len(f.gets) > f.getOK {
 		return nil, f.getErr
 	}
 	pkt := &gosnmp.SnmpPacket{Error: f.pduError}

@@ -69,7 +69,9 @@ func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address s
 // a Go error: every outcome is in the observations, as probe.Func
 // describes. A device that does not answer the first request, or a v3
 // device refusing the credentials, is snmp.up = 0 and snmp.failure alone
-// (FailureAuth for the credentials); params or a secret that cannot be
+// (FailureAuth for a refusal gosnmp names; FailureAuthOrLost when the device
+// answered the discovery but the first request and one more attempt got
+// no usable answer); params or a secret that cannot be
 // used, or a target the guard refuses, is an error on every host metric
 // and each oids entry's snmp.value.
 //
@@ -132,7 +134,25 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	start := time.Now()
 	pkt, err := c.get(first)
 	if err != nil {
-		return failed(classifyFirst(err, creds.version == gosnmp.Version3, c.answered()), downReason(ctx, err, c.socketFailure()), fail), Info{}
+		f := classifyFirst(err, creds.version == gosnmp.Version3, c.answered())
+		if f == failAuthOrLost && ctx.Err() == nil {
+			// Credentials inferred, not named: one more attempt before
+			// judging (backlog 3.70). A retry failing otherwise, or past
+			// the poll's deadline, is reported as that.
+			start = time.Now()
+			pkt, err = c.get(first)
+			if err != nil {
+				f = classifyFirst(err, true, c.answered())
+				if c.socketFailure() != "" || ctx.Err() != nil {
+					f = failDown
+				}
+			}
+		} else if f == failAuthOrLost {
+			f = failDown
+		}
+		if err != nil {
+			return failed(f, downReason(ctx, err, c.socketFailure()), fail), Info{}
+		}
 	}
 	rtt := c.roundTrip()
 	if rtt <= 0 {
@@ -203,6 +223,8 @@ func failed(f failure, reason string, fail func(string) []probe.Observation) []p
 		return fail(probe.ErrNotAllowed.Error())
 	case failCredentials:
 		return probe.Down("snmp", probe.FailureAuth)
+	case failAuthOrLost:
+		return probe.Down("snmp", probe.FailureAuthOrLost)
 	}
 	return probe.Down("snmp", reason)
 }

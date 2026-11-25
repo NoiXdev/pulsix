@@ -19,14 +19,14 @@ import (
 // TestFailureVocabulary pins the labels of the spec's table: rules and
 // the SPA's texts name them, so one changes only with both.
 func TestFailureVocabulary(t *testing.T) {
-	want := []string{"none", "dns", "refused", "timeout", "unreachable", "reset", "tls", "certificate", "protocol", "redirects", "nxdomain", "servfail", "auth", "error"}
+	want := []string{"none", "dns", "refused", "timeout", "unreachable", "reset", "tls", "certificate", "protocol", "redirects", "nxdomain", "servfail", "auth", "auth_or_lost", "error"}
 	if !slices.Equal(probe.FailureLabels(), want) {
 		t.Fatalf("FailureLabels = %v, want %v", probe.FailureLabels(), want)
 	}
 	got := []string{
 		probe.FailureNone, probe.FailureDNS, probe.FailureRefused, probe.FailureTimeout, probe.FailureUnreachable,
 		probe.FailureReset, probe.FailureTLS, probe.FailureCertificate, probe.FailureProtocol, probe.FailureRedirects,
-		probe.FailureNXDomain, probe.FailureServFail, probe.FailureAuth, probe.FailureError,
+		probe.FailureNXDomain, probe.FailureServFail, probe.FailureAuth, probe.FailureAuthOrLost, probe.FailureError,
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("constants = %v, want %v", got, want)

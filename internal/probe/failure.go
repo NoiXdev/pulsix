@@ -43,6 +43,11 @@ const (
 	FailureServFail = "servfail"
 	// FailureAuth: the SNMP agent refused the credentials.
 	FailureAuth = "auth"
+	// FailureAuthOrLost: a SNMPv3 device answered the engine discovery,
+	// but neither the first request nor its second attempt got an answer
+	// the poll could use: the privacy password is wrong, or the requests
+	// were lost.
+	FailureAuthOrLost = "auth_or_lost"
 	// FailureError: any other failure.
 	FailureError = "error"
 )
@@ -52,7 +57,7 @@ func FailureLabels() []string {
 	return []string{
 		FailureNone, FailureDNS, FailureRefused, FailureTimeout, FailureUnreachable, FailureReset,
 		FailureTLS, FailureCertificate, FailureProtocol, FailureRedirects, FailureNXDomain,
-		FailureServFail, FailureAuth, FailureError,
+		FailureServFail, FailureAuth, FailureAuthOrLost, FailureError,
 	}
 }
 

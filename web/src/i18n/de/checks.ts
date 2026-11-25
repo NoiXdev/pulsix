@@ -160,6 +160,7 @@ export const deChecks: Messages['checks'] = {
       nxdomain: 'Name existiert nicht',
       servfail: 'DNS-Server antwortete mit einem Fehler',
       auth: 'Zugangsdaten abgelehnt',
+      auth_or_lost: 'Zugangsdaten abgelehnt, oder die Anfragen gingen verloren',
       error: 'anderer Fehler',
     },
   },

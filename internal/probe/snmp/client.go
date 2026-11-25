@@ -175,6 +175,10 @@ const (
 	// digest or its security level, or could not decrypt the request;
 	// snmp.up = 0 with probe.FailureAuth.
 	failCredentials
+	// failAuthOrLost: a v3 device answered the engine discovery, but the
+	// first request failed with no refusal gosnmp names; snmp.up = 0 with
+	// probe.FailureAuthOrLost once one more attempt failed the same way.
+	failAuthOrLost
 )
 
 // classify sorts a gosnmp error. Its text is never used: it can quote a
@@ -199,11 +203,14 @@ func classify(err error) failure {
 // the engine discovery: a v3 first request that failed although the device
 // answered something is credentials it did not accept, not a device that
 // is down. Losing a request and its retry right after a successful
-// discovery reads the same way, for that one poll.
+// discovery reads the same way, so that case is failAuthOrLost, not
+// failCredentials: the poll sends the request once more before reporting
+// it, and names both possible causes (wrong privacy password, or the
+// requests were lost). A refusal gosnmp names stays failCredentials.
 func classifyFirst(err error, v3, answered bool) failure {
 	f := classify(err)
 	if f == failDown && v3 && answered {
-		return failCredentials
+		return failAuthOrLost
 	}
 	return f
 }

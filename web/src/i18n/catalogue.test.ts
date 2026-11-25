@@ -43,7 +43,7 @@ describe('the German catalogue', () => {
 describe('the failure reasons of the synthetic checks', () => {
   // The <plugin>.failure vocabulary of internal/probe (failure.go,
   // FailureLabels), in its order; a label added there needs a text here.
-  const VOCABULARY = ['none', 'dns', 'refused', 'timeout', 'unreachable', 'reset', 'tls', 'certificate', 'protocol', 'redirects', 'nxdomain', 'servfail', 'auth', 'error'];
+  const VOCABULARY = ['none', 'dns', 'refused', 'timeout', 'unreachable', 'reset', 'tls', 'certificate', 'protocol', 'redirects', 'nxdomain', 'servfail', 'auth', 'auth_or_lost', 'error'];
   it.each([['English', en], ['German', de]])('have a text for every label in the %s catalogue', (_name, catalogue) => {
     expect(Object.keys(catalogue.checks.synthetic.failures)).toEqual(VOCABULARY);
   });

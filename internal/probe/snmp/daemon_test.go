@@ -201,7 +201,9 @@ func TestRealDaemon(t *testing.T) {
 			{"username": "pulsixpriv", "auth_protocol": "SHA-512", "auth_password": "pulsix-auth-pass", "priv_protocol": "AES-256", "priv_password": "wrong-password"},
 		} {
 			obs := snmp.Probe(ctx, g, daemonParams(port, "v3"), "127.0.0.1", secret)
-			probetest.WantDown(t, obs, "snmp", probe.FailureAuth)
+			// gosnmp names none of these refusals once it knows the
+			// engine, so each reads as inferred: refused or lost.
+			probetest.WantDown(t, obs, "snmp", probe.FailureAuthOrLost)
 		}
 	})
 
