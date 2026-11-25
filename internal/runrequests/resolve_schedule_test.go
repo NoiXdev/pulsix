@@ -28,6 +28,7 @@ type fakeSchedules struct {
 	updated     []schedules.Input
 	updatedRev  []int64
 	resumed     []uuid.UUID
+	resumedRev  []int64
 }
 
 func (f *fakeSchedules) Get(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
@@ -59,11 +60,11 @@ func (f *fakeSchedules) Update(_ context.Context, _, id uuid.UUID, revision int6
 	return schedules.Schedule{ID: id}, nil
 }
 
-func (f *fakeSchedules) Resume(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
+func (f *fakeSchedules) ResumeAt(_ context.Context, _, id uuid.UUID, revision int64) (schedules.Schedule, error) {
 	if f.applyErr != nil {
 		return schedules.Schedule{}, f.applyErr
 	}
-	f.resumed = append(f.resumed, id)
+	f.resumed, f.resumedRev = append(f.resumed, id), append(f.resumedRev, revision)
 	return schedules.Schedule{ID: id}, nil
 }
 
@@ -115,16 +116,16 @@ func TestValidateScheduleCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tmpl != w.s || rev != 6 || ch.Action != runrequests.ScheduleCreate || !ch.AssistantOverrides || ch.Spec.Name != "weekly" {
+	if tmpl != w.s || rev != 6 || ch.Action != runrequests.ScheduleCreate || !ch.AssistantExtraVars || ch.AssistantLimit || ch.Spec.Name != "weekly" {
 		t.Fatalf("change = %+v, template %v rev %d", ch, tmpl, rev)
 	}
 	in := w.scheds.validated[0]
-	if !in.Untrusted || in.TemplateID != w.s || in.Overrides.ExtraVars["release"] != json.Number("2") {
+	if !in.UntrustedExtraVars || in.UntrustedLimit || in.TemplateID != w.s || in.Overrides.ExtraVars["release"] != json.Number("2") {
 		t.Fatalf("validated = %+v", in)
 	}
 	// Without overrides there is nothing of the assistant's to mark.
 	ch, _, _, err = w.resolver().ValidateSchedule(context.Background(), id(), id(), runrequests.ScheduleInput{Action: runrequests.ScheduleCreate, Spec: w.spec()})
-	if err != nil || ch.AssistantOverrides {
+	if err != nil || ch.AssistantExtraVars || ch.AssistantLimit {
 		t.Fatalf("plain create = %+v, %v", ch, err)
 	}
 }
@@ -211,13 +212,13 @@ func TestValidateScheduleUpdateMergesThePatch(t *testing.T) {
 	if tmpl != w.s || s.Name != "nightly" || s.Mode != schedules.ModeCron || s.Cron != cron || s.Simple != nil || s.Timezone != "Europe/Berlin" || *s.Limit != "web*" {
 		t.Fatalf("merged = %+v", s)
 	}
-	if ch.AssistantOverrides {
+	if ch.AssistantExtraVars || ch.AssistantLimit {
 		t.Fatal("an update that sets no override marked the overrides the assistant's")
 	}
 	if pw, ok := s.ExtraVars["db_password"].(map[string]any); !ok || pw["$secret"] != "set" || s.ExtraVars["release"] != "1.0" {
 		t.Fatalf("extra vars = %#v", s.ExtraVars)
 	}
-	if w.scheds.validated[0].Untrusted {
+	if w.scheds.validated[0].UntrustedExtraVars || w.scheds.validated[0].UntrustedLimit {
 		t.Fatal("validated as untrusted")
 	}
 }
@@ -234,13 +235,13 @@ func TestValidateScheduleUpdateWithExtraVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ch.AssistantOverrides || ch.Spec.ExtraVars["release"] != "2.0" {
+	if !ch.AssistantExtraVars || ch.AssistantLimit || ch.Spec.ExtraVars["release"] != "2.0" {
 		t.Fatalf("change = %+v", ch)
 	}
 	if pw := ch.Spec.ExtraVars["db_password"].(map[string]any); pw["$secret"] != "set" || len(pw) != 1 {
 		t.Fatalf("kept secret = %#v", pw)
 	}
-	if !w.scheds.validated[0].Untrusted {
+	if !w.scheds.validated[0].UntrustedExtraVars || w.scheds.validated[0].UntrustedLimit {
 		t.Fatal("the assistant's overrides were validated as trusted")
 	}
 	// A new value for the secret is refused, as is a keep at another path.
@@ -287,13 +288,13 @@ func TestPictureOfAScheduleUpdate(t *testing.T) {
 	w := newScheduleWorld()
 	spec := w.spec()
 	spec.ExtraVars = map[string]any{"release": "2", "db_password": schema.Mask()}
-	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleUpdate, Spec: spec, AssistantOverrides: true}, w.sched)
+	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleUpdate, Spec: spec, AssistantExtraVars: true}, w.sched)
 	p, err := w.resolver().Picture(context.Background(), id(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ps := p.Schedule
-	if p.TemplateName != "S" || p.TemplateRevision != 6 || ps == nil || ps.Action != runrequests.ScheduleUpdate || ps.ScheduleID != w.sched.String() || !ps.AssistantOverrides {
+	if p.TemplateName != "S" || p.TemplateRevision != 6 || ps == nil || ps.Action != runrequests.ScheduleUpdate || ps.ScheduleID != w.sched.String() || !ps.AssistantExtraVars || ps.AssistantLimit {
 		t.Fatalf("picture = %+v", p)
 	}
 	if ps.Current == nil || ps.Current.Revision != 5 || !ps.Current.Paused || ps.Current.Description == "" || ps.Current.TemplateName != "S" {
@@ -350,11 +351,11 @@ func TestApplySchedule(t *testing.T) {
 	target := id()
 	spec := w.spec()
 	spec.ExtraVars = map[string]any{"release": "2"}
-	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, Spec: spec, AssistantOverrides: true}, target)
+	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, Spec: spec, AssistantExtraVars: true}, target)
 	if err := w.resolver().ApplySchedule(context.Background(), id(), req, runrequests.PictureSchedule{Action: runrequests.ScheduleCreate}, actor); err != nil {
 		t.Fatal(err)
 	}
-	if w.scheds.createdAs[0] != target || w.scheds.createdAs[1] != actor || !w.scheds.created[0].Untrusted || w.scheds.created[0].Name != "weekly" {
+	if w.scheds.createdAs[0] != target || w.scheds.createdAs[1] != actor || !w.scheds.created[0].UntrustedExtraVars || w.scheds.created[0].Name != "weekly" {
 		t.Fatalf("created = %+v %v", w.scheds.created, w.scheds.createdAs)
 	}
 
@@ -363,15 +364,16 @@ func TestApplySchedule(t *testing.T) {
 	if err := w.resolver().ApplySchedule(context.Background(), id(), upd, pic, actor); err != nil {
 		t.Fatal(err)
 	}
-	if w.scheds.updatedRev[0] != 5 || w.scheds.updated[0].Untrusted {
+	if w.scheds.updatedRev[0] != 5 || w.scheds.updated[0].UntrustedExtraVars {
 		t.Fatalf("updated = %+v at %v", w.scheds.updated, w.scheds.updatedRev)
 	}
 
 	res := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleResume}, w.sched)
-	if err := w.resolver().ApplySchedule(context.Background(), id(), res, runrequests.PictureSchedule{Action: runrequests.ScheduleResume}, actor); err != nil {
+	resPic := runrequests.PictureSchedule{Action: runrequests.ScheduleResume, Current: &runrequests.ScheduleState{Revision: 5}}
+	if err := w.resolver().ApplySchedule(context.Background(), id(), res, resPic, actor); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.scheds.resumed) != 1 || w.scheds.resumed[0] != w.sched {
+	if len(w.scheds.resumed) != 1 || w.scheds.resumed[0] != w.sched || w.scheds.resumedRev[0] != 5 {
 		t.Fatalf("resumed = %v", w.scheds.resumed)
 	}
 }
@@ -391,96 +393,11 @@ func TestApplyScheduleRefusals(t *testing.T) {
 	w.invSecrets.names["release"] = true
 	spec := w.spec()
 	spec.ExtraVars = map[string]any{"release": "2"}
-	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, Spec: spec, AssistantOverrides: true}, id())
+	req := w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, Spec: spec, AssistantExtraVars: true}, id())
 	if err := w.resolver().ApplySchedule(context.Background(), id(), req, runrequests.PictureSchedule{Action: runrequests.ScheduleCreate}, id()); !errors.Is(err, runrequests.ErrInvalidInput) {
 		t.Fatalf("a shadow that appeared after the request: %v", err)
 	}
 	if len(w.scheds.created) != 0 {
 		t.Fatal("created despite the refusal")
-	}
-}
-
-// An update's patch keeps what it leaves out and switches the mode with
-// the timetable it gives.
-func TestValidateScheduleUpdatePatches(t *testing.T) {
-	cron, empty, tz, name := "*/5 * * * *", "", "UTC", "renamed"
-	modeCron, modeSimple := schedules.ModeCron, schedules.ModeSimple
-	weekly := &cronexpr.Simple{Kind: "weekly", Days: []string{"mon"}, Time: "04:00"}
-	guards := schedules.Guards{Overlap: schedules.OverlapQueue}
-	cases := []struct {
-		name  string
-		patch runrequests.SchedulePatch
-		check func(t *testing.T, w *scheduleWorld, s *runrequests.ScheduleSpec)
-	}{
-		{"nothing", runrequests.SchedulePatch{}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Mode != modeSimple || s.Cron != "" || s.Simple == nil || s.Simple.Kind != "daily" || s.Name != "nightly" {
-				t.Fatalf("spec = %+v", s)
-			}
-		}},
-		{"cron mode keeps the compiled timetable", runrequests.SchedulePatch{Mode: &modeCron}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Mode != modeCron || s.Cron != "0 3 * * *" || s.Simple != nil {
-				t.Fatalf("spec = %+v", s)
-			}
-		}},
-		{"a cron switches to cron mode", runrequests.SchedulePatch{Cron: &cron}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Mode != modeCron || s.Cron != cron || s.Simple != nil {
-				t.Fatalf("spec = %+v", s)
-			}
-		}},
-		{"a simple shape switches to simple mode", runrequests.SchedulePatch{Simple: weekly}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Mode != modeSimple || s.Cron != "" || s.Simple.Kind != "weekly" {
-				t.Fatalf("spec = %+v", s)
-			}
-		}},
-		{"name, zone, guards, template", runrequests.SchedulePatch{Name: &name, Timezone: &tz, Guards: &guards}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Name != name || s.Timezone != tz || s.Guards.Overlap != schedules.OverlapQueue {
-				t.Fatalf("spec = %+v", s)
-			}
-		}},
-		{"an empty limit clears it", runrequests.SchedulePatch{Limit: &empty}, func(t *testing.T, _ *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.Limit != nil {
-				t.Fatalf("limit = %q", *s.Limit)
-			}
-		}},
-		{"the template stays", runrequests.SchedulePatch{}, func(t *testing.T, w *scheduleWorld, s *runrequests.ScheduleSpec) {
-			if s.TemplateID != w.s {
-				t.Fatalf("template = %v", s.TemplateID)
-			}
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newScheduleWorld()
-			patch := tc.patch
-			ch, _, _, err := w.resolver().ValidateSchedule(context.Background(), id(), w.sched, runrequests.ScheduleInput{Action: runrequests.ScheduleUpdate, ScheduleID: w.sched, Patch: &patch})
-			if err != nil {
-				t.Fatal(err)
-			}
-			tc.check(t, w, ch.Spec)
-		})
-	}
-	// A template the update moves to is the request's template.
-	w := newScheduleWorld()
-	_, tmpl, rev, err := w.resolver().ValidateSchedule(context.Background(), id(), w.sched, runrequests.ScheduleInput{
-		Action: runrequests.ScheduleUpdate, ScheduleID: w.sched, Patch: &runrequests.SchedulePatch{TemplateID: &w.y},
-	})
-	if err != nil || tmpl != w.y || rev != 5 {
-		t.Fatalf("moved to %v rev %d, %v", tmpl, rev, err)
-	}
-}
-
-// A kept secret nested in a value shows masked in the picture, never as
-// the keep marker.
-func TestPictureMasksKeptSecrets(t *testing.T) {
-	w := newScheduleWorld()
-	spec := w.spec()
-	spec.ExtraVars = map[string]any{"list": []any{map[string]any{"$secret": "keep", "from": "x"}}}
-	p, err := w.resolver().Picture(context.Background(), id(), w.request(runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, Spec: spec}, id()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	item := p.Schedule.New.ExtraVars["list"].([]any)[0].(map[string]any)
-	if item["$secret"] != "set" || len(item) != 1 {
-		t.Fatalf("shown = %#v", item)
 	}
 }

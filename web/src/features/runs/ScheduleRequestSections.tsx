@@ -16,9 +16,21 @@ const TD = 'border-t border-border px-4 py-2 align-top';
  * 2026-11-25 C): what the approval does (create, change or resume), the
  * schedule as it is now next to how the approval leaves it, with every
  * setting that changes marked, secrets masked. It says when the limit and
- * extra vars are the assistant's, and when the schedule is gone.
+ * extra vars are the assistant's (each on its own), the template's
+ * revision (and that it changed since the request), and when the schedule
+ * is gone.
  */
-export function ScheduleRequestSections({ schedule }: { schedule: PictureSchedule }) {
+export function ScheduleRequestSections({
+  schedule,
+  templateRevision,
+  requestedRevision,
+}: {
+  schedule: PictureSchedule;
+  /** The template revision the approval approves (the picture's). */
+  templateRevision: number;
+  /** The template revision when the request was made. */
+  requestedRevision?: number;
+}) {
   const t = useT();
   const d = t.runs.requests.detail;
   const sd = d.schedule;
@@ -94,9 +106,20 @@ export function ScheduleRequestSections({ schedule }: { schedule: PictureSchedul
           </p>
         )}
         <p className="text-xs text-muted-foreground">{sd.intro[action]}</p>
-        {schedule.assistant_overrides && (
+        <p className="text-xs text-muted-foreground">{sd.templateRevision(templateRevision)}</p>
+        {requestedRevision !== undefined && requestedRevision !== templateRevision && (
           <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
-            {sd.assistantValues}
+            {sd.templateChanged(requestedRevision)}
+          </p>
+        )}
+        {schedule.assistant_limit && (
+          <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
+            {sd.assistantLimit}
+          </p>
+        )}
+        {schedule.assistant_extra_vars && (
+          <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
+            {sd.assistantExtraVars}
           </p>
         )}
         {columns.length > 0 && (

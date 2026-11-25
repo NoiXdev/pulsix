@@ -27,7 +27,7 @@ func TestSQLStoreScheduleRequest(t *testing.T) {
 		ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Kind: runrequests.KindSchedule, TemplateID: f.template, TemplateRevision: 2,
 		Reason: "nightly", RequestedByUser: f.user, Status: runrequests.StatusPending, ExpiresAt: now.Add(time.Hour), CreatedAt: now,
 		TargetID: &target,
-		Schedule: &runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, AssistantOverrides: true, Spec: &runrequests.ScheduleSpec{
+		Schedule: &runrequests.ScheduleChange{Action: runrequests.ScheduleCreate, AssistantLimit: true, AssistantExtraVars: true, Spec: &runrequests.ScheduleSpec{
 			TemplateID: f.template, Name: "nightly", Mode: schedules.ModeCron, Cron: "0 3 * * *", Timezone: "UTC",
 			Guards: schedules.Guards{Overlap: schedules.OverlapQueue}, Limit: &limit,
 			ExtraVars: map[string]any{"build": json.Number("9007199254740993")},
@@ -44,7 +44,7 @@ func TestSQLStoreScheduleRequest(t *testing.T) {
 		t.Fatalf("Get = %+v", got)
 	}
 	s := got.Schedule
-	if s.Action != runrequests.ScheduleCreate || !s.AssistantOverrides || s.Spec.Name != "nightly" || *s.Spec.Limit != "web*" ||
+	if s.Action != runrequests.ScheduleCreate || !s.AssistantLimit || !s.AssistantExtraVars || s.Spec.Name != "nightly" || *s.Spec.Limit != "web*" ||
 		s.Spec.Guards.Overlap != schedules.OverlapQueue || s.Spec.ExtraVars["build"] != json.Number("9007199254740993") {
 		t.Fatalf("schedule = %+v", s.Spec)
 	}

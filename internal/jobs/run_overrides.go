@@ -73,7 +73,7 @@ func mergeExtraVars(base json.RawMessage, ov *RunOverrides) (json.RawMessage, er
 // literal text instead of running on the worker (final review C1). Trusted
 // overrides (a person's schedule, spec §14) pass unchanged.
 func (o *RunOverrides) inert() *RunOverrides {
-	if o == nil || !o.Untrusted || len(o.ExtraVars) == 0 {
+	if !o.varsUntrusted() || len(o.ExtraVars) == 0 {
 		return o
 	}
 	out := *o
@@ -97,7 +97,7 @@ func (o *RunOverrides) inert() *RunOverrides {
 // names the source in the reason (untrustedSource). The reason names only
 // the variable, never a key or value from the payload.
 func (o *RunOverrides) checkUntrusted(trigger string) error {
-	if o == nil || !o.Untrusted {
+	if !o.varsUntrusted() {
 		return nil
 	}
 	source := untrustedSource(trigger)
@@ -119,6 +119,12 @@ func (o *RunOverrides) checkUntrusted(trigger string) error {
 	return nil
 }
 
+// varsUntrusted reports whether the extra vars are untrusted values.
+func (o *RunOverrides) varsUntrusted() bool { return o != nil && (o.Untrusted || o.UntrustedVars) }
+
+// limitUntrusted reports whether the limit is an untrusted value.
+func (o *RunOverrides) limitUntrusted() bool { return o != nil && (o.Untrusted || o.UntrustedLimit) }
+
 // untrustedSource names where a run's untrusted overrides came from, by
 // the job's trigger: a webhook delivery, a schedule an approved schedule
 // request set them on, else an approved run request (the only other
@@ -137,7 +143,7 @@ func untrustedSource(trigger string) string {
 // same rule the webhook mapping applies at receive time: no "@file",
 // regex or subscript patterns. The value itself is never echoed.
 func (o *RunOverrides) checkLimit() error {
-	if o == nil || !o.Untrusted || o.Limit == nil {
+	if !o.limitUntrusted() || o.Limit == nil {
 		return nil
 	}
 	if err := ansiblevars.CheckUntrustedLimit(*o.Limit); err != nil {

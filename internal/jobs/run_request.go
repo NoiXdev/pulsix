@@ -30,6 +30,12 @@ type RunOverrides struct {
 	// re-checks the limit (ansiblevars.Inert, CheckUntrustedLimit). It is
 	// sealed together with the values, so it cannot be dropped on its own.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// UntrustedVars and UntrustedLimit mark one part only: an approved
+	// schedule request's (spec 2026-11-25 C) where the assistant set the
+	// extra vars, the limit or both, while a person's part of the same
+	// schedule stays trusted. Untrusted marks both.
+	UntrustedVars  bool `json:"untrusted_vars,omitempty"`
+	UntrustedLimit bool `json:"untrusted_limit,omitempty"`
 	// Check runs the play in Ansible's check mode (a playbook dry run, spec
 	// 2026-11-22 §1); Diff, Tags and Playbook belong to such a run. Diff
 	// asks for --diff, Tags for --tags. Playbook is an editor playbook's

@@ -174,6 +174,11 @@ func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, b
 	return n == 1, nil
 }
 
+// InTx implements Store (db.WithWriteTx).
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
 // RevertToPending implements Store.
 func (s *SQLStore) RevertToPending(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.q.RevertRunRequest(ctx, gen.RevertRunRequestParams{OrgID: orgID, ID: id})

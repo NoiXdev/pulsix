@@ -387,3 +387,34 @@ func TestCheckUntrustedRefusesReservedNamesAndNamesItsSource(t *testing.T) {
 		t.Fatalf("schedule request tags = %v", err)
 	}
 }
+
+// An approved schedule request marks only the parts the assistant set
+// (spec 2026-11-25 C, controller ruling): an untrusted limit leaves a
+// person's extra vars trusted, and the other way round.
+func TestUntrustedPartsAreCheckedApart(t *testing.T) {
+	file := "@/etc/hosts"
+	limitOnly := &RunOverrides{UntrustedLimit: true, Limit: &file, ExtraVars: map[string]any{"tags": "{{ x }}"}}
+	if err := limitOnly.checkLimit(); err == nil {
+		t.Fatal("an untrusted file limit passed")
+	}
+	if err := limitOnly.checkUntrusted(TriggerSchedule); err != nil {
+		t.Fatalf("a person's extra vars were held to the assistant's rules: %v", err)
+	}
+	if got := limitOnly.inert().ExtraVars["tags"]; got != "{{ x }}" {
+		t.Fatalf("a person's extra var was marked unsafe: %#v", got)
+	}
+	varsOnly := &RunOverrides{UntrustedVars: true, Limit: &file, ExtraVars: map[string]any{"release": "{{ x }}"}}
+	if err := varsOnly.checkLimit(); err != nil {
+		t.Fatalf("a person's limit was held to the assistant's rules: %v", err)
+	}
+	if got := varsOnly.inert().ExtraVars["release"]; got == "{{ x }}" {
+		t.Fatal("an assistant's extra var was not marked unsafe")
+	}
+	varsOnly.ExtraVars = map[string]any{"tags": "x"}
+	if err := varsOnly.checkUntrusted(TriggerSchedule); err == nil {
+		t.Fatal("an assistant's keyword-named extra var passed")
+	}
+	if !varsOnly.varsUntrusted() || varsOnly.limitUntrusted() || !limitOnly.limitUntrusted() || limitOnly.varsUntrusted() {
+		t.Fatal("the parts' marks are mixed up")
+	}
+}

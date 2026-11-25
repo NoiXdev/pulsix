@@ -335,7 +335,11 @@ export function RunRequestDetailPage() {
 
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
-      {schedule ? <ScheduleRequestSections schedule={schedule} /> : <RunPictureSections org={org} picture={picture} status={request.status} />}
+      {schedule ? (
+        <ScheduleRequestSections schedule={schedule} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
+      ) : (
+        <RunPictureSections org={org} picture={picture} status={request.status} />
+      )}
       {!schedule && picture.follow_ups && (
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}

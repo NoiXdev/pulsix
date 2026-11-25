@@ -139,10 +139,16 @@ func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request
 }
 
 // Picture implements Pictures: everything the run would use now.
-// A schedule request's picture is the schedule's (schedulePicture).
+// A schedule request's picture is the schedule's (schedulePicture); a
+// kind this version does not know is refused.
 func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (Picture, error) {
-	if req.Kind == KindSchedule {
+	switch req.Kind {
+	case KindSchedule:
 		return r.schedulePicture(ctx, orgID, req)
+	case KindRun, KindRetryFailed:
+	default:
+		// A kind a newer version wrote is no run: never shown as one.
+		return Picture{}, fmt.Errorf("%w: requests of kind %q are not known to this version", ErrInvalidInput, req.Kind)
 	}
 	tmpl, err := r.src.Templates.Get(ctx, orgID, req.TemplateID)
 	if err != nil {

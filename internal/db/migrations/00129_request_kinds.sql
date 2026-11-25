@@ -25,15 +25,20 @@ ALTER TABLE run_requests ADD COLUMN target_id uuid;
 ALTER TABLE run_requests ADD CONSTRAINT run_requests_payload_check
   CHECK ((kind IN ('run', 'retry_failed')) = (payload IS NULL));
 
--- A schedule whose limit and extra vars an assistant asked for (an approved
--- schedule request): its runs carry them as untrusted values, which the
--- claim re-checks and marks unsafe for Ansible, as a run request's. False
--- for every existing schedule; a constant default touches only the catalog.
-ALTER TABLE schedules ADD COLUMN untrusted_overrides boolean NOT NULL DEFAULT false;
+-- The parts of a schedule's overrides an assistant set (an approved schedule
+-- request): the limit and the extra vars carry their own mark, so an
+-- assistant's limit leaves a person's extra vars as they are and the other
+-- way round. A marked part reaches the schedule's runs as untrusted values,
+-- which the claim re-checks and marks unsafe for Ansible, as a run
+-- request's. False for every existing schedule; constant defaults touch
+-- only the catalog..
+ALTER TABLE schedules ADD COLUMN untrusted_limit boolean NOT NULL DEFAULT false;
+ALTER TABLE schedules ADD COLUMN untrusted_extra_vars boolean NOT NULL DEFAULT false;
 
 -- +goose Down
 -- Development databases only (docs/upgrades.md: migrations only go up).
-ALTER TABLE schedules DROP COLUMN untrusted_overrides;
+ALTER TABLE schedules DROP COLUMN untrusted_extra_vars;
+ALTER TABLE schedules DROP COLUMN untrusted_limit;
 DELETE FROM run_requests WHERE kind NOT IN ('run', 'retry_failed');
 ALTER TABLE run_requests DROP CONSTRAINT run_requests_payload_check;
 ALTER TABLE run_requests DROP COLUMN target_id;

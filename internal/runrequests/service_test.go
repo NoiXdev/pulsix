@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
@@ -120,6 +121,17 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 	}
 	m.rows[id] = r
 	return true, nil
+}
+
+// InTx runs fn and, when it fails, puts the rows back as they were: the
+// SQL store's transaction rollback.
+func (m *memStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	saved := maps.Clone(m.rows)
+	if err := fn(ctx); err != nil {
+		m.rows = saved
+		return err
+	}
+	return nil
 }
 
 func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {

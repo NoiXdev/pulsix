@@ -903,8 +903,8 @@ widens the `run_requests.kind` CHECK by `schedule`, `trigger`, `schedule_review`
 `run_requests.payload` (jsonb: what a request of another kind than `run` and
 `retry_failed` creates or changes, never a secret) and `run_requests.target_id` (uuid,
 no foreign key), with a CHECK that a run or retry has no payload and every other kind
-has one; every existing row passes. It also adds `schedules.untrusted_overrides`
-(boolean, NOT NULL DEFAULT false). All catalog changes that rewrite nothing, and a
+has one; every existing row passes. It also adds `schedules.untrusted_limit` and
+`schedules.untrusted_extra_vars` (booleans, NOT NULL DEFAULT false). All catalog changes that rewrite nothing, and a
 backup carries them. The new token area `automation.request` lets an assistant ask for
 a schedule to be created, changed or resumed (`create_schedule`, `update_schedule`,
 `resume_schedule`; REST `POST …/schedule-requests`, `POST …/schedules/{id}/update-requests`,
@@ -912,11 +912,13 @@ a schedule to be created, changed or resumed (`create_schedule`, `update_schedul
 (`pause_schedule`, `delete_schedule`; the existing routes accept `automation.request`
 beside `templates.write`). A person approves such a request on the run request routes
 and page, which needs `templates.write` beside `jobs.run`; the approval stores the
-schedule exactly as pictured, created by the approver. The limit and extra vars an
-assistant set are stored with `untrusted_overrides`: the schedule's runs carry them as
-untrusted values, re-checked at the claim and marked unsafe for Ansible; a person's
-later edit keeps the mark while the schedule has overrides. **An older manager
-alongside ignores the mark** and runs such a schedule's values as trusted, and it
+schedule exactly as pictured, created by the approver, in the transaction that
+records the approval. The limit and the extra vars an assistant set each carry their
+own mark (`untrusted_limit`, `untrusted_extra_vars`): the schedule's runs carry a
+marked part as untrusted values, re-checked at the claim (and the extra vars marked
+unsafe for Ansible), while a person's part stays trusted; a request that copies a
+marked part keeps its mark, and a person's later edit keeps a mark while its part is
+set. **An older manager alongside ignores the marks** and runs such a schedule's values as trusted, and it
 shows a schedule request as a run of its template, whose approval there would start
 that run instead of saving the schedule. Stop every manager instance before the new
 version starts, as 00123 requires. Workers and agents are not affected.

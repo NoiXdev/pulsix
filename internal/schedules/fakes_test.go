@@ -97,6 +97,27 @@ func (f *fakeStore) SetPaused(_ context.Context, orgID, id uuid.UUID, paused boo
 	return s, nil
 }
 
+func (f *fakeStore) SetPausedAt(ctx context.Context, orgID, id uuid.UUID, paused bool, next *time.Time, revision int64) (schedules.Schedule, error) {
+	f.mu.Lock()
+	s, ok := f.byID[id]
+	f.mu.Unlock()
+	if ok && s.OrgID == orgID && s.Revision != revision {
+		return schedules.Schedule{}, schedules.ErrRevisionMismatch
+	}
+	return f.SetPaused(ctx, orgID, id, paused, next)
+}
+
+func (f *fakeStore) GetByName(_ context.Context, orgID uuid.UUID, name string) (schedules.Schedule, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.byID {
+		if s.OrgID == orgID && s.Name == name {
+			return s, nil
+		}
+	}
+	return schedules.Schedule{}, schedules.ErrNotFound
+}
+
 func (f *fakeStore) PauseAll(_ context.Context, orgID uuid.UUID) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

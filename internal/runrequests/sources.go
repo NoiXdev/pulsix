@@ -94,7 +94,7 @@ type (
 		Validate(ctx context.Context, orgID, id uuid.UUID, in schedules.Input) error
 		CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in schedules.Input) (schedules.Schedule, error)
 		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in schedules.Input) (schedules.Schedule, error)
-		Resume(ctx context.Context, orgID, id uuid.UUID) (schedules.Schedule, error)
+		ResumeAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error)
 	}
 	// RunVarsSource reads the variable values a run would receive, secrets
 	// in the clear. The resolver feeds them only into the keyed vars

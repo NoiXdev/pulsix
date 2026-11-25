@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -70,10 +69,11 @@ func (s *Service) scheduleRequest(ctx context.Context, orgID uuid.UUID, in *Sche
 // approveSchedule is Approve for a schedule request (r with its current
 // picture p): only a person who may write schedules approves it; the
 // picture must still be the one the person saw, and its schedule must
-// still exist. The decision is recorded first, as for a run, so a
-// concurrent second approval loses; then the schedule is created,
-// changed or resumed exactly as pictured, as by; a failure puts the
-// request back to pending.
+// still exist. The decision and the schedule's write are one
+// transaction: the decision first, so a concurrent second approval
+// loses, then the schedule created, changed or resumed exactly as
+// pictured, as by. A failure of either leaves the request pending and the
+// schedule as it was.
 func (s *Service) approveSchedule(ctx context.Context, orgID uuid.UUID, r Request, p Picture, by uuid.UUID, fingerprint, current string, followUps *[]uuid.UUID, may Approver) (Approved, error) {
 	if !may.WriteTemplates {
 		return Approved{}, errScheduleNotAllowed
@@ -91,17 +91,17 @@ func (s *Service) approveSchedule(ctx context.Context, orgID uuid.UUID, r Reques
 		return Approved{}, errScheduleGone
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
-	if err != nil {
-		return Approved{}, fmt.Errorf("decide schedule request: %w", err)
-	}
-	if !ok {
-		return Approved{}, ErrDecided
-	}
-	if err := s.auto.ApplySchedule(ctx, orgID, r, *p.Schedule, by); err != nil {
-		if rerr := s.store.RevertToPending(ctx, orgID, r.ID); rerr != nil {
-			slog.ErrorContext(ctx, "schedule request: revert after a failed apply", "err", rerr, "request_id", r.ID)
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
+		if err != nil {
+			return fmt.Errorf("decide schedule request: %w", err)
 		}
+		if !ok {
+			return ErrDecided
+		}
+		return s.auto.ApplySchedule(ctx, orgID, r, *p.Schedule, by)
+	})
+	if err != nil {
 		return Approved{}, err
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint = StatusApproved, &by, &at, fingerprint

@@ -1,12 +1,24 @@
 -- name: CreateSchedule :one
 INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by,
-  untrusted_overrides)
+  untrusted_limit, untrusted_extra_vars)
 VALUES (@id, @org_id, @template_id, @name, @mode, @cron, @simple, @timezone, @guards, sqlc.narg(limit_override), @extra_vars, false, sqlc.narg(next_run_at), sqlc.narg(created_by),
-  @untrusted_overrides)
+  @untrusted_limit, @untrusted_extra_vars)
 RETURNING *;
 
 -- name: GetSchedule :one
 SELECT * FROM schedules WHERE org_id = @org_id AND id = @id;
+
+-- name: GetScheduleByName :one
+-- The schedule of that name; a name is unique per organization.
+SELECT * FROM schedules WHERE org_id = @org_id AND name = @name;
+
+-- name: SetSchedulePausedAt :one
+-- SetSchedulePaused guarded by the revision a person saw (an approved
+-- resume request): no row back means a stale revision or an unknown
+-- schedule.
+UPDATE schedules SET paused = @paused, next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id AND revision = @revision
+RETURNING *;
 
 -- name: ListSchedules :many
 SELECT * FROM schedules
@@ -18,7 +30,7 @@ ORDER BY name;
 -- tells the two apart with GetSchedule).
 UPDATE schedules SET template_id = @template_id, name = @name, mode = @mode, cron = @cron, simple = @simple,
   timezone = @timezone, guards = @guards, "limit" = sqlc.narg(limit_override), extra_vars = @extra_vars,
-  untrusted_overrides = @untrusted_overrides,
+  untrusted_limit = @untrusted_limit, untrusted_extra_vars = @untrusted_extra_vars,
   next_run_at = sqlc.narg(next_run_at), revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;

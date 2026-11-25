@@ -65,13 +65,17 @@ type ScheduleInput struct {
 // ScheduleChange is what a stored schedule request does, the request's
 // payload: the action and, for a create or an update, the schedule as it
 // will be (an update's patch merged into the schedule when the request was
-// made). AssistantOverrides says the limit and extra vars are the
-// assistant's (a create with any, an update that set either): the
-// schedule then carries them untrusted (schedules.Input.Untrusted).
+// made). AssistantLimit and AssistantExtraVars say the limit, the extra
+// vars, are the assistant's: set by the request, or copied from the
+// schedule while it marked them so. The trust is decided when the
+// request is made and travels with it, so a later change of the schedule
+// cannot make the copied values trusted. The schedule carries a marked
+// part untrusted (schedules.Input.UntrustedLimit, UntrustedExtraVars).
 type ScheduleChange struct {
 	Action             ScheduleAction `json:"action"`
 	Spec               *ScheduleSpec  `json:"spec,omitempty"`
-	AssistantOverrides bool           `json:"assistant_overrides,omitempty"`
+	AssistantLimit     bool           `json:"assistant_limit,omitempty"`
+	AssistantExtraVars bool           `json:"assistant_extra_vars,omitempty"`
 }
 
 // PictureSchedule is the picture of a schedule request: the schedule as it
@@ -84,9 +88,10 @@ type PictureSchedule struct {
 	ScheduleID string         `json:"schedule_id" doc:"The schedule the request creates (its id is taken when the request is made), changes or resumes"`
 	New        *ScheduleState `json:"new,omitempty" doc:"The schedule as the approval stores it (create and update)"`
 	Current    *ScheduleState `json:"current,omitempty" doc:"The schedule as it is now (update and resume)"`
-	// AssistantOverrides says New's limit and extra vars are the
-	// assistant's: the runs take every text in them literally.
-	AssistantOverrides bool `json:"assistant_overrides,omitempty" doc:"The limit and extra vars are the assistant's: its runs take every text in them literally, never as a template"`
+	// AssistantLimit and AssistantExtraVars say New's limit, extra vars,
+	// are the assistant's.
+	AssistantLimit     bool `json:"assistant_limit,omitempty" doc:"The limit is the assistant's: its runs hold it to plain host patterns"`
+	AssistantExtraVars bool `json:"assistant_extra_vars,omitempty" doc:"The extra vars are the assistant's: its runs take every text in them literally, never as a template"`
 	Gone               bool `json:"gone,omitempty" doc:"The schedule no longer exists; the request cannot be approved"`
 }
 

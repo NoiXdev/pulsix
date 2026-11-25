@@ -25,6 +25,10 @@ type Store interface {
 	List(ctx context.Context, orgID uuid.UUID, templateID *uuid.UUID) ([]Schedule, error)
 	Update(ctx context.Context, s Schedule, revision int64) (Schedule, error)
 	SetPaused(ctx context.Context, orgID, id uuid.UUID, paused bool, next *time.Time) (Schedule, error)
+	// SetPausedAt is SetPaused guarded by revision (ErrRevisionMismatch).
+	SetPausedAt(ctx context.Context, orgID, id uuid.UUID, paused bool, next *time.Time, revision int64) (Schedule, error)
+	// GetByName reads the schedule of that name (ErrNotFound).
+	GetByName(ctx context.Context, orgID uuid.UUID, name string) (Schedule, error)
 	PauseAll(ctx context.Context, orgID uuid.UUID) (int, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	RecordRun(ctx context.Context, r Run) error
@@ -100,7 +104,7 @@ func (s *Service) Create(ctx context.Context, orgID, actor uuid.UUID, in Input) 
 // CreateAs is Create under a given id: an approved schedule request
 // creates the schedule under the id the request took when it was made.
 func (s *Service) CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in Input) (Schedule, error) {
-	sch, err := s.build(ctx, orgID, id, in, nil, false)
+	sch, err := s.build(ctx, orgID, id, in, nil, untrustedParts{})
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -113,26 +117,26 @@ func (s *Service) CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in I
 // schedule request is checked when it is made, not only at its approval.
 func (s *Service) Validate(ctx context.Context, orgID, id uuid.UUID, in Input) error {
 	var stored map[string]any
-	untrusted := false
+	var was untrustedParts
 	cur, err := s.store.Get(ctx, orgID, id)
 	switch {
 	case err == nil:
-		stored, untrusted = cur.Overrides.ExtraVars, cur.UntrustedOverrides
+		stored, was = cur.Overrides.ExtraVars, partsOf(cur)
 	case !errors.Is(err, ErrNotFound):
 		return err
 	}
-	sch, err := s.build(ctx, orgID, id, in, stored, untrusted)
+	sch, err := s.build(ctx, orgID, id, in, stored, was)
 	if err != nil {
 		return err
 	}
-	all, err := s.store.List(ctx, orgID, nil)
-	if err != nil {
+	other, err := s.store.GetByName(ctx, orgID, sch.Name)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return nil
+	case err != nil:
 		return err
-	}
-	for _, o := range all {
-		if o.ID != id && o.Name == sch.Name {
-			return ErrNameTaken
-		}
+	case other.ID != id:
+		return ErrNameTaken
 	}
 	return nil
 }
@@ -147,7 +151,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 	if cur.Revision != revision {
 		return Schedule{}, ErrRevisionMismatch
 	}
-	sch, err := s.build(ctx, orgID, id, in, cur.Overrides.ExtraVars, cur.UntrustedOverrides)
+	sch, err := s.build(ctx, orgID, id, in, cur.Overrides.ExtraVars, partsOf(cur))
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -162,21 +166,22 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, revision int6
 	return s.store.Update(ctx, sch, revision)
 }
 
-// build validates in into the schedule to store. Its overrides are
-// untrusted when in says so (an approved request) or, for an update, when
-// the current ones were (wasUntrusted) and some remain: a person's update
-// cannot be told apart from the assistant's values it keeps. Untrusted
-// overrides pass checkUntrusted.
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stored map[string]any, wasUntrusted bool) (Schedule, error) {
+// build validates in into the schedule to store. Each part of its
+// overrides (limit, extra vars) is untrusted when in says so (an approved
+// request) or, for an update, when the current part was (was) and the
+// part is still set: a person's update cannot be told apart from the
+// assistant's values it keeps. Untrusted parts pass checkUntrusted.
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stored map[string]any, was untrustedParts) (Schedule, error) {
 	name, err := normalizeName(in.Name)
 	if err != nil {
 		return Schedule{}, err
 	}
-	untrusted := (in.Untrusted || wasUntrusted) && !in.Overrides.Empty()
-	if untrusted {
-		if err := checkUntrusted(in.Overrides); err != nil {
-			return Schedule{}, err
-		}
+	parts := untrustedParts{
+		limit: (in.UntrustedLimit || was.limit) && in.Overrides.Limit != nil,
+		vars:  (in.UntrustedExtraVars || was.vars) && len(in.Overrides.ExtraVars) > 0,
+	}
+	if err := checkUntrusted(in.Overrides, parts); err != nil {
+		return Schedule{}, err
 	}
 	now := s.now()
 	tt, err := compileTimetable(in.Mode, in.Cron, in.Simple, in.Timezone, now)
@@ -205,7 +210,7 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input, stor
 	return Schedule{
 		ID: id, OrgID: orgID, TemplateID: in.TemplateID, Name: name, Mode: in.Mode,
 		Cron: tt.cron, Simple: tt.simple, Timezone: in.Timezone, Guards: guards,
-		Overrides: ov, NextRunAt: &next, UntrustedOverrides: untrusted,
+		Overrides: ov, NextRunAt: &next, UntrustedLimit: parts.limit, UntrustedExtraVars: parts.vars,
 	}, nil
 }
 
@@ -273,6 +278,28 @@ func (s *Service) Resume(ctx context.Context, orgID, id uuid.UUID) (Schedule, er
 	}
 	next := tt.expr.Next(s.now(), tt.loc)
 	return s.store.SetPaused(ctx, orgID, id, false, &next)
+}
+
+// ResumeAt is Resume at the revision a person saw (an approved resume
+// request): a schedule changed since is ErrRevisionMismatch, never
+// resumed unseen.
+func (s *Service) ResumeAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Schedule, error) {
+	cur, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
+		return Schedule{}, err
+	}
+	if cur.Revision != revision {
+		return Schedule{}, ErrRevisionMismatch
+	}
+	if !cur.Paused {
+		return cur, nil
+	}
+	tt, err := compileTimetable(ModeCron, cur.Cron, nil, cur.Timezone, s.now())
+	if err != nil {
+		return Schedule{}, err
+	}
+	next := tt.expr.Next(s.now(), tt.loc)
+	return s.store.SetPausedAt(ctx, orgID, id, false, &next, revision)
 }
 
 // PauseAll pauses every active schedule of the org and returns how many.
@@ -383,7 +410,8 @@ func (s *Service) enqueue(ctx context.Context, sch Schedule, actor *uuid.UUID, e
 		if err != nil {
 			return nil, fmt.Errorf("reveal overrides: %w", err)
 		}
-		ov = &jobs.RunOverrides{Limit: revealed.Limit, ExtraVars: revealed.ExtraVars, Untrusted: sch.UntrustedOverrides}
+		ov = &jobs.RunOverrides{Limit: revealed.Limit, ExtraVars: revealed.ExtraVars,
+			UntrustedLimit: sch.UntrustedLimit, UntrustedVars: sch.UntrustedExtraVars}
 	}
 	ref := sch.ID
 	var key string

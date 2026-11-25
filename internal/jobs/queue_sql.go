@@ -672,7 +672,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		// whole document as JSON: a malformed "__ansible" object anywhere —
 		// the template's own values included — would make it fall back to
 		// YAML and drop them (final re-review New Breakage 1).
-		if ov != nil && ov.Untrusted {
+		if ov.varsUntrusted() {
 			if err := checkWireMarkers(wireRaw, job.Trigger); err != nil {
 				return err
 			}

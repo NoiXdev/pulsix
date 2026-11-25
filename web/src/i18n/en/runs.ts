@@ -208,7 +208,7 @@ export const enRuns = {
    * or rejects against what the page shows. */
   requests: {
     title: 'Run requests',
-    summary: 'Runs and schedules an assistant asked for. Nothing runs and no schedule changes until someone with the right to run jobs approves it.',
+    summary: 'Runs and schedules an assistant asked for. Nothing runs and no schedule changes until someone approves it: a run needs the right to run jobs, a schedule also the right to change job templates.',
     pendingCount: (n: number) => `${n} pending`,
     label: 'Run requests',
     count: (n: number) => (n === 1 ? '1 request' : `${n} requests`),
@@ -424,7 +424,10 @@ export const enRuns = {
         catchUpOn: (window: string) => `once, up to ${window || '1h'} late`,
         overlapValue: { skip: 'skip while a run is active', queue: 'queue behind the active run' } as Record<string, string>,
         maintenanceValue: { ignore: 'run anyway', skip: 'skip the run', exclude_hosts: 'leave those hosts out' } as Record<string, string>,
-        assistantValues: "The limit and extra vars come from the assistant: the schedule's runs take every text in them literally, never as a template.",
+        assistantLimit: "The limit comes from the assistant: the schedule's runs hold it to plain host patterns.",
+        assistantExtraVars: "The extra vars come from the assistant: the schedule's runs take every text in them literally, never as a template.",
+        templateRevision: (n: number) => `Template revision ${n}`,
+        templateChanged: (n: number) => `The template changed since the request (it was at revision ${n}).`,
         gone: 'The schedule no longer exists. This request cannot be approved; reject it.',
         approved: 'Request approved; the schedule is saved',
         openSchedules: 'Open the schedules',

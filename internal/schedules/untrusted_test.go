@@ -20,20 +20,20 @@ func TestCreateAsKeepsTheIDAndMarksTheOverridesUntrusted(t *testing.T) {
 	id := uuid.Must(uuid.NewV7())
 	in := validInput(w.templateID)
 	in.Overrides = templates.Overrides{ExtraVars: map[string]any{"release": "1.2"}}
-	in.Untrusted = true
+	in.UntrustedLimit, in.UntrustedExtraVars = true, true
 	s, err := w.svc.CreateAs(ctx, w.org, id, w.actor, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.ID != id || s.CreatedBy == nil || *s.CreatedBy != w.actor || !s.UntrustedOverrides {
+	if s.ID != id || s.CreatedBy == nil || *s.CreatedBy != w.actor || !s.UntrustedExtraVars || s.UntrustedLimit {
 		t.Fatalf("created = %+v", s)
 	}
 	if _, err := w.svc.RunNow(ctx, w.org, id, w.actor); err != nil {
 		t.Fatal(err)
 	}
 	req := w.runs.requests[len(w.runs.requests)-1]
-	if req.Overrides == nil || !req.Overrides.Untrusted {
-		t.Fatalf("run overrides = %+v, want untrusted", req.Overrides)
+	if req.Overrides == nil || !req.Overrides.UntrustedVars || req.Overrides.UntrustedLimit || req.Overrides.Untrusted {
+		t.Fatalf("run overrides = %+v, want untrusted extra vars only", req.Overrides)
 	}
 }
 
@@ -42,12 +42,12 @@ func TestCreateAsKeepsTheIDAndMarksTheOverridesUntrusted(t *testing.T) {
 func TestCreateAsWithoutOverridesIsNotUntrusted(t *testing.T) {
 	w := newWorld(t)
 	in := validInput(w.templateID)
-	in.Untrusted = true
+	in.UntrustedLimit, in.UntrustedExtraVars = true, true
 	s, err := w.svc.CreateAs(ctx, w.org, uuid.Must(uuid.NewV7()), w.actor, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.UntrustedOverrides {
+	if s.UntrustedLimit || s.UntrustedExtraVars {
 		t.Fatal("a schedule without overrides is marked untrusted")
 	}
 }
@@ -68,7 +68,7 @@ func TestUntrustedOverridesFollowTheClaimRules(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t)
 			in := validInput(w.templateID)
-			in.Overrides, in.Untrusted = ov, true
+			in.Overrides, in.UntrustedLimit, in.UntrustedExtraVars = ov, true, true
 			if _, err := w.svc.CreateAs(ctx, w.org, uuid.Must(uuid.NewV7()), w.actor, in); !errors.Is(err, schedules.ErrInvalidInput) {
 				t.Fatalf("err = %v, want ErrInvalidInput", err)
 			}
@@ -82,7 +82,7 @@ func TestUntrustedOverridesFollowTheClaimRules(t *testing.T) {
 func TestAPersonsUpdateKeepsTheUntrustedMarkWhileOverridesRemain(t *testing.T) {
 	w := newWorld(t)
 	in := validInput(w.templateID)
-	in.Overrides, in.Untrusted = templates.Overrides{ExtraVars: map[string]any{"release": "1.2"}}, true
+	in.Overrides, in.UntrustedExtraVars = templates.Overrides{ExtraVars: map[string]any{"release": "1.2"}}, true
 	s, err := w.svc.CreateAs(ctx, w.org, uuid.Must(uuid.NewV7()), w.actor, in)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestAPersonsUpdateKeepsTheUntrustedMarkWhileOverridesRemain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !up.UntrustedOverrides {
+	if !up.UntrustedExtraVars {
 		t.Fatal("a person's update with overrides dropped the untrusted mark")
 	}
 	person.Overrides = templates.Overrides{ExtraVars: map[string]any{"ansible_user": "root"}}
@@ -105,7 +105,7 @@ func TestAPersonsUpdateKeepsTheUntrustedMarkWhileOverridesRemain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.UntrustedOverrides {
+	if cleared.UntrustedExtraVars {
 		t.Fatal("clearing the overrides kept the untrusted mark")
 	}
 }
@@ -119,13 +119,13 @@ func TestAPersonsScheduleIsTrusted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.UntrustedOverrides {
+	if s.UntrustedLimit || s.UntrustedExtraVars {
 		t.Fatal("a person's schedule is untrusted")
 	}
 	if _, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor); err != nil {
 		t.Fatal(err)
 	}
-	if req := w.runs.requests[len(w.runs.requests)-1]; req.Overrides.Untrusted {
+	if req := w.runs.requests[len(w.runs.requests)-1]; req.Overrides.UntrustedVars || req.Overrides.UntrustedLimit {
 		t.Fatal("a person's schedule ran untrusted")
 	}
 }
@@ -167,21 +167,92 @@ func TestStoreKeepsTheUntrustedMark(t *testing.T) {
 	in := schedules.Schedule{
 		ID: uuid.Must(uuid.NewV7()), OrgID: org, TemplateID: templateID, Name: "Assistant's", Mode: schedules.ModeCron,
 		Cron: "0 3 * * *", Timezone: "UTC", Overrides: templates.Overrides{ExtraVars: map[string]any{"a": "b"}},
-		UntrustedOverrides: true,
+		UntrustedExtraVars: true,
 	}
 	got, err := st.Create(scoped, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.UntrustedOverrides {
-		t.Fatal("create dropped the untrusted mark")
+	if !got.UntrustedExtraVars || got.UntrustedLimit {
+		t.Fatal("create mixed up the untrusted marks")
 	}
-	got.UntrustedOverrides = false
+	got.UntrustedExtraVars, got.UntrustedLimit = false, true
 	up, err := st.Update(scoped, got, got.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if up.UntrustedOverrides {
-		t.Fatal("update kept a cleared untrusted mark")
+	if up.UntrustedExtraVars || !up.UntrustedLimit {
+		t.Fatal("update mixed up the untrusted marks")
+	}
+	byName, err := st.GetByName(scoped, org, "Assistant's")
+	if err != nil || byName.ID != in.ID {
+		t.Fatalf("GetByName = %+v %v", byName, err)
+	}
+	if _, err := st.GetByName(scoped, org, "nobody"); !errors.Is(err, schedules.ErrNotFound) {
+		t.Fatalf("GetByName of an unknown name = %v", err)
+	}
+	if _, err := st.SetPausedAt(scoped, org, in.ID, true, nil, up.Revision+1); !errors.Is(err, schedules.ErrRevisionMismatch) {
+		t.Fatalf("SetPausedAt at a stale revision = %v", err)
+	}
+	paused, err := st.SetPausedAt(scoped, org, in.ID, true, nil, up.Revision)
+	if err != nil || !paused.Paused {
+		t.Fatalf("SetPausedAt = %+v %v", paused, err)
+	}
+}
+
+// Each part carries its own mark: an assistant's limit leaves a person's
+// extra vars trusted, and a person's file limit stays allowed next to an
+// assistant's extra vars.
+func TestUntrustedPartsAreMarkedApart(t *testing.T) {
+	w := newWorld(t)
+	limit, file := "web*", "@hosts.txt"
+	in := validInput(w.templateID)
+	in.Overrides = templates.Overrides{Limit: &limit, ExtraVars: map[string]any{"ansible_user": "deploy"}}
+	in.UntrustedLimit = true
+	s, err := w.svc.CreateAs(ctx, w.org, uuid.Must(uuid.NewV7()), w.actor, in)
+	if err != nil {
+		t.Fatalf("an assistant's limit next to a person's ansible_user: %v", err)
+	}
+	if !s.UntrustedLimit || s.UntrustedExtraVars {
+		t.Fatalf("marks = limit %v vars %v", s.UntrustedLimit, s.UntrustedExtraVars)
+	}
+	in = validInput(w.templateID)
+	in.Name = "other"
+	in.Overrides = templates.Overrides{Limit: &file, ExtraVars: map[string]any{"release": "1"}}
+	in.UntrustedExtraVars = true
+	s, err = w.svc.CreateAs(ctx, w.org, uuid.Must(uuid.NewV7()), w.actor, in)
+	if err != nil {
+		t.Fatalf("a person's file limit next to an assistant's extra vars: %v", err)
+	}
+	if s.UntrustedLimit || !s.UntrustedExtraVars {
+		t.Fatalf("marks = limit %v vars %v", s.UntrustedLimit, s.UntrustedExtraVars)
+	}
+	if _, err := w.svc.RunNow(ctx, w.org, s.ID, w.actor); err != nil {
+		t.Fatal(err)
+	}
+	ov := w.runs.requests[len(w.runs.requests)-1].Overrides
+	if !ov.UntrustedVars || ov.UntrustedLimit || ov.Untrusted {
+		t.Fatalf("run overrides = %+v", ov)
+	}
+}
+
+// An approved resume resumes the schedule at the revision the person saw;
+// a schedule changed since is refused.
+func TestResumeAtTheRevisionSeen(t *testing.T) {
+	w := newWorld(t)
+	s, err := w.svc.Create(ctx, w.org, w.actor, validInput(w.templateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, err := w.svc.Pause(ctx, w.org, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.ResumeAt(ctx, w.org, s.ID, paused.Revision-1); !errors.Is(err, schedules.ErrRevisionMismatch) {
+		t.Fatalf("stale revision: %v", err)
+	}
+	got, err := w.svc.ResumeAt(ctx, w.org, s.ID, paused.Revision)
+	if err != nil || got.Paused || got.NextRunAt == nil {
+		t.Fatalf("resumed = %+v %v", got, err)
 	}
 }

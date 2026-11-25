@@ -38,10 +38,10 @@ func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams
 
 const createSchedule = `-- name: CreateSchedule :one
 INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by,
-  untrusted_overrides)
+  untrusted_limit, untrusted_extra_vars)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, $12, $13,
-  $14)
-RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides
+  $14, $15)
+RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars
 `
 
 type CreateScheduleParams struct {
@@ -58,7 +58,8 @@ type CreateScheduleParams struct {
 	ExtraVars          []byte             `json:"extra_vars"`
 	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
 	CreatedBy          pgtype.UUID        `json:"created_by"`
-	UntrustedOverrides bool               `json:"untrusted_overrides"`
+	UntrustedLimit     bool               `json:"untrusted_limit"`
+	UntrustedExtraVars bool               `json:"untrusted_extra_vars"`
 }
 
 func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) (Schedule, error) {
@@ -76,7 +77,8 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		arg.ExtraVars,
 		arg.NextRunAt,
 		arg.CreatedBy,
-		arg.UntrustedOverrides,
+		arg.UntrustedLimit,
+		arg.UntrustedExtraVars,
 	)
 	var i Schedule
 	err := row.Scan(
@@ -98,7 +100,8 @@ func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
-		&i.UntrustedOverrides,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
 	)
 	return i, err
 }
@@ -121,7 +124,7 @@ func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) 
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides FROM schedules WHERE org_id = $1 AND id = $2
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars FROM schedules WHERE org_id = $1 AND id = $2
 `
 
 type GetScheduleParams struct {
@@ -151,7 +154,46 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
-		&i.UntrustedOverrides,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
+	)
+	return i, err
+}
+
+const getScheduleByName = `-- name: GetScheduleByName :one
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars FROM schedules WHERE org_id = $1 AND name = $2
+`
+
+type GetScheduleByNameParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+}
+
+// The schedule of that name; a name is unique per organization.
+func (q *Queries) GetScheduleByName(ctx context.Context, arg GetScheduleByNameParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, getScheduleByName, arg.OrgID, arg.Name)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.TemplateID,
+		&i.Name,
+		&i.Mode,
+		&i.Cron,
+		&i.Simple,
+		&i.Timezone,
+		&i.Guards,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.Paused,
+		&i.NextRunAt,
+		&i.LastRunAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
 	)
 	return i, err
 }
@@ -315,7 +357,7 @@ func (q *Queries) ListScheduleRunsBetween(ctx context.Context, arg ListScheduleR
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides FROM schedules
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars FROM schedules
 WHERE org_id = $1 AND ($2::uuid IS NULL OR template_id = $2::uuid)
 ORDER BY name
 `
@@ -353,7 +395,8 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
-			&i.UntrustedOverrides,
+			&i.UntrustedLimit,
+			&i.UntrustedExtraVars,
 		); err != nil {
 			return nil, err
 		}
@@ -366,7 +409,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 }
 
 const lockDueSchedules = `-- name: LockDueSchedules :many
-SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides FROM schedules
+SELECT id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars FROM schedules
 WHERE NOT paused AND next_run_at IS NOT NULL AND next_run_at <= $1::timestamptz
 ORDER BY next_run_at
 LIMIT $2
@@ -414,7 +457,8 @@ func (q *Queries) LockDueSchedules(ctx context.Context, arg LockDueSchedulesPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
-			&i.UntrustedOverrides,
+			&i.UntrustedLimit,
+			&i.UntrustedExtraVars,
 		); err != nil {
 			return nil, err
 		}
@@ -442,7 +486,7 @@ func (q *Queries) PauseAllSchedules(ctx context.Context, orgID uuid.UUID) (int64
 const setSchedulePaused = `-- name: SetSchedulePaused :one
 UPDATE schedules SET paused = $1, next_run_at = $2, revision = revision + 1, updated_at = now()
 WHERE org_id = $3 AND id = $4
-RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides
+RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars
 `
 
 type SetSchedulePausedParams struct {
@@ -479,7 +523,59 @@ func (q *Queries) SetSchedulePaused(ctx context.Context, arg SetSchedulePausedPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
-		&i.UntrustedOverrides,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
+	)
+	return i, err
+}
+
+const setSchedulePausedAt = `-- name: SetSchedulePausedAt :one
+UPDATE schedules SET paused = $1, next_run_at = $2, revision = revision + 1, updated_at = now()
+WHERE org_id = $3 AND id = $4 AND revision = $5
+RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars
+`
+
+type SetSchedulePausedAtParams struct {
+	Paused    bool               `json:"paused"`
+	NextRunAt pgtype.Timestamptz `json:"next_run_at"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	ID        uuid.UUID          `json:"id"`
+	Revision  int64              `json:"revision"`
+}
+
+// SetSchedulePaused guarded by the revision a person saw (an approved
+// resume request): no row back means a stale revision or an unknown
+// schedule.
+func (q *Queries) SetSchedulePausedAt(ctx context.Context, arg SetSchedulePausedAtParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, setSchedulePausedAt,
+		arg.Paused,
+		arg.NextRunAt,
+		arg.OrgID,
+		arg.ID,
+		arg.Revision,
+	)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.TemplateID,
+		&i.Name,
+		&i.Mode,
+		&i.Cron,
+		&i.Simple,
+		&i.Timezone,
+		&i.Guards,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.Paused,
+		&i.NextRunAt,
+		&i.LastRunAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
 	)
 	return i, err
 }
@@ -509,10 +605,10 @@ func (q *Queries) TrimScheduleRuns(ctx context.Context, arg TrimScheduleRunsPara
 const updateSchedule = `-- name: UpdateSchedule :one
 UPDATE schedules SET template_id = $1, name = $2, mode = $3, cron = $4, simple = $5,
   timezone = $6, guards = $7, "limit" = $8, extra_vars = $9,
-  untrusted_overrides = $10,
-  next_run_at = $11, revision = revision + 1, updated_at = now()
-WHERE org_id = $12 AND id = $13 AND revision = $14
-RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_overrides
+  untrusted_limit = $10, untrusted_extra_vars = $11,
+  next_run_at = $12, revision = revision + 1, updated_at = now()
+WHERE org_id = $13 AND id = $14 AND revision = $15
+RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars
 `
 
 type UpdateScheduleParams struct {
@@ -525,7 +621,8 @@ type UpdateScheduleParams struct {
 	Guards             []byte             `json:"guards"`
 	LimitOverride      *string            `json:"limit_override"`
 	ExtraVars          []byte             `json:"extra_vars"`
-	UntrustedOverrides bool               `json:"untrusted_overrides"`
+	UntrustedLimit     bool               `json:"untrusted_limit"`
+	UntrustedExtraVars bool               `json:"untrusted_extra_vars"`
 	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
 	OrgID              uuid.UUID          `json:"org_id"`
 	ID                 uuid.UUID          `json:"id"`
@@ -545,7 +642,8 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		arg.Guards,
 		arg.LimitOverride,
 		arg.ExtraVars,
-		arg.UntrustedOverrides,
+		arg.UntrustedLimit,
+		arg.UntrustedExtraVars,
 		arg.NextRunAt,
 		arg.OrgID,
 		arg.ID,
@@ -571,7 +669,8 @@ func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
-		&i.UntrustedOverrides,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
 	)
 	return i, err
 }

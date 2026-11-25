@@ -32,10 +32,11 @@ func newScheduleRequestFixture(t *testing.T, slug string) scheduleRequestFixture
 
 type scheduleRequestDetail struct {
 	Request struct {
-		ID       string `json:"id"`
-		Kind     string `json:"kind"`
-		Status   string `json:"status"`
-		TargetID string `json:"target_id"`
+		ID               string `json:"id"`
+		Kind             string `json:"kind"`
+		Status           string `json:"status"`
+		TargetID         string `json:"target_id"`
+		TemplateRevision int64  `json:"template_revision"`
 	} `json:"request"`
 	Picture struct {
 		TemplateName string `json:"template_name"`
@@ -44,7 +45,8 @@ type scheduleRequestDetail struct {
 			ScheduleID         string          `json:"schedule_id"`
 			New                json.RawMessage `json:"new"`
 			Current            json.RawMessage `json:"current"`
-			AssistantOverrides bool            `json:"assistant_overrides"`
+			AssistantLimit     bool            `json:"assistant_limit"`
+			AssistantExtraVars bool            `json:"assistant_extra_vars"`
 		} `json:"schedule"`
 	} `json:"picture"`
 	Fingerprint  string `json:"fingerprint"`
@@ -74,12 +76,38 @@ func (f scheduleRequestFixture) createBody() map[string]any {
 
 func (f scheduleRequestFixture) scheduleRow(t *testing.T, id string) (paused, untrusted bool, cron string, createdBy uuid.UUID) {
 	t.Helper()
-	err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT paused, untrusted_overrides, cron, created_by FROM schedules WHERE id = $1`, id).
-		Scan(&paused, &untrusted, &cron, &createdBy)
+	var limit bool
+	err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT paused, untrusted_extra_vars, untrusted_limit, cron, created_by FROM schedules WHERE id = $1`, id).
+		Scan(&paused, &untrusted, &limit, &cron, &createdBy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return paused, untrusted, cron, createdBy
+}
+
+func (f scheduleRequestFixture) marks(t *testing.T, id string) (limit, vars bool) {
+	t.Helper()
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT untrusted_limit, untrusted_extra_vars FROM schedules WHERE id = $1`, id).Scan(&limit, &vars); err != nil {
+		t.Fatal(err)
+	}
+	return limit, vars
+}
+
+// approveNow approves request id with the fingerprint of its current
+// picture and wants want.
+func (f scheduleRequestFixture) approveNow(t *testing.T, id string, want int) {
+	t.Helper()
+	d := f.detail(t, id)
+	if resp := f.approve(t, f.adminC, id, d.Fingerprint); resp.StatusCode != want {
+		t.Fatalf("approve %s = %d %s, want %d", id, resp.StatusCode, mustReadBody(t, resp), want)
+	}
+}
+
+func (f scheduleRequestFixture) declareRelease(t *testing.T) {
+	t.Helper()
+	updateTemplate(t, f.runRequestFixture, func(in *templates.UpdateInput) {
+		in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{{Name: "release", Type: schema.TypeString}, {Name: "deploy_tag", Type: schema.TypeString}}}
+	})
 }
 
 // An assistant asks for a schedule; nothing exists until a person
@@ -178,7 +206,7 @@ func TestScheduleRequestExtraVarsAreUntrusted(t *testing.T) {
 	body := f.createBody()
 	body["extra_vars"] = map[string]any{"release": "{{ lookup('pipe', 'id') }}"}
 	created := f.ask(t, "/schedule-requests", body, http.StatusCreated)
-	if !created.Picture.Schedule.AssistantOverrides || !strings.Contains(string(created.Picture.Schedule.New), "lookup") {
+	if !created.Picture.Schedule.AssistantExtraVars || created.Picture.Schedule.AssistantLimit || !strings.Contains(string(created.Picture.Schedule.New), "lookup") {
 		t.Fatalf("picture = %+v %s", created.Picture.Schedule, created.Picture.Schedule.New)
 	}
 	d := f.detail(t, created.Request.ID)
@@ -285,5 +313,98 @@ func TestAutomationTokenPausesAndDeletesDirectly(t *testing.T) {
 	scoped := db.WithOrgScope(context.Background(), f.orgID)
 	if _, err := f.s.Deps.Schedules.Get(scoped, f.orgID, uuid.MustParse(sched.Schedule.ID)); err == nil {
 		t.Fatal("the schedule still exists")
+	}
+}
+
+// Review finding 1: an update request that leaves the extra vars out
+// copies them with the mark they have when the request is made, so
+// clearing them in between (R1) cannot make the assistant's value come
+// back trusted with the later approval of R2.
+func TestScheduleRequestTrustCannotBeLaundered(t *testing.T) {
+	f := newScheduleRequestFixture(t, "sr-launder")
+	f.declareRelease(t)
+	body := f.createBody()
+	body["extra_vars"] = map[string]any{"release": "{{ lookup('pipe', 'id') }}"}
+	created := f.ask(t, "/schedule-requests", body, http.StatusCreated)
+	f.approveNow(t, created.Request.ID, http.StatusOK)
+	id := created.Request.TargetID
+
+	r2 := f.ask(t, "/schedules/"+id+"/update-requests", map[string]any{"reason": "cron only", "cron": "*/30 * * * *"}, http.StatusCreated)
+	if !r2.Picture.Schedule.AssistantExtraVars {
+		t.Fatalf("R2 copies the assistant's extra vars without their mark: %+v", r2.Picture.Schedule)
+	}
+	r1 := f.ask(t, "/schedules/"+id+"/update-requests", map[string]any{"reason": "clear", "extra_vars": map[string]any{}}, http.StatusCreated)
+	f.approveNow(t, r1.Request.ID, http.StatusOK)
+	if _, vars := f.marks(t, id); vars {
+		t.Fatal("clearing the extra vars kept their mark")
+	}
+	f.approveNow(t, r2.Request.ID, http.StatusOK)
+	var release string
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT extra_vars->>'release' FROM schedules WHERE id = $1`, id).Scan(&release); err != nil {
+		t.Fatal(err)
+	}
+	if limit, vars := f.marks(t, id); !strings.Contains(release, "lookup") || !vars || limit {
+		t.Fatalf("after R2: release %q, marks limit=%v vars=%v; want the value back untrusted", release, limit, vars)
+	}
+}
+
+// Controller ruling (finding 2): the limit and the extra vars carry their
+// own marks, so an assistant's limit leaves a person's extra vars trusted
+// and an assistant's extra vars leave a person's limit trusted.
+func TestScheduleRequestTrustPerPart(t *testing.T) {
+	f := newScheduleRequestFixture(t, "sr-parts")
+	f.declareRelease(t)
+	body := f.scheduleBody("Person's")
+	body["extra_vars"] = map[string]any{"release": "{{ inventory_hostname }}"}
+	resp := postJSON(t, f.adminC, f.schedulesURL(), body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	var sched struct {
+		Schedule struct {
+			ID string `json:"id"`
+		} `json:"schedule"`
+	}
+	decodeInto(t, resp, &sched)
+	id := sched.Schedule.ID
+	upd := f.ask(t, "/schedules/"+id+"/update-requests", map[string]any{"reason": "web only", "limit": "web-*"}, http.StatusCreated)
+	if ps := upd.Picture.Schedule; !ps.AssistantLimit || ps.AssistantExtraVars {
+		t.Fatalf("picture marks = %+v", ps)
+	}
+	f.approveNow(t, upd.Request.ID, http.StatusOK)
+	if limit, vars := f.marks(t, id); !limit || vars {
+		t.Fatalf("marks limit=%v vars=%v, want the limit only", limit, vars)
+	}
+	upd = f.ask(t, "/schedules/"+id+"/update-requests", map[string]any{"reason": "new release", "extra_vars": map[string]any{"release": "2"}}, http.StatusCreated)
+	if ps := upd.Picture.Schedule; !ps.AssistantLimit || !ps.AssistantExtraVars {
+		t.Fatalf("picture marks = %+v, want both (the limit copied with its mark)", ps)
+	}
+}
+
+// Review finding 4: the decision and the schedule's write are one
+// transaction. A create whose name a person took meanwhile fails, and the
+// request stays pending with nothing stored, ready to be decided again.
+func TestScheduleRequestApprovalIsOneTransaction(t *testing.T) {
+	f := newScheduleRequestFixture(t, "sr-tx")
+	created := f.ask(t, "/schedule-requests", f.createBody(), http.StatusCreated)
+	if resp := postJSON(t, f.adminC, f.schedulesURL(), f.scheduleBody("Nightly safety net")); resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	f.approveNow(t, created.Request.ID, http.StatusUnprocessableEntity)
+	var status string
+	var fp *string
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT status, approved_fingerprint FROM run_requests WHERE id = $1`, created.Request.ID).Scan(&status, &fp); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || fp != nil {
+		t.Fatalf("after the failed approval: status %s, fingerprint %v", status, fp)
+	}
+	var n int
+	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT count(*) FROM schedules WHERE id = $1`, created.Request.TargetID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("schedules under the target = %d %v", n, err)
+	}
+	// Item 7: the request names the template revision it was made at.
+	if created.Request.TemplateRevision == 0 {
+		t.Fatal("the request carries no template revision")
 	}
 }

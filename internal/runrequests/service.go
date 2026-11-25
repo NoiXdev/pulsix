@@ -186,6 +186,10 @@ type Store interface {
 	// for none) and sets the run group to the request's own id, in the same
 	// write.
 	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error)
+	// InTx runs fn in one transaction: every store call made with the
+	// context fn receives (this store's and any other store built on the
+	// same database) commits with the others or not at all.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 	// RevertToPending undoes an approval whose enqueue failed; the run
 	// group stays, the fingerprint and the pinned commit go.
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error

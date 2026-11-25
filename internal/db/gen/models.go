@@ -1029,7 +1029,8 @@ type Schedule struct {
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
 	Revision           int64              `json:"revision"`
-	UntrustedOverrides bool               `json:"untrusted_overrides"`
+	UntrustedLimit     bool               `json:"untrusted_limit"`
+	UntrustedExtraVars bool               `json:"untrusted_extra_vars"`
 }
 
 type ScheduleNotification struct {

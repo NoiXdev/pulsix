@@ -7494,8 +7494,10 @@ export interface components {
              * @enum {string}
              */
             action: "create" | "update" | "resume";
-            /** @description The limit and extra vars are the assistant's: its runs take every text in them literally, never as a template */
-            assistant_overrides?: boolean;
+            /** @description The extra vars are the assistant's: its runs take every text in them literally, never as a template */
+            assistant_extra_vars?: boolean;
+            /** @description The limit is the assistant's: its runs hold it to plain host patterns */
+            assistant_limit?: boolean;
             /** @description The schedule as it is now (update and resume) */
             current?: components["schemas"]["ScheduleState"];
             /** @description The schedule no longer exists; the request cannot be approved */
@@ -8175,6 +8177,11 @@ export interface components {
             /** @description A schedule request's schedule: the one it creates (its id is taken when the request is made), changes or resumes */
             target_id?: string;
             template_id: string;
+            /**
+             * Format: int64
+             * @description The template's revision when the request was made; the picture's template_revision is the one an approval approves
+             */
+            template_revision: number;
             /**
              * @description Whether the requesting token can still ask for runs; approving starts the run either way
              * @enum {string}

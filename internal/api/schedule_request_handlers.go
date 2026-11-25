@@ -191,12 +191,12 @@ func scheduleRequestSummary(r runrequests.Request) string {
 	summary := "requested to " + string(ch.Action) + " schedule " + uuidString(r.TargetID)
 	if ch.Spec != nil {
 		summary += " (" + strconv.Quote(ch.Spec.Name) + ", job template " + ch.Spec.TemplateID.String()
-		if ch.AssistantOverrides {
+		if ch.AssistantLimit || ch.AssistantExtraVars {
 			var fields []string
-			if ch.Spec.Limit != nil {
+			if ch.AssistantLimit {
 				fields = append(fields, "limit")
 			}
-			if len(ch.Spec.ExtraVars) > 0 {
+			if ch.AssistantExtraVars {
 				fields = append(fields, "extra_vars ("+strings.Join(slices.Sorted(maps.Keys(ch.Spec.ExtraVars)), ", ")+")")
 			}
 			if len(fields) > 0 {

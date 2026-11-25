@@ -26,6 +26,7 @@ type runRequestDTO struct {
 	Kind               string `json:"kind" enum:"run,retry_failed,schedule" doc:"run, retry_failed, or schedule (create, change or resume a schedule; the picture's schedule says which)"`
 	Status             string `json:"status" enum:"pending,approved,rejected,expired,waiting_for_sync,failed"`
 	TemplateID         string `json:"template_id"`
+	TemplateRevision   int64  `json:"template_revision" doc:"The template's revision when the request was made; the picture's template_revision is the one an approval approves"`
 	HostID             string `json:"host_id,omitempty"`
 	JobID              string `json:"job_id,omitempty"`
 	Reason             string `json:"reason"`
@@ -47,7 +48,7 @@ type runRequestDTO struct {
 
 func toRunRequestDTO(r runrequests.Request) runRequestDTO {
 	dto := runRequestDTO{
-		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateID: r.TemplateID.String(),
+		ID: r.ID.String(), Kind: string(r.Kind), Status: string(r.Status), TemplateID: r.TemplateID.String(), TemplateRevision: r.TemplateRevision,
 		Reason: r.Reason, RequestedByUserID: r.RequestedByUser.String(), DecidedAt: r.DecidedAt,
 		CreatedAt: r.CreatedAt, SyncError: r.SyncError,
 		RequestedByTokenName: r.TokenName, TokenState: string(r.TokenState),

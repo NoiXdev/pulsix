@@ -99,11 +99,29 @@ describe('RunRequestDetailPage schedule requests (spec 2026-11-25 C)', () => {
   it('says the assistant set the limit and extra vars', async () => {
     renderSchedule({
       action: 'create',
-      assistant_overrides: true,
+      assistant_extra_vars: true,
       new: { ...current, paused: false, revision: undefined },
     });
     expect(await screen.findByRole('heading', { name: 'Create a schedule' })).toBeInTheDocument();
     expect(screen.getByText(/take every text in them literally/)).toBeInTheDocument();
+  });
+
+  it('names only the parts the assistant set', async () => {
+    renderSchedule({ action: 'update', current, assistant_limit: true, new: { ...current, limit: 'web-*', revision: undefined } });
+    expect(await screen.findByText(/The limit comes from the assistant/)).toBeInTheDocument();
+    expect(screen.queryByText(/The extra vars come from the assistant/)).not.toBeInTheDocument();
+  });
+
+  it('shows the template revision and says when the template changed since the request', async () => {
+    renderSchedule({ action: 'resume', current }, 'operator', { template_revision: 6 });
+    expect(await screen.findByText('Template revision 7')).toBeInTheDocument();
+    expect(screen.getByText('The template changed since the request (it was at revision 6).')).toBeInTheDocument();
+  });
+
+  it('says nothing about a template change when there is none', async () => {
+    renderSchedule({ action: 'resume', current }, 'operator', { template_revision: 7 });
+    expect(await screen.findByText('Template revision 7')).toBeInTheDocument();
+    expect(screen.queryByText(/changed since the request/)).not.toBeInTheDocument();
   });
 
   it('approves with the fingerprint and opens the schedule', async () => {

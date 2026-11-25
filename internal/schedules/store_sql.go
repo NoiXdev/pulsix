@@ -30,7 +30,8 @@ func (st *SQLStore) Create(ctx context.Context, s Schedule) (Schedule, error) {
 	row, err := st.q.CreateSchedule(ctx, gen.CreateScheduleParams{
 		ID: s.ID, OrgID: s.OrgID, TemplateID: s.TemplateID, Name: s.Name, Mode: string(s.Mode), Cron: s.Cron,
 		Simple: simple, Timezone: s.Timezone, Guards: guards, LimitOverride: s.Overrides.Limit, ExtraVars: vars,
-		NextRunAt: db.NullTime(s.NextRunAt), CreatedBy: db.NullUUID(s.CreatedBy), UntrustedOverrides: s.UntrustedOverrides,
+		NextRunAt: db.NullTime(s.NextRunAt), CreatedBy: db.NullUUID(s.CreatedBy),
+		UntrustedLimit: s.UntrustedLimit, UntrustedExtraVars: s.UntrustedExtraVars,
 	})
 	if db.IsUniqueViolation(err) {
 		return Schedule{}, ErrNameTaken
@@ -79,7 +80,8 @@ func (st *SQLStore) Update(ctx context.Context, s Schedule, revision int64) (Sch
 	row, err := st.q.UpdateSchedule(ctx, gen.UpdateScheduleParams{
 		OrgID: s.OrgID, ID: s.ID, Revision: revision, TemplateID: s.TemplateID, Name: s.Name, Mode: string(s.Mode),
 		Cron: s.Cron, Simple: simple, Timezone: s.Timezone, Guards: guards, LimitOverride: s.Overrides.Limit,
-		ExtraVars: vars, NextRunAt: db.NullTime(s.NextRunAt), UntrustedOverrides: s.UntrustedOverrides,
+		ExtraVars: vars, NextRunAt: db.NullTime(s.NextRunAt),
+		UntrustedLimit: s.UntrustedLimit, UntrustedExtraVars: s.UntrustedExtraVars,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gerr := st.Get(ctx, s.OrgID, s.ID); gerr != nil {
@@ -106,6 +108,34 @@ func (st *SQLStore) SetPaused(ctx context.Context, orgID, id uuid.UUID, paused b
 	}
 	if err != nil {
 		return Schedule{}, fmt.Errorf("set schedule paused: %w", err)
+	}
+	return toSchedule(row)
+}
+
+// SetPausedAt is SetPaused at revision: ErrRevisionMismatch when the
+// schedule changed since, ErrNotFound when it is gone.
+func (st *SQLStore) SetPausedAt(ctx context.Context, orgID, id uuid.UUID, paused bool, next *time.Time, revision int64) (Schedule, error) {
+	row, err := st.q.SetSchedulePausedAt(ctx, gen.SetSchedulePausedAtParams{OrgID: orgID, ID: id, Paused: paused, NextRunAt: db.NullTime(next), Revision: revision})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := st.Get(ctx, orgID, id); gerr != nil {
+			return Schedule{}, gerr
+		}
+		return Schedule{}, ErrRevisionMismatch
+	}
+	if err != nil {
+		return Schedule{}, fmt.Errorf("set schedule paused: %w", err)
+	}
+	return toSchedule(row)
+}
+
+// GetByName reads the organization's schedule of that name.
+func (st *SQLStore) GetByName(ctx context.Context, orgID uuid.UUID, name string) (Schedule, error) {
+	row, err := st.q.GetScheduleByName(ctx, gen.GetScheduleByNameParams{OrgID: orgID, Name: name})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Schedule{}, ErrNotFound
+	}
+	if err != nil {
+		return Schedule{}, fmt.Errorf("get schedule by name: %w", err)
 	}
 	return toSchedule(row)
 }
@@ -209,7 +239,7 @@ func toSchedule(r gen.Schedule) (Schedule, error) {
 		ID: r.ID, OrgID: r.OrgID, TemplateID: r.TemplateID, Name: r.Name, Mode: Mode(r.Mode), Cron: r.Cron,
 		Timezone: r.Timezone, Paused: r.Paused, NextRunAt: db.TimePtr(r.NextRunAt), LastRunAt: db.TimePtr(r.LastRunAt),
 		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
-		UntrustedOverrides: r.UntrustedOverrides,
+		UntrustedLimit: r.UntrustedLimit, UntrustedExtraVars: r.UntrustedExtraVars,
 	}
 	s.Overrides.Limit = r.Limit
 	if len(r.Simple) > 0 {
