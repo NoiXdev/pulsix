@@ -27,8 +27,9 @@ function renderPage() {
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents', component: AgentsPage });
   const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST VIEW</div> });
+  const runRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: () => <div>RUN VIEW</div> });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, hostRoute])]),
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, hostRoute, runRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/agents'] }),
   });
   return {
@@ -116,6 +117,24 @@ describe('AgentsPage', () => {
     expect(screen.getByText('1 / 3')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for web-1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for token edge-1' })).toBeInTheDocument();
+  });
+
+  it('marks a token a run minted and links to the run (spec 2026-11-25 B)', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/agents': { agents: [agent()] },
+      'GET /api/v1/orgs/acme/agents/tokens': {
+        tokens: [
+          { id: 't1', zone_id: 'z1', host_id: 'h9', name_hint: 'db-1', max_uses: 1, uses: 0, expires_at: inDays(1), created_at: '', job_id: '0197c0a2-1234-7000-8000-000000000001' },
+          { id: 't2', zone_id: 'z1', name_hint: 'edge-1', max_uses: 3, uses: 1, expires_at: inDays(0.02), created_at: '' },
+        ],
+      },
+    });
+    renderPage();
+    const link = await screen.findByRole('link', { name: 'for job 0197c0a2' });
+    expect(link).toHaveAttribute('href', '/o/acme/runs/0197c0a2-1234-7000-8000-000000000001');
+    // A person's token carries no such mark.
+    expect(screen.getAllByText(/^for job /)).toHaveLength(1);
   });
 
   it('keeps a pending token menu apart from an agent of the same name', async () => {

@@ -76,6 +76,7 @@ type agentTokenDTO struct {
 	Uses      int       `json:"uses"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+	JobID     string    `json:"job_id,omitempty" doc:"Set when a run minted the token for its host (a template with agent enrollment); the run revokes it when it ends"`
 }
 
 type agentOrgInput struct {
@@ -171,6 +172,9 @@ func toAgentTokenDTO(t agents.Token) agentTokenDTO {
 	}
 	if t.HostID != nil {
 		dto.HostID = t.HostID.String()
+	}
+	if t.JobID != nil {
+		dto.JobID = t.JobID.String()
 	}
 	return dto
 }

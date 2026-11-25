@@ -177,8 +177,10 @@ function RunFacts({ org, job }: { org: string; job: JobDetail }) {
         // 2026-11-25 A).
         ...(job.pinned_commit ? [{ label: t.runs.detail.pinnedCommit, value: <CommitId sha={job.pinned_commit} /> }] : []),
         // The agent enrollment tokens the run handed its hosts, as counts
-        // (spec 2026-11-25 B): the tokens themselves are never served.
-        ...(job.enroll_tokens
+        // (spec 2026-11-25 B): the tokens themselves are never served. A
+        // run that minted none (a dry run, every host had an agent) shows
+        // nothing.
+        ...(job.enroll_tokens && job.enroll_tokens.minted > 0
           ? [{ label: t.runs.detail.enrollTokens, value: <span className="font-mono">{t.runs.detail.enrollTokenCounts(job.enroll_tokens.minted, job.enroll_tokens.used)}</span> }]
           : []),
       ]}

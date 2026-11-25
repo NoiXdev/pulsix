@@ -43,6 +43,7 @@ export const deAgents: Messages['agents'] = {
   },
   boundToHost: 'an einen Host',
   boundNewHost: 'neuer Host',
+  forJob: (id: string) => `für Job ${id}`,
   empty: 'Noch keine Agents registriert.',
   revoke: 'Widerrufen',
   revokeItem: 'Widerrufen…',

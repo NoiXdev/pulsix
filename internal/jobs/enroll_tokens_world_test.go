@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -51,10 +52,17 @@ type enrolPin struct{}
 func (enrolPin) CAPin() [32]byte { return [32]byte{7} }
 
 // enrolRenderer renders the world's hosts afresh on every call (the claim
-// writes tokens into the document it gets).
-type enrolRenderer struct{ names map[uuid.UUID]string }
+// writes tokens into the document it gets). hook, when set, runs before
+// every render: a test moves the job on while a claim builds its payload.
+type enrolRenderer struct {
+	names map[uuid.UUID]string
+	hook  func()
+}
 
 func (r enrolRenderer) Snapshot(_ context.Context, _ uuid.UUID, scope render.Scope) (render.Inventory, error) {
+	if r.hook != nil {
+		r.hook()
+	}
 	hostvars := map[string]any{}
 	conns := map[string]render.Connection{}
 	for _, id := range scope.HostIDs {
@@ -108,11 +116,16 @@ func newEnrolWorld(t *testing.T, slug string) *enrolWorld {
 
 // newQueue builds the world's queue over tokens' agent registry.
 func (w *enrolWorld) newQueue(tokens *agents.Service) *SQLQueue {
+	return w.newHookedQueue(tokens, nil)
+}
+
+// newHookedQueue is newQueue whose renderer runs hook before every render.
+func (w *enrolWorld) newHookedQueue(tokens *agents.Service, hook func()) *SQLQueue {
 	names := map[uuid.UUID]string{}
 	for n, id := range w.hosts {
 		names[id] = n
 	}
-	q := NewSQLQueue(w.d, fakeBox{}, enrolRenderer{names: names}, fullProbeCreds{}, w.templates, fakeBastions{}, time.Now, rand.Reader)
+	q := NewSQLQueue(w.d, fakeBox{}, enrolRenderer{names: names, hook: hook}, fullProbeCreds{}, w.templates, fakeBastions{}, time.Now, rand.Reader)
 	q.SetKeyPins(fakePins{})
 	q.SetEnrollment(agentTokens{svc: tokens}, audit.NewRecorder(audit.NewSQLStore(w.d), time.Now))
 	return q
@@ -252,7 +265,8 @@ func assertNoToken(t *testing.T, where, text string, tokens map[string]string) {
 		if err != nil {
 			t.Fatalf("%s's token is no agent token: %v", host, err)
 		}
-		secret := strings.TrimPrefix(tok, enrolltoken.AgentPrefix)
+		// The secret part alone, as the token spells it.
+		secret := base64.RawURLEncoding.EncodeToString(parsed.Secret)
 		if strings.Contains(text, tok) || strings.Contains(text, secret) || len(parsed.Secret) == 0 {
 			t.Fatalf("%s carries %s's token: %s", where, host, text)
 		}

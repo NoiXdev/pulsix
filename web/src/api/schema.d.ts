@@ -3845,6 +3845,8 @@ export interface components {
             /** @description Set when the token is bound to an existing host */
             host_id?: string;
             id: string;
+            /** @description Set when a run minted the token for its host (a template with agent enrollment); the run revokes it when it ends */
+            job_id?: string;
             /** Format: int64 */
             max_uses: number;
             name_hint?: string;
@@ -6050,7 +6052,7 @@ export interface components {
             created_at: string;
             /** @description A dry run's options; absent for every other job */
             dry_run?: components["schemas"]["DryRunDTO"];
-            /** @description The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that enrols no agents */
+            /** @description The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that minted none */
             enroll_tokens?: components["schemas"]["JobEnrollTokensDTO"];
             error?: string;
             /** Format: date-time */

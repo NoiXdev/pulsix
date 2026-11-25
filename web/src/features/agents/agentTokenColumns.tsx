@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import type { AgentToken } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
@@ -11,9 +12,10 @@ export function agentTokenName(tok: AgentToken): string {
 /**
  * agentTokenColumns is every column the pending enrollment token list
  * offers (list id `agent-tokens`, a second list on the Agents page whose
- * sort and page stay in component state). Withdraw is the row menu's.
+ * sort and page stay in component state). Withdraw is the row menu's. A
+ * token a run minted for its host names the run and links to it.
  */
-export function agentTokenColumns(t: Messages, fmt: ReturnType<typeof useFormat>): DataListColumn<AgentToken>[] {
+export function agentTokenColumns(t: Messages, fmt: ReturnType<typeof useFormat>, org: string): DataListColumn<AgentToken>[] {
   const c = t.agents.columns;
   return [
     {
@@ -24,7 +26,16 @@ export function agentTokenColumns(t: Messages, fmt: ReturnType<typeof useFormat>
       sortValue: (tok) => agentTokenName(tok),
       required: true,
       defaultVisible: true,
-      render: (tok) => <span className="block truncate font-mono">{agentTokenName(tok)}</span>,
+      render: (tok) => (
+        <span className="block truncate">
+          <span className="font-mono">{agentTokenName(tok)}</span>
+          {tok.job_id && (
+            <Link to="/o/$org/runs/$id" params={{ org, id: tok.job_id }} className={`ml-2 text-muted-foreground hover:text-primary ${CELL_MINOR}`}>
+              {t.agents.forJob(tok.job_id.slice(0, 8))}
+            </Link>
+          )}
+        </span>
+      ),
     },
     {
       id: 'uses',

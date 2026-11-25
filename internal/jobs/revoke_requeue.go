@@ -28,16 +28,20 @@ func (q *SQLQueue) RequeueWorkerJobs(ctx context.Context, orgID, workerID uuid.U
 	// own.
 	var ids []uuid.UUID
 	err = q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
-		var err error
-		ids, err = g.RequeueWorkerJobs(ctx, gen.RequeueWorkerJobsParams{
+		rows, err := g.RequeueWorkerJobs(ctx, gen.RequeueWorkerJobsParams{
 			Reason: "requeued: " + reason, OrgID: orgID, WorkerID: worker, MaxAttempts: int32(maxAttempts), //nolint:gosec // a small configured count
 		})
 		if err != nil {
 			return err
 		}
-		for _, id := range ids {
-			if err := q.revokeEnrollTokens(ctx, orgID, id); err != nil {
-				return fmt.Errorf("job %s: %w", id, err)
+		ids = make([]uuid.UUID, len(rows))
+		for i, r := range rows {
+			ids[i] = r.ID
+			if Kind(r.Kind) != KindRun {
+				continue
+			}
+			if err := q.revokeEnrollTokens(ctx, orgID, r.ID); err != nil {
+				return fmt.Errorf("job %s: %w", r.ID, err)
 			}
 		}
 		return nil

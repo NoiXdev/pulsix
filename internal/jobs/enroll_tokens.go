@@ -13,8 +13,10 @@ package jobs
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 )
 
@@ -89,18 +92,47 @@ func enrols(job Job, tmpl TemplateRow) bool {
 	return job.Kind == KindRun && job.EnrollHostIDs != nil && tmpl.AgentEnrollment && !job.CheckMode && job.Trigger == TriggerManual
 }
 
-// enrollTargets is the hosts of the job's confirmed list that the claim
-// rendered (the job's own hosts, minus any the claim dropped), sorted by
-// name.
-func enrollTargets(list []uuid.UUID, conns map[string]render.Connection) []EnrollTarget {
+// enrollTargets is the hosts of the job's confirmed list the play runs
+// on, sorted by name: the hosts the claim rendered (the job's own, after
+// any host list of the run and minus any the claim dropped) that the run's
+// effective limit keeps (limitKeeps).
+func enrollTargets(list []uuid.UUID, inv render.Inventory, limit string) []EnrollTarget {
+	keep := limitKeeps(limit, inv.Doc)
 	var out []EnrollTarget
-	for name, c := range conns {
-		if slices.Contains(list, c.HostID) {
+	for name, c := range inv.Connections {
+		if slices.Contains(list, c.HostID) && keep(name) {
 			out = append(out, EnrollTarget{HostID: c.HostID, Name: name})
 		}
 	}
 	slices.SortFunc(out, func(a, b EnrollTarget) int { return strings.Compare(a.Name, b.Name) })
 	return out
+}
+
+// limitKeeps decides by host name whether the run's limit keeps a host,
+// with the matcher the enqueue gates zones with (limit.go). It keeps every
+// host when the limit cannot be decided, and when any of its terms matches
+// a group of the rendered inventory: a host's groups are not matched here,
+// and a token too many is revoked with the run, while a token too few
+// stops the install on that host.
+func limitKeeps(limit string, doc map[string]any) func(name string) bool {
+	p := parseLimit(limit)
+	if !p.decided {
+		return func(string) bool { return true }
+	}
+	for group := range doc {
+		if group == "_meta" {
+			continue
+		}
+		for _, term := range p.terms {
+			if m, err := path.Match(term.pat, group); err != nil || m {
+				return func(string) bool { return true }
+			}
+		}
+	}
+	return func(name string) bool {
+		matched, decided := p.matches(name)
+		return matched || !decided
+	}
 }
 
 // handOverEnrollTokens mints the claim's tokens in one transaction —
@@ -110,11 +142,11 @@ func enrollTargets(list []uuid.UUID, conns map[string]render.Connection) []Enrol
 // claim (LockClaimedJob); a requeue or an end that got there first leaves
 // nothing minted. Any failure rolls the whole hand-out back: nothing
 // reaches the inventory.
-func (q *SQLQueue) handOverEnrollTokens(ctx context.Context, job Job, inv *render.Inventory) error {
+func (q *SQLQueue) handOverEnrollTokens(ctx context.Context, job Job, inv *render.Inventory, limit string) error {
 	if q.enroll == nil {
 		return errors.New("mint enrollment tokens: no agent registry wired")
 	}
-	targets := enrollTargets(job.EnrollHostIDs, inv.Connections)
+	targets := enrollTargets(job.EnrollHostIDs, *inv, limit)
 	var minted []EnrollToken
 	err := q.db.WithWriteTx(ctx, job.OrgID, func(ctx context.Context) error {
 		n, err := gen.New(q.db).LockClaimedJob(ctx, gen.LockClaimedJobParams{ID: job.ID, Attempts: int32(job.Attempts)}) //nolint:gosec // a small claim count
@@ -155,7 +187,12 @@ func (q *SQLQueue) handOverEnrollTokens(ctx context.Context, job Job, inv *rende
 		if err := inv.SetHostVar(m.Name, enrollTokensVar, map[string]any{}); err != nil {
 			return fmt.Errorf("hand over the enrollment token of host %s: %w", m.Name, err)
 		}
-		inv.Secrets = append(inv.Secrets, m.Token)
+		// The secret part on its own too, in case a task prints only it.
+		parsed, err := enrolltoken.ParseAgent(m.Token)
+		if err != nil {
+			return fmt.Errorf("hand over the enrollment token of host %s: %w", m.Name, err)
+		}
+		inv.Secrets = append(inv.Secrets, m.Token, base64.RawURLEncoding.EncodeToString(parsed.Secret))
 	}
 	return nil
 }

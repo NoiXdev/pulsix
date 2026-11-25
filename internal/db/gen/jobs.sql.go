@@ -807,7 +807,7 @@ type ListExhaustedStaleJobsRow struct {
 	Attempts int32     `json:"attempts"`
 }
 
-// Reaper pass 1b (org-unscoped, raw pool): stale claims that used up their
+// Reaper pass 1b (org-unscoped): stale claims that used up their
 // attempts. The reaper fails each through the queue's terminal transition
 // instead of requeuing it again.
 func (q *Queries) ListExhaustedStaleJobs(ctx context.Context, arg ListExhaustedStaleJobsParams) ([]ListExhaustedStaleJobsRow, error) {
@@ -1707,6 +1707,51 @@ func (q *Queries) ListLiveJobs(ctx context.Context, arg ListLiveJobsParams) ([]J
 	return items, nil
 }
 
+const listStaleJobs = `-- name: ListStaleJobs :many
+SELECT id, org_id, kind FROM jobs
+WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
+  AND NOT (id = ANY($2::uuid[]))
+  AND attempts < $3::integer
+`
+
+type ListStaleJobsParams struct {
+	StaleBefore time.Time   `json:"stale_before"`
+	Live        []uuid.UUID `json:"live"`
+	MaxAttempts int32       `json:"max_attempts"`
+}
+
+type ListStaleJobsRow struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+	Kind  string    `json:"kind"`
+}
+
+// Reaper pass 1 (org-unscoped): claims whose worker went away and that
+// have attempts left (attempts counts claims; see ListExhaustedStaleJobs
+// for the rest). The live ids — the jobs whose bound stream still shows
+// signs of life — are excluded; an empty array excludes nothing (id =
+// ANY('{}') is false for every row). The reaper requeues each in a
+// transaction of its own, bound to the job's organization (RequeueStaleJob).
+func (q *Queries) ListStaleJobs(ctx context.Context, arg ListStaleJobsParams) ([]ListStaleJobsRow, error) {
+	rows, err := q.db.Query(ctx, listStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStaleJobsRow
+	for rows.Next() {
+		var i ListStaleJobsRow
+		if err := rows.Scan(&i.ID, &i.OrgID, &i.Kind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnreportedFinishedRunGroups = `-- name: ListUnreportedFinishedRunGroups :many
 SELECT org_id, run_group_id
 FROM jobs
@@ -1937,50 +1982,34 @@ func (q *Queries) RecordVaultIdentities(ctx context.Context, arg RecordVaultIden
 	return err
 }
 
-const requeueStaleJobs = `-- name: RequeueStaleJobs :many
+const requeueStaleJob = `-- name: RequeueStaleJob :execrows
 UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
-WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
-  AND NOT (id = ANY($2::uuid[]))
-  AND attempts < $3::integer
-RETURNING id, org_id
+WHERE id = $1 AND status IN ('claimed', 'running') AND claimed_at < $2::timestamptz
+  AND NOT (id = ANY($3::uuid[]))
+  AND attempts < $4::integer
 `
 
-type RequeueStaleJobsParams struct {
+type RequeueStaleJobParams struct {
+	ID          uuid.UUID   `json:"id"`
 	StaleBefore time.Time   `json:"stale_before"`
 	Live        []uuid.UUID `json:"live"`
 	MaxAttempts int32       `json:"max_attempts"`
 }
 
-type RequeueStaleJobsRow struct {
-	ID    uuid.UUID `json:"id"`
-	OrgID uuid.UUID `json:"org_id"`
-}
-
-// Reaper pass 1 (org-unscoped): claims whose worker went away
-// go back to queued for the next claim round — but only while the job has
-// attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
-// rest). The live ids — the jobs whose bound stream still shows signs of
-// life — are excluded; an empty array excludes nothing (id = ANY('{}') is
-// false for every row). The organization comes back for the revocation of
-// a requeued run's enrollment tokens in the same transaction.
-func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsParams) ([]RequeueStaleJobsRow, error) {
-	rows, err := q.db.Query(ctx, requeueStaleJobs, arg.StaleBefore, arg.Live, arg.MaxAttempts)
+// Requeues one job ListStaleJobs found, re-checking the same conditions
+// inside the UPDATE: a job that finished, was re-claimed or bound a live
+// stream since the scan is left alone (0 rows).
+func (q *Queries) RequeueStaleJob(ctx context.Context, arg RequeueStaleJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueStaleJob,
+		arg.ID,
+		arg.StaleBefore,
+		arg.Live,
+		arg.MaxAttempts,
+	)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []RequeueStaleJobsRow
-	for rows.Next() {
-		var i RequeueStaleJobsRow
-		if err := rows.Scan(&i.ID, &i.OrgID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
 }
 
 const requeueWorkerJobs = `-- name: RequeueWorkerJobs :many
@@ -1988,7 +2017,7 @@ UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_
     error = $1::text
 WHERE org_id = $2 AND worker_id = $3
   AND status IN ('claimed', 'running') AND attempts < $4::integer
-RETURNING id
+RETURNING id, kind
 `
 
 type RequeueWorkerJobsParams struct {
@@ -1998,10 +2027,15 @@ type RequeueWorkerJobsParams struct {
 	MaxAttempts int32       `json:"max_attempts"`
 }
 
+type RequeueWorkerJobsRow struct {
+	ID   uuid.UUID `json:"id"`
+	Kind string    `json:"kind"`
+}
+
 // A revoked worker's claimed and running jobs go back to the queue while
 // attempts remain (the claim already counted the attempt); the reason
 // stays in error until the next finish overwrites it.
-func (q *Queries) RequeueWorkerJobs(ctx context.Context, arg RequeueWorkerJobsParams) ([]uuid.UUID, error) {
+func (q *Queries) RequeueWorkerJobs(ctx context.Context, arg RequeueWorkerJobsParams) ([]RequeueWorkerJobsRow, error) {
 	rows, err := q.db.Query(ctx, requeueWorkerJobs,
 		arg.Reason,
 		arg.OrgID,
@@ -2012,13 +2046,13 @@ func (q *Queries) RequeueWorkerJobs(ctx context.Context, arg RequeueWorkerJobsPa
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	var items []RequeueWorkerJobsRow
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i RequeueWorkerJobsRow
+		if err := rows.Scan(&i.ID, &i.Kind); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

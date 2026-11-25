@@ -42,6 +42,12 @@ describe('RunDetailPage enrolment tokens (spec 2026-11-25 B)', () => {
     expect(screen.getByText('3 minted, 2 used')).toBeInTheDocument();
   });
 
+  it('shows nothing for a run that minted no token (a dry run, every host had an agent)', async () => {
+    render({ enroll_tokens: { minted: 0, used: 0 } });
+    await screen.findByText('deploy-site');
+    expect(screen.queryByText('Enrolment tokens')).not.toBeInTheDocument();
+  });
+
   it('shows nothing for a run that enrols no agents', async () => {
     render({});
     await screen.findByText('deploy-site');

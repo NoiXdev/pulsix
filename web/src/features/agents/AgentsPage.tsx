@@ -48,7 +48,7 @@ export function AgentsPage() {
   const view = useListView('agents', columns, { mode: 'client', rowKey: (a) => a.host_id, resetKey: JSON.stringify(filters) });
   // The pending tokens keep their filter in component state, like their sort and page.
   const [expiredTokens, setExpiredTokens] = useState(false);
-  const tokenColumns = agentTokenColumns(t, fmt);
+  const tokenColumns = agentTokenColumns(t, fmt, org);
   const tokenView = useListView('agent-tokens', tokenColumns, { mode: 'client', urlState: false, rowKey: (tok) => tok.id, resetKey: String(expiredTokens) });
 
   const orgGuard = useQueryGuard(orgInfo);

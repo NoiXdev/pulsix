@@ -332,6 +332,13 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		}
 	}
 	if err := q.buildPayload(db.WithOrgScope(ctx, job.OrgID), job, &claim.Job); err != nil {
+		// The job left this claim while its payload was built (a requeue,
+		// perhaps already another claim): the claim is void, and whoever
+		// moved the job owns it — failing it here would end a run another
+		// worker is running and revoke its tokens.
+		if errors.Is(err, errClaimMoved) {
+			return nil, nil
+		}
 		if failErr := q.failJob(ctx, job.ID, err); failErr != nil {
 			return nil, fmt.Errorf("fail unbuildable job %s (payload: %v): %w", job.ID, err, failErr)
 		}
@@ -801,7 +808,7 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 	// Minted last, once nothing else can fail the build: each token goes
 	// into its own host's variables and inv.Secrets, nowhere else.
 	if enrol {
-		if err := q.handOverEnrollTokens(ctx, job, &inv); err != nil {
+		if err := q.handOverEnrollTokens(ctx, job, &inv, limit); err != nil {
 			return err
 		}
 	}

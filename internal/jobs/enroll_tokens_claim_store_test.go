@@ -10,6 +10,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/inventory/render"
@@ -40,10 +42,10 @@ func TestEnrollingClaimHandsEachHostItsOwnToken(t *testing.T) {
 		t.Fatalf("pulsix_agent_enroll_tokens = %v, want {} on web-1 and web-2 only", dicts)
 	}
 	for host, tok := range tokens {
-		if !slices.Contains(claimed.GetRedact(), tok) {
-			t.Fatalf("%s's token is not in the redact list", host)
-		}
 		parsed, _ := enrolltoken.ParseAgent(tok)
+		if !slices.Contains(claimed.GetRedact(), tok) || !slices.Contains(claimed.GetRedact(), base64.RawURLEncoding.EncodeToString(parsed.Secret)) {
+			t.Fatalf("%s's token or its secret part is not in the redact list", host)
+		}
 		var hostID, jobID uuid.UUID
 		var maxUses int
 		var expires time.Time
@@ -329,7 +331,7 @@ func TestHandOverMintsNothingForAClaimThatMovedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv, _ := enrolRenderer{names: map[uuid.UUID]string{w.hosts["web-1"]: "web-1"}}.Snapshot(context.Background(), w.org, render.Scope{HostIDs: w.ids("web-1")})
-	err = w.q.handOverEnrollTokens(db.WithOrgScope(context.Background(), w.org), got, &inv)
+	err = w.q.handOverEnrollTokens(db.WithOrgScope(context.Background(), w.org), got, &inv, "")
 	if !errors.Is(err, errClaimMoved) {
 		t.Fatalf("hand-out for a requeued job = %v, want errClaimMoved", err)
 	}
@@ -340,7 +342,128 @@ func TestHandOverMintsNothingForAClaimThatMovedOn(t *testing.T) {
 	if _, err := w.d.Pool().Exec(context.Background(), `UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = $1`, j.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.q.handOverEnrollTokens(db.WithOrgScope(context.Background(), w.org), got, &inv); !errors.Is(err, errClaimMoved) {
+	if err := w.q.handOverEnrollTokens(db.WithOrgScope(context.Background(), w.org), got, &inv, ""); !errors.Is(err, errClaimMoved) {
 		t.Fatalf("hand-out for an earlier attempt = %v, want errClaimMoved", err)
+	}
+}
+
+// A claim whose job moved on while it built the payload (a requeue and
+// another claim got there first) ends without a job for its worker and
+// leaves the job, the run and the tokens of the claim that now owns it
+// alone (review finding 1).
+func TestAClaimThatMovedOnLeavesTheNewClaimAlone(t *testing.T) {
+	ctx := context.Background()
+	w := newEnrolWorld(t, "jobs-enrol-moved-claim")
+	j := w.queueRun(t, []string{"web-1"}, w.ids("web-1"), nil)
+	var second *Claim
+	var secondErr error
+	fired := false
+	w.q = w.newHookedQueue(w.agents, func() {
+		if fired {
+			return
+		}
+		fired = true
+		// The first claim's worker went away: its job is requeued, and
+		// another claim takes it, mints and hands out its own tokens.
+		if _, err := w.d.Pool().Exec(ctx, `UPDATE jobs SET status = 'queued', claimed_at = NULL, started_at = NULL WHERE id = $1`, j.ID); err != nil {
+			secondErr = err
+			return
+		}
+		second, secondErr = w.q.Claim(ctx, w.org, []uuid.UUID{w.zone}, "v1")
+	})
+	first, err := w.q.Claim(ctx, w.org, []uuid.UUID{w.zone}, "v1")
+	if err != nil || first != nil {
+		t.Fatalf("the moved-on claim = %+v, %v; want no job and no error", first, err)
+	}
+	if secondErr != nil || second == nil || second.Job.GetId() != j.ID.String() {
+		t.Fatalf("the second claim = %+v, %v", second, secondErr)
+	}
+	tokens, _ := handedOut(t, &second.Job)
+	parsed, err := enrolltoken.ParseAgent(tokens["web-1"])
+	if err != nil {
+		t.Fatalf("second claim's tokens = %v", tokens)
+	}
+	got, err := NewSQLStore(w.d).GetJob(db.WithOrgScope(ctx, w.org), w.org, j.ID)
+	if err != nil || got.Status != StatusRunning || got.Error != "" || got.Attempts != 2 {
+		t.Fatalf("job = %s %q attempts %d, %v; want the second claim's run untouched", got.Status, got.Error, got.Attempts, err)
+	}
+	if p := w.pendingOf(t, j.ID); len(p) != 1 || p[0] != parsed.ID {
+		t.Fatalf("pending = %v, want the second claim's token %s", p, parsed.ID)
+	}
+}
+
+// failingRevoke is the world's registry whose revocation fails for one job.
+type failingRevoke struct {
+	agentTokens
+	job uuid.UUID
+}
+
+func (f failingRevoke) RevokeJobTokens(ctx context.Context, orgID, jobID uuid.UUID) (int, error) {
+	if jobID == f.job {
+		return 0, errors.New("revoke failed")
+	}
+	return f.agentTokens.RevokeJobTokens(ctx, orgID, jobID)
+}
+
+// The reaper requeues each stale job in a transaction of its own, bound to
+// the job's organization: one job's failed revocation leaves that job as
+// it was and requeues the others (review finding 2).
+func TestReaperRequeuesEachJobOnItsOwn(t *testing.T) {
+	ctx := context.Background()
+	w := newEnrolWorld(t, "jobs-enrol-reaper-own")
+	stuck := w.queueRun(t, []string{"web-1"}, w.ids("web-1"), nil)
+	w.claim(t, stuck)
+	other := w.queueRun(t, []string{"web-2"}, w.ids("web-2"), nil)
+	w.claim(t, other)
+	if _, err := w.d.Pool().Exec(ctx, `UPDATE jobs SET claimed_at = now() - interval '2 minutes' WHERE id = ANY($1)`, []uuid.UUID{stuck.ID, other.ID}); err != nil {
+		t.Fatal(err)
+	}
+	w.q.SetEnrollment(failingRevoke{agentTokens: agentTokens{svc: w.agents}, job: stuck.ID}, audit.NewRecorder(audit.NewSQLStore(w.d), time.Now))
+
+	requeued, _, err := NewReaper(w.q, 0, 3).Sweep(ctx)
+	if err == nil || requeued != 1 {
+		t.Fatalf("Sweep = %d requeued, %v; want the other job requeued and the failure reported", requeued, err)
+	}
+	if got := w.statusOf(t, other.ID); got != StatusQueued || len(w.pendingOf(t, other.ID)) != 0 {
+		t.Fatalf("the other job is %s with %d tokens, want queued with none", got, len(w.pendingOf(t, other.ID)))
+	}
+	if got := w.statusOf(t, stuck.ID); got != StatusRunning || len(w.pendingOf(t, stuck.ID)) != 1 {
+		t.Fatalf("the failing job is %s with %d tokens, want it left running with its token", got, len(w.pendingOf(t, stuck.ID)))
+	}
+}
+
+// The claim mints only for listed hosts the play runs on: the run's
+// effective limit narrows them by name, and a limit that names a group
+// (or cannot be decided) narrows nothing (review finding 5).
+func TestClaimMintsOnlyForHostsTheLimitKeeps(t *testing.T) {
+	cases := []struct {
+		limit string
+		want  []string
+	}{
+		{limit: "web-1", want: []string{"web-1"}},
+		{limit: "web-*:!web-2", want: []string{"web-1"}},
+		{limit: "web*:!web-2", want: []string{"web-1", "web-2"}}, // matches the group web too
+		{limit: "db*", want: nil},
+		{limit: "web", want: []string{"web-1", "web-2"}},            // the group of that name
+		{limit: "web-[12]&web-2", want: []string{"web-1", "web-2"}}, // undecidable
+	}
+	for i, tc := range cases {
+		t.Run(tc.limit, func(t *testing.T) {
+			w := newEnrolWorld(t, fmt.Sprintf("jobs-enrol-limit-%d", i))
+			row := w.templates.byID[w.tmpl]
+			row.Limit = tc.limit
+			w.templates.byID[w.tmpl] = row
+			w.q = w.newQueue(w.agents)
+			j := w.queueRun(t, []string{"web-1", "web-2"}, w.ids("web-1", "web-2"), nil)
+			tokens, _ := handedOut(t, w.claim(t, j))
+			var got []string
+			for host := range tokens {
+				got = append(got, host)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) || w.minted(t, j.ID) != len(tc.want) {
+				t.Fatalf("tokens for %v (minted %d), want %v", got, w.minted(t, j.ID), tc.want)
+			}
+		})
 	}
 }

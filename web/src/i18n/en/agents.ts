@@ -45,6 +45,8 @@ export const enAgents = {
   },
   boundToHost: 'to a host',
   boundNewHost: 'new host',
+  /** A token a run minted for its host (spec 2026-11-25 B); id is the job id's start. */
+  forJob: (id: string) => `for job ${id}`,
   empty: 'No agents enrolled yet.',
   revoke: 'Revoke',
   revokeItem: 'Revoke…',

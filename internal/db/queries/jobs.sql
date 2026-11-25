@@ -423,22 +423,29 @@ RETURNING *;
 -- that made it, and nothing else about this column is ever written.
 UPDATE jobs SET resolved_vault_identities = sqlc.arg(identities)::jsonb WHERE id = sqlc.arg(id);
 
--- name: RequeueStaleJobs :many
--- Reaper pass 1 (org-unscoped): claims whose worker went away
--- go back to queued for the next claim round — but only while the job has
--- attempts left (attempts counts claims; see ListExhaustedStaleJobs for the
--- rest). The live ids — the jobs whose bound stream still shows signs of
--- life — are excluded; an empty array excludes nothing (id = ANY('{}') is
--- false for every row). The organization comes back for the revocation of
--- a requeued run's enrollment tokens in the same transaction.
-UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
+-- name: ListStaleJobs :many
+-- Reaper pass 1 (org-unscoped): claims whose worker went away and that
+-- have attempts left (attempts counts claims; see ListExhaustedStaleJobs
+-- for the rest). The live ids — the jobs whose bound stream still shows
+-- signs of life — are excluded; an empty array excludes nothing (id =
+-- ANY('{}') is false for every row). The reaper requeues each in a
+-- transaction of its own, bound to the job's organization (RequeueStaleJob).
+SELECT id, org_id, kind FROM jobs
 WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
   AND NOT (id = ANY(@live::uuid[]))
-  AND attempts < @max_attempts::integer
-RETURNING id, org_id;
+  AND attempts < @max_attempts::integer;
+
+-- name: RequeueStaleJob :execrows
+-- Requeues one job ListStaleJobs found, re-checking the same conditions
+-- inside the UPDATE: a job that finished, was re-claimed or bound a live
+-- stream since the scan is left alone (0 rows).
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
+WHERE id = @id AND status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
+  AND NOT (id = ANY(@live::uuid[]))
+  AND attempts < @max_attempts::integer;
 
 -- name: ListExhaustedStaleJobs :many
--- Reaper pass 1b (org-unscoped, raw pool): stale claims that used up their
+-- Reaper pass 1b (org-unscoped): stale claims that used up their
 -- attempts. The reaper fails each through the queue's terminal transition
 -- instead of requeuing it again.
 SELECT id, attempts FROM jobs
@@ -562,7 +569,7 @@ UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_
     error = sqlc.arg(reason)::text
 WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
   AND status IN ('claimed', 'running') AND attempts < sqlc.arg(max_attempts)::integer
-RETURNING id;
+RETURNING id, kind;
 
 -- name: ListWorkerJobsToEnd :many
 -- The rest of a revoked worker's jobs: exhausted claims end as error,

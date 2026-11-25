@@ -151,7 +151,7 @@ type jobDetailDTO struct {
 	// EnrollTokens counts the agent enrollment tokens the run handed its
 	// hosts (spec 2026-11-25 B). Counts only: a token itself is never
 	// served.
-	EnrollTokens *jobEnrollTokensDTO `json:"enroll_tokens,omitempty" doc:"The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that enrols no agents"`
+	EnrollTokens *jobEnrollTokensDTO `json:"enroll_tokens,omitempty" doc:"The agent enrollment tokens the run handed its hosts, as counts. Absent for a run that minted none"`
 }
 
 // jobEnrollTokensDTO is how many enrollment tokens a run's claims minted
@@ -183,7 +183,9 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()
 	}
-	if j.EnrollHostIDs != nil || j.EnrollTokensMinted > 0 {
+	// Only a run that minted tokens: a confirmed list with nothing to mint
+	// (a dry run, every host already had an agent) shows no counts.
+	if j.EnrollTokensMinted > 0 {
 		out.EnrollTokens = &jobEnrollTokensDTO{Minted: j.EnrollTokensMinted, Used: j.EnrollTokensUsed}
 	}
 	out.Hosts = make([]string, len(j.HostIDs))

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -66,7 +67,7 @@ func TestEnrollingRunNeverShowsItsToken(t *testing.T) {
 	jobID := group[0].ID.String()
 	_, tok := claimedEnrollToken(t, f, group[0].ZoneID, jobID, "web-1")
 	parsed, _ := enrolltoken.ParseAgent(tok)
-	secret := strings.TrimPrefix(tok, enrolltoken.AgentPrefix)
+	secret := base64.RawURLEncoding.EncodeToString(parsedSecret(t, tok))
 
 	assertClean := func(where, body string) {
 		t.Helper()
@@ -95,6 +96,20 @@ func TestEnrollingRunNeverShowsItsToken(t *testing.T) {
 		t.Fatalf("counts = %d minted, %d used; want 1, 0", minted, used)
 	}
 	assertClean("the job list", f.get(t, f.orgPath()+"/jobs"))
+	// The pending token list marks the run's token as the job's (review
+	// finding 7) and never carries its secret.
+	pending := f.get(t, f.orgPath()+"/agents/tokens")
+	assertClean("the pending tokens", pending)
+	var list struct {
+		Tokens []struct {
+			ID    string `json:"id"`
+			JobID string `json:"job_id"`
+		} `json:"tokens"`
+	}
+	if err := json.Unmarshal([]byte(pending), &list); err != nil || len(list.Tokens) != 1 ||
+		list.Tokens[0].ID != parsed.ID.String() || list.Tokens[0].JobID != jobID {
+		t.Fatalf("pending tokens = %s, want the run's token marked with job %s", pending, jobID)
+	}
 	assertClean("the job log", f.get(t, f.orgPath()+"/jobs/"+jobID+"/events"))
 	assertClean("the run request and its picture", f.get(t, f.orgPath()+"/run-requests/"+created.Request.ID))
 	activity := f.get(t, f.orgPath()+"/activity?limit=100")
@@ -115,12 +130,30 @@ func TestEnrollingRunNeverShowsItsToken(t *testing.T) {
 	assertClean("the activity log", f.get(t, f.orgPath()+"/activity?limit=100"))
 }
 
-// A run that enrols nothing shows no token counts.
+// A run that minted no token shows no token counts: one that enrols
+// nothing, and one whose confirmed list had nothing to mint (review
+// finding 6).
 func TestJobWithoutEnrollmentShowsNoTokenCounts(t *testing.T) {
 	f := newRunRequestFixture(t, "enrol-tokens-none")
 	started := runJob(t, f.operatorC, f.runURLFor(f.templateID))
-	body := f.get(t, f.orgPath()+"/jobs/"+started[0].ID)
-	if strings.Contains(body, "enroll_tokens") {
-		t.Fatalf("job = %s, want no enroll_tokens", body)
+	empty, err := f.s.Deps.Jobs.EnqueueRunWith(f.scoped, f.orgID, f.templateID, jobs.RunRequest{Trigger: jobs.TriggerManual, EnrollHostIDs: []uuid.UUID{}})
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, id := range []string{started[0].ID, empty[0].ID.String()} {
+		body := f.get(t, f.orgPath()+"/jobs/"+id)
+		if strings.Contains(body, "enroll_tokens") {
+			t.Fatalf("job = %s, want no enroll_tokens", body)
+		}
+	}
+}
+
+// parsedSecret is an agent token's secret part.
+func parsedSecret(t *testing.T, tok string) []byte {
+	t.Helper()
+	parsed, err := enrolltoken.ParseAgent(tok)
+	if err != nil || len(parsed.Secret) == 0 {
+		t.Fatalf("not an agent token: %v", err)
+	}
+	return parsed.Secret
 }

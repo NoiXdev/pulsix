@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -93,7 +94,7 @@ func TestGetJobNeverShowsAnEnrollmentToken(t *testing.T) {
 	if _, err := enrolltoken.ParseAgent(tok); err != nil {
 		t.Fatalf("web-1's hostvars = %v, want a token", doc.Meta.Hostvars["web-1"])
 	}
-	secret := strings.TrimPrefix(tok, enrolltoken.AgentPrefix)
+	secret := base64.RawURLEncoding.EncodeToString(parsedSecret(t, tok))
 
 	cs := mustConnect(t, f.s, f.token)
 	for _, tool := range []string{"get_job", "get_job_log"} {
@@ -105,4 +106,14 @@ func TestGetJobNeverShowsAnEnrollmentToken(t *testing.T) {
 			t.Fatalf("get_job = %s, want the token counts", text)
 		}
 	}
+}
+
+// parsedSecret is an agent token's secret part.
+func parsedSecret(t *testing.T, tok string) []byte {
+	t.Helper()
+	parsed, err := enrolltoken.ParseAgent(tok)
+	if err != nil || len(parsed.Secret) == 0 {
+		t.Fatalf("not an agent token: %v", err)
+	}
+	return parsed.Secret
 }
