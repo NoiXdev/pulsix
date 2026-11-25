@@ -88,6 +88,18 @@ func Reconcile(in rules.AlertInput, open, closed []Alert) []Action {
 	return actions
 }
 
+// opensTuple reports whether actions open a tuple alert: the only kind of
+// action an adoption can attach to, so the only case Service.Apply reads
+// the closed episodes for.
+func opensTuple(actions []Action) bool {
+	for _, a := range actions {
+		if a.Kind == ActionOpen && a.Subject.Scope == ScopeTuple {
+			return true
+		}
+	}
+	return false
+}
+
 // reopenAdoptWindow is how long after a `stale` close a re-opening of the
 // same subject still continues the closed episode (backlog 4.39, owner
 // decision 2026-11-25): a check switched off and on again, a host

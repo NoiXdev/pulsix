@@ -61,6 +61,8 @@ func TestReconcileReopenAdoption(t *testing.T) {
 	forgotten := acked(closedEpisode(sub, rules.StateCrit, alerts.Forgotten, 30*time.Minute), rules.StateCrit)
 	ackedWarnSnoozed := snoozedUntil(acked(closedEpisode(sub, rules.StateWarn, alerts.Stale, 30*time.Minute), rules.StateWarn), stillRunning)
 	timed := snoozedUntil(closedEpisode(sub, rules.StateCrit, alerts.Stale, 30*time.Minute), stillRunning)
+	timedWarn := snoozedUntil(closedEpisode(sub, rules.StateWarn, alerts.Stale, 30*time.Minute), stillRunning)
+	closedLater := acked(closedEpisode(sub, rules.StateCrit, alerts.Stale, -time.Minute), rules.StateCrit)
 	expired := snoozedUntil(closedEpisode(sub, rules.StateCrit, alerts.Stale, 30*time.Minute), at)
 	changeSame := untilChange(closedEpisode(sub, rules.StateWarn, alerts.Stale, 30*time.Minute))
 	changeOther := untilChange(closedEpisode(sub, rules.StateWarn, alerts.Stale, 30*time.Minute))
@@ -88,6 +90,8 @@ func TestReconcileReopenAdoption(t *testing.T) {
 		{"a severity above the acknowledged one adopts nothing, not even the snooze", ackedWarnSnoozed, rules.StateCrit, nil},
 		{"a timed snooze still running is adopted", timed, rules.StateCrit, &alerts.Adoption{From: timed.ID, SnoozedUntil: timed.SnoozedUntil}},
 		{"a timed snooze that has run out is not", expired, rules.StateCrit, nil},
+		{"without an acknowledgement a timed snooze is adopted at a higher severity", timedWarn, rules.StateCrit, &alerts.Adoption{From: timedWarn.ID, SnoozedUntil: timedWarn.SnoozedUntil}},
+		{"an episode closed after the evaluation's At is not adopted from", closedLater, rules.StateCrit, nil},
 		{"a snooze until change is adopted at the same severity", changeSame, rules.StateWarn, &alerts.Adoption{From: changeSame.ID, SnoozeUntilChange: true}},
 		{"a snooze until change is not adopted at another severity", changeOther, rules.StateCrit, nil},
 		{"the acknowledgement is adopted without a snooze until change at another severity", ackedChangeOther, rules.StateWarn, ackOf(ackedChangeOther)},

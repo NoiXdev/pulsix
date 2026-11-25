@@ -703,13 +703,18 @@ slots to organizations fairly (backlog 3.71), so one organization's slow JSON
 targets no longer make another's checks report the manager too busy.
 
 Backlog 4.39: migration 00120 adds the nullable column `alerts.continues_alert_id`
-(`REFERENCES alerts(id) ON DELETE SET NULL`; NULL for every existing alert, a catalog
-change) and the partial index `alerts_host_closed_idx` on `alerts (host_id, closed_at)
-WHERE closed_at IS NOT NULL`, which the evaluation now reads on every host evaluation.
-The index is built with a plain `CREATE INDEX` like 00079: it **blocks writes to
-`alerts` while it builds**, which holds up the evaluation (alerts open and close in the
-evaluation's transaction) for as long as the build reads the alert history; on a large
-history upgrade in a quiet moment. The alert API gains `continues_alert_id` on an alert
+(NULL for every existing alert, a catalog change) with the composite foreign key
+`(org_id, continues_alert_id)` to `alerts (org_id, id)`, `ON DELETE SET NULL
+(continues_alert_id)`, and two partial indexes: `alerts_continues_idx` on
+`(org_id, continues_alert_id) WHERE continues_alert_id IS NOT NULL` (empty at the
+upgrade) and `alerts_host_closed_idx` on `(host_id, closed_at) WHERE closed_at IS NOT
+NULL`, which the evaluation reads when a tuple alert opens. Both are built with a plain
+`CREATE INDEX` like 00079, which **blocks writes to `alerts` while they build** and reads
+the whole alert history: expect the manager's first start after the upgrade, which runs
+the migration, to take correspondingly longer. A manager instance still running
+alongside during the migration has its evaluation held up for that time, since alerts
+open and close in the evaluation's transaction; on a large history, upgrade in a quiet
+moment. The alert API gains `continues_alert_id` on an alert
 and `continues_alert_id`, `ack_carried_over` and `snooze_carried_over` on its `opened`
 timeline event (additive; an older SPA ignores them). A backup carries the column.
 Skew: an older manager that keeps evaluating alongside opens a re-opened alert plain,

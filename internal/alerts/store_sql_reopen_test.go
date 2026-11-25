@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/alerts"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/rules"
 )
@@ -171,5 +172,53 @@ func TestExecuteOpenWithoutAdoptionKeepsTheDefaultPayload(t *testing.T) {
 	}
 	if payload != "{}" {
 		t.Fatalf("opened payload = %s, want {}", payload)
+	}
+}
+
+// TestAContinuationCannotCrossOrganizations: continues_alert_id is a
+// composite reference (org_id, continues_alert_id) → alerts (org_id, id),
+// so an alert cannot continue another organization's episode, and
+// deleting the continued episode nulls only continues_alert_id.
+func TestAContinuationCannotCrossOrganizations(t *testing.T) {
+	d := testdb.Open(t)
+	orgA, hostA := seedHost(t, d)
+	orgB, hostB := seedHost(t, d)
+	st := alerts.NewSQLStore(d)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	tx := beginTx(t, d)
+	prevA := openAndClose(t, st, tx, orgA, tuple(hostA, "disk", "/", "used_pct"), rules.StateCrit, alerts.Stale, now.Add(-time.Hour), now.Add(-time.Minute))
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	tx = beginTx(t, d)
+	err := st.Execute(ctx, tx, orgB, []alerts.Action{{
+		Kind: alerts.ActionOpen, Subject: tuple(hostB, "disk", "/", "used_pct"), At: now, Severity: rules.StateCrit,
+		Adopt: &alerts.Adoption{From: prevA, SnoozeUntilChange: true},
+	}})
+	if !db.IsForeignKeyViolation(err) {
+		t.Fatalf("continuing another organization's episode: err = %v, want a foreign key violation", err)
+	}
+	_ = tx.Rollback(ctx)
+
+	tx = beginTx(t, d)
+	sub := tuple(hostA, "disk", "/", "used_pct")
+	if err := st.Execute(ctx, tx, orgA, []alerts.Action{{
+		Kind: alerts.ActionOpen, Subject: sub, At: now, Severity: rules.StateCrit,
+		Adopt: &alerts.Adoption{From: prevA, SnoozeUntilChange: true},
+	}}); err != nil {
+		t.Fatalf("continue own episode: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM alerts WHERE id = $1`, prevA); err != nil {
+		t.Fatalf("delete the continued episode: %v", err)
+	}
+	open, err := st.OpenForHost(ctx, tx, orgA, hostA)
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open for host = %+v, %v; want one alert", open, err)
+	}
+	if open[0].ContinuesAlertID != nil || open[0].OrgID != orgA {
+		t.Fatalf("after deleting the continued episode: continues %v, org %s; want nil and %s", open[0].ContinuesAlertID, open[0].OrgID, orgA)
 	}
 }

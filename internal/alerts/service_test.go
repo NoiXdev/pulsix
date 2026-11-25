@@ -674,6 +674,36 @@ func TestApplyHandsReconcileTheRecentlyClosedEpisodes(t *testing.T) {
 	}
 }
 
+// TestApplyReadsNoEpisodesWithoutATupleOpening: the closed episodes are
+// read only when the evaluation opens a tuple alert — not on a quiet tick,
+// a severity change of an open alert, or the host-scope unknown alert.
+func TestApplyReadsNoEpisodesWithoutATupleOpening(t *testing.T) {
+	sub := tupleSubject("cpu", "", "used")
+	unknownHost := withHost(input(), rules.HostState{HostID: hostID, State: rules.StateUnknown, Since: t0, EvaluatedAt: t0.Add(time.Hour)})
+	cases := []struct {
+		name string
+		open []alerts.Alert
+		in   rules.AlertInput
+	}{
+		{"a quiet tick", nil, input()},
+		{"a severity change of an open alert", []alerts.Alert{openAlert(sub, rules.StateWarn, t0)}, input(stateAt(sub, rules.StateCrit, t0))},
+		{"the host-scope unknown alert opening", nil, unknownHost},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			store.open[hostID] = tc.open
+			svc := alerts.NewService(store, clockAt(t0))
+			if err := svc.Apply(ctx, nil, tc.in); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if len(store.closedSince) != 0 {
+				t.Fatalf("RecentlyClosedForHost asked %d time(s), want none", len(store.closedSince))
+			}
+		})
+	}
+}
+
 func TestApplyPropagatesARecentlyClosedError(t *testing.T) {
 	store := newFakeStore()
 	store.closedErr = errors.New("boom")

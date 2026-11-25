@@ -34,7 +34,11 @@ func (e *followEnv) staleEpisode(prepare func(uuid.UUID)) uuid.UUID {
 }
 
 // reopenAdopting opens a new crit alert on its own subject through the real
-// alerts.SQLStore, carrying ad, and returns its id.
+// alerts.SQLStore, carrying ad, and returns its id. The subject is not
+// prev's and ad is built by the caller rather than read from prev, which
+// only satisfies the foreign key: what these tests pin is that the
+// follower's gates read the opening row's own acknowledgement and snooze
+// columns, not how Reconcile pairs episodes (internal/alerts tests that).
 func (e *followEnv) reopenAdopting(ad alerts.Adoption) uuid.UUID {
 	e.t.Helper()
 	ctx := context.Background()
