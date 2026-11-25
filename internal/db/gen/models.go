@@ -578,6 +578,7 @@ type Job struct {
 	CheckMode               bool               `json:"check_mode"`
 	DryRun                  []byte             `json:"dry_run"`
 	PinnedCommit            *string            `json:"pinned_commit"`
+	PinnedRepoID            pgtype.UUID        `json:"pinned_repo_id"`
 }
 
 type JobEvent struct {

@@ -144,6 +144,7 @@ func createJobParams(j Job, payload json.RawMessage) gen.CreateJobParams {
 		DependsOn: db.NullUUID(j.DependsOn), RotationCredentialID: db.NullUUID(j.RotationCredentialID),
 		TriggerRef: db.NullUUID(j.TriggerRef), HostsExcluded: int32(j.HostsExcluded), //nolint:gosec // a host count, bounded by the scope
 		CheckMode: j.CheckMode, DryRun: encodeDryRun(j.DryRun), PinnedCommit: nullText(j.PinnedCommit),
+		PinnedRepoID: db.NullUUID(j.PinnedRepoID),
 	}
 }
 

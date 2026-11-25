@@ -79,3 +79,11 @@ describe('RunRequestDetailPage overrides', () => {
     expect(screen.getByText('durch diese Anfrage ersetzt')).toBeInTheDocument();
   });
 });
+
+describe('RunRequestDetailPage, a retry whose repository moved', () => {
+  it('names the reason approval is held', async () => {
+    renderDetail({ commit: { sha: '0123456789abcdef0123456789abcdef01234567', source: 'original_run', blocked: ['repo_moved'] } });
+    expect(await screen.findByText(/ran a commit of another repository than the template's playbook uses now/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  });
+});

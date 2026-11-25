@@ -77,16 +77,25 @@ export function usePendingRunRequestCount(org: string, opts: { enabled?: boolean
  * finished (spec 2026-11-25 A, sync_first). */
 export const WAITING_POLL_MS = 5_000;
 
+/** waitsForSync reports a request that a sync holds up: one waiting for its
+ * own sync, or a pending one whose approval waits for a queued or running
+ * sync of its repository. Either moves on by itself once the sync ends. */
+export function waitsForSync(data: { request: { status: string }; picture: RunPicture } | undefined): boolean {
+  if (!data) return false;
+  if (data.request.status === 'waiting_for_sync') return true;
+  return data.request.status === 'pending' && (data.picture.commit?.blocked ?? []).includes('sync_running');
+}
+
 /** useRunRequest is one request with its run picture (what the run would use
  * if it were approved now) and the fingerprint over that picture, which an
- * approval sends back. While the request waits for its sync it is polled
- * every WAITING_POLL_MS; the polling stops once it leaves that state. */
+ * approval sends back. While a sync holds the request up (waitsForSync) it is
+ * polled every WAITING_POLL_MS; the polling stops once nothing does. */
 export function useRunRequest(org: string, id: string) {
   return useQuery({
     queryKey: ['run-request', org, id],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/run-requests/{id}', { params: { path: { org, id } } })),
     enabled: !!org && !!id,
-    refetchInterval: (query) => (query.state.data?.request.status === 'waiting_for_sync' ? WAITING_POLL_MS : false),
+    refetchInterval: (query) => (waitsForSync(query.state.data) ? WAITING_POLL_MS : false),
   });
 }
 

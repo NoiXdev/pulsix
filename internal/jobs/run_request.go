@@ -120,6 +120,9 @@ type RunRequest struct {
 	// run inherits its parent's (chainPin). Only a manual or chained run of
 	// a repository playbook takes one (checkPin).
 	PinnedCommit string
+	// pinnedRepo is the repository PinnedCommit belongs to, set by the
+	// enqueue from the template it resolved (Job.PinnedRepoID).
+	pinnedRepo *uuid.UUID
 }
 
 // validate checks the trigger kind and that TriggerRef fits it: schedule
@@ -183,6 +186,7 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if req.PinnedCommit, err = s.chainPin(ctx, orgID, tmpl, req); err != nil {
 		return nil, err
 	}
+	req.pinnedRepo = tmpl.PlaybookRepo
 	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}

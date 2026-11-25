@@ -93,8 +93,11 @@ func TestRunRequestRefusesNamesAnsibleActsOn(t *testing.T) {
 			t.Fatalf("%s = %d %s, want 422 naming it as reserved", name, resp.Code, resp.Body)
 		}
 	}
-	if resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"release": "1.2"}}); resp.Code != http.StatusCreated {
-		t.Fatalf("plain var = %d %s", resp.Code, resp.Body)
+	// The template declares no extra vars, so even a plain one is refused
+	// (final review I2): nothing tells which name a secret hides under.
+	if resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"release": "1.2"}}); resp.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(resp.Body.String(), "declares no extra variables") {
+		t.Fatalf("plain var on a template without a schema = %d %s", resp.Code, resp.Body)
 	}
 }
 
@@ -226,4 +229,171 @@ func TestRunRequestDryRunWithOverridesRunsAsPictured(t *testing.T) {
 	if err := f.s.DB.Pool().QueryRow(context.Background(), `SELECT status FROM jobs WHERE id = $1`, list.Jobs[0].ID).Scan(&status); err != nil || status != "running" {
 		t.Fatalf("job status after the claim = %q %v", status, err)
 	}
+}
+
+// TestSyncFirstDryRunWithOverrides (final review M7): a request that syncs
+// first and is a dry run with extra vars on some hosts waits for its sync,
+// turns pending with the new commit and its overrides pictured, is
+// approved, and its job is claimed in check mode on those hosts only, with
+// the vars inert and the synced commit pinned.
+func TestSyncFirstDryRunWithOverrides(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-ov-sync-first")
+	repo := f.repoTemplate(t)
+	f.overridesTemplate(t)
+	f.recordSync(t, repo, syncedA)
+	tok := f.syncToken(t)
+
+	resp := f.s.AssistantDo(t, http.MethodPost, tok, f.orgPath()+"/job-templates/"+f.templateID.String()+"/run-requests", "", map[string]any{
+		"reason": "dry run on the fresh head", "sync_first": true, "check_mode": true,
+		"extra_vars": map[string]any{"version": "1.2", "note": "{{ api_key }}"}, "host_ids": []string{f.hostA.String()},
+	})
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", resp.Code, resp.Body)
+	}
+	var created syncFirstDetail
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Request.Status != "waiting_for_sync" || created.Request.SyncJobID == "" {
+		t.Fatalf("created = %+v", created.Request)
+	}
+
+	f.recordSync(t, repo, syncedB)
+	f.finishSync(t, created.Request.SyncJobID, jobs.StatusSucceeded, "")
+	d := f.syncFirstDetail(t, created.Request.ID)
+	var picture struct {
+		CheckMode         bool           `json:"check_mode"`
+		ExtraVarsOverride map[string]any `json:"extra_vars_override"`
+		RequestedHostIDs  []string       `json:"requested_host_ids"`
+		Targets           []struct {
+			ID string `json:"id"`
+		} `json:"targets"`
+		Commit *pictureCommit `json:"commit"`
+	}
+	if err := json.Unmarshal(d.Picture, &picture); err != nil {
+		t.Fatal(err)
+	}
+	if d.Request.Status != "pending" || !picture.CheckMode || picture.ExtraVarsOverride["version"] != "1.2" ||
+		len(picture.Targets) != 1 || picture.Targets[0].ID != f.hostA.String() ||
+		picture.Commit == nil || picture.Commit.SHA != syncedB || len(picture.Commit.Blocked) != 0 {
+		t.Fatalf("after the sync = %+v %s", d.Request, d.Picture)
+	}
+	if resp := f.approve(t, f.adminC, created.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	worker := uuid.Must(uuid.NewV7())
+	if _, err := f.s.DB.Pool().Exec(context.Background(),
+		`INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, $4, $5)`,
+		worker, f.orgID, f.zoneA, "w-sync-first", "serial-"+worker.String()); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := f.s.Queue.ClaimFor(context.Background(), worker, f.orgID, []uuid.UUID{f.zoneA}, "v1",
+		jobs.ClaimCaps{SupportsCheckMode: true, SupportsPinnedCommit: true})
+	if err != nil || claim == nil {
+		t.Fatalf("claim = %+v %v", claim, err)
+	}
+	ev := claim.Job.GetExtraVars()
+	if !claim.Job.GetCheck() || !claim.Job.GetDiff() || ev["version"] != `{"__ansible_unsafe":"1.2"}` || ev["note"] != `{"__ansible_unsafe":"{{ api_key }}"}` {
+		t.Fatalf("claimed: check %v diff %v vars %v", claim.Job.GetCheck(), claim.Job.GetDiff(), ev)
+	}
+	if inv := claim.Job.GetInventoryDoc(); !strings.Contains(inv, "web-1") || strings.Contains(inv, "web-2") {
+		t.Fatalf("claimed inventory = %s, want web-1 only", inv)
+	}
+	var payload struct {
+		Repo struct {
+			Commit string `json:"commit"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal([]byte(claim.Job.GetKindPayload()), &payload); err != nil || payload.Repo.Commit != syncedB {
+		t.Fatalf("claimed repository payload = %s %v, want commit %s", claim.Job.GetKindPayload(), err, syncedB)
+	}
+}
+
+// TestRunRequestRefusesToReplaceAnInventorySecret (final review I2): a
+// template that declares a variable a target host's inventory group keeps
+// a secret under still refuses a request setting it; the value is not
+// echoed.
+func TestRunRequestRefusesToReplaceAnInventorySecret(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-ov-inv-secret")
+	f.secretGroup(t, "group-s3cret-11", "member-s3cret-22")
+	updateTemplate(t, f, func(in *templates.UpdateInput) {
+		in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{{Name: "db_pass", Type: schema.TypeString}, {Name: "version", Type: schema.TypeString}}}
+		in.ExtraVars = map[string]any{}
+	})
+	for _, name := range []string{"db_pass"} {
+		resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{name: "assistant-chosen-77"}})
+		if resp.Code != http.StatusUnprocessableEntity || !strings.Contains(resp.Body.String(), name) || !strings.Contains(resp.Body.String(), "inventory") ||
+			strings.Contains(resp.Body.String(), "assistant-chosen-77") {
+			t.Fatalf("%s = %d %s, want 422 naming it and the inventory", name, resp.Code, resp.Body)
+		}
+	}
+	if resp := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"version": "1.2"}}); resp.Code != http.StatusCreated {
+		t.Fatalf("a var no secret shares its name with = %d %s", resp.Code, resp.Body)
+	}
+}
+
+// TestRetryRepeatsTheRunsExtraVars (final review M1): a retry of a run an
+// approved request started repeats its extra vars, through a retry request
+// (whose picture shows them) and through a person's retry route alike, and
+// the retried job carries them inert.
+func TestRetryRepeatsTheRunsExtraVars(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-ov-retry-vars")
+	f.overridesTemplate(t)
+	created := f.tryRequest(t, map[string]any{"extra_vars": map[string]any{"version": "1.2"}, "host_ids": []string{f.hostA.String()}})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	var out runRequestDetail
+	if err := json.Unmarshal(created.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	d := f.detail(t, out.Request.ID)
+	if resp := f.approve(t, f.adminC, out.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	worker := uuid.Must(uuid.NewV7())
+	if _, err := f.s.DB.Pool().Exec(context.Background(),
+		`INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, $4, $5)`,
+		worker, f.orgID, f.zoneA, "w-retry", "serial-"+worker.String()); err != nil {
+		t.Fatal(err)
+	}
+	// claimAndFail claims the zone's next job, checks its version var and
+	// fails it on web-1.
+	claimAndFail := func(what string) string {
+		t.Helper()
+		claim, err := f.s.Queue.ClaimFor(context.Background(), worker, f.orgID, []uuid.UUID{f.zoneA}, "v1", jobs.ClaimCaps{})
+		if err != nil || claim == nil {
+			t.Fatalf("%s: claim = %+v %v", what, claim, err)
+		}
+		if v := claim.Job.GetExtraVars()["version"]; v != `{"__ansible_unsafe":"1.2"}` {
+			t.Fatalf("%s: claimed version = %s, want the request's, inert", what, v)
+		}
+		id := uuid.MustParse(claim.Job.GetId())
+		if err := f.s.Queue.FinishFor(context.Background(), jobs.WorkerRef{ID: worker, OrgID: f.orgID, ZoneID: f.zoneA}, id, jobs.StatusFailed,
+			map[string]any{jobs.StatsFailedHosts: []any{f.hostA.String()}, jobs.StatsUnreachableHosts: []any{}}, "playbook failed"); err != nil {
+			t.Fatalf("%s: finish: %v", what, err)
+		}
+		return id.String()
+	}
+	first := claimAndFail("the run")
+
+	retry := f.retryRequest(t, first)
+	rd := f.detail(t, retry.Request.ID)
+	var picture struct {
+		ExtraVarsOverride map[string]any `json:"extra_vars_override"`
+	}
+	if err := json.Unmarshal(rd.Picture, &picture); err != nil || picture.ExtraVarsOverride["version"] != "1.2" {
+		t.Fatalf("retry picture = %s %v", rd.Picture, err)
+	}
+	if resp := f.approve(t, f.adminC, retry.Request.ID, rd.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve the retry = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	second := claimAndFail("the retry request's run")
+
+	resp := postJSON(t, f.adminC, f.baseURL()+"/"+second+"/retry-failed", nil)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("person's retry = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	claimAndFail("the person's retry")
 }

@@ -37,10 +37,57 @@ func TestEnqueueRunPinsEveryJobToTheCommit(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("jobs = %d, want one per zone", len(got))
 	}
+	repo := f.tmpl.byID[f.tpl].PlaybookRepo
 	for _, j := range got {
 		if f.store.jobs[j.ID].j.PinnedCommit != pin {
 			t.Fatalf("job %s stored with pin %q, want %q", j.ID, f.store.jobs[j.ID].j.PinnedCommit, pin)
 		}
+		// The pin's repository is recorded with it (final review M4).
+		if r := f.store.jobs[j.ID].j.PinnedRepoID; r == nil || *r != *repo {
+			t.Fatalf("job %s stored with pin repository %v, want %s", j.ID, r, *repo)
+		}
+	}
+	// An unpinned run records no repository.
+	plain, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, jobs.RunRequest{Trigger: jobs.TriggerManual})
+	if err != nil || f.store.jobs[plain[0].ID].j.PinnedRepoID != nil {
+		t.Fatalf("unpinned run = %+v, %v", plain, err)
+	}
+}
+
+// TestRetryOfAPinFromAnotherRepositoryIsRefused (final review M4): a
+// retry runs its original job's commit, which belongs to the repository
+// the original ran; once the template's playbook comes from another
+// repository, or none, the retry is refused with a clear reason instead of
+// failing on the worker.
+func TestRetryOfAPinFromAnotherRepositoryIsRefused(t *testing.T) {
+	f, inline := pinFixture(t)
+	repo := *f.tmpl.byID[f.tpl].PlaybookRepo
+	for name, tc := range map[string]struct {
+		tmpl    uuid.UUID
+		pinRepo uuid.UUID
+		refused bool
+	}{
+		"same repository":    {f.tpl, repo, false},
+		"another repository": {f.tpl, id7(), true},
+		"an editor playbook": {inline, repo, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			orig := id7()
+			tmpl := tc.tmpl
+			pinRepo := tc.pinRepo
+			f.store.jobs[orig] = storedJob{j: jobs.Job{
+				ID: orig, OrgID: f.org, Kind: jobs.KindRun, Status: jobs.StatusFailed,
+				TemplateID: &tmpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: id7(), PinnedCommit: pin, PinnedRepoID: &pinRepo,
+				Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
+			}}
+			_, err := f.svc.RetryFailed(ctx, f.org, orig, nil)
+			if tc.refused != (err != nil) || (tc.refused && !errors.Is(err, jobs.ErrInvalidInput)) {
+				t.Fatalf("retry = %v, refused want %v", err, tc.refused)
+			}
+			if tc.refused && name == "another repository" && !errors.Is(err, jobs.ErrPinnedRepoMoved) {
+				t.Fatalf("retry = %v, want ErrPinnedRepoMoved", err)
+			}
+		})
 	}
 }
 
@@ -91,15 +138,15 @@ func TestRetryRunsTheOriginalJobsCommit(t *testing.T) {
 				TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1}, RunGroupID: id7(), PinnedCommit: tc.original,
 				Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String()}},
 			}}
-			got, err := f.svc.RetryFailedInto(ctx, f.org, orig, nil, "", id7(), nil, tc.given)
+			got, err := f.svc.RetryFailedInto(ctx, f.org, orig, nil, "", id7(), nil, tc.given, nil)
 			if err != nil || len(got) != 1 {
 				t.Fatalf("retry = %+v, %v", got, err)
 			}
 			if pinned := f.store.jobs[got[0].ID].j.PinnedCommit; pinned != tc.want {
 				t.Fatalf("retry pinned to %q, want %q", pinned, tc.want)
 			}
-			if c, err := f.svc.PinnedCommit(ctx, f.org, orig); err != nil || c != tc.original {
-				t.Fatalf("PinnedCommit(original) = %q, %v; want %q", c, err, tc.original)
+			if c, err := f.svc.PinnedCommit(ctx, f.org, orig); err != nil || c.Commit != tc.original {
+				t.Fatalf("PinnedCommit(original) = %+v, %v; want %q", c, err, tc.original)
 			}
 		})
 	}

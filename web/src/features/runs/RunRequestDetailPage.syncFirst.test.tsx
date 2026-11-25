@@ -65,6 +65,52 @@ describe('RunRequestDetailPage, sync first', () => {
     expect(loads).toBe(3);
   });
 
+  it('polls while approval waits for a running sync and stops once it may be approved, without a changed notice', async () => {
+    let loads = 0;
+    const commit = (blocked?: string[]) => ({ sha: '0123456789abcdef0123456789abcdef01234567', ...(blocked ? { blocked } : {}) });
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: () => {
+        loads += 1;
+        return loads < 3
+          ? detail({ picture: { commit: commit(['sync_running']) }, fingerprint: 'fp-blocked' })
+          : detail({ picture: { commit: { ...commit(), sha: 'fedcba9876543210fedcba9876543210fedcba98' } }, fingerprint: 'fp-free' });
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled();
+    expect(loads).toBe(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(loads).toBe(2));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled());
+    expect(loads).toBe(3);
+    // Nothing could be approved while it was blocked, so the free picture
+    // is the one reviewed.
+    expect(screen.queryByText('This request changed since you opened it. Review it again.')).not.toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(loads).toBe(3);
+  });
+
+  it('does not poll a request blocked only until the repository is synced by hand', async () => {
+    let loads = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('operator'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: () => {
+        loads += 1;
+        return detail({ picture: { commit: { sha: '', blocked: ['never_synced'] } } });
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderDetail();
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(loads).toBe(1);
+  });
+
   it('says the request waits for its sync, links the sync, holds approval and allows a rejection', async () => {
     mockDetail({ status: 'waiting_for_sync', expires_at: undefined, sync_job_id: SYNC });
     renderDetail();

@@ -42,6 +42,8 @@ func blockedText(reason string) string {
 		return "the repository's URL, branch or subpath changed after its last sync; sync it, then approve"
 	case BlockedSyncRunning:
 		return "a sync of the repository is queued or running; approve once it has finished"
+	case BlockedRepoMoved:
+		return "the run being retried ran a commit of another repository than the template's playbook uses now; reject this retry and ask for a new run"
 	}
 	return "the run's commit cannot be pinned (" + reason + ")"
 }

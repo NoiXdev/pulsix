@@ -315,6 +315,8 @@ export const deRuns: Messages['runs'] = {
           sync_unrecorded: 'Der letzte Sync des Repositorys hat nicht festgehalten, was er abgerufen hat. Synchronisiere es erneut, dann gib frei.',
           repo_changed: 'URL, Branch oder Unterpfad des Repositorys haben sich nach seinem letzten Sync geändert. Synchronisiere es, dann gib frei.',
           sync_running: 'Ein Sync des Repositorys steht an oder läuft. Gib frei, sobald er fertig ist.',
+          repo_moved:
+            'Der wiederholte Lauf lief mit einem Commit eines anderen Repositorys, als das Playbook der Vorlage jetzt nutzt. Lehne diese Wiederholung ab und fordere einen neuen Lauf an.',
         },
       },
       targetColumns: {

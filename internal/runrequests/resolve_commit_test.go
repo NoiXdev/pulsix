@@ -34,6 +34,7 @@ func (f *fakeCommits) SyncedCommit(_ context.Context, _ uuid.UUID, repo repos.Re
 type fakeSyncJobs struct {
 	active  bool
 	pins    map[uuid.UUID]string
+	repos   map[uuid.UUID]uuid.UUID // the pinned jobs' repositories
 	pinErr  error
 	asked   []uuid.UUID // repositories HasActiveSync was asked about
 	pinCall int
@@ -44,12 +45,16 @@ func (f *fakeSyncJobs) HasActiveSync(_ context.Context, _, repoID uuid.UUID) (bo
 	return f.active, nil
 }
 
-func (f *fakeSyncJobs) PinnedCommit(_ context.Context, _, jobID uuid.UUID) (string, error) {
+func (f *fakeSyncJobs) PinnedCommit(_ context.Context, _, jobID uuid.UUID) (jobs.Pin, error) {
 	f.pinCall++
 	if f.pinErr != nil {
-		return "", f.pinErr
+		return jobs.Pin{}, f.pinErr
 	}
-	return f.pins[jobID], nil
+	pin := jobs.Pin{Commit: f.pins[jobID]}
+	if r, ok := f.repos[jobID]; ok {
+		pin.RepoID = &r
+	}
+	return pin, nil
 }
 
 // TestPictureShowsTheLiveCommitWhilePending (spec 2026-11-25 A, D3): a
@@ -213,7 +218,7 @@ func TestRunAndRetryEnqueueThePin(t *testing.T) {
 	}
 
 	fx := newResolverFx(fakeTemplates{}, false, nil, nil)
-	if err := fx.res.RetryFailed(ctx, fx.org, id(), actor, "k", id(), nil, commitY); err != nil {
+	if err := fx.res.RetryFailed(ctx, fx.org, retryOf(id()), actor, "k", id(), nil, commitY); err != nil {
 		t.Fatal(err)
 	}
 	if fx.jobs.retryPin != commitY {
@@ -276,5 +281,39 @@ func TestPictureSaysWhatEachFollowUpRuns(t *testing.T) {
 	}
 	if strings.Contains(string(doc), `"commit"`) || strings.Contains(string(doc), `"repo"`) {
 		t.Fatalf("an unpinned picture's follow-ups say what they run: %s", doc)
+	}
+}
+
+// TestPictureBlocksAPinnedRetryWhoseRepositoryMoved (final review M4): a
+// retry of a pinned job runs that job's commit again, of the repository it
+// belongs to; once the template runs another repository's playbook, or an
+// editor playbook, the picture says so and blocks the approval.
+func TestPictureBlocksAPinnedRetryWhoseRepositoryMoved(t *testing.T) {
+	job := id()
+	retry := func(w *world) runrequests.Request {
+		return runrequests.Request{ID: id(), Kind: runrequests.KindRetryFailed, TemplateID: w.x, JobID: &job, Status: runrequests.StatusPending}
+	}
+	w := newWorld()
+	w.syncs.pins[job] = commitY
+	w.syncs.repos = map[uuid.UUID]uuid.UUID{job: w.repo}
+	if p := w.picture(t, retry(w)); p.Commit == nil || p.Commit.SHA != commitY || len(p.Commit.Blocked) != 0 {
+		t.Fatalf("same repository = %+v", p.Commit)
+	}
+	w.syncs.repos[job] = id()
+	if p := w.picture(t, retry(w)); p.Commit == nil || p.Commit.SHA != commitY || !slices.Equal(p.Commit.Blocked, []string{runrequests.BlockedRepoMoved}) {
+		t.Fatalf("another repository = %+v", p.Commit)
+	}
+	// The template now runs an editor playbook.
+	w = newWorld()
+	w.syncs.pins[job] = commitY
+	inline := "- hosts: all\n"
+	w.pbs[w.pb] = playbooks.Playbook{ID: w.pb, Source: "editor", Inline: &inline}
+	if p := w.picture(t, retry(w)); p.Commit == nil || !slices.Equal(p.Commit.Blocked, []string{runrequests.BlockedRepoMoved}) {
+		t.Fatalf("editor playbook = %+v", p.Commit)
+	}
+	// An unpinned retry of an editor playbook has no commit at all.
+	delete(w.syncs.pins, job)
+	if p := w.picture(t, retry(w)); p.Commit != nil {
+		t.Fatalf("unpinned editor retry = %+v", p.Commit)
 	}
 }

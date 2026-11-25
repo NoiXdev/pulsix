@@ -85,7 +85,9 @@ export function RunRequestDetailPage() {
   // waits for its sync nothing can be approved, so the review starts with
   // the picture shown once it is pending.
   const reviewHere = review?.id === id ? review : undefined;
-  const waitsNow = request.status === 'waiting_for_sync';
+  // Nothing can be approved while the request waits for its sync or its
+  // commit is blocked, so the review starts again once it may be approved.
+  const waitsNow = request.status === 'waiting_for_sync' || (picture.commit?.blocked ?? []).length > 0;
   const reviewStarts =
     !reviewHere || (reviewHere.waiting === true && (reviewHere.fingerprint !== fingerprint || !waitsNow));
   if (reviewStarts) setReview({ id, fingerprint, refused: false, waiting: waitsNow });

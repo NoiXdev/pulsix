@@ -68,6 +68,11 @@ type Picture struct {
 // The other reasons are repos.SyncedCommit's Stale values.
 const BlockedSyncRunning = "sync_running"
 
+// BlockedRepoMoved is PictureCommit.Blocked's reason for a retry of a
+// pinned run whose template's playbook now comes from another repository,
+// or from none: the commit the retry would run again is not in it.
+const BlockedRepoMoved = "repo_moved"
+
 // PictureCommit is the commit a run of a repository playbook runs. While
 // the request is pending it is live: the commit of the repository's last
 // successful sync (a newer sync changes the picture). An approval stores
@@ -81,7 +86,7 @@ type PictureCommit struct {
 	// repos.Commit* reasons (sync the repository first) and
 	// BlockedSyncRunning, in that order. Empty when the commit can be
 	// pinned.
-	Blocked []string `json:"blocked,omitempty" enum:"never_synced,not_reported,sync_unrecorded,repo_changed,sync_running" doc:"Why the request cannot be approved now: the repository needs a sync first, or a sync of it is queued or running. Absent when the commit can be pinned"`
+	Blocked []string `json:"blocked,omitempty" enum:"never_synced,not_reported,sync_unrecorded,repo_changed,sync_running,repo_moved" doc:"Why the request cannot be approved now: the repository needs a sync first, a sync of it is queued or running, or (a retry) the template no longer runs the repository the original run's commit belongs to. Absent when the commit can be pinned"`
 	// Source is CommitFromOriginalRun for a retry that runs its original
 	// job's commit again; empty for the repository's last sync (or, once
 	// approved, the commit the approval stored).

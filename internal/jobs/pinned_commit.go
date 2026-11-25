@@ -77,6 +77,34 @@ func (s *Service) chainPin(ctx context.Context, orgID uuid.UUID, tmpl TemplateRo
 	return "", nil
 }
 
+// pinnedRepo is a pinned job's repository: repo when the job has a pin, nil
+// otherwise.
+func pinnedRepo(commit string, repo *uuid.UUID) *uuid.UUID {
+	if commit == "" {
+		return nil
+	}
+	return repo
+}
+
+// ErrPinnedRepoMoved refuses a retry of a pinned job whose template now
+// runs a playbook of another repository, or none: the commit the retry
+// would run again belongs to the repository the original ran.
+var ErrPinnedRepoMoved = errors.New("the run being retried ran a commit of another repository than the template's playbook uses now; start a new run instead of a retry")
+
+// checkRetryPinRepo refuses a retry of original when its pin belongs to a
+// repository the template no longer runs (final review M4). A job pinned
+// before its repository was recorded is not checked here (a template
+// without a repository is still refused by checkPin).
+func checkRetryPinRepo(original Job, tmpl TemplateRow) error {
+	if original.PinnedCommit == "" || original.PinnedRepoID == nil {
+		return nil
+	}
+	if tmpl.PlaybookRepo == nil || *tmpl.PlaybookRepo != *original.PinnedRepoID {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, ErrPinnedRepoMoved)
+	}
+	return nil
+}
+
 // checkClaimPin refuses, at the claim, a pinned job that cannot run its
 // pin: only a template run whose playbook comes from a repository can,
 // and only to a full commit id. Such a job fails rather than run the
@@ -94,14 +122,22 @@ func checkClaimPin(job Job, isRepo bool) error {
 	return nil
 }
 
-// PinnedCommit is the commit job id is pinned to, "" for none. A retry
-// request's picture shows it: the retry runs that commit again.
-func (s *Service) PinnedCommit(ctx context.Context, orgID, id uuid.UUID) (string, error) {
+// Pin is the commit a job is pinned to and the repository it belongs to;
+// zero for an unpinned job (RepoID nil also for a job pinned before
+// migration 00126).
+type Pin struct {
+	Commit string
+	RepoID *uuid.UUID
+}
+
+// PinnedCommit is the pin of job id. A retry request's picture shows it:
+// the retry runs that commit again, of that repository.
+func (s *Service) PinnedCommit(ctx context.Context, orgID, id uuid.UUID) (Pin, error) {
 	j, err := s.store.GetJob(ctx, orgID, id)
 	if err != nil {
-		return "", err
+		return Pin{}, err
 	}
-	return j.PinnedCommit, nil
+	return Pin{Commit: j.PinnedCommit, RepoID: j.PinnedRepoID}, nil
 }
 
 // SyncedRef is the digest of what a sync fetched: the repository's URL,

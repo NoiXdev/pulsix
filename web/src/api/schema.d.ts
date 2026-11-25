@@ -7280,8 +7280,8 @@ export interface components {
             vault_identities: components["schemas"]["PictureVault"][] | null;
         };
         PictureCommit: {
-            /** @description Why the request cannot be approved now: the repository needs a sync first, or a sync of it is queued or running. Absent when the commit can be pinned */
-            blocked?: ("never_synced" | "not_reported" | "sync_unrecorded" | "repo_changed" | "sync_running")[] | null;
+            /** @description Why the request cannot be approved now: the repository needs a sync first, a sync of it is queued or running, or (a retry) the template no longer runs the repository the original run's commit belongs to. Absent when the commit can be pinned */
+            blocked?: ("never_synced" | "not_reported" | "sync_unrecorded" | "repo_changed" | "sync_running" | "repo_moved")[] | null;
             /** @description The full commit id; absent when no sync recorded one */
             sha?: string;
             /**

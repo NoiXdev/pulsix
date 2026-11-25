@@ -331,6 +331,8 @@ export const enRuns = {
           sync_unrecorded: "The repository's last sync did not record what it fetched. Sync it again, then approve.",
           repo_changed: "The repository's URL, branch or subpath changed after its last sync. Sync it, then approve.",
           sync_running: 'A sync of the repository is queued or running. Approve once it has finished.',
+          repo_moved:
+            "The run being retried ran a commit of another repository than the template's playbook uses now. Reject this retry and ask for a new run.",
         },
       },
       targetColumns: {

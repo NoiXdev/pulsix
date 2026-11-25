@@ -746,6 +746,24 @@ and it counts pre-gap transitions towards flapping); its state writes leave the 
 alone and supersede a mark through `evaluated_at`, as the new manager's own do. Workers
 and agents are not affected.
 
+Run request overrides (spec 2026-11-25 assistant API gaps, A) add migration 00122:
+the nullable `run_requests.overrides` (jsonb, NULL for every existing row, a catalog
+change; a backup carries it). A run request (REST
+`POST /job-templates/{id}/run-requests` and the assistant's `request_run`) now takes
+`check_mode` (a dry run) with `diff`, `extra_vars`, `host_ids`, `limit` and
+`expires_in` (minutes, 5 to 1440); the overrides are stored on the request, shown in
+its picture (`check_mode`, `diff`, `extra_vars_override`, `limit_override`,
+`requested_host_ids`, all left out when not set, so a picture without overrides keeps
+its fingerprint) and enqueued with the approval. The vars travel as untrusted values
+(every text in them reaches Ansible marked unsafe, as a webhook's do); the limit is
+resolved into the hosts the run keeps to and never reaches Ansible. A retry of a run
+an approved request started (a retry request or the retry route) repeats the
+request's extra vars. **An older manager ignores the overrides**: a dry run it
+approves runs for real, on every target and without the vars. Stop every manager
+instance before the new version starts, as 00123 requires anyway, and upgrade every
+manager before assistants use the new parameters. Workers and agents are not
+affected.
+
 Pinned commits of approved run requests (spec 2026-11-25 assistant API gaps, A)
 add migration 00123 and the additive proto field
 `ClaimJobRequest.supports_pinned_commit`. 00123 adds the nullable
@@ -806,6 +824,20 @@ repository webhook keeps its own `on_active` rule. **An older manager cannot rea
 `expires_at` is NULL), so its run request list and detail fail while one exists:
 stop every manager instance before the new version starts, as 00123 already
 requires. Workers and agents are not affected.
+
+The final review of part A adds migrations 00125 and 00126, both nullable columns
+(catalog changes; a backup carries them). 00125 adds `repo_var_sources.sync_queued_at`:
+when the sync behind a repository's recorded read was queued. Two syncs of one
+repository can finish in either order; the read of the one queued earlier, finishing
+last, no longer overwrites the newer one's commit (a record from before the column has
+none and is replaced by any sync). 00126 adds `jobs.pinned_repo_id`: the repository a
+pinned job's commit belongs to. A retry of a pinned run whose template has since moved
+to another repository or to an editor playbook is refused (the retry route answers
+422; a retry request's picture says so and its approval is refused) instead of failing
+on the worker; jobs pinned before 00126 have none and are not checked that way. A
+failure telling the waiting `sync_first` requests about a finished sync no longer
+rolls the sync's finish back: it is logged and the sweep moves them. An older manager
+alongside writes neither column, which only leaves the older behaviour in place.
 
 ## Behaviour changes to check after an upgrade
 
@@ -1626,6 +1658,38 @@ requires. Workers and agents are not affected.
   sync with `already_running: true` (HTTP 200) and the repository page says so; while
   one runs, a new one is still queued behind it. A script that expected 202 for every
   sync call must accept 200.
+- **`expires_in: 0` on a run request is refused (spec 2026-11-25 A, migration 00122):**
+  REST and the assistant's `request_run` answer 422 for `expires_in` outside 5 to
+  1440; leave it out for the default of 60 minutes.
+- **Run request extra vars need declared, non-secret variables (spec 2026-11-25 A):**
+  a run request with `extra_vars` on a template without an extra vars schema is
+  refused (422 "this template declares no extra variables"); declare the variables an
+  assistant may set on the template. A key is also refused when the run's variable
+  sources hold a secret of that name: a secret field of the template, of an inventory
+  group (or its ancestors) of a target host, or a variable the playbook declares
+  secret. Values Ansible Vault encrypts in the repository's `group_vars`, `host_vars`
+  or role files are not named anywhere Pulsix records, so a template schema that
+  declares such a name as plain text is not caught: declare it secret there.
+  Variable names Ansible or Pulsix act on are refused too (below, plus Ansible's
+  playbook keywords such as `tags`, `name`, `port`, `environment`).
+- **Webhook mappings onto names Ansible acts on are refused (spec 2026-11-25 A):** a
+  trigger whose mapping sets one of these variables is refused when saved, every
+  delivery is answered 422 naming the field, and a run already queued fails at its
+  claim: every `ansible_…` name (beyond the connection-security names refused before,
+  for example `ansible_python_interpreter`, `ansible_become_exe`,
+  `ansible_shell_executable`), every `pulsix_…` name, the magic variables
+  (`hostvars`, `groups`, `group_names`, `inventory_hostname`,
+  `inventory_hostname_short`, `inventory_dir`, `inventory_file`, `play_hosts`,
+  `playbook_dir`, `role_name`, `role_names`, `role_path`, `role_uuid`) and the
+  template globals plus `vars` (`cycler`, `dict`, `joiner`, `lipsum`, `lookup`,
+  `namespace`, `now`, `omit`, `q`, `query`, `range`, `undef`, `vars`). To check
+  after the upgrade: look at your triggers' mappings and map such a value onto
+  another variable name. Mappings onto playbook keywords (`tags`, `name`,
+  `environment`, …) keep working.
+- **Numbers in run overrides stay exact (spec 2026-11-25 A):** a run with overrides
+  (a schedule's, a webhook's, a run request's) sends the template's and the
+  overrides' numbers as written: `1.0` stays `1.0` and an integer past 2^53 keeps
+  every digit, where they used to pass through a float.
 
 ## Roll order
 
