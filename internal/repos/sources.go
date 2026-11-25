@@ -37,12 +37,12 @@ type SourcesRecord struct {
 	// recorded none (claimed before migration 00123, or by an older
 	// manager).
 	SyncedRef string
-	// SyncQueuedAt orders the sync that read Commit among the repository's
+	// SyncClaimedAt orders the sync that read Commit among the repository's
 	// syncs: when it was last claimed (a requeued sync fetches again at its
 	// new claim), when it was queued if never claimed; zero when unknown
 	// (recorded before migration 00125). RecordVarSources keeps the record
 	// of the sync that fetched last.
-	SyncQueuedAt time.Time
+	SyncClaimedAt time.Time
 }
 
 // SetLogger sets where RecordVarSources reports what it skips (a
@@ -102,17 +102,17 @@ const maxReportDepth = 64
 // recorded none). It is stored with the commit it fetched: a record that
 // keeps the previous commit keeps the previous one too (SyncedCommit).
 //
-// queuedAt orders the reporting sync: its last claim, approximating when it
+// claimedAt orders the reporting sync: its last claim, approximating when it
 // fetched (zero when unknown). Two syncs of one repository can finish in
 // either order: a report of a sync ordered before the one whose read is
 // recorded is logged and ignored, so the record always holds the newest
 // fetch (final review M2 of spec
 // 2026-11-25 A: a sync_first request must get the fresh head).
-func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string, queuedAt time.Time) (bool, error) {
+func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw, texts json.RawMessage, syncedRef string, claimedAt time.Time) (bool, error) {
 	if err := s.store.LockVarSources(ctx, orgID, repoID); err != nil {
 		return false, s.skipGone(ctx, orgID, repoID, err)
 	}
-	if older, err := s.olderThanRecorded(ctx, orgID, repoID, queuedAt); err != nil || older {
+	if older, err := s.olderThanRecorded(ctx, orgID, repoID, claimedAt); err != nil || older {
 		return false, err
 	}
 	if raw == nil {
@@ -130,7 +130,7 @@ func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID,
 			r.Notes = append(r.Notes, varsource.PathTooLong(p, MaxStoredPathBytes))
 		}
 	}
-	next, err := s.nextSources(ctx, orgID, repoID, at, r, s.reportTexts(ctx, orgID, repoID, texts, r.Playbooks), syncRef{ref: syncedRef, queuedAt: queuedAt})
+	next, err := s.nextSources(ctx, orgID, repoID, at, r, s.reportTexts(ctx, orgID, repoID, texts, r.Playbooks), syncRef{ref: syncedRef, claimedAt: claimedAt})
 	if err != nil {
 		return false, err
 	}
@@ -140,11 +140,11 @@ func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID,
 	return !r.Failed, nil
 }
 
-// olderThanRecorded reports whether a sync queued at queuedAt is older
+// olderThanRecorded reports whether a sync claimed at claimedAt is older
 // than the one whose read the repository's record holds; both must be
 // known. The caller holds LockVarSources.
-func (s *Service) olderThanRecorded(ctx context.Context, orgID, repoID uuid.UUID, queuedAt time.Time) (bool, error) {
-	if queuedAt.IsZero() {
+func (s *Service) olderThanRecorded(ctx context.Context, orgID, repoID uuid.UUID, claimedAt time.Time) (bool, error) {
+	if claimedAt.IsZero() {
 		return false, nil
 	}
 	prev, err := s.store.GetVarSources(ctx, orgID, repoID)
@@ -154,19 +154,19 @@ func (s *Service) olderThanRecorded(ctx context.Context, orgID, repoID uuid.UUID
 	if err != nil {
 		return false, fmt.Errorf("get recorded variable sources: %w", err)
 	}
-	if prev.SyncQueuedAt.IsZero() || !queuedAt.Before(prev.SyncQueuedAt) {
+	if prev.SyncClaimedAt.IsZero() || !claimedAt.Before(prev.SyncClaimedAt) {
 		return false, nil
 	}
-	s.logger().WarnContext(ctx, "variable sources skipped: a sync queued later already recorded its read", "org", orgID, "repo", repoID,
-		"queued_at", queuedAt, "recorded_queued_at", prev.SyncQueuedAt)
+	s.logger().WarnContext(ctx, "variable sources skipped: a sync that fetched later already recorded its read", "org", orgID, "repo", repoID,
+		"claimed_at", claimedAt, "recorded_claimed_at", prev.SyncClaimedAt)
 	return true, nil
 }
 
 // syncRef is what identifies the reporting sync in the record: what it
-// fetched and when it was queued.
+// fetched and when it was last claimed (queued, if never claimed).
 type syncRef struct {
-	ref      string
-	queuedAt time.Time
+	ref       string
+	claimedAt time.Time
 }
 
 // skipGone logs a repository gone meanwhile and drops that error; any
@@ -215,15 +215,15 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 			record: SourcesRecord{
 				Commit: prev.Commit, SyncedAt: at, WorkerReads: true,
 				Incomplete: prev.Incomplete, LeftOut: prev.LeftOut, Notes: r.Notes,
-				SyncedRef: prev.SyncedRef, SyncQueuedAt: prev.SyncQueuedAt,
+				SyncedRef: prev.SyncedRef, SyncClaimedAt: prev.SyncClaimedAt,
 			},
 			playbooks: prevPlaybooks,
 			texts:     keptTexts(nil, prevTexts, prevPlaybooks),
 		}, nil
 	}
-	commit, ref, queuedAt := r.Commit, sync.ref, sync.queuedAt
+	commit, ref, claimedAt := r.Commit, sync.ref, sync.claimedAt
 	if commit == "" {
-		commit, ref, queuedAt = prev.Commit, prev.SyncedRef, prev.SyncQueuedAt
+		commit, ref, claimedAt = prev.Commit, prev.SyncedRef, prev.SyncClaimedAt
 	}
 	playbooks := r.Playbooks
 	if len(r.LeftOut) > 0 {
@@ -252,7 +252,7 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 		record: SourcesRecord{
 			Commit: commit, SyncedAt: at, WorkerReads: true,
 			Incomplete: r.Incomplete, LeftOut: r.LeftOut, Notes: r.Notes,
-			SyncedRef: ref, SyncQueuedAt: queuedAt,
+			SyncedRef: ref, SyncClaimedAt: claimedAt,
 		},
 		playbooks: playbooks,
 		texts:     texts,

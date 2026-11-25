@@ -70,7 +70,7 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 	n, err := q.UpsertRepoVarSources(ctx, gen.UpsertRepoVarSourcesParams{
 		CommitSha: rec.Commit, SyncedAt: rec.SyncedAt, Incomplete: rec.Incomplete,
 		LeftOut: leftOut, Notes: notes, OrgID: orgID, RepoID: repoID, SyncedRef: nullString(rec.SyncedRef),
-		SyncQueuedAt: pgtype.Timestamptz{Time: rec.SyncQueuedAt, Valid: !rec.SyncQueuedAt.IsZero()},
+		SyncClaimedAt: pgtype.Timestamptz{Time: rec.SyncClaimedAt, Valid: !rec.SyncClaimedAt.IsZero()},
 	})
 	if err != nil {
 		return fmt.Errorf("upsert repo variable sources: %w", err)
@@ -115,8 +115,8 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 		return SourcesRecord{}, fmt.Errorf("get repo variable sources: %w", err)
 	}
 	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
-	if err == nil && row.SyncQueuedAt.Valid {
-		rec.SyncQueuedAt = row.SyncQueuedAt.Time
+	if err == nil && row.SyncClaimedAt.Valid {
+		rec.SyncClaimedAt = row.SyncClaimedAt.Time
 	}
 	return rec, err
 }

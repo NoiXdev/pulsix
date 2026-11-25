@@ -935,16 +935,16 @@ type RepoPlaybookSource struct {
 }
 
 type RepoVarSource struct {
-	RepoID       uuid.UUID          `json:"repo_id"`
-	OrgID        uuid.UUID          `json:"org_id"`
-	CommitSha    string             `json:"commit_sha"`
-	SyncedAt     time.Time          `json:"synced_at"`
-	WorkerReads  bool               `json:"worker_reads"`
-	Incomplete   bool               `json:"incomplete"`
-	LeftOut      []byte             `json:"left_out"`
-	Notes        []byte             `json:"notes"`
-	SyncedRef    *string            `json:"synced_ref"`
-	SyncQueuedAt pgtype.Timestamptz `json:"sync_queued_at"`
+	RepoID        uuid.UUID          `json:"repo_id"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	CommitSha     string             `json:"commit_sha"`
+	SyncedAt      time.Time          `json:"synced_at"`
+	WorkerReads   bool               `json:"worker_reads"`
+	Incomplete    bool               `json:"incomplete"`
+	LeftOut       []byte             `json:"left_out"`
+	Notes         []byte             `json:"notes"`
+	SyncedRef     *string            `json:"synced_ref"`
+	SyncClaimedAt pgtype.Timestamptz `json:"sync_claimed_at"`
 }
 
 type RotationGroup struct {

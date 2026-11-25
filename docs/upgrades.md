@@ -826,7 +826,7 @@ stop every manager instance before the new version starts, as 00123 already
 requires. Workers and agents are not affected.
 
 The final review of part A adds migrations 00125 and 00126, both nullable columns
-(catalog changes; a backup carries them). 00125 adds `repo_var_sources.sync_queued_at`:
+(catalog changes; a backup carries them). 00125 adds `repo_var_sources.sync_claimed_at`:
 when the sync behind a repository's recorded read was last claimed by a worker (when
 it was queued, for one never claimed), which approximates when it fetched; a sync the
 reaper requeued fetches again at its new claim. Two syncs of one repository can finish
