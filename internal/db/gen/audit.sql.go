@@ -98,6 +98,40 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 	return err
 }
 
+const lastAuditActor = `-- name: LastAuditActor :one
+SELECT actor_id, at FROM audit_events
+WHERE org_id = $1::uuid AND object_type = $2 AND object_id = $3
+  AND action = ANY($4::text[])
+ORDER BY at DESC, id DESC LIMIT 1
+`
+
+type LastAuditActorParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	ObjectType string    `json:"object_type"`
+	ObjectID   string    `json:"object_id"`
+	Actions    []string  `json:"actions"`
+}
+
+type LastAuditActorRow struct {
+	ActorID pgtype.UUID `json:"actor_id"`
+	At      time.Time   `json:"at"`
+}
+
+// Who last did one of the actions to the object (the person who paused a
+// schedule or disabled a trigger before an assistant's change, spec
+// 2026-11-25 C2): the newest matching event of the organization.
+func (q *Queries) LastAuditActor(ctx context.Context, arg LastAuditActorParams) (LastAuditActorRow, error) {
+	row := q.db.QueryRow(ctx, lastAuditActor,
+		arg.OrgID,
+		arg.ObjectType,
+		arg.ObjectID,
+		arg.Actions,
+	)
+	var i LastAuditActorRow
+	err := row.Scan(&i.ActorID, &i.At)
+	return i, err
+}
+
 const listAuditEventsForActor = `-- name: ListAuditEventsForActor :many
 SELECT e.id, e.org_id, e.actor_id, e.actor_kind, e.action, e.object_type, e.object_id, e.summary, e.meta, e.at,
        e.actor_token_id, COALESCE(t.name, pt.name, '')::text AS token_name

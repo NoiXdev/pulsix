@@ -96,6 +96,9 @@ type (
 		CreateAs(ctx context.Context, orgID, id, actor uuid.UUID, in schedules.Input) (schedules.Schedule, error)
 		Update(ctx context.Context, orgID, id uuid.UUID, revision int64, in schedules.Input) (schedules.Schedule, error)
 		ResumeAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error)
+		// AcceptReviewAt clears a review's reason and leaves the schedule
+		// paused (a person had paused it before the change).
+		AcceptReviewAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error)
 	}
 	// TriggerSource reads, checks and writes webhook triggers for trigger
 	// requests (triggers.Service). Its writes return the new secret, which
@@ -109,6 +112,9 @@ type (
 		// EnableAt enables a trigger at the revision a person saw (an
 		// approved review).
 		EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error)
+		// AcceptReviewAt clears a review's reason and leaves the trigger
+		// disabled (a person had disabled it before the change).
+		AcceptReviewAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error)
 		URL(t triggers.Trigger) string
 	}
 	// RunVarsSource reads the variable values a run would receive, secrets

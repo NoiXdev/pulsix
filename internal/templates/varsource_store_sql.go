@@ -75,6 +75,15 @@ func (s *SQLStore) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uu
 	return ids, nil
 }
 
+// IDsOfPlaybook implements Store.
+func (s *SQLStore) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.q.ListTemplateIDsForPlaybook(ctx, gen.ListTemplateIDsForPlaybookParams{OrgID: orgID, PlaybookID: db.NullUUID(&playbookID)})
+	if err != nil {
+		return nil, fmt.Errorf("list the templates of a playbook: %w", err)
+	}
+	return ids, nil
+}
+
 // ListAutomaticForPlaybook implements Store.
 func (s *SQLStore) ListAutomaticForPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]Template, error) {
 	rows, err := s.q.ListAutomaticTemplatesForPlaybook(ctx, gen.ListAutomaticTemplatesForPlaybookParams{OrgID: orgID, PlaybookID: db.NullUUID(&playbookID)})

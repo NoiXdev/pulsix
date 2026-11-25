@@ -46,11 +46,20 @@ RETURNING *;
 
 -- name: PauseScheduleForReview :one
 -- An assistant's change paused the schedule until a person reviews it
--- (spec 2026-11-25 C2): only an active schedule moves; no row back means
--- it was already paused.
+-- (spec 2026-11-25 C2): an active schedule, and one a person paused (it
+-- gets the reason, so the notice shows before anyone resumes it); no row
+-- back means it was already paused for review.
 UPDATE schedules SET paused = true, paused_reason = 'assistant_change', next_run_at = NULL,
   revision = revision + 1, updated_at = now()
-WHERE org_id = @org_id AND id = @id AND NOT paused
+WHERE org_id = @org_id AND id = @id AND paused_reason IS NULL
+RETURNING *;
+
+-- name: ClearSchedulePausedReasonAt :one
+-- An approved review of a schedule a person had paused before the change:
+-- the reason goes, the schedule stays paused as that person left it, at the
+-- revision the approver saw (no row back: stale revision or unknown).
+UPDATE schedules SET paused_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
 -- name: ListSchedulesOfTemplates :many

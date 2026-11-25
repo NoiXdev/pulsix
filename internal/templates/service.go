@@ -221,6 +221,8 @@ type Store interface {
 	// IDsOfRepo lists the templates whose playbook belongs to the
 	// repository.
 	IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error)
+	// IDsOfPlaybook lists the templates that run the playbook.
+	IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error)
 	FollowUpStore
 	VarsStore
 }

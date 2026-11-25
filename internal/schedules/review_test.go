@@ -46,6 +46,29 @@ func TestPauseForReviewThroughTheStore(t *testing.T) {
 	if _, _, err := st.PauseForReview(scoped, org, uuid.Must(uuid.NewV7())); !errors.Is(err, schedules.ErrNotFound) {
 		t.Fatalf("unknown = %v", err)
 	}
+	// A schedule a person paused gets the reason too (fix round 1), and
+	// an approved review of it clears the reason at the revision seen and
+	// leaves it paused.
+	other := in
+	other.ID, other.Name = uuid.Must(uuid.NewV7()), "Weekly"
+	byPerson, err := st.Create(scoped, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byPerson, err = st.SetPaused(scoped, org, byPerson.ID, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	marked, ok, err := st.PauseForReview(scoped, org, byPerson.ID)
+	if err != nil || !ok || !marked.Paused || marked.PausedReason != schedules.PausedForReview || marked.Revision != byPerson.Revision+1 {
+		t.Fatalf("person-paused = %+v ok %v, %v", marked, ok, err)
+	}
+	if _, err := st.ClearReasonAt(scoped, org, byPerson.ID, marked.Revision-1); !errors.Is(err, schedules.ErrRevisionMismatch) {
+		t.Fatalf("stale clear = %v", err)
+	}
+	cleared, err := st.ClearReasonAt(scoped, org, byPerson.ID, marked.Revision)
+	if err != nil || !cleared.Paused || cleared.PausedReason != "" || cleared.Revision != marked.Revision+1 {
+		t.Fatalf("cleared = %+v, %v", cleared, err)
+	}
 	// Pausing a paused schedule keeps its reason; resuming clears it.
 	if p, err := st.SetPaused(scoped, org, created.ID, true, nil); err != nil || p.PausedReason != schedules.PausedForReview {
 		t.Fatalf("pause = %+v, %v", p, err)

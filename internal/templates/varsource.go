@@ -101,6 +101,14 @@ type ApplyInput struct {
 // (ApplyVariables), so off → manual or automatic is ErrInvalidInput; a
 // projection's variables belong to its definition (ErrForbidden).
 func (s *Service) SetVariablesMode(ctx context.Context, orgID, id uuid.UUID, mode SourceMode, ifRevision *int64) (Template, error) {
+	return s.SetVariablesModeBy(ctx, orgID, id, mode, ifRevision, assistantchange.Actor{})
+}
+
+// SetVariablesModeBy is SetVariablesMode by actor: the mode decides whether
+// a sync applies the playbook's variable sources to the template on its
+// own, so an assistant's switch is a run-relevant change (spec 2026-11-25
+// C2) handed on in the write's transaction.
+func (s *Service) SetVariablesModeBy(ctx context.Context, orgID, id uuid.UUID, mode SourceMode, ifRevision *int64, actor assistantchange.Actor) (Template, error) {
 	cur, err := s.linkable(ctx, orgID, id)
 	if err != nil {
 		return Template{}, err
@@ -122,8 +130,26 @@ func (s *Service) SetVariablesMode(ctx context.Context, orgID, id uuid.UUID, mod
 	case !isLinked(cur):
 		return Template{}, fmt.Errorf("%w: the variables are not linked to the playbook yet; link them through the preview", ErrInvalidInput)
 	}
-	updated, err := s.store.UpdateVarsSource(ctx, next, readRevision(ifRevision, cur), &cur.VarsSourceRev)
-	if err != nil {
+	if !s.watches(actor) {
+		updated, err := s.store.UpdateVarsSource(ctx, next, readRevision(ifRevision, cur), &cur.VarsSourceRev)
+		if err != nil {
+			return Template{}, err
+		}
+		return masked(updated), nil
+	}
+	var updated Template
+	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		before, err := s.stateOf(ctx, cur)
+		if err != nil {
+			return err
+		}
+		if updated, err = s.store.UpdateVarsSource(ctx, next, readRevision(ifRevision, cur), &cur.VarsSourceRev); err != nil {
+			return err
+		}
+		after := before
+		after.t = updated
+		return s.handOn(ctx, orgID, actor, before, after)
+	}); err != nil {
 		return Template{}, err
 	}
 	return masked(updated), nil

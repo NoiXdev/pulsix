@@ -436,7 +436,13 @@ export const deRuns: Messages['runs'] = {
         paused: 'pausiert',
         active: 'aktiv',
         changes: 'Was der Assistent geändert hat',
-        subject: { job_template: 'Vorlage', repo: 'Repository' } as Record<string, string>,
+        subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook' } as Record<string, string>,
+        pausedBefore: {
+          schedule: (who: string) =>
+            `${who || 'Eine Person'} hatte diesen Zeitplan schon vor der Änderung des Assistenten pausiert. Die Freigabe übernimmt die Änderungen und lässt ihn pausiert; ihn fortzusetzen bleibt die Entscheidung einer Person.`,
+          trigger: (who: string) =>
+            `${who || 'Eine Person'} hatte diesen Trigger schon vor der Änderung des Assistenten deaktiviert. Die Freigabe übernimmt die Änderungen und lässt ihn deaktiviert; ihn zu aktivieren bleibt die Entscheidung einer Person.`,
+        } as Record<string, (who: string) => string>,
         changedBy: (token: string) => `geändert mit dem Assistenten-Token ${token}`,
         otherToken: (id: string) => `geändert mit einem anderen Assistenten-Token (${id})`,
         field: 'Feld',
@@ -449,6 +455,7 @@ export const deRuns: Messages['runs'] = {
         } as Record<string, string>,
         gone: 'Den Zeitplan oder Trigger gibt es nicht mehr. Diese Prüfung kann nicht freigegeben werden; lehne sie ab.',
         approved: { schedule: 'Prüfung freigegeben; der Zeitplan läuft wieder', trigger: 'Prüfung freigegeben; der Trigger ist wieder aktiv' } as Record<string, string>,
+        acceptedStopped: 'Prüfung freigegeben; die Änderungen sind übernommen und er bleibt pausiert',
         decided: {
           approved: 'Freigegeben. Der Zeitplan oder Trigger läuft wieder.',
           rejected: 'Abgelehnt. Der Zeitplan oder Trigger bleibt pausiert.',

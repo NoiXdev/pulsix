@@ -37,6 +37,12 @@ type (
 	ReviewTemplates interface {
 		Get(ctx context.Context, orgID, id uuid.UUID) (templates.Template, error)
 		IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error)
+		IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error)
+	}
+	// ReviewHistory names who last did one of actions to an object (the
+	// activity log, audit.SQLStore): who had paused an item before.
+	ReviewHistory interface {
+		LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error)
 	}
 	// ReviewSchedules lists and pauses schedules (schedules.Service).
 	ReviewSchedules interface {
@@ -60,7 +66,16 @@ type ReviewSources struct {
 	Templates ReviewTemplates
 	Schedules ReviewSchedules
 	Triggers  ReviewTriggers
+	// History names who had stopped an item before; nil names nobody.
+	History ReviewHistory
 }
+
+// The activity log actions that stop a schedule or a trigger (the API's
+// "<method> <operation>"): who did the last of them had stopped the item.
+var (
+	schedulePauseActions  = []string{"POST pauseSchedule"}
+	triggerDisableActions = []string{"POST disableTrigger", "PUT updateTrigger", "POST createTrigger"}
+)
 
 // Reviewer stops what runs unattended after an assistant's change to what
 // it runs (spec 2026-11-25 assistant API gaps, C2, decision D5): it
@@ -82,13 +97,15 @@ func NewReviewer(store ReviewStore, src ReviewSources, auditor Auditor, now func
 }
 
 // Changed implements assistantchange.Watcher: every active schedule of the
-// templates c touches (the template itself, or every template whose
-// playbook comes from the repository) is paused and every enabled trigger
-// that runs one of them, or syncs the repository, is disabled, each with
-// the reason assistant_change, an activity entry and one review a person
-// approves to resume it. An item already stopped for review gets c added
-// to its open review instead; one a person paused or disabled is left
-// alone (resuming it is that person's decision).
+// templates c touches (the template itself, every template whose playbook
+// comes from the repository, or every template that runs the editor
+// playbook) is paused and every enabled trigger that runs one of them, or
+// syncs the repository, is disabled, each with the reason assistant_change,
+// an activity entry and one review a person approves to resume it. An item
+// a person had paused or disabled gets the reason and a review as well,
+// which remembers who stopped it (PausedBefore), so the notice shows before
+// anyone resumes it; approving that review leaves it stopped. An item
+// already stopped for review gets c added to its open review instead.
 func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantchange.Change) error {
 	var templateIDs []uuid.UUID
 	var repoID *uuid.UUID
@@ -101,6 +118,12 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 			return fmt.Errorf("list the repository's templates: %w", err)
 		}
 		templateIDs, repoID = ids, &c.ID
+	case assistantchange.SubjectPlaybook:
+		ids, err := rv.src.Templates.IDsOfPlaybook(ctx, orgID, c.ID)
+		if err != nil {
+			return fmt.Errorf("list the playbook's templates: %w", err)
+		}
+		templateIDs = ids
 	default:
 		return fmt.Errorf("an assistant change of an unknown subject %q", c.Subject)
 	}
@@ -117,29 +140,33 @@ func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assis
 		return fmt.Errorf("list the schedules to pause: %w", err)
 	}
 	for _, s := range list {
-		paused := false
-		switch {
-		case !s.Paused:
+		wasPaused, paused := s.Paused, false
+		if s.PausedReason != schedules.PausedForReview {
 			id := s.ID
 			if s, paused, err = rv.src.Schedules.PauseForReview(ctx, orgID, id); err != nil {
 				return fmt.Errorf("pause schedule %s for review: %w", id, err)
 			}
-		case s.PausedReason != schedules.PausedForReview:
-			continue
 		}
-		if !paused && s.PausedReason != schedules.PausedForReview {
-			continue // a person paused it meanwhile
+		var before *PausedBefore
+		if paused && wasPaused {
+			if before, err = rv.pausedBefore(ctx, orgID, "schedule", s.ID, schedulePauseActions); err != nil {
+				return err
+			}
 		}
 		rev, err := rv.revision(ctx, orgID, s.TemplateID, revisions)
 		if err != nil {
 			return err
 		}
-		id, err := rv.review(ctx, orgID, KindScheduleReview, s.ID, s.TemplateID, rev, c)
+		id, err := rv.review(ctx, orgID, KindScheduleReview, s.ID, s.TemplateID, rev, c, before)
 		if err != nil {
 			return err
 		}
 		if paused {
-			if err := rv.record(ctx, orgID, c, "pauseScheduleForReview", "schedule", s.ID, "paused schedule "+s.Name, id); err != nil {
+			did := "paused schedule " + s.Name
+			if wasPaused {
+				did = "kept schedule " + s.Name + " paused"
+			}
+			if err := rv.record(ctx, orgID, c, "pauseScheduleForReview", "schedule", s.ID, did, id); err != nil {
 				return err
 			}
 		}
@@ -153,18 +180,18 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 		return fmt.Errorf("list the triggers to disable: %w", err)
 	}
 	for _, t := range list {
-		disabled := false
-		switch {
-		case t.Enabled:
+		wasDisabled, disabled := !t.Enabled, false
+		if t.DisabledReason != triggers.DisabledForReview {
 			id := t.ID
 			if t, disabled, err = rv.src.Triggers.DisableForReview(ctx, orgID, id); err != nil {
 				return fmt.Errorf("disable trigger %s for review: %w", id, err)
 			}
-		case t.DisabledReason != triggers.DisabledForReview:
-			continue
 		}
-		if !disabled && t.DisabledReason != triggers.DisabledForReview {
-			continue
+		var before *PausedBefore
+		if disabled && wasDisabled {
+			if before, err = rv.pausedBefore(ctx, orgID, "trigger", t.ID, triggerDisableActions); err != nil {
+				return err
+			}
 		}
 		tmpl, rev := uuid.Nil, int64(0)
 		if t.Kind == triggers.KindTemplateRun && t.TemplateID != nil {
@@ -173,17 +200,36 @@ func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assi
 				return err
 			}
 		}
-		id, err := rv.review(ctx, orgID, KindTriggerReview, t.ID, tmpl, rev, c)
+		id, err := rv.review(ctx, orgID, KindTriggerReview, t.ID, tmpl, rev, c, before)
 		if err != nil {
 			return err
 		}
 		if disabled {
-			if err := rv.record(ctx, orgID, c, "disableTriggerForReview", "trigger", t.ID, "disabled webhook trigger "+t.Name, id); err != nil {
+			did := "disabled webhook trigger " + t.Name
+			if wasDisabled {
+				did = "kept webhook trigger " + t.Name + " disabled"
+			}
+			if err := rv.record(ctx, orgID, c, "disableTriggerForReview", "trigger", t.ID, did, id); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// pausedBefore records who had stopped the item (objectType id) before:
+// the actor of the last of actions in the activity log, if any.
+func (rv *Reviewer) pausedBefore(ctx context.Context, orgID uuid.UUID, objectType string, id uuid.UUID, actions []string) (*PausedBefore, error) {
+	before := &PausedBefore{}
+	if rv.src.History == nil {
+		return before, nil
+	}
+	by, err := rv.src.History.LastActor(ctx, orgID, objectType, id.String(), actions)
+	if err != nil {
+		return nil, fmt.Errorf("find who stopped %s %s: %w", objectType, id, err)
+	}
+	before.By = by
+	return before, nil
 }
 
 // revision is the template's revision now (after the change), read once
@@ -200,10 +246,11 @@ func (rv *Reviewer) revision(ctx context.Context, orgID, templateID uuid.UUID, s
 	return t.Revision, nil
 }
 
-// review adds c to the open review of target, or opens one: one open
-// review per item, whose expiry starts again with each change. It returns
+// review adds c to the open review of target, or opens one (with before,
+// who had stopped the item): one open review per item, whose expiry starts
+// again with each change and which keeps who had stopped it. It returns
 // the review's id.
-func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, target, templateID uuid.UUID, rev int64, c assistantchange.Change) (uuid.UUID, error) {
+func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, target, templateID uuid.UUID, rev int64, c assistantchange.Change, before *PausedBefore) (uuid.UUID, error) {
 	now := rv.now()
 	open, err := rv.store.OpenReview(ctx, orgID, kind, target, now)
 	switch {
@@ -227,7 +274,7 @@ func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, targ
 		ID: rv.newID(), OrgID: orgID, Kind: kind, TemplateID: templateID, TemplateRevision: rev,
 		Reason: reviewReason(c), RequestedByUser: c.UserID, RequestedByToken: c.TokenID,
 		Status: StatusPending, CreatedAt: now, ExpiresAt: now.Add(ReviewTTL), TargetID: &target,
-		Review: &ReviewChange{Changes: []assistantchange.Change{c}},
+		Review: &ReviewChange{Changes: []assistantchange.Change{c}, PausedBefore: before},
 	}
 	if err := rv.store.Insert(ctx, r); err != nil {
 		return uuid.Nil, fmt.Errorf("store review: %w", err)
@@ -237,11 +284,18 @@ func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, targ
 
 // reviewReason is a review's one line: what the assistant changed.
 func reviewReason(c assistantchange.Change) string {
-	what := "job template"
-	if c.Subject == assistantchange.SubjectRepo {
-		what = "repository"
+	return fmt.Sprintf("An assistant changed %s %s; a person reviews the change before this runs unattended again", subjectWords(c.Subject), c.Name)
+}
+
+// subjectWords names a change's subject in a sentence.
+func subjectWords(s assistantchange.Subject) string {
+	switch s {
+	case assistantchange.SubjectRepo:
+		return "repository"
+	case assistantchange.SubjectPlaybook:
+		return "playbook"
 	}
-	return fmt.Sprintf("An assistant changed %s %s; a person reviews the change before this runs unattended again", what, c.Name)
+	return "job template"
 }
 
 // record writes the activity entry of one pause, as the assistant's token
@@ -252,10 +306,7 @@ func (rv *Reviewer) record(ctx context.Context, orgID uuid.UUID, c assistantchan
 	for i, f := range c.Fields {
 		names[i] = f.Name
 	}
-	what := "job template"
-	if c.Subject == assistantchange.SubjectRepo {
-		what = "repository"
-	}
+	what := subjectWords(c.Subject)
 	user, kind := c.UserID, audit.ActorKindToken
 	if c.TokenID == nil {
 		kind = audit.ActorKindUser

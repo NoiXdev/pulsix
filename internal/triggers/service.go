@@ -55,10 +55,13 @@ type Store interface {
 	// InTx runs fn in one write transaction every store on the same
 	// database joins.
 	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
-	// DisableForReview disables an enabled trigger with
-	// DisabledForReview; ok is false (the trigger as it is) when it was
-	// disabled already.
+	// DisableForReview disables a trigger with DisabledForReview (an
+	// enabled one, or one a person disabled); ok is false (the trigger as
+	// it is) when it was disabled for review already.
 	DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error)
+	// ClearReasonAt clears the reason at revision and leaves the trigger
+	// disabled (ErrRevisionMismatch).
+	ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error)
 	// EnableAt enables the trigger at revision and clears its reason.
 	EnableAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error)
 	// ListForReview lists the triggers that run any of templateIDs or
@@ -230,11 +233,20 @@ func (s *Service) UpdateBy(ctx context.Context, orgID, id, by uuid.UUID, revisio
 	return out, err
 }
 
-// DisableForReview disables an enabled trigger because an assistant
-// changed what it runs or syncs (spec 2026-11-25 C2). ok is false, and the
-// trigger comes back as it is, when it was disabled already.
+// DisableForReview disables a trigger because an assistant changed what it
+// runs or syncs (spec 2026-11-25 C2). A trigger a person disabled gets the
+// reason as well, so the notice shows before anyone enables it. ok is
+// false, and the trigger comes back as it is, when it was disabled for
+// review already.
 func (s *Service) DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error) {
 	return s.d.Store.DisableForReview(ctx, orgID, id)
+}
+
+// AcceptReviewAt is an approved review of a trigger a person had disabled
+// before the assistant's change: the reason goes, the trigger stays
+// disabled, at the revision the approver saw.
+func (s *Service) AcceptReviewAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error) {
+	return s.d.Store.ClearReasonAt(ctx, orgID, id, revision)
 }
 
 // EnableAt enables the trigger at the revision a person saw (an approved

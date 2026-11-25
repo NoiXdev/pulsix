@@ -3,6 +3,8 @@ package runrequests
 import (
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/assistantchange"
 )
 
@@ -21,6 +23,16 @@ const MaxReviewChanges = 20
 // masked marker.
 type ReviewChange struct {
 	Changes []assistantchange.Change `json:"changes"`
+	// PausedBefore is set when a person had paused the schedule (disabled
+	// the trigger) before the first change: an approval then accepts the
+	// changes and leaves the item stopped as that person left it.
+	PausedBefore *PausedBefore `json:"paused_before,omitempty"`
+}
+
+// PausedBefore says who had stopped an item before an assistant's change;
+// By is nil when no record names them.
+type PausedBefore struct {
+	By *uuid.UUID `json:"by,omitempty"`
 }
 
 // PictureReview is the picture of a review request: the paused schedule
@@ -42,6 +54,14 @@ type PictureReview struct {
 	Changes []ChangedObject `json:"changes" doc:"The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token"`
 	// Gone is set when the item, or what it starts, no longer exists.
 	Gone bool `json:"gone,omitempty"`
+	// PausedBefore is set when a person had paused (disabled) the item
+	// before the assistant's change: approving then leaves it stopped.
+	PausedBefore *PicturePausedBefore `json:"paused_before,omitempty" doc:"Set when a person had paused the schedule (disabled the trigger) before the assistant's change: approving accepts the change and leaves it paused (disabled) as that person left it"`
+}
+
+// PicturePausedBefore names who had stopped the item before the change.
+type PicturePausedBefore struct {
+	ByUserID string `json:"by_user_id,omitempty" doc:"The person who paused (disabled) it, when the activity log names them"`
 }
 
 // Review items.
@@ -53,7 +73,7 @@ const (
 // ChangedObject is one assistant change as a review's picture shows it
 // (assistantchange.Change).
 type ChangedObject struct {
-	Subject string         `json:"subject" enum:"job_template,repo" doc:"What the assistant changed: a job template or a repository"`
+	Subject string         `json:"subject" enum:"job_template,repo,playbook" doc:"What the assistant changed: a job template, a repository or an editor playbook"`
 	ID      string         `json:"id"`
 	Name    string         `json:"name"`
 	Fields  []ChangedField `json:"fields"`

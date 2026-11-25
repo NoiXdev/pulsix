@@ -208,9 +208,10 @@ func (st *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx conte
 	return st.d.WithWriteTx(ctx, orgID, fn)
 }
 
-// DisableForReview disables an enabled trigger for a person's review
-// (reason DisabledForReview); ok is false, and the trigger comes back as it
-// is, when it was disabled already.
+// DisableForReview disables a trigger for a person's review (reason
+// DisabledForReview): an enabled one, and one a person disabled; ok is
+// false, and the trigger comes back as it is, when it was disabled for
+// review already.
 func (st *SQLStore) DisableForReview(ctx context.Context, orgID, id uuid.UUID) (Trigger, bool, error) {
 	row, err := st.q.DisableTriggerForReview(ctx, gen.DisableTriggerForReviewParams{OrgID: orgID, ID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -237,6 +238,23 @@ func (st *SQLStore) EnableAt(ctx context.Context, orgID, id uuid.UUID, revision 
 	}
 	if err != nil {
 		return Trigger{}, fmt.Errorf("enable trigger: %w", err)
+	}
+	return toTrigger(row)
+}
+
+// ClearReasonAt clears why the trigger is disabled, leaving it disabled,
+// at revision: ErrRevisionMismatch when it changed since, ErrNotFound when
+// it is gone.
+func (st *SQLStore) ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Trigger, error) {
+	row, err := st.q.ClearTriggerDisabledReasonAt(ctx, gen.ClearTriggerDisabledReasonAtParams{OrgID: orgID, ID: id, Revision: revision})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := st.Get(ctx, orgID, id); gerr != nil {
+			return Trigger{}, gerr
+		}
+		return Trigger{}, ErrRevisionMismatch
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("clear trigger disabled reason: %w", err)
 	}
 	return toTrigger(row)
 }

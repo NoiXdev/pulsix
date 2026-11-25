@@ -23,6 +23,11 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d), d: d} }
 
+// InTx implements Store (db.WithWriteTx).
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(context.Context) error) error {
+	return s.d.WithWriteTx(ctx, orgID, fn)
+}
+
 func (s *SQLStore) Create(ctx context.Context, p Playbook) (Playbook, error) {
 	row, err := s.q.CreatePlaybook(ctx, gen.CreatePlaybookParams{
 		ID: p.ID, OrgID: p.OrgID, RepoID: db.NullUUID(p.RepoID),

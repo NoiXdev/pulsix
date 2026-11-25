@@ -29,6 +29,8 @@ type fakeSchedules struct {
 	updatedRev  []int64
 	resumed     []uuid.UUID
 	resumedRev  []int64
+	accepted    []uuid.UUID
+	acceptedRev []int64
 }
 
 func (f *fakeSchedules) Get(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {

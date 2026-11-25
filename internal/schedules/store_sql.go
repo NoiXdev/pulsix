@@ -31,9 +31,10 @@ func (st *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx conte
 	return st.d.WithWriteTx(ctx, orgID, fn)
 }
 
-// PauseForReview pauses an active schedule for a person's review (reason
-// PausedForReview); ok is false, and the schedule comes back as it is,
-// when it was already paused.
+// PauseForReview pauses a schedule for a person's review (reason
+// PausedForReview): an active one, and one a person paused; ok is false,
+// and the schedule comes back as it is, when it was already paused for
+// review.
 func (st *SQLStore) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error) {
 	row, err := st.q.PauseScheduleForReview(ctx, gen.PauseScheduleForReviewParams{OrgID: orgID, ID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -45,6 +46,23 @@ func (st *SQLStore) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Sc
 	}
 	s, err := toSchedule(row)
 	return s, err == nil, err
+}
+
+// ClearReasonAt clears why the schedule is paused, leaving it paused, at
+// revision: ErrRevisionMismatch when it changed since, ErrNotFound when it
+// is gone.
+func (st *SQLStore) ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Schedule, error) {
+	row, err := st.q.ClearSchedulePausedReasonAt(ctx, gen.ClearSchedulePausedReasonAtParams{OrgID: orgID, ID: id, Revision: revision})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := st.Get(ctx, orgID, id); gerr != nil {
+			return Schedule{}, gerr
+		}
+		return Schedule{}, ErrRevisionMismatch
+	}
+	if err != nil {
+		return Schedule{}, fmt.Errorf("clear schedule paused reason: %w", err)
+	}
+	return toSchedule(row)
 }
 
 // ListOfTemplates lists the schedules that run any of templateIDs.

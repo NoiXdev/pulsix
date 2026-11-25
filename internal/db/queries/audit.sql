@@ -120,3 +120,12 @@ WHERE e.actor_id = sqlc.arg(actor_id)
 SELECT id, name FROM api_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[])
 UNION ALL
 SELECT id, name FROM personal_tokens WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: LastAuditActor :one
+-- Who last did one of the actions to the object (the person who paused a
+-- schedule or disabled a trigger before an assistant's change, spec
+-- 2026-11-25 C2): the newest matching event of the organization.
+SELECT actor_id, at FROM audit_events
+WHERE org_id = sqlc.arg(org_id)::uuid AND object_type = sqlc.arg(object_type) AND object_id = sqlc.arg(object_id)
+  AND action = ANY(sqlc.arg(actions)::text[])
+ORDER BY at DESC, id DESC LIMIT 1;

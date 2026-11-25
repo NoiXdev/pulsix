@@ -155,7 +155,8 @@ func (f changeReviewFixture) putTemplateAsAssistant(t *testing.T, fields map[str
 // C2) through the real stores, for each class of run-relevant template
 // field an assistant can change: the active schedule is paused and the
 // trigger disabled, each with the reason assistant_change, one review each
-// and an activity entry; the schedule a person paused is left alone.
+// and an activity entry; the schedule a person paused gets the reason and
+// a review too (fix round 1).
 func TestAnAssistantsTemplateChangePausesWhatRunsUnattended(t *testing.T) {
 	cases := map[string]func(t *testing.T, f changeReviewFixture) map[string]any{
 		"limit": func(*testing.T, changeReviewFixture) map[string]any { return map[string]any{"limit": "web*"} },
@@ -189,17 +190,17 @@ func TestAnAssistantsTemplateChangePausesWhatRunsUnattended(t *testing.T) {
 			if paused, reason := f.scheduleState(t, f.active); !paused || reason != schedules.PausedForReview {
 				t.Fatalf("active schedule = %v %q", paused, reason)
 			}
-			if paused, reason := f.scheduleState(t, f.byPerson); !paused || reason != "" {
+			if paused, reason := f.scheduleState(t, f.byPerson); !paused || reason != schedules.PausedForReview {
 				t.Fatalf("a person's pause = %v %q", paused, reason)
 			}
 			if enabled, reason := f.triggerState(t, f.hook); enabled || reason != triggers.DisabledForReview {
 				t.Fatalf("trigger = %v %q", enabled, reason)
 			}
 			reviews := f.reviews(t)
-			if len(reviews) != 2 || len(reviews[f.active]) != 1 || len(reviews[f.hook]) != 1 || len(reviews[f.byPerson]) != 0 {
+			if len(reviews) != 3 || len(reviews[f.active]) != 1 || len(reviews[f.hook]) != 1 || len(reviews[f.byPerson]) != 1 {
 				t.Fatalf("reviews = %v", reviews)
 			}
-			if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 1 || !strings.HasPrefix(ev[0], f.active.String()) {
+			if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 2 {
 				t.Fatalf("pause events = %v", ev)
 			}
 			if ev := f.events(t, "disableTriggerForReview"); len(ev) != 1 || !strings.HasPrefix(ev[0], f.hook.String()) {
@@ -327,7 +328,9 @@ func TestReviewLifecycle(t *testing.T) {
 	if len(d.Picture.Review.Changes) != 2 {
 		t.Fatalf("changes = %+v", d.Picture.Review.Changes)
 	}
-	if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 1 {
+	// One entry each for the active and the person-paused schedule, from
+	// the first change only.
+	if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 2 {
 		t.Fatalf("a schedule paused already was paused again: %v", ev)
 	}
 
@@ -434,7 +437,7 @@ func TestAnAssistantsRepoChangePausesItsTemplates(t *testing.T) {
 				}
 			}
 			reviews := f.reviews(t)
-			if len(reviews) != 3 {
+			if len(reviews) != 4 {
 				t.Fatalf("reviews = %v", reviews)
 			}
 			d := f.reviewDetail(t, reviewID(reviews[sync.Trigger.ID]))
@@ -451,5 +454,121 @@ func TestAnAssistantsRepoChangePausesItsTemplates(t *testing.T) {
 				t.Fatalf("after a person's resume = %v", r)
 			}
 		})
+	}
+}
+
+// Fix round 1: a schedule a person paused gets the reason and a review that
+// names that person; approving it accepts the change and leaves the
+// schedule paused as the person left it, without the reason.
+func TestAReviewOfWhatAPersonPausedKeepsItPaused(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-person-paused")
+	in := schedules.Input{TemplateID: f.templateID, Name: "monthly", Mode: schedules.ModeCron, Cron: "0 5 1 * *", Timezone: "UTC"}
+	sch, err := f.s.Deps.Schedules.Create(f.scoped, f.orgID, f.operator, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := postJSON(t, f.adminC, f.s.HTTP.URL+f.orgPath()+"/schedules/"+sch.ID.String()+"/pause", map[string]any{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("pause = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	f.putTemplateAsAssistant(t, map[string]any{"limit": "web*"})
+	if paused, reason := f.scheduleState(t, sch.ID); !paused || reason != schedules.PausedForReview {
+		t.Fatalf("schedule = %v %q", paused, reason)
+	}
+	id := reviewID(f.reviews(t)[sch.ID])
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+id, nil)
+	var d struct {
+		Picture struct {
+			Review struct {
+				PausedBefore *struct {
+					ByUserID string `json:"by_user_id"`
+				} `json:"paused_before"`
+			} `json:"review"`
+		} `json:"picture"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	decodeInto(t, resp, &d)
+	admin := f.memberID(t, "acr-person-paused-admin@example.test")
+	if d.Picture.Review.PausedBefore == nil || d.Picture.Review.PausedBefore.ByUserID != admin.String() {
+		t.Fatalf("paused before = %+v", d.Picture.Review.PausedBefore)
+	}
+	// The schedule paused through the service directly has no activity
+	// entry naming anyone: its review says it was paused, by nobody named.
+	other := f.reviewDetail(t, reviewID(f.reviews(t)[f.byPerson]))
+	if other.Request.Kind != "schedule_review" {
+		t.Fatalf("other = %+v", other)
+	}
+	if r := f.approve(t, f.adminC, id, d.Fingerprint); r.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", r.StatusCode, mustReadBody(t, r))
+	}
+	if paused, reason := f.scheduleState(t, sch.ID); !paused || reason != "" {
+		t.Fatalf("after approval = %v %q, want paused without the reason", paused, reason)
+	}
+}
+
+// Fix round 1: an assistant's edit of an inline playbook's text pauses
+// what runs the templates of that playbook.
+func TestAnAssistantsPlaybookEditPausesItsTemplates(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-playbook")
+	resp := f.s.AssistantDo(t, http.MethodPut, f.tok, f.orgPath()+"/playbooks/"+f.playbook.String(), "",
+		map[string]any{"inline": "- name: deploy\n  hosts: web\n  tasks: []\n"})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("assistant PUT playbook = %d %s", resp.Code, resp.Body)
+	}
+	if paused, reason := f.scheduleState(t, f.active); !paused || reason != schedules.PausedForReview {
+		t.Fatalf("schedule = %v %q", paused, reason)
+	}
+	if enabled, reason := f.triggerState(t, f.hook); enabled || reason != triggers.DisabledForReview {
+		t.Fatalf("trigger = %v %q", enabled, reason)
+	}
+	d := f.reviewDetail(t, reviewID(f.reviews(t)[f.active]))
+	if c := d.Picture.Review.Changes; len(c) != 1 || c[0].Subject != "playbook" || len(c[0].Fields) != 1 || c[0].Fields[0].Field != "playbook_text" {
+		t.Fatalf("changes = %+v", c)
+	}
+	// A person's edit pauses nothing.
+	g := newChangeReviewFixture(t, "acr-playbook-person")
+	put := requestJSON(t, g.adminC, http.MethodPut, g.s.HTTP.URL+g.orgPath()+"/playbooks/"+g.playbook.String(),
+		map[string]any{"inline": "- name: deploy\n  hosts: web\n  tasks: []\n"})
+	if put.StatusCode != http.StatusOK {
+		t.Fatalf("person PUT playbook = %d %s", put.StatusCode, mustReadBody(t, put))
+	}
+	if paused, _ := g.scheduleState(t, g.active); paused {
+		t.Fatal("a person's playbook edit paused the schedule")
+	}
+}
+
+// Fix round 1: switching a template's variables mode is a run-relevant
+// change.
+func TestAnAssistantsVariablesModeSwitchPausesTheTemplate(t *testing.T) {
+	f := newChangeReviewFixture(t, "acr-vars-mode")
+	url := f.s.HTTP.URL + f.templatePath() + "/variables"
+	var preview struct {
+		Preview struct {
+			SourceRev string `json:"source_rev"`
+		} `json:"preview"`
+		Source struct {
+			SyncedAt *time.Time `json:"synced_at"`
+		} `json:"source"`
+	}
+	decodeInto(t, postJSON(t, f.adminC, url+"/preview", map[string]any{}), &preview)
+	apply := map[string]any{"mode": "manual", "source_rev": preview.Preview.SourceRev}
+	if preview.Source.SyncedAt != nil {
+		apply["source_synced_at"] = preview.Source.SyncedAt
+	}
+	if resp := postJSON(t, f.adminC, url+"/apply", apply); resp.StatusCode != http.StatusOK {
+		t.Fatalf("link = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if paused, _ := f.scheduleState(t, f.active); paused {
+		t.Fatal("a person's link paused the schedule")
+	}
+	resp := f.s.AssistantDo(t, http.MethodPut, f.tok, f.templatePath()+"/variables/mode", "", map[string]any{"mode": "automatic"})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("assistant mode = %d %s", resp.Code, resp.Body)
+	}
+	if paused, reason := f.scheduleState(t, f.active); !paused || reason != schedules.PausedForReview {
+		t.Fatalf("schedule = %v %q", paused, reason)
+	}
+	d := f.reviewDetail(t, reviewID(f.reviews(t)[f.active]))
+	if c := d.Picture.Review.Changes; len(c) != 1 || c[0].Fields[0].Field != "vars_mode" || c[0].Fields[0].New != "automatic" {
+		t.Fatalf("changes = %+v", c)
 	}
 }

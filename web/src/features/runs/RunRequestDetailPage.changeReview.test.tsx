@@ -127,6 +127,18 @@ describe('RunRequestDetailPage reviews of an assistant change (spec 2026-11-25 C
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
   });
 
+  it('names who paused the schedule before the change and says approving keeps it paused', async () => {
+    renderReview({ item: 'schedule', schedule, paused_before: { by_user_id: 'u1' } });
+    expect(await screen.findByText(/Tim R\. had paused this schedule before the assistant's change/)).toBeInTheDocument();
+    expect(screen.getByText(/Approving accepts the changes and leaves it paused/)).toBeInTheDocument();
+  });
+
+  it('names an editor playbook as what the assistant changed', async () => {
+    const playbookChange = [{ subject: 'playbook', id: 'pb1', name: 'deploy', user_id: 'u1', fields: [{ field: 'playbook_text', old: '- hosts: all', new: '- hosts: web' }] }];
+    renderReview({ item: 'schedule', schedule, changes: playbookChange });
+    expect(await screen.findByRole('table', { name: 'Playbook deploy' })).toBeInTheDocument();
+  });
+
   it('speaks German', async () => {
     renderReview({ item: 'schedule', schedule }, 'operator', 'schedule_review', {}, 'de');
     expect(await screen.findByRole('heading', { name: 'Pausierten Zeitplan prüfen' })).toBeInTheDocument();

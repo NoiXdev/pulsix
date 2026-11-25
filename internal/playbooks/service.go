@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/varsource"
 )
@@ -77,6 +78,10 @@ type Playbook struct {
 type CreateInput struct {
 	Name   string
 	Inline string
+	// Actor is who saves an edit (UpdateEditor): an assistant's change of
+	// the text pauses what runs the templates of the playbook for a
+	// person's review (spec 2026-11-25 C2, SetChangeWatcher).
+	Actor assistantchange.Actor
 }
 
 // RepoSource is the slice of repos.Service a repo playbook needs: the
@@ -134,6 +139,9 @@ type Store interface {
 	// on the repository path; every store call made with the context fn
 	// receives joins it.
 	WithRepoPathLock(ctx context.Context, orgID, repoID uuid.UUID, path string, fn func(context.Context) error) error
+	// InTx runs fn in one organization-scoped write transaction that
+	// every store on the same database joins.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(context.Context) error) error
 }
 
 // Service implements the playbook registry.
@@ -143,7 +151,15 @@ type Service struct {
 	resolver TemplateResolver
 	applier  InlineApplier
 	log      *slog.Logger
+	// watcher is told about an assistant's change of an editor playbook's
+	// text (SetChangeWatcher); nil hands nothing on.
+	watcher assistantchange.Watcher
 }
+
+// SetChangeWatcher wires the watcher an assistant's change of an editor
+// playbook's text is handed to (spec 2026-11-25 C2): the text is what every
+// template that runs the playbook runs.
+func (s *Service) SetChangeWatcher(w assistantchange.Watcher) { s.watcher = w }
 
 // NewService wires the store, the repo source and the template resolver
 // (TemplateResolver's own doc comment: the organization-side half of
@@ -249,8 +265,19 @@ func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in Crea
 	if err := ValidateYAML(in.Inline); err != nil {
 		return Playbook{}, err
 	}
-	p, err := s.store.UpdateInline(ctx, orgID, id, in.Inline, s.inlineSource(ctx, orgID, in.Inline), expectedRevision)
-	if err != nil {
+	source := s.inlineSource(ctx, orgID, in.Inline)
+	var p Playbook
+	if !in.Actor.Assistant || s.watcher == nil || cur.Inline == nil || *cur.Inline == in.Inline {
+		if p, err = s.store.UpdateInline(ctx, orgID, id, in.Inline, source, expectedRevision); err != nil {
+			return Playbook{}, err
+		}
+	} else if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		if p, err = s.store.UpdateInline(ctx, orgID, id, in.Inline, source, expectedRevision); err != nil {
+			return err
+		}
+		return s.watcher.Changed(ctx, orgID, assistantchange.New(assistantchange.SubjectPlaybook, id, p.Summary(),
+			[]assistantchange.Field{{Name: "playbook_text", Old: *cur.Inline, New: in.Inline}}, in.Actor))
+	}); err != nil {
 		return Playbook{}, err
 	}
 	s.applyInline(ctx, orgID, id)

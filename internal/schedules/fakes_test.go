@@ -112,12 +112,27 @@ func (f *fakeStore) PauseForReview(_ context.Context, orgID, id uuid.UUID) (sche
 	if !ok || s.OrgID != orgID {
 		return schedules.Schedule{}, false, schedules.ErrNotFound
 	}
-	if s.Paused {
+	if s.PausedReason != "" {
 		return s, false, nil
 	}
 	s.Paused, s.PausedReason, s.NextRunAt, s.Revision = true, schedules.PausedForReview, nil, s.Revision+1
 	f.byID[id] = s
 	return s, true, nil
+}
+
+func (f *fakeStore) ClearReasonAt(_ context.Context, orgID, id uuid.UUID, revision int64) (schedules.Schedule, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.byID[id]
+	if !ok || s.OrgID != orgID {
+		return schedules.Schedule{}, schedules.ErrNotFound
+	}
+	if s.Revision != revision {
+		return schedules.Schedule{}, schedules.ErrRevisionMismatch
+	}
+	s.PausedReason, s.Revision = "", s.Revision+1
+	f.byID[id] = s
+	return s, nil
 }
 
 func (f *fakeStore) ListOfTemplates(_ context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]schedules.Schedule, error) {

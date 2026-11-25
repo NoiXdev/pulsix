@@ -175,7 +175,7 @@ func registerPlaybookRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		p, err := deps.Playbooks.UpdateEditor(ctx, scope.OrgID, id, playbooks.CreateInput{Name: in.Body.Name, Inline: in.Body.Inline}, ifRevision)
+		p, err := deps.Playbooks.UpdateEditor(ctx, scope.OrgID, id, playbooks.CreateInput{Name: in.Body.Name, Inline: in.Body.Inline, Actor: changeActor(scope)}, ifRevision)
 		if err != nil {
 			return nil, mapPlaybooksErr(ctx, err)
 		}

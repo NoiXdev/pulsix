@@ -112,6 +112,10 @@ func (f *fakeStore) FindRepo(ctx context.Context, orgID, repoID uuid.UUID, path 
 	return playbooks.Playbook{}, playbooks.ErrNotFound
 }
 
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 func (f *fakeStore) WithRepoPathLock(ctx context.Context, _, _ uuid.UUID, _ string, fn func(context.Context) error) error {
 	f.lockMu.Lock()
 	defer f.lockMu.Unlock()

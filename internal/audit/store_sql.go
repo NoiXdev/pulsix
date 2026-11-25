@@ -3,10 +3,12 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/db"
@@ -282,4 +284,24 @@ func (s *SQLStore) pageEvents(ctx context.Context, rows []gen.AuditEvent) ([]Eve
 		}
 	}
 	return events, nil
+}
+
+// LastActor is who last did one of actions to the object (objectType,
+// objectID) in the organization; nil when no such event was recorded or
+// its actor is gone. The schedule and trigger reviews of spec 2026-11-25
+// C2 name the person who had paused or disabled an item before an
+// assistant's change.
+func (s *SQLStore) LastActor(ctx context.Context, orgID uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error) {
+	row, err := s.q.LastAuditActor(ctx, gen.LastAuditActorParams{OrgID: orgID, ObjectType: objectType, ObjectID: objectID, Actions: actions})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find the last actor: %w", err)
+	}
+	if !row.ActorID.Valid {
+		return nil, nil
+	}
+	id := uuid.UUID(row.ActorID.Bytes)
+	return &id, nil
 }

@@ -36,6 +36,50 @@ func (q *Queries) AdvanceSchedule(ctx context.Context, arg AdvanceScheduleParams
 	return err
 }
 
+const clearSchedulePausedReasonAt = `-- name: ClearSchedulePausedReasonAt :one
+UPDATE schedules SET paused_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = $1 AND id = $2 AND revision = $3
+RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason
+`
+
+type ClearSchedulePausedReasonAtParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	ID       uuid.UUID `json:"id"`
+	Revision int64     `json:"revision"`
+}
+
+// An approved review of a schedule a person had paused before the change:
+// the reason goes, the schedule stays paused as that person left it, at the
+// revision the approver saw (no row back: stale revision or unknown).
+func (q *Queries) ClearSchedulePausedReasonAt(ctx context.Context, arg ClearSchedulePausedReasonAtParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, clearSchedulePausedReasonAt, arg.OrgID, arg.ID, arg.Revision)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.TemplateID,
+		&i.Name,
+		&i.Mode,
+		&i.Cron,
+		&i.Simple,
+		&i.Timezone,
+		&i.Guards,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.Paused,
+		&i.NextRunAt,
+		&i.LastRunAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.UntrustedLimit,
+		&i.UntrustedExtraVars,
+		&i.PausedReason,
+	)
+	return i, err
+}
+
 const createSchedule = `-- name: CreateSchedule :one
 INSERT INTO schedules (id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, created_by,
   untrusted_limit, untrusted_extra_vars)
@@ -545,7 +589,7 @@ func (q *Queries) PauseAllSchedules(ctx context.Context, orgID uuid.UUID) (int64
 const pauseScheduleForReview = `-- name: PauseScheduleForReview :one
 UPDATE schedules SET paused = true, paused_reason = 'assistant_change', next_run_at = NULL,
   revision = revision + 1, updated_at = now()
-WHERE org_id = $1 AND id = $2 AND NOT paused
+WHERE org_id = $1 AND id = $2 AND paused_reason IS NULL
 RETURNING id, org_id, template_id, name, mode, cron, simple, timezone, guards, "limit", extra_vars, paused, next_run_at, last_run_at, created_by, created_at, updated_at, revision, untrusted_limit, untrusted_extra_vars, paused_reason
 `
 
@@ -555,8 +599,9 @@ type PauseScheduleForReviewParams struct {
 }
 
 // An assistant's change paused the schedule until a person reviews it
-// (spec 2026-11-25 C2): only an active schedule moves; no row back means
-// it was already paused.
+// (spec 2026-11-25 C2): an active schedule, and one a person paused (it
+// gets the reason, so the notice shows before anyone resumes it); no row
+// back means it was already paused for review.
 func (q *Queries) PauseScheduleForReview(ctx context.Context, arg PauseScheduleForReviewParams) (Schedule, error) {
 	row := q.db.QueryRow(ctx, pauseScheduleForReview, arg.OrgID, arg.ID)
 	var i Schedule

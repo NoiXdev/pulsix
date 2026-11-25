@@ -44,9 +44,13 @@ type Store interface {
 	// InTx runs fn in one write transaction every store on the same
 	// database joins.
 	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
-	// PauseForReview pauses an active schedule with PausedForReview; ok
-	// is false (the schedule as it is) when it was already paused.
+	// PauseForReview pauses a schedule with PausedForReview (an active
+	// one, or one a person paused); ok is false (the schedule as it is)
+	// when it was already paused for review.
 	PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error)
+	// ClearReasonAt clears the reason at revision and leaves the schedule
+	// paused (ErrRevisionMismatch).
+	ClearReasonAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Schedule, error)
 	// ListOfTemplates lists the schedules that run any of templateIDs.
 	ListOfTemplates(ctx context.Context, orgID uuid.UUID, templateIDs []uuid.UUID) ([]Schedule, error)
 }
@@ -322,12 +326,20 @@ func (s *Service) Resume(ctx context.Context, orgID, id, by uuid.UUID) (Schedule
 	return out, err
 }
 
-// PauseForReview pauses an active schedule because an assistant changed
-// what it runs (spec 2026-11-25 C2): the reason PausedForReview tells its
-// page to point at the review. ok is false, and the schedule comes back as
-// it is, when it was paused already.
+// PauseForReview pauses a schedule because an assistant changed what it
+// runs (spec 2026-11-25 C2): the reason PausedForReview tells its page to
+// point at the review. A schedule a person paused gets the reason as well,
+// so the notice shows before anyone resumes it. ok is false, and the
+// schedule comes back as it is, when it was paused for review already.
 func (s *Service) PauseForReview(ctx context.Context, orgID, id uuid.UUID) (Schedule, bool, error) {
 	return s.store.PauseForReview(ctx, orgID, id)
+}
+
+// AcceptReviewAt is an approved review of a schedule a person had paused
+// before the assistant's change: the reason goes, the schedule stays paused
+// as that person left it, at the revision the approver saw.
+func (s *Service) AcceptReviewAt(ctx context.Context, orgID, id uuid.UUID, revision int64) (Schedule, error) {
+	return s.store.ClearReasonAt(ctx, orgID, id, revision)
 }
 
 // ListOfTemplates lists the schedules that run any of templateIDs.

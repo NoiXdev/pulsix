@@ -458,7 +458,15 @@ export const enRuns = {
         paused: 'paused',
         active: 'active',
         changes: 'What the assistant changed',
-        subject: { job_template: 'Job template', repo: 'Repository' } as Record<string, string>,
+        subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook' } as Record<string, string>,
+        /** A person had stopped the item before the change (fix round 1);
+         * `who` is their name, or empty when no record names them. */
+        pausedBefore: {
+          schedule: (who: string) =>
+            `${who || 'A person'} had paused this schedule before the assistant's change. Approving accepts the changes and leaves it paused; resuming it stays a person's decision.`,
+          trigger: (who: string) =>
+            `${who || 'A person'} had disabled this trigger before the assistant's change. Approving accepts the changes and leaves it disabled; enabling it stays a person's decision.`,
+        } as Record<string, (who: string) => string>,
         changedBy: (token: string) => `changed with the assistant token ${token}`,
         otherToken: (id: string) => `changed with another assistant token (${id})`,
         field: 'Field',
@@ -471,6 +479,7 @@ export const enRuns = {
         } as Record<string, string>,
         gone: 'The schedule or trigger no longer exists. This review cannot be approved; reject it.',
         approved: { schedule: 'Review approved; the schedule runs again', trigger: 'Review approved; the trigger is enabled again' } as Record<string, string>,
+        acceptedStopped: 'Review approved; the changes are accepted and it stays paused',
         decided: {
           approved: 'Approved. The schedule or trigger runs again.',
           rejected: 'Rejected. The schedule or trigger stays paused.',

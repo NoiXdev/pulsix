@@ -239,7 +239,7 @@ func registerTemplateVarsLinkRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		t, err := deps.Templates.SetVariablesMode(ctx, scope.OrgID, id, templates.SourceMode(in.Body.Mode), ifRevision)
+		t, err := deps.Templates.SetVariablesModeBy(ctx, scope.OrgID, id, templates.SourceMode(in.Body.Mode), ifRevision, changeActor(scope))
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
 		}

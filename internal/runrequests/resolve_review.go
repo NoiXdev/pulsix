@@ -39,6 +39,12 @@ func (r *Resolver) reviewPicture(ctx context.Context, orgID uuid.UUID, req Reque
 		}
 	}
 	pr := &PictureReview{ItemID: req.TargetID.String(), Changes: changedObjects(req.Review.Changes)}
+	if pb := req.Review.PausedBefore; pb != nil {
+		pr.PausedBefore = &PicturePausedBefore{}
+		if pb.By != nil {
+			pr.PausedBefore.ByUserID = pb.By.String()
+		}
+	}
 	switch req.Kind {
 	case KindScheduleReview:
 		pr.Item = ReviewItemSchedule
@@ -89,9 +95,11 @@ func (r *Resolver) reviewPicture(ctx context.Context, orgID uuid.UUID, req Reque
 
 // ApplyReview implements Automation: the approved review's schedule is
 // resumed, or its trigger enabled, at the revision the person saw (one
-// changed since is ErrChanged); an item no longer stopped for the review
-// (a person resumed it, or stopped it for another reason) is left as it
-// is. The approval runs it in the transaction that records the decision.
+// changed since is ErrChanged); an item a person had stopped before the
+// change (PausedBefore) only loses the reason and stays stopped as that
+// person left it; an item no longer stopped for the review (a person
+// resumed it, or stopped it for another reason) is left as it is. The
+// approval runs it in the transaction that records the decision.
 func (r *Resolver) ApplyReview(ctx context.Context, orgID uuid.UUID, req Request, p PictureReview, _ uuid.UUID) error {
 	if req.TargetID == nil {
 		return fmt.Errorf("review %s has no target", req.ID)
@@ -107,7 +115,11 @@ func (r *Resolver) ApplyReview(ctx context.Context, orgID uuid.UUID, req Request
 		if r.src.Schedules == nil {
 			return errNoSchedules
 		}
-		if _, err := r.src.Schedules.ResumeAt(ctx, orgID, *req.TargetID, p.Schedule.Revision); err != nil {
+		apply := r.src.Schedules.ResumeAt
+		if p.PausedBefore != nil {
+			apply = r.src.Schedules.AcceptReviewAt
+		}
+		if _, err := apply(ctx, orgID, *req.TargetID, p.Schedule.Revision); err != nil {
 			if errors.Is(err, schedules.ErrNotFound) {
 				return errReviewGone
 			}
@@ -117,7 +129,11 @@ func (r *Resolver) ApplyReview(ctx context.Context, orgID uuid.UUID, req Request
 		if r.src.Triggers == nil {
 			return errNoTriggers
 		}
-		if _, err := r.src.Triggers.EnableAt(ctx, orgID, *req.TargetID, p.Trigger.Revision); err != nil {
+		apply := r.src.Triggers.EnableAt
+		if p.PausedBefore != nil {
+			apply = r.src.Triggers.AcceptReviewAt
+		}
+		if _, err := apply(ctx, orgID, *req.TargetID, p.Trigger.Revision); err != nil {
 			if errors.Is(err, triggers.ErrNotFound) {
 				return errReviewGone
 			}

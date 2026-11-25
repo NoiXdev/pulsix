@@ -22,6 +22,16 @@ func (f *fakeTriggerSource) EnableAt(_ context.Context, _, id uuid.UUID, revisio
 	return triggers.Trigger{ID: id}, nil
 }
 
+func (f *fakeTriggerSource) AcceptReviewAt(_ context.Context, _, id uuid.UUID, revision int64) (triggers.Trigger, error) {
+	f.accepted, f.acceptedRev = append(f.accepted, id), append(f.acceptedRev, revision)
+	return triggers.Trigger{ID: id}, nil
+}
+
+func (f *fakeSchedules) AcceptReviewAt(_ context.Context, _, id uuid.UUID, revision int64) (schedules.Schedule, error) {
+	f.accepted, f.acceptedRev = append(f.accepted, id), append(f.acceptedRev, revision)
+	return schedules.Schedule{ID: id}, nil
+}
+
 func reviewChanges(subject assistantchange.Subject, id uuid.UUID) *runrequests.ReviewChange {
 	return &runrequests.ReviewChange{Changes: []assistantchange.Change{{Subject: subject, ID: id, Name: "S",
 		Fields: []assistantchange.Field{{Name: "limit", Old: "web*", New: "db*"}}}}}
@@ -145,5 +155,52 @@ func TestAnAssistantCannotResumeWhatItsChangeStopped(t *testing.T) {
 	if _, _, _, err := tw.resolver().ValidateTrigger(ctx, id(), tw.run, runrequests.TriggerInput{Action: runrequests.TriggerUpdate, TriggerID: tw.run,
 		Patch: &runrequests.TriggerPatch{Name: &name}}); err != nil {
 		t.Fatalf("rename = %v", err)
+	}
+}
+
+// Fix round 1: the review of an item a person had stopped before the
+// change names that person, and approving it leaves the item stopped (the
+// reason goes) instead of resuming it.
+func TestReviewOfAnItemAPersonStopped(t *testing.T) {
+	ctx := context.Background()
+	w := newScheduleWorld()
+	s := w.scheds.byID[w.sched]
+	s.PausedReason = schedules.PausedForReview
+	w.scheds.byID[w.sched] = s
+	person := id()
+	target := w.sched
+	ch := reviewChanges(assistantchange.SubjectTemplate, w.s)
+	ch.PausedBefore = &runrequests.PausedBefore{By: &person}
+	req := runrequests.Request{ID: id(), Kind: runrequests.KindScheduleReview, TemplateID: w.s, TargetID: &target, Review: ch}
+	p, err := w.resolver().Picture(ctx, id(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Review.PausedBefore == nil || p.Review.PausedBefore.ByUserID != person.String() {
+		t.Fatalf("paused before = %+v", p.Review.PausedBefore)
+	}
+	if err := w.resolver().ApplyReview(ctx, id(), req, *p.Review, id()); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.scheds.resumed) != 0 || len(w.scheds.accepted) != 1 || w.scheds.acceptedRev[0] != 5 {
+		t.Fatalf("resumed %v, accepted %v at %v", w.scheds.resumed, w.scheds.accepted, w.scheds.acceptedRev)
+	}
+
+	tw := newTriggerWorld()
+	tr := tw.trigs.byID[tw.run]
+	tr.DisabledReason = triggers.DisabledForReview
+	tw.trigs.byID[tw.run] = tr
+	run := tw.run
+	treq := runrequests.Request{ID: id(), Kind: runrequests.KindTriggerReview, TemplateID: tw.x, TargetID: &run,
+		Review: &runrequests.ReviewChange{Changes: ch.Changes, PausedBefore: &runrequests.PausedBefore{}}}
+	tp, err := tw.resolver().Picture(ctx, id(), treq)
+	if err != nil || tp.Review.PausedBefore == nil || tp.Review.PausedBefore.ByUserID != "" {
+		t.Fatalf("trigger picture = %+v, %v", tp.Review, err)
+	}
+	if err := tw.resolver().ApplyReview(ctx, id(), treq, *tp.Review, id()); err != nil {
+		t.Fatal(err)
+	}
+	if len(tw.trigs.enabled) != 0 || len(tw.trigs.accepted) != 1 || tw.trigs.acceptedRev[0] != 4 {
+		t.Fatalf("enabled %v, accepted %v", tw.trigs.enabled, tw.trigs.accepted)
 	}
 }

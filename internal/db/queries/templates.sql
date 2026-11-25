@@ -101,6 +101,13 @@ WHERE job_templates.org_id = @org_id
     SELECT p.id FROM playbooks p WHERE p.org_id = @org_id AND p.repo_id = @repo_id)
 ORDER BY job_templates.name, job_templates.id;
 
+-- name: ListTemplateIDsForPlaybook :many
+-- The templates that run the playbook: what a change of an editor
+-- playbook's text changes for them (spec 2026-11-25 C2).
+SELECT id FROM job_templates
+WHERE org_id = @org_id AND playbook_id = @playbook_id
+ORDER BY name, id;
+
 -- name: ListAutomaticTemplatesForPlaybook :many
 -- The templates an editor playbook's save applies its new variable
 -- sources to: those of the playbook in automatic mode.

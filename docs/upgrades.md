@@ -959,21 +959,28 @@ disabled trigger, which every existing row passes with NULL) and a partial index
 `run_requests_review_target_idx` on `(org_id, target_id)` for the two review kinds 00129
 already admits. Catalog changes plus a small index; a backup carries both columns. When
 a change made with an assistant token moves a run-relevant field of a job template
-(playbook, scope, limit, extra vars values or schema, credential, vault identities,
-agent enrollment, follow-ups; through the template save, variables save or variables
-apply routes) or of a repository (URL, branch, subpath, credential, vault identities),
-the same transaction pauses every active schedule of the affected templates (a
-repository's: the templates whose playbook comes from it) and disables every enabled
-trigger that runs one of them or syncs the repository, each with the reason
+(playbook, scope, limit, extra vars values or schema, variables mode, credential, vault
+identities, agent enrollment, follow-ups; through the template save, variables save,
+variables apply or variables mode routes), of a repository (URL, branch, subpath,
+credential, vault identities) or the text of an editor playbook (`PUT …/playbooks/{id}`),
+the same transaction pauses every schedule of the affected templates (a repository's:
+the templates whose playbook comes from it; an editor playbook's: the templates that
+run it) and disables every trigger that runs one of them or syncs the repository, each
+with the reason
 `assistant_change`, one activity entry (`pauseScheduleForReview`,
 `disableTriggerForReview`, attributed to the token) and one review request
 (`schedule_review`, `trigger_review`) whose picture shows the item and the changes, old
 and new, secrets masked. Another change of an item already paused for review is added
-to its open review instead. A schedule a person paused, or a trigger a person disabled,
-is left as it is. A person's change pauses nothing; inventory changes never do. A review
+to its open review instead. A schedule a person had paused, or a trigger a person had
+disabled, gets the reason and a review as well, so the notice shows before anyone
+resumes it; its picture names who had stopped it (the last `POST pauseSchedule`, or
+`POST disableTrigger` / `PUT updateTrigger` / `POST createTrigger`, in the activity log,
+when there is one), and approving it accepts the changes and leaves it stopped without
+the reason. A person's change pauses nothing; inventory changes never do. A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
-repository sync trigger) and resumes (enables) the item at the revision shown;
+repository sync trigger) and resumes (enables) the item at the revision shown (one a
+person had stopped stays stopped);
 rejecting leaves it paused. A person may resume or enable such an item directly, which
 clears the reason and closes the open review as approved by them; an assistant's
 `resume_schedule`, or an `update_trigger` that enables it, is refused with 422. The

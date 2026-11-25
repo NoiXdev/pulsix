@@ -187,7 +187,7 @@ func (f *fakeStore) DisableForReview(_ context.Context, orgID, id uuid.UUID) (tr
 	if !ok || t.OrgID != orgID {
 		return triggers.Trigger{}, false, triggers.ErrNotFound
 	}
-	if !t.Enabled {
+	if t.DisabledReason != "" {
 		return t, false, nil
 	}
 	t.Enabled, t.DisabledReason = false, triggers.DisabledForReview
@@ -207,6 +207,22 @@ func (f *fakeStore) EnableAt(_ context.Context, orgID, id uuid.UUID, revision in
 		return triggers.Trigger{}, triggers.ErrRevisionMismatch
 	}
 	t.Enabled, t.DisabledReason = true, ""
+	t.Revision++
+	f.byID[id] = t
+	return t, nil
+}
+
+func (f *fakeStore) ClearReasonAt(_ context.Context, orgID, id uuid.UUID, revision int64) (triggers.Trigger, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.byID[id]
+	if !ok || t.OrgID != orgID {
+		return triggers.Trigger{}, triggers.ErrNotFound
+	}
+	if t.Revision != revision {
+		return triggers.Trigger{}, triggers.ErrRevisionMismatch
+	}
+	t.DisabledReason = ""
 	t.Revision++
 	f.byID[id] = t
 	return t, nil

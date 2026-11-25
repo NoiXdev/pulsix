@@ -14,6 +14,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearTriggerDisabledReasonAt = `-- name: ClearTriggerDisabledReasonAt :one
+UPDATE job_triggers SET disabled_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = $1 AND id = $2 AND revision = $3
+RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
+`
+
+type ClearTriggerDisabledReasonAtParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	ID       uuid.UUID `json:"id"`
+	Revision int64     `json:"revision"`
+}
+
+// An approved review of a trigger a person had disabled before the change:
+// the reason goes, the trigger stays disabled, at the revision the
+// approver saw.
+func (q *Queries) ClearTriggerDisabledReasonAt(ctx context.Context, arg ClearTriggerDisabledReasonAtParams) (JobTrigger, error) {
+	row := q.db.QueryRow(ctx, clearTriggerDisabledReasonAt, arg.OrgID, arg.ID, arg.Revision)
+	var i JobTrigger
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Kind,
+		&i.TemplateID,
+		&i.RepoID,
+		&i.Name,
+		&i.Enabled,
+		&i.Preset,
+		&i.Auth,
+		&i.SignatureHeader,
+		&i.TimestampHeader,
+		&i.Secret,
+		&i.AllowCidrs,
+		&i.Mapping,
+		&i.OnActive,
+		&i.RateLimit,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.DisabledReason,
+	)
+	return i, err
+}
+
 const createTrigger = `-- name: CreateTrigger :one
 INSERT INTO job_triggers (id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header,
                           timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by)
@@ -151,7 +195,7 @@ func (q *Queries) DisableTrigger(ctx context.Context, arg DisableTriggerParams) 
 
 const disableTriggerForReview = `-- name: DisableTriggerForReview :one
 UPDATE job_triggers SET enabled = false, disabled_reason = 'assistant_change', revision = revision + 1, updated_at = now()
-WHERE org_id = $1 AND id = $2 AND enabled
+WHERE org_id = $1 AND id = $2 AND disabled_reason IS NULL
 RETURNING id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header, timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by, created_at, updated_at, revision, disabled_reason
 `
 
@@ -161,8 +205,8 @@ type DisableTriggerForReviewParams struct {
 }
 
 // An assistant's change disabled the trigger until a person reviews it
-// (spec 2026-11-25 C2): only an enabled trigger moves; no row back means
-// it was already disabled.
+// (spec 2026-11-25 C2): an enabled trigger, and one a person disabled (it
+// gets the reason); no row back means it was already disabled for review.
 func (q *Queries) DisableTriggerForReview(ctx context.Context, arg DisableTriggerForReviewParams) (JobTrigger, error) {
 	row := q.db.QueryRow(ctx, disableTriggerForReview, arg.OrgID, arg.ID)
 	var i JobTrigger

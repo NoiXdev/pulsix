@@ -32,6 +32,9 @@ type Subject string
 const (
 	SubjectTemplate Subject = "job_template"
 	SubjectRepo     Subject = "repo"
+	// SubjectPlaybook is an editor playbook's text: what every template
+	// that runs it runs.
+	SubjectPlaybook Subject = "playbook"
 )
 
 // Field is one run-relevant field the change moved: its name (a template's

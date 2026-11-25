@@ -418,6 +418,39 @@ func (q *Queries) ListTemplateFollowUps(ctx context.Context, arg ListTemplateFol
 	return items, nil
 }
 
+const listTemplateIDsForPlaybook = `-- name: ListTemplateIDsForPlaybook :many
+SELECT id FROM job_templates
+WHERE org_id = $1 AND playbook_id = $2
+ORDER BY name, id
+`
+
+type ListTemplateIDsForPlaybookParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	PlaybookID pgtype.UUID `json:"playbook_id"`
+}
+
+// The templates that run the playbook: what a change of an editor
+// playbook's text changes for them (spec 2026-11-25 C2).
+func (q *Queries) ListTemplateIDsForPlaybook(ctx context.Context, arg ListTemplateIDsForPlaybookParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTemplateIDsForPlaybook, arg.OrgID, arg.PlaybookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplateIDsForRepo = `-- name: ListTemplateIDsForRepo :many
 SELECT job_templates.id FROM job_templates
 WHERE job_templates.org_id = $1

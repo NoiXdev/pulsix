@@ -4674,10 +4674,10 @@ export interface components {
             id: string;
             name: string;
             /**
-             * @description What the assistant changed: a job template or a repository
+             * @description What the assistant changed: a job template, a repository or an editor playbook
              * @enum {string}
              */
-            subject: "job_template" | "repo";
+            subject: "job_template" | "repo" | "playbook";
             /** @description The assistant token that made the change */
             token_id?: string;
             /** @description The person whose assistant token made the change */
@@ -7569,6 +7569,10 @@ export interface components {
             ssh_port?: number;
             ssh_user?: string;
         };
+        PicturePausedBefore: {
+            /** @description The person who paused (disabled) it, when the activity log names them */
+            by_user_id?: string;
+        };
         PicturePlaybook: {
             id: string;
             inline_digest?: string;
@@ -7598,6 +7602,8 @@ export interface components {
              */
             item: "schedule" | "trigger";
             item_id: string;
+            /** @description Set when a person had paused the schedule (disabled the trigger) before the assistant's change: approving accepts the change and leaves it paused (disabled) as that person left it */
+            paused_before?: components["schemas"]["PicturePausedBefore"];
             /** @description Whether the item is still paused (disabled) because of the changes; approving resumes (enables) it */
             paused_for_review: boolean;
             /** @description The paused schedule as it is now */

@@ -241,6 +241,18 @@ func (f *fakeStore) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]u
 	return out, nil
 }
 
+// IDsOfPlaybook mirrors the real store: the templates of the playbook.
+func (f *fakeStore) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {
+	all, _ := f.List(ctx, orgID)
+	var out []uuid.UUID
+	for _, t := range all {
+		if t.PlaybookID == playbookID {
+			out = append(out, t.ID)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListAutomaticForPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]templates.Template, error) {
 	return f.listAutomatic(ctx, orgID, func(t templates.Template) bool { return t.PlaybookID == playbookID })
 }

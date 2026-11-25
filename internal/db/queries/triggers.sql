@@ -51,10 +51,18 @@ RETURNING *;
 
 -- name: DisableTriggerForReview :one
 -- An assistant's change disabled the trigger until a person reviews it
--- (spec 2026-11-25 C2): only an enabled trigger moves; no row back means
--- it was already disabled.
+-- (spec 2026-11-25 C2): an enabled trigger, and one a person disabled (it
+-- gets the reason); no row back means it was already disabled for review.
 UPDATE job_triggers SET enabled = false, disabled_reason = 'assistant_change', revision = revision + 1, updated_at = now()
-WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND enabled
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND disabled_reason IS NULL
+RETURNING *;
+
+-- name: ClearTriggerDisabledReasonAt :one
+-- An approved review of a trigger a person had disabled before the change:
+-- the reason goes, the trigger stays disabled, at the revision the
+-- approver saw.
+UPDATE job_triggers SET disabled_reason = NULL, revision = revision + 1, updated_at = now()
+WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(revision)
 RETURNING *;
 
 -- name: EnableTriggerAt :one

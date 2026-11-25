@@ -59,6 +59,23 @@ func TestDisableForReviewThroughTheStore(t *testing.T) {
 	if _, _, err := st.DisableForReview(scoped, org, uuid.Must(uuid.NewV7())); !errors.Is(err, triggers.ErrNotFound) {
 		t.Fatalf("unknown = %v", err)
 	}
+	// A trigger a person disabled gets the reason too (fix round 1); an
+	// approved review of it clears the reason and leaves it disabled.
+	byPerson, err := st.Disable(scoped, org, sync.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, ok, err := st.DisableForReview(scoped, org, sync.ID)
+	if err != nil || !ok || marked.Enabled || marked.DisabledReason != triggers.DisabledForReview || marked.Revision != byPerson.Revision+1 {
+		t.Fatalf("person-disabled = %+v ok %v, %v", marked, ok, err)
+	}
+	if _, err := st.ClearReasonAt(scoped, org, sync.ID, marked.Revision-1); !errors.Is(err, triggers.ErrRevisionMismatch) {
+		t.Fatalf("stale clear = %v", err)
+	}
+	cleared, err := st.ClearReasonAt(scoped, org, sync.ID, marked.Revision)
+	if err != nil || cleared.Enabled || cleared.DisabledReason != "" {
+		t.Fatalf("cleared = %+v, %v", cleared, err)
+	}
 	if _, err := st.EnableAt(scoped, org, run.ID, off.Revision-1); !errors.Is(err, triggers.ErrRevisionMismatch) {
 		t.Fatalf("stale = %v", err)
 	}

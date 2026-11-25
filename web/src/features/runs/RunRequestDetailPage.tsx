@@ -219,7 +219,7 @@ export function RunRequestDetailPage() {
         return;
       }
       if (reviewed) {
-        toast.show(rv.approved[reviewed.item]);
+        toast.show(reviewed.paused_before ? rv.acceptedStopped : rv.approved[reviewed.item]);
         if (reviewed.item === 'schedule') await openSchedule(approved.target_id);
         return;
       }
@@ -381,7 +381,12 @@ export function RunRequestDetailPage() {
       ) : trigger ? (
         <TriggerRequestSections trigger={trigger} templateRevision={picture.template_revision} requestedRevision={request.template_revision} />
       ) : reviewed ? (
-        <ReviewRequestSections review={reviewed} tokenName={request.requested_by_token_name} tokenId={request.requested_by_token_id} />
+        <ReviewRequestSections
+          review={reviewed}
+          tokenName={request.requested_by_token_name}
+          tokenId={request.requested_by_token_id}
+          personName={(userId) => (members.data?.members ?? []).find((m) => m.user_id === userId)?.display_name ?? ''}
+        />
       ) : (
         <RunPictureSections org={org} picture={picture} status={request.status} />
       )}

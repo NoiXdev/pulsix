@@ -26,6 +26,12 @@ func (s *Service) IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uui
 	return s.store.IDsOfRepo(ctx, orgID, repoID)
 }
 
+// IDsOfPlaybook lists the templates that run the playbook: what a change of
+// an editor playbook's text changes for them (spec 2026-11-25 C2).
+func (s *Service) IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error) {
+	return s.store.IDsOfPlaybook(ctx, orgID, playbookID)
+}
+
 // runState is a template with the parts of it a run uses that the row
 // itself does not hold: its own vault passwords and its follow-ups.
 type runState struct {
@@ -101,6 +107,9 @@ func (s *Service) runChanges(ctx context.Context, orgID uuid.UUID, before, after
 	}
 	if oldVault, newVault := s.vaultLabels(ctx, orgID, before.vault), s.vaultLabels(ctx, orgID, after.vault); !slices.Equal(oldVault, newVault) {
 		add("vault_identities", oldVault, newVault)
+	}
+	if b.VarsMode != a.VarsMode {
+		add("vars_mode", string(b.VarsMode), string(a.VarsMode))
 	}
 	if b.AgentEnrollment != a.AgentEnrollment {
 		add("agent_enrollment", b.AgentEnrollment, a.AgentEnrollment)

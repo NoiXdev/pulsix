@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,12 +59,17 @@ func (m *memReviews) CloseReviews(_ context.Context, _ uuid.UUID, kind runreques
 
 type reviewWorld struct {
 	org, tmplA, tmplB, repo uuid.UUID
+	playbook                uuid.UUID
 	schedules               map[uuid.UUID]schedules.Schedule
 	triggers                map[uuid.UUID]triggers.Trigger
 	events                  []audit.Event
 	reviews                 *memReviews
 	reviewer                *runrequests.Reviewer
 	now                     time.Time
+	// pausedBy answers who paused or disabled an item before; asked
+	// records the questions.
+	pausedBy *uuid.UUID
+	asked    []string
 }
 
 func (w *reviewWorld) Get(_ context.Context, _, id uuid.UUID) (templates.Template, error) {
@@ -83,6 +89,13 @@ func (w *reviewWorld) IDsOfRepo(_ context.Context, _, repo uuid.UUID) ([]uuid.UU
 	return nil, nil
 }
 
+func (w *reviewWorld) IDsOfPlaybook(_ context.Context, _, playbook uuid.UUID) ([]uuid.UUID, error) {
+	if playbook == w.playbook {
+		return []uuid.UUID{w.tmplA}, nil
+	}
+	return nil, nil
+}
+
 func (w *reviewWorld) ListOfTemplates(_ context.Context, _ uuid.UUID, ids []uuid.UUID) ([]schedules.Schedule, error) {
 	var out []schedules.Schedule
 	for _, id := range ids {
@@ -97,7 +110,7 @@ func (w *reviewWorld) ListOfTemplates(_ context.Context, _ uuid.UUID, ids []uuid
 
 func (w *reviewWorld) PauseForReview(_ context.Context, _, id uuid.UUID) (schedules.Schedule, bool, error) {
 	s := w.schedules[id]
-	if s.Paused {
+	if s.PausedReason != "" {
 		return s, false, nil
 	}
 	s.Paused, s.PausedReason, s.Revision = true, schedules.PausedForReview, s.Revision+1
@@ -121,12 +134,17 @@ func (w *reviewWorld) ListForReview(_ context.Context, _ uuid.UUID, ids []uuid.U
 
 func (w *reviewWorld) DisableForReview(_ context.Context, _, id uuid.UUID) (triggers.Trigger, bool, error) {
 	t := w.triggers[id]
-	if !t.Enabled {
+	if t.DisabledReason != "" {
 		return t, false, nil
 	}
 	t.Enabled, t.DisabledReason, t.Revision = false, triggers.DisabledForReview, t.Revision+1
 	w.triggers[id] = t
 	return t, true, nil
+}
+
+func (w *reviewWorld) LastActor(_ context.Context, _ uuid.UUID, objectType, objectID string, actions []string) (*uuid.UUID, error) {
+	w.asked = append(w.asked, objectType+" "+objectID+" "+strings.Join(actions, ","))
+	return w.pausedBy, nil
 }
 
 func (w *reviewWorld) Record(_ context.Context, e audit.Event) error {
@@ -137,10 +155,11 @@ func (w *reviewWorld) Record(_ context.Context, e audit.Event) error {
 func newReviewWorld() *reviewWorld {
 	w := &reviewWorld{
 		org: uuid.Must(uuid.NewV7()), tmplA: uuid.Must(uuid.NewV7()), tmplB: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7()),
+		playbook:  uuid.Must(uuid.NewV7()),
 		schedules: map[uuid.UUID]schedules.Schedule{}, triggers: map[uuid.UUID]triggers.Trigger{},
 		reviews: &memReviews{}, now: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}
-	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w}, w,
+	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w, History: w}, w,
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
@@ -174,15 +193,13 @@ func (w *reviewWorld) reviewOf(target uuid.UUID) []runrequests.Request {
 // TestAnAssistantsTemplateChangePausesWhatRunsIt (spec 2026-11-25 C2):
 // every active schedule of the template is paused and every enabled
 // trigger that runs it disabled, each with one review naming the change and
-// the token, and an activity entry. A schedule a person paused, a disabled
-// trigger and the items of another template are left alone.
+// the token, and an activity entry. The items of another template are left
+// alone.
 func TestAnAssistantsTemplateChangePausesWhatRunsIt(t *testing.T) {
 	w := newReviewWorld()
 	active := w.schedule("nightly", w.tmplA, false, "")
-	byPerson := w.schedule("weekly", w.tmplA, true, "")
 	other := w.schedule("other", w.tmplB, false, "")
 	hook := w.trigger("deploy-hook", &w.tmplA, nil, true)
-	off := w.trigger("old-hook", &w.tmplA, nil, false)
 	token := uuid.Must(uuid.NewV7())
 	user := uuid.Must(uuid.NewV7())
 	change := assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA, Name: "deploy", UserID: user, TokenID: &token,
@@ -193,8 +210,8 @@ func TestAnAssistantsTemplateChangePausesWhatRunsIt(t *testing.T) {
 	if s := w.schedules[active]; !s.Paused || s.PausedReason != schedules.PausedForReview {
 		t.Fatalf("active schedule = %+v", s)
 	}
-	if w.schedules[byPerson].PausedReason != "" || w.schedules[other].Paused || w.triggers[off].Revision != 1 || w.triggers[off].DisabledReason != "" {
-		t.Fatalf("left alone: %+v %+v %+v", w.schedules[byPerson], w.schedules[other], w.triggers[off])
+	if w.schedules[other].Paused {
+		t.Fatalf("another template's schedule = %+v", w.schedules[other])
 	}
 	if tr := w.triggers[hook]; tr.Enabled || tr.DisabledReason != triggers.DisabledForReview {
 		t.Fatalf("trigger = %+v", tr)
@@ -208,7 +225,7 @@ func TestAnAssistantsTemplateChangePausesWhatRunsIt(t *testing.T) {
 		!sr[0].ExpiresAt.Equal(w.now.Add(runrequests.ReviewTTL)) || len(sr[0].Review.Changes) != 1 || sr[0].Reason == "" {
 		t.Fatalf("schedule review = %+v", sr)
 	}
-	if tr := w.reviewOf(hook); len(tr) != 1 || tr[0].Kind != runrequests.KindTriggerReview {
+	if tr := w.reviewOf(hook); len(tr) != 1 || tr[0].Kind != runrequests.KindTriggerReview || tr[0].Review.PausedBefore != nil {
 		t.Fatalf("trigger review = %+v", tr)
 	}
 	if len(w.events) != 2 || w.events[0].Action != "pauseScheduleForReview" || w.events[0].ObjectID != active.String() ||
@@ -301,9 +318,67 @@ func (failingAudit) Record(context.Context, audit.Event) error { return errors.N
 func TestAReviewerFailureFailsTheChange(t *testing.T) {
 	w := newReviewWorld()
 	w.schedule("a", w.tmplA, false, "")
-	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w}, failingAudit{},
+	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: w, History: w}, failingAudit{},
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	if err := r.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err == nil {
 		t.Fatal("a change whose pause could not be recorded succeeded")
+	}
+}
+
+// Fix round 1: a schedule a person paused, and a trigger a person disabled,
+// get the reason and a review too, which remembers who had stopped them, so
+// the notice shows before anyone resumes them. The record of who did it is
+// asked by the item's pause or disable actions.
+func TestAnAssistantsChangeMarksWhatAPersonStopped(t *testing.T) {
+	w := newReviewWorld()
+	person := uuid.Must(uuid.NewV7())
+	w.pausedBy = &person
+	byPerson := w.schedule("weekly", w.tmplA, true, "")
+	off := w.trigger("old-hook", &w.tmplA, nil, false)
+	change := assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA, Name: "deploy",
+		Fields: []assistantchange.Field{{Name: "limit", Old: nil, New: "db*"}}}
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	if s := w.schedules[byPerson]; !s.Paused || s.PausedReason != schedules.PausedForReview {
+		t.Fatalf("schedule = %+v", s)
+	}
+	if tr := w.triggers[off]; tr.Enabled || tr.DisabledReason != triggers.DisabledForReview {
+		t.Fatalf("trigger = %+v", tr)
+	}
+	for _, id := range []uuid.UUID{byPerson, off} {
+		r := w.reviewOf(id)
+		if len(r) != 1 || r[0].Review.PausedBefore == nil || r[0].Review.PausedBefore.By == nil || *r[0].Review.PausedBefore.By != person {
+			t.Fatalf("review of %s = %+v", id, r)
+		}
+	}
+	if len(w.asked) != 2 || !strings.Contains(w.asked[0], "schedule "+byPerson.String()+" POST pauseSchedule") ||
+		!strings.Contains(w.asked[1], "trigger "+off.String()+" POST disableTrigger") {
+		t.Fatalf("asked = %v", w.asked)
+	}
+	if len(w.events) != 2 || !strings.Contains(w.events[0].Summary, "kept schedule weekly paused") {
+		t.Fatalf("events = %+v", w.events)
+	}
+	// Another change refreshes the review and keeps who had paused it.
+	w.pausedBy = nil
+	if err := w.reviewer.Changed(ctx, w.org, change); err != nil {
+		t.Fatal(err)
+	}
+	if r := w.reviewOf(byPerson); len(r) != 1 || len(r[0].Review.Changes) != 2 || r[0].Review.PausedBefore == nil || *r[0].Review.PausedBefore.By != person {
+		t.Fatalf("refreshed = %+v", r)
+	}
+}
+
+// An inline playbook's change reaches the templates that run it.
+func TestAnAssistantsPlaybookChangePausesItsTemplates(t *testing.T) {
+	w := newReviewWorld()
+	a := w.schedule("a", w.tmplA, false, "")
+	b := w.schedule("b", w.tmplB, false, "")
+	if err := w.reviewer.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectPlaybook, ID: w.playbook, Name: "deploy",
+		Fields: []assistantchange.Field{{Name: "playbook_text", Old: "- hosts: all", New: "- hosts: web"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !w.schedules[a].Paused || w.schedules[b].Paused {
+		t.Fatalf("schedules = %+v %+v", w.schedules[a], w.schedules[b])
 	}
 }

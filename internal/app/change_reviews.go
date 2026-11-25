@@ -7,6 +7,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
@@ -15,18 +16,20 @@ import (
 )
 
 // WireChangeReviews wires the pause after an assistant's change (spec
-// 2026-11-25 assistant API gaps, C2): the template and repository services
+// 2026-11-25 assistant API gaps, C2): the template, repository and playbook
+// services
 // hand an assistant's run-relevant change to the reviewer inside the
 // change's transaction, which pauses the schedules and disables the
 // triggers it affects and opens their reviews; the schedule and trigger
 // services close a review when a person resumes or enables its item. Every
 // store involved is built on d, so all of it is one transaction.
-func WireChangeReviews(d *db.DB, tmpl *templates.Service, rp *repos.Service, sch *schedules.Service, trg *triggers.Service, rec *audit.Recorder) *runrequests.Reviewer {
+func WireChangeReviews(d *db.DB, tmpl *templates.Service, rp *repos.Service, pb *playbooks.Service, sch *schedules.Service, trg *triggers.Service, rec *audit.Recorder) *runrequests.Reviewer {
 	reviewer := runrequests.NewReviewer(runrequests.NewSQLStore(d),
-		runrequests.ReviewSources{Templates: tmpl, Schedules: sch, Triggers: trg}, rec,
+		runrequests.ReviewSources{Templates: tmpl, Schedules: sch, Triggers: trg, History: audit.NewSQLStore(d)}, rec,
 		time.Now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	tmpl.SetChangeWatcher(reviewer)
 	rp.SetChangeWatcher(reviewer)
+	pb.SetChangeWatcher(reviewer)
 	sch.SetReviews(reviewer)
 	trg.SetReviews(reviewer)
 	return reviewer

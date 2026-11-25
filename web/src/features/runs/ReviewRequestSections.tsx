@@ -16,14 +16,17 @@ const TD = 'border-t border-border px-4 py-2 align-top';
  * (disabled) it. It shows the item as it is now and, per change, the job
  * template or repository with each field's value before and after — a
  * secret only as "hidden" — and the token that made it. It says when the
- * item is no longer stopped for the review and when it is gone.
+ * item is no longer stopped for the review and when it is gone, and who had
+ * paused it before the change (approving then leaves it paused).
  */
-export function ReviewRequestSections({ review, tokenName, tokenId }: {
+export function ReviewRequestSections({ review, tokenName, tokenId, personName }: {
   review: PictureReview;
   /** The requesting token's name and id: the change made with another
    * token names that one by id. */
   tokenName?: string;
   tokenId?: string;
+  /** The display name of a member by user id ('' when unknown). */
+  personName: (userId: string) => string;
 }) {
   const t = useT();
   const r = t.runs.requests.detail.review;
@@ -63,6 +66,11 @@ export function ReviewRequestSections({ review, tokenName, tokenId }: {
           </p>
         )}
         <p className="text-xs text-muted-foreground">{r.intro[review.item]}</p>
+        {review.paused_before && (
+          <p role="note" className="rounded-md border border-border px-3 py-2 text-xs">
+            {r.pausedBefore[review.item](review.paused_before.by_user_id ? personName(review.paused_before.by_user_id) : '')}
+          </p>
+        )}
         {!review.gone && !review.paused_for_review && (
           <p role="note" className="rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs text-[var(--px-warn)]">
             {r.notPaused[review.item]}

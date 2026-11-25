@@ -213,3 +213,41 @@ func TestAnAssistantsVariablesWriteIsHandedOn(t *testing.T) {
 		t.Fatalf("changes = %+v", w.got)
 	}
 }
+
+// Fix round 1: the variables mode (manual or automatic sources) is a field
+// the run uses: an assistant's switch is handed on, a person's is not.
+func TestAnAssistantsVariablesModeSwitchIsHandedOn(t *testing.T) {
+	f := newFixture()
+	w := &recordingWatcher{}
+	f.svc.SetChangeWatcher(w)
+	tm := f.linked(t, "linked", templates.ModeManual, "c1", []schema.Field{{Name: "tag", Type: schema.TypeString}}, map[string]any{"tag": "v1"})
+	if _, err := f.svc.SetVariablesModeBy(ctx, f.org, tm.ID, templates.ModeAutomatic, nil, assistantchange.Actor{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.got) != 0 {
+		t.Fatalf("a person's switch was handed on: %+v", w.got)
+	}
+	if _, err := f.svc.SetVariablesModeBy(ctx, f.org, tm.ID, templates.ModeManual, nil, assistantchange.Actor{Assistant: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.got) != 1 || !reflect.DeepEqual(w.got[0].Fields, []assistantchange.Field{{Name: "vars_mode", Old: "automatic", New: "manual"}}) {
+		t.Fatalf("changes = %+v", w.got)
+	}
+}
+
+// The templates that run a playbook: what an editor playbook's change
+// reaches.
+func TestIDsOfPlaybook(t *testing.T) {
+	f := newFixture()
+	a, err := f.svc.Create(ctx, f.org, templates.CreateInput{Name: "a", PlaybookID: f.playbook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Create(ctx, f.org, templates.CreateInput{Name: "b", PlaybookID: f.playbook2}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := f.svc.IDsOfPlaybook(ctx, f.org, f.playbook)
+	if err != nil || len(ids) != 1 || ids[0] != a.ID {
+		t.Fatalf("ids = %v, %v", ids, err)
+	}
+}
