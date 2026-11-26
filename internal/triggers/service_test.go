@@ -295,6 +295,9 @@ type world struct {
 	store    *fakeStore
 	tmpls    fakeTemplates
 	repos    fakeRepos
+	inv      *fakeInvSecrets
+	pbs      *fakePbVars
+	scope    *fakeScope
 	org      uuid.UUID
 	actor    uuid.UUID
 	template uuid.UUID
@@ -305,13 +308,15 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{store: newFakeStore(), org: uuid.Must(uuid.NewV7()), actor: uuid.Must(uuid.NewV7()), template: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7())}
 	sc := &schema.Schema{Fields: []schema.Field{{Name: "release", Type: schema.TypeString}, {Name: "token", Type: schema.TypeSecret}}}
-	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, ExtraVarsSchema: sc}}, opts: &[]templates.OverrideOptions{}, refuse: new(error)}
+	w.tmpls = fakeTemplates{byID: map[uuid.UUID]templates.Template{w.template: {ID: w.template, OrgID: w.org, PlaybookID: uuid.Must(uuid.NewV7()), ExtraVarsSchema: sc}}, opts: &[]templates.OverrideOptions{}, refuse: new(error)}
 	w.repos = fakeRepos{byID: map[uuid.UUID]repos.Repo{w.repo: {ID: w.repo, OrgID: w.org}}}
+	w.inv, w.pbs, w.scope = &fakeInvSecrets{names: map[string]bool{}}, &fakePbVars{}, &fakeScope{hosts: []uuid.UUID{uuid.Must(uuid.NewV7())}}
 	w.svc = triggers.NewService(triggers.Deps{
 		Store:     w.store,
 		Templates: w.tmpls,
 		Repos:     w.repos,
-		Box:       fakeBox{}, PublicURL: "https://pulsix.example.test/",
+		Secrets:   w.secrets(), Scope: w.scope,
+		Box: fakeBox{}, PublicURL: "https://pulsix.example.test/",
 		Now: func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }, Rand: rand.Reader,
 	})
 	return w
@@ -329,7 +334,7 @@ func (w *world) templateInput() triggers.Input {
 func TestNewServiceDefaultsRand(t *testing.T) {
 	w := newWorld(t)
 	w.svc = triggers.NewService(triggers.Deps{
-		Store: w.store, Templates: w.tmpls, Repos: w.repos, Box: fakeBox{}, PublicURL: "https://pulsix.example.test/",
+		Store: w.store, Templates: w.tmpls, Repos: w.repos, Secrets: w.secrets(), Scope: w.scope, Box: fakeBox{}, PublicURL: "https://pulsix.example.test/",
 		Now: func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) },
 	})
 	if _, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput()); err != nil {

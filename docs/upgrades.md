@@ -2052,6 +2052,18 @@ an unknown outcome; stop every manager instance first, as above.
   after the upgrade: look at your triggers' mappings and map such a value onto
   another variable name. Mappings onto playbook keywords (`tags`, `name`,
   `environment`, …) keep working.
+- **Webhook mappings onto secret names are refused (backlog 2.139, no migration):** a
+  mapping target named like a secret of the template's run (as for run request extra
+  vars above: an inventory secret of any host the template's scope reaches, a variable
+  the playbook declares secret, or one its repository encrypts with Ansible Vault) is
+  refused when the trigger is saved (400), and every delivery to a trigger saved
+  before with such a target fails (422 naming the field, outcome `invalid_payload`;
+  no run starts, nothing is collected). A run a settle delay collected is checked
+  again when it is due and is not started, its deliveries failed, when a secret of a
+  mapped name appeared meanwhile. A template whose scope names something that no
+  longer exists cannot be checked, so a trigger with mapped variables for it cannot
+  be saved (400) until the scope is fixed. To check after the upgrade: rename such a
+  mapping target.
 - **Numbers in run overrides stay exact (spec 2026-11-25 A):** a run with overrides
   (a schedule's, a webhook's, a run request's) sends the template's and the
   overrides' numbers as written: `1.0` stays `1.0` and an integer past 2^53 keeps
