@@ -17,14 +17,26 @@ func TestTLSFilesFIFODoesNotHang(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
 		t.Skipf("no FIFOs here: %v", err)
 	}
-	done := make(chan struct{})
+	type result struct{ ca, cert error }
+	done := make(chan result, 1)
 	go func() {
-		defer close(done)
-		mustLoadErr(t, files(fifo, "", ""), "secret field `tls_ca` is not a regular file")
-		mustLoadErr(t, files("", fifo, fifo), "secret field `tls_cert` is not a regular file")
+		_, caErr := files(fifo, "", "").Load()
+		_, certErr := files("", fifo, fifo).Load()
+		done <- result{caErr, certErr}
 	}()
 	select {
-	case <-done:
+	case r := <-done:
+		for _, c := range []struct {
+			err  error
+			want string
+		}{
+			{r.ca, "secret field `tls_ca` is not a regular file"},
+			{r.cert, "secret field `tls_cert` is not a regular file"},
+		} {
+			if c.err == nil || c.err.Error() != c.want {
+				t.Errorf("err = %v, want %q", c.err, c.want)
+			}
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("loading a FIFO hung")
 	}
