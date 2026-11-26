@@ -63,6 +63,8 @@ describe('the parameter formats', () => {
     expect(formatProblem('httpHeader', 'content-type: text/plain')).toBe('httpHeaderContentType');
     expect(formatProblem('httpHeader', 'X-A: a\nb')).toBe('httpHeader');
     expect(formatProblem('httpHeader', 'Authorization')).toBe('httpHeader');
+    expect(formatProblem('httpHeader', 'X-Api-Key: k')).toBe('httpHeaderCredentials');
+    expect(formatProblem('httpHeader', 'X-Forwarded-For: 1.2.3.4')).toBe('httpHeaderRouting');
   });
 
   it('accept nothing for a format no twin knows, as the server does', () => {

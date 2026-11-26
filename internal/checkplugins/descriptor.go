@@ -160,6 +160,11 @@ type Descriptor struct {
 	// always is; see ProbedOnlyFromManager. Nil means only the secret
 	// decides.
 	ManagerOnly func(params map[string]any) string `json:"-"`
+	// Writes reports whether a check with params may change something on
+	// its target (http: POST, PUT, PATCH, DELETE or a body). The manager
+	// accepts and sends such a check only while its operator allows it
+	// (PULSIX_PROBE_WRITE_METHODS); see SendsWrites. Nil means never.
+	Writes func(params map[string]any) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes

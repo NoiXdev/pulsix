@@ -56,6 +56,14 @@ func TestHTTPRequestParams(t *testing.T) {
 		{"a content type without a body", "http", httpOK(map[string]any{"method": "POST", "content_type": "text/plain"}), false},
 		{"a bad content type", "http", httpOK(map[string]any{"method": "POST", "body": "x", "content_type": "json"}), false},
 		{"a content type with a line break", "http", httpOK(map[string]any{"method": "POST", "body": "x", "content_type": "text/plain\r\nX: 1"}), false},
+		// Fix round 1: NUL and invalid UTF-8 (M3), credential-like and
+		// routing names (M1, I1).
+		{"a body with NUL", "http", httpOK(map[string]any{"method": "POST", "body": "a\x00b"}), false},
+		{"a body not UTF-8", "http", httpOK(map[string]any{"method": "POST", "body": "a\xffb"}), false},
+		{"a header value not UTF-8", "http", httpOK(map[string]any{"headers": []any{"X-A: \xff"}}), false},
+		{"X-Api-Key", "http", httpOK(map[string]any{"headers": []any{"X-Api-Key: k"}}), false},
+		{"X-Forwarded-For", "http", httpOK(map[string]any{"headers": []any{"X-Forwarded-For: 127.0.0.1"}}), false},
+		{"X-HTTP-Method-Override", "http", httpOK(map[string]any{"headers": []any{"X-HTTP-Method-Override: DELETE"}}), false},
 	})
 }
 
@@ -68,7 +76,8 @@ func TestHTTPRequestMessages(t *testing.T) {
 		{httpOK(map[string]any{"headers": []any{"X-A: 1", "x-a: 2"}}), `http: headers names "X-A" twice`},
 		{httpOK(map[string]any{"body": "x"}), "http: body needs method POST, PUT or PATCH"},
 		{httpOK(map[string]any{"method": "POST", "content_type": "text/plain"}), "http: content_type needs a body"},
-		{httpOK(map[string]any{"headers": []any{"Authorization: x"}}), "http: headers entries must not set Authorization, Proxy-Authorization or Cookie: credentials belong in the check's secret"},
+		{httpOK(map[string]any{"headers": []any{"Authorization: x"}}), "http: headers entries must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API key, password): credentials belong in the check's secret"},
+		{httpOK(map[string]any{"method": "POST", "body": "a\x00"}), "http: body must be UTF-8 text without NUL characters"},
 		{httpOK(map[string]any{"method": "POST", "body": "x", "content_type": "json"}), "http: content_type must be a media type such as application/json or text/plain; charset=utf-8"},
 		{httpOK(map[string]any{"method": "HEAD", "json_values": []any{"a=$.a"}}), "http: json_values needs a method other than HEAD: a HEAD response has no body"},
 		{httpOK(map[string]any{"method": "POST", "body": "x", "vantage_groups": []any{g1}}), "http: checks that send a method other than GET or HEAD, headers or a body are probed only from the Pulsix server"},
@@ -154,10 +163,36 @@ func TestHTTPRequestParamSpecs(t *testing.T) {
 	if b := byName["body"]; b.Type != checkplugins.TypeString || !b.NonEmpty || b.MaxBytes != 8192 || b.Format != "" {
 		t.Fatalf("body = %+v", b)
 	}
-	if c := byName["content_type"]; c.Type != checkplugins.TypeString || c.MaxBytes != 255 || c.Format != checkplugins.FormatMediaType || c.Default != "application/json" {
+	// No advertised default (fix round 1, M2): a client that sends the
+	// defaults would send it on a check without a body, which is refused.
+	if c := byName["content_type"]; c.Type != checkplugins.TypeString || c.MaxBytes != 255 || c.Format != checkplugins.FormatMediaType || c.Default != nil || c.Example != "application/json" {
 		t.Fatalf("content_type = %+v", c)
 	}
 	if i := slices.Index(names, "headers"); i != 2 || names[3] != "body" || names[4] != "content_type" {
 		t.Fatalf("params = %v, want method, headers, body, content_type in a row", names)
+	}
+}
+
+// TestSendsWrites: what PULSIX_PROBE_WRITE_METHODS gates (fix round 1,
+// I1): POST, PUT, PATCH, DELETE or a body.
+func TestSendsWrites(t *testing.T) {
+	http, _ := checkplugins.Get("http")
+	tcp, _ := checkplugins.Get("tcp")
+	for _, c := range []struct {
+		d    checkplugins.Descriptor
+		p    map[string]any
+		want bool
+	}{
+		{http, httpOK(nil), false},
+		{http, httpOK(map[string]any{"method": "HEAD", "headers": []any{"X-A: 1"}}), false},
+		{http, httpOK(map[string]any{"method": "OPTIONS"}), false},
+		{http, httpOK(map[string]any{"method": "POST"}), true},
+		{http, httpOK(map[string]any{"method": "DELETE"}), true},
+		{http, httpOK(map[string]any{"body": "x"}), true},
+		{tcp, map[string]any{"port": 22}, false},
+	} {
+		if got := c.d.SendsWrites(c.p); got != c.want {
+			t.Errorf("%s %v: SendsWrites = %v, want %v", c.d.Name, c.p, got, c.want)
+		}
 	}
 }

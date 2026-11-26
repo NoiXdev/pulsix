@@ -106,7 +106,7 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if p := probe.Params[3]; p.Name != "body" || p.Type != "string" || p.MaxBytes != 8192 {
 		t.Errorf("http body param = %+v", p)
 	}
-	if p := probe.Params[4]; p.Name != "content_type" || p.Default != "application/json" || p.Format != "mediaType" {
+	if p := probe.Params[4]; p.Name != "content_type" || p.Default != nil || p.Format != "mediaType" {
 		t.Errorf("http content_type param = %+v", p)
 	}
 	if p := probe.Params[5]; p.Name != "secret" || p.Required || p.Format != "secretName" {

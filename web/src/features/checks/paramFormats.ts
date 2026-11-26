@@ -372,8 +372,16 @@ const RESERVED_HEADERS: ReadonlySet<string> = new Set([
   'te', 'trailer', 'upgrade', 'expect', 'accept-encoding',
 ]);
 
-/** The headers that carry credentials: the check's secret sends them. */
+/** The headers that carry credentials, and the words in a name that
+ * suggest one: the check's secret sends them. */
 const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(['authorization', 'proxy-authorization', 'cookie']);
+const CREDENTIAL_WORDS = ['token', 'secret', 'apikey', 'api-key', 'password'];
+
+/** The routing and override headers a target may trust; X-Forwarded and
+ * every X-Forwarded-* name too. */
+const ROUTING_HEADERS: ReadonlySet<string> = new Set([
+  'forwarded', 'x-real-ip', 'x-original-url', 'x-rewrite-url', 'x-http-method-override', 'x-http-method', 'x-method-override',
+]);
 
 /** headerValueOK is httpguts.ValidHeaderFieldValue: no control character
  * below space other than tab, and no DEL; anything from U+0080 on is
@@ -384,8 +392,9 @@ function headerValueOK(s: string): boolean {
 }
 
 /** httpHeaderProblem names why a headers entry is refused: 'httpHeader'
- * for its shape or value, 'httpHeaderReserved', 'httpHeaderContentType'
- * or 'httpHeaderCredentials' for its name; null when it may be sent. */
+ * for its shape or value, 'httpHeaderReserved', 'httpHeaderContentType',
+ * 'httpHeaderCredentials' or 'httpHeaderRouting' for its name; null when
+ * it may be sent. */
 export function httpHeaderProblem(s: string): string | null {
   const colon = s.indexOf(':');
   if (colon < 0) return 'httpHeader';
@@ -394,7 +403,8 @@ export function httpHeaderProblem(s: string): string | null {
   const lower = name.toLowerCase();
   if (RESERVED_HEADERS.has(lower)) return 'httpHeaderReserved';
   if (lower === 'content-type') return 'httpHeaderContentType';
-  if (CREDENTIAL_HEADERS.has(lower)) return 'httpHeaderCredentials';
+  if (CREDENTIAL_HEADERS.has(lower) || CREDENTIAL_WORDS.some((w) => lower.includes(w))) return 'httpHeaderCredentials';
+  if (ROUTING_HEADERS.has(lower) || lower === 'x-forwarded' || lower.startsWith('x-forwarded-')) return 'httpHeaderRouting';
   return null;
 }
 

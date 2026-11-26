@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/http/httpguts"
 )
@@ -57,8 +58,10 @@ const (
 	ProblemHeaderValue       = "must have a value without control characters such as line breaks"
 	ProblemHeaderReserved    = "must not set Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect or Accept-Encoding: the probe sets them"
 	ProblemHeaderContentType = "must not set Content-Type: use content_type"
-	ProblemHeaderCredentials = "must not set Authorization, Proxy-Authorization or Cookie: credentials belong in the check's secret"
+	ProblemHeaderCredentials = "must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API key, password): credentials belong in the check's secret"
+	ProblemHeaderRouting     = "must not set X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL or a method override: a target may trust them for the client's address, the path or the method"
 	ProblemMediaType         = "must be a media type such as application/json or text/plain; charset=utf-8"
+	ProblemBodyText          = "must be UTF-8 text without NUL characters"
 )
 
 // reserved are the headers the probe or its transport controls: framing,
@@ -71,21 +74,50 @@ var reserved = map[string]bool{
 }
 
 // credentialHeaders carry credentials, which never stand in a check's
-// definition: the check's secret sends them.
+// definition: the check's secret sends them (its header and value form
+// sends any one header).
 var credentialHeaders = map[string]bool{"Authorization": true, "Proxy-Authorization": true, "Cookie": true}
+
+// credentialWords in a header name (case ignored) suggest it carries a
+// credential: X-Api-Key, X-Auth-Token, Private-Token, X-Client-Secret.
+var credentialWords = []string{"token", "secret", "apikey", "api-key", "password"}
+
+// routingHeaders are the headers a target or its proxy may trust for the
+// client's address, the original path or the method (canonical form);
+// X-Forwarded and every X-Forwarded-* name are refused as well.
+var routingHeaders = map[string]bool{
+	"Forwarded": true, "X-Real-Ip": true, "X-Original-Url": true, "X-Rewrite-Url": true,
+	"X-Http-Method-Override": true, "X-Http-Method": true, "X-Method-Override": true,
+}
+
+// credentialLike reports whether canonical is a credential header or
+// suggests one.
+func credentialLike(canonical string) bool {
+	if credentialHeaders[canonical] {
+		return true
+	}
+	lower := strings.ToLower(canonical)
+	return slices.ContainsFunc(credentialWords, func(w string) bool { return strings.Contains(lower, w) })
+}
+
+// routing reports whether canonical is a routing or override header.
+func routing(canonical string) bool {
+	return routingHeaders[canonical] || canonical == "X-Forwarded" || strings.HasPrefix(canonical, "X-Forwarded-")
+}
 
 // HeaderProblem describes why entry is not a headers entry a check may
 // send, or returns "" when it is one: "Name: value" split at the first
 // colon, the name a token of at most 128 bytes and not one the probe
 // controls or that carries credentials, the value without control
-// characters other than tab. Spaces and tabs around the value are not
+// characters other than tab, and UTF-8. Routing and override headers
+// (routing) are refused too. Spaces and tabs around the value are not
 // part of it; the value may be empty.
 func HeaderProblem(entry string) string {
 	name, value, found := strings.Cut(entry, ":")
 	if !found || len(name) > maxHeaderNameLen || !httpguts.ValidHeaderFieldName(name) {
 		return ProblemHeaderShape
 	}
-	if !httpguts.ValidHeaderFieldValue(value) {
+	if !httpguts.ValidHeaderFieldValue(value) || !utf8.ValidString(value) {
 		return ProblemHeaderValue
 	}
 	canonical := http.CanonicalHeaderKey(name)
@@ -94,10 +126,31 @@ func HeaderProblem(entry string) string {
 		return ProblemHeaderReserved
 	case canonical == "Content-Type":
 		return ProblemHeaderContentType
-	case credentialHeaders[canonical]:
+	case credentialLike(canonical):
 		return ProblemHeaderCredentials
+	case routing(canonical):
+		return ProblemHeaderRouting
 	}
 	return ""
+}
+
+// BodyProblem describes why body is not a request body a check may send,
+// or returns "" when it is one: UTF-8 text without NUL (which the
+// database cannot store either).
+func BodyProblem(body string) string {
+	if !utf8.ValidString(body) || strings.ContainsRune(body, 0) {
+		return ProblemBodyText
+	}
+	return ""
+}
+
+// Writes reports whether a request of method, with or without a body,
+// may change something on its target: POST, PUT, PATCH or DELETE, or any
+// request with a body. The manager sends such a request only while its
+// operator allows it (PULSIX_PROBE_WRITE_METHODS).
+func Writes(method string, hasBody bool) bool {
+	return hasBody || method == http.MethodPost || method == http.MethodPut ||
+		method == http.MethodPatch || method == http.MethodDelete
 }
 
 // ParseHeader reads a headers entry: the canonical name and the trimmed

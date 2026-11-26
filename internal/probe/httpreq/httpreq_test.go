@@ -49,6 +49,33 @@ func TestHeaderProblem(t *testing.T) {
 		{"Authorization: Bearer x", httpreq.ProblemHeaderCredentials},
 		{"proxy-authorization: Basic x", httpreq.ProblemHeaderCredentials},
 		{"COOKIE: a=b", httpreq.ProblemHeaderCredentials},
+		// Names that suggest a credential (fix round 1, M1): the secret
+		// sends any one header of the operator's choice.
+		{"X-Api-Key: k", httpreq.ProblemHeaderCredentials},
+		{"api-key: k", httpreq.ProblemHeaderCredentials},
+		{"X-APIKEY: k", httpreq.ProblemHeaderCredentials},
+		{"X-Auth-Token: t", httpreq.ProblemHeaderCredentials},
+		{"Private-Token: t", httpreq.ProblemHeaderCredentials},
+		{"X-Vault-Token: t", httpreq.ProblemHeaderCredentials},
+		{"X-Client-Secret: s", httpreq.ProblemHeaderCredentials},
+		{"X-Password: p", httpreq.ProblemHeaderCredentials},
+		{"X-Key-Id: 1", ""},
+		{"X-Author: me", ""},
+		// Routing and override headers a target may trust (fix round 1, I1).
+		{"X-Forwarded-For: 127.0.0.1", httpreq.ProblemHeaderRouting},
+		{"x-forwarded-host: a", httpreq.ProblemHeaderRouting},
+		{"X-Forwarded-Proto: https", httpreq.ProblemHeaderRouting},
+		{"Forwarded: for=1.2.3.4", httpreq.ProblemHeaderRouting},
+		{"X-Real-IP: 1.2.3.4", httpreq.ProblemHeaderRouting},
+		{"X-Original-URL: /admin", httpreq.ProblemHeaderRouting},
+		{"X-Rewrite-URL: /admin", httpreq.ProblemHeaderRouting},
+		{"X-HTTP-Method-Override: DELETE", httpreq.ProblemHeaderRouting},
+		{"X-HTTP-Method: DELETE", httpreq.ProblemHeaderRouting},
+		{"X-Method-Override: DELETE", httpreq.ProblemHeaderRouting},
+		{"X-Forwarded: x", httpreq.ProblemHeaderRouting},
+		{"X-Forward-Me: x", ""},
+		// Not UTF-8 (fix round 1, M3): only a Go caller can pass it.
+		{"X-Bin: a\xffb", httpreq.ProblemHeaderValue},
 	}
 	for _, c := range cases {
 		if got := httpreq.HeaderProblem(c.entry); got != c.want {
@@ -121,6 +148,35 @@ func TestTakesBodyAndMethods(t *testing.T) {
 	for _, m := range []string{"get", "TRACE", "CONNECT", ""} {
 		if httpreq.KnownMethod(m) || httpreq.TakesBody(m) {
 			t.Errorf("%q is known or takes a body", m)
+		}
+	}
+}
+
+func TestWrites(t *testing.T) {
+	for _, c := range []struct {
+		method  string
+		hasBody bool
+		want    bool
+	}{
+		{"GET", false, false}, {"HEAD", false, false}, {"OPTIONS", false, false},
+		{"POST", false, true}, {"PUT", false, true}, {"PATCH", false, true}, {"DELETE", false, true},
+		{"GET", true, true},
+	} {
+		if got := httpreq.Writes(c.method, c.hasBody); got != c.want {
+			t.Errorf("Writes(%q, %v) = %v", c.method, c.hasBody, got)
+		}
+	}
+}
+
+func TestBodyProblem(t *testing.T) {
+	for _, ok := range []string{"x", "{\"a\": 1}\r\n", "grüße\ttab"} {
+		if p := httpreq.BodyProblem(ok); p != "" {
+			t.Errorf("BodyProblem(%q) = %q", ok, p)
+		}
+	}
+	for _, bad := range []string{"a\x00b", "a\xffb", "\x00"} {
+		if p := httpreq.BodyProblem(bad); p != httpreq.ProblemBodyText {
+			t.Errorf("BodyProblem(%q) = %q, want %q", bad, p, httpreq.ProblemBodyText)
 		}
 	}
 }

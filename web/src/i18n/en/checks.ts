@@ -403,15 +403,15 @@ export const enChecks = {
       method: { label: 'Method' },
       headers: {
         label: 'Request headers (one per line, Name: value)',
-        hint: 'Sent with every request, at most 16. Not Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect or Accept-Encoding (Pulsix sets them), not Content-Type (use the content type below), and no credentials such as Authorization or Cookie: put those in the secret.',
+        hint: 'Sent with every request, at most 16, and not on to another site a redirect leads to. Not Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect or Accept-Encoding (Pulsix sets them), not Content-Type (use the content type below), not X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL or method overrides, and no credentials such as Authorization, Cookie or an API key or token header: put those in the secret.',
         placeholder: 'Accept: application/json',
       },
       body: {
         label: 'Request body',
-        hint: 'Sent as written with POST, PUT or PATCH, at most 8 KiB. It is never shown in results.',
+        hint: 'Sent as written with POST, PUT or PATCH, at most 8 KiB of text. It is never shown in results. POST, PUT, PATCH, DELETE and a body work only where the Pulsix server’s operator has turned them on.',
         placeholder: '{"ping": true}',
       },
-      content_type: { label: 'Content type of the body', hint: 'Only with a body.' },
+      content_type: { label: 'Content type of the body', hint: 'Only with a body. Empty means application/json.', placeholder: 'application/json' },
       secret: {
         label: 'Secret',
         hint: 'Optional. Name of a secret in the organization’s secrets (Settings → Secrets) holding the login: username and password, a token (sent as a bearer token), or header and value (one header of your choice). It is never sent on to another host when a redirect leads there; its values are never shown again and never leave the Pulsix server. A definition several organizations use reads each one’s own secret of that name.',
@@ -492,7 +492,10 @@ export const enChecks = {
       httpHeaderReserved:
         'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect and Accept-Encoding are set by Pulsix',
       httpHeaderContentType: 'set Content-Type with the content type field, not as a header',
-      httpHeaderCredentials: 'Authorization, Proxy-Authorization and Cookie carry credentials: put them in the check’s secret (header and value)',
+      httpHeaderCredentials:
+        'Authorization, Proxy-Authorization, Cookie and headers whose name suggests a credential (token, secret, API key, password) carry credentials: put them in the check’s secret (header and value)',
+      httpHeaderRouting:
+        'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and method overrides are refused: a target may trust them for the client’s address, the path or the method',
       mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',

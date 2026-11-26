@@ -40,7 +40,9 @@ func httpPlugin() Descriptor {
 			{Name: "method", Type: TypeEnum, Options: slices.Clone(httpreq.Methods), Default: "GET"},
 			{Name: "headers", Type: TypeList, MaxEntries: httpreq.MaxHeaders, MaxBytes: httpreq.MaxHeaderLen, Format: FormatHTTPHeader, Example: "Accept: application/json"},
 			{Name: "body", Type: TypeString, NonEmpty: true, MaxBytes: httpreq.MaxBodyLen},
-			{Name: "content_type", Type: TypeString, MaxBytes: httpreq.MaxContentTypeLen, Format: FormatMediaType, Default: httpreq.DefaultContentType},
+			// No Default: application/json applies only to a body, and a
+			// client that sends the defaults would send it without one.
+			{Name: "content_type", Type: TypeString, MaxBytes: httpreq.MaxContentTypeLen, Format: FormatMediaType, Example: httpreq.DefaultContentType},
 			secret,
 			syntheticText("body_contains", true),
 			{Name: "json_values", Type: TypeList, MaxEntries: maxHTTPJSONValues, Format: FormatJSONValue, Example: "status=$.status"},
@@ -54,6 +56,7 @@ func httpPlugin() Descriptor {
 		ItemAsked:           httpItemAsked,
 		MetricAsked:         httpMetricAsked,
 		ManagerOnly:         httpManagerOnly,
+		Writes:              httpWrites,
 		Check:               httpCheck,
 		Metrics: []MetricSpec{
 			{Name: "http.up", Kind: Numeric},
@@ -127,6 +130,13 @@ func httpManagerOnly(params map[string]any) string {
 	return ""
 }
 
+// httpWrites: POST, PUT, PATCH, DELETE or a body (httpreq.Writes).
+func httpWrites(params map[string]any) bool {
+	method, _ := params["method"].(string)
+	_, body := params["body"]
+	return httpreq.Writes(method, body)
+}
+
 // httpRequestCheck: no header twice, a body only with a method that takes
 // one, a content type only with a body. Every value passed its spec.
 func httpRequestCheck(params map[string]any) error {
@@ -143,9 +153,12 @@ func httpRequestCheck(params map[string]any) error {
 	if method == "" {
 		method = "GET"
 	}
-	_, body := params["body"]
+	text, body := params["body"].(string)
 	if body && !httpreq.TakesBody(method) {
 		return errors.New("body needs method POST, PUT or PATCH")
+	}
+	if problem := httpreq.BodyProblem(text); body && problem != "" {
+		return errors.New("body " + problem)
 	}
 	if _, contentType := params["content_type"]; contentType && !body {
 		return errors.New("content_type needs a body")

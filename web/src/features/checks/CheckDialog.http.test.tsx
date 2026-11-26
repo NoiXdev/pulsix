@@ -70,6 +70,8 @@ describe('CheckDialog — http JSON values and credentials', () => {
     await user.type(screen.getByLabelText('URL'), 'https://{{address}/api/ping');
     await pickOption(screen, 'Method', { value: 'POST' });
     await user.type(screen.getByLabelText('Request headers (one per line, Name: value)'), 'X-Api-Version: 2{Enter}Accept: application/json');
+    // No default is sent: application/json applies only to a body.
+    expect(screen.getByLabelText('Content type of the body')).toHaveAttribute('placeholder', 'application/json');
     const body = screen.getByLabelText('Request body');
     expect(body.tagName).toBe('TEXTAREA');
     await user.type(body, '{{"ping":{Enter}  true}');

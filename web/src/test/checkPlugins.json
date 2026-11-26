@@ -1039,7 +1039,7 @@
         {
           "name": "content_type",
           "type": "string",
-          "default": "application/json",
+          "example": "application/json",
           "max_bytes": 255,
           "format": "mediaType"
         },

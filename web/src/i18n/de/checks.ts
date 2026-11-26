@@ -374,15 +374,15 @@ export const deChecks: Messages['checks'] = {
       method: { label: 'Methode' },
       headers: {
         label: 'Anfrage-Header (einer pro Zeile, Name: Wert)',
-        hint: 'Werden mit jeder Anfrage gesendet, höchstens 16. Nicht Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect oder Accept-Encoding (setzt Pulsix), nicht Content-Type (dafür das Feld Inhaltstyp unten) und keine Zugangsdaten wie Authorization oder Cookie: Diese gehören in das Secret.',
+        hint: 'Werden mit jeder Anfrage gesendet, höchstens 16. Nicht Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect oder Accept-Encoding (setzt Pulsix), nicht Content-Type (dafür das Feld Inhaltstyp unten), nicht X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL oder Methoden-Overrides und keine Zugangsdaten wie Authorization, Cookie oder einen API-Key- oder Token-Header: Diese gehören in das Secret. Sie gehen nicht an eine andere Website mit, auf die eine Weiterleitung führt.',
         placeholder: 'Accept: application/json',
       },
       body: {
         label: 'Anfrage-Body',
-        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB. Er erscheint nie in Ergebnissen.',
+        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn der Betreiber des Pulsix-Servers sie eingeschaltet hat.',
         placeholder: '{"ping": true}',
       },
-      content_type: { label: 'Inhaltstyp des Bodys', hint: 'Nur mit einem Body.' },
+      content_type: { label: 'Inhaltstyp des Bodys', hint: 'Nur mit einem Body. Leer bedeutet application/json.', placeholder: 'application/json' },
       secret: {
         label: 'Secret',
         hint: 'Optional. Name eines Secrets in den Secrets der Organisation (Einstellungen → Secrets), das den Login enthält: Benutzername und Passwort, ein Token (als Bearer-Token gesendet) oder Header und Wert (ein Header Ihrer Wahl). Führt eine Weiterleitung zu einem anderen Host, wird er dorthin nicht mitgesendet; seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie. Eine Definition, die mehrere Organisationen nutzen, liest in jeder deren eigenes Secret dieses Namens.',
@@ -464,7 +464,10 @@ export const deChecks: Messages['checks'] = {
       httpHeaderReserved:
         'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect und Accept-Encoding setzt Pulsix',
       httpHeaderContentType: 'Content-Type wird über das Feld Inhaltstyp gesetzt, nicht als Header',
-      httpHeaderCredentials: 'Authorization, Proxy-Authorization und Cookie tragen Zugangsdaten: Diese gehören in das Secret des Checks (Header und Wert)',
+      httpHeaderCredentials:
+        'Authorization, Proxy-Authorization, Cookie und Header, deren Name auf Zugangsdaten hindeutet (Token, Secret, API-Key, Passwort), tragen Zugangsdaten: Diese gehören in das Secret des Checks (Header und Wert)',
+      httpHeaderRouting:
+        'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
