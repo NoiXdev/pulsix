@@ -21,7 +21,7 @@ export interface TemplateListActionsOptions {
 
 /**
  * useTemplateListActions is the templates list's row menu for every row:
- * Run (a template with follow-ups asks first, in the "run with follow-ups"
+ * Open (the template's page), Run (a template with follow-ups asks first, in the "run with follow-ups"
  * dialog, so they can be changed for this run), Variables, Triggers,
  * Schedules, Edit and Delete (not for a projected template: its dialog
  * offers none either). `dialogs` holds the one dialog an entry opened;
@@ -36,7 +36,9 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
   const close = () => setDialog(null);
 
   function rowActions(tpl: Template): RowAction[] {
-    const items: RowAction[] = [];
+    const items: RowAction[] = [
+      { id: 'open', label: t.templates.list.open, onSelect: () => void navigate({ to: '/o/$org/templates/$id', params: { org, id: tpl.id }, search: { tab: undefined } }) },
+    ];
     if (opts.canRun) items.push({ id: 'run', label: t.templates.list.run, onSelect: () => void runner.run(tpl), disabled: runner.isPending });
     items.push(
       { id: 'variables', label: t.templates.list.variables, onSelect: () => void navigate({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id } }) },

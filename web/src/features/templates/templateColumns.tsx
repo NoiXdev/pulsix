@@ -3,6 +3,7 @@ import { CELL_MINOR, type DataListColumn } from '../../ui/data-list/index.ts';
 import type { Template } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { ReviewBadges } from './variables/ReviewBadges.tsx';
+import { scopeText } from './scopeText.ts';
 
 export interface TemplateColumnsContext {
   t: Messages;
@@ -10,17 +11,6 @@ export interface TemplateColumnsContext {
   groupName: (id: string) => string;
   /** The default credential's name, undefined when this page does not know it. */
   credentialName: (id: string) => string | undefined;
-}
-
-/** What a template's scope says, as text: the whole organization, a group,
- * an explicit host selection, or both halves at once. */
-function scopeText(tpl: Template, groupName: (id: string) => string, t: Messages): string {
-  const count = (tpl.scope.host_ids ?? []).length;
-  if (!tpl.scope.group_id && count === 0) return t.templates.scope.whole;
-  const group = tpl.scope.group_id ? groupName(tpl.scope.group_id) : null;
-  if (!group) return t.templates.scope.hosts(count);
-  if (count === 0) return group;
-  return t.templates.scope.groupAndHosts(group, count);
 }
 
 /**

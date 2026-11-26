@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderListPage } from '../../test/renderListPage.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { findConfirmDialog } from '../../test/confirmDialog.ts';
-import { firstCells, hideColumn, numbered, openRow, openRowMenu, sortBy } from '../../test/wholeList.ts';
+import { firstCells, hideColumn, numbered, openRowMenu, sortBy } from '../../test/wholeList.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
 import { validateTemplatesSearch } from './templatesSearch.ts';
 
@@ -35,7 +35,11 @@ function setup(over: Record<string, unknown> = {}, started: string[] = [], role 
     component: TemplatesPage,
     initial,
     extraSearch: (s) => ({ ...validateTemplatesSearch(s) }),
-    others: [{ path: '/runs/$id', component: () => <div>RUN VIEW</div> }, { path: '/templates/$id/variables', component: () => <div>VARIABLES</div> }],
+    others: [
+      { path: '/runs/$id', component: () => <div>RUN VIEW</div> },
+      { path: '/templates/$id', component: () => <div>TEMPLATE PAGE</div> },
+      { path: '/templates/$id/variables', component: () => <div>VARIABLES</div> },
+    ],
   });
 }
 
@@ -56,7 +60,7 @@ describe('TemplatesPage list', () => {
     await screen.findByText('1–25 of 30 templates');
     expect(screen.queryByRole('button', { name: 'Run' })).not.toBeInTheDocument();
     await openRowMenu(user, 'tpl30');
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Run', 'Variables', 'Triggers', 'Schedules', 'Edit', 'Delete']);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open', 'Run', 'Variables', 'Triggers', 'Schedules', 'Edit', 'Delete']);
     await user.click(screen.getByRole('menuitem', { name: 'Run' }));
     expect(await screen.findByText('RUN VIEW')).toBeInTheDocument();
     expect(started).toHaveLength(1);
@@ -81,19 +85,31 @@ describe('TemplatesPage list', () => {
     expect(await findConfirmDialog()).toHaveTextContent('Delete template tpl30?');
   });
 
-  it('opens the row\'s dialog from the row itself', async () => {
+  it('links the row name to the template\'s page', async () => {
     const user = userEvent.setup();
-    setup();
+    const router = setup();
     await screen.findByText('1–25 of 30 templates');
-    await openRow(user, 'tpl30');
-    expect(await screen.findByRole('dialog', { name: 'tpl30' })).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'tpl30' });
+    expect(link).toHaveAttribute('href', '/o/acme/templates/id-tpl30');
+    await user.click(link);
+    expect(await screen.findByText('TEMPLATE PAGE')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/templates/id-tpl30');
   });
 
-  it('gives a viewer a row that opens nothing', async () => {
+  it('opens the template\'s page from the row menu', async () => {
+    const user = userEvent.setup();
+    const router = setup();
+    await screen.findByText('1–25 of 30 templates');
+    await openRowMenu(user, 'tpl30');
+    await user.click(screen.getByRole('menuitem', { name: 'Open' }));
+    expect(await screen.findByText('TEMPLATE PAGE')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/templates/id-tpl30');
+  });
+
+  it('gives a viewer the link to the page too', async () => {
     setup({}, [], 'viewer');
     await screen.findByText('1–25 of 30 templates');
-    expect(screen.getAllByText('tpl30').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: 'tpl30' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'tpl30' })).toHaveAttribute('href', '/o/acme/templates/id-tpl30');
   });
 
   it('hides a column from the Columns menu', async () => {
@@ -113,12 +129,12 @@ describe('TemplatesPage list', () => {
     expect(await screen.findByText('1–10 of 30 templates')).toBeInTheDocument();
   });
 
-  it('offers a viewer only Variables, Triggers and Schedules', async () => {
+  it('offers a viewer only Open, Variables, Triggers and Schedules', async () => {
     const user = userEvent.setup();
     setup({}, [], 'viewer');
     await screen.findByText('1–25 of 30 templates');
     await openRowMenu(user, 'tpl30');
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Variables', 'Triggers', 'Schedules']);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open', 'Variables', 'Triggers', 'Schedules']);
   });
 
   it('offers no Delete for an installation-managed template', async () => {
@@ -126,7 +142,7 @@ describe('TemplatesPage list', () => {
     setup({ shared_template_id: 'shared-1' });
     await screen.findByText('1–25 of 30 templates');
     await openRowMenu(user, 'tpl30');
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Run', 'Variables', 'Triggers', 'Schedules', 'Edit']);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Open', 'Run', 'Variables', 'Triggers', 'Schedules', 'Edit']);
   });
   describe('filters', () => {
     const rows = [

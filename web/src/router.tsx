@@ -35,6 +35,8 @@ import { PlaybookPage } from './features/playbooks/PlaybookPage.tsx';
 import { NewPlaybookPage } from './features/playbooks/NewPlaybookPage.tsx';
 import { validatePlaybookSearch } from './features/playbooks/playbookTabs.ts';
 import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
+import { TemplateDetailPage } from './features/templates/TemplateDetailPage.tsx';
+import { validateTemplateSearch } from './features/templates/templateTabs.ts';
 import { TemplateVariablesPage } from './features/templates/variables/TemplateVariablesPage.tsx';
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
@@ -292,6 +294,14 @@ const templatesRoute = createRoute({
   validateSearch: validateTemplatesSearch,
   component: TemplatesPage,
 });
+// A job template's own page (backlog 1.53): the open tab in ?tab=,
+// Overview, the default, left out.
+const templateDetailRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/templates/$id',
+  validateSearch: validateTemplateSearch,
+  component: TemplateDetailPage,
+});
 const templateVariablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: TemplateVariablesPage });
 const schedulesRoute = createRoute({
   getParentRoute: () => orgRoute,
@@ -422,6 +432,7 @@ const routeTree = rootRoute.addChildren([
     newPlaybookRoute,
     playbookRoute,
     templatesRoute,
+    templateDetailRoute,
     templateVariablesRoute,
     schedulesRoute,
     runsRoute,

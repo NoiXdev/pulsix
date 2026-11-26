@@ -23,8 +23,9 @@ import { TemplateDialog } from './TemplateDialog.tsx';
 /** TemplatesPage lists the job templates (spec §7, backlog 2.10): a
  * playbook plus scope, limit, extra vars and the default SSH credential —
  * the thing an operator runs, and the run view's own entry point. The list (id
- * `templates`) is one request, sorted and paged in the browser; Run, Variables,
- * Triggers, Schedules, Edit and Delete are the row menu's. `?create=<playbook>`
+ * `templates`) is one request, sorted and paged in the browser; a row's name
+ * opens the template's page (backlog 1.53); Open, Run, Variables, Triggers,
+ * Schedules, Edit and Delete are the row menu's. `?create=<playbook>`
  * opens the new template dialog with that playbook chosen, once the
  * playbooks are known; an id that is none of them (or no UUID at all)
  * opens it without a playbook. */
@@ -103,9 +104,8 @@ export function TemplatesPage() {
         columns={columns}
         rows={rows}
         rowKey={(tpl) => tpl.id}
-        rowLabel={(tpl) => tpl.name}
+        rowLink={(tpl) => ({ to: '/o/$org/templates/$id', params: { org, id: tpl.id }, search: { tab: undefined }, label: tpl.name })}
         rowActions={actions.rowActions}
-        onRowActivate={actions.edit}
         loading={!view.ready}
         empty={active ? t.templates.list.noMatch : t.templates.list.empty}
         toolbar={

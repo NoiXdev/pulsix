@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'vitest';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pageRoutes, renderTemplatePage, template } from './templatePageTestKit.tsx';
+
+const SETTINGS = '/o/acme/templates/t1?tab=settings';
+const form = async () => within(await screen.findByRole('form', { name: 'Template settings' }));
+
+const withSchema = {
+  extra_vars_schema: { fields: [{ name: 'region', type: 'string', required: true }, { name: 'token', type: 'secret', required: true }] },
+  extra_vars: { region: 'eu', token: { $secret: 'set' } },
+};
+
+describe('TemplateSettingsTab', () => {
+  it('shows the settings read-only until Edit', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes({ tpl: template({ limit: 'web*' }) }));
+    renderTemplatePage(SETTINGS);
+    const f = await form();
+    expect(f.getByLabelText('Name')).toHaveValue('deploy-site');
+    expect(f.getByLabelText('Name')).toBeDisabled();
+    expect(f.getByLabelText('Limit pattern')).toHaveValue('web*');
+    expect(f.getByLabelText('Limit pattern')).toBeDisabled();
+    expect(f.getByRole('switch', { name: 'Enrol agents' })).toBeDisabled();
+    expect(f.queryByRole('button', { name: 'Save template' })).not.toBeInTheDocument();
+    expect(screen.getByText('The settings as saved. Edit to change them.')).toBeInTheDocument();
+
+    await user.click(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    const editing = await form();
+    expect(editing.getByLabelText('Name')).toBeEnabled();
+    expect(editing.getByLabelText('Limit pattern')).toBeEnabled();
+    expect(editing.getByRole('button', { name: 'Save template' })).toBeInTheDocument();
+    expect(editing.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // Delete is the header's; the variables are a tab of their own.
+    expect(editing.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(editing.queryByRole('link', { name: 'Variables' })).not.toBeInTheDocument();
+  });
+
+  it('saves under If-Match with the variables echoed, then shows the saved settings', async () => {
+    const user = userEvent.setup();
+    const puts: MockRequest[] = [];
+    let current = template({ revision: 3, ...withSchema });
+    mockApi(
+      pageRoutes({
+        tpl: current,
+        over: {
+          'GET /api/v1/orgs/acme/job-templates/t1': () => ({ template: current }),
+          'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+            puts.push(req);
+            current = template({ revision: 4, ...withSchema, limit: 'web*' });
+            return { template: current };
+          },
+        },
+      }),
+    );
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Limit pattern'), 'web*');
+    await user.click((await form()).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site saved');
+    expect(puts).toHaveLength(1);
+    expect(puts[0].headers.get('If-Match')).toBe('"3"');
+    expect(puts[0].body).toMatchObject({
+      name: 'deploy-site',
+      limit: 'web*',
+      extra_vars: { region: 'eu', token: { $secret: 'keep', from: 'token' } },
+      extra_vars_schema: withSchema.extra_vars_schema,
+    });
+    await waitFor(async () => expect((await form()).getByLabelText('Limit pattern')).toBeDisabled());
+    expect((await form()).getByLabelText('Limit pattern')).toHaveValue('web*');
+  });
+
+  it('drops the changes on Cancel', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes());
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Name'), '-x');
+    await user.click((await form()).getByRole('button', { name: 'Cancel' }));
+    const f = await form();
+    expect(f.getByLabelText('Name')).toBeDisabled();
+    expect(f.getByLabelText('Name')).toHaveValue('deploy-site');
+  });
+
+  it('ends the edit when another tab is opened', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes());
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Name'), '-x');
+    await user.click(screen.getByRole('tab', { name: /^Overview/ }));
+    await user.click(screen.getByRole('tab', { name: /^Settings/ }));
+    expect((await form()).getByLabelText('Name')).toBeDisabled();
+    expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site');
+  });
+
+  it('offers Reload after a conflict and saves on the new revision, keeping this edit', async () => {
+    const user = userEvent.setup();
+    const puts: MockRequest[] = [];
+    let current = template({ revision: 1 });
+    mockApi(
+      pageRoutes({
+        tpl: current,
+        over: {
+          'GET /api/v1/orgs/acme/job-templates/t1': () => ({ template: current }),
+          'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+            puts.push(req);
+            if (puts.length === 1) {
+              // Meanwhile another person narrowed the limit.
+              current = template({ revision: 2, limit: 'db*' });
+              return new Response(JSON.stringify({ detail: 'stale' }), { status: 412 });
+            }
+            return { template: current };
+          },
+        },
+      }),
+    );
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Name'), '-2');
+    await user.click((await form()).getByRole('button', { name: 'Save template' }));
+    expect(await (await form()).findByText(/Someone else saved this template since it was opened/)).toBeInTheDocument();
+    await user.click((await form()).getByRole('button', { name: 'Reload' }));
+    await waitFor(async () => expect((await form()).getByLabelText('Limit pattern')).toHaveValue('db*'));
+    expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site-2');
+    expect((await form()).getByLabelText('Name')).toBeEnabled();
+    await user.click((await form()).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site-2 saved');
+    expect(puts[1].headers.get('If-Match')).toBe('"2"');
+    expect(puts[1].body).toMatchObject({ name: 'deploy-site-2', limit: 'db*' });
+  });
+
+  it("keeps an installation-managed template's own fields read-only while editing", async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes({ tpl: template({ shared_template_id: 'shared-1' }) }));
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    const f = await form();
+    expect(f.getByLabelText('Name')).toBeDisabled();
+    expect(f.getByLabelText('Limit pattern')).toBeDisabled();
+    expect(f.getByRole('button', { name: 'Save template' })).toBeEnabled();
+  });
+
+  it('shows a viewer the settings without Edit', async () => {
+    mockApi(pageRoutes({ role: 'viewer' }));
+    renderTemplatePage(SETTINGS);
+    const f = await form();
+    expect(f.getByLabelText('Name')).toBeDisabled();
+    expect(screen.getByText('The settings as saved. Changing them needs the templates permission.')).toBeInTheDocument();
+    expect(within(screen.getByRole('tabpanel')).queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+});
