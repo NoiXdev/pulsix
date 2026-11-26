@@ -195,10 +195,16 @@ func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine,
 			}
 			continue
 		}
-		cur := sampleOf(r.stats, started[c.ID])
+		old, seen := p.prev[c.ID]
+		startedAt := started[c.ID]
+		if startedAt == "" && seen {
+			// This round's inspect failed: keep the start time known, so the
+			// next round can still tell a restart.
+			startedAt = old.startedAt
+		}
+		cur := sampleOf(r.stats, startedAt)
 		next[c.ID] = cur
 		reported[c.ID] = readingMetrics(c, r.stats)
-		old, seen := p.prev[c.ID]
 		if seen && old.startedAt != "" && cur.startedAt != "" && old.startedAt != cur.startedAt {
 			seen = false // restarted under the same ID: its counters started over
 		}

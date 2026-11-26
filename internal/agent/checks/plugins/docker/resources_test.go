@@ -800,3 +800,24 @@ func TestDockerResourcesRestartRebaselines(t *testing.T) {
 		t.Errorf("cpu after the restart = %v", v)
 	}
 }
+
+// TestDockerResourcesRestartCheckSurvivesAFailedInspect: a round whose
+// inspect failed keeps the baseline's known start time, so a restart in
+// the round after it still starts the rates over.
+func TestDockerResourcesRestartCheckSurvivesAFailedInspect(t *testing.T) {
+	f := resourcesFake()
+	f.details["a"] = containerDetail{Health: "none", StartedAt: "2026-11-26T09:00:00Z"}
+	f.stats["a"] = reading(0, 1e9, 0, 0, 0, 0)
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	f.inspectErr = map[string]error{"a": errors.New("boom")}
+	f.stats["a"] = reading(10*time.Second, 2e9, 0, 0, 0, 0)
+	_, _ = collect(t, p, withResources)
+	f.inspectErr = nil
+	f.details["a"] = containerDetail{Health: "none", StartedAt: "2026-11-26T10:00:15Z"}
+	f.stats["a"] = reading(20*time.Second, 5e9, 0, 0, 0, 0)
+	obs, _ := collect(t, p, withResources)
+	if hasObs(obs, "web", "docker.cpu_percent") {
+		t.Error("a rate across a restart that followed a failed inspect")
+	}
+}
