@@ -139,3 +139,48 @@ func TestIOFailureKeepsKnownLabels(t *testing.T) {
 		t.Fatalf("label = %q, want timeout kept over an unknown failure", f.label())
 	}
 }
+
+// TestAnswersText: the answers sorted and joined, names lower-cased
+// without the trailing dot, addresses as they come (already canonical),
+// TXT strings as received.
+func TestAnswersText(t *testing.T) {
+	tests := []struct {
+		typ     string
+		answers []string
+		want    string
+	}{
+		{"A", []string{"192.0.2.9", "192.0.2.10"}, "192.0.2.10, 192.0.2.9"},
+		{"AAAA", []string{"2001:db8::1"}, "2001:db8::1"},
+		{"MX", []string{"Mail2.Example.COM.", "mail1.example.com."}, "mail1.example.com, mail2.example.com"},
+		{"CNAME", []string{"Target.Example."}, "target.example"},
+		{"NS", []string{"ns1.example.", "ns0.example."}, "ns0.example, ns1.example"},
+		{"TXT", []string{"v=spf1 -all", "Google-Site-Verification=AbC"}, "Google-Site-Verification=AbC, v=spf1 -all"},
+	}
+	for _, tc := range tests {
+		if got := answersText(tc.typ, tc.answers); got != tc.want {
+			t.Errorf("answersText(%s, %q) = %q, want %q", tc.typ, tc.answers, got, tc.want)
+		}
+	}
+}
+
+// TestMatchingAnswer is answerMatches naming the answer it found, as
+// answersText prints it.
+func TestMatchingAnswer(t *testing.T) {
+	tests := []struct {
+		typ, want string
+		answers   []string
+		found     string
+		ok        bool
+	}{
+		{"AAAA", "2001:DB8:0:0::1", []string{"2001:db8::1"}, "2001:db8::1", true},
+		{"MX", "mail.example.com", []string{"Mail.Example.COM."}, "mail.example.com", true},
+		{"TXT", "V=SPF1 -ALL", []string{"v=spf1 -all"}, "v=spf1 -all", true},
+		{"A", "192.0.2.1", []string{"192.0.2.10"}, "", false},
+	}
+	for _, tc := range tests {
+		found, ok := matchingAnswer(tc.typ, tc.answers, tc.want)
+		if found != tc.found || ok != tc.ok {
+			t.Errorf("matchingAnswer(%s, %q, %q) = %q %v, want %q %v", tc.typ, tc.answers, tc.want, found, ok, tc.found, tc.ok)
+		}
+	}
+}
