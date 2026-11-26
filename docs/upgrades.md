@@ -1183,6 +1183,19 @@ trigger tools carry the two fields. **An older manager alongside** ignores the d
 two columns as they are), starts no collected run, and shows `collected` deliveries as
 an unknown outcome; stop every manager instance first, as above.
 
+Sibling combinators and more pseudo-classes in `html(…)` assertions (backlog 3.90) add
+no migration, no proto change and no dependency. The selector subset gains `+`, `~`,
+`:only-child`, `:nth-last-child()`, `:first-of-type`, `:last-of-type`, `:only-of-type`,
+`:nth-of-type()`, `:nth-last-of-type()`, `:empty`, `:root` and `:not()`, and the nth
+pseudo-classes take `An+B`; every selector valid before selects what it selected
+before, under the same work budgets. **Skew:** the grammar is not gated by version.
+Every new construct is refused by the parser of earlier releases, so an older agent
+used as a probe vantage, or an older manager still running during a rolling upgrade,
+reports such an assertion as the error "the assertion is not valid" instead of judging
+it with another meaning (the item reads unknown whenever the check's result comes from
+that vantage); the check's other assertions run as before. Update the agents of a
+check's vantage groups before using the new forms.
+
 ## Behaviour changes to check after an upgrade
 
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**
