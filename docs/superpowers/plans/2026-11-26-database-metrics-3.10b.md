@@ -34,6 +34,14 @@
 - **R18 Both mysql schema metrics are asked only while `schema_sizes` is true** (`MetricAsked`), so switching sizes off reads as "not asked", not stale.
 - **R19 Version skew:** an older agent ignores `schema_sizes` and reports none of the new metrics; an older manager stores the new metrics, refuses rules on them and refuses a mysql check carrying `schema_sizes` (unknown parameter) — upgrade note.
 
+## Rulings amended after the independent review (fix round 2, controller)
+- **R4a Only replaying senders count** (amends R4): left out besides `state = 'backup'` are `application_name` `pg_basebackup` (its `-X stream` sender), `pg_receivewal`, `barman_receive_wal`, logical table-sync workers (`application_name ~ '_[0-9]+_sync_[0-9]+(_[0-9]+)?$'`: PostgreSQL 14+ `pg_<subid>_sync_<relid>_<sysid>`, 10 to 13 `<slot>_<subid>_sync_<relid>`), and any sender with `replay_lsn IS NULL` (a standby that just connected counts from its first reply). Subscriptions' apply senders stay. Pinned by `TestReplicasQueryFiltersNonReplicaSenders` and the real-server `a base backup alongside is no replica` (fails without the filter).
+- **R6a Time lag** (amends R6): 0 when the byte lag is 0; otherwise `COALESCE(replay_lag, flush_lag, write_lag)`; when all are NULL while bytes are behind (the window after an idle spell until the standby's next reply) the observation is left out of that round, no error. Pinned by `TestReplicaTimeLag`.
+- **R8a A failed replica read** (amends R8) errors `pg.replicas` only and leaves out replica items that round; `pg.up` and the rest stay (like mysql's R16). `TestReplicaQueryFailureErrorsOnlyTheCount`.
+- **R14a Empty schemas report 0** (amends R14): the query starts from `SCHEMATA` and LEFT JOINs `TABLES`; they count in the cap like the others. A login sees only schemas it holds a privilege on (accepted, documented); one that sees a schema but not its tables reads 0.
+- **R19a Version skew** (amends R19): an agent-local `mysql` check with `schema_sizes` is ignored as a whole by an older manager; an older manager shows replica items of a `postgres` check with a `databases` list as not asked. Both in `docs/upgrades.md`.
+- Cascading standby branch of the byte lag pinned by the real-server `a cascading standby reports its own replica`.
+
 ## Review Focus
 - Primary without privileges: `pg.replicas` error, no items, rest unchanged — `TestReplicasWithoutPrivilege`.
 - NULL replay position / NULL replay_lag never read as 0 lag — `TestReplicaLagUnknownIsNeverZero`.

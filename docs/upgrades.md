@@ -2047,17 +2047,26 @@ an unknown outcome; stop every manager instance first, as above.
   and a failure on a failed round like the other host metrics), and per replica item
   `replica:<application_name>@<client address>` (`replica:<name>@local` over a Unix
   socket) `pg.replica_lag_bytes`, `pg.replica_lag_seconds` and `pg.replica_state`;
-  these items are asked whatever `databases` lists. `redis`: seven persistence metrics
+  these items are asked whatever `databases` lists. Only senders that replay count:
+  `pg_basebackup`, `pg_receivewal`, `barman_receive_wal` and logical table-sync workers
+  are left out, and a standby counts from its first reply. A failed replica read errors
+  `pg.replicas` only; the round stays up. A replica that is retired or changes address
+  leaves a stale item behind; **Forget** it, or let the item expiry remove it. `redis`: seven persistence metrics
   on item "" (`redis.rdb_last_bgsave_status`, `redis.rdb_last_save_age_seconds`,
   `redis.rdb_changes_since_last_save`, `redis.aof_enabled`, `redis.aof_last_write_status`,
   `redis.aof_last_bgrewrite_status`, `redis.loading`); a Redis-protocol server whose INFO
   lacks them reports an error on each. `mysql`: a new optional parameter
   `schema_sizes` (default false) adds `mysql.schema_size_bytes` per schema and
-  `mysql.schemas_unreported`; the login needs a privilege on the tables
+  `mysql.schemas_unreported` (a schema without tables reads 0); the login needs a privilege on the tables
   (`GRANT SHOW VIEW ON *.*` suffices and reads no data). Version skew: an older agent
   reports none of these and ignores `schema_sizes`; a manager older than this release
   stores the new metrics but refuses rules on them, and refuses a `mysql` check that
   carries `schema_sizes` (unknown parameter), so roll the managers before setting it.
+  Two more skew cases: a `mysql` check defined in a host's `agent.yaml` with
+  `schema_sizes` is ignored as a whole by an older manager (the plugin refuses its
+  parameters), `mysql.up` included, until the manager is updated; and an older manager
+  has no rule that asks for replica items on a `postgres` check with a `databases`
+  list, so it shows them as not asked until it is updated.
 
 ## Roll order
 
