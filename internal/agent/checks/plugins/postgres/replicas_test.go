@@ -3,6 +3,7 @@ package postgres
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,31 +51,78 @@ func TestNoReplicas(t *testing.T) {
 	}
 }
 
-func TestReplicaLagUnknownIsNeverZero(t *testing.T) {
+// The time lag (R6 as amended): 0 while nothing is behind; otherwise the
+// first of replay_lag, flush_lag, write_lag the server measured (the query
+// coalesces them); none at all while bytes are behind leaves the metric out
+// of the round. That is the window after an idle spell: PostgreSQL cleared
+// the lag times, and the standby reports its replay position only on its
+// next reply, so the byte lag reads > 0 for up to wal_receiver_status_interval.
+func TestReplicaTimeLag(t *testing.T) {
 	sess := &fakeSession{
 		stats: serverStats{MaxConnections: 10},
 		replicas: []replica{
-			// Starting up: no replay position yet, no lag time.
-			{Name: "starting", Host: "10.0.0.1", State: "startup"},
-			// Bytes behind but no lag time measured.
-			{Name: "behind", Host: "10.0.0.2", State: "streaming", LagBytes: f64(100)},
-			// Caught up and idle: PostgreSQL clears the lag time.
-			{Name: "idle", Host: "10.0.0.3", State: "streaming", LagBytes: f64(0)},
-			// A lag time without a replay position.
-			{Name: "timed", Host: "10.0.0.4", State: "streaming", LagSeconds: f64(3)},
+			// Caught up: 0, whatever lag time the server still shows.
+			{Name: "idle", Host: "10.0.0.1", State: "streaming", LagBytes: f64(0)},
+			{Name: "settled", Host: "10.0.0.2", State: "streaming", LagBytes: f64(0), LagSeconds: f64(0.4)},
+			// Behind with a measured lag time.
+			{Name: "behind", Host: "10.0.0.3", State: "streaming", LagBytes: f64(100), LagSeconds: f64(2.5)},
+			// The idle-to-write window: bytes behind, no lag time yet.
+			{Name: "window", Host: "10.0.0.4", State: "streaming", LagBytes: f64(100)},
 		},
 	}
 	obs, err := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustErr(t, obs, "replica:starting@10.0.0.1", "pg.replica_lag_bytes", "postgres: replica reports no replay position")
-	mustErr(t, obs, "replica:starting@10.0.0.1", "pg.replica_lag_seconds", "postgres: replication lag time is unknown")
-	mustValue(t, obs, "replica:behind@10.0.0.2", "pg.replica_lag_bytes", 100)
-	mustErr(t, obs, "replica:behind@10.0.0.2", "pg.replica_lag_seconds", "postgres: replication lag time is unknown")
-	mustValue(t, obs, "replica:idle@10.0.0.3", "pg.replica_lag_seconds", 0)
-	mustErr(t, obs, "replica:timed@10.0.0.4", "pg.replica_lag_bytes", "postgres: replica reports no replay position")
-	mustValue(t, obs, "replica:timed@10.0.0.4", "pg.replica_lag_seconds", 3)
+	mustValue(t, obs, "replica:idle@10.0.0.1", "pg.replica_lag_seconds", 0)
+	mustValue(t, obs, "replica:settled@10.0.0.2", "pg.replica_lag_seconds", 0)
+	mustValue(t, obs, "replica:behind@10.0.0.3", "pg.replica_lag_seconds", 2.5)
+	if o, ok := find(obs, "replica:window@10.0.0.4", "pg.replica_lag_seconds"); ok {
+		t.Errorf("a time lag in the window: %+v", o)
+	}
+	mustValue(t, obs, "replica:window@10.0.0.4", "pg.replica_lag_bytes", 100)
+	mustLabel(t, obs, "replica:window@10.0.0.4", "pg.replica_state", "streaming")
+}
+
+// The query reports only senders with a replay position, but a row without
+// one is never read as 0 bytes behind.
+func TestReplicaWithoutAReplayPositionIsNeverZero(t *testing.T) {
+	sess := &fakeSession{stats: serverStats{MaxConnections: 10}, replicas: []replica{{Name: "odd", Host: "h", State: "streaming", LagSeconds: f64(3)}}}
+	obs, _ := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
+	mustErr(t, obs, "replica:odd@h", "pg.replica_lag_bytes", "postgres: replica reports no replay position")
+	mustValue(t, obs, "replica:odd@h", "pg.replica_lag_seconds", 3)
+}
+
+// The sender filter lives in the query; pin what it leaves out.
+func TestReplicasQueryFiltersNonReplicaSenders(t *testing.T) {
+	for _, want := range []string{
+		"state IS DISTINCT FROM 'backup'",
+		"replay_lsn IS NOT NULL",
+		"'pg_basebackup'", "'pg_receivewal'", "'barman_receive_wal'",
+		`'_[0-9]+_sync_[0-9]+(_[0-9]+)?$'`,
+		"COALESCE(replay_lag, flush_lag, write_lag)",
+		"pg_last_wal_receive_lsn()",
+	} {
+		if !strings.Contains(replicasQuery, want) {
+			t.Errorf("replicasQuery lacks %s", want)
+		}
+	}
+	// The table-sync pattern: PostgreSQL 14+ names the worker's slot (its
+	// application_name) pg_<subid>_sync_<relid>_<sysid>, 10 to 13
+	// <slot>_<subid>_sync_<relid>; a subscription's apply sender (named
+	// after the subscription) stays.
+	re := regexp.MustCompile(`_[0-9]+_sync_[0-9]+(_[0-9]+)?$`)
+	for name, sync := range map[string]bool{
+		"pg_16394_sync_16385_7312345678901234567": true,
+		"mysub_16394_sync_16385":                  true,
+		"mysub":                                   false,
+		"standby1":                                false,
+		"walreceiver":                             false,
+	} {
+		if re.MatchString(name) != sync {
+			t.Errorf("%q: table sync = %v, want %v", name, !sync, sync)
+		}
+	}
 }
 
 func TestReplicaWithoutANameIsKeyedByItsHost(t *testing.T) {
@@ -130,15 +178,25 @@ func TestReplicasWithoutPrivilege(t *testing.T) {
 	mustValue(t, obs, "", "pg.up", 1)
 }
 
-func TestReplicaQueryFailureIsADownRound(t *testing.T) {
-	sess := &fakeSession{stats: serverStats{MaxConnections: 10}, replicasErr: errors.New("boom " + plantedHost)}
+// The replica read is an addition to the check: when it fails, only
+// pg.replicas carries the error and the round stays up (like mysql's sizes).
+func TestReplicaQueryFailureErrorsOnlyTheCount(t *testing.T) {
+	sess := &fakeSession{stats: serverStats{MaxConnections: 10, Connections: 3}, dbs: []database{{Name: "app", Size: i64(5)}}, replicasErr: errors.New("boom " + plantedHost)}
 	obs, err := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustValue(t, obs, "", "pg.up", 0)
-	if o, ok := find(obs, "", "pg.replicas"); !ok || o.Err == "" {
-		t.Errorf("pg.replicas on a failed round = %+v", o)
+	mustValue(t, obs, "", "pg.up", 1)
+	mustValue(t, obs, "", "pg.connections", 3)
+	mustValue(t, obs, "app", "pg.database_size_bytes", 5)
+	o, ok := find(obs, "", "pg.replicas")
+	if !ok || o.Err == "" || o.Value != nil {
+		t.Errorf("pg.replicas = %+v", o)
+	}
+	for _, o := range obs {
+		if strings.HasPrefix(o.Item, replicaItemPrefix) {
+			t.Errorf("replica item after a failed read: %+v", o)
+		}
 	}
 	noSecretIn(t, obs, err)
 }

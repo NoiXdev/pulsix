@@ -126,20 +126,25 @@ func (p plugin) CollectWithSecret(ctx context.Context, params map[string]any, fi
 	if err != nil {
 		return down(err)
 	}
+	// Last, and on its own: a failed replica read errors pg.replicas only.
 	var (
 		rs        []replica
 		replTotal int
+		replErr   string
 	)
 	if !stats.LimitedView {
 		if rs, replTotal, err = sess.Replicas(cctx, maxReplicas); err != nil {
-			return down(err)
+			replErr = classify(err)
+			if cctx.Err() != nil {
+				replErr = "timed out"
+			}
 		}
 	}
 	if perr := ctx.Err(); perr != nil {
 		return nil, perr
 	}
 	obs, advisory := observe(stats, dbs, total, filter)
-	robs, radvisory := observeReplicas(rs, replTotal, stats.LimitedView)
+	robs, radvisory := observeReplicas(rs, replTotal, stats.LimitedView, replErr)
 	return append(obs, robs...), errors.Join(advisory, radvisory)
 }
 
