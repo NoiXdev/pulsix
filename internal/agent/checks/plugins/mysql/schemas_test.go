@@ -211,6 +211,9 @@ func TestSchemasQuery(t *testing.T) {
 	if !strings.HasSuffix(schemasQuery, "LIMIT "+strconv.Itoa(maxSchemas)) {
 		t.Errorf("the query is not capped at maxSchemas: %s", schemasQuery)
 	}
+	if !strings.Contains(schemasQuery, "FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES") {
+		t.Errorf("empty schemas are not reported: %s", schemasQuery)
+	}
 	for _, sys := range []string{"'mysql'", "'information_schema'", "'performance_schema'", "'sys'"} {
 		if !strings.Contains(schemasQuery, sys) {
 			t.Errorf("system schema %s not excluded", sys)

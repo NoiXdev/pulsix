@@ -28,16 +28,18 @@ type schemaSize struct {
 }
 
 // schemasQuery sums each schema's data and index length, system schemas
-// left out (backlog 3.10b). It sees only the tables the user holds some
-// privilege on (SHOW VIEW is enough, and reads no data). MySQL 8 answers
-// from its statistics cache (information_schema_stats_expiry); MariaDB
-// opens every table, which is why the plugin asks only with schema_sizes,
-// and why Schemas sends it under a server-side bound (boundedSelect).
-// The LIMIT is maxSchemas; COUNT(*) OVER () counts every schema.
-const schemasQuery = `SELECT TABLE_SCHEMA, CAST(SUM(COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0)) AS UNSIGNED), COUNT(*) OVER () ` +
-	`FROM information_schema.TABLES ` +
-	`WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') ` +
-	`GROUP BY TABLE_SCHEMA ORDER BY TABLE_SCHEMA LIMIT 256`
+// left out (backlog 3.10b). It starts from SCHEMATA, so a schema without
+// tables reports 0. It sees only the schemas and tables the user holds some
+// privilege on (SHOW VIEW is enough, and reads no data); a login that sees a
+// schema but none of its tables reads 0 for it. MySQL 8 answers from its
+// statistics cache (information_schema_stats_expiry); MariaDB opens every
+// table, which is why the plugin asks only with schema_sizes, and why
+// Schemas sends it under a server-side bound (boundedSelect). The LIMIT is
+// maxSchemas; COUNT(*) OVER () counts every schema.
+const schemasQuery = `SELECT s.SCHEMA_NAME, CAST(COALESCE(SUM(COALESCE(t.DATA_LENGTH, 0) + COALESCE(t.INDEX_LENGTH, 0)), 0) AS UNSIGNED), COUNT(*) OVER () ` +
+	`FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME ` +
+	`WHERE s.SCHEMA_NAME NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') ` +
+	`GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME LIMIT 256`
 
 // dialect is the SQL a statement bound is written in.
 type dialect int

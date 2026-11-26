@@ -176,6 +176,7 @@ func TestAgainstARealServer(t *testing.T) {
 
 			t.Run("schema sizes", func(t *testing.T) {
 				exec(`CREATE DATABASE sized`)
+				exec(`CREATE DATABASE empty_db`)
 				exec(`CREATE TABLE sized.bulk (id INT PRIMARY KEY, pad VARCHAR(200))`)
 				exec(`INSERT INTO sized.bulk VALUES (1, REPEAT('x', 200)), (2, REPEAT('y', 200))`)
 				// The grant the docs name: table sizes become visible, data
@@ -193,6 +194,7 @@ func TestAgainstARealServer(t *testing.T) {
 					t.Errorf("sized = %+v", o)
 				}
 				mustValue(t, obs, "", "mysql.schemas_unreported", 0)
+				mustValue(t, obs, "empty_db", "mysql.schema_size_bytes", 0)
 				for _, sys := range []string{"mysql", "information_schema", "performance_schema", "sys"} {
 					if _, ok := find(obs, sys, "mysql.schema_size_bytes"); ok {
 						t.Errorf("system schema %s reported", sys)
@@ -215,8 +217,8 @@ func TestAgainstARealServer(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, ok := find(obs, "sized", "mysql.schema_size_bytes"); ok {
-					t.Error("sized reported without a privilege on its tables")
+				if o, ok := find(obs, "sized", "mysql.schema_size_bytes"); ok {
+					t.Errorf("sized reported without a privilege on its tables: %+v", o)
 				}
 				mustValue(t, obs, "", "mysql.schemas_unreported", 0)
 			})
