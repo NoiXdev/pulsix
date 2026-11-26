@@ -15535,7 +15535,12 @@ export interface operations {
     };
     "get-api-v1-orgs-by-org-jobs-by-id": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Seconds to wait (0 to 25, default 0) for the status to change before answering; the answer is the current picture either way */
+                wait?: number;
+                /** @description The status the caller already knows: the wait ends once the status differs from it. Without it, the status at the first read is the one waited out */
+                unless?: string;
+            };
             header?: never;
             path: {
                 org: string;
@@ -17935,7 +17940,12 @@ export interface operations {
     };
     "get-api-v1-orgs-by-org-run-requests-by-id": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Seconds to wait (0 to 25, default 0) for the status to change before answering; the answer is the current picture either way */
+                wait?: number;
+                /** @description The status the caller already knows: the wait ends once the status differs from it. Without it, the status at the first read is the one waited out */
+                unless?: string;
+            };
             header?: never;
             path: {
                 org: string;

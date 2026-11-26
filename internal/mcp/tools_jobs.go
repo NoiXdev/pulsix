@@ -99,7 +99,27 @@ type runRequestListArgs struct {
 }
 
 type runRequestGetArgs struct {
-	RequestID string `json:"request_id"`
+	RequestID   string `json:"request_id"`
+	WaitSeconds int    `json:"wait_seconds,omitempty" jsonschema:"wait up to this many seconds (0 to 25) for the status to change before answering, instead of polling"`
+	Unless      string `json:"unless,omitempty" jsonschema:"the status you already know; the wait ends once the status differs from it (default: the status when the call starts)"`
+}
+
+type jobGetArgs struct {
+	JobID       string `json:"job_id"`
+	WaitSeconds int    `json:"wait_seconds,omitempty" jsonschema:"wait up to this many seconds (0 to 25) for the status to change before answering, instead of polling"`
+	Unless      string `json:"unless,omitempty" jsonschema:"the status you already know; the wait ends once the status differs from it (default: the status when the call starts)"`
+}
+
+// waitQuery is the wait and unless of a long-polled get, as the REST query.
+func waitQuery(seconds int, unless string) url.Values {
+	q := url.Values{}
+	if seconds != 0 {
+		q.Set("wait", strconv.Itoa(seconds))
+	}
+	if unless != "" {
+		q.Set("unless", unless)
+	}
+	return q
 }
 
 // jobEvent is one event as GET /jobs/{id}/events returns it.
@@ -162,9 +182,9 @@ func jobTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/jobs")
 			}),
-		define("get_job", "Get job", "One job: status, hosts, stats, error, its run group and, for an approved run, the commit it runs (pinned_commit).",
-			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobArgs) (any, error) {
-				return passGet(ctx, c, nil, "/jobs/%s", in.JobID)
+		define("get_job", "Get job", "One job: status, hosts, stats, error, its run group and, for an approved run, the commit it runs (pinned_commit). With wait_seconds (at most 25) the call returns as soon as the status changes (from unless, or from the status it started with) instead of after the full time, so wait on a queued or running job rather than polling.",
+			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobGetArgs) (any, error) {
+				return passGet(ctx, c, waitQuery(in.WaitSeconds, in.Unless), "/jobs/%s", in.JobID)
 			}),
 		define("get_job_log", "Get job log", "A job's log, one line per event (sequence, host, task, state, text). Call again with next_after to read on; a running job's log grows.",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobLogArgs) (any, error) {
@@ -208,9 +228,9 @@ func jobTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/run-requests")
 			}),
-		define("get_run_request", "Get run request", "One request: for a run, what the run would use now and, once approved, its run group; for a schedule request, the schedule as it will be and as it is (picture.schedule).",
+		define("get_run_request", "Get run request", "One request: for a run, what the run would use now and, once approved, its run group; for a schedule request, the schedule as it will be and as it is (picture.schedule). With wait_seconds (at most 25) the call returns as soon as the status changes (from unless, or from the status it started with), so wait for an approval instead of polling.",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in runRequestGetArgs) (any, error) {
-				return passGet(ctx, c, nil, "/run-requests/%s", in.RequestID)
+				return passGet(ctx, c, waitQuery(in.WaitSeconds, in.Unless), "/run-requests/%s", in.RequestID)
 			}),
 		define("cancel_job", "Cancel job", "Cancel a job that one of your approved run requests started.",
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in jobArgs) (any, error) {

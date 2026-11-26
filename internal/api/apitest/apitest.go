@@ -344,6 +344,12 @@ func WithMFAOptional() Option {
 	}
 }
 
+// WithWaitSleep replaces the pause of a long-polled GET (wait=) so a test
+// drives the wait without real time: sleep runs instead of each pause.
+func WithWaitSleep(sleep func(ctx context.Context, d time.Duration) error) Option {
+	return func(s *Server) { s.Deps.WaitSleep = sleep }
+}
+
 // WithRunRequestClock rebuilds the run request service on the test's
 // clock, so a test can let a request expire.
 func WithRunRequestClock(now func() time.Time) Option {

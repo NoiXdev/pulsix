@@ -49,7 +49,13 @@ type orgFixture struct {
 
 func newOrgFixture(t *testing.T, areas ...tenancy.Area) orgFixture {
 	t.Helper()
-	s := apitest.New(t)
+	return newOrgFixtureWith(t, nil, areas...)
+}
+
+// newOrgFixtureWith is newOrgFixture on a server built with opts.
+func newOrgFixtureWith(t *testing.T, opts []apitest.Option, areas ...tenancy.Area) orgFixture {
+	t.Helper()
+	s := apitest.New(t, opts...)
 	if len(areas) == 0 {
 		areas = allAreas
 	}

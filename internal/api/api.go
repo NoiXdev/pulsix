@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -268,6 +269,9 @@ type Deps struct {
 	// managerVersion defaults an empty value to "dev", so no caller needs
 	// to know about this field just to keep building a working Deps.
 	Version string
+	// WaitSleep replaces the pause between two reads of a long-polled job or
+	// run request (wait=); nil sleeps for real. Tests drive the wait with it.
+	WaitSleep func(ctx context.Context, d time.Duration) error
 }
 
 // managerVersion is the build version the public routes report: Deps.Version,

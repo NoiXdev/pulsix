@@ -328,6 +328,14 @@ type jobGetInput struct {
 	ID  string `path:"id"`
 }
 
+// jobWaitInput is GET …/jobs/{id}, which can wait for a status change.
+type jobWaitInput struct {
+	Org    string `path:"org"`
+	ID     string `path:"id"`
+	Wait   int    `query:"wait" minimum:"0" maximum:"25" default:"0" doc:"Seconds to wait (0 to 25, default 0) for the status to change before answering; the answer is the current picture either way"`
+	Unless string `query:"unless" maxLength:"40" doc:"The status the caller already knows: the wait ends once the status differs from it. Without it, the status at the first read is the one waited out"`
+}
+
 // templateRunInput is POST .../job-templates/{id}/run: no body runs the
 // template on its whole scope; host_id narrows the run to that one host
 // (backlog 7.76). The body is optional and nullable: before host_id existed
@@ -604,7 +612,7 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Get(hapi, "/api/v1/orgs/{org}/jobs/{id}", func(ctx context.Context, in *jobGetInput) (*jobDetailOutput, error) {
+	huma.Get(hapi, "/api/v1/orgs/{org}/jobs/{id}", func(ctx context.Context, in *jobWaitInput) (*jobDetailOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRead)
 		if err != nil {
 			return nil, err
@@ -613,7 +621,12 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		j, err := deps.Jobs.Get(ctx, scope.OrgID, id)
+		// Authorization was checked above, once; the wait only re-reads the
+		// job row, and the heavier picture is built from the final read.
+		j, err := waitForChange(ctx, deps, in.Wait, in.Unless, func() (jobs.Job, string, error) {
+			j, err := deps.Jobs.Get(ctx, scope.OrgID, id)
+			return j, string(j.Status), err
+		})
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}

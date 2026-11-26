@@ -119,6 +119,15 @@ type runRequestIDInput struct {
 	ID  string `path:"id"`
 }
 
+// runRequestWaitInput is GET …/run-requests/{id}, which can wait for a
+// status change.
+type runRequestWaitInput struct {
+	Org    string `path:"org"`
+	ID     string `path:"id"`
+	Wait   int    `query:"wait" minimum:"0" maximum:"25" default:"0" doc:"Seconds to wait (0 to 25, default 0) for the status to change before answering; the answer is the current picture either way"`
+	Unless string `query:"unless" maxLength:"40" doc:"The status the caller already knows: the wait ends once the status differs from it. Without it, the status at the first read is the one waited out"`
+}
+
 // registerRunRequestRoutes wires the run request routes.
 func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs/{org}/job-templates/{id}/run-requests", func(ctx context.Context, in *struct {
@@ -222,7 +231,7 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Get(hapi, "/api/v1/orgs/{org}/run-requests/{id}", func(ctx context.Context, in *runRequestIDInput) (*runRequestDetailOutput, error) {
+	huma.Get(hapi, "/api/v1/orgs/{org}/run-requests/{id}", func(ctx context.Context, in *runRequestWaitInput) (*runRequestDetailOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRead)
 		if err != nil {
 			return nil, err
@@ -231,7 +240,13 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		return runRequestDetail(ctx, deps, scope, id)
+		return waitForChange(ctx, deps, in.Wait, in.Unless, func() (*runRequestDetailOutput, string, error) {
+			out, err := runRequestDetail(ctx, deps, scope, id)
+			if err != nil {
+				return nil, "", err
+			}
+			return out, out.Body.Request.Status, nil
+		})
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/run-requests/{id}/approve", func(ctx context.Context, in *struct {

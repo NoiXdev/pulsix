@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -368,5 +369,82 @@ func TestRequestRunSyncsFirst(t *testing.T) {
 	callOK(t, cs, "sync_repo", map[string]any{"repo_id": f.repo.String()}, &sync)
 	if !sync.AlreadyRunning || sync.Job.ID != req.SyncJobID {
 		t.Fatalf("sync_repo = %+v, want the request's sync %s already running", sync, req.SyncJobID)
+	}
+}
+
+// waitPauses is the fake pause of a long poll: it counts pauses and runs
+// onPause(n) at the n-th, so a test changes the row while the tool waits.
+type waitPauses struct {
+	calls   int
+	onPause func(n int)
+}
+
+func (w *waitPauses) sleep(context.Context, time.Duration) error {
+	w.calls++
+	if w.onPause != nil {
+		w.onPause(w.calls)
+	}
+	return nil
+}
+
+func TestGetJobWaitsThroughTheTool(t *testing.T) {
+	w := &waitPauses{}
+	f := newOrgFixtureWith(t, []apitest.Option{apitest.WithWaitSleep(w.sleep)})
+	id := f.startJob(t, nil)
+	cs := mustConnect(t, f.s, f.token)
+	w.onPause = func(n int) {
+		if n == 2 {
+			if err := f.s.Queue.Finish(context.Background(), id, jobs.StatusSucceeded, nil, ""); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	var job struct {
+		Job struct {
+			Status string `json:"status"`
+		} `json:"job"`
+	}
+	callOK(t, cs, "get_job", map[string]any{"job_id": id.String(), "wait_seconds": 25}, &job)
+	if job.Job.Status != "succeeded" || w.calls != 2 {
+		t.Fatalf("status %s after %d pauses, want succeeded after 2", job.Job.Status, w.calls)
+	}
+
+	// unless is passed on: the job is no longer running, so no pause.
+	w.calls = 0
+	callOK(t, cs, "get_job", map[string]any{"job_id": id.String(), "wait_seconds": 25, "unless": "running"}, &job)
+	if job.Job.Status != "succeeded" || w.calls != 0 {
+		t.Fatalf("unless=running: status %s, pauses %d", job.Job.Status, w.calls)
+	}
+
+	// Beyond the cap is refused by the API's bound.
+	if _, isErr := call(t, cs, "get_job", map[string]any{"job_id": id.String(), "wait_seconds": 26}); !isErr {
+		t.Fatal("wait_seconds 26 was accepted")
+	}
+}
+
+func TestGetRunRequestWaitsThroughTheTool(t *testing.T) {
+	w := &waitPauses{}
+	f := newOrgFixtureWith(t, []apitest.Option{apitest.WithWaitSleep(w.sleep)})
+	cs := mustConnect(t, f.s, f.token)
+	var req struct {
+		RequestID string `json:"request_id"`
+	}
+	callOK(t, cs, "request_run", map[string]any{"template_id": f.template.String(), "reason": "deploy web"}, &req)
+	reqID := uuid.MustParse(req.RequestID)
+	w.onPause = func(n int) {
+		if n == 3 {
+			if _, err := f.s.Deps.RunRequests.Reject(f.scoped, f.org, reqID, f.owner); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	var got struct {
+		Request struct {
+			Status string `json:"status"`
+		} `json:"request"`
+	}
+	callOK(t, cs, "get_run_request", map[string]any{"request_id": req.RequestID, "wait_seconds": 10, "unless": "pending"}, &got)
+	if got.Request.Status != "rejected" || w.calls != 3 {
+		t.Fatalf("status %s after %d pauses, want rejected after 3", got.Request.Status, w.calls)
 	}
 }
