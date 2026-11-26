@@ -71,7 +71,7 @@ func (r *Runner) vantageCandidates(ctx context.Context, org uuid.UUID, sets map[
 	var groups []uuid.UUID
 	for _, rs := range sets {
 		for _, c := range rs.Synthetic {
-			if r.secretName(c) != "" {
+			if r.managerOnly(c) {
 				continue
 			}
 			for _, g := range checkplugins.VantageOf(c.Params).Groups {
