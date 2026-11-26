@@ -27,14 +27,14 @@ const (
 )
 
 // phpfpmStatusPath is the status path: '/' and at most 254 more bytes of
-// letters, digits, '_', '~', '/' and '-'. The agent never sends the path
-// as SCRIPT_FILENAME (always "/", see the fastcgi client), so a path that
-// is not the pool's pm.status_path names no script for FPM to run. No dot
-// on top of that, as defence in depth: a dotless path can never name a
-// .php or .phar file (nor a x.php/… PATH_INFO split), which FPM's default
-// security.limit_extensions refuses as well. No '?', '#', '%' or ':'
+// letters, digits, '_', '/' and '-'. The agent never sends the path as
+// SCRIPT_FILENAME (always "/..", see the fastcgi client), so FPM never
+// executes a request that is not the pool's pm.status_path. On top of
+// that, as defence in depth: no dot, so the path can never name a .php or
+// .phar file (nor a x.php/… PATH_INFO split), and no '~', which only
+// serves FPM's user_dir lookup (/~user/…). No '?', '#', '%' or ':'
 // either: the agent always asks for json itself.
-var phpfpmStatusPath = regexp.MustCompile(`^/[A-Za-z0-9_~/-]{0,254}$`)
+var phpfpmStatusPath = regexp.MustCompile(`^/[A-Za-z0-9_/-]{0,254}$`)
 
 // phpfpmPort is a decimal port without a leading zero.
 var phpfpmPort = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
@@ -56,7 +56,7 @@ func IsPHPFPMFastCGI(s string) bool {
 
 // Errors of ParsePHPFPMFastCGI, phrased to follow the parameter's name.
 var (
-	errPHPFPMPath   = errors.New("must end in a status path: / followed by at most 254 letters, digits, _ ~ / or - (no dot)")
+	errPHPFPMPath   = errors.New("must end in a status path: / followed by at most 254 letters, digits, _ / or - (no dot)")
 	errPHPFPMTCP    = errors.New("must be fcgi://host:port/path, the host an IP address (IPv6 in brackets) or a DNS name and the port 1 to 65535")
 	errPHPFPMSocket = errors.New("must be unix:/socket:/path, the socket an absolute path of at most 103 bytes without ':' or control characters")
 )

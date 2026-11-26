@@ -109,7 +109,7 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatDevicePath:   "a /dev/... path",
 	checkplugins.FormatURL:          "an http or https URL that may contain {address}",
 	checkplugins.FormatStatusURL:    "an http or https URL without user info or fragment",
-	checkplugins.FormatPHPFPMPool:   "an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ ~ / - without a dot",
+	checkplugins.FormatPHPFPMPool:   "an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ / - without a dot",
 	checkplugins.FormatDNSName:      "a DNS name that may contain {address}",
 	checkplugins.FormatServer:       "an IP address with an optional port",
 	checkplugins.FormatDockerLabel:  "key or key=value",

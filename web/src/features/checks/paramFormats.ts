@@ -282,9 +282,10 @@ function statusURL(s: string): boolean {
 // from internal/checkplugins/phpfpm_pool.go.
 // ---------------------------------------------------------------------------
 
-/** The status path: '/' and at most 254 letters, digits, _ ~ / - (no dot,
- * so it never names a PHP script). */
-const PHPFPM_STATUS_PATH = /^\/[A-Za-z0-9_~/-]{0,254}$/;
+/** The status path: '/' and at most 254 letters, digits, _ / - (no dot
+ * and no ~, defence in depth: it never names a PHP script or a user_dir
+ * path). */
+const PHPFPM_STATUS_PATH = /^\/[A-Za-z0-9_/-]{0,254}$/;
 
 /** An IPv4 address, an IPv6 address in brackets without a zone, or a DNS
  * name — validPHPFPMHost. */

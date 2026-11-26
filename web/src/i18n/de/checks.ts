@@ -443,7 +443,7 @@ export const deChecks: Messages['checks'] = {
       snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0, die mit 0, 1 oder 2 beginnt (nach 0 oder 1 ist die zweite Zahl höchstens 39)',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
-      phpfpmPool: 'jeder Eintrag muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment sein oder eine Pool-Adresse fcgi://Host:Port/Pfad bzw. unix:/Socket:/Pfad, deren Pfad aus / und Buchstaben, Ziffern und _ ~ / - besteht (kein Punkt)',
+      phpfpmPool: 'jeder Eintrag muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment sein oder eine Pool-Adresse fcgi://Host:Port/Pfad bzw. unix:/Socket:/Pfad, deren Pfad aus / und Buchstaben, Ziffern und _ / - besteht (kein Punkt)',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
       uuid: 'jeder Eintrag muss die ID einer Überwachungsgruppe sein (eine UUID in Kleinbuchstaben)',

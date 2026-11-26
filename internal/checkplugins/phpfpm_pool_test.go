@@ -16,7 +16,7 @@ func TestParsePHPFPMFastCGI(t *testing.T) {
 	}{
 		{"fcgi://127.0.0.1:9000/status", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "127.0.0.1:9000", Path: "/status"}},
 		{"fcgi://[::1]:9001/fpm-status", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "[::1]:9001", Path: "/fpm-status"}},
-		{"fcgi://php-fpm.internal:1/a/b_c~d", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "php-fpm.internal:1", Path: "/a/b_c~d"}},
+		{"fcgi://php-fpm.internal:1/a/b_c-d", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "php-fpm.internal:1", Path: "/a/b_c-d"}},
 		{"fcgi://localhost:65535/", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "localhost:65535", Path: "/"}},
 		{"unix:/run/php/php8.3-fpm.sock:/status", checkplugins.PHPFPMFastCGI{Network: "unix", Address: "/run/php/php8.3-fpm.sock", Path: "/status"}},
 		{"unix:" + sock103 + ":" + path255, checkplugins.PHPFPMFastCGI{Network: "unix", Address: sock103, Path: path255}},
@@ -41,6 +41,8 @@ func TestParsePHPFPMFastCGI(t *testing.T) {
 		"fcgi://127.0.0.1:9000/status.php",  // a dot in the path
 		"fcgi://127.0.0.1:9000/x.php/status",
 		"fcgi://127.0.0.1:9000/st atus",
+		"fcgi://127.0.0.1:9000/~www-data/status", // a user_dir path
+		"unix:/run/php/fpm.sock:/a~b",
 		"fcgi://127.0.0.1:9000/st%41tus",
 		"fcgi://127.0.0.1:9000/a\nb",
 		"fcgi://u@127.0.0.1:9000/status",

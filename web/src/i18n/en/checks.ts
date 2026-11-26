@@ -469,7 +469,7 @@ export const enChecks = {
       snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2 (after 0 or 1, the second number is at most 39)',
       url: 'must be an http:// or https:// URL without a user name or password',
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',
-      phpfpmPool: 'every entry must be an http:// or https:// URL without a user name, password or #fragment, or a pool address fcgi://host:port/path or unix:/socket:/path whose path is / followed by letters, digits and _ ~ / - (no dot)',
+      phpfpmPool: 'every entry must be an http:// or https:// URL without a user name, password or #fragment, or a pool address fcgi://host:port/path or unix:/socket:/path whose path is / followed by letters, digits and _ / - (no dot)',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',
       uuid: 'every entry must be a monitoring group’s id (a lower-case UUID)',

@@ -56,7 +56,7 @@ func TestGetSendsTheFixedRequest(t *testing.T) {
 	want := map[string]string{
 		"GATEWAY_INTERFACE": "CGI/1.1",
 		"REQUEST_METHOD":    "GET",
-		"SCRIPT_FILENAME":   "/",
+		"SCRIPT_FILENAME":   "/..",
 		"SCRIPT_NAME":       "/status",
 		"DOCUMENT_URI":      "/status",
 		"REQUEST_URI":       "/status?json",

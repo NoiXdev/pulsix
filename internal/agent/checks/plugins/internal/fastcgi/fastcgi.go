@@ -83,16 +83,19 @@ func Get(ctx context.Context, network, address, path, query string, maxBody int)
 	return resp, err
 }
 
-// scriptFilename is the SCRIPT_FILENAME of every request: the root
-// directory, which is never a regular file. PHP-FPM recognises its status
-// page by the request URI it derives from SCRIPT_NAME, so the path goes
-// there only; were it SCRIPT_FILENAME too, a path that is not the pool's
-// status path would name a file for FPM to run as PHP (any dotless file
-// once a pool empties security.limit_extensions), and the answer would
-// tell which files exist. With "/" FPM finds no script for every such
-// path and answers alike (pinned against real PHP-FPM in phpfpm's
-// container test).
-const scriptFilename = "/"
+// scriptFilename is the SCRIPT_FILENAME of every request. PHP-FPM
+// recognises its status page by the request URI it derives from
+// SCRIPT_NAME, so the operator's path goes there only. Were it
+// SCRIPT_FILENAME, a path that is not the pool's status path would name a
+// file for FPM to run as PHP (any dotless file once a pool empties
+// security.limit_extensions). "/" is not enough either: with
+// cgi.fix_pathinfo=0 FPM accepts it as a valid path and, with doc_root or
+// user_dir set, opens doc_root plus SCRIPT_NAME as the script. FPM refuses
+// a path with a ".." segment outright, before the extension check and
+// that lookup, so with "/.." a request that is not the status page is
+// never executed; it answers 404 (403 under some pool settings). Pinned
+// against real PHP-FPM in phpfpm's container test.
+const scriptFilename = "/.."
 
 // buildRequest is BEGIN_REQUEST (responder, no keep-conn), the fixed
 // params, the empty PARAMS record and the empty STDIN record.
