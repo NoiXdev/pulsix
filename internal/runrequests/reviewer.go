@@ -154,7 +154,7 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 			return fmt.Errorf("list the playbook's templates: %w", err)
 		}
 		templateIDs = ids
-	case assistantchange.SubjectInventoryGroup, assistantchange.SubjectInventoryMembership, assistantchange.SubjectHost:
+	case assistantchange.SubjectInventoryGroup, assistantchange.SubjectInventoryMembership, assistantchange.SubjectHost, assistantchange.SubjectZone:
 		return rv.inventoryChanged(ctx, orgID, c)
 	default:
 		return fmt.Errorf("an assistant change of an unknown subject %q", c.Subject)
@@ -394,6 +394,8 @@ func changeWords(c assistantchange.Change) string {
 		return "host " + c.HostName + " in inventory group " + c.Name
 	case assistantchange.SubjectHost:
 		return "host " + c.Name
+	case assistantchange.SubjectZone:
+		return "the jump host of zone " + c.Name
 	}
 	return "job template " + c.Name
 }

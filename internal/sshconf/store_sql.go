@@ -25,6 +25,11 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
 
+// InTx implements Store: db.WithWriteTx.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
 // chainLockKeyPrefix namespaces this lock's key within hashtext's output
 // space, the same way inventory.treeLockKeyPrefix does for the sibling
 // group-tree lock (see its doc comment): without a distinct prefix,

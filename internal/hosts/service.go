@@ -256,6 +256,9 @@ type Store interface {
 	// ListAllHosts returns every host of orgID ordered by name, unpaginated,
 	// for the inventory renderer.
 	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
+	// GetJump returns the host's jump host setting; inherit when the host
+	// has no SSH settings stored.
+	GetJump(ctx context.Context, orgID, hostID uuid.UUID) (Jump, error)
 	// InTx runs fn inside one organization-scoped write transaction that
 	// every store built on the same database joins through the context
 	// (an assistant's host write and the pause it causes). Not nested.

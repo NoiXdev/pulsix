@@ -171,7 +171,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "host", hostKeys, in.updateArgs, nil, true, "/hosts/%s", in.HostID)
 			}),
-		define("set_host_ssh", "Set host SSH", "Set how the host is reached: user, port, SSH credential (by reference) and jump host.",
+		define("set_host_ssh", "Set host SSH", "Set how the host is reached: user, port, SSH credential (by reference) and jump host. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostSSHArgs) (any, error) {
 				body := map[string]any{"username": in.Username, "port": in.Port, "bastion_mode": in.BastionMode}
 				if in.CredentialID != nil {
@@ -318,7 +318,7 @@ const plainTextValues = "Every value you set or change reaches a run as plain te
 
 // inventoryPauses tells the assistant what its change of the inventory's
 // values does to what runs unattended (decision D6).
-const inventoryPauses = "Your change pauses every schedule and disables every webhook trigger whose runs then reach other hosts or receive other values, or that start such a run as a follow-up, until a person approves the review request each gets: a change of a group's values or schema (defaults, and any edit that changes the values a run receives), of a member's values, a host joining or leaving a group, a group moving or deleted with its members, and a managed host you create or make managed. A run's limit does not narrow this. The answer does not list them, list_run_requests does."
+const inventoryPauses = "Your change pauses every schedule and disables every webhook trigger whose runs then reach other hosts, reach a host another way or receive other values, or that start such a run as a follow-up, until a person approves the review request each gets: a change of a group's values or schema (defaults, and any edit that changes the values a run receives), of a member's values, a host joining or leaving a group, a group renamed, moved, given another jump host or deleted with its members, a managed host you create or make managed, a host's zone, SSH settings or jump host, and a zone's jump host. A run's limit does not narrow this. The answer does not list them, list_run_requests does."
 
 // templateSecrets applies the secret rules to a merged template body: the
 // stored schema's secret fields keep their type, and extra vars pass the

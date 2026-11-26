@@ -86,3 +86,53 @@ func TestAnAssistantsManagedHostIsHandedOn(t *testing.T) {
 		t.Fatalf("a person's host handed on %+v", got)
 	}
 }
+
+// TestAnAssistantsHostRouteChangeIsHandedOn (decision D7): an assistant
+// moving a managed host to another zone, or changing its jump host, hands
+// the host on; a resend of the same jump host, a rename and a person's
+// zone change do not.
+func TestAnAssistantsHostRouteChangeIsHandedOn(t *testing.T) {
+	svc := hosts.NewService(newFakeHostStore(), time.Now)
+	w := &recordingWatcher{}
+	svc.SetChangeWatcher(w)
+	org := uuid.Must(uuid.NewV7())
+	fra, err := svc.CreateZone(ctx, org, "fra", "Falkenstein")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nbg, err := svc.CreateZone(ctx, org, "nbg", "Nuremberg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant := assistantchange.Actor{UserID: uuid.Must(uuid.NewV7()), Assistant: true}
+	h, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", ZoneID: fra.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", ZoneID: nbg.ID, Managed: true}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.take(); len(got) != 1 || len(got[0].Fields) != 1 || got[0].Fields[0].Name != "zone" || got[0].Fields[0].Old != "fra" || got[0].Fields[0].New != "nbg" {
+		t.Fatalf("zone change = %+v", got)
+	}
+	bastion := uuid.Must(uuid.NewV7())
+	jump := &hosts.Jump{Mode: "explicit", BastionID: &bastion}
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.take(); len(got) != 1 || got[0].Fields[0].Name != "jump_host" || got[0].Fields[0].Old != "inherit" {
+		t.Fatalf("jump host change = %+v", got)
+	}
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.take(); len(got) != 0 {
+		t.Fatalf("a rename with the same jump host handed on %+v", got)
+	}
+	if _, err = svc.UpdateHost(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", ZoneID: fra.ID, Managed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.take(); len(got) != 0 {
+		t.Fatalf("a person's zone change handed on %+v", got)
+	}
+}

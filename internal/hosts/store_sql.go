@@ -236,6 +236,18 @@ func (s *SQLStore) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.U
 // ListAllHosts returns every host of orgID ordered by name, unpaginated, for
 // the inventory renderer (see ListAllHosts's own comment,
 // internal/db/queries/hosts.sql).
+// GetJump implements Store.
+func (s *SQLStore) GetJump(ctx context.Context, orgID, hostID uuid.UUID) (Jump, error) {
+	row, err := s.q.GetHostSSH(ctx, gen.GetHostSSHParams{OrgID: orgID, HostID: hostID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Jump{Mode: "inherit"}, nil
+	}
+	if err != nil {
+		return Jump{}, fmt.Errorf("get host jump host: %w", err)
+	}
+	return Jump{Mode: row.BastionMode, BastionID: db.UUIDPtr(row.BastionID)}, nil
+}
+
 // InTx implements Store: db.WithWriteTx.
 func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
 	return s.db.WithWriteTx(ctx, orgID, fn)

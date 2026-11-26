@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"net"
 	"regexp"
 	"time"
@@ -138,6 +139,10 @@ type Store interface {
 	// connection while this one already holds one, which a small,
 	// contended pool may never free up again).
 	WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
+	// InTx runs fn inside one organization-scoped write transaction that
+	// every store built on the same database joins through the context
+	// (an assistant's route change and the pause it causes). Not nested.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 }
 
 // CredentialLookup is the slice of credentials.Service this package needs.
@@ -148,6 +153,10 @@ type CredentialLookup interface {
 // HostLookup is the slice of hosts.Service this package needs.
 type HostLookup interface {
 	GetHost(ctx context.Context, orgID, id uuid.UUID) (hosts.Host, error)
+	// ListScopeHosts lists the organization's hosts with id, name, zone
+	// and managed flag: the hosts a zone's jump host reaches.
+	ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]hosts.Host, error)
+	ListZones(ctx context.Context, orgID uuid.UUID) ([]hosts.Zone, error)
 }
 
 // Service implements jump hosts and host SSH settings.
@@ -155,6 +164,9 @@ type Service struct {
 	store Store
 	creds CredentialLookup
 	hosts HostLookup
+	// watcher is handed an assistant's change of how runs reach a host
+	// (assistant_change.go); nil hands on nothing.
+	watcher assistantchange.Watcher
 }
 
 // NewService wires the store and the lookups used to validate references.

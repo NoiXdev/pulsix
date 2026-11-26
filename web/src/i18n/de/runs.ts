@@ -442,7 +442,7 @@ export const deRuns: Messages['runs'] = {
         paused: 'pausiert',
         active: 'aktiv',
         changes: 'Was der Assistent geändert hat',
-        subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventargruppe', host: 'Host' } as Record<string, string>,
+        subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventargruppe', host: 'Host', zone: 'Jump-Host der Zone' } as Record<string, string>,
         inventoryPlainTitle: 'Inventarwerte',
         inventoryPlain:
           'Die Freigabe macht die Inventarwerte des Assistenten nicht wirksam: Sie bleiben reiner Text, bis eine Person sie auf der Gruppen- oder Host-Seite ändert oder übernimmt.',

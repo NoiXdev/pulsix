@@ -31,8 +31,10 @@ func (s *Service) handOnManaged(ctx context.Context, actor assistantchange.Actor
 	return s.watcher.Changed(ctx, after.OrgID, c)
 }
 
-// updateWatched writes h (UpdateHostWith); an assistant's write that makes
-// the host managed is handed on in the same transaction.
+// updateWatched writes h (UpdateHostWith). An assistant's write to a
+// managed host is handed on in the same transaction when it makes the host
+// managed, moves it to another zone (another worker reaches it) or changes
+// its jump host (decision D7): what runs there reaches it otherwise now.
 func (s *Service) updateWatched(ctx context.Context, h Host, x HostExtras, actor assistantchange.Actor) (Host, error) {
 	if !s.watches(actor) || !h.Managed {
 		return s.store.UpdateHostWith(ctx, h, x)
@@ -43,13 +45,67 @@ func (s *Service) updateWatched(ctx context.Context, h Host, x HostExtras, actor
 		if err != nil {
 			return err
 		}
+		var jumpBefore Jump
+		if x.Jump != nil {
+			if jumpBefore, err = s.store.GetJump(ctx, h.OrgID, h.ID); err != nil {
+				return err
+			}
+		}
 		if out, err = s.store.UpdateHostWith(ctx, h, x); err != nil {
 			return err
 		}
-		return s.handOnManaged(ctx, actor, before, out, "managed", false, true)
+		var fields []assistantchange.Field
+		if !before.Managed {
+			fields = append(fields, assistantchange.Field{Name: "managed", Old: false, New: true})
+		}
+		if before.ZoneID != out.ZoneID {
+			fields = append(fields, assistantchange.Field{Name: "zone", Old: s.zoneLabel(ctx, h.OrgID, before.ZoneID), New: s.zoneLabel(ctx, h.OrgID, out.ZoneID)})
+		}
+		if x.Jump != nil && !sameJump(jumpBefore, *x.Jump) {
+			fields = append(fields, assistantchange.Field{Name: "jump_host", Old: jumpLabel(jumpBefore), New: jumpLabel(*x.Jump)})
+		}
+		return s.handOnHost(ctx, actor, out, fields)
 	})
 	if err != nil {
 		return Host{}, err
 	}
 	return out, nil
+}
+
+// handOnHost tells the watcher about an assistant's change of host h
+// moving fields; nothing when none moved.
+func (s *Service) handOnHost(ctx context.Context, actor assistantchange.Actor, h Host, fields []assistantchange.Field) error {
+	if !s.watches(actor) || len(fields) == 0 {
+		return nil
+	}
+	c := assistantchange.New(assistantchange.SubjectHost, h.ID, h.Name, fields, actor)
+	c.Reach = &assistantchange.Reach{Hosts: []uuid.UUID{h.ID}}
+	return s.watcher.Changed(ctx, h.OrgID, c)
+}
+
+// zoneLabel names a zone by its slug, or its id when it cannot be read.
+func (s *Service) zoneLabel(ctx context.Context, orgID, id uuid.UUID) string {
+	if z, err := s.store.GetZone(ctx, orgID, id); err == nil {
+		return z.Slug
+	}
+	return id.String()
+}
+
+func sameJump(a, b Jump) bool {
+	if a.Mode != b.Mode {
+		return false
+	}
+	if a.BastionID == nil || b.BastionID == nil {
+		return a.BastionID == b.BastionID
+	}
+	return *a.BastionID == *b.BastionID
+}
+
+// jumpLabel is a jump host setting as the picture shows it: the mode, and
+// the jump host's id when one is named.
+func jumpLabel(j Jump) string {
+	if j.BastionID != nil {
+		return j.Mode + " " + j.BastionID.String()
+	}
+	return j.Mode
 }

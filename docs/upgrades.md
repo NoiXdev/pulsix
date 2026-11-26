@@ -1037,10 +1037,18 @@ migration). Writes made with an assistant token that pause:
   group and host scope, made overridable or not), for the group and each member;
 - a membership (`PUT …/members/{host}`): a host joining the group, with or without values,
   or a change of an existing membership's values; `DELETE …/members/{host}`: a host leaving;
-- a group's parent (`PATCH …/inventory/groups/{id}` with another `parent_id`), and a group
-  deleted with its members (`DELETE …/inventory/groups/{id}`);
-- a managed host created (`POST …/hosts`) or made managed (`PATCH …/hosts/{id}`,
-  `PATCH …/hosts/{id}/capabilities`).
+- a group renamed (the `group_names` and `groups[…]` a run sees), moved to another parent or
+  given another jump host (`PATCH …/inventory/groups/{id}`), and a group deleted with its
+  members (`DELETE …/inventory/groups/{id}`);
+- a managed host created (`POST …/hosts`), made managed (`PATCH …/hosts/{id}`,
+  `PATCH …/hosts/{id}/capabilities`), moved to another zone or given another jump host
+  (`PATCH …/hosts/{id}`);
+- how a run reaches a host: its SSH user, port, credential or jump host
+  (`PUT …/hosts/{id}/ssh`), and a zone's default jump host (`PUT …/zones/{id}/bastion`, which
+  reaches every managed host of the zone).
+
+Deleting a host pauses nothing (runs reach fewer hosts), nor does editing a jump host itself
+(`PUT …/bastions/{id}`).
 
 Each pauses every active schedule and disables every enabled webhook trigger whose run then
 receives other values or reaches other hosts, in the same transaction as the write, with the
@@ -1052,8 +1060,9 @@ this: a limited run still renders every scoped host of its zones and a play read
 through `hostvars`. Templates that start a reached one through follow-ups are included; an
 organization without any schedule or template trigger reads nothing more. The review's picture
 lists each change as subject `inventory_group`, `inventory_membership` (with `host_id`,
-`host_name`) or `host`, with fields `vars.<key>`, `<host>: vars.<key>`, `default.<field>`,
-`member`, `members`, `parent`, `host` or `managed`, old and new value (secrets masked) and the
+`host_name`), `host` or `zone`, with fields `vars.<key>`, `<host>: vars.<key>`, `default.<field>`,
+`member`, `members`, `name`, `parent`, `jump_host`, `host`, `managed`, `zone`, `ssh_user`,
+`ssh_port` or `ssh_credential`, old and new value (secrets masked) and the
 token, and says that approving leaves the assistant's values plain text until a person changes
 or accepts them. A person's change, an accept, a rename and a write that moves nothing pause
 nothing. These writes now run in one write transaction each; a membership write locks the row
@@ -1061,7 +1070,11 @@ nothing. These writes now run in one write transaction each; a membership write 
 
 **Host addresses** (decision D7, controller's call): `POST`/`PATCH …/hosts` now refuse an
 address that is not empty, an IP address or a host name (the jump host address rule; 400), for
-every caller. Stored addresses are not rewritten: check them before upgrading with
+every caller. The check applies to new writes only: stored addresses are not rewritten, and
+an address stored before the upgrade that is neither an IP address nor a host name (for
+example one containing `{{`) stays as it is. **After the upgrade, review and correct such
+addresses** (edit the host and save a valid address); runs carry them as plain text, but the
+worker's own system jobs (bootstrap, key rotation) do not. Find them, read-only, with
 `SELECT id, name, address FROM hosts WHERE address <> '' AND address !~ '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'`
 (it also lists IPv6 literals, which the API accepts). Every run's inventory
 now carries `ansible_host` as plain text (`{"__ansible_unsafe": …}`), so a stored address is

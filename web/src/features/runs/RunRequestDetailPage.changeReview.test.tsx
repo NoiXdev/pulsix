@@ -178,6 +178,12 @@ describe('RunRequestDetailPage reviews of an assistant change (spec 2026-11-25 C
     expect(await screen.findByRole('table', { name: /Host web-9/ })).toBeInTheDocument();
   });
 
+  it('names a zone whose jump host an assistant changed', async () => {
+    const zoneChange = [{ subject: 'zone', id: 'z1', name: 'fra', user_id: 'u1', fields: [{ field: 'jump_host', old: null, new: 'jump' }] }];
+    renderReview({ item: 'schedule', schedule, changes: zoneChange });
+    expect(await screen.findByRole('table', { name: /Zone jump host fra/ })).toBeInTheDocument();
+  });
+
   it('names an inventory change in German', async () => {
     const inventoryChanges = [
       { subject: 'inventory_membership', id: 'g2', name: 'db', host_id: 'h2', host_name: 'web-2', user_id: 'u1', fields: [{ field: 'vars.note', old: 'a', new: 'b' }] },

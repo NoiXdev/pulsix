@@ -47,6 +47,9 @@ const (
 	// SubjectHost is a host an assistant created, or made managed: the
 	// runs whose scope it now falls into reach it.
 	SubjectHost Subject = "host"
+	// SubjectZone is a zone's default jump host: how runs reach the
+	// zone's hosts.
+	SubjectZone Subject = "zone"
 )
 
 // Reach is which hosts an inventory change reaches, for the watcher to

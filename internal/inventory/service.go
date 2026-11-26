@@ -298,10 +298,11 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 // UpdateGroupBy renames, moves, describes and sets the jump host of a
 // group on actor's behalf. A move may not place a group below itself and
 // may not make the tree deeper than MaxGroupDepth. An assistant's move
-// (a parent change) is handed to the watcher in the move's transaction
-// (decision D7): the moved subtree's hosts receive other ancestors'
-// values, and runs scoped to the old or the new ancestors reach other
-// hosts.
+// (a parent change), rename or jump host change is handed to the watcher
+// in the update's transaction (decision D7): the moved subtree's hosts
+// receive other ancestors' values and runs scoped to the old or the new
+// ancestors reach other hosts; a rename changes the group names a run
+// sees; a jump host changes how a run reaches the group's hosts.
 func (s *Service) UpdateGroupBy(ctx context.Context, orgID, id uuid.UUID, revision int64, in GroupPatch, actor assistantchange.Actor) (GroupView, error) {
 	if !s.watches(actor) {
 		return s.updateGroup(ctx, orgID, id, revision, in, nil)
@@ -313,11 +314,20 @@ func (s *Service) UpdateGroupBy(ctx context.Context, orgID, id uuid.UUID, revisi
 		if result, err = s.updateGroup(ctx, orgID, id, revision, in, &moved); err != nil {
 			return err
 		}
-		if moved == nil {
-			return nil
+		var fields []assistantchange.Field
+		reach := &assistantchange.Reach{Group: &id}
+		if moved.oldName != moved.newName {
+			// group_names and groups[...] a run sees change (decision D7).
+			fields = append(fields, assistantchange.Field{Name: "name", Old: moved.oldName, New: moved.newName})
 		}
-		fields := []assistantchange.Field{{Name: "parent", Old: moved.oldParent, New: moved.newParent}}
-		return s.handOnGroup(ctx, orgID, actor, result.Group, fields, &assistantchange.Reach{Group: &id, FormerGroups: moved.former})
+		if moved.parentMoved {
+			fields = append(fields, assistantchange.Field{Name: "parent", Old: moved.oldParent, New: moved.newParent})
+			reach.FormerGroups = moved.former
+		}
+		if !sameParent(moved.oldBastion, moved.newBastion) {
+			fields = append(fields, assistantchange.Field{Name: "jump_host", Old: s.bastionLabel(ctx, orgID, moved.oldBastion), New: s.bastionLabel(ctx, orgID, moved.newBastion)})
+		}
+		return s.handOnGroup(ctx, orgID, actor, result.Group, fields, reach)
 	})
 	if err != nil {
 		return GroupView{}, err
@@ -325,12 +335,27 @@ func (s *Service) UpdateGroupBy(ctx context.Context, orgID, id uuid.UUID, revisi
 	return result, nil
 }
 
-// move is what updateGroup tells a watched caller about a parent change:
-// the old and the new parent's names (nil for a root) and the groups above
-// the group before the move.
+// move is what updateGroup tells a watched caller about the update: the
+// old and the new name, whether the parent changed with the old and the
+// new parent's names (nil for a root) and the groups above the group
+// before the move, and the old and the new jump host.
 type move struct {
-	oldParent, newParent any
-	former               []uuid.UUID
+	oldName, newName       string
+	parentMoved            bool
+	oldParent, newParent   any
+	former                 []uuid.UUID
+	oldBastion, newBastion *uuid.UUID
+}
+
+// bastionLabel names a jump host, or none.
+func (s *Service) bastionLabel(ctx context.Context, orgID uuid.UUID, id *uuid.UUID) any {
+	if id == nil {
+		return nil
+	}
+	if b, err := s.bastions.GetBastion(ctx, orgID, *id); err == nil {
+		return b.Name
+	}
+	return id.String()
 }
 
 // updateGroup is UpdateGroupBy's write; with moved set it reports a
@@ -391,8 +416,12 @@ func (s *Service) updateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 			return err
 		}
 		result = groupView(updated)
-		if moved != nil && !sameParent(cur.ParentID, in.ParentID) {
-			*moved = &move{oldParent: nameIn(t, cur.ParentID), newParent: nameIn(t, in.ParentID), former: t.Ancestors(id)}
+		if moved != nil {
+			*moved = &move{oldName: cur.Name, newName: in.Name, oldBastion: cur.BastionID, newBastion: in.BastionID}
+			if !sameParent(cur.ParentID, in.ParentID) {
+				(*moved).parentMoved = true
+				(*moved).oldParent, (*moved).newParent, (*moved).former = nameIn(t, cur.ParentID), nameIn(t, in.ParentID), t.Ancestors(id)
+			}
 		}
 		return nil
 	})

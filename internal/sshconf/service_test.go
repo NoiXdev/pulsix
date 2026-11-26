@@ -137,6 +137,11 @@ func (f *fakeStore) WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(
 	return fn(f)
 }
 
+// InTx runs fn directly: the fake has no transactions.
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 type fakeCreds map[uuid.UUID]credentials.Credential
 
 func (f fakeCreds) Get(_ context.Context, orgID, id uuid.UUID) (credentials.Credential, error) {
@@ -156,6 +161,18 @@ func (f fakeHosts) GetHost(_ context.Context, orgID, id uuid.UUID) (hosts.Host, 
 	}
 	return h, nil
 }
+
+func (f fakeHosts) ListScopeHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	var out []hosts.Host
+	for _, h := range f {
+		if h.OrgID == orgID {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
+func (f fakeHosts) ListZones(context.Context, uuid.UUID) ([]hosts.Zone, error) { return nil, nil }
 
 type fixture struct {
 	svc     *sshconf.Service

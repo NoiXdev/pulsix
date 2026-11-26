@@ -409,7 +409,7 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.SSH.SetZoneBastion(ctx, scope.OrgID, zoneID, bastionID); err != nil {
+		if err := deps.SSH.SetZoneBastionBy(ctx, scope.OrgID, zoneID, bastionID, changeActor(scope)); err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
 		summary := "cleared the zone's default jump host"
@@ -464,11 +464,11 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		h, err := deps.SSH.SetHostSSH(ctx, scope.OrgID, id, sshconf.HostSSHInput{
+		h, err := deps.SSH.SetHostSSHBy(ctx, scope.OrgID, id, sshconf.HostSSHInput{
 			Username: in.Body.Username, Port: in.Body.Port, CredentialID: cred,
 			BastionMode: sshconf.BastionMode(in.Body.BastionMode), BastionID: bastion,
 			IfRevision: ifRev,
-		})
+		}, changeActor(scope))
 		if err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}

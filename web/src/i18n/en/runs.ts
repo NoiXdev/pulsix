@@ -467,7 +467,7 @@ export const enRuns = {
         paused: 'paused',
         active: 'active',
         changes: 'What the assistant changed',
-        subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventory group', host: 'Host' } as Record<string, string>,
+        subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventory group', host: 'Host', zone: 'Zone jump host' } as Record<string, string>,
         /** Approving a review of an inventory change leaves the values plain text (final review M4). */
         inventoryPlainTitle: 'Inventory values',
         inventoryPlain:

@@ -324,6 +324,14 @@ func (f *fakeHostStore) ListHostsByIDs(_ context.Context, orgID uuid.UUID, ids [
 	return out, nil
 }
 
+// GetJump is the jump host the last write carrying one set; inherit before.
+func (f *fakeHostStore) GetJump(_ context.Context, _, hostID uuid.UUID) (hosts.Jump, error) {
+	if x, ok := f.extras[hostID]; ok && x.Jump != nil {
+		return *x.Jump, nil
+	}
+	return hosts.Jump{Mode: "inherit"}, nil
+}
+
 func (f *fakeHostStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
 	return fn(ctx)
 }

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
@@ -253,9 +256,10 @@ func TestAssistantSchemaEditsThatChangeResolvedValuesAreHandedOn(t *testing.T) {
 }
 
 // TestAssistantGroupMovesAndDeletesAreHandedOn (decision D7): an
-// assistant's move of a group reaches its subtree and the groups above it
-// before the move; its delete of a group with members reaches them and the
-// group's former line; a rename, a person's move and an empty group's
+// assistant's rename or jump host change of a group reaches its subtree,
+// its move reaches the subtree and the groups above it before the move;
+// its delete of a group with members reaches them and the group's former
+// line; a description, a person's move and rename and an empty group's
 // delete hand on nothing.
 func TestAssistantGroupMovesAndDeletesAreHandedOn(t *testing.T) {
 	f := newFixture()
@@ -271,17 +275,30 @@ func TestAssistantGroupMovesAndDeletesAreHandedOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantNone(t, "a rename", w.take())
-	child, err = f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", ParentID: &b.ID}, assistant)
+	// A rename changes the group names a run sees (decision D7).
+	c := wantFields(t, "a rename", w.take(), assistantchange.Field{Name: "name", Old: "child", New: "kid"})
+	if c.Reach == nil || c.Reach.Group == nil || *c.Reach.Group != child.ID || len(c.Reach.FormerGroups) != 0 {
+		t.Fatalf("rename reach = %+v", c.Reach)
+	}
+	// So does a jump host: it changes how a run reaches the members.
+	if child, err = f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", ParentID: &a.ID, BastionID: &f.bastionID}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	wantFields(t, "a jump host", w.take(), assistantchange.Field{Name: "jump_host", Old: nil, New: "bastion"})
+	if child, err = f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", Description: "d", ParentID: &a.ID, BastionID: &f.bastionID}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	wantNone(t, "a description", w.take())
+	child, err = f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", Description: "d", ParentID: &b.ID, BastionID: &f.bastionID}, assistant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := wantFields(t, "a move", w.take(), assistantchange.Field{Name: "parent", Old: "a", New: "b"})
+	c = wantFields(t, "a move", w.take(), assistantchange.Field{Name: "parent", Old: "a", New: "b"})
 	if c.Subject != assistantchange.SubjectInventoryGroup || c.Reach == nil || c.Reach.Group == nil || *c.Reach.Group != child.ID ||
 		len(c.Reach.FormerGroups) != 1 || c.Reach.FormerGroups[0] != a.ID {
 		t.Fatalf("move = %+v reach %+v", c, c.Reach)
 	}
-	if child, err = f.svc.UpdateGroup(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid"}); err != nil {
+	if child, err = f.svc.UpdateGroup(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid2"}); err != nil {
 		t.Fatal(err)
 	}
 	wantNone(t, "a person's move", w.take())
@@ -344,5 +361,79 @@ func TestAnInventoryChangeAndItsPauseAreOneTransaction(t *testing.T) {
 	}
 	if got.Revision != g.Revision || got.Vars["port"] != 80.0 || len(got.AssistantKeys) != 0 {
 		t.Fatalf("after a failed pause the group is %+v, want it unchanged", got.Group)
+	}
+}
+
+// blockingWatcher signals inside once it is handed a change and returns
+// when release closes: the write's transaction stays open meanwhile.
+type blockingWatcher struct {
+	inside  chan struct{}
+	release chan struct{}
+}
+
+func (w blockingWatcher) Changed(context.Context, uuid.UUID, assistantchange.Change) error {
+	close(w.inside)
+	<-w.release
+	return nil
+}
+
+// TestAMembershipChangeHoldsTheRowUntilItsPauseCommits (final review M1):
+// an assistant's membership change locks the row from its read until the
+// transaction that writes the values and the pause commits, so no other
+// writer slips in between. A second transaction asking for the row
+// without waiting is refused while the first is open, and gets it after.
+func TestAMembershipChangeHoldsTheRowUntilItsPauseCommits(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	o, err := q.CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "inv-member-lock", Name: "inv-member-lock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostStore := hosts.NewSQLStore(d)
+	zone, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if err := hostStore.CreateZone(ctx, hosts.Zone{ID: zone, OrgID: o.ID, Slug: "fra", Name: "fra"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostStore.CreateHost(ctx, hosts.Host{ID: host, OrgID: o.ID, ZoneID: zone, Name: "web-01", Managed: true, Facts: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	svc := inventory.NewService(inventory.NewSQLStore(d), hosts.NewService(hostStore, time.Now), fakeBastions{}, testBox())
+	g, err := svc.CreateGroup(ctx, o.ID, inventory.GroupInput{Name: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, _, err = svc.SetSchema(ctx, o.ID, g.ID, g.Revision, schema.Schema{Fields: []schema.Field{{Name: "note", Type: schema.TypeString, Scope: schema.ScopeHost}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Assign(ctx, o.ID, g.ID, host, map[string]any{"note": "a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	w := blockingWatcher{inside: make(chan struct{}), release: make(chan struct{})}
+	svc.SetChangeWatcher(w)
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.AssignBy(ctx, o.ID, g.ID, host, map[string]any{"note": "b"}, nil, assistant)
+		done <- err
+	}()
+	<-w.inside
+	lockNoWait := func() error {
+		tx, err := d.Pool().Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck // read only
+		var one int
+		return tx.QueryRow(ctx, `SELECT 1 FROM inventory_memberships WHERE group_id = $1 AND host_id = $2 FOR NO KEY UPDATE NOWAIT`, g.ID, host).Scan(&one)
+	}
+	var pgErr *pgconn.PgError
+	if err := lockNoWait(); !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("while the change is open the row = %v, want lock_not_available", err)
+	}
+	close(w.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := lockNoWait(); err != nil {
+		t.Fatalf("after the commit the row = %v", err)
 	}
 }

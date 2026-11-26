@@ -10,9 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/schedules"
+	"github.com/noixdev/pulsix/internal/sshconf"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 	"github.com/noixdev/pulsix/internal/triggers"
@@ -326,5 +328,58 @@ func TestAnAssistantsInventoryChurnPausesWhatItReaches(t *testing.T) {
 		if ev := f.events(t, "pauseScheduleForReview"); len(ev) == 0 || !strings.Contains(ev[0], "vars.port") {
 			t.Fatalf("events = %v", ev)
 		}
+	})
+	t.Run("a group renamed or given a jump host", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-rename")
+		bastion, err := f.s.Deps.SSH.CreateBastion(f.scoped, f.orgID, sshconf.BastionInput{Name: "jump", Address: "10.0.0.9", Port: 22, Username: "ops"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		db, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.orgID, f.dbGroup.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// group_names and groups[...] change for web-2: other pauses.
+		f.assistantOK(t, http.MethodPatch, f.groupsPath(db.ID), revOf(db.Revision), map[string]any{"name": "databases"})
+		f.wantPaused(t, "after the rename", map[uuid.UUID]bool{f.other: true, f.active: false})
+		eu, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.orgID, f.webEU.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPatch, f.groupsPath(eu.ID), revOf(eu.Revision), map[string]any{"name": "web_eu", "parent_id": f.web.ID.String(), "bastion_id": bastion.ID.String()})
+		f.wantPaused(t, "after the jump host", map[uuid.UUID]bool{f.active: true})
+		if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 3 || !strings.Contains(ev[0], "(name)") || !strings.Contains(ev[1], "(jump_host)") {
+			t.Fatalf("events = %v", ev)
+		}
+	})
+	t.Run("a host's SSH settings, zone and delete", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-route")
+		bastion, err := f.s.Deps.SSH.CreateBastion(f.scoped, f.orgID, sshconf.BastionInput{Name: "jump", Address: "10.0.0.9", Port: 22, Username: "ops"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPut, f.orgPath()+"/hosts/"+f.hostB.String()+"/ssh", "",
+			map[string]any{"username": "ops", "bastion_mode": "explicit", "bastion_id": bastion.ID.String()})
+		f.wantPaused(t, "after web-2's SSH settings", map[uuid.UUID]bool{f.other: true, f.active: false})
+
+		f2 := newInventoryReviewFixture(t, "inv-d7-zone")
+		h, err := f2.s.Deps.Hosts.GetHost(f2.scoped, f2.orgID, f2.hostA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f2.assistantOK(t, http.MethodPatch, f2.orgPath()+"/hosts/"+h.ID.String(), revOf(h.Revision),
+			map[string]any{"name": h.Name, "address": h.Address, "zone_id": f2.zoneB.String(), "managed": true})
+		f2.wantPaused(t, "after web-1 moved zone", map[uuid.UUID]bool{f2.active: true, f2.other: false})
+
+		f3 := newInventoryReviewFixture(t, "inv-d7-delete")
+		if _, err := f3.s.DB.Pool().Exec(context.Background(), `UPDATE job_templates SET scope = '{}' WHERE id = $1`, f3.templateID); err != nil {
+			t.Fatal(err)
+		}
+		spare, err := f3.s.Deps.Hosts.CreateHost(f3.scoped, f3.orgID, hosts.HostInput{Name: "spare-1", Address: "10.0.0.7", ZoneID: f3.zoneA, Managed: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f3.assistantOK(t, http.MethodDelete, f3.orgPath()+"/hosts/"+spare.ID.String(), "", nil)
+		f3.wantRunning(t, "after a host was deleted")
 	})
 }
