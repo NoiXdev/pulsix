@@ -165,14 +165,14 @@ func TestCrossOriginRedirectDropsConfiguredHeaders(t *testing.T) {
 		http.Redirect(w, r, other.URL+"/landed", http.StatusTemporaryRedirect)
 	}))
 	defer first.Close()
-	params := httpParams(first.URL, map[string]any{"secret": "api", "headers": []any{"X-Tenant: a", "X-Session-Id: s"}})
+	params := httpParams(first.URL, map[string]any{"secret": "api", "headers": []any{"X-Tenant: a", "X-Trace-Id: s"}})
 	obs := runWith(context.Background(), probetest.LoopbackGuard(), params, "", map[string]string{"header": "X-Tenant", "value": "from-secret"})
 	probetest.WantUp(t, obs, "http")
 	s := next(t, got)
 	if s.path != "/landed" {
 		t.Fatalf("path = %s", s.path)
 	}
-	for _, h := range []string{"X-Tenant", "X-Session-Id"} {
+	for _, h := range []string{"X-Tenant", "X-Trace-Id"} {
 		if v := s.header.Values(h); len(v) != 0 {
 			t.Fatalf("%s = %v went to another origin", h, v)
 		}

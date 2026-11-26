@@ -493,7 +493,7 @@ export const enChecks = {
         'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect and Accept-Encoding are set by Pulsix',
       httpHeaderContentType: 'set Content-Type with the content type field, not as a header',
       httpHeaderCredentials:
-        'Authorization, Proxy-Authorization, Cookie and headers whose name suggests a credential (token, secret, API key, password) carry credentials: put them in the check’s secret (header and value)',
+        'Authorization, Proxy-Authorization, Cookie and headers whose name suggests a credential (token, secret, API or access key, password, session, auth) carry credentials: put them in the check’s secret (header and value)',
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and method overrides are refused: a target may trust them for the client’s address, the path or the method',
       mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',

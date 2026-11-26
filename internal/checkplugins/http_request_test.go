@@ -76,7 +76,7 @@ func TestHTTPRequestMessages(t *testing.T) {
 		{httpOK(map[string]any{"headers": []any{"X-A: 1", "x-a: 2"}}), `http: headers names "X-A" twice`},
 		{httpOK(map[string]any{"body": "x"}), "http: body needs method POST, PUT or PATCH"},
 		{httpOK(map[string]any{"method": "POST", "content_type": "text/plain"}), "http: content_type needs a body"},
-		{httpOK(map[string]any{"headers": []any{"Authorization: x"}}), "http: headers entries must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API key, password): credentials belong in the check's secret"},
+		{httpOK(map[string]any{"headers": []any{"Authorization: x"}}), "http: headers entries must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API or access key, password, session, auth): credentials belong in the check's secret"},
 		{httpOK(map[string]any{"method": "POST", "body": "a\x00"}), "http: body must be UTF-8 text without NUL characters"},
 		{httpOK(map[string]any{"method": "POST", "body": "x", "content_type": "json"}), "http: content_type must be a media type such as application/json or text/plain; charset=utf-8"},
 		{httpOK(map[string]any{"method": "HEAD", "json_values": []any{"a=$.a"}}), "http: json_values needs a method other than HEAD: a HEAD response has no body"},

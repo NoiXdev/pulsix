@@ -7,13 +7,9 @@ import (
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
-)
 
-// reservedHeaders are the headers the probe controls; a secret's header
-// may not be one of them.
-var reservedHeaders = map[string]bool{
-	"Host": true, "Content-Length": true, "Transfer-Encoding": true, "Connection": true, "User-Agent": true,
-}
+	"github.com/noixdev/pulsix/internal/probe/httpreq"
+)
 
 // credentials is the header a check's secret sends; header "" sends none.
 // It never prints its value.
@@ -62,8 +58,10 @@ func credentialsFor(name string, fields map[string]string) (credentials, error) 
 			return credentials{}, fieldError(name, "header", "must be an HTTP header name")
 		}
 		header = http.CanonicalHeaderKey(header)
-		if reservedHeaders[header] {
-			return credentials{}, fieldError(name, "header", "must not be Host, Content-Length, Transfer-Encoding, Connection or User-Agent")
+		// The plain headers' name rules (backlog 3.84 fix round 2), but
+		// not their credential heuristic: carrying one is the secret's job.
+		if httpreq.NameProblem(header) != "" {
+			return credentials{}, fieldError(name, "header", "must not be a header the probe sets, Content-Type, or a routing or method override header (X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL, X-HTTP-Method-Override)")
 		}
 		if !httpguts.ValidHeaderFieldValue(fields["value"]) {
 			return credentials{}, fieldError(name, "value", "must be a valid HTTP header value")

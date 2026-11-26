@@ -61,6 +61,19 @@ func TestHeaderProblem(t *testing.T) {
 		{"X-Password: p", httpreq.ProblemHeaderCredentials},
 		{"X-Key-Id: 1", ""},
 		{"X-Author: me", ""},
+		// Fix round 2 (N3): more credential variants; "auth" only as a
+		// whole segment, so X-Author and Authority-like names stay.
+		{"X-Api_Key: k", httpreq.ProblemHeaderCredentials},
+		{"X-Auth: a", httpreq.ProblemHeaderCredentials},
+		{"x-auth-user: a", httpreq.ProblemHeaderCredentials},
+		{"Api-Auth: a", httpreq.ProblemHeaderCredentials},
+		{"X-Access-Key: k", httpreq.ProblemHeaderCredentials},
+		{"X-Access_Key: k", httpreq.ProblemHeaderCredentials},
+		{"X-Session: s", httpreq.ProblemHeaderCredentials},
+		{"X-Session-Id: s", httpreq.ProblemHeaderCredentials},
+		{"X-Authority: a", ""},
+		{"X-Authored-By: a", ""},
+		{"X-Access-Level: 1", ""},
 		// Routing and override headers a target may trust (fix round 1, I1).
 		{"X-Forwarded-For: 127.0.0.1", httpreq.ProblemHeaderRouting},
 		{"x-forwarded-host: a", httpreq.ProblemHeaderRouting},
@@ -177,6 +190,31 @@ func TestBodyProblem(t *testing.T) {
 	for _, bad := range []string{"a\x00b", "a\xffb", "\x00"} {
 		if p := httpreq.BodyProblem(bad); p != httpreq.ProblemBodyText {
 			t.Errorf("BodyProblem(%q) = %q, want %q", bad, p, httpreq.ProblemBodyText)
+		}
+	}
+}
+
+// TestNameProblem: the name rules a secret's own header follows (fix
+// round 2, N2): reserved, Content-Type and routing names are refused,
+// credential names are what a secret is for.
+func TestNameProblem(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+	}{
+		{"X-Api-Key", ""},
+		{"Authorization", ""},
+		{"Cookie", ""},
+		{"x-session-id", ""},
+		{"Host", httpreq.ProblemHeaderReserved},
+		{"expect", httpreq.ProblemHeaderReserved},
+		{"Accept-Encoding", httpreq.ProblemHeaderReserved},
+		{"Content-Type", httpreq.ProblemHeaderContentType},
+		{"X-Forwarded-For", httpreq.ProblemHeaderRouting},
+		{"x-http-method-override", httpreq.ProblemHeaderRouting},
+		{"X-Real-IP", httpreq.ProblemHeaderRouting},
+	} {
+		if got := httpreq.NameProblem(c.name); got != c.want {
+			t.Errorf("NameProblem(%q) = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

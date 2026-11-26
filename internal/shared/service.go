@@ -668,8 +668,8 @@ func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in Ch
 	if err != nil {
 		return CheckDefinition{}, err
 	}
-	if err := checks.RefuseWrites(strings.TrimSpace(in.Plugin), in.Params, s.probeWrites); err != nil {
-		return CheckDefinition{}, asInvalidInput(err)
+	if err := s.refuseWriteChange(ctx, id, in); err != nil {
+		return CheckDefinition{}, err
 	}
 	if refusal := reservedKeyRefusal(key); refusal != nil {
 		current, err := s.store.GetCheckDefinition(ctx, id)
@@ -692,6 +692,26 @@ func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in Ch
 		Params: checkParamsOrEmpty(in.Params), Interval: in.Interval,
 	}
 	return s.store.UpdateCheckDefinitionAndPropagate(ctx, def)
+}
+
+// refuseWriteChange is checks.RefuseWriteChange for an update of the
+// shared definition id: with PULSIX_PROBE_WRITE_METHODS off, a stored
+// write stays editable while its request is unchanged (fix round 2, N1).
+// The stored definition is read only when the update sends a write and
+// the switch is off.
+func (s *Service) refuseWriteChange(ctx context.Context, id uuid.UUID, in CheckDefinitionInput) error {
+	plugin := strings.TrimSpace(in.Plugin)
+	if checks.RefuseWrites(plugin, in.Params, s.probeWrites) == nil {
+		return nil
+	}
+	current, err := s.store.GetCheckDefinition(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := checks.RefuseWriteChange(current.Plugin, current.Params, plugin, in.Params, s.probeWrites); err != nil {
+		return asInvalidInput(err)
+	}
+	return nil
 }
 
 // DeleteCheckDefinition removes a check definition and every one of its

@@ -375,7 +375,18 @@ const RESERVED_HEADERS: ReadonlySet<string> = new Set([
 /** The headers that carry credentials, and the words in a name that
  * suggest one: the check's secret sends them. */
 const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(['authorization', 'proxy-authorization', 'cookie']);
-const CREDENTIAL_WORDS = ['token', 'secret', 'apikey', 'api-key', 'password'];
+const CREDENTIAL_WORDS = ['token', 'secret', 'apikey', 'api-key', 'api_key', 'password', 'access-key', 'access_key', 'session'];
+/** A name segment (split at - and _) that suggests a credential: X-Auth,
+ * Api-Auth, but not X-Author. */
+const CREDENTIAL_SEGMENTS: ReadonlySet<string> = new Set(['auth']);
+
+function credentialLike(lower: string): boolean {
+  return (
+    CREDENTIAL_HEADERS.has(lower) ||
+    CREDENTIAL_WORDS.some((w) => lower.includes(w)) ||
+    lower.split(/[-_]/).some((seg) => CREDENTIAL_SEGMENTS.has(seg))
+  );
+}
 
 /** The routing and override headers a target may trust; X-Forwarded and
  * every X-Forwarded-* name too. */
@@ -403,8 +414,8 @@ export function httpHeaderProblem(s: string): string | null {
   const lower = name.toLowerCase();
   if (RESERVED_HEADERS.has(lower)) return 'httpHeaderReserved';
   if (lower === 'content-type') return 'httpHeaderContentType';
-  if (CREDENTIAL_HEADERS.has(lower) || CREDENTIAL_WORDS.some((w) => lower.includes(w))) return 'httpHeaderCredentials';
   if (ROUTING_HEADERS.has(lower) || lower === 'x-forwarded' || lower.startsWith('x-forwarded-')) return 'httpHeaderRouting';
+  if (credentialLike(lower)) return 'httpHeaderCredentials';
   return null;
 }
 

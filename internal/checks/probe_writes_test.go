@@ -76,3 +76,79 @@ func TestRefuseWrites(t *testing.T) {
 		t.Fatalf("unknown plugin = %v", err)
 	}
 }
+
+// TestUpdateOfAStoredWriteWithTheSwitchOff: once the operator turns the
+// switch off, a check stored while it was on can still be disabled or
+// edited without touching its request (method, headers, body,
+// content_type; fix round 2, N1); adding or changing a write is refused,
+// also on a disabled check.
+func TestUpdateOfAStoredWriteWithTheSwitchOff(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	on := checks.NewService(store, checks.WithProbeWrites(true))
+	off := checks.NewService(store)
+	post := httpDef("post", map[string]any{"method": "POST", "body": "x", "headers": []any{"X-A: 1"}})
+	d, err := on.CreateDefinition(ctx, org, post)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get, err := on.CreateDefinition(ctx, org, httpDef("get", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disable := post
+	disable.Enabled = false
+	if _, err := off.UpdateDefinition(ctx, org, d.ID, disable); err != nil {
+		t.Fatalf("disabling a stored POST check: %v", err)
+	}
+	slower := post
+	slower.Interval = 5 * time.Minute
+	slower.Params = map[string]any{"url": "https://{address}/", "method": "POST", "body": "x", "headers": []string{"X-A: 1"}}
+	if _, err := off.UpdateDefinition(ctx, org, d.ID, slower); err != nil {
+		t.Fatalf("an update leaving the request as it is: %v", err)
+	}
+	for name, in := range map[string]checks.DefinitionInput{
+		"another body":   httpDef("post", map[string]any{"method": "POST", "body": "y", "headers": []any{"X-A: 1"}}),
+		"another method": httpDef("post", map[string]any{"method": "PUT", "body": "x", "headers": []any{"X-A: 1"}}),
+		"another header": httpDef("post", map[string]any{"method": "POST", "body": "x", "headers": []any{"X-A: 2"}}),
+		"a content type": httpDef("post", map[string]any{"method": "POST", "body": "x", "headers": []any{"X-A: 1"}, "content_type": "text/plain"}),
+	} {
+		if _, err := off.UpdateDefinition(ctx, org, d.ID, in); !errors.Is(err, checks.ErrInvalidInput) {
+			t.Fatalf("%s with writes off = %v, want ErrInvalidInput", name, err)
+		}
+	}
+	toPost := httpDef("get", map[string]any{"method": "POST"})
+	toPost.Enabled = false
+	if _, err := off.UpdateDefinition(ctx, org, get.ID, toPost); !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("a GET check turned into a disabled POST = %v, want ErrInvalidInput", err)
+	}
+	// Disabling does not let a request change: enabling it later would
+	// leave a write the operator never allowed.
+	changedAndOff := httpDef("post", map[string]any{"method": "DELETE"})
+	changedAndOff.Enabled = false
+	if _, err := off.UpdateDefinition(ctx, org, d.ID, changedAndOff); !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("disabling a stored write while changing it = %v, want ErrInvalidInput", err)
+	}
+	// Turning a stored write into a plain GET needs no switch.
+	if _, err := off.UpdateDefinition(ctx, org, d.ID, httpDef("post", nil)); err != nil {
+		t.Fatalf("turning a stored write into a GET: %v", err)
+	}
+}
+
+func TestSameRequest(t *testing.T) {
+	a := map[string]any{"url": "x", "method": "POST", "headers": []any{"X-A: 1"}, "body": "b"}
+	for _, c := range []struct {
+		b    map[string]any
+		want bool
+	}{
+		{map[string]any{"url": "y", "method": "POST", "headers": []string{"X-A: 1"}, "body": "b", "timeout_s": 5}, true},
+		{map[string]any{"method": "POST", "headers": []any{"X-A: 1"}}, false},
+		{map[string]any{"method": "POST", "headers": []any{"X-A: 1"}, "body": "b", "content_type": "text/plain"}, false},
+		{map[string]any{"headers": []any{"X-A: 1"}, "body": "b"}, false},
+	} {
+		if got := checks.SameRequest(a, c.b); got != c.want {
+			t.Errorf("SameRequest(%v, %v) = %v, want %v", a, c.b, got, c.want)
+		}
+	}
+}

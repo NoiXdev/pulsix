@@ -58,7 +58,7 @@ const (
 	ProblemHeaderValue       = "must have a value without control characters such as line breaks"
 	ProblemHeaderReserved    = "must not set Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect or Accept-Encoding: the probe sets them"
 	ProblemHeaderContentType = "must not set Content-Type: use content_type"
-	ProblemHeaderCredentials = "must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API key, password): credentials belong in the check's secret"
+	ProblemHeaderCredentials = "must not set Authorization, Proxy-Authorization, Cookie or a header whose name suggests a credential (token, secret, API or access key, password, session, auth): credentials belong in the check's secret"
 	ProblemHeaderRouting     = "must not set X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL or a method override: a target may trust them for the client's address, the path or the method"
 	ProblemMediaType         = "must be a media type such as application/json or text/plain; charset=utf-8"
 	ProblemBodyText          = "must be UTF-8 text without NUL characters"
@@ -79,8 +79,17 @@ var reserved = map[string]bool{
 var credentialHeaders = map[string]bool{"Authorization": true, "Proxy-Authorization": true, "Cookie": true}
 
 // credentialWords in a header name (case ignored) suggest it carries a
-// credential: X-Api-Key, X-Auth-Token, Private-Token, X-Client-Secret.
-var credentialWords = []string{"token", "secret", "apikey", "api-key", "password"}
+// credential: X-Api-Key, X-Api_Key, X-Auth-Token, Private-Token,
+// X-Client-Secret, X-Access-Key, X-Session-Id. A heuristic, never
+// complete; the form's hint points to the secret either way.
+var credentialWords = []string{
+	"token", "secret", "apikey", "api-key", "api_key", "password", "access-key", "access_key", "session",
+}
+
+// credentialSegments, as a whole segment of a name split at '-' and '_'
+// (case ignored), suggest a credential: X-Auth, X-Auth-User, Api-Auth,
+// but not X-Author.
+var credentialSegments = []string{"auth"}
 
 // routingHeaders are the headers a target or its proxy may trust for the
 // client's address, the original path or the method (canonical form);
@@ -97,7 +106,11 @@ func credentialLike(canonical string) bool {
 		return true
 	}
 	lower := strings.ToLower(canonical)
-	return slices.ContainsFunc(credentialWords, func(w string) bool { return strings.Contains(lower, w) })
+	if slices.ContainsFunc(credentialWords, func(w string) bool { return strings.Contains(lower, w) }) {
+		return true
+	}
+	segments := strings.FieldsFunc(lower, func(r rune) bool { return r == '-' || r == '_' })
+	return slices.ContainsFunc(segments, func(seg string) bool { return slices.Contains(credentialSegments, seg) })
 }
 
 // routing reports whether canonical is a routing or override header.
@@ -120,14 +133,28 @@ func HeaderProblem(entry string) string {
 	if !httpguts.ValidHeaderFieldValue(value) || !utf8.ValidString(value) {
 		return ProblemHeaderValue
 	}
+	if problem := NameProblem(name); problem != "" {
+		return problem
+	}
+	if credentialLike(http.CanonicalHeaderKey(name)) {
+		return ProblemHeaderCredentials
+	}
+	return ""
+}
+
+// NameProblem describes why name (a valid header name, any case) is a
+// header no configuration may set, or returns "" when it may be: one the
+// probe controls (ProblemHeaderReserved), Content-Type
+// (ProblemHeaderContentType) or a routing or override header
+// (ProblemHeaderRouting). It leaves credential headers alone: the check's
+// secret sends them, and its header follows this rule.
+func NameProblem(name string) string {
 	canonical := http.CanonicalHeaderKey(name)
 	switch {
 	case reserved[canonical]:
 		return ProblemHeaderReserved
 	case canonical == "Content-Type":
 		return ProblemHeaderContentType
-	case credentialLike(canonical):
-		return ProblemHeaderCredentials
 	case routing(canonical):
 		return ProblemHeaderRouting
 	}

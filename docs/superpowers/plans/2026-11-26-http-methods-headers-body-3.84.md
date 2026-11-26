@@ -37,6 +37,11 @@
 - **R17 Body text only (review M3):** `body` must be UTF-8 without NUL (PostgreSQL jsonb cannot store NUL; it was a 500), header values UTF-8; validated (400) and re-checked by the probe. `body_contains` and other string parameters keep the pre-existing NUL gap.
 - **R18 Slow-body breakdown test (review M5):** asserts what is deterministic (`response_ms >= 200`, `ttfb_ms < 200`, `transfer_ms >= 100` with slack for the read goroutine's scheduling) instead of injecting a clock, which would need a seam through `NewProbe` for one test.
 
+### Fix round 2 (re-review, controller rulings)
+- **R19 A stored write stays editable with the switch off (N1).** An update (organization or shared definition) is refused only when it adds or changes a write: the plugin and the request parameters (`method`, `headers`, `body`, `content_type`, compared as JSON by `checks.SameRequest`) unchanged pass, so a check can be disabled, moved, renamed or retimed; a changed request that writes is refused also on a disabled definition, which would send it once enabled again; turning it into a GET passes. — Pausing must not require deleting.
+- **R20 The secret's header follows the name rules (N2).** `httpreq.NameProblem` (reserved, Content-Type, routing and override names, no credential heuristic) is shared by plain headers and the secret's "header and value" form (`credentialsFor`); a secret naming such a header fails the check with `secret "<name>": field "header" must not be …` and sends nothing. Secrets are not validated on save (a generic store), so the probe is the place. Documented as a behaviour change.
+- **R21 Wider credential heuristic (N3):** the words `token`, `secret`, `apikey`, `api-key`, `api_key`, `password`, `access-key`, `access_key`, `session` anywhere in the name, and `auth` as a whole segment split at `-` and `_` (X-Auth, X-Auth-User, Api-Auth; X-Author, X-Authority stay allowed). Go and the TS twin share the vectors. Order: reserved, Content-Type, routing, then credential.
+
 ## Review Focus
 - A header entry with CR/LF, a non-token name or a reserved/credential name passes nowhere: `TestHeaderProblem` (httpreq), `formats.json` vectors (Go and TS), `TestHTTPParams`.
 - A body or content type sent with the wrong method, or headers twice: `TestHTTPCheckRequestRules`.

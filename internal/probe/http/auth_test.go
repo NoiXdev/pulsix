@@ -88,7 +88,7 @@ func TestHTTPNoSecretParamNoCredentials(t *testing.T) {
 // value; nothing is requested.
 func TestHTTPBadCredentials(t *testing.T) {
 	const mustHold = `secret "api" must hold username and password, token, or header and value`
-	const reserved = `secret "api": field "header" must not be Host, Content-Length, Transfer-Encoding, Connection or User-Agent`
+	const reserved = `secret "api": field "header" must not be a header the probe sets, Content-Type, or a routing or method override header (X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL, X-HTTP-Method-Override)`
 	srv, s := recordingServer(t)
 	for _, tc := range []struct {
 		name   string
@@ -110,6 +110,14 @@ func TestHTTPBadCredentials(t *testing.T) {
 		{"transfer-encoding", map[string]string{"header": "TRANSFER-ENCODING", "value": "chunked"}, reserved},
 		{"connection", map[string]string{"header": "Connection", "value": "close"}, reserved},
 		{"user-agent", map[string]string{"header": "user-agent", "value": "curl"}, reserved},
+		// Fix round 2 (N2): the plain headers' reserved and routing rules.
+		{"x-forwarded-for", map[string]string{"header": "X-Forwarded-For", "value": "127.0.0.1"}, reserved},
+		{"method override", map[string]string{"header": "X-HTTP-Method-Override", "value": "DELETE"}, reserved},
+		{"x-real-ip", map[string]string{"header": "x-real-ip", "value": "1.2.3.4"}, reserved},
+		{"expect", map[string]string{"header": "Expect", "value": "100-continue"}, reserved},
+		{"accept-encoding", map[string]string{"header": "Accept-Encoding", "value": "br"}, reserved},
+		{"content-type", map[string]string{"header": "Content-Type", "value": "text/plain"}, reserved},
+		{"upgrade", map[string]string{"header": "Upgrade", "value": "h2c"}, reserved},
 		{"header with a space", map[string]string{"header": "X Key", "value": "v-s3cret"}, `secret "api": field "header" must be an HTTP header name`},
 		{"header with a colon", map[string]string{"header": "X-Key:", "value": "v-s3cret"}, `secret "api": field "header" must be an HTTP header name`},
 		{"value with a newline", map[string]string{"header": "X-Key", "value": "v-s3cret\r\nX-Evil: 1"}, `secret "api": field "value" must be a valid HTTP header value`},

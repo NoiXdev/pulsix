@@ -65,6 +65,12 @@ describe('the parameter formats', () => {
     expect(formatProblem('httpHeader', 'Authorization')).toBe('httpHeader');
     expect(formatProblem('httpHeader', 'X-Api-Key: k')).toBe('httpHeaderCredentials');
     expect(formatProblem('httpHeader', 'X-Forwarded-For: 1.2.3.4')).toBe('httpHeaderRouting');
+    for (const name of ['X-Api_Key', 'X-Auth', 'x-auth-user', 'Api-Auth', 'X-Access-Key', 'X-Access_Key', 'X-Session', 'X-Session-Id']) {
+      expect(formatProblem('httpHeader', `${name}: v`)).toBe('httpHeaderCredentials');
+    }
+    for (const name of ['X-Author', 'X-Authority', 'X-Authored-By', 'X-Access-Level']) {
+      expect(httpHeaderProblem(`${name}: v`)).toBeNull();
+    }
   });
 
   it('accept nothing for a format no twin knows, as the server does', () => {

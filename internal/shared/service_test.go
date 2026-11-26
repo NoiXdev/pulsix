@@ -967,12 +967,24 @@ func TestCheckDefinitionsRefuseWritesUnlessAllowed(t *testing.T) {
 	if _, err := off.CreateCheckDefinition(ctx, in); !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "PULSIX_PROBE_WRITE_METHODS") {
 		t.Fatalf("create with writes off = %v, want a refusal naming the setting", err)
 	}
-	if _, err := off.UpdateCheckDefinition(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidInput) {
-		t.Fatalf("update with writes off = %v, want ErrInvalidInput", err)
-	}
-	on := shared.NewService(newFakeStore(), shared.WithProbeWrites(true))
-	if _, err := on.CreateCheckDefinition(ctx, in); err != nil {
+	store := newFakeStore()
+	on := shared.NewService(store, shared.WithProbeWrites(true))
+	created, err := on.CreateCheckDefinition(ctx, in)
+	if err != nil {
 		t.Fatalf("create with writes on = %v", err)
+	}
+	// Fix round 2 (N1): with the switch off, a stored write stays
+	// editable while its request is unchanged; changing it is refused.
+	offOnStore := shared.NewService(store)
+	slower := in
+	slower.Interval = 5 * time.Minute
+	if _, err := offOnStore.UpdateCheckDefinition(ctx, created.ID, slower); err != nil {
+		t.Fatalf("update leaving the request as it is = %v", err)
+	}
+	changed := in
+	changed.Params = map[string]any{"url": "https://{address}/", "method": "POST", "body": "y"}
+	if _, err := offOnStore.UpdateCheckDefinition(ctx, created.ID, changed); !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("update changing the body with writes off = %v, want ErrInvalidInput", err)
 	}
 }
 

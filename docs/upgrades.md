@@ -1209,7 +1209,20 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
   admin APIs, mail relays); a check sends its request every interval. Routing
   and override headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`,
   `X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`,
-  `X-HTTP-Method`, `X-Method-Override`) are always refused.
+  `X-HTTP-Method`, `X-Method-Override`) are always refused. With the switch
+  turned off, a check stored while it was on can still be disabled or edited
+  as long as its method, headers, body and content type stay as they are.
+- **A secret whose header names a reserved or routing header now fails
+  (backlog 3.84, no migration):** an http check's secret in the "header and
+  value" form may no longer name a header the probe sets (Host,
+  Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive,
+  Proxy-Connection, TE, Trailer, Upgrade, Expect, Accept-Encoding),
+  Content-Type, or a routing or override header (`X-Forwarded-*`,
+  `Forwarded`, `X-Real-IP`, `X-Original-URL`, `X-Rewrite-URL`, the method
+  overrides). Such a check sends nothing and reads `secret "<name>": field
+  "header" must not be …` on every metric until the secret names another
+  header. Before, only Host, Content-Length, Transfer-Encoding, Connection
+  and User-Agent were refused.
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
   migration):** the `smart` check leaves a disk in standby asleep, as before, but used
   to report nothing for it, so its readings turned stale, the host read unknown, and a

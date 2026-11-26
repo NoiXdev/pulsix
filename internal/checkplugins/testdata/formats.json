@@ -485,5 +485,16 @@
   {"format": "httpHeader", "input": "X-HTTP-Method-Override: DELETE", "valid": false},
   {"format": "httpHeader", "input": "X-HTTP-Method: DELETE", "valid": false},
   {"format": "httpHeader", "input": "X-Method-Override: DELETE", "valid": false},
-  {"format": "httpHeader", "input": "X-Forward-Me: x", "valid": true}
+  {"format": "httpHeader", "input": "X-Forward-Me: x", "valid": true},
+  {"format": "httpHeader", "input": "X-Api_Key: k", "valid": false},
+  {"format": "httpHeader", "input": "X-Auth: a", "valid": false},
+  {"format": "httpHeader", "input": "x-auth-user: a", "valid": false},
+  {"format": "httpHeader", "input": "Api-Auth: a", "valid": false},
+  {"format": "httpHeader", "input": "X-Access-Key: k", "valid": false},
+  {"format": "httpHeader", "input": "X-Access_Key: k", "valid": false},
+  {"format": "httpHeader", "input": "X-Session: s", "valid": false},
+  {"format": "httpHeader", "input": "X-Session-Id: s", "valid": false},
+  {"format": "httpHeader", "input": "X-Authority: a", "valid": true},
+  {"format": "httpHeader", "input": "X-Authored-By: a", "valid": true},
+  {"format": "httpHeader", "input": "X-Access-Level: 1", "valid": true}
 ]

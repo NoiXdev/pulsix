@@ -465,7 +465,7 @@ export const deChecks: Messages['checks'] = {
         'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect und Accept-Encoding setzt Pulsix',
       httpHeaderContentType: 'Content-Type wird über das Feld Inhaltstyp gesetzt, nicht als Header',
       httpHeaderCredentials:
-        'Authorization, Proxy-Authorization, Cookie und Header, deren Name auf Zugangsdaten hindeutet (Token, Secret, API-Key, Passwort), tragen Zugangsdaten: Diese gehören in das Secret des Checks (Header und Wert)',
+        'Authorization, Proxy-Authorization, Cookie und Header, deren Name auf Zugangsdaten hindeutet (Token, Secret, API- oder Access-Key, Passwort, Session, Auth), tragen Zugangsdaten: Diese gehören in das Secret des Checks (Header und Wert)',
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
