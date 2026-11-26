@@ -226,6 +226,8 @@ export const deInventory: Messages['inventory'] = {
     badge: 'Assistentenwerte',
     defaultBadge: 'Assistenten-Standardwert',
     accept: 'Als live übernehmen',
+    /** Accept waits while the form shows something else than the stored value (final review M3). */
+    acceptEdited: 'Speichern oder verwerfen Sie Ihre Änderung, bevor Sie den gespeicherten Wert übernehmen',
     acceptFor: (key: string) => `${key} als live übernehmen`,
     accepted: (key: string) => `${key} ist jetzt live`,
     acceptFailed: 'Übernehmen fehlgeschlagen',

@@ -92,7 +92,7 @@ const (
 // ChangedObject is one assistant change as a review's picture shows it
 // (assistantchange.Change).
 type ChangedObject struct {
-	Subject string `json:"subject" enum:"job_template,repo,playbook,inventory_group,inventory_membership" doc:"What the assistant changed: a job template, a repository, an editor playbook, an inventory group's values or schema defaults, or the values of one host's membership in a group"`
+	Subject string `json:"subject" enum:"job_template,repo,playbook,inventory_group,inventory_membership,host" doc:"What the assistant changed: a job template, a repository, an editor playbook, an inventory group (its values, schema, place or members), one host's membership in a group (joining, leaving or its values), or a host it created or made managed"`
 	ID      string `json:"id" doc:"The changed object's id; the group's for a membership"`
 	Name    string `json:"name" doc:"The changed object's name; the group's for a membership"`
 	// HostID and HostName name the host of a membership change.
@@ -105,7 +105,7 @@ type ChangedObject struct {
 
 // ChangedField is one field an assistant change moved (assistantchange.Field).
 type ChangedField struct {
-	Field string `json:"field" doc:"The field; an extra var as extra_vars.<name>, an inventory value as vars.<key>, a schema default as default.<field>"`
+	Field string `json:"field" doc:"The field; an extra var as extra_vars.<name>, an inventory value as vars.<key> (a member's as <host>: vars.<key>), a schema default as default.<field>; member, members, parent, host and managed for who is in a group, where it sits and a host's arrival"`
 	Old   any    `json:"old" doc:"The value before; null for none. A secret is {\"$secret\":\"set\"}"`
 	New   any    `json:"new" doc:"The value after; null for none. A secret is {\"$secret\":\"set\"}"`
 }

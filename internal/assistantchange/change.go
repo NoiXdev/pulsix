@@ -44,7 +44,25 @@ const (
 	// a group: what that host receives. The change's ID and Name are the
 	// group's, HostID and HostName the host's.
 	SubjectInventoryMembership Subject = "inventory_membership"
+	// SubjectHost is a host an assistant created, or made managed: the
+	// runs whose scope it now falls into reach it.
+	SubjectHost Subject = "host"
 )
+
+// Reach is which hosts an inventory change reaches, for the watcher to
+// find the runs that receive other values or run on other hosts because
+// of it (decisions D6, D7). It travels with the change and is not stored.
+type Reach struct {
+	// Group reaches every member of this group and of its descendant
+	// groups, as the inventory is after the change.
+	Group *uuid.UUID
+	// Hosts reaches these hosts.
+	Hosts []uuid.UUID
+	// FormerGroups are groups whose subtree held reached hosts before the
+	// change and no longer does (a host left a group, a group moved away
+	// or was deleted): a template scoped to one of them ran on them.
+	FormerGroups []uuid.UUID
+}
 
 // Field is one run-relevant field the change moved: its name (a template's
 // extra var as "extra_vars.<name>", an inventory value as "vars.<key>", a
@@ -67,6 +85,8 @@ type Change struct {
 	HostID   *uuid.UUID `json:"host_id,omitempty"`
 	HostName string     `json:"host_name,omitempty"`
 	Fields   []Field    `json:"fields"`
+	// Reach is set for an inventory change (inventory subjects, hosts).
+	Reach *Reach `json:"-"`
 	// UserID and TokenID are the actor's (Actor without its kind: a
 	// change handed on is always an assistant's).
 	UserID  uuid.UUID  `json:"user_id"`

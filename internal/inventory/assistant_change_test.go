@@ -117,7 +117,11 @@ func TestAssistantGroupChangesAreHandedOn(t *testing.T) {
 	if g, _, err = f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, sc, assistant); err != nil {
 		t.Fatal(err)
 	}
-	wantFields(t, "the assistant's default", w.take(), assistantchange.Field{Name: "default.greeting", Old: nil, New: "hello"})
+	c = wantFields(t, "the assistant's default", w.take(), assistantchange.Field{Name: "default.greeting", Old: nil, New: "hello"},
+		assistantchange.Field{Name: "vars.greeting", Old: nil, New: "hello"})
+	if c.Reach == nil || c.Reach.Group == nil || *c.Reach.Group != g.ID {
+		t.Fatalf("reach = %+v, want the group", c.Reach)
+	}
 	if g, err = f.svc.AcceptDefaults(ctx, f.org, g.ID, g.Revision, []string{"greeting"}); err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +135,15 @@ func TestAssistantGroupChangesAreHandedOn(t *testing.T) {
 	if _, _, err = f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, sc, assistant); err != nil {
 		t.Fatal(err)
 	}
-	wantFields(t, "the assistant's removed default", w.take(), assistantchange.Field{Name: "default.greeting", Old: "bye", New: nil})
+	wantFields(t, "the assistant's removed default", w.take(), assistantchange.Field{Name: "default.greeting", Old: "bye", New: nil},
+		assistantchange.Field{Name: "vars.greeting", Old: "bye", New: nil})
 }
 
-// TestAssistantMembershipChangesAreHandedOn: an assistant's change of an
-// existing membership's values is handed on with the group and the host;
-// a host joining (with values) or leaving a group, and a person's change,
-// hand on nothing.
+// TestAssistantMembershipChangesAreHandedOn (decisions D6, D7): an
+// assistant's host joining a group (with or without values), its change
+// of a membership's values and its removal of a host are handed on with
+// the group, the host and the reach; a person's change and an unchanged
+// resend hand on nothing.
 func TestAssistantMembershipChangesAreHandedOn(t *testing.T) {
 	f := newFixture()
 	w := &recordingWatcher{}
@@ -146,17 +152,21 @@ func TestAssistantMembershipChangesAreHandedOn(t *testing.T) {
 	if _, err := f.svc.AssignBy(ctx, f.org, g.ID, f.web01, map[string]any{"note": "x"}, nil, assistant); err != nil {
 		t.Fatal(err)
 	}
-	wantNone(t, "a host joining", w.take())
+	c := wantFields(t, "a host joining", w.take(), assistantchange.Field{Name: "member", Old: nil, New: "web-01"},
+		assistantchange.Field{Name: "vars.note", Old: nil, New: "x"})
+	if c.Reach == nil || len(c.Reach.Hosts) != 1 || c.Reach.Hosts[0] != f.web01 || len(c.Reach.FormerGroups) != 0 {
+		t.Fatalf("join reach = %+v", c.Reach)
+	}
 	m, err := f.svc.AssignBy(ctx, f.org, g.ID, f.web01, map[string]any{"note": "y"}, nil, assistant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := wantFields(t, "the assistant's change", w.take(), assistantchange.Field{Name: "vars.note", Old: "x", New: "y"})
+	c = wantFields(t, "the assistant's change", w.take(), assistantchange.Field{Name: "vars.note", Old: "x", New: "y"})
 	if c.Subject != assistantchange.SubjectInventoryMembership || c.ID != g.ID || c.Name != "web" || c.HostID == nil || *c.HostID != f.web01 || c.HostName != "web-01" {
 		t.Fatalf("change = %+v", c)
 	}
 	rev := m.Revision
-	if m, err = f.svc.AssignBy(ctx, f.org, g.ID, f.web01, map[string]any{"note": "z"}, &rev, person); err != nil {
+	if _, err = f.svc.AssignBy(ctx, f.org, g.ID, f.web01, map[string]any{"note": "z"}, &rev, person); err != nil {
 		t.Fatal(err)
 	}
 	wantNone(t, "a person's change", w.take())
@@ -164,10 +174,128 @@ func TestAssistantMembershipChangesAreHandedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantNone(t, "the assistant's unchanged resend", w.take())
+	if err := f.svc.UnassignBy(ctx, f.org, g.ID, f.web01, assistant); err != nil {
+		t.Fatal(err)
+	}
+	c = wantFields(t, "a host leaving", w.take(), assistantchange.Field{Name: "member", Old: "web-01", New: nil},
+		assistantchange.Field{Name: "vars.note", Old: "z", New: nil})
+	if c.Reach == nil || len(c.Reach.Hosts) != 1 || len(c.Reach.FormerGroups) != 1 || c.Reach.FormerGroups[0] != g.ID {
+		t.Fatalf("leave reach = %+v", c.Reach)
+	}
+	// A person's join and removal hand on nothing.
+	if _, err := f.svc.Assign(ctx, f.org, g.ID, f.web01, map[string]any{"note": "p"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.svc.Unassign(ctx, f.org, g.ID, f.web01); err != nil {
 		t.Fatal(err)
 	}
-	wantNone(t, "a host leaving", w.take())
+	wantNone(t, "a person's join and removal", w.take())
+}
+
+// TestAssistantSchemaEditsThatChangeResolvedValuesAreHandedOn (final
+// review I3): an assistant's schema save that changes what a run receives
+// without touching a default — a field made inactive, retyped, removed,
+// moved to host scope — is handed on with the values as they resolve
+// before and after, members' included; a label change moves nothing.
+func TestAssistantSchemaEditsThatChangeResolvedValuesAreHandedOn(t *testing.T) {
+	base := func() schema.Schema {
+		return schema.Schema{Fields: []schema.Field{
+			{Name: "port", Type: schema.TypeInt},
+			{Name: "flag", Type: schema.TypeBool},
+			{Name: "note", Type: schema.TypeString, Scope: schema.ScopeHost},
+		}}
+	}
+	inactive := false
+	cases := map[string]struct {
+		edit func(*schema.Schema)
+		want []assistantchange.Field
+	}{
+		"label only": {func(sc *schema.Schema) { sc.Fields[0].Label = "Port" }, nil},
+		"inactive": {func(sc *schema.Schema) { sc.Fields[1].Active = &inactive },
+			[]assistantchange.Field{{Name: "vars.flag", Old: true, New: nil}}},
+		"retyped": {func(sc *schema.Schema) { sc.Fields[0].Type = schema.TypeString },
+			[]assistantchange.Field{{Name: "vars.port", Old: 80.0, New: nil}}},
+		"removed": {func(sc *schema.Schema) { sc.Fields = sc.Fields[1:] },
+			[]assistantchange.Field{{Name: "vars.port", Old: 80.0, New: nil}}},
+		"host field removed": {func(sc *schema.Schema) { sc.Fields = sc.Fields[:2] },
+			[]assistantchange.Field{{Name: "web-01: vars.note", Old: "n", New: nil}}},
+		"moved to host scope": {func(sc *schema.Schema) { sc.Fields[0].Scope = schema.ScopeHost },
+			[]assistantchange.Field{{Name: "vars.port", Old: 80.0, New: nil}}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			w := &recordingWatcher{}
+			f.svc.SetChangeWatcher(w)
+			g := f.group(t, "web", nil)
+			g, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, base())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g, err = f.svc.SetVars(ctx, f.org, g.ID, g.Revision, map[string]any{"port": 80.0, "flag": true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.svc.Assign(ctx, f.org, g.ID, f.web01, map[string]any{"note": "n"}, nil); err != nil {
+				t.Fatal(err)
+			}
+			sc := base()
+			tc.edit(&sc)
+			if _, _, err := f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, sc, assistant); err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == nil {
+				wantNone(t, name, w.take())
+				return
+			}
+			wantFields(t, name, w.take(), tc.want...)
+		})
+	}
+}
+
+// TestAssistantGroupMovesAndDeletesAreHandedOn (decision D7): an
+// assistant's move of a group reaches its subtree and the groups above it
+// before the move; its delete of a group with members reaches them and the
+// group's former line; a rename, a person's move and an empty group's
+// delete hand on nothing.
+func TestAssistantGroupMovesAndDeletesAreHandedOn(t *testing.T) {
+	f := newFixture()
+	w := &recordingWatcher{}
+	f.svc.SetChangeWatcher(w)
+	a := f.group(t, "a", nil)
+	b := f.group(t, "b", nil)
+	child := f.group(t, "child", &a.ID)
+	if _, err := f.svc.Assign(ctx, f.org, child.ID, f.web01, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", ParentID: &a.ID}, assistant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNone(t, "a rename", w.take())
+	child, err = f.svc.UpdateGroupBy(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid", ParentID: &b.ID}, assistant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := wantFields(t, "a move", w.take(), assistantchange.Field{Name: "parent", Old: "a", New: "b"})
+	if c.Subject != assistantchange.SubjectInventoryGroup || c.Reach == nil || c.Reach.Group == nil || *c.Reach.Group != child.ID ||
+		len(c.Reach.FormerGroups) != 1 || c.Reach.FormerGroups[0] != a.ID {
+		t.Fatalf("move = %+v reach %+v", c, c.Reach)
+	}
+	if child, err = f.svc.UpdateGroup(ctx, f.org, child.ID, child.Revision, inventory.GroupPatch{Name: "kid"}); err != nil {
+		t.Fatal(err)
+	}
+	wantNone(t, "a person's move", w.take())
+	if err := f.svc.DeleteGroupBy(ctx, f.org, a.ID, assistant); err != nil {
+		t.Fatal(err)
+	}
+	wantNone(t, "an empty group's delete", w.take())
+	if err := f.svc.DeleteGroupBy(ctx, f.org, child.ID, assistant); err != nil {
+		t.Fatal(err)
+	}
+	c = wantFields(t, "a delete", w.take(), assistantchange.Field{Name: "members", Old: []string{"web-01"}, New: nil})
+	if c.Reach == nil || len(c.Reach.Hosts) != 1 || c.Reach.Hosts[0] != f.web01 || len(c.Reach.FormerGroups) != 1 || c.Reach.FormerGroups[0] != child.ID {
+		t.Fatalf("delete reach = %+v", c.Reach)
+	}
 }
 
 // A watcher's failure fails the write.

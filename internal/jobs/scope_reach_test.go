@@ -46,7 +46,7 @@ func TestScopeReachOverlap(t *testing.T) {
 	}
 
 	t.Run("a group reaches its members and its descendants' members", func(t *testing.T) {
-		got, err := reach.Overlap(ctx, org, render.Scope{GroupID: &parent}, scopes)
+		got, err := reach.Overlap(ctx, org, []render.Scope{{GroupID: &parent}}, scopes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestScopeReachOverlap(t *testing.T) {
 	})
 
 	t.Run("a host reaches the scopes selecting it", func(t *testing.T) {
-		got, err := reach.Overlap(ctx, org, render.Scope{HostIDs: []uuid.UUID{db1.ID}}, scopes)
+		got, err := reach.Overlap(ctx, org, []render.Scope{{HostIDs: []uuid.UUID{db1.ID}}}, scopes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,8 +78,18 @@ func TestScopeReachOverlap(t *testing.T) {
 		}
 	})
 
+	t.Run("a group and a host together", func(t *testing.T) {
+		got, err := reach.Overlap(ctx, org, []render.Scope{{GroupID: &child}, {HostIDs: []uuid.UUID{db1.ID}}}, scopes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got[orgWide], []string{"db1", "web2"}) || !reflect.DeepEqual(got[ofChild], []string{"web2"}) {
+			t.Fatalf("overlap = %v", got)
+		}
+	})
+
 	t.Run("an unmanaged host reaches nothing", func(t *testing.T) {
-		got, err := reach.Overlap(ctx, org, render.Scope{HostIDs: []uuid.UUID{off.ID}}, scopes)
+		got, err := reach.Overlap(ctx, org, []render.Scope{{HostIDs: []uuid.UUID{off.ID}}}, scopes)
 		if err != nil {
 			t.Fatal(err)
 		}

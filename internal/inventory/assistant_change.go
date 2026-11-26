@@ -25,24 +25,72 @@ func (s *Service) watches(actor assistantchange.Actor) bool {
 }
 
 // handOnGroup tells the watcher about an assistant's change of group g
-// moving fields; nothing when no field moved. It runs inside the write's
-// transaction.
-func (s *Service) handOnGroup(ctx context.Context, orgID uuid.UUID, actor assistantchange.Actor, g Group, fields []assistantchange.Field) error {
+// moving fields; nothing when no field moved. reach nil reaches the
+// group's members and its descendant groups' members. It runs inside the
+// write's transaction.
+func (s *Service) handOnGroup(ctx context.Context, orgID uuid.UUID, actor assistantchange.Actor, g Group, fields []assistantchange.Field, reach *assistantchange.Reach) error {
 	if !s.watches(actor) || len(fields) == 0 {
 		return nil
 	}
-	return s.watcher.Changed(ctx, orgID, assistantchange.New(assistantchange.SubjectInventoryGroup, g.ID, g.Name, fields, actor))
+	if reach == nil {
+		id := g.ID
+		reach = &assistantchange.Reach{Group: &id}
+	}
+	c := assistantchange.New(assistantchange.SubjectInventoryGroup, g.ID, g.Name, fields, actor)
+	c.Reach = reach
+	return s.watcher.Changed(ctx, orgID, c)
 }
 
-// handOnMembership is handOnGroup for the values of host's membership in
-// g.
-func (s *Service) handOnMembership(ctx context.Context, orgID uuid.UUID, actor assistantchange.Actor, g Group, hostID uuid.UUID, hostName string, fields []assistantchange.Field) error {
+// handOnMembership is handOnGroup for host's membership in g.
+func (s *Service) handOnMembership(ctx context.Context, orgID uuid.UUID, actor assistantchange.Actor, g Group, hostID uuid.UUID, hostName string, fields []assistantchange.Field, reach *assistantchange.Reach) error {
 	if !s.watches(actor) || len(fields) == 0 {
 		return nil
 	}
 	c := assistantchange.New(assistantchange.SubjectInventoryMembership, g.ID, g.Name, fields, actor)
-	c.HostID, c.HostName = &hostID, hostName
+	c.HostID, c.HostName, c.Reach = &hostID, hostName, reach
 	return s.watcher.Changed(ctx, orgID, c)
+}
+
+// selfAndAncestors is id and every group above it, as the tree is now.
+func (s *Service) selfAndAncestors(ctx context.Context, orgID, id uuid.UUID) ([]uuid.UUID, error) {
+	t, err := treeVia(ctx, s.store, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return append([]uuid.UUID{id}, t.Ancestors(id)...), nil
+}
+
+// schemaChanges is what an assistant's schema save from old to next moves
+// for a run (decision D6, final review I3): the defaults it set, changed
+// or removed, and every value the group or one of its members hands its
+// hosts that resolves differently under next than under old (a field made
+// inactive, retyped, removed, moved between group and host scope, made
+// overridable or not), as "vars.<key>" and "<host>: vars.<key>" with
+// secrets masked.
+func schemaChanges(old, next schema.Schema, vars map[string]any, members []Membership) []assistantchange.Field {
+	out := defaultChanges(old, next)
+	out = append(out, resolvedChanges("", old.GroupFields(), next.GroupFields(), vars)...)
+	for _, m := range members {
+		out = append(out, resolvedChanges(m.HostName+": ", old.MembershipFields(), next.MembershipFields(), m.Vars)...)
+	}
+	return out
+}
+
+// resolvedChanges lists the top-level keys whose resolved value
+// (schema.Resolve) differs between the old and the next fields, prefixed.
+func resolvedChanges(prefix string, old, next []schema.Field, values map[string]any) []assistantchange.Field {
+	// A sealed secret resolves like the string it stands for; the picture
+	// shows it masked.
+	plain := schema.ReplaceSealed(values, func() any { return sealedStandIn })
+	before := schema.MaskDeclared(old, masked(schema.Resolve(old, plain)))
+	after := schema.MaskDeclared(next, masked(schema.Resolve(next, plain)))
+	var out []assistantchange.Field
+	for _, k := range unionKeys(before, after) {
+		if !reflect.DeepEqual(before[k], after[k]) {
+			out = append(out, assistantchange.Field{Name: prefix + "vars." + k, Old: before[k], New: after[k]})
+		}
+	}
+	return out
 }
 
 // valueChanges lists the top-level keys whose value moved from old to
@@ -92,6 +140,37 @@ func defaultsByName(sc schema.Schema) map[string]any {
 		out[f.Name] = f.Default
 	}
 	return out
+}
+
+// sealedStandIn stands for a sealed secret while values resolve.
+const sealedStandIn = "\x00sealed"
+
+// masked replaces every sealedStandIn in m, at any depth, with the masked
+// marker.
+func masked(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = maskedValue(v)
+	}
+	return out
+}
+
+func maskedValue(v any) any {
+	switch x := v.(type) {
+	case string:
+		if x == sealedStandIn {
+			return schema.Mask()
+		}
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = maskedValue(item)
+		}
+		return out
+	case map[string]any:
+		return masked(x)
+	}
+	return v
 }
 
 // unionKeys is every key of a and b whose value is not nil, sorted.

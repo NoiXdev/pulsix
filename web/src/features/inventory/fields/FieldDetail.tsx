@@ -23,6 +23,8 @@ export interface FieldDetailProps {
   assistantDefault?: boolean;
   /** Accepts that default as live; absent for a reader. */
   onAcceptDefault?: () => void;
+  /** The draft holds another default than the stored one: accept waits. */
+  defaultEdited?: boolean;
   accepting?: boolean;
   /** Absent when the field may not be removed (read-only, from a source). */
   onRemove?: () => void;
@@ -36,7 +38,7 @@ export interface FieldDetailProps {
  * below them every other setting the field has (FieldMore). A reader gets
  * all of it disabled.
  */
-export function FieldDetail({ field, path, problems, readOnly, assistantDefault, onAcceptDefault, accepting, onRemove, onChange }: FieldDetailProps) {
+export function FieldDetail({ field, path, problems, readOnly, assistantDefault, onAcceptDefault, defaultEdited, accepting, onRemove, onChange }: FieldDetailProps) {
   const t = useT();
   const f = t.inventory.fields;
   const idBase = `mf-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
@@ -78,11 +80,12 @@ export function FieldDetail({ field, path, problems, readOnly, assistantDefault,
           text={t.inventory.assistant.defaultSet}
           action={
             onAcceptDefault && (
-              <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting} onClick={onAcceptDefault}>
+              <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting || defaultEdited} onClick={onAcceptDefault}>
                 {t.inventory.assistant.accept}
               </Button>
             )
           }
+          note={onAcceptDefault && defaultEdited ? t.inventory.assistant.acceptEdited : undefined}
         />
       )}
       <FieldMore field={field} path={path} idBase={idBase} problems={problems} readOnly={readOnly} onChange={onChange} />

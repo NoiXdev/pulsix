@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -255,6 +256,13 @@ type Store interface {
 	// ListAllHosts returns every host of orgID ordered by name, unpaginated,
 	// for the inventory renderer.
 	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
+	// InTx runs fn inside one organization-scoped write transaction that
+	// every store built on the same database joins through the context
+	// (an assistant's host write and the pause it causes). Not nested.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
+	// ListScopeHosts is ListAllHosts with the id, name, zone and managed
+	// flag only, no facts.
+	ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
 
 	// ListOrgIDs returns every organization id, for background
 	// reconciliation passes (the daily re-test). organizations carries no
@@ -346,6 +354,9 @@ type Service struct {
 	store Store
 	now   func() time.Time
 	dirty EvalDirtyMarker
+	// watcher is handed an assistant's host that newly falls into run
+	// scopes (assistant_change.go); nil hands on nothing.
+	watcher assistantchange.Watcher
 }
 
 // EvalDirtyMarker marks a host due for evaluation (backlog 3.57: a kind
@@ -453,8 +464,18 @@ func (s *Service) ReconcileDefaultZones(ctx context.Context) (repaired int, err 
 // and unique within the organization. in.Jump and in.Tags, when set, are
 // validated first and written in the same transaction as the host.
 func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput) (Host, error) {
+	return s.CreateHostBy(ctx, orgID, in, assistantchange.Actor{})
+}
+
+// CreateHostBy is CreateHost on actor's behalf: an assistant's managed
+// host is handed to the watcher in the create's transaction (decision
+// D7), since the runs whose scope it falls into reach it from now on.
+func (s *Service) CreateHostBy(ctx context.Context, orgID uuid.UUID, in HostInput, actor assistantchange.Actor) (Host, error) {
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
+	}
+	if err := validateAddress(in.Address); err != nil {
+		return Host{}, err
 	}
 	if err := validateKind(in.Kind); err != nil {
 		return Host{}, err
@@ -479,7 +500,21 @@ func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput)
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address,
 		Managed: in.Managed, Monitored: in.Monitored, Facts: map[string]any{}, CreatedAt: s.now(), Kind: kind,
 	}
-	return s.store.CreateHostWith(ctx, h, extras)
+	if !s.watches(actor) {
+		return s.store.CreateHostWith(ctx, h, extras)
+	}
+	var out Host
+	err = s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var err error
+		if out, err = s.store.CreateHostWith(ctx, h, extras); err != nil {
+			return err
+		}
+		return s.handOnManaged(ctx, actor, Host{}, out, "host", nil, out.Name)
+	})
+	if err != nil {
+		return Host{}, err
+	}
+	return out, nil
 }
 
 // GetHost returns the host identified by (orgID, id), or ErrNotFound if it
@@ -497,8 +532,18 @@ func (s *Service) GetHost(ctx context.Context, orgID, id uuid.UUID) (Host, error
 // who saved before them. in.Jump and in.Tags, when set, are written in
 // the same transaction under the same revision check; nil leaves them.
 func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64, in HostInput) (Host, error) {
+	return s.UpdateHostBy(ctx, orgID, id, rev, in, assistantchange.Actor{})
+}
+
+// UpdateHostBy is UpdateHost on actor's behalf: an assistant's update that
+// makes the host managed is handed to the watcher in the update's
+// transaction (decision D7).
+func (s *Service) UpdateHostBy(ctx context.Context, orgID, id uuid.UUID, rev int64, in HostInput, actor assistantchange.Actor) (Host, error) {
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
+	}
+	if err := validateAddress(in.Address); err != nil {
+		return Host{}, err
 	}
 	if err := validateKind(in.Kind); err != nil {
 		return Host{}, err
@@ -521,7 +566,7 @@ func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64
 		prev, prevErr = s.store.GetHost(ctx, orgID, id)
 	}
 	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev, Kind: in.Kind}
-	out, err := s.store.UpdateHostWith(ctx, h, extras)
+	out, err := s.updateWatched(ctx, h, extras, actor)
 	if err != nil {
 		return Host{}, err
 	}
@@ -575,7 +620,31 @@ func (s *Service) markKindChanged(ctx context.Context, h Host) {
 // TestSQLStorePatchCapabilitiesConcurrent, store_sql_test.go, for the race
 // this closes).
 func (s *Service) SetCapabilities(ctx context.Context, orgID, id uuid.UUID, managed, monitored *bool) (Host, error) {
-	return s.store.PatchCapabilities(ctx, orgID, id, managed, monitored)
+	return s.SetCapabilitiesBy(ctx, orgID, id, managed, monitored, assistantchange.Actor{})
+}
+
+// SetCapabilitiesBy is SetCapabilities on actor's behalf: an assistant
+// making the host managed is handed to the watcher in the same transaction
+// (decision D7).
+func (s *Service) SetCapabilitiesBy(ctx context.Context, orgID, id uuid.UUID, managed, monitored *bool, actor assistantchange.Actor) (Host, error) {
+	if !s.watches(actor) || managed == nil || !*managed {
+		return s.store.PatchCapabilities(ctx, orgID, id, managed, monitored)
+	}
+	var out Host
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		before, err := s.store.GetHost(ctx, orgID, id)
+		if err != nil {
+			return err
+		}
+		if out, err = s.store.PatchCapabilities(ctx, orgID, id, managed, monitored); err != nil {
+			return err
+		}
+		return s.handOnManaged(ctx, actor, before, out, "managed", false, true)
+	})
+	if err != nil {
+		return Host{}, err
+	}
+	return out, nil
 }
 
 // ListHosts returns a keyset-paginated page of orgID's hosts matching f.
@@ -625,6 +694,12 @@ func (s *Service) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.UU
 // reported exactly like one that does not exist at all (ErrNotFound).
 func (s *Service) DeleteHost(ctx context.Context, orgID, id uuid.UUID) error {
 	return s.store.DeleteHost(ctx, orgID, id)
+}
+
+// ListScopeHosts returns every host of orgID ordered by name with only
+// what a scope selects on: id, name, zone and the managed flag.
+func (s *Service) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	return s.store.ListScopeHosts(ctx, orgID)
 }
 
 // ListAllHosts returns every host of orgID ordered by name.

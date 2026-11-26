@@ -6,7 +6,9 @@ import type { InventoryGroup } from '../../../api/types.ts';
 import { StaleNotice } from '../sections/StaleNotice.tsx';
 import { FieldsEditor } from './FieldsEditor.tsx';
 import { useSchemaDraft } from './useSchemaDraft.ts';
-import { useAcceptGroupDefaults } from '../../../api/hooks/useInventory.ts';
+import { toVarSchema, useAcceptGroupDefaults } from '../../../api/hooks/useInventory.ts';
+import { sameValue } from '../../variables/origin.ts';
+import type { SchemaField, VarSchema } from '../../variables/types.ts';
 import { useToast } from '../../../ui/toastContext.ts';
 import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
@@ -98,6 +100,7 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
           problems={s.problems}
           readOnly={!canWrite}
           assistantDefaults={group.assistant_default_keys ?? []}
+          editedDefaults={editedDefaults(s.draft, group.schema)}
           onAcceptDefault={canWrite ? (name) => void acceptDefault(name) : undefined}
           accepting={accept.isPending}
         />
@@ -128,4 +131,17 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
       </div>
     </Dialog>
   );
+}
+
+/** The top-level fields whose defaults (their own and their sub-fields')
+ * the draft holds otherwise than the stored schema: an accept of such a
+ * default waits (final review M3), since it would make the stored one
+ * live, not the one on screen. */
+function editedDefaults(draft: VarSchema, stored: unknown): string[] {
+  const before = new Map(toVarSchema(stored).fields.map((f) => [f.name, defaultsOf(f)]));
+  return draft.fields.filter((f) => !sameValue(defaultsOf(f), before.get(f.name))).map((f) => f.name);
+}
+
+function defaultsOf(f: SchemaField): unknown {
+  return { d: f.default, f: (f.fields ?? []).map((s) => [s.name, defaultsOf(s)]) };
 }

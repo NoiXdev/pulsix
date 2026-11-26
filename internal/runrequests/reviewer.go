@@ -33,6 +33,10 @@ type ReviewStore interface {
 	// LatestReview is the newest review of kind for target, whatever its
 	// state; ErrNotFound when there is none.
 	LatestReview(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID) (Request, error)
+	// HasAutomation reports whether the organization has any schedule or
+	// any template trigger, in whatever state: without one an inventory
+	// change has nothing to pause.
+	HasAutomation(ctx context.Context, orgID uuid.UUID) (bool, error)
 }
 
 // The services the Reviewer reads and stops, each narrowed to what it uses.
@@ -51,7 +55,7 @@ type (
 	// ReviewReach says which hosts an inventory change reaches in each
 	// template's run (jobs.ScopeReach).
 	ReviewReach interface {
-		Overlap(ctx context.Context, orgID uuid.UUID, changed render.Scope, scopes map[uuid.UUID]render.Scope) (map[uuid.UUID][]string, error)
+		Overlap(ctx context.Context, orgID uuid.UUID, changed []render.Scope, scopes map[uuid.UUID]render.Scope) (map[uuid.UUID][]string, error)
 	}
 	// ReviewHistory names who last did one of actions to an object (the
 	// activity log, audit.SQLStore): who had paused an item before.
@@ -150,7 +154,7 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 			return fmt.Errorf("list the playbook's templates: %w", err)
 		}
 		templateIDs = ids
-	case assistantchange.SubjectInventoryGroup, assistantchange.SubjectInventoryMembership:
+	case assistantchange.SubjectInventoryGroup, assistantchange.SubjectInventoryMembership, assistantchange.SubjectHost:
 		return rv.inventoryChanged(ctx, orgID, c)
 	default:
 		return fmt.Errorf("an assistant change of an unknown subject %q", c.Subject)
@@ -387,7 +391,9 @@ func changeWords(c assistantchange.Change) string {
 	case assistantchange.SubjectInventoryGroup:
 		return "inventory group " + c.Name
 	case assistantchange.SubjectInventoryMembership:
-		return "the values of host " + c.HostName + " in inventory group " + c.Name
+		return "host " + c.HostName + " in inventory group " + c.Name
+	case assistantchange.SubjectHost:
+		return "host " + c.Name
 	}
 	return "job template " + c.Name
 }

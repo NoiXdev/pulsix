@@ -15,7 +15,7 @@ import {
 } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
-import { activeFields } from '../../variables/origin.ts';
+import { activeFields, sameValue } from '../../variables/origin.ts';
 import { groupFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
 import type { Problem, SchemaField, Vars } from '../../variables/types.ts';
@@ -96,6 +96,9 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
   const { draft, revision, generation, touched, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.vars, group.revision, draftOf, own);
+  // The stored values as the form shows them: an accept makes these live,
+  // so it waits while the draft shows something else (final review M3).
+  const stored = draftOf(group.vars);
   const orphaned = group.orphaned ?? [];
   // Stored values of removed fields are something to save too: a save
   // drops them. Only an edit counts for the leave question, though.
@@ -229,6 +232,7 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
             canWrite={canWrite}
             ancestors={ancestors}
             assistant={assistantMark(group, f.name, draft)}
+            edited={!sameValue(stored[f.name], draft[f.name])}
             onAccept={canWrite ? (kind) => void onAccept(f.name, kind) : undefined}
             accepting={acceptVars.isPending || acceptDefaults.isPending}
           />
@@ -251,7 +255,7 @@ function assistantMark(group: InventoryGroup, name: string, draft: Vars): 'value
  * comes from when the data at hand says, and whether an assistant wrote
  * it. */
 function VariableRow({
-  field, draft, onChange, problems, canWrite, ancestors, assistant, onAccept, accepting,
+  field, draft, onChange, problems, canWrite, ancestors, assistant, edited, onAccept, accepting,
 }: {
   field: SchemaField;
   draft: Vars;
@@ -260,6 +264,8 @@ function VariableRow({
   canWrite: boolean;
   ancestors: readonly AncestorVars[];
   assistant: 'value' | 'default' | null;
+  /** The draft holds another value than the stored one: an accept waits. */
+  edited: boolean;
   /** Absent for a reader. */
   onAccept?: (kind: 'value' | 'default') => void;
   accepting: boolean;
@@ -293,11 +299,12 @@ function VariableRow({
             text={assistant === 'value' ? t.inventory.assistant.written : t.inventory.assistant.defaultSet}
             action={
               onAccept && (
-                <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting} onClick={() => onAccept(assistant)}>
+                <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting || edited} onClick={() => onAccept(assistant)}>
                   {t.inventory.assistant.accept}
                 </Button>
               )
             }
+            note={onAccept && edited ? t.inventory.assistant.acceptEdited : undefined}
           />
         )}
       </div>

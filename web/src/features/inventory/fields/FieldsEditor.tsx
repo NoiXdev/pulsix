@@ -21,6 +21,9 @@ export interface FieldsEditorProps {
   readOnly?: boolean;
   /** The stored fields whose default an assistant set (decision D6). */
   assistantDefaults?: readonly string[];
+  /** The fields whose defaults the draft holds otherwise than stored: an
+   * accept of theirs waits. */
+  editedDefaults?: readonly string[];
   /** Accepts such a default as live; absent for a reader. */
   onAcceptDefault?: (name: string) => void;
   accepting?: boolean;
@@ -36,7 +39,7 @@ export interface FieldsEditorProps {
  * Every change of an existing field goes through editLocked, as in the
  * VariableEditor, so a field locked to a source would turn adjusted.
  */
-export function FieldsEditor({ schema, onChange, problems, readOnly, assistantDefaults = [], onAcceptDefault, accepting }: FieldsEditorProps) {
+export function FieldsEditor({ schema, onChange, problems, readOnly, assistantDefaults = [], editedDefaults = [], onAcceptDefault, accepting }: FieldsEditorProps) {
   const t = useT();
   const f = t.inventory.fields;
   const fields = schema.fields;
@@ -162,6 +165,7 @@ export function FieldsEditor({ schema, onChange, problems, readOnly, assistantDe
               readOnly={readOnly}
               assistantDefault={assistantDefaults.includes(field.name)}
               onAcceptDefault={onAcceptDefault && (() => onAcceptDefault(field.name))}
+              defaultEdited={editedDefaults.includes(field.name)}
               accepting={accepting}
               onRemove={removable ? () => remove(selected) : undefined}
               onChange={(next) => update(selected, next)}

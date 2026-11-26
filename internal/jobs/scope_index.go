@@ -25,7 +25,7 @@ type scopeIndex struct {
 }
 
 // loadScopeIndex reads the three sources.
-func loadScopeIndex(ctx context.Context, orgID uuid.UUID, groups GroupSource, memberships MembershipSource, hostSrc HostSource) (scopeIndex, error) {
+func loadScopeIndex(ctx context.Context, orgID uuid.UUID, groups GroupSource, memberships MembershipSource, listHosts func(context.Context, uuid.UUID) ([]hosts.Host, error)) (scopeIndex, error) {
 	groupList, err := groups.ListGroups(ctx, orgID)
 	if err != nil {
 		return scopeIndex{}, fmt.Errorf("list inventory groups: %w", err)
@@ -44,7 +44,7 @@ func loadScopeIndex(ctx context.Context, orgID uuid.UUID, groups GroupSource, me
 	for _, m := range memberList {
 		ix.groupsOf[m.HostID] = append(ix.groupsOf[m.HostID], m.GroupID)
 	}
-	if ix.hosts, err = hostSrc.ListAllHosts(ctx, orgID); err != nil {
+	if ix.hosts, err = listHosts(ctx, orgID); err != nil {
 		return scopeIndex{}, fmt.Errorf("list hosts: %w", err)
 	}
 	return ix, nil

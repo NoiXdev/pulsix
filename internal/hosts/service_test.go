@@ -324,6 +324,14 @@ func (f *fakeHostStore) ListHostsByIDs(_ context.Context, orgID uuid.UUID, ids [
 	return out, nil
 }
 
+func (f *fakeHostStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+func (f *fakeHostStore) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	return f.ListAllHosts(ctx, orgID)
+}
+
 func (f *fakeHostStore) ListAllHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
 	if err := f.take("ListAllHosts"); err != nil {
 		return nil, err

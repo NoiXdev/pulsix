@@ -4728,7 +4728,7 @@ export interface components {
             reason?: string;
         };
         ChangedField: {
-            /** @description The field; an extra var as extra_vars.<name>, an inventory value as vars.<key>, a schema default as default.<field> */
+            /** @description The field; an extra var as extra_vars.<name>, an inventory value as vars.<key> (a member's as <host>: vars.<key>), a schema default as default.<field>; member, members, parent, host and managed for who is in a group, where it sits and a host's arrival */
             field: string;
             /** @description The value after; null for none. A secret is {"$secret":"set"} */
             new: unknown;
@@ -4746,10 +4746,10 @@ export interface components {
             /** @description The changed object's name; the group's for a membership */
             name: string;
             /**
-             * @description What the assistant changed: a job template, a repository, an editor playbook, an inventory group's values or schema defaults, or the values of one host's membership in a group
+             * @description What the assistant changed: a job template, a repository, an editor playbook, an inventory group (its values, schema, place or members), one host's membership in a group (joining, leaving or its values), or a host it created or made managed
              * @enum {string}
              */
-            subject: "job_template" | "repo" | "playbook" | "inventory_group" | "inventory_membership";
+            subject: "job_template" | "repo" | "playbook" | "inventory_group" | "inventory_membership" | "host";
             /** @description The assistant token that made the change */
             token_id?: string;
             /** @description The person whose assistant token made the change */

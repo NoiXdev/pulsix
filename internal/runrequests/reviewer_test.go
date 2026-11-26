@@ -27,6 +27,13 @@ type memReviews struct {
 	// refreshMiss makes the next RefreshReview find no pending row (a
 	// person decided it in between).
 	refreshMiss bool
+	// noAutomation answers HasAutomation: the org has no schedule or
+	// template trigger.
+	noAutomation bool
+}
+
+func (m *memReviews) HasAutomation(context.Context, uuid.UUID) (bool, error) {
+	return !m.noAutomation, nil
 }
 
 func (m *memReviews) LatestReview(_ context.Context, _ uuid.UUID, kind runrequests.Kind, target uuid.UUID) (runrequests.Request, error) {
@@ -98,7 +105,9 @@ type reviewWorld struct {
 	// was asked for.
 	overlap map[uuid.UUID][]string
 	limits  map[uuid.UUID]string
-	changed []render.Scope
+	changed [][]render.Scope
+	// scopeA is template A's scope group.
+	scopeA uuid.UUID
 }
 
 func (w *reviewWorld) LockForReview(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
@@ -208,7 +217,7 @@ func (w *reviewWorld) Record(_ context.Context, e audit.Event) error {
 func newReviewWorld() *reviewWorld {
 	w := &reviewWorld{
 		org: uuid.Must(uuid.NewV7()), tmplA: uuid.Must(uuid.NewV7()), tmplB: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7()),
-		playbook:  uuid.Must(uuid.NewV7()),
+		playbook: uuid.Must(uuid.NewV7()), scopeA: uuid.Must(uuid.NewV7()),
 		schedules: map[uuid.UUID]schedules.Schedule{}, triggers: map[uuid.UUID]triggers.Trigger{},
 		reviews: &memReviews{}, now: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}

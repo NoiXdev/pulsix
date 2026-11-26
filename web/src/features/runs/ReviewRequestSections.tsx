@@ -94,6 +94,11 @@ export function ReviewRequestSections({ review, tokenName, tokenId, personName }
           </dl>
         )}
         <h3 className="text-xs font-semibold">{r.changes}</h3>
+        {(review.changes ?? []).some((c) => c.subject.startsWith('inventory_')) && (
+          <p role="note" aria-label={r.inventoryPlainTitle} className="rounded-md border border-border px-3 py-2 text-xs">
+            {r.inventoryPlain}
+          </p>
+        )}
         {(review.changes ?? []).map((c, i) => {
           const caption =
             c.subject === 'inventory_membership'

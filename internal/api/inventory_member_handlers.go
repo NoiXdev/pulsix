@@ -174,7 +174,7 @@ func registerInventoryMemberRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Inventory.Unassign(ctx, scope.OrgID, groupID, hostID); err != nil {
+		if err := deps.Inventory.UnassignBy(ctx, scope.OrgID, groupID, hostID, changeActor(scope)); err != nil {
 			return nil, mapInventoryErr(ctx, err, "")
 		}
 		setAuditObject(ctx, groupID.String(), "removed host "+hostID.String()+" from the inventory group")

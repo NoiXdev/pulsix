@@ -236,6 +236,25 @@ func (s *SQLStore) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.U
 // ListAllHosts returns every host of orgID ordered by name, unpaginated, for
 // the inventory renderer (see ListAllHosts's own comment,
 // internal/db/queries/hosts.sql).
+// InTx implements Store: db.WithWriteTx.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
+// ListScopeHosts implements Store: every host of orgID with its id, name,
+// zone and managed flag only.
+func (s *SQLStore) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	rows, err := s.q.ListScopeHosts(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Host, len(rows))
+	for i, r := range rows {
+		out[i] = Host{ID: r.ID, OrgID: orgID, Name: r.Name, ZoneID: r.ZoneID, Managed: r.Managed}
+	}
+	return out, nil
+}
+
 func (s *SQLStore) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
 	rows, err := s.q.ListAllHosts(ctx, orgID)
 	if err != nil {

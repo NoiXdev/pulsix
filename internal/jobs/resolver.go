@@ -47,7 +47,7 @@ func NewScopeResolver(groups GroupSource, memberships MembershipSource, hosts Ho
 // depth). Callers without a limit (RunTargets, the maintenance guard's
 // group look-ahead) resolve the full scope.
 func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string) ([]ZoneTargets, error) {
-	ix, err := loadScopeIndex(ctx, orgID, r.groups, r.memberships, r.hosts)
+	ix, err := loadScopeIndex(ctx, orgID, r.groups, r.memberships, r.hosts.ListAllHosts)
 	if err != nil {
 		return nil, err
 	}

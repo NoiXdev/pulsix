@@ -90,4 +90,18 @@ describe('GroupDetailPage fields dialog', () => {
     expect(accepted?.headers.get('If-Match')).toBe('"3"');
     expect(accepted?.body).toEqual({ keys: ['env'] });
   });
+
+  it('offers no accept while the default on screen is not the stored one (final review M3)', async () => {
+    const user = userEvent.setup();
+    const schema = { fields: [{ name: 'env', type: 'string', default: '{{ x }}' }] };
+    mockApi(routes('admin', { 'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema, assistant_default_keys: ['env'] }) }));
+    renderAt('/o/acme/groups/g1');
+    const dialog = await openFields(user);
+    const mark = within(dialog).getByTestId('assistant-default-env');
+    const accept = within(mark).getByRole('button', { name: 'Accept env as live' });
+    expect(accept).toBeEnabled();
+    await user.type(within(dialog).getByLabelText('Default'), 'y');
+    expect(accept).toBeDisabled();
+    expect(within(mark).getByText('Save or discard your edit before accepting the stored value')).toBeInTheDocument();
+  });
 });

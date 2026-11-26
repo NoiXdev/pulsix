@@ -136,3 +136,64 @@ func TestClaimShipsAssistantInventoryValuesInert(t *testing.T) {
 		t.Fatalf("after a person's accept shipped group vars %#v, host vars %#v; want both live", vars, hv)
 	}
 }
+
+// TestClaimShipsAHostAddressInert (decision D7, controller's call): an
+// address that is no IP address or host name is refused at the write, and
+// one stored before that rule (a legacy row) reaches the worker as plain
+// text in ansible_host, never as a template Ansible would evaluate.
+func TestClaimShipsAHostAddressInert(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-claim-host-address")
+	box := crypto.NewBox(testBoxKey("jobs-host-address-inert-key-0123"))
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	credsSvc := credentials.NewService(credentials.NewSQLStore(d), box, time.Now, rand.Reader)
+	sshSvc := sshconf.NewService(sshconf.NewSQLStore(d), credsSvc, hostsSvc)
+	invStore := inventory.NewSQLStore(d)
+	invSvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
+	renderer := inventory.NewRenderer(invStore, hostsSvc, sshSvc, credsSvc, box)
+	scoped := db.WithOrgScope(ctx, org)
+	zone, err := hostsSvc.CreateZone(scoped, org, "z1", "Zone 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const planted = "{{ lookup('pipe','id') }}"
+	if _, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "web1", Address: planted, ZoneID: zone.ID, Managed: true}); err == nil {
+		t.Fatal("a templated address was stored")
+	}
+	host, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "web1", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(scoped, `UPDATE hosts SET address = $1 WHERE id = $2`, planted, host.ID); err != nil {
+		t.Fatal(err)
+	}
+	playbookID, templateID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err := d.Exec(scoped, `INSERT INTO playbooks (id, org_id, inline, source) VALUES ($1, $2, $3, 'editor')`,
+		playbookID, org, "- hosts: all\n  tasks: []"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(scoped, `INSERT INTO job_templates (id, org_id, name, playbook_id, scope) VALUES ($1, $2, $3, $4, '{}')`,
+		templateID, org, "ping", playbookID); err != nil {
+		t.Fatal(err)
+	}
+	lookup := app.NewTemplateLookup(templates.NewSQLStore(d), playbooks.NewSQLStore(d), box)
+	queue := jobs.NewSQLQueue(d, box, renderer, credsSvc, lookup, sshSvc, time.Now, rand.Reader)
+	queue.SetKeyPins(hostsSvc)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, lookup, jobs.NewScopeResolver(invSvc, invSvc, hostsSvc), hostsSvc, hostsSvc, box, time.Now, rand.Reader)
+	if _, err := svc.EnqueueRun(scoped, org, templateID, nil); err != nil {
+		t.Fatalf("EnqueueRun: %v", err)
+	}
+	claim, err := queue.Claim(ctx, org, []uuid.UUID{zone.ID}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(claim.Job.GetInventoryDoc()), &doc); err != nil {
+		t.Fatal(err)
+	}
+	hv, _ := doc["_meta"].(map[string]any)["hostvars"].(map[string]any)["web1"].(map[string]any)
+	if want := map[string]any{"__ansible_unsafe": planted}; !reflect.DeepEqual(hv["ansible_host"], want) {
+		t.Fatalf("ansible_host = %#v, want %#v", hv["ansible_host"], want)
+	}
+}

@@ -139,8 +139,12 @@ type Store interface {
 	// DeleteGroup returns ErrHasChildren while child groups exist.
 	DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error
 	MemberCounts(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]int, error)
-	// PutMembership creates the membership or replaces its vars.
-	PutMembership(ctx context.Context, m Membership) (Membership, error)
+	// PutMembership creates the membership or replaces its vars; inserted
+	// says it was created (a host joining the group).
+	PutMembership(ctx context.Context, m Membership) (saved Membership, inserted bool, err error)
+	// GetMembershipForUpdate is GetMembership with the row locked until
+	// the transaction (InTx) ends.
+	GetMembershipForUpdate(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error)
 	UpdateMembership(ctx context.Context, m Membership) (Membership, error)
 	GetMembership(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error)
 	DeleteMembership(ctx context.Context, orgID, groupID, hostID uuid.UUID) error
@@ -286,10 +290,52 @@ func (s *Service) ListGroups(ctx context.Context, orgID uuid.UUID) ([]GroupSumma
 	return out, nil
 }
 
-// UpdateGroup renames, moves, describes and sets the jump host of a group.
-// A move may not place a group below itself and may not make the tree
-// deeper than MaxGroupDepth.
+// UpdateGroup is UpdateGroupBy for a person.
 func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision int64, in GroupPatch) (GroupView, error) {
+	return s.UpdateGroupBy(ctx, orgID, id, revision, in, assistantchange.Actor{})
+}
+
+// UpdateGroupBy renames, moves, describes and sets the jump host of a
+// group on actor's behalf. A move may not place a group below itself and
+// may not make the tree deeper than MaxGroupDepth. An assistant's move
+// (a parent change) is handed to the watcher in the move's transaction
+// (decision D7): the moved subtree's hosts receive other ancestors'
+// values, and runs scoped to the old or the new ancestors reach other
+// hosts.
+func (s *Service) UpdateGroupBy(ctx context.Context, orgID, id uuid.UUID, revision int64, in GroupPatch, actor assistantchange.Actor) (GroupView, error) {
+	if !s.watches(actor) {
+		return s.updateGroup(ctx, orgID, id, revision, in, nil)
+	}
+	var result GroupView
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var moved *move
+		var err error
+		if result, err = s.updateGroup(ctx, orgID, id, revision, in, &moved); err != nil {
+			return err
+		}
+		if moved == nil {
+			return nil
+		}
+		fields := []assistantchange.Field{{Name: "parent", Old: moved.oldParent, New: moved.newParent}}
+		return s.handOnGroup(ctx, orgID, actor, result.Group, fields, &assistantchange.Reach{Group: &id, FormerGroups: moved.former})
+	})
+	if err != nil {
+		return GroupView{}, err
+	}
+	return result, nil
+}
+
+// move is what updateGroup tells a watched caller about a parent change:
+// the old and the new parent's names (nil for a root) and the groups above
+// the group before the move.
+type move struct {
+	oldParent, newParent any
+	former               []uuid.UUID
+}
+
+// updateGroup is UpdateGroupBy's write; with moved set it reports a
+// parent change there.
+func (s *Service) updateGroup(ctx context.Context, orgID, id uuid.UUID, revision int64, in GroupPatch, moved **move) (GroupView, error) {
 	if err := validateGroupMeta(in.Name, in.Description); err != nil {
 		return GroupView{}, err
 	}
@@ -345,6 +391,9 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 			return err
 		}
 		result = groupView(updated)
+		if moved != nil && !sameParent(cur.ParentID, in.ParentID) {
+			*moved = &move{oldParent: nameIn(t, cur.ParentID), newParent: nameIn(t, in.ParentID), former: t.Ancestors(id)}
+		}
 		return nil
 	})
 	if err != nil {
@@ -353,14 +402,73 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, revision
 	return result, nil
 }
 
-// DeleteGroup removes a group without children, and its memberships. It
-// runs under the same per-organization tree lock as CreateGroup and
-// UpdateGroup (2.15) so it never races a concurrent move or create that
-// reads this group's existence into a now-stale tree snapshot.
+// DeleteGroup is DeleteGroupBy for a person.
 func (s *Service) DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
-		return txStore.DeleteGroup(ctx, orgID, id)
+	return s.DeleteGroupBy(ctx, orgID, id, assistantchange.Actor{})
+}
+
+// DeleteGroupBy removes a group without children, and its memberships, on
+// actor's behalf. It runs under the same per-organization tree lock as
+// CreateGroup and UpdateGroup (2.15) so it never races a concurrent move
+// or create that reads this group's existence into a now-stale tree
+// snapshot. An assistant's delete of a group with members is handed to the
+// watcher in the delete's transaction (decision D7): its hosts leave it.
+func (s *Service) DeleteGroupBy(ctx context.Context, orgID, id uuid.UUID, actor assistantchange.Actor) error {
+	if !s.watches(actor) {
+		return s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+			return txStore.DeleteGroup(ctx, orgID, id)
+		})
+	}
+	return s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		var g Group
+		var members []Membership
+		var former []uuid.UUID
+		err := s.store.WithTreeLock(ctx, orgID, func(txStore Store) error {
+			var err error
+			if g, err = txStore.GetGroup(ctx, orgID, id); err != nil {
+				return err
+			}
+			if members, err = txStore.ListGroupMembers(ctx, orgID, id); err != nil {
+				return err
+			}
+			t, err := treeVia(ctx, txStore, orgID)
+			if err != nil {
+				return err
+			}
+			former = append([]uuid.UUID{id}, t.Ancestors(id)...)
+			return txStore.DeleteGroup(ctx, orgID, id)
+		})
+		if err != nil || len(members) == 0 {
+			return err
+		}
+		hostIDs := make([]uuid.UUID, len(members))
+		names := make([]string, len(members))
+		for i, m := range members {
+			hostIDs[i], names[i] = m.HostID, m.HostName
+		}
+		fields := []assistantchange.Field{{Name: "members", Old: names, New: nil}}
+		return s.handOnGroup(ctx, orgID, actor, g, fields, &assistantchange.Reach{Hosts: hostIDs, FormerGroups: former})
 	})
+}
+
+// nameIn is the name of group id in t; nil for none.
+func nameIn(t grouptree.Tree, id *uuid.UUID) any {
+	if id == nil {
+		return nil
+	}
+	if n, ok := t.Node(*id); ok {
+		return n.Name
+	}
+	return id.String()
+}
+
+// sameParent reports whether two parent references name the same group
+// (nil: a root).
+func sameParent(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // SetSchema is SetSchemaBy for a person.
@@ -375,7 +483,8 @@ func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision i
 // may neither add a field under a name Ansible or Pulsix act on nor set a
 // default under one; a person's clears the marks of the defaults it
 // changes (decision D6, marks.go). An assistant's save that moves a
-// default is handed to the watcher in the save's transaction.
+// default, or a value a run receives (schemaChanges), is handed to the
+// watcher in the save's transaction.
 func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema, actor assistantchange.Actor) (GroupView, int, error) {
 	if sc.Fields == nil {
 		sc.Fields = []schema.Field{}
@@ -416,7 +525,7 @@ func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision
 			}
 		}
 		result = groupView(updated)
-		return s.handOnGroup(ctx, orgID, actor, updated, defaultChanges(cur.Schema, sc))
+		return s.handOnGroup(ctx, orgID, actor, updated, schemaChanges(cur.Schema, sc, cur.Vars, members), nil)
 	})
 	if err != nil {
 		return GroupView{}, 0, err
@@ -460,7 +569,7 @@ func (s *Service) SetVarsBy(ctx context.Context, orgID, id uuid.UUID, revision i
 			return err
 		}
 		result = groupView(updated)
-		return s.handOnGroup(ctx, orgID, actor, updated, valueChanges(cur.Schema.GroupFields(), cur.Vars, sealed))
+		return s.handOnGroup(ctx, orgID, actor, updated, valueChanges(cur.Schema.GroupFields(), cur.Vars, sealed), nil)
 	})
 	if err != nil {
 		return GroupView{}, err

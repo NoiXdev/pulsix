@@ -2,7 +2,9 @@
   "_meta": {
     "hostvars": {
       "web-01": {
-        "ansible_host": "10.0.0.11",
+        "ansible_host": {
+          "__ansible_unsafe": "10.0.0.11"
+        },
         "ansible_port": 2200,
         "ansible_ssh_common_args": "-o ProxyJump=ops@bastion.fra.example:2222",
         "ansible_user": "ansible",

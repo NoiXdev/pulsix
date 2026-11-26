@@ -457,8 +457,8 @@ export const enRuns = {
         title: { schedule: 'Review a paused schedule', trigger: 'Review a disabled webhook trigger' } as Record<string, string>,
         section: 'Review',
         intro: {
-          schedule: 'An assistant changed what this schedule runs, or the inventory values its runs receive, so it was paused. Approving resumes it from now on with the changes below; rejecting leaves it paused.',
-          trigger: 'An assistant changed what this webhook trigger runs or syncs, or the inventory values its runs receive, so it was disabled. Approving enables it again with the changes below; rejecting leaves it disabled.',
+          schedule: 'An assistant changed what this schedule runs, the inventory values its runs receive or the hosts they reach, so it was paused. Approving resumes it from now on with the changes below; rejecting leaves it paused.',
+          trigger: 'An assistant changed what this webhook trigger runs or syncs, the inventory values its runs receive or the hosts they reach, so it was disabled. Approving enables it again with the changes below; rejecting leaves it disabled.',
         } as Record<string, string>,
         item: { schedule: 'Schedule', trigger: 'Webhook trigger' } as Record<string, string>,
         timetable: 'Timetable',
@@ -467,7 +467,11 @@ export const enRuns = {
         paused: 'paused',
         active: 'active',
         changes: 'What the assistant changed',
-        subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventory group' } as Record<string, string>,
+        subject: { job_template: 'Job template', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventory group', host: 'Host' } as Record<string, string>,
+        /** Approving a review of an inventory change leaves the values plain text (final review M4). */
+        inventoryPlainTitle: 'Inventory values',
+        inventoryPlain:
+          "Approving does not make the assistant's inventory values live: they stay plain text until a person changes or accepts them on the group or host page.",
         /** The values of one host's membership in a group (decision D6). */
         membership: (host: string, group: string) => `Values of host ${host} in inventory group ${group}`,
         byAssistant: (token: string) => `An assistant (token ${token})`,

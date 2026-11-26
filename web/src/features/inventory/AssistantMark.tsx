@@ -6,8 +6,9 @@ import { useT } from '../../i18n/useT.ts';
 /** AssistantMark says, beside a value, that an assistant wrote it and that
  * a run receives it as plain text until a person changes or accepts it
  * (decision D6: the server renders such values inert). The caller picks
- * the text and may add an action (Accept as live). */
-export function AssistantMark({ text, testId, action }: { text: string; testId?: string; action?: ReactNode }) {
+ * the text and may add an action (Accept as live) and a note beside it
+ * (why the action waits). */
+export function AssistantMark({ text, testId, action, note }: { text: string; testId?: string; action?: ReactNode; note?: string }) {
   return (
     <div data-testid={testId} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-warn">
       <span className="flex items-start gap-1.5">
@@ -15,6 +16,7 @@ export function AssistantMark({ text, testId, action }: { text: string; testId?:
         <span>{text}</span>
       </span>
       {action}
+      {note && <span className="text-muted-foreground">{note}</span>}
     </div>
   );
 }

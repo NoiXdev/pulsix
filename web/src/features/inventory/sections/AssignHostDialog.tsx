@@ -8,6 +8,7 @@ import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { groupFields, membershipFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
+import { isActive, sameValue } from '../../variables/origin.ts';
 import type { Problem, Vars } from '../../variables/types.ts';
 import { GroupPicker } from './GroupPicker.tsx';
 import { ManagedHostPicker } from './ManagedHostPicker.tsx';
@@ -85,7 +86,12 @@ function AssignForm({
   const ownFields = groupFields(schema);
   const assign = useAssignHost(org, group.id);
   const [hostId, setHostId] = useState(member?.host_id ?? fixedHost?.id ?? '');
-  const [vars, setVars] = useState<Vars>(() => (member ? toKeepMarkers(fields, declaredOnly(fields, (member.vars ?? {}) as Vars)) : {}));
+  // The stored values as the form shows them; an accept makes these live,
+  // so it is offered only for a key the form shows and waits while the
+  // form holds another value (final review M3).
+  const stored: Vars = member ? toKeepMarkers(fields, declaredOnly(fields, (member.vars ?? {}) as Vars)) : {};
+  const shown = new Set(fields.filter(isActive).map((f) => f.name));
+  const [vars, setVars] = useState<Vars>(() => stored);
   const [problems, setProblems] = useState<Problem[]>(() => (member?.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [error, setError] = useState<string | null>(null);
   // The membership's revision and marks as this dialog last learned them:
@@ -130,18 +136,22 @@ function AssignForm({
     <>
       <form onSubmit={submit} className="flex flex-col gap-4">
         {!member && !fixedHost && <ManagedHostPicker org={org} existing={existing} value={hostId} onChange={setHostId} />}
-        {marked.map((key) => (
-          <AssistantMark
-            key={key}
-            testId={`assistant-member-${key}`}
-            text={`${key}: ${t.inventory.assistant.written}`}
-            action={
-              <Button type="button" aria-label={t.inventory.assistant.acceptFor(key)} disabled={accept.isPending} onClick={() => void onAccept(key)}>
-                {t.inventory.assistant.accept}
-              </Button>
-            }
-          />
-        ))}
+        {marked.filter((key) => shown.has(key)).map((key) => {
+          const edited = !sameValue(stored[key], vars[key]);
+          return (
+            <AssistantMark
+              key={key}
+              testId={`assistant-member-${key}`}
+              text={`${key}: ${t.inventory.assistant.written}`}
+              action={
+                <Button type="button" aria-label={t.inventory.assistant.acceptFor(key)} disabled={accept.isPending || edited} onClick={() => void onAccept(key)}>
+                  {t.inventory.assistant.accept}
+                </Button>
+              }
+              note={edited ? t.inventory.assistant.acceptEdited : undefined}
+            />
+          );
+        })}
         <SchemaForm fields={fields} value={vars} onChange={setVars} problems={problems} idPrefix="assign" />
         {ownFields.length > 0 && (
           <details className="rounded-md border border-border p-3">

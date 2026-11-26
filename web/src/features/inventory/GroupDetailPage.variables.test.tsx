@@ -84,6 +84,24 @@ describe('GroupDetailPage variables', () => {
     expect(accepts[1].body).toEqual({ keys: ['level'] });
   });
 
+  it('offers no accept while the value on screen is not the stored one (final review M3)', async () => {
+    const user = userEvent.setup();
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema: SCHEMA, vars: { env: 'prod', ntp: 'x' }, assistant_keys: ['ntp'] }),
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    const accept = await screen.findByRole('button', { name: 'Accept ntp as live' });
+    expect(accept).toBeEnabled();
+    await user.type(screen.getByLabelText('ntp'), 'y');
+    expect(accept).toBeDisabled();
+    expect(within(screen.getByTestId('assistant-ntp')).getByText('Save or discard your edit before accepting the stored value')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('ntp'));
+    await user.type(screen.getByLabelText('ntp'), 'x');
+    expect(accept).toBeEnabled();
+  });
+
   it('offers no accept to a reader', async () => {
     mockApi(
       routes('viewer', {

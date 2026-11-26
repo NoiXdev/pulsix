@@ -197,6 +197,25 @@ describe('HostInventoryCard', () => {
       expect(accepted?.body).toEqual({ keys: ['domain'] });
     });
 
+    it('offers accept only for a shown value, and not while it is edited (final review M3)', async () => {
+      const user = userEvent.setup();
+      const schema = { fields: [{ name: 'domain', type: 'string', scope: 'host', required: true }, { name: 'old', type: 'string', scope: 'host', active: false }] };
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [{ ...MEMBERSHIP, vars: { domain: 'a.io', old: 'x', gone: 'y' }, assistant_keys: ['domain', 'old', 'gone'] }] },
+        'GET /api/v1/orgs/acme/inventory/groups/g1': { group: { ...full('g1', 'webserver').group, schema } },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
+      const dialog = await screen.findByRole('dialog');
+      const mark = await within(dialog).findByTestId('assistant-member-domain');
+      expect(within(dialog).queryByTestId('assistant-member-old')).not.toBeInTheDocument();
+      expect(within(dialog).queryByTestId('assistant-member-gone')).not.toBeInTheDocument();
+      const accept = within(mark).getByRole('button', { name: 'Accept domain as live' });
+      expect(accept).toBeEnabled();
+      await user.type(within(dialog).getByRole('textbox', { name: /^domain/ }), 'x');
+      expect(accept).toBeDisabled();
+    });
+
     it('asks before removing the host from a group and then unassigns it', async () => {
       const user = userEvent.setup();
       let deleted = false;

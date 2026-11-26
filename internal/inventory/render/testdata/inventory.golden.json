@@ -3,21 +3,29 @@
     "_meta": {
       "hostvars": {
         "db-01": {
-          "ansible_host": "db-01",
+          "ansible_host": {
+            "__ansible_unsafe": "db-01"
+          },
           "ansible_ssh_common_args": "-o ProxyJump=jump@zone-jump.example:22",
           "db_role": "primary"
         },
         "db-02": {
-          "ansible_host": "db-02",
+          "ansible_host": {
+            "__ansible_unsafe": "db-02"
+          },
           "ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22,ops@bastion-b.example:2222",
           "db_role": "witness"
         },
         "lonely": {
-          "ansible_host": "lonely",
+          "ansible_host": {
+            "__ansible_unsafe": "lonely"
+          },
           "ansible_user": "ubuntu"
         },
         "web-01": {
-          "ansible_host": "10.0.0.11",
+          "ansible_host": {
+            "__ansible_unsafe": "10.0.0.11"
+          },
           "ansible_port": 2222,
           "ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22",
           "ansible_user": "deploy",
@@ -39,7 +47,9 @@
           ]
         },
         "web-02": {
-          "ansible_host": "web-02",
+          "ansible_host": {
+            "__ansible_unsafe": "web-02"
+          },
           "vhosts": [
             {
               "domain": "shop.acme.io",
@@ -48,7 +58,9 @@
           ]
         },
         "web-03": {
-          "ansible_host": "web-03",
+          "ansible_host": {
+            "__ansible_unsafe": "web-03"
+          },
           "ansible_ssh_common_args": "-o ProxyJump=jump@zone-jump.example:22",
           "db_role": "primary"
         }

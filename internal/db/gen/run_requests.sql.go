@@ -338,6 +338,21 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 	return i, err
 }
 
+const hasAutomation = `-- name: HasAutomation :one
+SELECT (EXISTS (SELECT 1 FROM schedules s WHERE s.org_id = $1)
+    OR EXISTS (SELECT 1 FROM job_triggers t WHERE t.org_id = $1 AND t.kind = 'template_run'))::boolean AS has
+`
+
+// Whether the organization has any schedule or any template trigger, in
+// whatever state: an assistant's inventory change has something to pause
+// (a stopped item gets its review too).
+func (q *Queries) HasAutomation(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasAutomation, orgID)
+	var has bool
+	err := row.Scan(&has)
+	return has, err
+}
+
 const insertRunRequest = `-- name: InsertRunRequest :exec
 
 INSERT INTO run_requests (id, org_id, kind, template_id, template_revision, host_id, job_id, reason,

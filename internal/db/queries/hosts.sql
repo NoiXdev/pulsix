@@ -135,6 +135,12 @@ LIMIT sqlc.arg(row_limit);
 -- 10 000 hosts).
 SELECT * FROM hosts WHERE org_id = $1 ORDER BY name;
 
+-- name: ListScopeHosts :many
+-- Every host of the organization with only what a scope selects on (id,
+-- name, zone, managed): what an inventory change reaches, read inside the
+-- change's transaction without the facts.
+SELECT id, name, zone_id, managed FROM hosts WHERE org_id = $1 ORDER BY name;
+
 -- name: ListHostsByIDs :many
 -- The named hosts of one organization, ordered by name. For a caller that
 -- already knows exactly which ids it needs — the check list's host_name

@@ -296,7 +296,12 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 	if host == "" {
 		host = h.Name
 	}
-	vars["ansible_host"] = host
+	// Plain text always (decision D7, controller's call): the address is
+	// written through the host API, an assistant included, and Ansible
+	// templates connection variables. The writers refuse anything but an
+	// IP address or a host name; a value stored before that rule stays
+	// literal all the same.
+	vars["ansible_host"] = inert(host)
 	user := ssh.Username
 	if user == "" && ssh.CredentialID != nil {
 		user = r.in.CredentialUsers[*ssh.CredentialID]

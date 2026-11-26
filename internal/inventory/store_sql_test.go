@@ -89,11 +89,11 @@ func TestSQLStore(t *testing.T) {
 	}
 
 	// Memberships.
-	m, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webA, OrgID: org, Vars: map[string]any{"env": "a"}})
+	m, _, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webA, OrgID: org, Vars: map[string]any{"env": "a"}})
 	if err != nil || m.Revision != 1 {
 		t.Fatalf("PutMembership = %+v, %v", m, err)
 	}
-	m2, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webA, OrgID: org, Vars: map[string]any{"env": "b"}})
+	m2, _, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webA, OrgID: org, Vars: map[string]any{"env": "b"}})
 	if err != nil || m2.Revision != 2 || m2.Vars["env"] != "b" {
 		t.Fatalf("replace = %+v, %v", m2, err)
 	}
@@ -108,10 +108,10 @@ func TestSQLStore(t *testing.T) {
 	if _, err := store.UpdateMembership(ctx, missing); !errors.Is(err, inventory.ErrNotFound) {
 		t.Fatalf("unknown membership: %v", err)
 	}
-	if _, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webB, OrgID: org, Vars: map[string]any{}}); err != nil {
+	if _, _, err := store.PutMembership(ctx, inventory.Membership{GroupID: web.ID, HostID: webB, OrgID: org, Vars: map[string]any{}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PutMembership(ctx, inventory.Membership{GroupID: prod.ID, HostID: webA, OrgID: org, Vars: map[string]any{}}); err != nil {
+	if _, _, err := store.PutMembership(ctx, inventory.Membership{GroupID: prod.ID, HostID: webA, OrgID: org, Vars: map[string]any{}}); err != nil {
 		t.Fatal(err)
 	}
 	members, err := store.ListGroupMembers(ctx, org, web.ID)

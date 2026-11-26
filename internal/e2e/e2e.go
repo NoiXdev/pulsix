@@ -30,7 +30,9 @@ const GoldenPath = "fixtures/inventory.golden.json"
 // three stable shapes. Everything else in the render is deterministic and
 // compared byte for byte.
 var (
-	normalizeHost    = regexp.MustCompile(`"ansible_host":"[^"]*"`)
+	// ansible_host is plain text in the render (decision D7): the inert
+	// form around the address.
+	normalizeHost    = regexp.MustCompile(`"ansible_host":\{"__ansible_unsafe":"[^"]*"\}`)
 	normalizePort    = regexp.MustCompile(`"ansible_port":\d+`)
 	normalizeBastion = regexp.MustCompile(`"ansible_ssh_common_args":"-o ProxyJump=[^"]*"`)
 )
@@ -62,7 +64,7 @@ func NormalizeInventory(raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("normalize inventory: re-encode: %w", err)
 	}
-	out := normalizeHost.ReplaceAll(compact, []byte(`"ansible_host":"`+placeholderHost+`"`))
+	out := normalizeHost.ReplaceAll(compact, []byte(`"ansible_host":{"__ansible_unsafe":"`+placeholderHost+`"}`))
 	out = normalizePort.ReplaceAll(out, []byte(`"ansible_port":`+fmt.Sprint(placeholderPort)))
 	out = normalizeBastion.ReplaceAll(out, []byte(`"ansible_ssh_common_args":"`+placeholderBastion+`"`))
 	return string(out), nil

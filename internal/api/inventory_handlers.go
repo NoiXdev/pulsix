@@ -233,9 +233,9 @@ func registerInventoryRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		g, err := deps.Inventory.UpdateGroup(ctx, scope.OrgID, id, rev, inventory.GroupPatch{
+		g, err := deps.Inventory.UpdateGroupBy(ctx, scope.OrgID, id, rev, inventory.GroupPatch{
 			Name: in.Body.Name, Description: in.Body.Description, ParentID: parent, BastionID: bastion,
-		})
+		}, changeActor(scope))
 		if err != nil {
 			return nil, mapInventoryErr(ctx, err, "")
 		}
@@ -252,7 +252,7 @@ func registerInventoryRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Inventory.DeleteGroup(ctx, scope.OrgID, id); err != nil {
+		if err := deps.Inventory.DeleteGroupBy(ctx, scope.OrgID, id, changeActor(scope)); err != nil {
 			return nil, mapInventoryErr(ctx, err, "")
 		}
 		setAuditObject(ctx, id.String(), "deleted inventory group")

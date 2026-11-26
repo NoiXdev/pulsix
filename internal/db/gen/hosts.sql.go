@@ -751,6 +751,45 @@ func (q *Queries) ListHostsPageSorted(ctx context.Context, arg ListHostsPageSort
 	return items, nil
 }
 
+const listScopeHosts = `-- name: ListScopeHosts :many
+SELECT id, name, zone_id, managed FROM hosts WHERE org_id = $1 ORDER BY name
+`
+
+type ListScopeHostsRow struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	ZoneID  uuid.UUID `json:"zone_id"`
+	Managed bool      `json:"managed"`
+}
+
+// Every host of the organization with only what a scope selects on (id,
+// name, zone, managed): what an inventory change reaches, read inside the
+// change's transaction without the facts.
+func (q *Queries) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]ListScopeHostsRow, error) {
+	rows, err := q.db.Query(ctx, listScopeHosts, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListScopeHostsRow
+	for rows.Next() {
+		var i ListScopeHostsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ZoneID,
+			&i.Managed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listZonesForOrg = `-- name: ListZonesForOrg :many
 SELECT id, org_id, slug, name, created_at, bastion_id FROM zones WHERE org_id = $1 ORDER BY slug
 `

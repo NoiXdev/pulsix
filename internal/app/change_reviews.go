@@ -35,6 +35,7 @@ func WireChangeReviews(d *db.DB, tmpl *templates.Service, rp *repos.Service, pb 
 	rp.SetChangeWatcher(reviewer)
 	pb.SetChangeWatcher(reviewer)
 	inv.SetChangeWatcher(reviewer)
+	hs.SetChangeWatcher(reviewer)
 	sch.SetReviews(reviewer)
 	trg.SetReviews(reviewer)
 	return reviewer

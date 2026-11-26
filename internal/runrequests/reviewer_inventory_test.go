@@ -15,19 +15,18 @@ import (
 	"github.com/noixdev/pulsix/internal/triggers"
 )
 
-// List implements ReviewTemplates: the world's two templates with their
-// limits.
+// List implements ReviewTemplates: the world's two templates, deploy
+// scoped to group scopeA, with their limits.
 func (w *reviewWorld) List(_ context.Context, _ uuid.UUID) ([]templates.Template, error) {
-	group := uuid.Must(uuid.NewV7())
 	return []templates.Template{
-		{ID: w.tmplA, Name: "deploy", Limit: w.limits[w.tmplA], Scope: templates.Scope{GroupID: &group}},
+		{ID: w.tmplA, Name: "deploy", Limit: w.limits[w.tmplA], Scope: templates.Scope{GroupID: &w.scopeA}},
 		{ID: w.tmplB, Name: "cleanup", Limit: w.limits[w.tmplB]},
 	}, nil
 }
 
 // Overlap implements ReviewReach: the hosts each template reaches, as the
 // test set them in overlap; changed records what was asked.
-func (w *reviewWorld) Overlap(_ context.Context, _ uuid.UUID, changed render.Scope, scopes map[uuid.UUID]render.Scope) (map[uuid.UUID][]string, error) {
+func (w *reviewWorld) Overlap(_ context.Context, _ uuid.UUID, changed []render.Scope, scopes map[uuid.UUID]render.Scope) (map[uuid.UUID][]string, error) {
 	w.changed = append(w.changed, changed)
 	out := map[uuid.UUID][]string{}
 	for id := range scopes {
@@ -40,8 +39,9 @@ func (w *reviewWorld) Overlap(_ context.Context, _ uuid.UUID, changed render.Sco
 
 func (w *reviewWorld) groupChange(fields ...assistantchange.Field) assistantchange.Change {
 	token := uuid.Must(uuid.NewV7())
-	return assistantchange.Change{Subject: assistantchange.SubjectInventoryGroup, ID: uuid.Must(uuid.NewV7()), Name: "web",
-		UserID: uuid.Must(uuid.NewV7()), TokenID: &token, Fields: fields}
+	id := uuid.Must(uuid.NewV7())
+	return assistantchange.Change{Subject: assistantchange.SubjectInventoryGroup, ID: id, Name: "web",
+		UserID: uuid.Must(uuid.NewV7()), TokenID: &token, Fields: fields, Reach: &assistantchange.Reach{Group: &id}}
 }
 
 var portChange = assistantchange.Field{Name: "vars.port", Old: 80.0, New: 8080.0}
@@ -61,7 +61,7 @@ func TestAnAssistantsGroupChangePausesWhatRunsOnItsMembers(t *testing.T) {
 	if err := w.reviewer.Changed(ctx, w.org, c); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.changed) != 1 || w.changed[0].GroupID == nil || *w.changed[0].GroupID != c.ID || len(w.changed[0].HostIDs) != 0 {
+	if len(w.changed) != 1 || len(w.changed[0]) != 1 || w.changed[0][0].GroupID == nil || *w.changed[0][0].GroupID != c.ID {
 		t.Fatalf("asked the reach for %+v, want the group", w.changed)
 	}
 	if s := w.schedules[a]; !s.Paused || s.PausedReason != schedules.PausedForReview {
@@ -93,10 +93,11 @@ func TestAnAssistantsMembershipChangePausesWhatRunsOnThatHost(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	c := w.groupChange(portChange)
 	c.Subject, c.HostID, c.HostName = assistantchange.SubjectInventoryMembership, &host, "db1"
+	c.Reach = &assistantchange.Reach{Hosts: []uuid.UUID{host}}
 	if err := w.reviewer.Changed(ctx, w.org, c); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.changed) != 1 || w.changed[0].GroupID != nil || len(w.changed[0].HostIDs) != 1 || w.changed[0].HostIDs[0] != host {
+	if len(w.changed) != 1 || len(w.changed[0]) != 1 || w.changed[0][0].GroupID != nil || len(w.changed[0][0].HostIDs) != 1 || w.changed[0][0].HostIDs[0] != host {
 		t.Fatalf("asked the reach for %+v, want the host", w.changed)
 	}
 	if w.schedules[a].Paused || !w.schedules[b].Paused {
@@ -110,42 +111,77 @@ func TestAnAssistantsMembershipChangePausesWhatRunsOnThatHost(t *testing.T) {
 	}
 }
 
-// The limit decides with the template's scope: a template whose limit
-// keeps none of the reached hosts is not paused, one whose limit cannot be
-// decided is (fail closed). A schedule's own limit replaces the
-// template's, and a trigger that maps its limit from the payload cannot be
-// decided.
-func TestAnInventoryChangeHonoursTheLimit(t *testing.T) {
+// The limit does not narrow the reach (final review I2): a limited run
+// still renders every scoped host of its zones, and a play reads their
+// values through hostvars, so a template whose limit excludes the reached
+// hosts, a schedule with its own limit and a trigger are all paused.
+func TestAnInventoryChangeIgnoresTheLimit(t *testing.T) {
 	w := newReviewWorld()
-	w.overlap = map[uuid.UUID][]string{w.tmplA: {"web1"}, w.tmplB: {"web1"}}
-	w.limits = map[uuid.UUID]string{w.tmplA: "db*", w.tmplB: "~web.*"}
+	w.overlap = map[uuid.UUID][]string{w.tmplA: {"web1"}}
+	w.limits = map[uuid.UUID]string{w.tmplA: "db*"}
 	excluded := w.schedule("db only", w.tmplA, false, "")
-	own := w.schedule("own limit", w.tmplA, false, "")
+	own := w.schedule("own limit elsewhere", w.tmplA, false, "")
 	s := w.schedules[own]
-	limit := "web1"
-	s.Overrides.Limit = &limit
-	w.schedules[own] = s
-	ownElsewhere := w.schedule("own limit elsewhere", w.tmplA, false, "")
-	s = w.schedules[ownElsewhere]
 	other := "db2"
 	s.Overrides.Limit = &other
-	w.schedules[ownElsewhere] = s
-	undecidable := w.schedule("regex", w.tmplB, false, "")
-	plain := w.trigger("plain", &w.tmplA, nil, true)
-	mapped := w.trigger("mapped", &w.tmplA, nil, true)
-	tr := w.triggers[mapped]
-	tr.Mapping.Limit = "$.host"
-	w.triggers[mapped] = tr
+	w.schedules[own] = s
+	hook := w.trigger("plain", &w.tmplA, nil, true)
 	if err := w.reviewer.Changed(ctx, w.org, w.groupChange(portChange)); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[uuid.UUID]bool{excluded: false, own: true, ownElsewhere: false, undecidable: true} {
-		if got := w.schedules[id].Paused; got != want {
-			t.Errorf("schedule %s paused = %v, want %v", w.schedules[id].Name, got, want)
-		}
+	if !w.schedules[excluded].Paused || !w.schedules[own].Paused || w.triggers[hook].Enabled {
+		t.Fatalf("schedules %+v / %+v, trigger %+v: want all stopped", w.schedules[excluded], w.schedules[own], w.triggers[hook])
 	}
-	if !w.triggers[plain].Enabled || w.triggers[mapped].Enabled {
-		t.Errorf("triggers: plain enabled %v (want true), mapped enabled %v (want false)", w.triggers[plain].Enabled, w.triggers[mapped].Enabled)
+}
+
+// A template scoped to a group that held the reached hosts before the
+// change (a host left it, a group moved away) is paused even though its
+// scope no longer selects them (decision D7).
+func TestAnInventoryChangeReachesTheFormerGroupsTemplates(t *testing.T) {
+	w := newReviewWorld()
+	a := w.schedule("nightly", w.tmplA, false, "")
+	b := w.schedule("cleanup", w.tmplB, false, "")
+	host := uuid.Must(uuid.NewV7())
+	c := w.groupChange(assistantchange.Field{Name: "member", Old: "web1", New: nil})
+	c.Subject, c.HostID, c.HostName = assistantchange.SubjectInventoryMembership, &host, "web1"
+	c.Reach = &assistantchange.Reach{Hosts: []uuid.UUID{host}, FormerGroups: []uuid.UUID{w.scopeA}}
+	if err := w.reviewer.Changed(ctx, w.org, c); err != nil {
+		t.Fatal(err)
+	}
+	if !w.schedules[a].Paused || w.schedules[b].Paused {
+		t.Fatalf("schedules %+v / %+v: want only the former group's template paused", w.schedules[a], w.schedules[b])
+	}
+}
+
+// An organization without any schedule or template trigger is answered
+// without reading what the change reaches (final review M2).
+func TestAnInventoryChangeWithoutAutomationReadsNothing(t *testing.T) {
+	w := newReviewWorld()
+	w.reviews.noAutomation = true
+	w.overlap = map[uuid.UUID][]string{w.tmplA: {"web1"}}
+	if err := w.reviewer.Changed(ctx, w.org, w.groupChange(portChange)); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.changed) != 0 || len(w.reviews.rows) != 0 {
+		t.Fatalf("asked %v, %d reviews", w.changed, len(w.reviews.rows))
+	}
+}
+
+// A host an assistant created (or made managed) reaches the runs whose
+// scope selects it.
+func TestAnAssistantsNewHostPausesWhatRunsOnIt(t *testing.T) {
+	w := newReviewWorld()
+	w.overlap = map[uuid.UUID][]string{w.tmplB: {"web9"}}
+	b := w.schedule("cleanup", w.tmplB, false, "")
+	host := uuid.Must(uuid.NewV7())
+	token := uuid.Must(uuid.NewV7())
+	c := assistantchange.Change{Subject: assistantchange.SubjectHost, ID: host, Name: "web9", UserID: uuid.Must(uuid.NewV7()), TokenID: &token,
+		Fields: []assistantchange.Field{{Name: "host", Old: nil, New: "web9"}}, Reach: &assistantchange.Reach{Hosts: []uuid.UUID{host}}}
+	if err := w.reviewer.Changed(ctx, w.org, c); err != nil {
+		t.Fatal(err)
+	}
+	if !w.schedules[b].Paused || !strings.Contains(w.events[0].Summary, "an assistant changed host web9 (host)") {
+		t.Fatalf("schedule %+v, events %+v", w.schedules[b], w.events)
 	}
 }
 
@@ -186,6 +222,7 @@ func TestAReviewPictureShowsTheInventoryChange(t *testing.T) {
 	host := uuid.Must(uuid.NewV7())
 	c := w.groupChange(assistantchange.Field{Name: "vars.pw", Old: map[string]any{"$secret": "set"}, New: nil})
 	c.Subject, c.HostID, c.HostName = assistantchange.SubjectInventoryMembership, &host, "web1"
+	c.Reach = &assistantchange.Reach{Hosts: []uuid.UUID{host}}
 	if err := w.reviewer.Changed(ctx, w.org, c); err != nil {
 		t.Fatal(err)
 	}

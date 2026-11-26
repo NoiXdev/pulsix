@@ -55,9 +55,24 @@ func TestSQLStoreKeepsAssistantMarks(t *testing.T) {
 		t.Fatalf("UpdateGroup without marks = %+v, %v", got, err)
 	}
 
-	m, err := store.PutMembership(ctx, inventory.Membership{GroupID: g.ID, HostID: host, OrgID: org, Vars: map[string]any{"b": "v"}, AssistantKeys: []string{"b"}})
-	if err != nil || !slices.Equal(m.AssistantKeys, []string{"b"}) {
-		t.Fatalf("PutMembership = %+v, %v", m, err)
+	// A caller passing no marks at all (nil) through the generated query
+	// stores none: the column is NOT NULL and the SQL says '{}'.
+	if _, err := q.UpsertInventoryMembership(ctx, gen.UpsertInventoryMembershipParams{GroupID: g.ID, HostID: host, OrgID: org, Vars: []byte(`{}`)}); err != nil {
+		t.Fatalf("upsert without marks: %v", err)
+	}
+	if err := store.DeleteMembership(ctx, org, g.ID, host); err != nil {
+		t.Fatal(err)
+	}
+	// The upsert says whether the host joined (final review M1).
+	m, joined, err := store.PutMembership(ctx, inventory.Membership{GroupID: g.ID, HostID: host, OrgID: org, Vars: map[string]any{"b": "v"}, AssistantKeys: []string{"b"}})
+	if err != nil || !joined || !slices.Equal(m.AssistantKeys, []string{"b"}) {
+		t.Fatalf("PutMembership = %+v, joined %v, %v", m, joined, err)
+	}
+	if m, joined, err = store.PutMembership(ctx, m); err != nil || joined {
+		t.Fatalf("PutMembership again = %+v, joined %v, %v", m, joined, err)
+	}
+	if locked, err := store.GetMembershipForUpdate(ctx, org, g.ID, host); err != nil || locked.Revision != m.Revision {
+		t.Fatalf("GetMembershipForUpdate = %+v, %v", locked, err)
 	}
 	m.AssistantKeys = nil
 	if m, err = store.UpdateMembership(ctx, m); err != nil || m.AssistantKeys == nil || len(m.AssistantKeys) != 0 {

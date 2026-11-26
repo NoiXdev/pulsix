@@ -181,6 +181,36 @@ func (q *Queries) GetInventoryMembership(ctx context.Context, arg GetInventoryMe
 	return i, err
 }
 
+const getInventoryMembershipForUpdate = `-- name: GetInventoryMembershipForUpdate :one
+SELECT group_id, host_id, org_id, vars, revision, created_at, updated_at, assistant_keys FROM inventory_memberships WHERE org_id = $1 AND group_id = $2 AND host_id = $3
+FOR NO KEY UPDATE
+`
+
+type GetInventoryMembershipForUpdateParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	GroupID uuid.UUID `json:"group_id"`
+	HostID  uuid.UUID `json:"host_id"`
+}
+
+// The membership locked until the write's transaction ends, so the values
+// a change replaces are the ones it read (FOR NO KEY UPDATE: the lock C2
+// takes on schedules and triggers).
+func (q *Queries) GetInventoryMembershipForUpdate(ctx context.Context, arg GetInventoryMembershipForUpdateParams) (InventoryMembership, error) {
+	row := q.db.QueryRow(ctx, getInventoryMembershipForUpdate, arg.OrgID, arg.GroupID, arg.HostID)
+	var i InventoryMembership
+	err := row.Scan(
+		&i.GroupID,
+		&i.HostID,
+		&i.OrgID,
+		&i.Vars,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssistantKeys,
+	)
+	return i, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT m.group_id, m.host_id, m.org_id, m.vars, m.revision, m.created_at, m.updated_at, m.assistant_keys, h.name AS host_name
 FROM inventory_memberships m
@@ -365,8 +395,8 @@ func (q *Queries) ListInventoryMemberships(ctx context.Context, orgID uuid.UUID)
 const updateInventoryGroup = `-- name: UpdateInventoryGroup :one
 UPDATE inventory_groups
 SET parent_id = $1, name = $2, description = $3, schema = $4,
-    vars = $5, bastion_id = $6, assistant_keys = $7,
-    assistant_default_keys = $8, revision = revision + 1, updated_at = now()
+    vars = $5, bastion_id = $6, assistant_keys = COALESCE($7::text[], '{}'),
+    assistant_default_keys = COALESCE($8::text[], '{}'), revision = revision + 1, updated_at = now()
 WHERE org_id = $9 AND id = $10 AND revision = $11
 RETURNING id, org_id, parent_id, name, description, schema, vars, bastion_id, revision, created_at, updated_at, assistant_keys, assistant_default_keys
 `
@@ -422,7 +452,7 @@ func (q *Queries) UpdateInventoryGroup(ctx context.Context, arg UpdateInventoryG
 
 const updateInventoryMembership = `-- name: UpdateInventoryMembership :one
 UPDATE inventory_memberships
-SET vars = $1, assistant_keys = $2, revision = revision + 1, updated_at = now()
+SET vars = $1, assistant_keys = COALESCE($2::text[], '{}'), revision = revision + 1, updated_at = now()
 WHERE org_id = $3 AND group_id = $4 AND host_id = $5 AND revision = $6
 RETURNING group_id, host_id, org_id, vars, revision, created_at, updated_at, assistant_keys
 `
@@ -461,11 +491,11 @@ func (q *Queries) UpdateInventoryMembership(ctx context.Context, arg UpdateInven
 
 const upsertInventoryMembership = `-- name: UpsertInventoryMembership :one
 INSERT INTO inventory_memberships (group_id, host_id, org_id, vars, assistant_keys)
-VALUES ($1, $2, $3, $4, $5)
+VALUES ($1, $2, $3, $4, COALESCE($5::text[], '{}'))
 ON CONFLICT (group_id, host_id) DO UPDATE
 SET vars = EXCLUDED.vars, assistant_keys = EXCLUDED.assistant_keys,
     revision = inventory_memberships.revision + 1, updated_at = now()
-RETURNING group_id, host_id, org_id, vars, revision, created_at, updated_at, assistant_keys
+RETURNING inventory_memberships.group_id, inventory_memberships.host_id, inventory_memberships.org_id, inventory_memberships.vars, inventory_memberships.revision, inventory_memberships.created_at, inventory_memberships.updated_at, inventory_memberships.assistant_keys, (xmax = 0)::boolean AS inserted
 `
 
 type UpsertInventoryMembershipParams struct {
@@ -476,7 +506,22 @@ type UpsertInventoryMembershipParams struct {
 	AssistantKeys []string  `json:"assistant_keys"`
 }
 
-func (q *Queries) UpsertInventoryMembership(ctx context.Context, arg UpsertInventoryMembershipParams) (InventoryMembership, error) {
+type UpsertInventoryMembershipRow struct {
+	GroupID       uuid.UUID `json:"group_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	OrgID         uuid.UUID `json:"org_id"`
+	Vars          []byte    `json:"vars"`
+	Revision      int64     `json:"revision"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	AssistantKeys []string  `json:"assistant_keys"`
+	Inserted      bool      `json:"inserted"`
+}
+
+// inserted says whether the row is new (a host joining the group) or an
+// existing membership whose values were replaced. A nil mark list stores
+// none: the column is NOT NULL.
+func (q *Queries) UpsertInventoryMembership(ctx context.Context, arg UpsertInventoryMembershipParams) (UpsertInventoryMembershipRow, error) {
 	row := q.db.QueryRow(ctx, upsertInventoryMembership,
 		arg.GroupID,
 		arg.HostID,
@@ -484,7 +529,7 @@ func (q *Queries) UpsertInventoryMembership(ctx context.Context, arg UpsertInven
 		arg.Vars,
 		arg.AssistantKeys,
 	)
-	var i InventoryMembership
+	var i UpsertInventoryMembershipRow
 	err := row.Scan(
 		&i.GroupID,
 		&i.HostID,
@@ -494,6 +539,7 @@ func (q *Queries) UpsertInventoryMembership(ctx context.Context, arg UpsertInven
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AssistantKeys,
+		&i.Inserted,
 	)
 	return i, err
 }

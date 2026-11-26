@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -164,20 +165,10 @@ func TestAnAssistantsGroupChangePausesWhatRunsOnItsMembers(t *testing.T) {
 }
 
 // A membership change reaches only its host: the assistant's change of
-// web-2's values in group db pauses template other, not deploy. A host
-// joining or leaving a group, with the same token, pauses nothing.
+// web-2's values in group db pauses template other, not deploy.
 func TestAnAssistantsMembershipChangePausesOnlyWhatRunsOnThatHost(t *testing.T) {
 	f := newInventoryReviewFixture(t, "inv-review-member")
-	member := func(g uuid.UUID, host uuid.UUID) string { return f.groupsPath(g) + "/members/" + host.String() }
-	if resp := f.s.AssistantDo(t, http.MethodPut, f.invTok, member(f.dbGroup.ID, f.hostA), "", map[string]any{"vars": map[string]any{"note": "joined"}}); resp.Code != http.StatusOK {
-		t.Fatalf("join = %d %s", resp.Code, resp.Body)
-	}
-	if resp := f.s.AssistantDo(t, http.MethodDelete, f.invTok, member(f.dbGroup.ID, f.hostA), "", nil); resp.Code != http.StatusOK && resp.Code != http.StatusNoContent {
-		t.Fatalf("leave = %d %s", resp.Code, resp.Body)
-	}
-	f.wantRunning(t, "after a host joined and left")
-
-	if resp := f.s.AssistantDo(t, http.MethodPut, f.invTok, member(f.dbGroup.ID, f.hostB), "", map[string]any{"vars": map[string]any{"note": "changed"}}); resp.Code != http.StatusOK {
+	if resp := f.s.AssistantDo(t, http.MethodPut, f.invTok, f.memberPath(f.dbGroup.ID, f.hostB), "", map[string]any{"vars": map[string]any{"note": "changed"}}); resp.Code != http.StatusOK {
 		t.Fatalf("change = %d %s", resp.Code, resp.Body)
 	}
 	if paused, reason := f.scheduleState(t, f.other); !paused || reason != schedules.PausedForReview {
@@ -189,7 +180,151 @@ func TestAnAssistantsMembershipChangePausesOnlyWhatRunsOnThatHost(t *testing.T) 
 	if enabled, _ := f.triggerState(t, f.hook); !enabled {
 		t.Fatal("deploy's trigger disabled")
 	}
-	if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 1 || !strings.Contains(ev[0], "the values of host web-2 in inventory group db (vars.note)") {
+	if ev := f.events(t, "pauseScheduleForReview"); len(ev) != 1 || !strings.Contains(ev[0], "host web-2 in inventory group db (vars.note)") {
 		t.Fatalf("events = %v", ev)
 	}
+}
+
+func (f inventoryReviewFixture) memberPath(g, host uuid.UUID) string {
+	return f.groupsPath(g) + "/members/" + host.String()
+}
+
+// scheduleOn adds a template with scope and a schedule of it; it returns
+// the schedule.
+func (f inventoryReviewFixture) scheduleOn(t *testing.T, name string, scope templates.Scope) uuid.UUID {
+	t.Helper()
+	tmpl, err := f.s.Deps.Templates.Create(f.scoped, f.orgID, templates.CreateInput{Name: name, PlaybookID: f.playbook, Scope: scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := f.s.Deps.Schedules.Create(f.scoped, f.orgID, f.operator, schedules.Input{
+		TemplateID: tmpl.ID, Name: name + "-nightly", Mode: schedules.ModeCron, Cron: "0 5 * * *", Timezone: "UTC",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.ID
+}
+
+func (f inventoryReviewFixture) wantPaused(t *testing.T, when string, want map[uuid.UUID]bool) {
+	t.Helper()
+	for id, w := range want {
+		if paused, _ := f.scheduleState(t, id); paused != w {
+			t.Errorf("%s: schedule %s paused = %v, want %v", when, id, paused, w)
+		}
+	}
+}
+
+func (f inventoryReviewFixture) assistantOK(t *testing.T, method, path, ifMatch string, body any) {
+	t.Helper()
+	if resp := f.s.AssistantDo(t, method, f.invTok, path, ifMatch, body); resp.Code != http.StatusOK && resp.Code != http.StatusCreated && resp.Code != http.StatusNoContent {
+		t.Fatalf("%s %s = %d %s", method, path, resp.Code, resp.Body)
+	}
+}
+
+func revOf(rev int64) string { return `"` + strconv.FormatInt(rev, 10) + `"` }
+
+// TestAnAssistantsInventoryChurnPausesWhatItReaches (decision D7): an
+// assistant's host joining or leaving a group, its move of a group and its
+// managed host each pause what runs on the hosts that then receive other
+// values or reach other hosts; the bypasses the final review named are
+// closed. A template's limit does not narrow it (final review I2), and a
+// schema edit that drops a value pauses like a value change (I3).
+func TestAnAssistantsInventoryChurnPausesWhatItReaches(t *testing.T) {
+	t.Run("remove then add with new values", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-swap")
+		f.assistantOK(t, http.MethodDelete, f.memberPath(f.dbGroup.ID, f.hostB), "", nil)
+		f.wantPaused(t, "after the removal", map[uuid.UUID]bool{f.other: true, f.active: false})
+		f.assistantOK(t, http.MethodPut, f.memberPath(f.dbGroup.ID, f.hostB), "", map[string]any{"vars": map[string]any{"note": "swapped"}})
+		reviews := f.reviews(t)
+		if len(reviews[f.other]) != 1 || len(reviews[f.active]) != 0 {
+			t.Fatalf("reviews = %v", reviews)
+		}
+		d := f.detail(t, strings.SplitN(reviews[f.other][0], ":", 2)[0])
+		if n := strings.Count(string(d.Picture), `"subject":"inventory_membership"`); n != 2 || !strings.Contains(string(d.Picture), `"field":"member"`) {
+			t.Fatalf("the review lists %d membership changes: %s", n, d.Picture)
+		}
+	})
+	t.Run("values on an empty group, then members", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-empty")
+		fresh, err := f.s.Deps.Inventory.CreateGroup(f.scoped, f.orgID, inventory.GroupInput{Name: "fresh"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fresh, _, err = f.s.Deps.Inventory.SetSchema(f.scoped, f.orgID, fresh.ID, fresh.Revision,
+			schema.Schema{Fields: []schema.Field{{Name: "port", Type: schema.TypeInt}}}); err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPut, f.groupsPath(fresh.ID)+"/vars", revOf(fresh.Revision), map[string]any{"vars": map[string]any{"port": 1}})
+		f.wantRunning(t, "after values on an empty group")
+		f.assistantOK(t, http.MethodPut, f.memberPath(fresh.ID, f.hostA), "", map[string]any{"vars": map[string]any{}})
+		f.wantPaused(t, "after web-1 joined", map[uuid.UUID]bool{f.active: true, f.other: false})
+	})
+	t.Run("update_group moves a group", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-move")
+		underWeb := f.scheduleOn(t, "web-wide", templates.Scope{GroupID: &f.web.ID})
+		underDB := f.scheduleOn(t, "db-wide", templates.Scope{GroupID: &f.dbGroup.ID})
+		f.wantRunning(t, "before the move")
+		eu, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.orgID, f.webEU.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPatch, f.groupsPath(eu.ID), revOf(eu.Revision), map[string]any{"name": "web_eu", "parent_id": f.dbGroup.ID.String()})
+		// web-1 leaves web's line (web-wide no longer reaches it) and joins
+		// db's (db-wide now does; deploy's run receives db's values).
+		f.wantPaused(t, "after the move", map[uuid.UUID]bool{underWeb: true, underDB: true, f.active: true, f.other: false})
+	})
+	t.Run("create_host into a scoped group", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-host")
+		everywhere := f.scheduleOn(t, "everywhere", templates.Scope{})
+		dbWide := f.scheduleOn(t, "db-wide", templates.Scope{GroupID: &f.dbGroup.ID})
+		resp := f.s.AssistantDo(t, http.MethodPost, f.invTok, f.orgPath()+"/hosts", "",
+			map[string]any{"name": "db-9", "address": "10.0.9.9", "zone_id": f.zoneA.String(), "managed": true})
+		if resp.Code != http.StatusCreated && resp.Code != http.StatusOK {
+			t.Fatalf("create host = %d %s", resp.Code, resp.Body)
+		}
+		f.wantPaused(t, "after the host was created", map[uuid.UUID]bool{everywhere: true, dbWide: false, f.active: false, f.other: false})
+		var created struct {
+			Host struct {
+				ID string `json:"id"`
+			} `json:"host"`
+		}
+		if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil || created.Host.ID == "" {
+			t.Fatalf("created = %s (%v)", resp.Body, err)
+		}
+		f.assistantOK(t, http.MethodPut, f.groupsPath(f.dbGroup.ID)+"/members/"+created.Host.ID, "", map[string]any{"vars": map[string]any{}})
+		f.wantPaused(t, "after it joined db", map[uuid.UUID]bool{dbWide: true, f.other: false})
+		if resp := f.s.AssistantDo(t, http.MethodPost, f.invTok, f.orgPath()+"/hosts", "",
+			map[string]any{"name": "db-10", "address": "{{ lookup('pipe','id') }}", "zone_id": f.zoneA.String()}); resp.Code < 400 {
+			t.Fatalf("a templated address = %d %s", resp.Code, resp.Body)
+		}
+	})
+	t.Run("a limit does not narrow the reach", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-limit")
+		if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE job_templates SET "limit" = 'db*' WHERE id = $1`, f.templateID); err != nil {
+			t.Fatal(err)
+		}
+		g, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.orgID, f.web.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPut, f.groupsPath(f.web.ID)+"/vars", revOf(g.Revision), map[string]any{"vars": map[string]any{"port": 81}})
+		f.wantPaused(t, "after the change", map[uuid.UUID]bool{f.active: true, f.other: false})
+	})
+	t.Run("a schema edit that drops a value", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-d7-schema")
+		g, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.orgID, f.web.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.assistantOK(t, http.MethodPut, f.groupsPath(f.web.ID)+"/schema", revOf(g.Revision), map[string]any{"schema": map[string]any{"fields": []any{
+			map[string]any{"name": "port", "type": "int", "active": false},
+			map[string]any{"name": "pw", "type": "secret"},
+			map[string]any{"name": "note", "type": "string", "scope": "host"},
+		}}})
+		f.wantPaused(t, "after the edit", map[uuid.UUID]bool{f.active: true, f.other: false})
+		if ev := f.events(t, "pauseScheduleForReview"); len(ev) == 0 || !strings.Contains(ev[0], "vars.port") {
+			t.Fatalf("events = %v", ev)
+		}
+	})
 }

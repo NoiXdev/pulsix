@@ -154,18 +154,19 @@ func (s *SQLStore) MemberCounts(ctx context.Context, orgID uuid.UUID) (map[uuid.
 	return out, nil
 }
 
-func (s *SQLStore) PutMembership(ctx context.Context, m Membership) (Membership, error) {
+func (s *SQLStore) PutMembership(ctx context.Context, m Membership) (Membership, bool, error) {
 	vars, err := json.Marshal(m.Vars)
 	if err != nil {
-		return Membership{}, fmt.Errorf("encode membership vars: %w", err)
+		return Membership{}, false, fmt.Errorf("encode membership vars: %w", err)
 	}
 	row, err := s.q.UpsertInventoryMembership(ctx, gen.UpsertInventoryMembershipParams{
 		GroupID: m.GroupID, HostID: m.HostID, OrgID: m.OrgID, Vars: vars, AssistantKeys: marks(m.AssistantKeys),
 	})
 	if err != nil {
-		return Membership{}, mapWriteErr(err)
+		return Membership{}, false, mapWriteErr(err)
 	}
-	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	saved, err := toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	return saved, row.Inserted, err
 }
 
 func (s *SQLStore) UpdateMembership(ctx context.Context, m Membership) (Membership, error) {
@@ -190,6 +191,16 @@ func (s *SQLStore) UpdateMembership(ctx context.Context, m Membership) (Membersh
 
 func (s *SQLStore) GetMembership(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error) {
 	row, err := s.q.GetInventoryMembership(ctx, gen.GetInventoryMembershipParams{OrgID: orgID, GroupID: groupID, HostID: hostID})
+	if err != nil {
+		return Membership{}, mapErr(err)
+	}
+	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+}
+
+// GetMembershipForUpdate implements Store: GetMembership, the row locked
+// until the transaction ends.
+func (s *SQLStore) GetMembershipForUpdate(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error) {
+	row, err := s.q.GetInventoryMembershipForUpdate(ctx, gen.GetInventoryMembershipForUpdateParams{OrgID: orgID, GroupID: groupID, HostID: hostID})
 	if err != nil {
 		return Membership{}, mapErr(err)
 	}

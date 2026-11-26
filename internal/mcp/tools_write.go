@@ -163,11 +163,11 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				return passGet(ctx, c, nil, "/zones")
 			}),
-		define("create_host", "Create host", "Add a host to the inventory.",
+		define("create_host", "Create host", "Add a host to the inventory. The address must be an IP address or a host name. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostCreateArgs) (any, error) {
 				return send(ctx, c, http.MethodPost, in, "", "/hosts")
 			}),
-		define("update_host", "Update host", "Change a host's name, address, zone, managed, monitored or kind. Fields: "+strings.Join(hostKeys, ", ")+".",
+		define("update_host", "Update host", "Change a host's name, address, zone, managed, monitored or kind. Fields: "+strings.Join(hostKeys, ", ")+". The address must be an IP address or a host name. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "host", hostKeys, in.updateArgs, nil, true, "/hosts/%s", in.HostID)
 			}),
@@ -189,7 +189,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupCreateArgs) (any, error) {
 				return send(ctx, c, http.MethodPost, in, "", "/inventory/groups")
 			}),
-		define("update_group", "Update group", "Change a group's name, description, parent or jump host. Fields: "+strings.Join(groupKeys, ", ")+".",
+		define("update_group", "Update group", "Change a group's name, description, parent or jump host. Fields: "+strings.Join(groupKeys, ", ")+". "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "group", groupKeys, in.updateArgs, nil, true, "/inventory/groups/%s", in.GroupID)
 			}),
@@ -266,7 +266,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberVarsArgs) (any, error) {
 				return putMember(ctx, c, in.GroupID, in.HostID, in.Vars, `"`+strconv.FormatInt(in.Revision, 10)+`"`)
 			}),
-		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays.",
+		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberRemoveArgs) (any, error) {
 				return send(ctx, c, http.MethodDelete, nil, "", "/inventory/groups/%s/members/%s", in.GroupID, in.HostID)
 			}),
@@ -318,7 +318,7 @@ const plainTextValues = "Every value you set or change reaches a run as plain te
 
 // inventoryPauses tells the assistant what its change of the inventory's
 // values does to what runs unattended (decision D6).
-const inventoryPauses = "A change of a group's values or schema defaults, or of an existing member's values, pauses every schedule and disables every webhook trigger whose runs reach a host that receives them (a group: its members and its subgroups' members), or that start such a run as a follow-up, until a person approves the review request each gets; a host joining or leaving a group pauses nothing. The answer does not list them, list_run_requests does."
+const inventoryPauses = "Your change pauses every schedule and disables every webhook trigger whose runs then reach other hosts or receive other values, or that start such a run as a follow-up, until a person approves the review request each gets: a change of a group's values or schema (defaults, and any edit that changes the values a run receives), of a member's values, a host joining or leaving a group, a group moving or deleted with its members, and a managed host you create or make managed. A run's limit does not narrow this. The answer does not list them, list_run_requests does."
 
 // templateSecrets applies the secret rules to a merged template body: the
 // stored schema's secret fields keep their type, and extra vars pass the

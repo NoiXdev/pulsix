@@ -27,6 +27,10 @@ func (f fakeMembers) ListMemberships(context.Context, uuid.UUID) ([]inventory.Me
 
 type fakeAllHosts struct{ hosts []hosts.Host }
 
+func (f fakeAllHosts) ListScopeHosts(ctx context.Context, org uuid.UUID) ([]hosts.Host, error) {
+	return f.ListAllHosts(ctx, org)
+}
+
 func (f fakeAllHosts) ListAllHosts(context.Context, uuid.UUID) ([]hosts.Host, error) {
 	return f.hosts, nil
 }

@@ -216,6 +216,8 @@ export const enInventory = {
     badge: 'assistant values',
     defaultBadge: 'assistant default',
     accept: 'Accept as live',
+    /** Accept waits while the form shows something else than the stored value (final review M3). */
+    acceptEdited: 'Save or discard your edit before accepting the stored value',
     acceptFor: (key: string) => `Accept ${key} as live`,
     accepted: (key: string) => `${key} is live now`,
     acceptFailed: 'Accepting failed',
