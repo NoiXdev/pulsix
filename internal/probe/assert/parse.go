@@ -27,10 +27,16 @@ var namePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 // fraction.
 var numberPattern = regexp.MustCompile(`^[+-]?[0-9]+(\.[0-9]+)?$`)
 
+// ValidName reports whether name may name an entry's item.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
+
+// Parse parses one entry of an http check (the HTTP dialect).
+func Parse(entry string) (Assertion, error) { return HTTP.Parse(entry) }
+
 // Parse parses one entry, name=expression with an optional @warn or
-// @crit. Its error says what is wrong, quoting only the operator's own
-// entry.
-func Parse(entry string) (Assertion, error) {
+// @crit, in the dialect d. Its error says what is wrong, quoting only the
+// operator's own entry.
+func (d Dialect) Parse(entry string) (Assertion, error) {
 	switch {
 	case len(entry) > MaxEntryLen:
 		return Assertion{}, fmt.Errorf("an assertion is at most %d bytes", MaxEntryLen)
@@ -43,7 +49,7 @@ func Parse(entry string) (Assertion, error) {
 	if !ok || !namePattern.MatchString(name) {
 		return Assertion{}, errors.New("the name before = must be 1 to 64 letters, digits, '_', '.' or '-'")
 	}
-	p := &parser{s: expr}
+	p := &parser{s: expr, d: d}
 	a, err := p.assertion()
 	if err != nil {
 		return Assertion{}, err
@@ -56,6 +62,7 @@ func Parse(entry string) (Assertion, error) {
 type parser struct {
 	s string
 	i int
+	d Dialect
 }
 
 func (p *parser) spaces() {
@@ -121,13 +128,11 @@ func (p *parser) subject(a *Assertion) error {
 	}
 	word := p.word(isLetter)
 	s := Subject(word)
-	known := []Subject{SubjectStatus, SubjectResponseMS, SubjectTTFBMS, SubjectSize, SubjectRedirects,
-		SubjectCertDays, SubjectCertIssuer, SubjectBody, SubjectHeader, SubjectJSON, SubjectHTML}
-	if !slices.Contains(known, s) {
+	if !p.d.knows(s) {
 		if word == "" {
 			word = p.rest()
 		}
-		return fmt.Errorf("unknown subject %q", word)
+		return fmt.Errorf("unknown subject %q (%s takes %s)", word, p.d.plugin, p.d.subjectList())
 	}
 	hasArg := !p.done() && p.s[p.i] == '('
 	switch {
@@ -180,6 +185,13 @@ func compileArg(a *Assertion, s Subject, arg string) error {
 			return fmt.Errorf("the JSONPath of json(…) is not in Pulsix's supported subset (see the docs): %w", err)
 		}
 		a.path = path
+	case SubjectAnswer:
+		switch {
+		case strings.TrimSpace(arg) == "":
+			return errors.New("the answer of answer(…) must not be empty")
+		case len(arg) > MaxAnswerLen:
+			return fmt.Errorf("the answer of answer(…) must be at most %d bytes", MaxAnswerLen)
+		}
 	case SubjectHTML:
 		switch {
 		case strings.TrimSpace(arg) == "":
