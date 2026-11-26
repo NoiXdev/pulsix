@@ -93,6 +93,9 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 	if err != nil {
 		return errObs(fmt.Errorf("mysql: %w", err)), nil
 	}
+	if settings, err = settings.withTLS(); err != nil {
+		return errObs(fmt.Errorf("mysql: %w", err)), nil
+	}
 
 	settings.queryTimeout = p.queryTimeout
 	timeout := p.timeout

@@ -53,19 +53,21 @@ var flavors = []flavor{
 const rootPassword = "root-pw"
 
 // startServer runs fl's image and returns the host and port, waiting until a
-// root login works (the image's init phase restarts the server).
-func startServer(t *testing.T, fl flavor) (host, port string) {
+// root login works (the image's init phase restarts the server). opts
+// adjust the request (files, server options).
+func startServer(t *testing.T, fl flavor, opts ...func(*testcontainers.ContainerRequest)) (host, port string) {
 	t.Helper()
 	ctx := context.Background()
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        fl.image,
-			ExposedPorts: []string{"3306/tcp"},
-			Env:          map[string]string{fl.rootEnv: rootPassword},
-			WaitingFor:   wait.ForListeningPort("3306/tcp").WithStartupTimeout(120 * time.Second),
-		},
-		Started: true,
-	})
+	req := testcontainers.ContainerRequest{
+		Image:        fl.image,
+		ExposedPorts: []string{"3306/tcp"},
+		Env:          map[string]string{fl.rootEnv: rootPassword},
+		WaitingFor:   wait.ForListeningPort("3306/tcp").WithStartupTimeout(120 * time.Second),
+	}
+	for _, o := range opts {
+		o(&req)
+	}
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	if err != nil {
 		t.Fatalf("start %s: %v", fl.image, err)
 	}
