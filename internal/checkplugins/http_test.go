@@ -70,7 +70,7 @@ func TestValidateHTTPMessages(t *testing.T) {
 		params map[string]any
 		want   string
 	}{
-		{httpOK(map[string]any{"method": "HEAD", "json_values": []any{"a=$.a"}}), "http: json_values needs method GET: a HEAD response has no body"},
+		{httpOK(map[string]any{"method": "HEAD", "json_values": []any{"a=$.a"}}), "http: json_values needs a method other than HEAD: a HEAD response has no body"},
 		{httpOK(map[string]any{"json_values": []any{"a=$.a", "b=$.b", "a=$.c"}}), `http: json_values names "a" twice`},
 		{httpOK(map[string]any{"json_values": []any{"a b=$.a"}}), "http: json_values entries must be name=JSONPath, the name 1 to 64 letters, digits, '_', '.' or '-'"},
 		{httpOK(map[string]any{"json_values": []any{"a=.a"}}), "http: json_values entries must be name=JSONPath, the path starting with $ and at most 512 bytes"},
@@ -113,7 +113,7 @@ func TestHTTPDescriptor(t *testing.T) {
 		names = append(names, p.Name)
 		byName[p.Name] = p
 	}
-	want := []string{"url", "method", "secret", "body_contains", "json_values", "assertions", "timeout_s", "follow_redirects", "verify_tls", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}
+	want := []string{"url", "method", "headers", "body", "content_type", "secret", "body_contains", "json_values", "assertions", "timeout_s", "follow_redirects", "verify_tls", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("params = %v, want %v", names, want)
 	}
@@ -346,7 +346,7 @@ func TestValidateHTTPAssertionMessages(t *testing.T) {
 			`http: assertions entries must be name=assertion such as ok=status == 200 (see the docs): "ok=status = 200": "=" is not an operator of status`},
 		{httpOK(map[string]any{"assertions": []any{"ok=status == 200", "b=status < 500", "ok=size > 1"}}), `http: assertions names "ok" twice`},
 		{httpOK(map[string]any{"json_values": []any{"ok=$.ok"}, "assertions": []any{"ok=status == 200"}}), `http: json_values and assertions both name "ok"`},
-		{httpOK(map[string]any{"method": "HEAD", "assertions": []any{"ok=status == 200", "s=size > 0"}}), `http: assertion "s" reads the body and needs method GET: a HEAD response has no body`},
+		{httpOK(map[string]any{"method": "HEAD", "assertions": []any{"ok=status == 200", "s=size > 0"}}), `http: assertion "s" reads the body and needs a method other than HEAD: a HEAD response has no body`},
 	}
 	for _, tc := range cases {
 		err := checkplugins.Validate("http", tc.params)

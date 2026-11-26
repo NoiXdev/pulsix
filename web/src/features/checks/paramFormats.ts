@@ -359,6 +359,54 @@ function uuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
 }
 
+// ---------------------------------------------------------------------------
+// The http check's request (backlog 3.84), internal/probe/httpreq's rules.
+// ---------------------------------------------------------------------------
+
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const HEADER_NAME = new RegExp(`^${TOKEN}$`);
+
+/** The headers the probe or its transport controls. */
+const RESERVED_HEADERS: ReadonlySet<string> = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'user-agent', 'keep-alive', 'proxy-connection',
+  'te', 'trailer', 'upgrade', 'expect', 'accept-encoding',
+]);
+
+/** The headers that carry credentials: the check's secret sends them. */
+const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(['authorization', 'proxy-authorization', 'cookie']);
+
+/** headerValueOK is httpguts.ValidHeaderFieldValue: no control character
+ * below space other than tab, and no DEL; anything from U+0080 on is
+ * obs-text bytes to Go. */
+function headerValueOK(s: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u0008\u000a-\u001f\u007f]/.test(s);
+}
+
+/** httpHeaderProblem names why a headers entry is refused: 'httpHeader'
+ * for its shape or value, 'httpHeaderReserved', 'httpHeaderContentType'
+ * or 'httpHeaderCredentials' for its name; null when it may be sent. */
+export function httpHeaderProblem(s: string): string | null {
+  const colon = s.indexOf(':');
+  if (colon < 0) return 'httpHeader';
+  const name = s.slice(0, colon);
+  if (name.length > 128 || !HEADER_NAME.test(name) || !headerValueOK(s.slice(colon + 1))) return 'httpHeader';
+  const lower = name.toLowerCase();
+  if (RESERVED_HEADERS.has(lower)) return 'httpHeaderReserved';
+  if (lower === 'content-type') return 'httpHeaderContentType';
+  if (CREDENTIAL_HEADERS.has(lower)) return 'httpHeaderCredentials';
+  return null;
+}
+
+const QUOTED = '"(?:[^"\\\\\u0000-\u0008\u000a-\u001f\u007f]|\\\\[^\u0000-\u0008\u000a-\u001f\u007f])*"';
+const MEDIA_TYPE = new RegExp(`^${TOKEN}/${TOKEN}(?:[ \\t]*;[ \\t]*${TOKEN}=(?:${TOKEN}|${QUOTED}))*$`);
+
+/** mediaType: http's content_type, type/subtype with optional
+ * ;name=value parameters (a token or a quoted string). */
+function mediaType(s: string): boolean {
+  return MEDIA_TYPE.test(s);
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -376,6 +424,8 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   jsonValue,
   assertion,
   uuid,
+  httpHeader: (s) => httpHeaderProblem(s) === null,
+  mediaType,
 };
 
 /** formatValid reports whether s passes the named format. An unknown
@@ -391,5 +441,6 @@ export function formatValid(format: string, s: string): boolean {
 export function formatProblem(format: string, s: string): string | null {
   if (formatValid(format, s)) return null;
   if (format === 'devicePath' && hasControl(s)) return 'noControl';
+  if (format === 'httpHeader') return httpHeaderProblem(s) ?? format;
   return format;
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/jpath"
 	"github.com/noixdev/pulsix/internal/probe/assert"
+	"github.com/noixdev/pulsix/internal/probe/httpreq"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -82,6 +83,14 @@ const (
 	// braces or urn prefix) — the id of a monitoring group in a check's
 	// vantage_groups (backlog 3.13a).
 	FormatUUID Format = "uuid"
+	// FormatHTTPHeader: one entry of http's headers (backlog 3.84), "Name:
+	// value" as internal/probe/httpreq reads it: the name a token, not one
+	// the probe controls nor one that carries credentials, the value
+	// without control characters other than tab.
+	FormatHTTPHeader Format = "httpHeader"
+	// FormatMediaType: http's content_type (backlog 3.84), type/subtype
+	// with optional ;name=value parameters (internal/probe/httpreq).
+	FormatMediaType Format = "mediaType"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -92,6 +101,7 @@ func Formats() []Format {
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
+		FormatHTTPHeader, FormatMediaType,
 	}
 }
 
@@ -147,6 +157,10 @@ func (f Format) problem(s string) string {
 		if id, err := uuid.Parse(s); err != nil || id.String() != s {
 			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"
 		}
+	case FormatHTTPHeader:
+		return httpreq.HeaderProblem(s)
+	case FormatMediaType:
+		return httpreq.MediaTypeProblem(s)
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}

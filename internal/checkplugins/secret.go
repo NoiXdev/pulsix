@@ -42,3 +42,15 @@ func (d Descriptor) SecretNameOf(params map[string]any) (string, bool) {
 	}
 	return name, true
 }
+
+// ProbedOnlyFromManager reports whether a check of d with params is
+// probed only from the Pulsix server, never from agent vantages: it names
+// a secret (whose fields never leave the server), or d's ManagerOnly hook
+// says so. The validation refuses vantage groups for such a check, and
+// the probe runner and its host-page view ignore any it has.
+func (d Descriptor) ProbedOnlyFromManager(params map[string]any) bool {
+	if _, named := d.SecretNameOf(params); named {
+		return true
+	}
+	return d.ManagerOnly != nil && d.ManagerOnly(params) != ""
+}

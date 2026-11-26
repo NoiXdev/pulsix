@@ -1014,8 +1014,34 @@
           "default": "GET",
           "options": [
             "GET",
-            "HEAD"
+            "HEAD",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
           ]
+        },
+        {
+          "name": "headers",
+          "type": "list",
+          "example": "Accept: application/json",
+          "max_entries": 16,
+          "max_bytes": 1024,
+          "format": "httpHeader"
+        },
+        {
+          "name": "body",
+          "type": "string",
+          "max_bytes": 8192,
+          "non_empty": true
+        },
+        {
+          "name": "content_type",
+          "type": "string",
+          "default": "application/json",
+          "max_bytes": 255,
+          "format": "mediaType"
         },
         {
           "name": "secret",

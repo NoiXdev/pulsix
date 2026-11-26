@@ -97,22 +97,31 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	}
 	method := probe.Params[1]
 	if method.Name != "method" || method.Type != "enum" || method.Default != "GET" ||
-		!reflect.DeepEqual(method.Options, []string{"GET", "HEAD"}) {
+		!reflect.DeepEqual(method.Options, []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}) {
 		t.Errorf("http method param = %+v", method)
 	}
-	if p := probe.Params[2]; p.Name != "secret" || p.Required || p.Format != "secretName" {
+	if p := probe.Params[2]; p.Name != "headers" || p.Type != "list" || p.MaxEntries != 16 || p.MaxBytes != 1024 || p.Format != "httpHeader" {
+		t.Errorf("http headers param = %+v", p)
+	}
+	if p := probe.Params[3]; p.Name != "body" || p.Type != "string" || p.MaxBytes != 8192 {
+		t.Errorf("http body param = %+v", p)
+	}
+	if p := probe.Params[4]; p.Name != "content_type" || p.Default != "application/json" || p.Format != "mediaType" {
+		t.Errorf("http content_type param = %+v", p)
+	}
+	if p := probe.Params[5]; p.Name != "secret" || p.Required || p.Format != "secretName" {
 		t.Errorf("http secret param = %+v", p)
 	}
-	if p := probe.Params[4]; p.Name != "json_values" || p.Type != "list" || p.MaxEntries != 32 || p.Format != "jsonValue" {
+	if p := probe.Params[7]; p.Name != "json_values" || p.Type != "list" || p.MaxEntries != 32 || p.Format != "jsonValue" {
 		t.Errorf("http json_values param = %+v", p)
 	}
 	if probe.ItemParam != "json_values" || !probe.HostItemAlwaysAsked {
 		t.Errorf("http items = %q, host item always asked %v", probe.ItemParam, probe.HostItemAlwaysAsked)
 	}
-	if p := probe.Params[5]; p.Name != "assertions" || p.Type != "list" || p.MaxEntries != 32 || p.MaxBytes != 512 || p.Format != "assertion" {
+	if p := probe.Params[8]; p.Name != "assertions" || p.Type != "list" || p.MaxEntries != 32 || p.MaxBytes != 512 || p.Format != "assertion" {
 		t.Errorf("http assertions param = %+v", p)
 	}
-	timeout := probe.Params[6]
+	timeout := probe.Params[9]
 	if timeout.Name != "timeout_s" || timeout.Type != "integer" || timeout.Default != float64(10) ||
 		timeout.Min == nil || *timeout.Min != 1 || timeout.Max == nil || *timeout.Max != 60 {
 		t.Errorf("http timeout_s param = %+v", timeout)

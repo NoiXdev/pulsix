@@ -164,6 +164,10 @@ export const enChecks = {
     pluginHint: 'runs from the Pulsix server',
     runsFromServer: 'Runs from the Pulsix server, not on the host.',
     rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply to every check of this type, whatever its key.`,
+    /** Under an http check's method while POST, PUT, PATCH or DELETE is
+     * chosen (backlog 3.84). */
+    methodChangesState:
+      'This request is sent at every interval, from every probing point. Use it only on an endpoint where that changes nothing, such as a health or echo endpoint.',
     /** Why an attempt failed: the labels of the <plugin>.failure metric
      * (internal/probe failure.go, backlog 3.13b), in its order. */
     failures: {
@@ -235,6 +239,7 @@ export const enChecks = {
     chosenGroups: 'Chosen groups',
     addGroup: 'Add a group',
     secretOnlyServer: 'Checks with a secret are probed only from the Pulsix server.',
+    customRequestOnlyServer: 'Checks that send a method other than GET or HEAD, headers or a body are probed only from the Pulsix server.',
   },
   /** Every check plugin's parameter fields, keyed by plugin and parameter
    * as GET /check-plugins names them (backlog 3.54), shared by the check
@@ -396,6 +401,17 @@ export const enChecks = {
     http: {
       url: { label: 'URL', hint: '{address} is replaced with the host’s address.' },
       method: { label: 'Method' },
+      headers: {
+        label: 'Request headers (one per line, Name: value)',
+        hint: 'Sent with every request, at most 16. Not Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect or Accept-Encoding (Pulsix sets them), not Content-Type (use the content type below), and no credentials such as Authorization or Cookie: put those in the secret.',
+        placeholder: 'Accept: application/json',
+      },
+      body: {
+        label: 'Request body',
+        hint: 'Sent as written with POST, PUT or PATCH, at most 8 KiB. It is never shown in results.',
+        placeholder: '{"ping": true}',
+      },
+      content_type: { label: 'Content type of the body', hint: 'Only with a body.' },
       secret: {
         label: 'Secret',
         hint: 'Optional. Name of a secret in the organization’s secrets (Settings → Secrets) holding the login: username and password, a token (sent as a bearer token), or header and value (one header of your choice). It is never sent on to another host when a redirect leads there; its values are never shown again and never leave the Pulsix server. A definition several organizations use reads each one’s own secret of that name.',
@@ -404,12 +420,12 @@ export const enChecks = {
       body_contains: { label: 'Body contains', hint: 'Looked for in the first 1 MiB of the body.' },
       json_values: {
         label: 'JSON values (one per line, name=JSONPath)',
-        hint: 'Each line reads one value out of a JSON response (up to 1 MiB) and reports it under its name: a number as a value, text or true/false as a label. The path must select exactly one value. Supported: names, indexes, *, one .. and filters comparing @ paths with values. Needs method GET.',
+        hint: 'Each line reads one value out of a JSON response (up to 1 MiB) and reports it under its name: a number as a value, text or true/false as a label. The path must select exactly one value. Supported: names, indexes, *, one .. and filters comparing @ paths with values. Not with method HEAD.',
         placeholder: 'status=$.status',
       },
       assertions: {
         label: 'Assertions (one per line, name=assertion)',
-        hint: 'Each line states what a good response is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header("Name"), json("$.path"), html("selector") or html("selector") count), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches; header, json and html also with exists and !exists. Add @warn to report warn instead of crit. Body, json, html and size need method GET.',
+        hint: 'Each line states what a good response is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header("Name"), json("$.path"), html("selector") or html("selector") count), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches; header, json and html also with exists and !exists. Add @warn to report warn instead of crit. Body, json, html and size do not work with method HEAD.',
         placeholder: 'ok=status in 200..299',
       },
       timeout_s: { label: 'Timeout (seconds)' },
@@ -472,6 +488,12 @@ export const enChecks = {
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',
       uuid: 'every entry must be a monitoring group’s id (a lower-case UUID)',
+      httpHeader: 'every entry must be Name: value, the name of letters, digits and !#$%&\'*+-.^_`|~ (at most 128), the value without line breaks or other control characters',
+      httpHeaderReserved:
+        'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect and Accept-Encoding are set by Pulsix',
+      httpHeaderContentType: 'set Content-Type with the content type field, not as a header',
+      httpHeaderCredentials: 'Authorization, Proxy-Authorization and Cookie carry credentials: put them in the check’s secret (header and value)',
+      mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },

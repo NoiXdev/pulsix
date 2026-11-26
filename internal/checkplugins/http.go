@@ -3,8 +3,10 @@ package checkplugins
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/noixdev/pulsix/internal/probe/assert"
+	"github.com/noixdev/pulsix/internal/probe/httpreq"
 )
 
 // maxHTTPJSONValues bounds http's json_values (backlog 3.6h).
@@ -35,7 +37,10 @@ func httpPlugin() Descriptor {
 		Runs: Server,
 		Params: []ParamSpec{
 			{Name: "url", Type: TypeString, Required: true, MaxBytes: maxParamStringLen, Format: FormatURL, Example: "https://{address}/"},
-			{Name: "method", Type: TypeEnum, Options: []string{"GET", "HEAD"}, Default: "GET"},
+			{Name: "method", Type: TypeEnum, Options: slices.Clone(httpreq.Methods), Default: "GET"},
+			{Name: "headers", Type: TypeList, MaxEntries: httpreq.MaxHeaders, MaxBytes: httpreq.MaxHeaderLen, Format: FormatHTTPHeader, Example: "Accept: application/json"},
+			{Name: "body", Type: TypeString, NonEmpty: true, MaxBytes: httpreq.MaxBodyLen},
+			{Name: "content_type", Type: TypeString, MaxBytes: httpreq.MaxContentTypeLen, Format: FormatMediaType, Default: httpreq.DefaultContentType},
 			secret,
 			syntheticText("body_contains", true),
 			{Name: "json_values", Type: TypeList, MaxEntries: maxHTTPJSONValues, Format: FormatJSONValue, Example: "status=$.status"},
@@ -48,6 +53,7 @@ func httpPlugin() Descriptor {
 		HostItemAlwaysAsked: true,
 		ItemAsked:           httpItemAsked,
 		MetricAsked:         httpMetricAsked,
+		ManagerOnly:         httpManagerOnly,
 		Check:               httpCheck,
 		Metrics: []MetricSpec{
 			{Name: "http.up", Kind: Numeric},
@@ -106,10 +112,54 @@ func httpMetricAsked(params map[string]any, metric string) bool {
 	return contains != ""
 }
 
-// httpCheck: no two json_values or assertions entries may report on the
-// same item, and a JSON value or an assertion on the body needs a body,
-// which HEAD does not fetch.
+// httpManagerOnly: a check that sends a method other than GET or HEAD,
+// headers or a body (backlog 3.84) is probed only from the Pulsix server.
+// An agent of an earlier release fails such a method, but drops headers
+// and a body without a word and would report a plain GET.
+func httpManagerOnly(params map[string]any) string {
+	method, _ := params["method"].(string)
+	headers, _ := stringList(params["headers"])
+	_, body := params["body"]
+	_, contentType := params["content_type"]
+	if (method != "" && method != "GET" && method != "HEAD") || len(headers) > 0 || body || contentType {
+		return "send a method other than GET or HEAD, headers or a body"
+	}
+	return ""
+}
+
+// httpRequestCheck: no header twice, a body only with a method that takes
+// one, a content type only with a body. Every value passed its spec.
+func httpRequestCheck(params map[string]any) error {
+	headers, _ := stringList(params["headers"])
+	seen := make(map[string]bool, len(headers))
+	for _, h := range headers {
+		name, _, _ := httpreq.ParseHeader(h)
+		if seen[name] {
+			return fmt.Errorf("headers names %q twice", name)
+		}
+		seen[name] = true
+	}
+	method, _ := params["method"].(string)
+	if method == "" {
+		method = "GET"
+	}
+	_, body := params["body"]
+	if body && !httpreq.TakesBody(method) {
+		return errors.New("body needs method POST, PUT or PATCH")
+	}
+	if _, contentType := params["content_type"]; contentType && !body {
+		return errors.New("content_type needs a body")
+	}
+	return nil
+}
+
+// httpCheck: the request rules (httpRequestCheck); no two json_values or
+// assertions entries may report on the same item, and a JSON value or an
+// assertion on the body needs a body, which HEAD does not fetch.
 func httpCheck(params map[string]any) error {
+	if err := httpRequestCheck(params); err != nil {
+		return err
+	}
 	entries, _ := stringList(params["json_values"])
 	if name, twice := duplicateEntryName(entries); twice {
 		return fmt.Errorf("json_values names %q twice", name)
@@ -127,12 +177,12 @@ func httpCheck(params map[string]any) error {
 		return nil
 	}
 	if len(entries) > 0 {
-		return errors.New("json_values needs method GET: a HEAD response has no body")
+		return errors.New("json_values needs a method other than HEAD: a HEAD response has no body")
 	}
 	for _, entry := range assertions {
 		// Every entry passed its format already.
 		if a, err := assert.Parse(entry); err == nil && a.Subject().ReadsBody() {
-			return fmt.Errorf("assertion %q reads the body and needs method GET: a HEAD response has no body", a.Name())
+			return fmt.Errorf("assertion %q reads the body and needs a method other than HEAD: a HEAD response has no body", a.Name())
 		}
 	}
 	return nil

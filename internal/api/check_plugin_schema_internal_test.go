@@ -58,7 +58,10 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"format (nagios or json; default nagios), timeout_seconds (1 to 60; default 10). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5), " + vantage +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " + vantage +
-		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), " +
+		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS; default GET), " +
+		"headers (list; at most 16 entries; each at most 1024 bytes; each Name: value, the name a header name other than Host, Content-Length, Transfer-Encoding, Connection, User-Agent, " +
+		"Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect, Accept-Encoding, Content-Type, Authorization, Proxy-Authorization and Cookie, the value without control characters), " +
+		"body (not empty; at most 8192 bytes), content_type (at most 255 bytes; a media type such as application/json; default application/json), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
 		"body_contains (not empty; at most 500 bytes), " +
 		"json_values (list; at most 32 entries; each name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status), " +
