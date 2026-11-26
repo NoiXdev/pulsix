@@ -110,6 +110,20 @@ describe('TemplateHeader actions', () => {
     expect(router.state.location.pathname).toBe('/o/acme/templates');
   });
 
+  it('asks once when deleting with unsaved changes: the delete question, not a leave question after it', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes({ over: { 'DELETE /api/v1/orgs/acme/job-templates/t1': () => new Response(null, { status: 204 }) } }));
+    const { router } = renderTemplatePage('/o/acme/templates/t1?tab=settings');
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type(within(await screen.findByRole('form', { name: 'Template settings' })).getByLabelText('Name'), '-x');
+    await user.click((await header()).getByRole('button', { name: 'More actions for deploy-site' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    expect(await acceptConfirm(user)).toMatch(/delete/i);
+    expect(await screen.findByText(/TEMPLATES LIST/)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/templates');
+  });
+
   it('offers no menu for an installation-managed template', async () => {
     mockApi(pageRoutes({ tpl: template({ shared_template_id: 'shared-1' }) }));
     renderTemplatePage();

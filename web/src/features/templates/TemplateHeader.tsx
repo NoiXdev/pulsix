@@ -18,6 +18,9 @@ interface TemplateHeaderProps {
   /** Opens the Settings tab with its form editable; absent on the
    * Settings tab, which offers its own Edit. */
   onEdit?: () => void;
+  /** Called once the template is deleted, before the page leaves: the
+   * page releases its unsaved-changes guard so leaving asks nothing. */
+  onDeleted?: () => Promise<void>;
 }
 
 /**
@@ -30,7 +33,7 @@ interface TemplateHeaderProps {
  * run tab), Edit (the Settings tab, editable; left to the tab itself
  * while it is open) and the "⋯" menu with Delete. Each keeps the gating it has on the templates list.
  */
-export function TemplateHeader({ org, template, role, onEdit }: TemplateHeaderProps) {
+export function TemplateHeader({ org, template, role, onEdit, onDeleted }: TemplateHeaderProps) {
   const t = useT();
   const p = t.templates.page;
   const followUps = (template.follow_ups ?? []).length;
@@ -49,12 +52,12 @@ export function TemplateHeader({ org, template, role, onEdit }: TemplateHeaderPr
         </div>
         <TemplateFacts org={org} template={template} />
       </div>
-      <TemplateHeaderActions org={org} template={template} role={role} onEdit={onEdit} />
+      <TemplateHeaderActions org={org} template={template} role={role} onEdit={onEdit} onDeleted={onDeleted} />
     </div>
   );
 }
 
-function TemplateHeaderActions({ org, template, role, onEdit }: TemplateHeaderProps) {
+function TemplateHeaderActions({ org, template, role, onEdit, onDeleted }: TemplateHeaderProps) {
   const t = useT();
   const p = t.templates.page;
   const navigate = useNavigate();
@@ -67,7 +70,9 @@ function TemplateHeaderActions({ org, template, role, onEdit }: TemplateHeaderPr
   if (!canRun && !canWrite) return null;
 
   async function onDelete() {
-    if (await remove.run(template)) await navigate({ to: '/o/$org/templates', params: { org } });
+    if (!(await remove.run(template))) return;
+    await onDeleted?.();
+    await navigate({ to: '/o/$org/templates', params: { org } });
   }
 
   return (

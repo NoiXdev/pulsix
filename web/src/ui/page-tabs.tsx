@@ -22,6 +22,10 @@ const TONE_VAR = { warn: 'var(--px-warn)', crit: 'var(--px-crit)' } as const;
  * that keeps a panel mounted while another tab is open (a form whose
  * unsaved input must survive a tab switch) has one panel per tab, and
  * `panelId` is then a function naming each tab's own.
+ *
+ * With `manual` (the open tab holds unsaved changes, so opening another
+ * asks to discard) the keys only move focus and Enter or Space opens the
+ * focused tab: the pattern's manual activation.
  */
 export function PageTabs<T extends string>({
   label,
@@ -30,6 +34,7 @@ export function PageTabs<T extends string>({
   onSelect,
   tabId,
   panelId,
+  manual = false,
 }: {
   label: string;
   tabs: PageTabItem<T>[];
@@ -37,16 +42,19 @@ export function PageTabs<T extends string>({
   onSelect: (tab: T, via: 'click' | 'key') => void;
   tabId: (id: T) => string;
   panelId: string | ((id: T) => string);
+  manual?: boolean;
 }) {
   const refs = useRef(new Map<T, HTMLButtonElement>());
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    const index = tabs.findIndex((tab) => tab.id === active);
+    // Manual activation roves from the focused tab, which is not the open one.
+    const focused = manual ? tabs.findIndex((tab) => refs.current.get(tab.id) === document.activeElement) : -1;
+    const index = focused >= 0 ? focused : tabs.findIndex((tab) => tab.id === active);
     const next: Record<string, number> = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: tabs.length - 1 };
     if (!(e.key in next)) return;
     e.preventDefault();
     const target = tabs[(next[e.key] + tabs.length) % tabs.length];
-    onSelect(target.id, 'key');
+    if (!manual) onSelect(target.id, 'key');
     refs.current.get(target.id)?.focus();
   }
 

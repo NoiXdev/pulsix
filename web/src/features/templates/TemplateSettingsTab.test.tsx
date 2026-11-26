@@ -131,6 +131,25 @@ describe('TemplateSettingsTab', () => {
     expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site');
   });
 
+  it('moves focus with the arrow keys and asks only when a tab is activated', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes());
+    const { router } = renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Name'), '-x');
+    screen.getByRole('tab', { name: /^Settings/ }).focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: /^Runs/ })).toHaveFocus();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
+    expect(router.state.location.search).toEqual({ tab: 'settings' });
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: /^Triggers/ })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    await declineConfirm(user);
+    expect(router.state.location.search).toEqual({ tab: 'settings' });
+    expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site-x');
+  });
+
   it('keeps editing when the question is declined', async () => {
     const user = userEvent.setup();
     mockApi(pageRoutes());
