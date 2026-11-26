@@ -71,6 +71,9 @@ type containerDetail struct {
 	Health       string // "healthy", "unhealthy", "starting", or "none" when State.Health is absent
 	RestartCount int
 	ExitCode     int
+	// StartedAt is State.StartedAt as the engine wrote it; it changes when
+	// the container restarts under the same ID. "" when absent.
+	StartedAt string
 }
 
 // dockerEngine is the seam the docker plugin depends on; tests fake it.
@@ -173,8 +176,9 @@ func (c *dockerClient) Inspect(ctx context.Context, id string) (containerDetail,
 	var raw struct {
 		RestartCount int
 		State        struct {
-			ExitCode int
-			Health   *struct{ Status string }
+			ExitCode  int
+			StartedAt string
+			Health    *struct{ Status string }
 		}
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -184,7 +188,7 @@ func (c *dockerClient) Inspect(ctx context.Context, id string) (containerDetail,
 	if raw.State.Health != nil && raw.State.Health.Status != "" {
 		health = raw.State.Health.Status
 	}
-	return containerDetail{Health: health, RestartCount: raw.RestartCount, ExitCode: raw.State.ExitCode}, nil
+	return containerDetail{Health: health, RestartCount: raw.RestartCount, ExitCode: raw.State.ExitCode, StartedAt: raw.State.StartedAt}, nil
 }
 
 // get performs one GET and returns the body, refusing one over limit. Errors

@@ -154,6 +154,7 @@ func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]ch
 
 	obs := make([]checks.Observation, 0, len(selected)*4+4)
 	present := make([]containerSummary, 0, len(selected))
+	started := make(map[string]string, len(selected))
 	var total, running float64
 	for i, c := range selected {
 		d := details[i]
@@ -161,6 +162,7 @@ func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]ch
 			continue
 		}
 		present = append(present, c)
+		started[c.ID] = d.detail.StartedAt
 		total++
 		if c.State == "running" {
 			running++
@@ -187,7 +189,7 @@ func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]ch
 		checks.ValueObservation("", "docker.containers_unreported", unreported),
 	)
 	if cfg.resources {
-		usage, unsampled, uerr := p.sampleResources(ctx, engine, present)
+		usage, unsampled, uerr := p.sampleResources(ctx, engine, present, started)
 		if perr := parent.Err(); perr != nil {
 			return nil, perr
 		}
@@ -198,7 +200,8 @@ func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]ch
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		// The deadline hit mid-inspect: what was gathered is still reported.
+		// The deadline hit mid-inspect or mid-stats: what was gathered is
+		// still reported.
 		errs = append(errs, fmt.Errorf("docker: %w", err))
 	}
 	return obs, errors.Join(errs...)

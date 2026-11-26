@@ -106,7 +106,10 @@ func (r rawStats) stats() containerStats {
 		}
 	}
 	if r.NumProcs > 0 {
-		// A Windows container: its own units and fields.
+		// A Windows container: its own units and fields. CPU time becomes
+		// nanoseconds, so its percentage reads 100 for one core as on
+		// every other platform; docker stats on Windows divides by the
+		// processor count instead (100 there is every core).
 		out.CPUNanos *= windowsCPUUnit
 		if ws := r.MemoryStats.PrivateWorkingSet; ws != nil {
 			out.Memory, out.MemoryKnown = *ws, true
@@ -129,17 +132,16 @@ func (r rawStats) stats() containerStats {
 	return out
 }
 
-// memoryWithoutCache is docker stats' own figure: the usage less the
-// inactive file cache (cgroup v1 total_inactive_file, else cgroup v2
-// inactive_file), a cache figure that is not below the usage ignored.
+// memoryWithoutCache is docker stats' own figure, its fallback order
+// included (the CLI's calculateMemUsageUnixNoCache): the usage less
+// cgroup v1's total_inactive_file when that is below it, else less cgroup
+// v2's inactive_file (0 when absent) when that is below it, else the usage.
 func memoryWithoutCache(usage uint64, stats map[string]uint64) uint64 {
-	for _, key := range []string{"total_inactive_file", "inactive_file"} {
-		if v, ok := stats[key]; ok {
-			if v < usage {
-				return usage - v
-			}
-			return usage
-		}
+	if v, ok := stats["total_inactive_file"]; ok && v < usage {
+		return usage - v
+	}
+	if v := stats["inactive_file"]; v < usage {
+		return usage - v
 	}
 	return usage
 }

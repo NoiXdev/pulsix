@@ -204,3 +204,28 @@ func TestClientListReadsNetworkMode(t *testing.T) {
 		t.Errorf("modes = %q, %q", got[0].NetworkMode, got[1].NetworkMode)
 	}
 }
+
+// TestClientStatsCgroupV1FallsThrough matches the docker CLI: a cgroup v1
+// total_inactive_file that is not below the usage falls through to
+// inactive_file.
+func TestClientStatsCgroupV1FallsThrough(t *testing.T) {
+	e := engineFor(t, statsBody(`{"read":"2026-11-26T10:00:00Z","memory_stats":{"usage":100,"stats":{"total_inactive_file":150,"inactive_file":30}}}`))
+	got, err := e.Stats(context.Background(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Memory != 70 {
+		t.Errorf("memory = %d", got.Memory)
+	}
+}
+
+func TestClientInspectReadsStartedAt(t *testing.T) {
+	e := engineFor(t, statsBody(`{"State":{"StartedAt":"2026-11-26T09:00:00.123Z"}}`))
+	got, err := e.Inspect(context.Background(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StartedAt != "2026-11-26T09:00:00.123Z" {
+		t.Errorf("started = %q", got.StartedAt)
+	}
+}

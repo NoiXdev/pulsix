@@ -35,16 +35,20 @@ const (
 
 // statsSample is the part of a reading the next round's rates need.
 type statsSample struct {
-	at                    time.Time
+	at time.Time
+	// startedAt is the container's State.StartedAt when it was read ("" if
+	// the inspect failed); a different one next round is a restart under
+	// the same ID, whose counters started over.
+	startedAt             string
 	cpu                   uint64
 	net                   bool
 	rx, tx                uint64
 	blockRead, blockWrite uint64
 }
 
-func sampleOf(s containerStats) statsSample {
+func sampleOf(s containerStats, startedAt string) statsSample {
 	return statsSample{
-		at: s.Read, cpu: s.CPUNanos,
+		at: s.Read, startedAt: startedAt, cpu: s.CPUNanos,
 		net: s.Net, rx: s.NetRx, tx: s.NetTx,
 		blockRead: s.BlockRead, blockWrite: s.BlockWrite,
 	}
@@ -105,37 +109,58 @@ type statsResult struct {
 }
 
 // sampleResources reports the usage of cs, the containers this round
-// counted. A container that is neither running nor paused reads zero
-// without a request, on the metrics its last running reading had (none
-// when this instance never read it running). Of the others, the first dockerMaxSampled by name are
-// read, at most dockerMaxStats at once; the rest are only counted
-// (unsampled) and named by count in err. Memory is reported from one
-// reading; CPU, network and block I/O are rates against the container's
-// previous reading (by ID, so a container recreated under the same name
-// starts over), each group left out for a round in which a counter went
-// backwards or no time passed. A failed reading is an error on each of the
-// container's metrics and keeps its old baseline; a container that is gone
-// reports nothing. The baselines are replaced by this round's, so they
-// never hold more than the containers read, and the remembered metrics
-// hold only containers listed this round and not over the cap.
-func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine, cs []containerSummary) (obs []checks.Observation, unsampled int, err error) {
-	reported := make(map[string][]string, len(cs))
+// counted; started holds their State.StartedAt by ID, from the inspects.
+//
+// At most dockerMaxSampled containers carry usage per round: the running
+// and paused ones first, by name, then the stopped ones whose last running
+// reading this instance remembers, by name. The rest are counted
+// (unsampled), named by count in err, and lose their baseline and
+// remembered metrics — so a host that piles up exited containers never
+// carries usage for more than the cap.
+//
+// A running or paused container is read, at most dockerMaxStats at once.
+// Memory comes from one reading; CPU, network and block I/O are rates
+// against the container's previous reading (by ID, so a container
+// recreated under the same name starts over, and only while its start time
+// is unchanged, so a restart under the same ID does too), each group left
+// out for a round in which a counter went backwards or no time passed. A
+// failed reading is an error on each of the container's metrics and keeps
+// its old baseline; a container that is gone reports nothing.
+//
+// A stopped container reads zero without a request, on the metrics its
+// last running reading had: a value it never reported while running is not
+// reported while stopped either. The baselines and remembered metrics are
+// replaced each round by those of the containers within the cap.
+func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine, cs []containerSummary, started map[string]string) (obs []checks.Observation, unsampled int, err error) {
+	byName := func(s []containerSummary) {
+		sort.SliceStable(s, func(i, j int) bool { return s[i].Name < s[j].Name })
+	}
 	live := make([]containerSummary, 0, len(cs))
+	var stopped []containerSummary
 	for _, c := range cs {
-		if c.State == "running" || c.State == "paused" {
+		switch {
+		case c.State == "running" || c.State == "paused":
 			live = append(live, c)
-			continue
-		}
-		if ms, ok := p.reported[c.ID]; ok {
-			reported[c.ID] = ms
-			obs = append(obs, zeroUsage(c.Name, ms)...)
+		case p.reported[c.ID] != nil:
+			stopped = append(stopped, c)
 		}
 	}
-	sort.SliceStable(live, func(i, j int) bool { return live[i].Name < live[j].Name })
-	if len(live) > dockerMaxSampled {
-		unsampled = len(live) - dockerMaxSampled
-		live = live[:dockerMaxSampled]
-		err = fmt.Errorf("docker: resource usage is read for at most %d running containers, the first by name; %d left out", dockerMaxSampled, unsampled)
+	byName(live)
+	byName(stopped)
+	if over := len(live) + len(stopped) - dockerMaxSampled; over > 0 {
+		unsampled = over
+		if len(live) > dockerMaxSampled {
+			live = live[:dockerMaxSampled]
+		}
+		stopped = stopped[:dockerMaxSampled-len(live)]
+		err = fmt.Errorf("docker: resource usage is read for at most %d containers (running first, then stopped ones, each by name); %d left out", dockerMaxSampled, unsampled)
+	}
+
+	reported := make(map[string][]string, len(live)+len(stopped))
+	for _, c := range stopped {
+		ms := p.reported[c.ID]
+		reported[c.ID] = ms
+		obs = append(obs, zeroUsage(c.Name, ms)...)
 	}
 
 	res := make([]statsResult, len(live))
@@ -157,7 +182,7 @@ func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine,
 			if wasRead {
 				reported[c.ID] = known
 			}
-			e := containerError("stats", opStats, c.Name, r.err)
+			e := statsError(ctx, c.Name, r.err)
 			for _, m := range errorMetrics(known, wasRead) {
 				obs = append(obs, checks.ErrObservation(c.Name, m, e))
 			}
@@ -170,14 +195,27 @@ func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine,
 			}
 			continue
 		}
-		cur := sampleOf(r.stats)
+		cur := sampleOf(r.stats, started[c.ID])
 		next[c.ID] = cur
 		reported[c.ID] = readingMetrics(c, r.stats)
 		old, seen := p.prev[c.ID]
+		if seen && old.startedAt != "" && cur.startedAt != "" && old.startedAt != cur.startedAt {
+			seen = false // restarted under the same ID: its counters started over
+		}
 		obs = append(obs, usage(c, r.stats, cur, old, seen)...)
 	}
 	p.prev, p.reported = next, reported
 	return obs, unsampled, err
+}
+
+// statsError names the container in a failed stats request; one that
+// missed the collect deadline reads "engine did not answer in time" rather
+// than the raw context error.
+func statsError(ctx context.Context, name string, err error) error {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return fmt.Errorf("docker: stats %s: engine did not answer in time", name)
+	}
+	return containerError("stats", opStats, name, err)
 }
 
 // usage is one container's observations from its reading st (cur) and, when

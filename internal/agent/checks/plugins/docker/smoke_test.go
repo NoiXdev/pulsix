@@ -81,8 +81,17 @@ func TestDockerSmokeAgainstLocalEngine(t *testing.T) {
 		t.Skip("no running container to check")
 	}
 	maxCPU := float64(runtime.NumCPU())*100 + 50 // the engine may see a VM with other CPUs; generous
+	checked := 0
 	for name := range running {
 		v := byItem[name]
+		if v["docker.memory_bytes"] == 0 && v["docker.cpu_percent"] == 0 {
+			// Listed running, read stopped: it stopped between the list and
+			// its stats, which reads zero by design. Other tools on a dev
+			// machine start and stop containers all the time.
+			t.Logf("%s: stopped during the round, not judged", name)
+			continue
+		}
+		checked++
 		t.Logf("%s: cpu %.2f%% mem %.0f B (%.2f%%) net rx %.0f B/s tx %.0f B/s block r %.0f B/s w %.0f B/s",
 			name, v["docker.cpu_percent"], v["docker.memory_bytes"], v["docker.memory_percent"],
 			v["docker.net_rx_bytes_per_s"], v["docker.net_tx_bytes_per_s"],
@@ -105,5 +114,8 @@ func TestDockerSmokeAgainstLocalEngine(t *testing.T) {
 		if _, ok := v["docker.block_read_bytes_per_s"]; !ok {
 			t.Errorf("%s: no block read rate", name)
 		}
+	}
+	if checked == 0 {
+		t.Error("no running container could be judged")
 	}
 }

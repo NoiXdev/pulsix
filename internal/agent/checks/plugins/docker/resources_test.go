@@ -570,8 +570,9 @@ func TestDockerResourcesDeadlineKeepsStateMetrics(t *testing.T) {
 	if l := findObs(t, obs, "web", "docker.state").Label; l == nil || *l != "running" {
 		t.Errorf("state = %v", l)
 	}
-	// Never read yet: the error lands on the metrics every reading has.
-	if o := findObs(t, obs, "web", "docker.cpu_percent"); !strings.Contains(o.Err, "deadline") {
+	// Never read yet: the error lands on the metrics every reading has,
+	// in the plugin's own words rather than the raw context error.
+	if o := findObs(t, obs, "web", "docker.cpu_percent"); o.Err != "docker: stats web: engine did not answer in time" {
 		t.Errorf("cpu = %+v", o)
 	}
 	if hasObs(obs, "web", "docker.memory_percent") || hasObs(obs, "web", "docker.net_rx_bytes_per_s") {
@@ -676,5 +677,126 @@ func TestDockerResourcesThroughTheClient(t *testing.T) {
 		if v := valueOf(t, obs, "web", metric); !near(v, want) {
 			t.Errorf("%s = %v, want %v", metric, v, want)
 		}
+	}
+}
+
+// TestDockerResourcesCapCountsRememberedStoppedContainers: the cap covers
+// the running containers and the remembered stopped ones together —
+// running first, then stopped, each by name — so a host that piles up
+// exited job containers never carries usage for more than
+// dockerMaxSampled containers; a stopped one past the cap is forgotten.
+func TestDockerResourcesCapCountsRememberedStoppedContainers(t *testing.T) {
+	f := &fakeDockerEngine{details: map[string]containerDetail{}, stats: map[string]containerStats{}}
+	add := func(prefix string, n int) {
+		for i := range n {
+			id := fmt.Sprintf("%s-id%03d", prefix, i)
+			f.containers = append(f.containers, containerSummary{ID: id, Name: fmt.Sprintf("%s%03d", prefix, i), State: "running"})
+			f.details[id] = containerDetail{Health: "none"}
+			f.stats[id] = reading(0, 0, 0, 0, 0, 0)
+		}
+	}
+	usageItems := func(obs []checks.Observation) map[string]bool {
+		items := map[string]bool{}
+		for _, o := range obs {
+			if o.Item != "" && slices.Contains(append(slices.Clone(rateMetrics), usageMetrics...), o.Metric) {
+				items[o.Item] = true
+			}
+		}
+		return items
+	}
+	p := newTestDocker(f, nil)
+	add("job", dockerMaxSampled)
+	if _, err := collect(t, p, withResources); err != nil {
+		t.Fatal(err)
+	}
+	// Every job exits and stays listed; new containers start.
+	for i := range f.containers {
+		f.containers[i].State = "exited"
+	}
+	add("web", 30)
+	for round := range 3 {
+		f.statsCalls = nil
+		// The first round leaves 30 stopped jobs out and forgets them;
+		// from then on they are no longer candidates.
+		wantUnsampled := 0.0
+		obs, err := collect(t, p, withResources)
+		if round == 0 {
+			wantUnsampled = 30
+			if err == nil || !strings.Contains(err.Error(), "30 left out") {
+				t.Errorf("round %d: err = %v", round, err)
+			}
+		} else if err != nil {
+			t.Errorf("round %d: err = %v", round, err)
+		}
+		items := usageItems(obs)
+		if len(items) > dockerMaxSampled {
+			t.Fatalf("round %d: %d containers carry usage, want at most %d", round, len(items), dockerMaxSampled)
+		}
+		if !items["web029"] || !items["job069"] || items["job070"] || items["job099"] {
+			t.Errorf("round %d: running first, then stopped by name; got %v", round, items)
+		}
+		if v := valueOf(t, obs, "", "docker.containers_unsampled"); v != wantUnsampled {
+			t.Errorf("round %d: unsampled = %v", round, v)
+		}
+		if len(f.statsCalls) != 30 {
+			t.Errorf("round %d: stats asked %d times", round, len(f.statsCalls))
+		}
+	}
+	if _, ok := p.reported["job-id070"]; ok {
+		t.Error("a stopped container past the cap is still remembered")
+	}
+	if len(p.reported) != dockerMaxSampled {
+		t.Errorf("remembered %d containers", len(p.reported))
+	}
+	// Once the running ones are gone, a forgotten job does not come back.
+	f.containers = f.containers[:dockerMaxSampled]
+	obs, _ := collect(t, p, withResources)
+	if items := usageItems(obs); items["job070"] || !items["job069"] {
+		t.Errorf("after the running ones left: %v", items)
+	}
+}
+
+// TestDockerResourcesRunningPastTheCapLosesItsState: a container read
+// before that falls past the cap loses its baseline and its remembered
+// metrics.
+func TestDockerResourcesRunningPastTheCapLosesItsState(t *testing.T) {
+	f := resourcesFake()
+	f.containers[0].Name = "zz-web"
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	for i := range dockerMaxSampled {
+		id := fmt.Sprintf("id%03d", i)
+		f.containers = append(f.containers, containerSummary{ID: id, Name: fmt.Sprintf("a%03d", i), State: "running"})
+		f.details[id] = containerDetail{Health: "none"}
+		f.stats[id] = reading(0, 0, 0, 0, 0, 0)
+	}
+	_, _ = collect(t, p, withResources)
+	if _, ok := p.prev["a"]; ok {
+		t.Error("baseline kept past the cap")
+	}
+	if _, ok := p.reported["a"]; ok {
+		t.Error("remembered metrics kept past the cap")
+	}
+}
+
+// TestDockerResourcesRestartRebaselines: a container restarted under the
+// same ID (its start time changed) starts its counters over; the rate
+// waits a round instead of reporting the difference to the old run.
+func TestDockerResourcesRestartRebaselines(t *testing.T) {
+	f := resourcesFake()
+	f.details["a"] = containerDetail{Health: "none", StartedAt: "2026-11-26T09:00:00Z"}
+	f.stats["a"] = reading(0, 1e9, 0, 0, 0, 0)
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	f.details["a"] = containerDetail{Health: "none", StartedAt: "2026-11-26T10:00:05Z"}
+	f.stats["a"] = reading(10*time.Second, 3e9, 0, 0, 0, 0)
+	obs, _ := collect(t, p, withResources)
+	if hasObs(obs, "web", "docker.cpu_percent") {
+		t.Error("a rate across a restart")
+	}
+	f.stats["a"] = reading(20*time.Second, 4e9, 0, 0, 0, 0)
+	obs, _ = collect(t, p, withResources)
+	if v := valueOf(t, obs, "web", "docker.cpu_percent"); !near(v, 10) {
+		t.Errorf("cpu after the restart = %v", v)
 	}
 }
