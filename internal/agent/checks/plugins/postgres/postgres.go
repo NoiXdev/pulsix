@@ -82,11 +82,8 @@ func (p plugin) CollectWithSecret(ctx context.Context, params map[string]any, fi
 	if err != nil {
 		return errObs(fmt.Errorf("postgres: %w", err)), nil
 	}
-	if err := checkRootCert(settings); err != nil {
-		if errors.Is(err, errNotCAFile) {
-			return errObs(errors.New("postgres: secret field `sslrootcert` is not a CA file")), nil
-		}
-		return errObs(errors.New("postgres: secret field `sslrootcert` cannot be read")), nil
+	if err := checkFiles(settings); err != nil {
+		return errObs(fmt.Errorf("postgres: %w", err)), nil
 	}
 	filter, _, err := checks.ParamStrings(params, "databases")
 	if err != nil {

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/testpki"
 )
 
 // plantClientFiles writes a valid client certificate, key and root CA under
@@ -175,6 +178,32 @@ func TestSSLModes(t *testing.T) {
 	cfg, _ := buildConfig(s)
 	if cfg.TLSConfig.InsecureSkipVerify || cfg.TLSConfig.ServerName != "db.internal" {
 		t.Errorf("verify-full does not verify: %+v", cfg.TLSConfig)
+	}
+}
+
+func TestBuildConfigClientCert(t *testing.T) {
+	dir := t.TempDir()
+	ca := testpki.NewCA(t)
+	client := ca.Client(t, "mon")
+	s := baseSettings()
+	s.sslmode = "verify-full"
+	s.sslrootcert = testpki.Write(t, dir, "ca.pem", ca.PEM, 0o644)
+	s.sslcert = testpki.Write(t, dir, "c.pem", client.CertPEM, 0o644)
+	s.sslkey = testpki.Write(t, dir, "c.key", client.KeyPEM, 0o600)
+	// The environment must not replace the files the secret names.
+	hostileEnv(t)
+	cfg, err := buildConfig(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLSConfig == nil || len(cfg.TLSConfig.Certificates) != 1 || cfg.SSLCertMode != "allow" {
+		t.Fatalf("client certificate not configured: %+v", cfg.TLSConfig)
+	}
+	if !bytes.Equal(cfg.TLSConfig.Certificates[0].Certificate[0], client.TLS(t).Certificate[0]) {
+		t.Error("a different certificate was configured")
+	}
+	if !cfg.TLSConfig.RootCAs.Equal(ca.Pool()) {
+		t.Error("the CA file did not become the root pool")
 	}
 }
 
