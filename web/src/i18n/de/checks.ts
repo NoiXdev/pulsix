@@ -239,7 +239,7 @@ export const deChecks: Messages['checks'] = {
       },
       resources: {
         label: 'Ressourcenverbrauch messen',
-        hint: 'CPU, Arbeitsspeicher, Netzwerk- und Datenträgerdurchsatz jedes Containers, gelesen für höchstens 100 laufende Container (die ersten nach Name). Ein gestoppter Container zeigt 0.',
+        hint: 'CPU, Arbeitsspeicher, Netzwerk- und Datenträgerdurchsatz jedes Containers, für höchstens 100 Container (laufende zuerst, jeweils nach Name). Ein gestoppter Container zeigt 0.',
       },
     },
     temperature: {

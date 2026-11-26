@@ -36,7 +36,8 @@ func dockerPlugin() Descriptor {
 			{Name: "docker.containers_unreported", Kind: Numeric},
 			// With resources, per container: CPU (100 is one core), memory
 			// in use without the file cache and its share of the limit,
-			// network and block I/O rates. A stopped container reads 0.
+			// network and block I/O rates. A stopped container reads 0 on
+			// what it reported while running.
 			{Name: "docker.cpu_percent", Kind: Numeric},
 			{Name: "docker.memory_bytes", Kind: Numeric},
 			{Name: "docker.memory_percent", Kind: Numeric},
@@ -44,8 +45,8 @@ func dockerPlugin() Descriptor {
 			{Name: "docker.net_tx_bytes_per_s", Kind: Numeric},
 			{Name: "docker.block_read_bytes_per_s", Kind: Numeric},
 			{Name: "docker.block_write_bytes_per_s", Kind: Numeric},
-			// Running containers over the agent's cap whose usage was not
-			// read, on item "".
+			// Containers over the agent's cap of 100 (running first, then
+			// stopped ones it remembers) that carry no usage, on item "".
 			{Name: "docker.containers_unsampled", Kind: Numeric},
 		},
 	}

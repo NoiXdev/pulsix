@@ -272,7 +272,7 @@ export const enChecks = {
       },
       resources: {
         label: 'Measure resource usage',
-        hint: 'CPU, memory, network and disk throughput of each container, read for at most 100 running containers (the first by name). A stopped container reads 0.',
+        hint: 'CPU, memory, network and disk throughput of each container, for at most 100 containers (running ones first, each by name). A stopped container reads 0.',
       },
     },
     temperature: {

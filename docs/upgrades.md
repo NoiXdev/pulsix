@@ -189,10 +189,13 @@ its agent is updated. Nothing is seeded into organizations, so no existing host
 gains the check by itself, and there is no schema change.
 
 The `docker` check's `resources` option (backlog 3.12a, off by default) needs an
-agent at the version that ships it. An older agent ignores the option and keeps
-reporting the container states; the usage metrics simply never appear. An older
-manager never sends the option, so a newer agent never reads usage for it. There
-is no schema or protocol change and no manager-side gating.
+agent at the version that ships it. An older agent ignores the option in a check the
+manager pushes and keeps reporting the container states; the usage metrics simply never appear. An older
+manager never sends the option, so a newer agent never reads usage for it. A
+docker check in the agent's local `agent.yaml` that sets `resources` is refused by an
+older agent (an unknown parameter to it), and an older manager drops such a local
+check from a newer agent, reporting it as ignored by the server. There is no schema
+or protocol change and no manager-side gating.
 
 The same holds for the `temperature`, `smart` and `raid` plugins (backlog 3.9):
 an older agent skips such a check, warns on every configuration push and shows
@@ -1186,16 +1189,17 @@ an unknown outcome; stop every manager instance first, as above.
   a new option `resources` (off by default; existing checks are unchanged) makes the
   agent read each running or paused container's CPU, memory, network and block I/O
   once per round from the engine's one-shot stats, after the state readings and
-  within the same 10-second bound, at most 8 requests at once and for at most 100
-  running containers (the first by name; the rest are counted in
-  `docker.containers_unsampled`). New per-container metrics: `docker.cpu_percent`
-  (100 is one core), `docker.memory_bytes` (without the file cache, as `docker stats`
-  shows it), `docker.memory_percent` (of the limit, or of the host's memory without
-  one; not for Windows containers while they run), `docker.net_rx_bytes_per_s`,
+  within the same 10-second bound, at most 8 requests at once. At most 100
+  containers carry usage per round: running ones first, then stopped ones, each by
+  name; the rest are counted in `docker.containers_unsampled` and forgotten. New
+  per-container metrics: `docker.cpu_percent` (100 is one core on every platform;
+  `docker stats` on Windows shows 100 for all cores instead), `docker.memory_bytes`
+  (without the file cache, as `docker stats` shows it), `docker.memory_percent` (of
+  the limit, or of the host's memory without one; never for Windows containers), `docker.net_rx_bytes_per_s`,
   `docker.net_tx_bytes_per_s` (only for a container with a network of its own, not
   `host`, `none` or `container:…`), `docker.block_read_bytes_per_s` and
   `docker.block_write_bytes_per_s`. Rates appear from the second round on, and again
-  one round after a container is recreated or its counters reset. A container that is
+  one round after a container is recreated, restarted or its counters reset. A container that is
   not running reads 0 instead of turning stale, on the values it reported while
   running (a container the agent has not seen running since it started reports none). Each option-on round adds up to seven
   tuples per container towards the per-host cap of 4 096; switching the option off
