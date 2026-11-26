@@ -73,10 +73,11 @@ type playFile struct {
 	lists    *collectionLists    // the walk's collections lists
 	allowed  map[*yaml.Node]bool // nodes whose line comment was read as a marker
 	// vault names the variables the file sets to a vault-encrypted value
-	// (vault.go), varsFileRefs its plays' static vars_files.
+	// (vault_play.go), varsFileRefs its plays' static vars_files.
 	vault        []string
-	vaultMemo    map[*yaml.Node]bool
+	vaultSearch  *vaultSearch
 	varsFileRefs []string
+	varsFilesCut bool // a vars_files entry the read cannot follow
 }
 
 // readPlayFile reads the plays of one playbook file (doc is its parsed

@@ -246,6 +246,7 @@ func (w *walk) visit(file string, d decoded, depth int) bool {
 	if n, over := d.y.tooComplex(); over {
 		w.useFile(file, FileUnreadable)
 		w.addNotes(n)
+		w.vaultIncomplete()
 		return false
 	}
 	w.useFile(file, FileRead)
@@ -374,6 +375,7 @@ func (w *walk) finish(read bool) Playbook {
 	switch {
 	case w.over != "":
 		pb.Failed = true
+		w.vaultIncomplete()
 		w.addNotes(warning(codePlaybookTooComplex, w.path, 0, "%s; nothing read from this playbook", w.over))
 	case !read:
 		pb.Failed = true

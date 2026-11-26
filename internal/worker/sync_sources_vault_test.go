@@ -62,3 +62,50 @@ func TestSyncExecutorReportsVaultNames(t *testing.T) {
 		t.Fatalf("the sync result carries a vault value or a name from outside the clone: %s", data)
 	}
 }
+
+// TestSyncExecutorVaultNamesFollowLinksInsideTheClone: a link inside
+// group_vars and a group_vars that is itself a link are read under the
+// path that links to them, as Ansible reads them; a loop of links ends,
+// and a linked group_vars that leaves the clone is unread, so the names
+// are not all known.
+func TestSyncExecutorVaultNamesFollowLinksInsideTheClone(t *testing.T) {
+	const tagged = "!vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  3132333435363738\n"
+	clone := t.TempDir()
+	writeTree(t, clone, map[string]string{
+		"playbooks/site.yml":   "- hosts: all\n",
+		"shared/web.yml":       "linked_dir_secret: " + tagged,
+		"inventory/vars.yml":   "linked_group_vars_secret: " + tagged,
+		"group_vars/plain.yml": "plain: 1\n",
+	})
+	for link, target := range map[string]string{
+		"group_vars/web":       filepath.Join("..", "shared"),
+		"playbooks/group_vars": filepath.Join("..", "inventory"),
+		"group_vars/loop":      ".",
+	} {
+		if err := os.Symlink(target, filepath.Join(clone, filepath.FromSlash(link))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "")
+	var got []string
+	for _, n := range r.Vault.Names {
+		got = append(got, n.Name+"@"+n.File)
+	}
+	want := []string{"linked_dir_secret@group_vars/web/web.yml", "linked_group_vars_secret@playbooks/group_vars/vars.yml"}
+	if !reflect.DeepEqual(got, want) || !r.Vault.Complete() {
+		t.Fatalf("vault names = %q (complete %v), want %q and a complete read", got, r.Vault.Complete(), want)
+	}
+
+	outside := t.TempDir()
+	writeTree(t, outside, map[string]string{"all.yml": "outside_secret: " + tagged})
+	if err := os.Symlink(outside, filepath.Join(clone, "host_vars")); err != nil {
+		t.Fatal(err)
+	}
+	r, _, stats := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "")
+	if !reflect.DeepEqual(r.Vault.Unread, []string{"host_vars"}) || r.Vault.Complete() {
+		t.Fatalf("unread = %q, complete %v; want host_vars unread", r.Vault.Unread, r.Vault.Complete())
+	}
+	if data, _ := json.Marshal(stats); strings.Contains(string(data), "outside_secret") {
+		t.Fatalf("a name from outside the clone was read: %s", data)
+	}
+}

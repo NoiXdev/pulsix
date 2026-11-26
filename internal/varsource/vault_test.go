@@ -27,13 +27,14 @@ func vaultTagAt(n int) string {
 func vaultRepo() map[string]string {
 	return map[string]string{
 		"site.yml": "- hosts: all\n  vars:\n    play_tagged: " + vaultTagAt(6) + "    play_plain: 1\n    play_string: " + vaultString +
-			"  vars_files: [secrets/extra.yml, \"{{ env }}.yml\"]\n  roles:\n    - role: db\n      vars:\n        role_entry: " + vaultTagAt(10) +
+			"  vars_files: [secrets/extra.yml]\n  roles:\n    - role: db\n      vars:\n        role_entry: " + vaultTagAt(10) +
 			"      role_param: " + vaultString,
 		"secrets/extra.yml":                   "extra_tagged: " + vaultTag + "extra_plain: x\n",
 		"group_vars/all.yml":                  "gv_tagged: " + vaultTag + "gv_plain: hello\ngv_string: " + vaultString,
 		"group_vars/web/vault.yaml":           "gv_nested:\n  inner:\n    - " + vaultTagAt(8) + "gv_list: [a, b]\n",
 		"group_vars/web/all.vault":            "gv_wrong_extension: " + vaultTag,
 		"group_vars/db":                       "gv_no_extension: " + vaultString,
+		"group_vars/other.yml":                "gv_encrypted_tag: " + strings.Replace(vaultTag, "!vault", "!vault-encrypted", 1) + "gv_unsafe: !unsafe " + vaultString + "gv_custom: !custom " + vaultString,
 		"group_vars/all/encrypted.yml":        wholeVault,
 		"inventories/prod/host_vars/h1.json":  "{\"hv_json\": \"$ANSIBLE_VAULT;1.1;AES256\\n6162\", \"hv_plain\": 1}\n",
 		"inventories/prod/host_vars/h1/a.yml": "hv_tagged: " + vaultTag,
@@ -58,10 +59,13 @@ func TestVaultNamesInEveryLocation(t *testing.T) {
 	want := []VaultName{
 		{Name: "coll_role", File: InstalledCollectionsPrefix + "ns/coll/roles/r/vars/main.yml"},
 		{Name: "extra_tagged", File: "secrets/extra.yml"},
+		{Name: "gv_custom", File: "group_vars/other.yml"},
+		{Name: "gv_encrypted_tag", File: "group_vars/other.yml"},
 		{Name: "gv_nested", File: "group_vars/web/vault.yaml"},
 		{Name: "gv_no_extension", File: "group_vars/db"},
 		{Name: "gv_string", File: "group_vars/all.yml"},
 		{Name: "gv_tagged", File: "group_vars/all.yml"},
+		{Name: "gv_unsafe", File: "group_vars/other.yml"},
 		{Name: "hv_json", File: "inventories/prod/host_vars/h1.json"},
 		{Name: "hv_tagged", File: "inventories/prod/host_vars/h1/a.yml"},
 		{Name: "installed_role", File: InstalledRolesPrefix + "ext/defaults/main.yml"},

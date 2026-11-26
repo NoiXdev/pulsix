@@ -10,19 +10,23 @@
 //   - a play's vars, a role entry's vars and parameters, and an import's
 //     vars, in every playbook file the walk reads.
 //
+// Links are followed as Ansible follows them, a linked file or directory
+// read under the path that links to it (vault_walk.go); the reader's file
+// system keeps them inside the clone.
+//
 // A name counts when its value holds a vault-encrypted scalar anywhere
 // inside it (a dictionary with one encrypted key replaces the secret just
-// as well): a !vault tag, or a string that starts with $ANSIBLE_VAULT;.
-// A variable file encrypted as a whole hides its names: it is listed as
-// such. The read is bounded; when a limit or the time limit leaves files
-// unread, Cut says so and the names are not all known.
+// as well): a scalar tagged !vault or !vault-encrypted (the two tags
+// Ansible's loader reads as vault-encrypted), or any scalar whatever its
+// tag whose text starts with $ANSIBLE_VAULT;. A variable file encrypted
+// as a whole hides its names: it is listed as such. The read is bounded;
+// when a limit or the time limit leaves files unread, or a source cannot
+// be followed (a templated vars_files, a link that leads nowhere, a value
+// nested too deep), Cut says so and the names are not all known.
 package varsource
 
 import (
 	"context"
-	"errors"
-	"io/fs"
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -50,7 +54,8 @@ type Vault struct {
 	// YAML, not readable): the names they set are not known.
 	Unread []string `json:"unread"`
 	// Cut: a limit, the time limit or a cancellation left files unread,
-	// or the report left playbooks out; names may be missing.
+	// a source could not be followed, or the report left playbooks out;
+	// names may be missing.
 	Cut bool `json:"cut"`
 }
 
@@ -74,8 +79,14 @@ const (
 	maxVaultFilesRead = 5000
 	// maxVaultBytes bounds the bytes of variable files read.
 	maxVaultBytes = 64 << 20
-	// maxVaultDepth bounds how deep a value is searched for ciphertext.
+	// maxVaultDepth bounds how deep a value is searched for ciphertext;
+	// past it the read is Cut.
 	maxVaultDepth = 64
+	// maxVaultEntries bounds the directory entries walked.
+	maxVaultEntries = 200_000
+	// maxVaultLinks bounds the directory links followed along one path
+	// where the file system cannot tell a loop (os.SameFile).
+	maxVaultLinks = 16
 )
 
 // vaultHeader starts every Ansible Vault ciphertext.
@@ -97,8 +108,12 @@ type vaultSet struct {
 	unread    []string
 	read      map[string]bool // variable files read, by reported name
 	files     int
+	entries   int // directory entries walked
 	bytes     int
-	cut       bool
+	// stop: a limit or the time limit ended the read; incomplete: a
+	// source was not followed or a list was capped, the read goes on.
+	// Either leaves the names Cut.
+	stop, incomplete bool
 }
 
 func newVaultSet(ctx context.Context) *vaultSet {
@@ -114,7 +129,7 @@ func (v *vaultSet) add(name, file string) {
 		return
 	}
 	if len(v.names) == maxVaultNames {
-		v.cut = true
+		v.incomplete = true
 		return
 	}
 	v.names[k] = true
@@ -122,7 +137,7 @@ func (v *vaultSet) add(name, file string) {
 
 func (v *vaultSet) listFile(list *[]string, file string) {
 	if len(*list) == maxVaultFiles {
-		v.cut = true
+		v.incomplete = true
 		return
 	}
 	*list = append(*list, clip(file, maxRefBytes))
@@ -130,7 +145,7 @@ func (v *vaultSet) listFile(list *[]string, file string) {
 
 // result is the read as a Vault; cut adds a cut of the caller's.
 func (v *vaultSet) result(cut bool) *Vault {
-	out := &Vault{Names: make([]VaultName, 0, len(v.names)), EncryptedFiles: v.encrypted, Unread: v.unread, Cut: v.cut || cut}
+	out := &Vault{Names: make([]VaultName, 0, len(v.names)), EncryptedFiles: v.encrypted, Unread: v.unread, Cut: v.stop || v.incomplete || cut}
 	for k := range v.names {
 		out.Names = append(out.Names, k)
 	}
@@ -151,215 +166,62 @@ func (v *vaultSet) result(cut bool) *Vault {
 	return out
 }
 
-// scanVaultFiles reads every variable file of the repository and of what
-// its requirements installed.
-func (v *vaultSet) scanVaultFiles(fsys fs.FS, in Installed) {
-	v.walk(fsys, "", isVarsFile, nil)
-	if in.Roles != nil {
-		// One directory per role: <role>/defaults/… and <role>/vars/….
-		v.walk(in.Roles, InstalledRolesPrefix, func(p string) bool { return isVarsFile("roles/" + p) }, nil)
+// stopped reports whether the read has ended: a limit was hit before, or
+// the time limit has passed now.
+func (v *vaultSet) stopped() bool {
+	if !v.stop && v.ctx.Err() != nil {
+		v.stop = true
 	}
-	if in.Collections != nil {
-		// Only the collections' roles: <namespace>/<collection>/roles/….
-		v.walk(in.Collections, InstalledCollectionsPrefix, isVarsFile, func(dir string) bool {
-			return strings.Count(dir, "/") == 2 && path.Base(dir) != "roles"
-		})
-	}
-}
-
-// walk reads the files of fsys that match, named prefix + their path.
-// Hidden directories are skipped, as discovery skips them, and so is a
-// directory skip (when set) reports.
-func (v *vaultSet) walk(fsys fs.FS, prefix string, match, skip func(string) bool) {
-	err := fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
-		if v.cut {
-			return fs.SkipAll
-		}
-		if err != nil {
-			if name == "." {
-				return err
-			}
-			if entry != nil && entry.IsDir() {
-				// A directory that cannot be listed may hold variable files.
-				v.listFile(&v.unread, prefix+name)
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			if name != "." && (strings.HasPrefix(entry.Name(), ".") || (skip != nil && skip(name))) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !entry.Type().IsRegular() && entry.Type()&fs.ModeSymlink == 0 {
-			return nil
-		}
-		if match(name) {
-			v.readVarsFile(fsys, name, prefix+name)
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, fs.SkipAll) {
-		v.listFile(&v.unread, prefix+".")
-	}
-}
-
-// isVarsFile reports whether p, a path in the repository, is a variable
-// file Ansible may load by its place: under group_vars or host_vars, a
-// role's defaults or vars, or under any directory named vars (vars_files
-// usually live there), with no extension or .yml, .yaml or .json.
-func isVarsFile(p string) bool {
-	switch path.Ext(p) {
-	case "", ".yml", ".yaml", ".json":
-	default:
-		return false
-	}
-	dirs := strings.Split(path.Dir(p), "/")
-	for i, d := range dirs {
-		switch {
-		case d == "group_vars" || d == "host_vars" || d == "vars":
-			return true
-		case d == "defaults" && i >= 2 && dirs[i-2] == "roles":
-			return true
-		}
-	}
-	return false
-}
-
-// readVarsFile reads one variable file of fsys, reported as file, once.
-func (v *vaultSet) readVarsFile(fsys fs.FS, name, file string) {
-	if v.read[file] {
-		return
-	}
-	if v.ctx.Err() != nil || v.files == maxVaultFilesRead {
-		v.cut = true
-		return
-	}
-	v.read[file] = true
-	v.files++
-	data, err := readLimited(fsys, name)
-	v.bytes += len(data)
-	switch {
-	case isNotExist(err) || errors.Is(err, errNotRegular):
-		return
-	case err != nil:
-		v.listFile(&v.unread, file)
-		return
-	}
-	if v.bytes > maxVaultBytes {
-		v.cut = true
-		return
-	}
-	if strings.HasPrefix(strings.TrimLeft(string(data), " \t\r\n\ufeff"), vaultHeader) {
-		v.listFile(&v.encrypted, file)
-		return
-	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		v.listFile(&v.unread, file)
-		return
-	}
-	y := newYAMLFile(file)
-	memo := map[*yaml.Node]bool{}
-	for _, p := range y.pairs(documentRoot(&doc)) {
-		if holdsVault(p.value, memo, 0) {
-			v.add(p.key.Value, file)
-		}
-	}
-	if y.exceeded() {
-		v.listFile(&v.unread, file)
-	}
+	return v.stop
 }
 
 // isVaultValue reports a scalar Ansible reads as vault-encrypted: tagged
-// !vault, or a string that starts with the vault header.
+// !vault or !vault-encrypted, or whatever its tag, text that starts with
+// the vault header (a tag Ansible does not decrypt still hands the
+// ciphertext on, and a custom loader may decrypt it).
 func isVaultValue(n *yaml.Node) bool {
 	if n.Kind != yaml.ScalarNode {
 		return false
 	}
-	if n.ShortTag() == "!vault" {
+	if t := n.ShortTag(); t == "!vault" || t == "!vault-encrypted" {
 		return true
 	}
-	return n.ShortTag() == "!!str" && strings.HasPrefix(strings.TrimLeft(n.Value, " \t\r\n"), vaultHeader)
+	return strings.HasPrefix(strings.TrimLeft(n.Value, " \t\r\n"), vaultHeader)
 }
 
-// holdsVault reports whether the value n holds a vault-encrypted scalar
-// anywhere inside it. memo keeps each node's answer, so a node reached
-// through many aliases is searched once; a node deeper than maxVaultDepth
-// is not searched.
-func holdsVault(n *yaml.Node, memo map[*yaml.Node]bool, depth int) bool {
+// vaultSearch looks for ciphertext inside values of one parsed file. memo
+// keeps each node's answer, so a node reached through many aliases is
+// searched once; deep: a node lay deeper than maxVaultDepth and was not
+// searched.
+type vaultSearch struct {
+	memo map[*yaml.Node]bool
+	deep bool
+}
+
+func newVaultSearch() *vaultSearch { return &vaultSearch{memo: map[*yaml.Node]bool{}} }
+
+// holds reports whether the value n holds a vault-encrypted scalar
+// anywhere inside it.
+func (s *vaultSearch) holds(n *yaml.Node, depth int) bool {
 	n = resolve(n)
-	if n == nil || depth > maxVaultDepth {
+	if n == nil {
 		return false
 	}
-	if held, ok := memo[n]; ok {
+	if depth > maxVaultDepth {
+		s.deep = true
+		return false
+	}
+	if held, ok := s.memo[n]; ok {
 		return held
 	}
-	memo[n] = false // a node that holds itself (an anchor in its own value) ends here
+	s.memo[n] = false // a node that holds itself (an anchor in its own value) ends here
 	held := isVaultValue(n)
 	for _, c := range n.Content {
 		if held {
 			break
 		}
-		held = holdsVault(c, memo, depth+1)
+		held = s.holds(c, depth+1)
 	}
-	memo[n] = held
+	s.memo[n] = held
 	return held
-}
-
-// playVault records the vault-encrypted variables a playbook file sets:
-// key is the variable's name, value what it is set to.
-func (f *playFile) playVault(key, value *yaml.Node) {
-	if f.vaultMemo == nil {
-		f.vaultMemo = map[*yaml.Node]bool{}
-	}
-	if holdsVault(value, f.vaultMemo, 0) {
-		f.vault = append(f.vault, key.Value)
-	}
-}
-
-// varsFiles records a play's static vars_files: a templated entry, or one
-// that is a list (Ansible's first-found form), is not read.
-func (f *playFile) varsFiles(n *yaml.Node) {
-	r := resolve(n)
-	if isNull(r) {
-		return
-	}
-	if r.Kind == yaml.ScalarNode {
-		f.addVarsFile(r)
-		return
-	}
-	for _, it := range f.y.items(r) {
-		if it = resolve(it); it != nil && it.Kind == yaml.ScalarNode {
-			f.addVarsFile(it)
-		}
-	}
-}
-
-func (f *playFile) addVarsFile(n *yaml.Node) {
-	text, ok := f.y.scalarText(n)
-	if !ok || text == "" || templated(text) || path.IsAbs(text) || len(f.varsFileRefs) == maxWalkFiles {
-		return
-	}
-	f.varsFileRefs = append(f.varsFileRefs, text)
-}
-
-// useVault hands what a read playbook file set to the repository's vault
-// read, when the walk has one (a repo read, not a single playbook).
-func (w *walk) useVault(file string, f *playFile) {
-	v := w.p.vault
-	if v == nil {
-		return
-	}
-	for _, name := range f.vault {
-		v.add(name, file)
-	}
-	for _, ref := range f.varsFileRefs {
-		p := path.Clean(path.Join(f.dir, ref))
-		if p == "." || p == ".." || strings.HasPrefix(p, "../") || !fs.ValidPath(p) {
-			continue
-		}
-		v.readVarsFile(w.p.fsys, p, p)
-	}
 }
