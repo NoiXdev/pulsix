@@ -1048,7 +1048,19 @@ migration). Writes made with an assistant token that pause:
   reaches every managed host of the zone).
 
 Deleting a host pauses nothing (runs reach fewer hosts), nor does editing a jump host itself
-(`PUT …/bastions/{id}`).
+(`PUT …/bastions/{id}`). A managed host renamed by an assistant pauses too (when it has an
+address; see below), and a host an assistant creates managed or makes managed shows its address,
+zone, SSH user, port, credential and jump host in the picture.
+
+**Assistant limits on managed hosts' connection** (controller's ruling N1): an assistant token
+may not change where a managed host is reached — its address, or its name while it has no
+address (`PATCH …/hosts/{id}` answers 403 "a person has to change where a managed host is
+reached"); an unmanaged host stays editable as before. An assistant's connection test
+(`POST …/hosts/{id}/connection-test`) is refused (403 "the host key must be pinned before an
+assistant tests with a password") while the host logs in with a password credential and its
+host key is not pinned. People are not affected. The pause on an assistant's host rename hands
+the change to the reviewer before the rename locks the host row, so a schedule tick enqueueing
+for that host never waits on it.
 
 Each pauses every active schedule and disables every enabled webhook trigger whose run then
 receives other values or reaches other hosts, in the same transaction as the write, with the

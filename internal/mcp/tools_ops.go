@@ -109,7 +109,7 @@ func opsTools() []toolDef {
 				}
 				return send(ctx, c, http.MethodPut, tags, "", "/hosts/%s/tags", in.HostID)
 			}),
-		define("start_connection_test", "Start connection test", "Test the connection to a host: it logs in and probes the host without running a playbook and pins no host key, so it needs no approval. Returns a job_id; read the outcome with get_connection_test.",
+		define("start_connection_test", "Start connection test", "Test the connection to a host: it logs in and probes the host without running a playbook and pins no host key, so it needs no approval. It is refused while the host logs in with a password credential and its host key is not pinned. Returns a job_id; read the outcome with get_connection_test.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
 				return send(ctx, c, http.MethodPost, nil, "", "/hosts/%s/connection-test", in.HostID)
 			}),

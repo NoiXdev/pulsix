@@ -382,4 +382,29 @@ func TestAnAssistantsInventoryChurnPausesWhatItReaches(t *testing.T) {
 		f3.assistantOK(t, http.MethodDelete, f3.orgPath()+"/hosts/"+spare.ID.String(), "", nil)
 		f3.wantRunning(t, "after a host was deleted")
 	})
+	t.Run("a managed host's connection is a person's to change", func(t *testing.T) {
+		f := newInventoryReviewFixture(t, "inv-n1-connection")
+		h, err := f.s.Deps.Hosts.GetHost(f.scoped, f.orgID, f.hostA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := f.s.AssistantDo(t, http.MethodPatch, f.invTok, f.orgPath()+"/hosts/"+h.ID.String(), revOf(h.Revision),
+			map[string]any{"name": h.Name, "address": "10.9.9.9", "zone_id": h.ZoneID.String(), "managed": true})
+		if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), "a person has to change where a managed host is reached") {
+			t.Fatalf("address change = %d %s", resp.Code, resp.Body)
+		}
+		f.wantRunning(t, "after the refused address change")
+		// A rename of a host with an address is allowed and pauses.
+		f.assistantOK(t, http.MethodPatch, f.orgPath()+"/hosts/"+h.ID.String(), revOf(h.Revision),
+			map[string]any{"name": "web-1a", "address": h.Address, "zone_id": h.ZoneID.String(), "managed": true})
+		f.wantPaused(t, "after the rename", map[uuid.UUID]bool{f.active: true, f.other: false})
+		// A connection test with a password to an unpinned host is refused.
+		if _, err := f.s.Deps.SSH.SetHostSSH(f.scoped, f.orgID, f.hostB, sshconf.HostSSHInput{CredentialID: &f.sshCred}); err != nil {
+			t.Fatal(err)
+		}
+		resp = f.s.AssistantDo(t, http.MethodPost, f.invTok, f.orgPath()+"/hosts/"+f.hostB.String()+"/connection-test", "", nil)
+		if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), "the host key must be pinned before an assistant tests with a password") {
+			t.Fatalf("password test = %d %s", resp.Code, resp.Body)
+		}
+	})
 }

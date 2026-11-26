@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/assistantchange"
+	"github.com/noixdev/pulsix/internal/credentials"
 )
 
 // SetChangeWatcher wires the watcher an assistant's change of how runs
@@ -28,6 +29,11 @@ func (s *Service) SetHostSSHBy(ctx context.Context, orgID, hostID uuid.UUID, in 
 	}
 	var out HostSSH
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		// The settings this write replaces, under the host row's lock
+		// (final review N3): no other write slips in between.
+		if err := s.store.LockHost(ctx, orgID, hostID); err != nil {
+			return err
+		}
 		before, err := s.HostSSH(ctx, orgID, hostID)
 		if err != nil {
 			return err
@@ -62,13 +68,10 @@ func (s *Service) SetZoneBastionBy(ctx context.Context, orgID, zoneID uuid.UUID,
 		return s.SetZoneBastion(ctx, orgID, zoneID, bastionID)
 	}
 	return s.store.InTx(ctx, orgID, func(ctx context.Context) error {
-		zones, err := s.store.ZoneBastions(ctx, orgID)
+		// The zone row locked (final review N3).
+		before, err := s.store.ZoneBastionForUpdate(ctx, orgID, zoneID)
 		if err != nil {
 			return err
-		}
-		var before *uuid.UUID
-		if id, ok := zones[zoneID]; ok {
-			before = &id
 		}
 		if err := s.SetZoneBastion(ctx, orgID, zoneID, bastionID); err != nil {
 			return err
@@ -168,4 +171,27 @@ func sameID(a, b *uuid.UUID) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// CheckAssistantConnectionTest refuses an assistant's connection test of
+// a host whose SSH credential is a password while its host key is not
+// pinned (controller's ruling N1): the test would send the password to
+// whatever answers at the host's address. A key credential, no credential
+// or a pinned key pass.
+func (s *Service) CheckAssistantConnectionTest(ctx context.Context, orgID, hostID uuid.UUID) error {
+	h, err := s.HostSSH(ctx, orgID, hostID)
+	if err != nil {
+		return err
+	}
+	if h.CredentialID == nil || h.KeyPinned {
+		return nil
+	}
+	c, err := s.creds.Get(ctx, orgID, *h.CredentialID)
+	if err != nil {
+		return fmt.Errorf("read the host's credential: %w", err)
+	}
+	if c.Kind == credentials.KindSSHPassword {
+		return ErrAssistantPasswordTest
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package sshconf_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -93,5 +94,36 @@ func TestAnAssistantsRouteChangeIsHandedOn(t *testing.T) {
 	}
 	if got := w.take(); len(got) != 0 {
 		t.Fatalf("an unchanged zone jump host handed on %+v", got)
+	}
+}
+
+// TestAnAssistantsPasswordTestNeedsAPinnedKey (controller's ruling N1): an
+// assistant's connection test is refused while the host's credential is a
+// password and its key is not pinned; a pinned key, a key credential and
+// no credential pass.
+func TestAnAssistantsPasswordTestNeedsAPinnedKey(t *testing.T) {
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	pw, key := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := sshconf.NewService(store, fakeCreds{
+		pw:  {ID: pw, OrgID: org, Name: "root-pw", Kind: credentials.KindSSHPassword},
+		key: {ID: key, OrgID: org, Name: "deploy-key", Kind: credentials.KindSSHKey},
+	}, fakeHosts{host: {ID: host, OrgID: org, Name: "web-01", Managed: true}})
+	if err := svc.CheckAssistantConnectionTest(ctx, org, host); err != nil {
+		t.Fatalf("no credential: %v", err)
+	}
+	store.hostSSH[host] = sshconf.HostSSH{HostID: host, OrgID: org, Port: 22, CredentialID: &pw, BastionMode: sshconf.ModeInherit}
+	if err := svc.CheckAssistantConnectionTest(ctx, org, host); !errors.Is(err, sshconf.ErrAssistantPasswordTest) {
+		t.Fatalf("password, unpinned: %v", err)
+	}
+	pinned := store.hostSSH[host]
+	pinned.KeyPinned = true
+	store.hostSSH[host] = pinned
+	if err := svc.CheckAssistantConnectionTest(ctx, org, host); err != nil {
+		t.Fatalf("password, pinned: %v", err)
+	}
+	store.hostSSH[host] = sshconf.HostSSH{HostID: host, OrgID: org, Port: 22, CredentialID: &key, BastionMode: sshconf.ModeInherit}
+	if err := svc.CheckAssistantConnectionTest(ctx, org, host); err != nil {
+		t.Fatalf("key, unpinned: %v", err)
 	}
 }

@@ -25,6 +25,22 @@ RETURNING *;
 -- which this query guarantees on its own, independent of RLS.
 SELECT * FROM hosts WHERE id = $1 AND org_id = $2;
 
+-- name: GetHostForUpdate :one
+-- GetHost with the row locked until the transaction ends. FOR NO KEY
+-- UPDATE: it does not conflict with the FOR KEY SHARE a job insert takes on
+-- its target hosts, so the schedule ticker's enqueue never waits on it.
+SELECT * FROM hosts WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE;
+
+-- name: GetHostRoute :one
+-- How runs reach a host, as a person reads it: its SSH user and port, the
+-- credential's and the jump host's names. No row when the host has no SSH
+-- settings stored (the defaults apply).
+SELECT hs.username, hs.port, hs.bastion_mode, COALESCE(c.name, '')::text AS credential_name, COALESCE(b.name, '')::text AS bastion_name
+FROM host_ssh hs
+LEFT JOIN credentials c ON c.org_id = hs.org_id AND c.id = hs.credential_id
+LEFT JOIN bastions b ON b.org_id = hs.org_id AND b.id = hs.bastion_id
+WHERE hs.org_id = $1 AND hs.host_id = $2;
+
 -- name: ListHostZones :many
 -- The zone of each named host, in no particular order: the revocation
 -- phase (backlog 2.46) resolves each snapshot target's claim zone. A host

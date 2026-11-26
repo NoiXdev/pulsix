@@ -36,10 +36,17 @@ func TestInventoryWriteTools(t *testing.T) {
 			Address string `json:"address"`
 		} `json:"host"`
 	}
-	callOK(t, cs, "create_host", map[string]any{"name": "db-1", "address": "10.0.0.5", "zone_id": zones.Zones[0].ID, "managed": true}, &created)
-	callOK(t, cs, "update_host", map[string]any{"host_id": created.Host.ID, "fields": map[string]any{"address": "10.0.0.6"}}, &created)
+	// An assistant changes the address of a host that is not managed yet
+	// (a managed host's address is a person's, controller's ruling N1).
+	callOK(t, cs, "create_host", map[string]any{"name": "db-1", "address": "10.0.0.5", "zone_id": zones.Zones[0].ID}, &created)
+	callOK(t, cs, "update_host", map[string]any{"host_id": created.Host.ID, "fields": map[string]any{"address": "10.0.0.6", "managed": true}}, &created)
 	if created.Host.Address != "10.0.0.6" {
 		t.Fatalf("updated host = %+v", created.Host)
+	}
+	// Now managed, its address is a person's to change.
+	if text, isErr := call(t, cs, "update_host", map[string]any{"host_id": created.Host.ID, "fields": map[string]any{"address": "10.0.0.7"}}); !isErr ||
+		!strings.Contains(text, "a person has to change where a managed host is reached") {
+		t.Fatalf("an assistant's address change of a managed host = %v %s", isErr, text)
 	}
 	callOK(t, cs, "set_host_ssh", map[string]any{"host_id": created.Host.ID, "username": "root", "port": 2222, "credential_id": f.credential.String()}, nil)
 

@@ -535,6 +535,8 @@ func mapHostsErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, hosts.ErrNameTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, hosts.ErrAssistantConnection):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, hosts.ErrInvalidCursor):
 		return huma.Error400BadRequest("invalid cursor")
 	default:

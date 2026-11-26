@@ -146,6 +146,13 @@ func registerHostopsRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		if changeActor(scope).Assistant {
+			// An assistant never sends a password to an unverified host
+			// (controller's ruling N1).
+			if err := deps.SSH.CheckAssistantConnectionTest(ctx, scope.OrgID, hostID); err != nil {
+				return nil, mapSSHErr(ctx, err)
+			}
+		}
 		actor := scope.UserID
 		j, err := deps.Jobs.EnqueueHostJob(ctx, scope.OrgID, jobs.KindConnectionTest, []uuid.UUID{hostID}, nil, jobs.TriggerManual, &actor)
 		if err != nil {

@@ -137,6 +137,16 @@ func (f *fakeStore) WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(
 	return fn(f)
 }
 
+func (f *fakeStore) LockHost(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
+func (f *fakeStore) ZoneBastionForUpdate(_ context.Context, orgID, zoneID uuid.UUID) (*uuid.UUID, error) {
+	z, ok := f.zones[zoneID]
+	if !ok || z.org != orgID {
+		return nil, sshconf.ErrNotFound
+	}
+	return z.bastion, nil
+}
+
 // InTx runs fn directly: the fake has no transactions.
 func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
 	return fn(ctx)

@@ -489,6 +489,8 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 
 func mapSSHErr(ctx context.Context, err error) error {
 	switch {
+	case errors.Is(err, sshconf.ErrAssistantPasswordTest):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, sshconf.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, sshconf.ErrRevisionMismatch):

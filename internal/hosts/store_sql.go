@@ -236,6 +236,30 @@ func (s *SQLStore) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.U
 // ListAllHosts returns every host of orgID ordered by name, unpaginated, for
 // the inventory renderer (see ListAllHosts's own comment,
 // internal/db/queries/hosts.sql).
+// GetHostForUpdate implements Store.
+func (s *SQLStore) GetHostForUpdate(ctx context.Context, orgID, id uuid.UUID) (Host, error) {
+	row, err := s.q.GetHostForUpdate(ctx, gen.GetHostForUpdateParams{ID: id, OrgID: orgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Host{}, ErrNotFound
+	}
+	if err != nil {
+		return Host{}, fmt.Errorf("get host for update: %w", err)
+	}
+	return fromHostRow(row)
+}
+
+// GetRoute implements Store.
+func (s *SQLStore) GetRoute(ctx context.Context, orgID, hostID uuid.UUID) (Route, error) {
+	row, err := s.q.GetHostRoute(ctx, gen.GetHostRouteParams{OrgID: orgID, HostID: hostID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Route{Port: 22, JumpMode: "inherit"}, nil
+	}
+	if err != nil {
+		return Route{}, fmt.Errorf("get host route: %w", err)
+	}
+	return Route{User: row.Username, Port: int(row.Port), Credential: row.CredentialName, JumpMode: row.BastionMode, JumpHost: row.BastionName}, nil
+}
+
 // GetJump implements Store.
 func (s *SQLStore) GetJump(ctx context.Context, orgID, hostID uuid.UUID) (Jump, error) {
 	row, err := s.q.GetHostSSH(ctx, gen.GetHostSSHParams{OrgID: orgID, HostID: hostID})

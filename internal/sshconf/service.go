@@ -31,6 +31,10 @@ var (
 	// ErrInUse means a zone, group, host or another jump host still
 	// references the jump host.
 	ErrInUse = errors.New("jump host is in use")
+	// ErrAssistantPasswordTest refuses an assistant's connection test that
+	// would send a password to a host whose key is not pinned (controller's
+	// ruling N1): an endpoint nobody verified would receive it.
+	ErrAssistantPasswordTest = errors.New("the host key must be pinned before an assistant tests with a password")
 )
 
 // BastionMode says how a host picks its jump host.
@@ -91,6 +95,9 @@ type HostSSH struct {
 	// HostRevision is the host's revision after the write that returned
 	// this value (backlog 7.79); zero on a read.
 	HostRevision int64
+	// KeyPinned is set when the host's key is pinned (a fingerprint at
+	// least): a run or test then refuses a host that answers with another.
+	KeyPinned bool
 }
 
 // HostSSHInput replaces a host's SSH settings. Port 0 means 22 and an empty
@@ -139,6 +146,14 @@ type Store interface {
 	// connection while this one already holds one, which a small,
 	// contended pool may never free up again).
 	WithChainLock(ctx context.Context, orgID uuid.UUID, fn func(Store) error) error
+	// LockHost locks the host's row FOR NO KEY UPDATE until the
+	// transaction ends: every SSH settings write bumps that row, so the
+	// settings read after it are the ones a write replaces.
+	LockHost(ctx context.Context, orgID, hostID uuid.UUID) error
+	// ZoneBastionForUpdate is a zone's default jump host (nil: none), the
+	// zone row locked until the transaction ends; ErrNotFound for an
+	// unknown zone.
+	ZoneBastionForUpdate(ctx context.Context, orgID, zoneID uuid.UUID) (*uuid.UUID, error)
 	// InTx runs fn inside one organization-scoped write transaction that
 	// every store built on the same database joins through the context
 	// (an assistant's route change and the pause it causes). Not nested.

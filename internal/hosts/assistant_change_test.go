@@ -2,6 +2,7 @@ package hosts_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -49,7 +50,20 @@ func TestAnAssistantsManagedHostIsHandedOn(t *testing.T) {
 		got[0].Reach == nil || len(got[0].Reach.Hosts) != 1 || got[0].Reach.Hosts[0] != h.ID {
 		t.Fatalf("created = %+v", got)
 	}
-	if _, err := svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", Address: "10.0.0.2", ZoneID: zone.ID, Managed: true}, assistant); err != nil {
+	// The picture shows where and how runs reach it (final review N4).
+	want := []string{"host", "address", "zone", "ssh_user", "ssh_port", "ssh_credential", "jump_host"}
+	if len(got[0].Fields) != len(want) {
+		t.Fatalf("created fields = %+v", got[0].Fields)
+	}
+	for i, name := range want {
+		if got[0].Fields[i].Name != name {
+			t.Fatalf("created fields = %+v, want %v", got[0].Fields, want)
+		}
+	}
+	if got[0].Fields[1].New != "web-01" || got[0].Fields[2].New != "fra" || got[0].Fields[4].New != 22 || got[0].Fields[6].New != "inherit" {
+		t.Fatalf("created route = %+v", got[0].Fields)
+	}
+	if _, err := svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", ZoneID: zone.ID, Managed: true, Monitored: true}, assistant); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.take(); len(got) != 0 {
@@ -66,7 +80,7 @@ func TestAnAssistantsManagedHostIsHandedOn(t *testing.T) {
 	if off, err = svc.UpdateHostBy(ctx, org, off.ID, off.Revision, hosts.HostInput{Name: "web-02", ZoneID: zone.ID, Managed: true}, assistant); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.take(); len(got) != 1 || got[0].Fields[0].Name != "managed" {
+	if got := w.take(); len(got) != 1 || got[0].Fields[0].Name != "managed" || len(got[0].Fields) != 7 {
 		t.Fatalf("made managed by an update = %+v", got)
 	}
 	no, yes := false, true
@@ -105,11 +119,11 @@ func TestAnAssistantsHostRouteChangeIsHandedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	assistant := assistantchange.Actor{UserID: uuid.Must(uuid.NewV7()), Assistant: true}
-	h, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", ZoneID: fra.ID, Managed: true})
+	h, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", Address: "10.0.0.1", ZoneID: fra.ID, Managed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", ZoneID: nbg.ID, Managed: true}, assistant); err != nil {
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", Address: "10.0.0.1", ZoneID: nbg.ID, Managed: true}, assistant); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.take(); len(got) != 1 || len(got[0].Fields) != 1 || got[0].Fields[0].Name != "zone" || got[0].Fields[0].Old != "fra" || got[0].Fields[0].New != "nbg" {
@@ -117,22 +131,75 @@ func TestAnAssistantsHostRouteChangeIsHandedOn(t *testing.T) {
 	}
 	bastion := uuid.Must(uuid.NewV7())
 	jump := &hosts.Jump{Mode: "explicit", BastionID: &bastion}
-	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", Address: "10.0.0.1", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.take(); len(got) != 1 || got[0].Fields[0].Name != "jump_host" || got[0].Fields[0].Old != "inherit" {
 		t.Fatalf("jump host change = %+v", got)
 	}
-	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-01", Address: "10.0.0.1", ZoneID: nbg.ID, Managed: true, Monitored: true, Jump: jump}, assistant); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.take(); len(got) != 0 {
-		t.Fatalf("a rename with the same jump host handed on %+v", got)
+		t.Fatalf("an update with the same zone and jump host handed on %+v", got)
 	}
-	if _, err = svc.UpdateHost(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", ZoneID: fra.ID, Managed: true}); err != nil {
+	// A managed host with an address may be renamed: inventory_hostname
+	// changes, so it is handed on (controller's ruling N1).
+	if h, err = svc.UpdateHostBy(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", Address: "10.0.0.1", ZoneID: nbg.ID, Managed: true, Jump: jump}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.take(); len(got) != 1 || got[0].Fields[0].Name != "name" || got[0].Fields[0].Old != "web-01" || got[0].Fields[0].New != "web-1" {
+		t.Fatalf("a rename = %+v", got)
+	}
+	if _, err = svc.UpdateHost(ctx, org, h.ID, h.Revision, hosts.HostInput{Name: "web-1", Address: "10.0.0.1", ZoneID: fra.ID, Managed: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.take(); len(got) != 0 {
 		t.Fatalf("a person's zone change handed on %+v", got)
+	}
+}
+
+// TestAnAssistantCannotMoveAManagedHostsConnection (controller's ruling
+// N1): an assistant may not change where a managed host is reached — its
+// address, or its name while it has no address — whether or not a watcher
+// is wired; an unmanaged host and a person may.
+func TestAnAssistantCannotMoveAManagedHostsConnection(t *testing.T) {
+	svc := hosts.NewService(newFakeHostStore(), time.Now)
+	org := uuid.Must(uuid.NewV7())
+	zone, err := svc.CreateZone(ctx, org, "fra", "Falkenstein")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assistant := assistantchange.Actor{UserID: uuid.Must(uuid.NewV7()), Assistant: true}
+	withAddr, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", Address: "10.0.0.1", ZoneID: zone.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noAddr, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-02", ZoneID: zone.ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-03", Address: "10.0.0.3", ZoneID: zone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		h  hosts.Host
+		in hosts.HostInput
+	}{
+		"another address":         {withAddr, hosts.HostInput{Name: "web-01", Address: "10.0.0.9", ZoneID: zone.ID, Managed: true}},
+		"address cleared":         {withAddr, hosts.HostInput{Name: "web-01", ZoneID: zone.ID, Managed: true}},
+		"an address set":          {noAddr, hosts.HostInput{Name: "web-02", Address: "10.0.0.2", ZoneID: zone.ID, Managed: true}},
+		"renamed without address": {noAddr, hosts.HostInput{Name: "web-22", ZoneID: zone.ID, Managed: true}},
+	} {
+		if _, err := svc.UpdateHostBy(ctx, org, tc.h.ID, tc.h.Revision, tc.in, assistant); !errors.Is(err, hosts.ErrAssistantConnection) {
+			t.Errorf("%s: err = %v, want ErrAssistantConnection", name, err)
+		}
+	}
+	if _, err := svc.UpdateHostBy(ctx, org, off.ID, off.Revision, hosts.HostInput{Name: "web-03", Address: "10.0.0.33", ZoneID: zone.ID}, assistant); err != nil {
+		t.Errorf("an unmanaged host's address: %v", err)
+	}
+	if _, err := svc.UpdateHost(ctx, org, withAddr.ID, withAddr.Revision, hosts.HostInput{Name: "web-01", Address: "10.0.0.9", ZoneID: zone.ID, Managed: true}); err != nil {
+		t.Errorf("a person's address change: %v", err)
 	}
 }

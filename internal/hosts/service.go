@@ -54,6 +54,9 @@ var (
 	// constraints in the schema) — reported as a conflict, not a generic
 	// store failure.
 	ErrNameTaken = errors.New("name already in use")
+	// ErrAssistantConnection refuses an assistant's change of where a
+	// managed host is reached (decision D7, controller's ruling N1).
+	ErrAssistantConnection = errors.New("a person has to change where a managed host is reached")
 	// ErrInvalidCursor is returned by DecodeCursor when cursor is not one
 	// EncodeCursor produced.
 	ErrInvalidCursor = errors.New("hosts: invalid cursor")
@@ -256,6 +259,12 @@ type Store interface {
 	// ListAllHosts returns every host of orgID ordered by name, unpaginated,
 	// for the inventory renderer.
 	ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error)
+	// GetHostForUpdate is GetHost with the row locked (FOR NO KEY UPDATE)
+	// until the transaction (InTx) ends.
+	GetHostForUpdate(ctx context.Context, orgID, id uuid.UUID) (Host, error)
+	// GetRoute is how runs reach the host, by name (the defaults when it
+	// has no SSH settings stored).
+	GetRoute(ctx context.Context, orgID, hostID uuid.UUID) (Route, error)
 	// GetJump returns the host's jump host setting; inherit when the host
 	// has no SSH settings stored.
 	GetJump(ctx context.Context, orgID, hostID uuid.UUID) (Jump, error)
@@ -512,7 +521,10 @@ func (s *Service) CreateHostBy(ctx context.Context, orgID uuid.UUID, in HostInpu
 		if out, err = s.store.CreateHostWith(ctx, h, extras); err != nil {
 			return err
 		}
-		return s.handOnManaged(ctx, actor, Host{}, out, "host", nil, out.Name)
+		if !out.Managed {
+			return nil
+		}
+		return s.handOnEntering(ctx, actor, out, assistantchange.Field{Name: "host", Old: nil, New: out.Name})
 	})
 	if err != nil {
 		return Host{}, err
@@ -635,14 +647,17 @@ func (s *Service) SetCapabilitiesBy(ctx context.Context, orgID, id uuid.UUID, ma
 	}
 	var out Host
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
-		before, err := s.store.GetHost(ctx, orgID, id)
+		before, err := s.store.GetHostForUpdate(ctx, orgID, id)
 		if err != nil {
 			return err
 		}
 		if out, err = s.store.PatchCapabilities(ctx, orgID, id, managed, monitored); err != nil {
 			return err
 		}
-		return s.handOnManaged(ctx, actor, before, out, "managed", false, true)
+		if before.Managed || !out.Managed {
+			return nil
+		}
+		return s.handOnEntering(ctx, actor, out, assistantchange.Field{Name: "managed", Old: false, New: true})
 	})
 	if err != nil {
 		return Host{}, err

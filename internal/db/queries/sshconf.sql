@@ -47,3 +47,14 @@ INSERT INTO host_ssh (host_id, org_id, bastion_mode, bastion_id)
 VALUES (@host_id, @org_id, @bastion_mode, @bastion_id)
 ON CONFLICT (host_id) DO UPDATE
 SET bastion_mode = EXCLUDED.bastion_mode, bastion_id = EXCLUDED.bastion_id, updated_at = now();
+
+-- name: LockHostForSSH :one
+-- The host row locked FOR NO KEY UPDATE until the transaction ends: every
+-- write of a host's SSH settings bumps this row, so an assistant's change
+-- reads the settings it replaces under this lock.
+SELECT id FROM hosts WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE;
+
+-- name: GetZoneBastionForUpdate :one
+-- A zone's default jump host, the zone row locked until the transaction
+-- ends.
+SELECT bastion_id FROM zones WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE;
