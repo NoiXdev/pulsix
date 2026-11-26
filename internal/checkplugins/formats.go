@@ -78,6 +78,14 @@ const (
 	// leaves regular expressions, CSS selectors and JSONPaths beyond their
 	// shape to the server.
 	FormatAssertion Format = "assertion"
+	// FormatTCPAssertion, FormatDNSAssertion and FormatTLSAssertion: one
+	// entry of the tcp, dns or tls check's assertions (backlog 3.87), the
+	// same grammar in that plugin's dialect (internal/probe/assert): only
+	// the subjects differ. The SPA's twin is FormatAssertion's with the
+	// plugin's subjects.
+	FormatTCPAssertion Format = "tcpAssertion"
+	FormatDNSAssertion Format = "dnsAssertion"
+	FormatTLSAssertion Format = "tlsAssertion"
 	// FormatUUID: a canonical lower-case UUID (8-4-4-4-12 hex digits, no
 	// braces or urn prefix) — the id of a monitoring group in a check's
 	// vantage_groups (backlog 3.13a).
@@ -92,6 +100,7 @@ func Formats() []Format {
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
+		FormatTCPAssertion, FormatDNSAssertion, FormatTLSAssertion,
 	}
 }
 
@@ -143,6 +152,12 @@ func (f Format) problem(s string) string {
 		return jsonValueProblem(s)
 	case FormatAssertion:
 		return assertionProblem(s)
+	case FormatTCPAssertion:
+		return dialectProblem(assert.TCP, tcpAssertionExample, s)
+	case FormatDNSAssertion:
+		return dialectProblem(assert.DNS, dnsAssertionExample, s)
+	case FormatTLSAssertion:
+		return dialectProblem(assert.TLS, tlsAssertionExample, s)
 	case FormatUUID:
 		if id, err := uuid.Parse(s); err != nil || id.String() != s {
 			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"

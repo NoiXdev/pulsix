@@ -13,7 +13,7 @@
  * http://x:99999/, the opposite of Go on both.
  */
 
-import { assertion, jsonPathDescendants } from './assertionFormat.ts';
+import { assertion, dnsAssertion, jsonPathDescendants, tcpAssertion, tlsAssertion } from './assertionFormat.ts';
 
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
@@ -376,6 +376,9 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   jsonValue,
   assertion,
   uuid,
+  tcpAssertion,
+  dnsAssertion,
+  tlsAssertion,
 };
 
 /** formatValid reports whether s passes the named format. An unknown
