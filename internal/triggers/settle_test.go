@@ -102,7 +102,7 @@ func (f *fakePending) Supersede(context.Context, uuid.UUID, uuid.UUID) (*uuid.UU
 
 func (rw *receiveWorld) withPending(p triggers.PendingStore) {
 	rw.svc = triggers.NewService(triggers.Deps{
-		Store: rw.rec, Pending: p, Templates: rw.tmpls, Repos: rw.repos, Box: fakeBox{},
+		Store: rw.rec, Pending: p, Templates: rw.tmpls, Repos: rw.repos, Secrets: rw.secrets(), Scope: rw.scope, Box: fakeBox{},
 		Runs: rw.runs, Audit: rw.audit, PublicURL: "https://pulsix.example.test",
 		Now: func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }, Rand: rand.Reader,
 	})

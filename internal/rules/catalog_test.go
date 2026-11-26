@@ -94,6 +94,15 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"docker.containers_running":    {CheckKey: "docker", Kind: rules.MetricNumeric},
 		"docker.containers_total":      {CheckKey: "docker", Kind: rules.MetricNumeric},
 		"docker.containers_unreported": {CheckKey: "docker", Kind: rules.MetricNumeric},
+		// Backlog 3.12a: per-container usage, with the resources option.
+		"docker.cpu_percent":             {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.memory_bytes":            {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.memory_percent":          {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.net_rx_bytes_per_s":      {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.net_tx_bytes_per_s":      {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.block_read_bytes_per_s":  {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.block_write_bytes_per_s": {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_unsampled":    {CheckKey: "docker", Kind: rules.MetricNumeric},
 
 		// Backlog 3.9: the hardware plugins (temperature, smart, raid).
 		"temp.celsius":                   {CheckKey: "temperature", Kind: rules.MetricNumeric},

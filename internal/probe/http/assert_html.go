@@ -13,15 +13,33 @@ const (
 	errHTMLTooMuch = "the selector took too much work"
 	// htmlSelectBudget bounds the steps one html assertion's walk may
 	// take (selectAll: one per node, child and condition, plus attribute
-	// bytes). The walk is linear in the page; a step took at most about
-	// 17 ns (measured: 15 comma parts of 8 compounds over 500-deep
-	// chains 16 ns, 150 000 siblings 17 ns, a 900 KB class list 11 ns),
-	// so this is about a quarter of a second of CPU. Ordinary selectors
-	// on a real 800 KiB page (20 000 elements) take 140 000 to 420 000.
+	// bytes and, for an of-type pseudo-class, element names). The walk
+	// is linear in the page. What a step costs depends on its kind
+	// (measured without -race, backlog 3.90, on a machine shared with
+	// other test runs): a condition or attribute byte 4 to 10 ns (15
+	// parts of 8 compounds over 500-deep chains, 14 :nth-child parts
+	// or 15 parts of 8-compound ~ chains over 150 000 siblings, a
+	// 900 KB class list); an of-type count over 150 000 distinct
+	// sibling names about 17 ns; a bare node visit (node, child and
+	// one condition: "p" over 150 000 siblings) 20 to 30 ns, the
+	// dearest — 3.13b's walk measured the same there. A whole budget
+	// of the dearest kind would be about 0.45 s, but bare visits are
+	// capped by the page: a walk visits at most htmlMaxNodes nodes,
+	// about 1.2 M such steps (35 ms), and an assertion that spends its
+	// budget does so mostly on conditions, about 0.15 s. Ordinary
+	// selectors on a real 800 KiB page (20 000 elements) take 140 000
+	// to 420 000.
 	htmlSelectBudget = 15_000_000
 	// htmlCheckBudget bounds all of a check's html assertions together,
-	// their walks and the text they read (collapsedText): about a second
-	// of CPU, like the JSON stage's budget.
+	// their walks and the text they read (collapsedText). Spent at the
+	// dearest step it would be about 1.8 s, but a check has at most
+	// assert.MaxEntries (32) assertions, whose bare visits come to at
+	// most about 38 M steps (1.2 s at 30 ns) and the rest of the budget
+	// to conditions (0.2 s): about 1.4 s at worst, typically far less.
+	// That is above the "about a second" of the JSON stage's budget but
+	// well inside the probe's deadline (10 s by default, at most 60 s),
+	// which the walk looks at before every node and stops at, so the
+	// budget is kept.
 	htmlCheckBudget = 60_000_000
 )
 

@@ -19,6 +19,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/secretshadow"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -53,6 +54,8 @@ type settleWorld struct {
 	clock  *fakeClock
 	runs   *fakeRuns
 	audit  *fakeAudit
+	inv    *fakeInvSecrets
+	scope  *fakeScope
 	svc    *triggers.Service
 	ticker *triggers.SettleTicker
 }
@@ -66,7 +69,8 @@ func newSettleWorld(t *testing.T, slug string) *settleWorld {
 		t.Fatal(err)
 	}
 	w := &settleWorld{d: d, org: org, tmpl: tmpl, repo: repo.ID, scoped: db.WithOrgScope(ctx, org),
-		clock: &fakeClock{t: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)}, runs: &fakeRuns{}, audit: &fakeAudit{}}
+		clock: &fakeClock{t: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)}, runs: &fakeRuns{}, audit: &fakeAudit{},
+		inv: &fakeInvSecrets{names: map[string]bool{}}, scope: &fakeScope{hosts: []uuid.UUID{uuid.Must(uuid.NewV7())}}}
 	w.svc = w.manager(triggers.NewSQLStore(d))
 	w.ticker = triggers.NewSettleTicker(w.svc, time.Second, nil, nil)
 	return w
@@ -76,7 +80,7 @@ func newSettleWorld(t *testing.T, slug string) *settleWorld {
 // database are two managers.
 func (w *settleWorld) manager(st *triggers.SQLStore) *triggers.Service {
 	return triggers.NewService(triggers.Deps{
-		Store: st, Pending: st, Box: fakeBox{}, Runs: w.runs, Audit: w.audit, Now: w.clock.Now, Rand: rand.Reader,
+		Store: st, Pending: st, Box: fakeBox{}, Runs: w.runs, Secrets: secretshadow.Checker{Inventory: w.inv, Playbooks: &fakePbVars{}}, Scope: w.scope, Audit: w.audit, Now: w.clock.Now, Rand: rand.Reader,
 		Templates: fakeTemplates{byID: map[uuid.UUID]templates.Template{w.tmpl: {ID: w.tmpl, OrgID: w.org, Name: "deploy"}}},
 		Repos:     fakeRepos{byID: map[uuid.UUID]repos.Repo{w.repo: {ID: w.repo, OrgID: w.org}}},
 	})

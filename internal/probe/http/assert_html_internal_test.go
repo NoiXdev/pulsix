@@ -64,6 +64,15 @@ func shopPage() string {
 	return r.String()
 }
 
+// distinctSiblings is n sibling elements of n distinct names.
+func distinctSiblings(n int) string {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "<t%d></t%d>", i, i)
+	}
+	return b.String()
+}
+
 // manyAttributes is n distinct attributes (the parser drops repeated
 // names).
 func manyAttributes(n int) string {
@@ -136,6 +145,126 @@ func TestSelectAllExpectations(t *testing.T) {
 		{list, "ul > #l2.b:nth-child(2)", []string{"l2"}},
 		{list, "LI[TITLE]", []string{"l3"}},
 		{list, "html li", []string{"l1", "l2", "l3"}},
+		// The An+B forms and pseudo-classes of backlog 3.90.
+		{list, "li:nth-child(-n+2)", []string{"l1", "l2"}},
+		{list, "li:nth-child(n)", []string{"l1", "l2", "l3"}},
+		{list, "li:nth-child(0)", []string{}},
+		{list, "li:nth-child(-1)", []string{}},
+		{list, "li:nth-child(2n+3)", []string{"l3"}},
+		{list, "li:nth-child(-2n+3)", []string{"l1", "l3"}},
+		{list, "li:nth-last-child(odd)", []string{"l1", "l3"}},
+		{list, "li:nth-last-child(1)", []string{"l3"}},
+		{list, "li:only-child", []string{}},
+		{list, "ul:only-child", []string{"u"}},
+		{list, "li:not(.a)", []string{"l2"}},
+		{list, "li:not(.a.c)", []string{"l1", "l2"}},
+		{list, "li:not(.c, :first-child)", []string{"l2"}},
+		{list, "li:not([title])", []string{"l1", "l2"}},
+		{list, "li:not(li)", []string{}},
+		{list, "li:not(*)", []string{}},
+		{list, "#u > :not(li)", []string{}},
+	}
+	for _, tc := range cases {
+		left := int64(htmlCheckBudget)
+		got, problem := selectAll(context.Background(), tc.doc, selectorOf(t, tc.sel), htmlSelectBudget, &left)
+		if problem != "" || !slices.Equal(ids(got), tc.want) {
+			t.Errorf("%q = %v, %q; want %v", tc.sel, ids(got), problem, tc.want)
+		}
+	}
+}
+
+// TestSelectAllSiblings: + takes the next element sibling only, ~ every
+// later one; text between siblings neither takes nor breaks a state (the
+// probe's tree keeps no comments); a sibling state never reaches a
+// sibling's descendants, another parent's children or an earlier
+// sibling.
+func TestSelectAllSiblings(t *testing.T) {
+	doc := htmlOf(t, `<body><h1 id=h></h1> text <p id=p1></p><!-- c --><p id=p2><span id=s1></span>`+
+		`<span id=s2></span></p><div id=d><p id=p3></p></div><p id=p4></p>`+
+		`<ul id=u><li id=l1></li><li id=l2><a id=a2></a></li><li id=l3><a id=a3></a></li></ul></body>`)
+	cases := []struct {
+		sel  string
+		want []string
+	}{
+		{"h1 + p", []string{"p1"}},
+		{"h1 ~ p", []string{"p1", "p2", "p4"}},
+		{"p + p", []string{"p2"}},
+		{"p ~ p", []string{"p2", "p4"}},
+		{"h1 + p + p", []string{"p2"}},
+		{"h1 + p ~ p", []string{"p2", "p4"}},
+		{"h1 + p2", []string{}},
+		{"h1 ~ div > p", []string{"p3"}},
+		{"h1 ~ div p", []string{"p3"}},
+		{"div + p", []string{"p4"}},
+		{"div ~ h1", []string{}},
+		{"p + h1", []string{}},
+		{"span + span", []string{"s2"}},
+		{"span ~ span", []string{"s2"}},
+		{"h1 ~ span", []string{}},
+		{"p + span", []string{}},
+		{"p span + span", []string{"s2"}},
+		{"p > span ~ span", []string{"s2"}},
+		{"h1 ~ p > span + span", []string{"s2"}},
+		{"h1 + span", []string{}},
+		{"ul > li + li a", []string{"a2", "a3"}},
+		{"ul > li + li > a", []string{"a2", "a3"}},
+		{"li + li + li", []string{"l3"}},
+		{"li ~ li > a", []string{"a2", "a3"}},
+		{"li:first-child ~ li", []string{"l2", "l3"}},
+		{"li:first-child + li a", []string{"a2"}},
+		{"div ~ ul li", []string{"l1", "l2", "l3"}},
+		{"body > h1 ~ ul > li:last-child > a", []string{"a3"}},
+		{"h1 + p, li + li", []string{"p1", "l2", "l3"}},
+		{"li + li, h1 + p", []string{"p1", "l2", "l3"}},
+		{"* + *", []string{"p1", "p2", "s2", "d", "p4", "u", "l2", "l3"}},
+		{"* ~ :not(p)", []string{"s2", "d", "u", "l2", "l3"}},
+	}
+	for _, tc := range cases {
+		left := int64(htmlCheckBudget)
+		got, problem := selectAll(context.Background(), doc, selectorOf(t, tc.sel), htmlSelectBudget, &left)
+		if problem != "" || !slices.Equal(ids(got), tc.want) {
+			t.Errorf("%q = %v, %q; want %v", tc.sel, ids(got), problem, tc.want)
+		}
+	}
+}
+
+// TestSelectAllPositionalPseudos: the of-type, :empty and :root
+// pseudo-classes of backlog 3.90. The root's parent is the document; an
+// element with only whitespace text is not empty.
+func TestSelectAllPositionalPseudos(t *testing.T) {
+	doc := htmlOf(t, `<html id=r><body id=b><div id=x1><p id=q1></p><span id=t1></span><p id=q2></p><p id=q3>x</p>`+
+		`<span id=t2></span></div><div id=x2><em id=e1></em></div><div id=x3> </div><div id=x4><!-- c --></div></body></html>`)
+	fragment := htmlOf(t, `<p id=f1></p><div id=f2><p id=f3></p></div>`)
+	cases := []struct {
+		doc  *html.Node
+		sel  string
+		want []string
+	}{
+		{doc, ":root", []string{"r"}},
+		{doc, "body:root", []string{}},
+		{doc, ":root > body", []string{"b"}},
+		{fragment, ":root", []string{"f1", "f2"}},
+		{doc, "p:first-of-type", []string{"q1"}},
+		{doc, "p:last-of-type", []string{"q3"}},
+		{doc, "span:first-of-type", []string{"t1"}},
+		{doc, "span:last-of-type", []string{"t2"}},
+		{doc, ":only-of-type", []string{"r", "b", "e1"}},
+		{doc, ":only-child", []string{"r", "b", "e1"}},
+		{doc, "p:nth-of-type(2)", []string{"q2"}},
+		{doc, ":nth-of-type(2)", []string{"q2", "t2", "x2"}},
+		{doc, "p:nth-of-type(odd)", []string{"q1", "q3"}},
+		{doc, "p:nth-last-of-type(1)", []string{"q3"}},
+		{doc, "#x1 > :nth-last-of-type(2)", []string{"t1", "q2"}},
+		{doc, "#x1 > :nth-last-child(2)", []string{"q3"}},
+		{doc, "div:nth-last-of-type(-n+2)", []string{"x3", "x4"}},
+		{doc, "div:empty", []string{"x4"}},
+		{doc, ":empty", []string{"q1", "t1", "q2", "t2", "e1", "x4"}},
+		{doc, "p:not(:first-of-type)", []string{"q2", "q3"}},
+		{doc, "#x1 > :not(p)", []string{"t1", "t2"}},
+		{doc, "#x1 > *:not([id^=q], span)", []string{}},
+		{doc, "#x1 > :not(:empty)", []string{"q3"}},
+		{doc, "p:first-of-type + span + p", []string{"q2"}},
+		{doc, "span:first-of-type ~ p:last-of-type", []string{"q3"}},
 	}
 	for _, tc := range cases {
 		left := int64(htmlCheckBudget)
@@ -158,6 +287,9 @@ func TestSelectAllOnARealPage(t *testing.T) {
 		{"div.card .inner .price", 2500}, {"div.card > .inner", 0}, {"tr:nth-child(odd) td", 3000},
 		{"ul > li:first-child a", 1}, {"td:last-child a", 2000}, {"#content td", 6000},
 		{"button[disabled]", 2500}, {"td, h3", 8500}, {"[href^='/p/']", 2000},
+		{"tr + tr", 1999}, {"tr ~ tr", 1999}, {"h3 + p", 2500}, {"table ~ .card", 2500}, {".card ~ .card", 2499},
+		{"td:nth-last-child(2)", 2000}, {"div:empty", 0}, {"span:first-of-type", 2500},
+		{"tr:not(:first-child) td.price", 1999}, {"li:nth-of-type(2n+1) a", 25}, {".card:nth-of-type(1)", 1},
 	} {
 		left := int64(htmlCheckBudget)
 		got, problem := selectAll(context.Background(), doc, selectorOf(t, tc.sel), htmlSelectBudget, &left)
@@ -189,6 +321,19 @@ func TestSelectAllBoundsHostilePages(t *testing.T) {
 		{"huge class list", `<div class="` + strings.Repeat("a ", 450_000) + `">` + strings.Repeat("<i></i>", 2000), ".x" + strings.Repeat(".a", 15) + " i", false},
 		{"many attributes", `<div ` + manyAttributes(60_000) + `>` + strings.Repeat("<i></i>", 2000), strings.Repeat("[zz]", 16) + " i", false},
 		{"many parts", chain(500, 190), strings.TrimSuffix(strings.Repeat("a b c d e f g h,", 15), ","), false},
+		// Sibling chains (backlog 3.90): a ~ state reaches every later
+		// sibling, so on 150 000 siblings each part keeps all its
+		// compounds open — linear still, past the budget with 15 parts.
+		{"long sibling chains", strings.Repeat("<p></p>", 150_000), "p~p~p~p~p~p~p~p,p+p+p+p+p+p+p+p", false},
+		{"many sibling chain parts", strings.Repeat("<p></p>", 150_000), strings.TrimSuffix(strings.Repeat("p~p~p~p~p~p~p~p,", 15), ","), true},
+		{"sibling chains over deep nesting", chain(500, 190), strings.TrimSuffix(strings.Repeat("div~div+div~div div+div~div div,", 7), ","), false},
+		{"distinct sibling names counted by type", distinctSiblings(60_000), strings.TrimSuffix(strings.Repeat(":nth-last-of-type(2) b,", 10), ","), false},
+		// Four parts (the 256 bytes hold no more) of a :not at the cap of
+		// 16 simple selectors: 15 class tests per element and part.
+		{"nots at the simple cap", chain(500, 190), strings.TrimSuffix(strings.Repeat(":not(.a,.b,.c,.d,.e,.f,.g,.h,.i,.j,.k,.l,.m,.n,.o) p,", 4), ","), false},
+		// Each of the 15 compounds inside the :not reads the 600 KB
+		// attribute and fails: 9 M steps per element.
+		{"nots reading a huge attribute", huge + huge, ":not(" + strings.TrimSuffix(strings.Repeat(`[title*="zz"],`, 15), ",") + ")", true},
 		// 16 substring tests read a 600 KB attribute 16 times: 9.6 M
 		// steps per element, two elements past the assertion's budget.
 		{"huge attribute read again and again", huge + huge, strings.Repeat(`[title*="ab"]`, 16), true},
