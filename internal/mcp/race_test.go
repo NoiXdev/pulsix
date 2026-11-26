@@ -179,3 +179,24 @@ func TestAddGroupMemberClearsValueUnderFieldMadeSecretMeanwhile(t *testing.T) {
 		t.Errorf("the plain value under the now secret field survived: %v", v)
 	}
 }
+
+// set_member_vars' clear-out write is guarded by the revision its own write
+// produced: a person's edit landing between the two is not overwritten.
+func TestSetMemberVarsClearOutIsRevisionGuarded(t *testing.T) {
+	f := newOrgFixture(t)
+	cs, hr := hookedSession(t, f)
+	f.setSchema(t, raceSchema(false))
+	hr.arm(http.MethodPut, "/members/"+f.host.String(), true, func() {
+		f.setSchema(t, raceSchema(true))
+		hr.arm(http.MethodPut, "/members/"+f.host.String(), false, func() {
+			if _, err := f.s.Deps.Inventory.Assign(f.scoped, f.org, f.group, f.host, map[string]any{"y": "person-secret"}, nil); err != nil {
+				t.Errorf("a person's edit: %v", err)
+			}
+		})
+	})
+	text, isErr := call(t, cs, "set_member_vars", map[string]any{
+		"group_id": f.group.String(), "host_id": f.host.String(), "revision": f.memberRevision(t), "vars": map[string]any{"y": "plain-by-assistant"}})
+	if !isErr || !strings.Contains(text, "take out the values of fields that became secret") {
+		t.Fatalf("tool result = %v %q, want the clear-out write refused as stale", isErr, text)
+	}
+}

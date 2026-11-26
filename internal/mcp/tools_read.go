@@ -1,10 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 
+	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -88,9 +92,25 @@ func readTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/hosts")
 			}),
-		define("get_host_vars", "Get host variables", "The variables Ansible sees for a host as the inventory renders them (secrets masked), with sources: for each variable the group it comes from, or \"host\" for the host's own (address, SSH settings, facts). Change a value with set_member_vars.",
+		define("get_host_vars", "Get host variables", "The effective variables of a host as the inventory renders them: the values of the groups it is in and of their parent groups (a deeper group wins), the values it has in its memberships, and its own (address and SSH settings as ansible_ variables, facts). sources names, per variable, the group the value comes from, or \"host\" for the host's own. A secret shows as {\"$secret\": \"set\"}, never its value. Change a host's values in a group with set_member_vars, a group's own with set_group_vars.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
-				return passGet(ctx, c, nil, "/hosts/%s/inventory/preview", in.HostID)
+				path, err := c.orgPath("/hosts/%s/inventory/preview", in.HostID)
+				if err != nil {
+					return nil, err
+				}
+				res, err := c.get(ctx, path, nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				dec := json.NewDecoder(bytes.NewReader(res.Body))
+				dec.UseNumber()
+				var body map[string]any
+				if err := dec.Decode(&body); err != nil {
+					return nil, fmt.Errorf("decode response: %w", err)
+				}
+				delete(body, "$schema")
+				body["vars"] = unmaskSecrets(body["vars"])
+				return body, nil
 			}),
 		define("get_host", "Get host", "One host with its SSH settings (credential by reference), its tags and the inventory groups it belongs to.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
@@ -140,7 +160,7 @@ func readTools() []toolDef {
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos")
 			}),
-		define("get_repo", "Get repository", "One git repository, with last_synced_commit and last_synced_at (the last successful sync; absent before one) next to last_sync.",
+		define("get_repo", "Get repository", "One git repository, with last_synced_commit (the commit of the last successful sync, absent before one), last_synced_at (when the sync that fetched it ran, when known) and last_synced_commit_current: false, with last_synced_commit_stale saying why, when a run cannot be pinned to that commit (repo_changed: the URL, branch or subpath changed since; not_reported: the sync came from a worker that reports no sources; sync_unrecorded), next to last_sync.",
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, in repoInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos/%s", in.RepoID)
 			}),
@@ -190,4 +210,24 @@ func readTools() []toolDef {
 				return map[string]any{"credentials": body.Credentials}, nil
 			}),
 	}
+}
+
+// unmaskSecrets turns the preview's mask into the {"$secret":"set"} form
+// every other read of the assistant surface uses.
+func unmaskSecrets(v any) any {
+	switch t := v.(type) {
+	case string:
+		if t == render.MaskedSecret {
+			return map[string]any{"$secret": "set"}
+		}
+	case map[string]any:
+		for k, e := range t {
+			t[k] = unmaskSecrets(e)
+		}
+	case []any:
+		for i, e := range t {
+			t[i] = unmaskSecrets(e)
+		}
+	}
+	return v
 }

@@ -1853,6 +1853,21 @@ does not clear the reason; stop every manager instance first, as above.
   (a schedule's, a webhook's, a run request's) sends the template's and the
   overrides' numbers as written: `1.0` stays `1.0` and an integer past 2^53 keeps
   every digit, where they used to pass through a float.
+- **A job's log is paged, and the job and request reads can wait (backlog 2.133, no
+  migration):** `GET …/jobs/{id}/events` now returns at most `limit` events per call
+  (1 to 1000, default 1000), in sequence order, and answers `next_after`, the sequence
+  number of the last event returned (the request's `after` when there was none). A client
+  that read a whole log in one call gets the first 1000 events of a longer log; it
+  continues with `after=<next_after>` until a call returns fewer than `limit`. An empty
+  list means nothing new yet: ask again with the same `after`. The route also takes the
+  filters `host` (exact name), `task` and `role` (case-insensitive text), and `state`
+  (repeatable or comma-separated), all applied in the database. `GET …/jobs/{id}` and
+  `GET …/run-requests/{id}` accept `wait` (seconds, 0 to 25, default 0) and `unless`
+  (the status the caller already knows) and answer as soon as the status differs, or
+  when the time is up. Additive: `last_synced_commit`, `last_synced_at`,
+  `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
+  `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
+  which now also carries the values of the host's groups and their parent groups.
 
 ## Roll order
 

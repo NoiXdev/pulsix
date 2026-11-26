@@ -40,8 +40,13 @@ func TestSetMemberVarsAndGetHostVars(t *testing.T) {
 	callOK(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": memberVarsSchema}, nil)
 	callOK(t, cs, "set_group_vars", map[string]any{"group_id": g, "vars": map[string]any{"env": "prod"}}, nil)
 
+	// A person stored a membership secret; the assistant keeps it.
+	if _, err := f.s.Deps.Inventory.Assign(f.scoped, f.org, f.group, f.host, map[string]any{"node_token": "stored-secret-9c1"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	rev := f.memberRevision(t)
-	callOK(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": rev, "vars": map[string]any{"node_role": "primary"}}, nil)
+	keep := map[string]any{"$secret": "keep"}
+	callOK(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": rev, "vars": map[string]any{"node_role": "primary", "node_token": keep}}, nil)
 	if got := f.memberVars(t)["node_role"]; got != "primary" {
 		t.Fatalf("stored node_role = %v", got)
 	}
@@ -62,6 +67,13 @@ func TestSetMemberVarsAndGetHostVars(t *testing.T) {
 	if !isErr || !strings.Contains(text, "secrets are set by a person in Pulsix") {
 		t.Fatalf("a secret value = %v %s, want the secret refusal", isErr, text)
 	}
+	// A group-scope field that a host may not override is refused too.
+	if text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": f.memberRevision(t), "vars": map[string]any{"env": "staging"}}); !isErr {
+		t.Fatalf("a group-scope key was accepted: %s", text)
+	}
+	if got := f.groupEnv(t); got != "prod" {
+		t.Fatalf("group env = %v", got)
+	}
 	// A key the schema does not declare for hosts is refused by the route.
 	if text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": f.memberRevision(t), "vars": map[string]any{"nope": "x"}}); !isErr {
 		t.Fatalf("an undeclared key was accepted: %s", text)
@@ -74,6 +86,16 @@ func TestSetMemberVarsAndGetHostVars(t *testing.T) {
 	raw := callOK(t, cs, "get_host_vars", map[string]any{"host_id": h}, &out)
 	if out.Vars["node_role"] != "primary" || out.Sources["node_role"] != "webservers" {
 		t.Fatalf("get_host_vars = %s", raw)
+	}
+	// The group's own value is part of the host's effective variables.
+	if out.Vars["env"] != "prod" || out.Sources["env"] != "webservers" {
+		t.Fatalf("env = %v from %q in %s", out.Vars["env"], out.Sources["env"], raw)
+	}
+	if tok, _ := out.Vars["node_token"].(map[string]any); tok["$secret"] != "set" || out.Sources["node_token"] != "webservers" {
+		t.Fatalf("node_token = %v from %q in %s", out.Vars["node_token"], out.Sources["node_token"], raw)
+	}
+	if strings.Contains(raw, "stored-secret-9c1") || strings.Contains(raw, "********") {
+		t.Fatalf("get_host_vars shows a secret or the preview mask: %s", raw)
 	}
 	if out.Sources["ansible_host"] != "host" {
 		t.Fatalf("ansible_host source = %q in %s", out.Sources["ansible_host"], raw)
@@ -100,4 +122,13 @@ func TestMemberVarsToolsNeedTheirArea(t *testing.T) {
 	if toolNames(t, mustConnect(t, g.s, g.token))["get_host_vars"] {
 		t.Fatal("get_host_vars listed without inventory.read")
 	}
+}
+
+func (f orgFixture) groupEnv(t *testing.T) any {
+	t.Helper()
+	gv, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.org, f.group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gv.Vars["env"]
 }

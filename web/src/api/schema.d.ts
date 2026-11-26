@@ -7955,6 +7955,8 @@ export interface components {
             /** Format: date-time */
             last_synced_at?: string;
             last_synced_commit?: string;
+            last_synced_commit_current?: boolean;
+            last_synced_commit_stale?: string;
             name: string;
             /** @enum {string} */
             pin_state?: "full" | "fingerprint_only";
@@ -15659,7 +15661,7 @@ export interface operations {
                 task?: string;
                 /** @description Only events of this role's tasks (task names reading "<role> : <task>"), in any case */
                 role?: string;
-                /** @description Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end). Repeat the parameter or join states with commas */
+                /** @description Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end, error, fatal). Repeat the parameter or join states with commas */
                 state?: string[] | null;
             };
             header?: never;

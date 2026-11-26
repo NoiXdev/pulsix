@@ -1,7 +1,9 @@
 package inventory
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -95,9 +97,17 @@ func (r *Renderer) HostPreview(ctx context.Context, orgID, hostID uuid.UUID) (Ho
 	}
 	out := HostPreview{Vars: map[string]any{}, Sources: map[string]string{}, Warnings: inv.Warnings}
 	if hv, ok := inv.Doc["_meta"].(map[string]any)["hostvars"].(map[string]any)[name].(map[string]any); ok {
-		out.Vars = hv
-		for k := range hv {
-			out.Sources[k] = "host"
+		// The effective values, lowest precedence first: the vars of the
+		// groups the host is in (ancestors before descendants, then by
+		// name, as Ansible merges them), then the host's own variables,
+		// which include the membership values.
+		for _, gv := range hostGroupVars(inv.Doc, name) {
+			for k, v := range gv.vars {
+				out.Vars[k], out.Sources[k] = v, gv.group
+			}
+		}
+		for k, v := range hv {
+			out.Vars[k], out.Sources[k] = v, "host"
 			if g, ok := inv.Origins[name][k]; ok {
 				out.Sources[k] = g
 			}
@@ -277,4 +287,78 @@ func straySealedMessage(strays []schema.StrayValue) string {
 		sentences = append(sentences, strings.Join(containers, ", ")+" holds a stored secret, but its container is no longer an object with a secret field; enter the value again")
 	}
 	return strings.Join(sentences, "; ")
+}
+
+type groupVars struct {
+	group string
+	vars  map[string]any
+}
+
+// hostGroupVars lists the vars of every group of the rendered document the
+// host belongs to, directly or through a child group, in the order Ansible
+// applies them: shallower groups first, then by name; a later entry wins.
+func hostGroupVars(doc map[string]any, host string) []groupVars {
+	entries := map[string]map[string]any{}
+	parent := map[string][]string{}
+	for name, e := range doc {
+		m, ok := e.(map[string]any)
+		if !ok || name == "_meta" || name == "all" || name == "ungrouped" {
+			continue
+		}
+		entries[name] = m
+		for _, c := range stringList(m["children"]) {
+			parent[c] = append(parent[c], name)
+		}
+	}
+	member := map[string]bool{}
+	var mark func(g string)
+	mark = func(g string) {
+		if member[g] {
+			return
+		}
+		member[g] = true
+		for _, p := range parent[g] {
+			mark(p)
+		}
+	}
+	for name, m := range entries {
+		if slices.Contains(stringList(m["hosts"]), host) {
+			mark(name)
+		}
+	}
+	var depth func(g string, seen map[string]bool) int
+	depth = func(g string, seen map[string]bool) int {
+		if seen[g] {
+			return 0
+		}
+		seen[g] = true
+		d := 0
+		for _, p := range parent[g] {
+			d = max(d, depth(p, seen)+1)
+		}
+		return d
+	}
+	var names []string
+	for g := range member {
+		names = append(names, g)
+	}
+	depths := map[string]int{}
+	for _, g := range names {
+		depths[g] = depth(g, map[string]bool{})
+	}
+	slices.SortFunc(names, func(a, b string) int {
+		return cmp.Or(cmp.Compare(depths[a], depths[b]), cmp.Compare(a, b))
+	})
+	var out []groupVars
+	for _, g := range names {
+		if v, ok := entries[g]["vars"].(map[string]any); ok && len(v) > 0 {
+			out = append(out, groupVars{group: g, vars: v})
+		}
+	}
+	return out
+}
+
+func stringList(v any) []string {
+	l, _ := v.([]string)
+	return l
 }

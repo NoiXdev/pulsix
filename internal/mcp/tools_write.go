@@ -235,7 +235,7 @@ func writeTools() []toolDef {
 						return nil, fmt.Errorf("check the memberships after the schema change: %w", err)
 					}
 					for _, m := range members {
-						if err := clearNewSecrets(ctx, c, in.GroupID, m.HostID, m.Vars, updated, fresh); err != nil {
+						if err := clearNewSecrets(ctx, c, in.GroupID, m.HostID, m.Vars, updated, fresh, ""); err != nil {
 							return nil, err
 						}
 					}
@@ -434,7 +434,7 @@ func groupMembers(ctx context.Context, c *caller, groupID string) ([]member, err
 // clearNewSecrets takes a membership's values at paths (fields that just
 // became secret) out again, keeping its stored secrets, and reports that
 // it did. Nothing at those paths, nothing to do.
-func clearNewSecrets(ctx context.Context, c *caller, groupID, hostID string, vars map[string]any, fields []schema.Field, paths []string) error {
+func clearNewSecrets(ctx context.Context, c *caller, groupID, hostID string, vars map[string]any, fields []schema.Field, paths []string, match string) error {
 	var held []string
 	for _, p := range paths {
 		for _, v := range valuesAt(vars, p) {
@@ -451,7 +451,7 @@ func clearNewSecrets(ctx context.Context, c *caller, groupID, hostID string, var
 	if err != nil {
 		return err
 	}
-	if _, err := send(ctx, c, http.MethodPut, map[string]any{"vars": kept}, "", "/inventory/groups/%s/members/%s", groupID, hostID); err != nil {
+	if _, err := send(ctx, c, http.MethodPut, map[string]any{"vars": kept}, match, "/inventory/groups/%s/members/%s", groupID, hostID); err != nil {
 		return fmt.Errorf("take out the values of fields that became secret: %w", err)
 	}
 	return fmt.Errorf("the group's schema changed meanwhile and made %s secret; that value was taken out again, a person sets it in Pulsix", strings.Join(held, ", "))
@@ -543,7 +543,22 @@ func putMember(ctx context.Context, c *caller, groupID, hostID string, values ma
 	if err != nil {
 		return nil, err
 	}
-	if err := clearNewSecrets(ctx, c, groupID, hostID, vars, afterFields, newSecretPaths(fields, afterFields)); err != nil {
+	// A guarded write is followed by a guarded one: the revision the first
+	// answered with, so a person's edit in between is not overwritten.
+	followUp := ""
+	if match != "" {
+		var written struct {
+			Member struct {
+				Revision int64 `json:"revision"`
+			} `json:"member"`
+		}
+		raw, _ := json.Marshal(res)
+		if json.Unmarshal(raw, &written) != nil || written.Member.Revision == 0 {
+			return nil, errors.New("unexpected response from Pulsix")
+		}
+		followUp = `"` + strconv.FormatInt(written.Member.Revision, 10) + `"`
+	}
+	if err := clearNewSecrets(ctx, c, groupID, hostID, vars, afterFields, newSecretPaths(fields, afterFields), followUp); err != nil {
 		return nil, err
 	}
 	return res, nil

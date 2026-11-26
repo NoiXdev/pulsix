@@ -176,6 +176,23 @@ func (a *assistantSuite) inventoryWrites(cs *sdk.ClientSession) map[string]any {
 	if !a.isMember(g2, h2) {
 		s.t.Fatal("add_group_member: the host is not a member through REST")
 	}
+	var members struct {
+		Members []struct {
+			HostID   string         `json:"host_id"`
+			Revision int64          `json:"revision"`
+			Vars     map[string]any `json:"vars"`
+		} `json:"members"`
+	}
+	s.get(prefix+"/inventory/groups/"+g2+"/members", &members)
+	if len(members.Members) != 1 || members.Members[0].HostID != h2 {
+		s.t.Fatalf("members of the created group = %+v, want only %s", members.Members, h2)
+	}
+	a.recordOK(cs, "set_member_vars", map[string]any{"group_id": g2, "host_id": h2, "revision": members.Members[0].Revision, "vars": map[string]any{"tier": "db"}}, nil)
+	members.Members = nil
+	s.get(prefix+"/inventory/groups/"+g2+"/members", &members)
+	if len(members.Members) != 1 || members.Members[0].Vars["tier"] != "db" {
+		s.t.Fatalf("members after set_member_vars = %+v, want tier db", members.Members)
+	}
 	a.recordOK(cs, "remove_group_member", map[string]any{"group_id": g2, "host_id": h2}, nil)
 	if a.isMember(g2, h2) {
 		s.t.Fatal("remove_group_member: the host is still a member through REST")
@@ -338,7 +355,7 @@ func (a *assistantSuite) reads(cs *sdk.ClientSession, ids map[string]any) {
 		"list_alerts": {a.seeded.alertID}, "get_alert": {a.seeded.alertID, "acknowledged", "snoozed"},
 		"list_maintenance_windows": {"asst window"}, "get_maintenance_window": {"asst window"}, "list_activity": {"turned assistant access on"},
 		"get_host_metrics": {cpuMetric}, "get_host_effective_rules": {"asst-host-cpu"}, "list_schedule_runs": {a.seeded.scheduledGroup},
-		"get_job_log": {"connection_test"},
+		"get_job_log": {"connection_test"}, "get_host_vars": {"ansible_host", "sources"},
 	}
 	props := a.toolProperties(cs)
 	for _, name := range a.allTools {

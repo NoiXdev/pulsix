@@ -180,7 +180,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		"set_group_vars":      {"group_id": f.group.String(), "vars": map[string]any{"db_password": map[string]any{"$secret": "keep"}}},
 		"update_repo":         {"repo_id": f.repo.String(), "fields": map[string]any{"branch": "main"}},
 		"update_job_template": {"template_id": f.template.String(), "fields": map[string]any{"limit": "web-1"}},
-		"add_group_member":    {"group_id": f.group.String(), "host_id": f.host.String()},
+		"add_group_member":    {"group_id": f.group.String(), "host_id": f.host.String(), "vars": map[string]any{"member_token": map[string]any{"$secret": "keep"}}},
 		"request_retry":       {"job_id": failed.String(), "reason": "sweep"},
 		"set_host_tags":       {"host_id": f.host.String(), "tags": []map[string]any{{"key": "env", "value": "prod"}}},
 		"snooze_alert":        {"alert_id": alert.String(), "until": now.Add(time.Hour).Format(time.RFC3339)},
@@ -235,7 +235,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		}
 		if name == "set_member_vars" {
 			// The membership's revision moved with add_group_member above.
-			a = map[string]any{"group_id": f.group.String(), "host_id": f.host.String(), "revision": f.memberRevision(t), "vars": map[string]any{}}
+			a = map[string]any{"group_id": f.group.String(), "host_id": f.host.String(), "revision": f.memberRevision(t), "vars": map[string]any{"member_token": map[string]any{"$secret": "keep"}}}
 		}
 		text, isErr := call(t, cs, name, a)
 		if isErr {
@@ -258,6 +258,7 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		{"get_job_template", f.vault.String(), "the vault passphrase credential"},
 		{"get_job_template", "api_key", "the template's secret extra var"},
 		{"get_repo", gitTok.ID.String(), "the repo's git credential"},
+		{"get_host_vars", `"member_token": {`, "the host's membership secret, kept through the writes and masked"},
 		{"get_run_request", pemKey.ID.String(), "the SSH credential in the run picture"},
 		{"get_run_request", f.vault.String(), "the vault credential in the run picture"},
 		// The fixture's playbook is an editor playbook with no repository, so

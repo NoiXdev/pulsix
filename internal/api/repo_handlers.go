@@ -95,13 +95,21 @@ type repoDTO struct {
 	// terminal state, and LastSyncError its failure reason ("" on success).
 	LastSync      *time.Time `json:"last_sync,omitempty"`
 	LastSyncError string     `json:"last_sync_error,omitempty"`
-	// LastSyncedCommit and LastSyncedAt are the commit and time of the last
-	// successful sync, read from the repository's variable sources record
-	// (the repository's own read only; absent when no sync recorded one).
-	LastSyncedCommit string     `json:"last_synced_commit,omitempty"`
-	LastSyncedAt     *time.Time `json:"last_synced_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// LastSyncedCommit is the commit of the last successful sync, read from
+	// the repository's variable sources record (absent when no sync
+	// recorded one).
+	// LastSyncedAt is when the sync that fetched that commit ran (absent
+	// when unknown), not the time of a later sync that kept it.
+	// LastSyncedCommitCurrent says whether a run can be pinned to the
+	// commit; when not, LastSyncedCommitStale is why (repo_changed: the
+	// URL, branch or subpath changed since; not_reported: the last sync
+	// came from a worker that reports no sources; sync_unrecorded).
+	LastSyncedCommit        string     `json:"last_synced_commit,omitempty"`
+	LastSyncedAt            *time.Time `json:"last_synced_at,omitempty"`
+	LastSyncedCommitCurrent *bool      `json:"last_synced_commit_current,omitempty"`
+	LastSyncedCommitStale   string     `json:"last_synced_commit_stale,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
 }
 
 // toRepoDTO redacts the URL's userinfo (backlog 7.103): a row stored before
@@ -272,12 +280,16 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 			return nil, mapReposErr(ctx, err)
 		}
 		out := repoDetail(r)
-		commit, at, found, err := deps.Repos.LastSynced(ctx, scope.OrgID, id)
+		last, found, err := deps.Repos.LastSynced(ctx, scope.OrgID, r)
 		if err != nil {
 			return nil, mapReposErr(ctx, err)
 		}
 		if found {
-			out.Body.Repo.LastSyncedCommit, out.Body.Repo.LastSyncedAt = commit, &at
+			current := last.Stale == ""
+			out.Body.Repo.LastSyncedCommit, out.Body.Repo.LastSyncedCommitCurrent, out.Body.Repo.LastSyncedCommitStale = last.Commit, &current, last.Stale
+			if !last.At.IsZero() {
+				out.Body.Repo.LastSyncedAt = &last.At
+			}
 		}
 		return out, nil
 	})

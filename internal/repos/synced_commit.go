@@ -66,19 +66,33 @@ func (s *Service) SyncedCommit(ctx context.Context, orgID uuid.UUID, repo Repo) 
 	return out, nil
 }
 
-// LastSynced is the commit and time of repo's last successful sync as its
-// variable sources record keeps them; found is false when no sync recorded
-// a commit.
-func (s *Service) LastSynced(ctx context.Context, orgID, repoID uuid.UUID) (commit string, at time.Time, found bool, err error) {
-	rec, err := s.store.GetVarSources(ctx, orgID, repoID)
+// LastSync is the commit a repository's variable sources record keeps, for
+// display. At is when the sync that fetched Commit was claimed (zero when
+// unknown, for a record from before migration 00125): the time of that
+// sync, not of a later one that kept the commit. Stale is SyncedCommit's
+// reason why a run cannot be pinned to Commit ("" when it can).
+type LastSync struct {
+	Commit string
+	At     time.Time
+	Stale  string
+}
+
+// LastSynced is repo's last successfully synced commit and the time of the
+// sync that fetched it; found is false when no sync recorded a commit.
+func (s *Service) LastSynced(ctx context.Context, orgID uuid.UUID, repo Repo) (last LastSync, found bool, err error) {
+	rec, err := s.store.GetVarSources(ctx, orgID, repo.ID)
 	if errors.Is(err, ErrNotFound) {
-		return "", time.Time{}, false, nil
+		return LastSync{}, false, nil
 	}
 	if err != nil {
-		return "", time.Time{}, false, fmt.Errorf("get the repository's last sync: %w", err)
+		return LastSync{}, false, fmt.Errorf("get the repository's last sync: %w", err)
 	}
 	if rec.Commit == "" {
-		return "", time.Time{}, false, nil
+		return LastSync{}, false, nil
 	}
-	return rec.Commit, rec.SyncedAt, true, nil
+	synced, err := s.SyncedCommit(ctx, orgID, repo)
+	if err != nil {
+		return LastSync{}, false, err
+	}
+	return LastSync{Commit: rec.Commit, At: rec.SyncClaimedAt, Stale: synced.Stale}, true, nil
 }

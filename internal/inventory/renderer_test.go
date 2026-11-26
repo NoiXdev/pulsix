@@ -125,6 +125,39 @@ func TestHostPreview(t *testing.T) {
 	}
 }
 
+// TestHostPreviewMergesGroupValues: the preview carries the values of the
+// groups the host is in and of their ancestors (a descendant wins), not
+// only the membership's own, each with its group as the source.
+func TestHostPreviewMergesGroupValues(t *testing.T) {
+	f, r, g := rendererFixture(t)
+	parent := f.group(t, "prod", nil)
+	pschema := schema.Schema{Fields: []schema.Field{{Name: "env", Type: schema.TypeString}, {Name: "region", Type: schema.TypeString}}}
+	p, _, err := f.svc.SetSchema(ctx, f.org, parent.ID, parent.Revision, pschema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SetVars(ctx, f.org, p.ID, p.Revision, map[string]any{"env": "staging", "region": "eu"}); err != nil {
+		t.Fatal(err)
+	}
+	stored := f.store.groups[g.ID]
+	stored.ParentID = &parent.ID
+	f.store.groups[g.ID] = stored
+
+	hp, err := r.HostPreview(ctx, f.org, f.web01)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hp.Vars["env"] != "prod" || hp.Sources["env"] != "webserver" {
+		t.Fatalf("env = %v from %q, want prod from webserver (the child wins)", hp.Vars["env"], hp.Sources["env"])
+	}
+	if hp.Vars["region"] != "eu" || hp.Sources["region"] != "prod" {
+		t.Fatalf("region = %v from %q, want eu from the parent group prod", hp.Vars["region"], hp.Sources["region"])
+	}
+	if hp.Vars["db_password"] != render.MaskedSecret || hp.Sources["db_password"] != "webserver" {
+		t.Fatalf("group secret = %v from %q, want masked from webserver", hp.Vars["db_password"], hp.Sources["db_password"])
+	}
+}
+
 func ptrUUID(id uuid.UUID) *uuid.UUID { return &id }
 
 // TestRenderFailureIsUnrenderable pins the sentinel the API maps to 409: a

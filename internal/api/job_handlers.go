@@ -401,7 +401,7 @@ type jobEventsInput struct {
 	Host  string   `query:"host" maxLength:"255" doc:"Only this host's events (exact name)"`
 	Task  string   `query:"task" maxLength:"255" doc:"Only events whose task name contains this, in any case"`
 	Role  string   `query:"role" maxLength:"255" doc:"Only events of this role's tasks (task names reading \"<role> : <task>\"), in any case"`
-	State []string `query:"state,explode" doc:"Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end). Repeat the parameter or join states with commas"`
+	State []string `query:"state,explode" doc:"Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end, error, fatal). Repeat the parameter or join states with commas"`
 }
 
 // eventStates splits the state parameter: each value may itself be a comma

@@ -36,9 +36,9 @@ const (
 // The tools each area lists. A write area lists its read area's tools too.
 var (
 	inventoryReadTools = []string{"get_organization", "list_hosts", "get_host", "list_groups", "get_group",
-		"preview_inventory", "list_zones", "get_connection_test"}
+		"preview_inventory", "list_zones", "get_connection_test", "get_host_vars"}
 	inventoryWriteTools = append(slices.Clone(inventoryReadTools), "create_host", "update_host", "set_host_ssh",
-		"create_group", "update_group", "set_group_schema", "set_group_vars", "add_group_member",
+		"create_group", "update_group", "set_group_schema", "set_group_vars", "add_group_member", "set_member_vars",
 		"remove_group_member", "set_host_tags", "start_connection_test")
 	reposReadTools      = []string{"list_repos", "get_repo", "list_repo_files", "list_playbooks", "get_playbook"}
 	reposWriteTools     = append(slices.Clone(reposReadTools), "create_repo", "update_repo", "sync_repo", "create_playbook")
