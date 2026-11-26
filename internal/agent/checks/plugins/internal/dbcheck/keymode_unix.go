@@ -16,5 +16,7 @@ func keyModeOK(m os.FileMode) bool { return m.Perm()&0o007 == 0 }
 // otherwise hold the open until something writes to it. A regular file
 // ignores O_NONBLOCK, and readTLSFile refuses anything else.
 func openTLSFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- the operator names the file in agent.yaml
+	// O_NOCTTY: a terminal device named here never becomes the agent's
+	// controlling terminal.
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0) // #nosec G304 -- the operator names the file in agent.yaml
 }
