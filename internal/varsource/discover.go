@@ -58,11 +58,15 @@ type Installed struct {
 // in.Collections. Their files count against the same limits as the
 // repository's.
 func ParseRepoInstalled(ctx context.Context, fsys fs.FS, in Installed, commit string) Report {
-	d := &discovery{ctx: ctx, p: &parser{fsys: fsys, roles: in.Roles, collections: in.Collections}}
+	vault := newVaultSet(ctx)
+	d := &discovery{ctx: ctx, p: &parser{fsys: fsys, roles: in.Roles, collections: in.Collections, vault: vault}}
 	r := Report{Commit: commit}
 	if err := fs.WalkDir(fsys, ".", d.visit); err != nil {
 		r.Failed = true
 		d.notes = append(d.notes, warning(codeReadFailed, "", 0, "the repository could not be read; no playbooks discovered"))
+	}
+	if !r.Failed {
+		vault.scanVaultFiles(fsys, in)
 	}
 	r.Playbooks, r.Notes = d.playbooks, d.notes
 	if r.Playbooks == nil {
@@ -85,6 +89,8 @@ func ParseRepoInstalled(ctx context.Context, fsys fs.FS, in Installed, commit st
 			why, d.stopped.n, nameList(d.stopped.names, d.stopped.n)))
 	}
 	r.Notes = capNotes(r.Notes, "", maxNotesPerList)
+	// Playbooks left out set variables nobody read: the names are cut.
+	r.Vault = vault.result(r.Failed || r.Incomplete)
 	return r
 }
 

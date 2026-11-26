@@ -43,6 +43,11 @@ type SourcesRecord struct {
 	// (recorded before migration 00125). RecordVarSources keeps the record
 	// of the sync that fetched last.
 	SyncClaimedAt time.Time
+	// Vault names the variables the read found set to vault-encrypted
+	// values (backlog 2.134), never their values. nil: unknown, the read
+	// came from a worker that does not report them (or predates migration
+	// 00132); a run request then cannot be checked against them.
+	Vault *varsource.Vault
 }
 
 // SetLogger sets where RecordVarSources reports what it skips (a
@@ -122,6 +127,10 @@ func (s *Service) RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID,
 	if err != nil {
 		s.logger().WarnContext(ctx, "variable sources ignored", "org", orgID, "repo", repoID, "err", err)
 		return false, nil
+	}
+	if n := checkVault(r.Vault); n > 0 {
+		s.logger().WarnContext(ctx, "variable sources: vault names that cannot be stored dropped; the names count as not all known",
+			"org", orgID, "repo", repoID, "count", n)
 	}
 	if len(dropped) > 0 {
 		s.logger().WarnContext(ctx, "variable sources: playbook paths too long to store dropped",
@@ -215,7 +224,7 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 			record: SourcesRecord{
 				Commit: prev.Commit, SyncedAt: at, WorkerReads: true,
 				Incomplete: prev.Incomplete, LeftOut: prev.LeftOut, Notes: r.Notes,
-				SyncedRef: prev.SyncedRef, SyncClaimedAt: prev.SyncClaimedAt,
+				SyncedRef: prev.SyncedRef, SyncClaimedAt: prev.SyncClaimedAt, Vault: prev.Vault,
 			},
 			playbooks: prevPlaybooks,
 			texts:     keptTexts(nil, prevTexts, prevPlaybooks),
@@ -252,7 +261,7 @@ func (s *Service) nextSources(ctx context.Context, orgID, repoID uuid.UUID, at t
 		record: SourcesRecord{
 			Commit: commit, SyncedAt: at, WorkerReads: true,
 			Incomplete: r.Incomplete, LeftOut: r.LeftOut, Notes: r.Notes,
-			SyncedRef: ref, SyncClaimedAt: claimedAt,
+			SyncedRef: ref, SyncClaimedAt: claimedAt, Vault: r.Vault,
 		},
 		playbooks: playbooks,
 		texts:     texts,

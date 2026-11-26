@@ -10,20 +10,22 @@
 SELECT id FROM git_repos WHERE org_id = @org_id AND id = @repo_id FOR NO KEY UPDATE;
 
 -- name: UpsertRepoVarSources :execrows
--- A worker's read: the record is replaced, worker_reads set. Like
+-- A worker's read: the record is replaced, worker_reads set. vault_names
+-- is NULL when the read does not name the vault-encrypted variables (an
+-- older worker's, migration 00132). Like
 -- MarkRepoVarSourcesUnread it selects the repository instead of naming it:
 -- a repository deleted while its sync ran inserts nothing (zero rows),
 -- where a plain INSERT would fail its foreign key and abort the whole
 -- finish transaction.
-INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at)
+INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at, vault_names)
 SELECT r.id, r.org_id, @commit_sha::text, @synced_at::timestamptz, true, @incomplete::boolean, @left_out::jsonb, @notes::jsonb,
-       sqlc.narg(synced_ref)::text, sqlc.narg(sync_claimed_at)::timestamptz
+       sqlc.narg(synced_ref)::text, sqlc.narg(sync_claimed_at)::timestamptz, sqlc.narg(vault_names)::jsonb
 FROM git_repos r
 WHERE r.org_id = @org_id AND r.id = @repo_id
 ON CONFLICT (repo_id) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha, synced_at = EXCLUDED.synced_at, worker_reads = true,
   incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes,
-  synced_ref = EXCLUDED.synced_ref, sync_claimed_at = EXCLUDED.sync_claimed_at;
+  synced_ref = EXCLUDED.synced_ref, sync_claimed_at = EXCLUDED.sync_claimed_at, vault_names = EXCLUDED.vault_names;
 
 -- name: MarkRepoVarSourcesUnread :exec
 -- A sync by a worker that reads no sources: an existing record is kept
@@ -45,7 +47,7 @@ INSERT INTO repo_playbook_sources (org_id, repo_id, path, result, content, conte
 VALUES (@org_id, @repo_id, @path, @result, sqlc.narg(content)::text, sqlc.narg(content_left_out)::text);
 
 -- name: GetRepoVarSources :one
-SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at
+SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at, vault_names
 FROM repo_var_sources
 WHERE org_id = @org_id AND repo_id = @repo_id;
 
@@ -60,7 +62,7 @@ ORDER BY path COLLATE "C";
 -- statement (backlog 7.87), so the two come from the same snapshot: no
 -- record answers no row, a record without a row for the path answers its
 -- columns with a null path and result.
-SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes, r.synced_ref,
+SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes, r.synced_ref, r.vault_names,
        p.path, p.result
 FROM repo_var_sources r
 LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = sqlc.arg(path)

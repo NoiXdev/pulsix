@@ -165,6 +165,9 @@ type parser struct {
 	fsys        fs.FS
 	roles       fs.FS
 	collections fs.FS
+	// vault gathers the repository's vault-encrypted variables (vault.go);
+	// nil outside a repo read.
+	vault *vaultSet
 }
 
 func (p *parser) inline() bool { return p.fsys == nil }
@@ -246,6 +249,7 @@ func (w *walk) visit(file string, d decoded, depth int) bool {
 		return false
 	}
 	w.useFile(file, FileRead)
+	w.useVault(file, f)
 	w.sources = append(w.sources, noteSource{y: d.y})
 	w.set.addAll(f.set)
 	w.marked.addAll(f.marked)

@@ -953,6 +953,7 @@ type RepoVarSource struct {
 	Notes         []byte             `json:"notes"`
 	SyncedRef     *string            `json:"synced_ref"`
 	SyncClaimedAt pgtype.Timestamptz `json:"sync_claimed_at"`
+	VaultNames    []byte             `json:"vault_names"`
 }
 
 type RotationGroup struct {

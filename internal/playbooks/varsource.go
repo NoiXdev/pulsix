@@ -53,6 +53,11 @@ type VarSource struct {
 	RepoID   *uuid.UUID
 	Path     string
 	Playbook varsource.Playbook
+	// Vault names the variables the repository's last read found set to
+	// vault-encrypted values (backlog 2.134); nil when they are unknown
+	// (no record, or a read by a worker that does not report them) and
+	// for an editor playbook.
+	Vault *varsource.Vault
 }
 
 // InlineApplier brings an editor playbook's new variable sources to the
@@ -99,7 +104,7 @@ func (s *Service) VarSource(ctx context.Context, orgID, playbookID uuid.UUID) (V
 	}
 	if rec != nil {
 		at := rec.SyncedAt
-		src.Rev, src.SyncedAt, src.WorkerReads, src.Incomplete = rec.Commit, &at, rec.WorkerReads, rec.Incomplete
+		src.Rev, src.SyncedAt, src.WorkerReads, src.Incomplete, src.Vault = rec.Commit, &at, rec.WorkerReads, rec.Incomplete, rec.Vault
 		// A left-out playbook keeps its row from an earlier read, whose
 		// commit the record no longer holds: its fields are never labelled
 		// with the new commit.

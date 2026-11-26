@@ -20,6 +20,10 @@ type Report struct {
 	Incomplete bool       `json:"incomplete"`
 	LeftOut    []string   `json:"left_out,omitempty"`
 	Notes      []Note     `json:"notes"`
+	// Vault names the variables the repository sets to vault-encrypted
+	// values (vault.go, backlog 2.134); nil from a worker that does not
+	// look, whose report says nothing about them.
+	Vault *Vault `json:"vault,omitempty"`
 }
 
 // Encode renders r as JSON of at most maxBytes. A report too large keeps
