@@ -37,7 +37,8 @@ var (
 	errTooManyRedirects = errors.New("too many redirects")
 )
 
-// probeHTTP requests url (with {address} replaced) and reports whether a
+// probeHTTP requests url (with {address} replaced) with the check's
+// method, headers and body (requestOf) and reports whether a
 // response arrived, its status, the time to the end of the body read, its
 // breakdown (lookups, connects, handshakes, time to first byte, transfer),
 // the redirects followed, the body's size and, over https, the final hop's
@@ -56,10 +57,11 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	if err != nil {
 		return fail(err.Error())
 	}
-	method := probe.StrParam(params, "method", http.MethodGet)
-	if method != http.MethodGet && method != http.MethodHead {
-		return fail(errBadMethod.Error())
+	rq, err := requestOf(params)
+	if err != nil {
+		return fail(err.Error())
 	}
+	method := rq.method
 	cred, err := credentialsFor(probe.StrParam(params, "secret", ""), secret)
 	if err != nil {
 		return fail(err.Error())
@@ -77,11 +79,12 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 		Transport:     transport,
 		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true), cred.header),
 	}
-	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), rq.bodyReader())
 	if err != nil {
 		return fail(errBadURL.Error())
 	}
 	req.Header.Set("User-Agent", httpUserAgent)
+	rq.apply(req)
 	cred.apply(req)
 
 	// hop owns the failure reason, phases the timing breakdown; the
