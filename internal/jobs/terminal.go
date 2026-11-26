@@ -52,7 +52,9 @@ type terminalTransition struct {
 	onMiss func(ctx context.Context) error
 	// precondition runs first inside the transaction; false writes
 	// nothing (applied stays false). nil: no precondition. Its locks
-	// last until the transaction ends (failWithdrawn's request lock).
+	// last until the transaction ends (failWithdrawn's request lock), and
+	// it runs before the group lock below, never after: the lock order is
+	// the run request row, then the run group lock, then the job row.
 	precondition func(ctx context.Context) (bool, error)
 }
 
@@ -74,6 +76,11 @@ type terminalTransition struct {
 // completeness count in one transaction, two members finishing
 // concurrently would otherwise each count the other as still running and
 // neither would finalize (or report) the group.
+//
+// Lock order: the run request row (a precondition's, failWithdrawn's FOR
+// SHARE, backlog 2.127), then the group lock, then the job row. Nothing
+// that holds the group lock or a job row may wait for a run request row:
+// a path that needs both takes the request row first, never the reverse.
 func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, error) {
 	if !t.status.Terminal() {
 		return false, fmt.Errorf("%w: %q is not a terminal status", ErrInvalidInput, t.status)

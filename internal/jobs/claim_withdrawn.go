@@ -138,6 +138,12 @@ func (q *SQLQueue) guardClaim(ctx context.Context, job Job) (bool, error) {
 // inside the failing transaction and under the request's lock, that its
 // approval is still withdrawn; confirmed reports that. Unconfirmed, it
 // writes nothing.
+//
+// The request's lock is taken first in that transaction, before terminate
+// takes the run group lock and writes the job row: the lock order is the
+// run request row, then the group lock, then the job row (terminate). No
+// path may hold the group lock or a job row while it waits for a request
+// row.
 func (q *SQLQueue) failWithdrawn(ctx context.Context, job Job) (confirmed bool, err error) {
 	_, err = q.terminate(ctx, terminalTransition{
 		jobID: job.ID, status: StatusError, errText: WithdrawnAtClaimError,

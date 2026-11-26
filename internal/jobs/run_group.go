@@ -362,7 +362,9 @@ func (q *SQLQueue) recordCancelledRunGroup(ctx context.Context, jobID uuid.UUID)
 // (advisory lock, then the job row) — the two paths must agree on it or
 // a cancel holding a job row while it waits for the group lock would
 // deadlock against a finish holding the group lock while it waits for
-// that row (backlog 2.87).
+// that row (backlog 2.87). A run request row, when a path takes one,
+// comes before both (failWithdrawn, backlog 2.127): request row, group
+// lock, job row — never the reverse.
 func (q *SQLQueue) reportGroupUnderLock(ctx context.Context, orgID, groupID uuid.UUID) error {
 	return q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
 		if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, finishGroupLockKeyPrefix+groupID.String()); err != nil {
