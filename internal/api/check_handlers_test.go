@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -297,12 +298,24 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			t.Fatalf("created = %+v, want the http check with its params", created)
 		}
 		requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		// Backlog 3.84: a method, headers and a body come back as sent.
+		post := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "web-post", "plugin": "http", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
+			"params": map[string]any{"url": "https://{address}/ping", "method": "POST", "headers": []string{"X-Api-Version: 2"}, "body": `{"ping":1}`},
+		})
+		if post.Params["method"] != "POST" || post.Params["body"] != `{"ping":1}` || !reflect.DeepEqual(post.Params["headers"], []any{"X-Api-Version: 2"}) {
+			t.Fatalf("created = %+v, want the request params", post)
+		}
+		requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+post.ID, nil)
 		for name, params := range map[string]map[string]any{
-			"ftp url":     {"url": "ftp://x"},
-			"post":        {"url": "http://x", "method": "POST"},
-			"userinfo":    {"url": "https://u:p@x/"},
-			"unknown key": {"url": "http://x", "headers": map[string]any{}},
-			"no url":      {},
+			"ftp url":            {"url": "ftp://x"},
+			"trace":              {"url": "http://x", "method": "TRACE"},
+			"userinfo":           {"url": "https://u:p@x/"},
+			"unknown key":        {"url": "http://x", "header": []string{"X-A: 1"}},
+			"headers not a list": {"url": "http://x", "headers": map[string]any{}},
+			"credential header":  {"url": "http://x", "headers": []string{"Authorization: Bearer x"}},
+			"body with GET":      {"url": "http://x", "body": "x"},
+			"no url":             {},
 		} {
 			resp := requestJSON(t, f.operatorC, http.MethodPost, f.checksURL(), map[string]any{
 				"key": "web-bad", "plugin": "http", "interval_seconds": 60, "binding_kind": "org", "params": params,
