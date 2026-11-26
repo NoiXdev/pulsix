@@ -88,6 +88,10 @@ func readTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/hosts")
 			}),
+		define("get_host_vars", "Get host variables", "The variables Ansible sees for a host as the inventory renders them (secrets masked), with sources: for each variable the group it comes from, or \"host\" for the host's own (address, SSH settings, facts). Change a value with set_member_vars.",
+			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
+				return passGet(ctx, c, nil, "/hosts/%s/inventory/preview", in.HostID)
+			}),
 		define("get_host", "Get host", "One host with its SSH settings (credential by reference), its tags and the inventory groups it belongs to.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
 				host, err := passGet(ctx, c, nil, "/hosts/%s", in.HostID)
@@ -136,7 +140,7 @@ func readTools() []toolDef {
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos")
 			}),
-		define("get_repo", "Get repository", "One git repository.",
+		define("get_repo", "Get repository", "One git repository, with last_synced_commit and last_synced_at (the last successful sync; absent before one) next to last_sync.",
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, in repoInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos/%s", in.RepoID)
 			}),

@@ -1,0 +1,103 @@
+package mcp_test
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/noixdev/pulsix/internal/tenancy"
+)
+
+// memberRevision is the fixture host's current revision in the fixture group.
+func (f orgFixture) memberRevision(t *testing.T) int64 {
+	t.Helper()
+	ms, err := f.s.Deps.Inventory.Members(f.scoped, f.org, f.group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.HostID == f.host {
+			return m.Revision
+		}
+	}
+	t.Fatal("host is not a member")
+	return 0
+}
+
+var memberVarsSchema = map[string]any{"fields": []any{
+	map[string]any{"name": "node_role", "type": "string", "scope": "host"},
+	map[string]any{"name": "node_token", "type": "secret", "scope": "host"},
+	map[string]any{"name": "env", "type": "string"},
+}}
+
+// TestSetMemberVarsAndGetHostVars: set_member_vars replaces a membership's
+// values under the revision guard and the secret rules, and get_host_vars
+// shows the merged result masked, with the group each value comes from.
+func TestSetMemberVarsAndGetHostVars(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	g, h := f.group.String(), f.host.String()
+	callOK(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": memberVarsSchema}, nil)
+	callOK(t, cs, "set_group_vars", map[string]any{"group_id": g, "vars": map[string]any{"env": "prod"}}, nil)
+
+	rev := f.memberRevision(t)
+	callOK(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": rev, "vars": map[string]any{"node_role": "primary"}}, nil)
+	if got := f.memberVars(t)["node_role"]; got != "primary" {
+		t.Fatalf("stored node_role = %v", got)
+	}
+
+	// The revision moved: the old one is refused and nothing changes.
+	if text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": rev, "vars": map[string]any{"node_role": "replica"}}); !isErr {
+		t.Fatalf("a stale revision was accepted: %s", text)
+	}
+	if got := f.memberVars(t)["node_role"]; got != "primary" {
+		t.Fatalf("node_role after a stale write = %v", got)
+	}
+	// revision is required.
+	if text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "vars": map[string]any{}}); !isErr {
+		t.Fatalf("a call without a revision was accepted: %s", text)
+	}
+	// A secret field never takes a value.
+	text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": f.memberRevision(t), "vars": map[string]any{"node_token": "hunter2"}})
+	if !isErr || !strings.Contains(text, "secrets are set by a person in Pulsix") {
+		t.Fatalf("a secret value = %v %s, want the secret refusal", isErr, text)
+	}
+	// A key the schema does not declare for hosts is refused by the route.
+	if text, isErr := call(t, cs, "set_member_vars", map[string]any{"group_id": g, "host_id": h, "revision": f.memberRevision(t), "vars": map[string]any{"nope": "x"}}); !isErr {
+		t.Fatalf("an undeclared key was accepted: %s", text)
+	}
+
+	var out struct {
+		Vars    map[string]any    `json:"vars"`
+		Sources map[string]string `json:"sources"`
+	}
+	raw := callOK(t, cs, "get_host_vars", map[string]any{"host_id": h}, &out)
+	if out.Vars["node_role"] != "primary" || out.Sources["node_role"] != "webservers" {
+		t.Fatalf("get_host_vars = %s", raw)
+	}
+	if out.Sources["ansible_host"] != "host" {
+		t.Fatalf("ansible_host source = %q in %s", out.Sources["ansible_host"], raw)
+	}
+	for name := range out.Vars {
+		if out.Sources[name] == "" {
+			t.Errorf("%s has no source in %s", name, raw)
+		}
+	}
+	if b, _ := json.Marshal(out.Vars); strings.Contains(string(b), "hunter2") {
+		t.Fatalf("a secret shows in %s", b)
+	}
+}
+
+// TestMemberVarsToolsNeedTheirArea: set_member_vars needs inventory.write,
+// get_host_vars inventory.read.
+func TestMemberVarsToolsNeedTheirArea(t *testing.T) {
+	f := newOrgFixture(t, tenancy.AreaInventoryRead)
+	names := toolNames(t, mustConnect(t, f.s, f.token))
+	if names["set_member_vars"] || !names["get_host_vars"] {
+		t.Fatalf("read-only token sees set_member_vars=%v get_host_vars=%v", names["set_member_vars"], names["get_host_vars"])
+	}
+	g := newOrgFixture(t, tenancy.AreaJobsRead)
+	if toolNames(t, mustConnect(t, g.s, g.token))["get_host_vars"] {
+		t.Fatal("get_host_vars listed without inventory.read")
+	}
+}

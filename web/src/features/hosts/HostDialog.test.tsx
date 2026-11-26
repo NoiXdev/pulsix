@@ -61,6 +61,20 @@ const problem = (status: number, detail: string) =>
   new Response(JSON.stringify({ title: 'x', status, detail }), { status, headers: { 'Content-Type': 'application/problem+json' } });
 
 describe('HostDialog', () => {
+  const NAME_HINT = "The name is the host's inventory name; playbooks and roles may derive names from it.";
+
+  it('says under the name field on create that the name is the inventory name', async () => {
+    mockApi(baseRoutes());
+    renderDialog();
+    expect(await screen.findByLabelText('Name')).toHaveAccessibleDescription(NAME_HINT);
+  });
+
+  it('says it on rename too', async () => {
+    mockApi(baseRoutes());
+    renderDialog({ host: HOST });
+    expect(await screen.findByText(NAME_HINT)).toBeInTheDocument();
+  });
+
   it('creates a host with jump and tags in one request', async () => {
     const user = userEvent.setup();
     const posts: MockRequest[] = [];

@@ -52,7 +52,11 @@ func NewRenderer(store Store, hostSource HostSource, ssh SSHSource, creds Creden
 // HostPreview is one host's rendered variables and connection. Connection is
 // nil when the host is not rendered (it is not managed).
 type HostPreview struct {
-	Vars       map[string]any
+	Vars map[string]any
+	// Sources says where each variable comes from: the name of the group
+	// whose membership or schema gave it, or "host" for the host's own
+	// (address, SSH settings, facts).
+	Sources    map[string]string
 	Connection *render.Connection
 	Warnings   []render.Warning
 }
@@ -89,9 +93,15 @@ func (r *Renderer) HostPreview(ctx context.Context, orgID, hostID uuid.UUID) (Ho
 	if err != nil {
 		return HostPreview{}, err
 	}
-	out := HostPreview{Vars: map[string]any{}, Warnings: inv.Warnings}
+	out := HostPreview{Vars: map[string]any{}, Sources: map[string]string{}, Warnings: inv.Warnings}
 	if hv, ok := inv.Doc["_meta"].(map[string]any)["hostvars"].(map[string]any)[name].(map[string]any); ok {
 		out.Vars = hv
+		for k := range hv {
+			out.Sources[k] = "host"
+			if g, ok := inv.Origins[name][k]; ok {
+				out.Sources[k] = g
+			}
+		}
 	}
 	if c, ok := inv.Connections[name]; ok {
 		out.Connection = &c

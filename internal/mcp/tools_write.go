@@ -98,6 +98,13 @@ type memberArgs struct {
 	Vars    map[string]any `json:"vars,omitempty" jsonschema:"host-scoped values and overrides; a secret field takes only {\"$secret\": \"keep\"}"`
 }
 
+type memberVarsArgs struct {
+	GroupID  string         `json:"group_id"`
+	HostID   string         `json:"host_id"`
+	Revision int64          `json:"revision" jsonschema:"the membership's current revision (get_group lists it per member); a stale one is refused"`
+	Vars     map[string]any `json:"vars" jsonschema:"the host's values in this group, replacing the current ones; a secret field takes only {\"$secret\": \"keep\"}"`
+}
+
 type memberRemoveArgs struct {
 	GroupID string `json:"group_id"`
 	HostID  string `json:"host_id"`
@@ -253,37 +260,11 @@ func writeTools() []toolDef {
 			}),
 		define("add_group_member", "Add group member", "Put a host into a group, with its host-scoped values. Secret fields take only {\"$secret\": \"keep\"}.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberArgs) (any, error) {
-				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
-				if err != nil {
-					return nil, err
-				}
-				fields, err := schemaOf(cur["schema"])
-				if err != nil {
-					return nil, err
-				}
-				vars, err := checkValues([][]schema.Field{fields}, nonNil(in.Vars), keepGroup)
-				if err != nil {
-					return nil, err
-				}
-				res, err := send(ctx, c, http.MethodPut, map[string]any{"vars": vars}, "", "/inventory/groups/%s/members/%s", in.GroupID, in.HostID)
-				if err != nil {
-					return nil, err
-				}
-				// A schema change that landed between the check above and
-				// the write may have made one of these values' fields
-				// secret: such a value is taken out again.
-				after, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
-				if err != nil {
-					return nil, fmt.Errorf("check the schema after the write: %w", err)
-				}
-				afterFields, err := schemaOf(after["schema"])
-				if err != nil {
-					return nil, err
-				}
-				if err := clearNewSecrets(ctx, c, in.GroupID, in.HostID, vars, afterFields, newSecretPaths(fields, afterFields)); err != nil {
-					return nil, err
-				}
-				return res, nil
+				return putMember(ctx, c, in.GroupID, in.HostID, in.Vars, "")
+			}),
+		define("set_member_vars", "Set member variables", "Replace the values a host has in a group (its membership's host-scoped and overridable values; only keys the group's schema declares), guarded by the membership's revision (get it from get_group's members). Secret fields take only {\"$secret\": \"keep\"}. See the result with get_host_vars.",
+			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberVarsArgs) (any, error) {
+				return putMember(ctx, c, in.GroupID, in.HostID, in.Vars, `"`+strconv.FormatInt(in.Revision, 10)+`"`)
 			}),
 		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberRemoveArgs) (any, error) {
@@ -530,4 +511,40 @@ func nonNil(m map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// putMember puts a host into a group with vars (match is the If-Match value,
+// empty for an unguarded upsert), under the secret rules of the vars tools.
+func putMember(ctx context.Context, c *caller, groupID, hostID string, values map[string]any, match string) (any, error) {
+	cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", groupID)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := schemaOf(cur["schema"])
+	if err != nil {
+		return nil, err
+	}
+	vars, err := checkValues([][]schema.Field{fields}, nonNil(values), keepGroup)
+	if err != nil {
+		return nil, err
+	}
+	res, err := send(ctx, c, http.MethodPut, map[string]any{"vars": vars}, match, "/inventory/groups/%s/members/%s", groupID, hostID)
+	if err != nil {
+		return nil, err
+	}
+	// A schema change that landed between the check above and the write
+	// may have made one of these values' fields secret: such a value is
+	// taken out again.
+	after, err := getObject(ctx, c, "group", "/inventory/groups/%s", groupID)
+	if err != nil {
+		return nil, fmt.Errorf("check the schema after the write: %w", err)
+	}
+	afterFields, err := schemaOf(after["schema"])
+	if err != nil {
+		return nil, err
+	}
+	if err := clearNewSecrets(ctx, c, groupID, hostID, vars, afterFields, newSecretPaths(fields, afterFields)); err != nil {
+		return nil, err
+	}
+	return res, nil
 }

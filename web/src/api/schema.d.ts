@@ -5804,6 +5804,10 @@ export interface components {
              */
             readonly $schema?: string;
             connection?: components["schemas"]["Connection"];
+            /** @description Where each variable comes from: the name of the group that gave it, or "host" for the host's own (address, SSH settings, facts) */
+            sources: {
+                [key: string]: string;
+            };
             vars: {
                 [key: string]: unknown;
             };
@@ -7948,6 +7952,9 @@ export interface components {
             /** Format: date-time */
             last_sync?: string;
             last_sync_error?: string;
+            /** Format: date-time */
+            last_synced_at?: string;
+            last_synced_commit?: string;
             name: string;
             /** @enum {string} */
             pin_state?: "full" | "fingerprint_only";

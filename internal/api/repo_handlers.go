@@ -95,8 +95,13 @@ type repoDTO struct {
 	// terminal state, and LastSyncError its failure reason ("" on success).
 	LastSync      *time.Time `json:"last_sync,omitempty"`
 	LastSyncError string     `json:"last_sync_error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// LastSyncedCommit and LastSyncedAt are the commit and time of the last
+	// successful sync, read from the repository's variable sources record
+	// (the repository's own read only; absent when no sync recorded one).
+	LastSyncedCommit string     `json:"last_synced_commit,omitempty"`
+	LastSyncedAt     *time.Time `json:"last_synced_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // toRepoDTO redacts the URL's userinfo (backlog 7.103): a row stored before
@@ -266,7 +271,15 @@ func registerRepoRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapReposErr(ctx, err)
 		}
-		return repoDetail(r), nil
+		out := repoDetail(r)
+		commit, at, found, err := deps.Repos.LastSynced(ctx, scope.OrgID, id)
+		if err != nil {
+			return nil, mapReposErr(ctx, err)
+		}
+		if found {
+			out.Body.Repo.LastSyncedCommit, out.Body.Repo.LastSyncedAt = commit, &at
+		}
+		return out, nil
 	})
 
 	huma.Put(hapi, "/api/v1/orgs/{org}/repos/{id}", func(ctx context.Context, in *repoUpdateInput) (*repoDetailOutput, error) {

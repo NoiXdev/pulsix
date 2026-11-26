@@ -99,6 +99,16 @@ func TestHostPreview(t *testing.T) {
 	if hp.Connection == nil || hp.Connection.BastionSource != render.SourceNone || hp.Vars["ansible_host"] != "web-01" {
 		t.Fatalf("HostPreview = %+v", hp)
 	}
+	// Each value says where it comes from: the group that set it, or the
+	// host itself (its address, SSH settings and facts).
+	if hp.Sources["vhosts"] != "webserver" || hp.Sources["ansible_host"] != "host" || hp.Sources["ansible_user"] != "host" {
+		t.Fatalf("HostPreview sources = %v", hp.Sources)
+	}
+	for name := range hp.Vars {
+		if hp.Sources[name] == "" {
+			t.Fatalf("%s has no source: %v", name, hp.Sources)
+		}
+	}
 	// switch-01 is a member of the webserver group (see rendererFixture)
 	// but not managed, so HostPreview's Scope{HostIDs: [switch-01]} puts it
 	// squarely in scope: it must carry the unmanaged-member warning, same

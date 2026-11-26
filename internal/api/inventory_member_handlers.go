@@ -90,6 +90,7 @@ type hostGroupsOutput struct {
 type hostPreviewOutput struct {
 	Body struct {
 		Vars       map[string]any     `json:"vars"`
+		Sources    map[string]string  `json:"sources" doc:"Where each variable comes from: the name of the group that gave it, or \"host\" for the host's own (address, SSH settings, facts)"`
 		Connection *render.Connection `json:"connection,omitempty"`
 		Warnings   []render.Warning   `json:"warnings"`
 	}
@@ -226,7 +227,7 @@ func registerInventoryMemberRoutes(hapi huma.API, deps Deps) {
 			return nil, mapInventoryErr(ctx, err, "")
 		}
 		out := &hostPreviewOutput{}
-		out.Body.Vars, out.Body.Connection, out.Body.Warnings = p.Vars, p.Connection, nonNilWarnings(p.Warnings)
+		out.Body.Vars, out.Body.Sources, out.Body.Connection, out.Body.Warnings = p.Vars, p.Sources, p.Connection, nonNilWarnings(p.Warnings)
 		return out, nil
 	})
 }

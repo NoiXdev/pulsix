@@ -118,6 +118,10 @@ type Inventory struct {
 	// claim can tell the worker what to redact from run output. Empty for
 	// a preview. Never logged, never served.
 	Secrets []string
+	// Origins says, per host name, which group each variable a membership
+	// gave the host comes from (variable -> group name). A variable absent
+	// here is the host's own (address, SSH settings, facts).
+	Origins map[string]map[string]string
 }
 
 type renderer struct {
@@ -126,6 +130,7 @@ type renderer struct {
 	groups   map[uuid.UUID]Group
 	hosts    map[uuid.UUID]Host
 	warnings []Warning
+	origins  map[string]map[string]string
 }
 
 // Render renders in. It fails with ErrUnrenderable, rather than guessing,
@@ -168,6 +173,7 @@ func (r *renderer) run() (Inventory, error) {
 	}
 	selected, byHost, included := sel.hosts, sel.byHost, sel.included
 	hostvars := map[string]any{}
+	r.origins = map[string]map[string]string{}
 	conns := map[string]Connection{}
 	var ungrouped []string
 	for _, h := range r.sortedHosts(selected) {
@@ -233,7 +239,7 @@ func (r *renderer) run() (Inventory, error) {
 	slices.SortFunc(r.warnings, func(a, b Warning) int {
 		return cmp.Or(cmp.Compare(a.Host, b.Host), cmp.Compare(a.Group, b.Group), cmp.Compare(a.Message, b.Message))
 	})
-	return Inventory{Doc: doc, Connections: conns, Warnings: r.warnings}, nil
+	return Inventory{Doc: doc, Connections: conns, Warnings: r.warnings, Origins: r.origins}, nil
 }
 
 func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection, error) {
@@ -257,6 +263,9 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 		}
 	}
 
+	if r.origins != nil {
+		r.origins[h.Name] = origin
+	}
 	ssh := r.sshFor(h.ID)
 	host := h.Address
 	if host == "" {

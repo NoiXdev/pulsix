@@ -88,6 +88,7 @@ export const enHosts = {
     titleEdit: (name: string) => `Edit host ${name}`,
     name: 'Name',
     namePlaceholder: 'web-04.fra',
+    nameHint: "The name is the host's inventory name; playbooks and roles may derive names from it.",
     zone: 'Zone',
     selectZone: 'Select a zone…',
     newZone: 'New zone…',

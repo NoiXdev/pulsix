@@ -176,7 +176,8 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="host_name">{t.hosts.dialog.name}</Label>
-          <Input id="host_name" {...form.register('name')} placeholder={t.hosts.dialog.namePlaceholder} />
+          <Input id="host_name" {...form.register('name')} placeholder={t.hosts.dialog.namePlaceholder} aria-describedby="host_name_hint" />
+          <span id="host_name_hint" className="text-[11px] text-muted-foreground">{t.hosts.dialog.nameHint}</span>
           {errors.name && <span className="text-[11px] text-destructive">{errors.name.message}</span>}
         </div>
         <div className="flex flex-col gap-1.5">

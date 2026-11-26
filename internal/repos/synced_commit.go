@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -63,4 +64,21 @@ func (s *Service) SyncedCommit(ctx context.Context, orgID uuid.UUID, repo Repo) 
 		out.Stale = CommitRepoChanged
 	}
 	return out, nil
+}
+
+// LastSynced is the commit and time of repo's last successful sync as its
+// variable sources record keeps them; found is false when no sync recorded
+// a commit.
+func (s *Service) LastSynced(ctx context.Context, orgID, repoID uuid.UUID) (commit string, at time.Time, found bool, err error) {
+	rec, err := s.store.GetVarSources(ctx, orgID, repoID)
+	if errors.Is(err, ErrNotFound) {
+		return "", time.Time{}, false, nil
+	}
+	if err != nil {
+		return "", time.Time{}, false, fmt.Errorf("get the repository's last sync: %w", err)
+	}
+	if rec.Commit == "" {
+		return "", time.Time{}, false, nil
+	}
+	return rec.Commit, rec.SyncedAt, true, nil
 }

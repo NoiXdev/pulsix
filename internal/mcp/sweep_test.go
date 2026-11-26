@@ -233,6 +233,10 @@ func TestNoToolOutputContainsASecret(t *testing.T) {
 		if !ok {
 			a = argsFor(props[name], ids)
 		}
+		if name == "set_member_vars" {
+			// The membership's revision moved with add_group_member above.
+			a = map[string]any{"group_id": f.group.String(), "host_id": f.host.String(), "revision": f.memberRevision(t), "vars": map[string]any{}}
+		}
 		text, isErr := call(t, cs, name, a)
 		if isErr {
 			t.Errorf("%s failed with the seeded arguments: %s", name, text)

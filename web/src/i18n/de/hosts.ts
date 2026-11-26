@@ -79,6 +79,7 @@ export const deHosts: Messages['hosts'] = {
     titleEdit: (name: string) => `Host ${name} bearbeiten`,
     name: 'Name',
     namePlaceholder: 'web-04.fra',
+    nameHint: 'Der Name ist der Inventarname des Hosts; Playbooks und Rollen können Namen daraus ableiten.',
     zone: 'Zone',
     selectZone: 'Zone auswählen…',
     newZone: 'Neue Zone…',
