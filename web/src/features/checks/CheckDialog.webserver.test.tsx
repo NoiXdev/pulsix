@@ -126,7 +126,7 @@ describe.each(SINGLE)('CheckDialog — $plugin status URL', ({ plugin, label, ur
 });
 
 describe('CheckDialog — phpfpm status URLs list', () => {
-  const LABEL = 'Status page URLs (one per line, one pool each)';
+  const LABEL = 'Status pages (one per line, one pool each)';
 
   it('shows the example as placeholder and sends nothing untouched', async () => {
     const user = userEvent.setup();
@@ -146,6 +146,27 @@ describe('CheckDialog — phpfpm status URLs list', () => {
     await save(user, posted);
     expect(posted[0].params).toEqual({ urls: ['http://127.0.0.1/status-a', 'http://127.0.0.1/status-b'] });
   });
+
+  it('sends FastCGI pool addresses next to a URL', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user, 'phpfpm');
+    const lines = ['http://127.0.0.1/status', 'fcgi://127.0.0.1:9000/status', 'unix:/run/php/php8.3-fpm.sock:/status'];
+    await user.type(screen.getByLabelText(LABEL), lines.join('\n'));
+    await save(user, posted);
+    expect(posted[0].params).toEqual({ urls: lines });
+  });
+
+  it.each(['fcgi://127.0.0.1/status', 'fcgi://127.0.0.1:9000/index.php', 'unix:/run/php/fpm.sock'])(
+    'refuses the FastCGI entry %s and sends nothing',
+    async (bad) => {
+      const user = userEvent.setup();
+      const posted = await openNew(user, 'phpfpm');
+      await user.type(screen.getByLabelText(LABEL), `http://127.0.0.1/status\n${bad}`);
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByText(/or a pool address fcgi:\/\/host:port\/path or unix:\/socket:\/path/)).toBeInTheDocument();
+      expect(posted).toHaveLength(0);
+    },
+  );
 
   it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/'])('refuses %s among the lines and sends nothing', async (bad) => {
     const user = userEvent.setup();

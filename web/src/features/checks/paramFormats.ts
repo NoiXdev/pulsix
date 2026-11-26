@@ -277,6 +277,65 @@ function statusURL(s: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// phpfpmPool (backlog 3.11a): a statusURL, or a pool's FastCGI address with
+// its status path — fcgi://host:port/path or unix:/socket:/path, ported
+// from internal/checkplugins/phpfpm_pool.go.
+// ---------------------------------------------------------------------------
+
+/** The status path: '/' and at most 254 letters, digits, _ ~ / - (no dot,
+ * so it never names a PHP script). */
+const PHPFPM_STATUS_PATH = /^\/[A-Za-z0-9_~/-]{0,254}$/;
+
+/** An IPv4 address, an IPv6 address in brackets without a zone, or a DNS
+ * name — validPHPFPMHost. */
+function phpfpmHost(h: string): boolean {
+  if (h.startsWith('[')) {
+    if (!h.endsWith(']') || h.length < 2) return false;
+    const inner = h.slice(1, -1);
+    return !inner.includes('%') && parseAddr(inner) === 6;
+  }
+  const family = parseAddr(h);
+  if (family !== null) return family === 4;
+  return !h.includes('{address}') && dnsName(h);
+}
+
+function phpfpmFastCGI(s: string): boolean {
+  if (s.startsWith('fcgi://')) {
+    const rest = s.slice('fcgi://'.length);
+    const slash = rest.indexOf('/');
+    if (slash < 0) return false;
+    const hostPort = rest.slice(0, slash);
+    const colon = hostPort.lastIndexOf(':');
+    if (colon < 0) return false;
+    const port = hostPort.slice(colon + 1);
+    return (
+      phpfpmHost(hostPort.slice(0, colon)) &&
+      /^[1-9][0-9]{0,4}$/.test(port) &&
+      Number(port) <= 65535 &&
+      PHPFPM_STATUS_PATH.test(rest.slice(slash))
+    );
+  }
+  const rest = s.slice('unix:'.length);
+  const colon = rest.indexOf(':');
+  if (colon < 0) return false;
+  const socket = rest.slice(0, colon);
+  return (
+    socket.startsWith('/') &&
+    !socket.startsWith('//') &&
+    byteLen(socket) <= 107 &&
+    !hasControl(socket) &&
+    PHPFPM_STATUS_PATH.test(rest.slice(colon + 1))
+  );
+}
+
+/** phpfpmPool: one entry of phpfpm's urls — a FastCGI address when it
+ * starts with fcgi:// or unix:, a statusURL otherwise. */
+function phpfpmPool(s: string): boolean {
+  if (s.startsWith('fcgi://') || s.startsWith('unix:')) return phpfpmFastCGI(s);
+  return statusURL(s);
+}
+
+// ---------------------------------------------------------------------------
 
 /** dnsName: dot-separated labels of letters, digits, '-' and '_', each
  * 1–63 bytes, an optional trailing dot, at most 253 bytes without it, once
@@ -366,6 +425,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   devicePath,
   url: probeURL,
   statusURL,
+  phpfpmPool,
   dnsName,
   server,
   dockerLabel,

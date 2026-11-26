@@ -37,6 +37,11 @@ const (
 	// no fragment and no {address} placeholder — the agent fetches it as
 	// written (the web server status checks, backlog 3.11).
 	FormatStatusURL Format = "statusURL"
+	// FormatPHPFPMPool: one entry of phpfpm's urls — a FormatStatusURL, or
+	// the pool's FastCGI address with its status path,
+	// fcgi://host:port/path or unix:/socket:/path (backlog 3.11a, see
+	// phpfpm_pool.go).
+	FormatPHPFPMPool Format = "phpfpmPool"
 	// FormatDNSName: a DNS name, once {address} stands for a label.
 	FormatDNSName Format = "dnsName"
 	// FormatServer: an IP address with an optional port, an IPv6 address
@@ -90,7 +95,7 @@ const (
 func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
-		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
+		FormatPHPFPMPool, FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
 	}
 }
@@ -121,6 +126,8 @@ func (f Format) problem(s string) string {
 		if !validStatusURL(s) {
 			return "must be an http:// or https:// URL with a host, no user info and no fragment (it must not contain {address})"
 		}
+	case FormatPHPFPMPool:
+		return phpfpmPoolProblem(s)
 	case FormatDNSName:
 		if !validDNSName(strings.ReplaceAll(s, "{address}", dnsPlaceholderLabel)) {
 			return "must be a DNS name: dot-separated labels of letters, digits, hyphens and underscores, at most 253 bytes (it may contain {address})"

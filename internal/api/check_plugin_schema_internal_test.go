@@ -51,7 +51,7 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"caddy: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1:2019/metrics), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
-		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment), " +
+		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ ~ / - without a dot), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"script: commands (required; list; not empty; at most 32 entries; each the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
