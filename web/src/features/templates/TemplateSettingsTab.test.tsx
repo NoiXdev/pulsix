@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { pageRoutes, renderTemplatePage, template } from './templatePageTestKit.tsx';
 
 const SETTINGS = '/o/acme/templates/t1?tab=settings';
@@ -116,16 +117,64 @@ describe('TemplateSettingsTab', () => {
     expect(f.getByLabelText('Name')).toHaveValue('deploy-site');
   });
 
-  it('ends the edit when another tab is opened', async () => {
+  it('asks before another tab discards unsaved changes, and discards them on yes', async () => {
     const user = userEvent.setup();
     mockApi(pageRoutes());
-    renderTemplatePage(SETTINGS);
+    const { router } = renderTemplatePage(SETTINGS);
     await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
     await user.type((await form()).getByLabelText('Name'), '-x');
     await user.click(screen.getByRole('tab', { name: /^Overview/ }));
+    expect(await acceptConfirm(user)).toMatch(/unsaved changes/i);
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
     await user.click(screen.getByRole('tab', { name: /^Settings/ }));
     expect((await form()).getByLabelText('Name')).toBeDisabled();
     expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site');
+  });
+
+  it('keeps editing when the question is declined', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes());
+    const { router } = renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Name'), '-x');
+    await user.click(screen.getByRole('tab', { name: /^Runs/ }));
+    await declineConfirm(user);
+    expect(router.state.location.search).toEqual({ tab: 'settings' });
+    expect((await form()).getByLabelText('Name')).toBeEnabled();
+    expect((await form()).getByLabelText('Name')).toHaveValue('deploy-site-x');
+  });
+
+  it('asks before another page is opened with unsaved changes', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes());
+    const { router } = renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Limit pattern'), 'web*');
+    await user.click(await within(screen.getByTestId('template-facts')).findByRole('link', { name: 'site.yml' }));
+    await declineConfirm(user);
+    expect(router.state.location.pathname).toBe('/o/acme/templates/t1');
+    await user.click(within(screen.getByTestId('template-facts')).getByRole('link', { name: 'site.yml' }));
+    await acceptConfirm(user);
+    expect(await screen.findByText(/PLAYBOOK PAGE pb1/)).toBeInTheDocument();
+  });
+
+  it('leaves an edit without changes, and one after Save, without asking', async () => {
+    const user = userEvent.setup();
+    mockApi(pageRoutes({ over: { 'PUT /api/v1/orgs/acme/job-templates/t1': { template: template({ revision: 2, limit: 'web*' }) } } }));
+    const { router } = renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('tab', { name: /^Overview/ }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /^Settings/ }));
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Limit pattern'), 'web*');
+    await user.click((await form()).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site saved');
+    await user.click(screen.getByRole('tab', { name: /^Runs/ }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: 'runs' }));
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it('offers Reload after a conflict and saves on the new revision, keeping this edit', async () => {

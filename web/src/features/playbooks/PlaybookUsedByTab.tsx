@@ -73,8 +73,9 @@ export function PlaybookUsedByTab({
           rowLabel={(tpl) => tpl.name}
           rowActions={actions.rowActions}
           // A writer opens the template's dialog, as on the templates list; a
-          // reader, who may not edit it, its variables page (read-only there).
-          rowLink={canWrite ? undefined : (tpl) => ({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id }, label: tpl.name })}
+          // reader, who may not edit it, the Variables tab of its page (read-only
+          // there).
+          rowLink={canWrite ? undefined : (tpl) => ({ to: '/o/$org/templates/$id', params: { org, id: tpl.id }, search: { tab: 'variables' }, label: tpl.name })}
           onRowActivate={actions.edit}
           loading={!templates || !view.ready}
           empty={u.none}

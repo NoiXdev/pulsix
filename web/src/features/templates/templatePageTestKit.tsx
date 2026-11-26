@@ -50,6 +50,18 @@ export function runRequest(id: string, over: Record<string, unknown> = {}) {
   };
 }
 
+/** The template's variables as the variables tab reads them: one field. */
+export function variables(over: Record<string, unknown> = {}) {
+  return {
+    extra_vars_schema: { fields: [{ name: 'region', type: 'string', required: true }] },
+    extra_vars: { region: 'eu' },
+    revision: 1,
+    mode: 'off',
+    review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0, not_sent: [] },
+    ...over,
+  };
+}
+
 /** The routes the page reads; `over` replaces or adds any. */
 export function pageRoutes({ role = 'operator', tpl = template(), over = {} }: { role?: string; tpl?: ReturnType<typeof template>; over?: Record<string, MockRoute> } = {}): Record<string, MockRoute> {
   return {
@@ -64,6 +76,9 @@ export function pageRoutes({ role = 'operator', tpl = template(), over = {} }: {
     'GET /api/v1/orgs/acme/triggers': { triggers: [] },
     'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
     'GET /api/v1/orgs/acme/run-requests': { requests: [] },
+    'GET /api/v1/orgs/acme/job-templates/t1/variables': variables(),
+    'GET /api/v1/auth/me/preferences': { density: 'standard', page_size: 25, lists: {} },
+    'PUT /api/v1/auth/me/preferences': (req: { body: unknown }) => req.body,
     ...over,
   };
 }
@@ -97,7 +112,6 @@ export function renderTemplatePage(path = '/o/acme/templates/t1') {
     orgRoute.addChildren([
       page,
       stand('/templates', 'TEMPLATES LIST'),
-      stand('/templates/$id/variables', 'VARIABLES PAGE'),
       stand('/playbooks/$id', 'PLAYBOOK PAGE'),
       stand('/runs', 'RUNS LIST'),
       stand('/runs/$id', 'RUN PAGE'),

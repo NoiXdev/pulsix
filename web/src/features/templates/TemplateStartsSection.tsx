@@ -6,6 +6,7 @@ import { Card } from '../../ui/table.tsx';
 import type { Schedule, Template, Trigger } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { relative } from '../schedules/simple.ts';
+import { ScheduleStatusPill } from '../schedules/ScheduleStatusPill.tsx';
 import { SectionAction } from '../hosts/HostOverviewCards.tsx';
 import { useNow } from '../runs/runRequestStatus.ts';
 import type { TemplateTab } from './templateTabs.ts';
@@ -51,13 +52,7 @@ export function TemplateStartsSection({ org, template, schedules, triggers, onTa
                   {s.cron}
                 </span>
                 <span>
-                  {s.paused_reason ? (
-                    <Pill tone="warn">{t.schedules.needsReview}</Pill>
-                  ) : s.paused ? (
-                    <Pill tone="unknown">{t.schedules.paused}</Pill>
-                  ) : (
-                    <Pill tone="ok">{t.schedules.active}</Pill>
-                  )}
+                  <ScheduleStatusPill schedule={s} />
                 </span>
                 <span className="text-right text-xs text-muted-foreground">{s.paused ? '—' : relative(s.next_run_at, now, t)}</span>
               </ListRow>

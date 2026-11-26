@@ -84,10 +84,15 @@ describe('the password pages (backlog 7.74)', () => {
   });
 });
 
-describe('the job template pages (backlog 7.75)', () => {
-  it("has a variables page for a template, beside the list", async () => {
-    expect(await settledAt('/o/acme/templates/t1/variables')).toBe('/o/acme/templates/t1/variables');
-    expect(router.state.matches.some((m) => m.routeId === '/o/$org/templates/$id/variables')).toBe(true);
+describe('the job template pages (backlog 7.75, 1.53)', () => {
+  it('has a page for a template, beside the list', async () => {
+    expect(await settledAt('/o/acme/templates/t1')).toBe('/o/acme/templates/t1');
+    expect(router.state.matches.some((m) => m.routeId === '/o/$org/templates/$id')).toBe(true);
+  });
+
+  it("redirects a template's former variables page to the Variables tab of its page", async () => {
+    expect(await settledAt('/o/acme/templates/t1/variables')).toBe('/o/acme/templates/t1');
+    expect(router.state.location.search).toEqual({ tab: 'variables' });
   });
 });
 

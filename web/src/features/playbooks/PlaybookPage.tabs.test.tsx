@@ -107,10 +107,10 @@ describe('PlaybookPage tabs and actions', () => {
     expect(await screen.findByRole('dialog', { name: 'Deploy web' })).toBeInTheDocument();
   });
 
-  it("opens a template's variables page for a reader", async () => {
+  it("opens the Variables tab of a template's page for a reader", async () => {
     mockApi(routes('viewer'));
     renderAt('/o/acme/playbooks/p1?tab=used');
-    expect(await screen.findByRole('link', { name: 'Deploy web' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
+    expect(await screen.findByRole('link', { name: 'Deploy web' })).toHaveAttribute('href', '/o/acme/templates/t1?tab=variables');
   });
 
   it('refuses Delete while a template uses the playbook, and says why', async () => {

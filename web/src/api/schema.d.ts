@@ -6173,6 +6173,11 @@ export interface components {
             created_at: string;
             /** @description A dry run's options; absent for every other job */
             dry_run?: components["schemas"]["DryRunDTO"];
+            /**
+             * Format: int64
+             * @description How many hosts the job targets; absent when none
+             */
+            host_count?: number;
             id: string;
             /** @enum {string} */
             kind: "run" | "adhoc" | "connection_test" | "bootstrap" | "rotate_key" | "revoke_key" | "sync_repo";

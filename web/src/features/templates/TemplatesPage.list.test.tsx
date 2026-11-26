@@ -38,7 +38,6 @@ function setup(over: Record<string, unknown> = {}, started: string[] = [], role 
     others: [
       { path: '/runs/$id', component: () => <div>RUN VIEW</div> },
       { path: '/templates/$id', component: () => <div>TEMPLATE PAGE</div> },
-      { path: '/templates/$id/variables', component: () => <div>VARIABLES</div> },
     ],
   });
 }

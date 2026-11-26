@@ -205,8 +205,8 @@ export const enTemplates = {
     stale: 'The template changed since this page was loaded. Reload it, then sync again.',
     reload: 'Reload',
   },
-  /** The template page (backlog 1.53): header, tabs, Overview and the
-   * Settings tab. */
+  /** The template page (backlog 1.53): header, tabs and what each tab
+   * shows. */
   page: {
     tabs: {
       label: 'Template sections',
@@ -271,13 +271,59 @@ export const enTemplates = {
       readOnly: 'The settings as saved. Edit to change them.',
       noAccess: 'The settings as saved. Changing them needs the templates permission.',
     },
-    /** The tabs whose content still lives on its own page. */
-    elsewhere: {
-      hint: 'This is managed on its own page for now.',
-      variables: 'Open the variables page',
-      schedules: 'Open the schedules of this template',
-      triggers: 'Manage the webhook triggers',
-      runs: 'Open the runs of this template',
+    schedules: {
+      title: 'Schedules',
+      hint: 'The schedules that run this template. The Schedules page shows them beside all others.',
+      newSchedule: 'New schedule',
+      empty: 'No schedule runs this template yet.',
+      readFailed: 'The schedules could not be read.',
+      label: 'Schedules of this template',
+      open: (name: string) => `Open ${name}`,
+      menu: (name: string) => `Actions for ${name}`,
+      next: (time: string) => `next ${time}`,
+      notWhilePaused: 'no run while paused',
+      overlap: {
+        skip: 'skips while a run is active',
+        queue: 'queues while a run is active',
+      },
+      inScheduler: 'Open on the Schedules page',
+    },
+    triggers: {
+      title: 'Webhook triggers',
+      hint: 'Each trigger is a URL that starts this template when a sender calls it.',
+      newTrigger: 'New trigger',
+      empty: 'No webhook trigger starts this template yet.',
+      readFailed: 'The webhook triggers could not be read.',
+      url: 'URL',
+      sender: 'Sender',
+      timestamp: 'Timestamp header',
+      noTimestamp: 'none',
+      sources: 'Allowed sources',
+      anySource: 'any',
+      sourceCount: (n: number) => (n === 1 ? '1 address range' : `${n} address ranges`),
+      onActive: 'While a run is active',
+      edit: 'Edit',
+      newSecret: 'New secret',
+      deliveries: 'Deliveries',
+      hideDeliveries: 'Hide deliveries',
+      deliveriesOf: (name: string) => `Deliveries of ${name}`,
+    },
+    runs: {
+      label: 'Runs of this template',
+      hint: 'Every run of this template, newest first.',
+      empty: 'This template has not run yet.',
+      noMatch: 'No run of this template matches these filters.',
+      readFailed: 'The runs could not be read.',
+      columns: {
+        run: 'Run',
+        started: 'Started',
+        by: 'Started by',
+        commit: 'Commit',
+        hosts: 'Hosts',
+        result: 'Result',
+      },
+      hosts: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
+      bySource: (trigger: string, source: string) => `${trigger} · ${source}`,
     },
   },
 };

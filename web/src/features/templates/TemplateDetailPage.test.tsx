@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../test/mockApi.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 import { pageRoutes, renderTemplatePage, schedule, template, trigger } from './templatePageTestKit.tsx';
 
 /** The tab strip, as label → count ('' for a tab without one). */
@@ -111,22 +112,32 @@ describe('TemplateDetailPage', () => {
     expect(await screen.findByRole('tab', { name: /^Runs/ })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it.each([
-    ['variables', 'Open the variables page', '/o/acme/templates/t1/variables'],
-    ['schedules', 'Open the schedules of this template', '/o/acme/schedules?template=t1'],
-    ['runs', 'Open the runs of this template', '/o/acme/runs?template=t1'],
-  ])('leads from the %s tab to where it lives for now', async (name, link, href) => {
+  it('shows the variables in the Variables tab, under the page header', async () => {
     mockApi(pageRoutes());
-    renderTemplatePage(`/o/acme/templates/t1?tab=${name}`);
-    expect(await (await findPanel()).findByRole('link', { name: link })).toHaveAttribute('href', href);
+    renderTemplatePage('/o/acme/templates/t1?tab=variables');
+    const p = await findPanel();
+    expect(await p.findByRole('region', { name: 'Fields' })).toBeInTheDocument();
+    expect(p.getByRole('region', { name: 'Values' })).toBeInTheDocument();
+    // The page's header names the template; the variables page's own title
+    // and back link are left out.
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.queryByRole('link', { name: /Job templates/ })).not.toBeInTheDocument();
   });
 
-  it('opens the triggers dialog from the Triggers tab', async () => {
+  it('asks before another tab discards unsaved variable values', async () => {
     const user = userEvent.setup();
-    mockApi(pageRoutes({ over: { 'GET /api/v1/orgs/acme/triggers': { triggers: [trigger('w1')] } } }));
-    renderTemplatePage('/o/acme/templates/t1?tab=triggers');
-    await user.click(await (await findPanel()).findByRole('button', { name: 'Manage the webhook triggers' }));
-    expect(await screen.findByRole('dialog', { name: 'Triggers · deploy-site' })).toBeInTheDocument();
+    mockApi(pageRoutes());
+    const { router } = renderTemplatePage('/o/acme/templates/t1?tab=variables');
+    const values = within(await (await findPanel()).findByRole('region', { name: 'Values' }));
+    const region = values.getByRole('textbox', { name: /region/ });
+    await user.clear(region);
+    await user.type(region, 'us');
+    await user.click(tab('Overview'));
+    await declineConfirm(user);
+    expect(router.state.location.search).toEqual({ tab: 'variables' });
+    await user.click(tab('Overview'));
+    await acceptConfirm(user);
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 
   it('says when an assistant change paused a schedule or trigger and links the review', async () => {

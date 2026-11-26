@@ -43,6 +43,9 @@ export interface ScheduleEditorProps {
   canWrite: boolean;
   canRun: boolean;
   onClose: () => void;
+  /** A new schedule was created: by default the Scheduler opens it; a
+   * caller showing the editor elsewhere (the template page) keeps it there. */
+  onCreated?: (id: string) => void;
 }
 
 /** ScheduleEditor is the Scheduler artboard's detail panel: template,
@@ -60,7 +63,7 @@ export function ScheduleEditor(props: ScheduleEditorProps) {
   );
 }
 
-function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose, initial }: ScheduleEditorProps & { initial?: Schedule }) {
+function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose, onCreated, initial }: ScheduleEditorProps & { initial?: Schedule }) {
   const t = useT();
   const fmt = useFormat();
   const m = t.schedules.editor;
@@ -138,7 +141,8 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
         await update.mutateAsync({ ...b, revision: initial.revision });
       } else {
         const res = await create.mutateAsync(b);
-        void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: res.schedule.id, template: undefined } });
+        if (onCreated) onCreated(res.schedule.id);
+        else void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: res.schedule.id, template: undefined } });
       }
       toast.show(m.saved);
     } catch (err) {

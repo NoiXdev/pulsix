@@ -42,7 +42,7 @@ export function useTemplateListActions(org: string, opts: TemplateListActionsOpt
     ];
     if (opts.canRun) items.push({ id: 'run', label: t.templates.list.run, onSelect: () => void runner.run(tpl), disabled: runner.isPending });
     items.push(
-      { id: 'variables', label: t.templates.list.variables, onSelect: () => void navigate({ to: '/o/$org/templates/$id/variables', params: { org, id: tpl.id } }) },
+      { id: 'variables', label: t.templates.list.variables, onSelect: () => void navigate({ to: '/o/$org/templates/$id', params: { org, id: tpl.id }, search: { tab: 'variables' } }) },
       { id: 'triggers', label: t.templates.list.triggers, onSelect: () => setDialog({ kind: 'triggers', template: tpl }) },
       {
         id: 'schedules',

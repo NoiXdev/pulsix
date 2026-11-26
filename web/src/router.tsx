@@ -37,7 +37,6 @@ import { validatePlaybookSearch } from './features/playbooks/playbookTabs.ts';
 import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
 import { TemplateDetailPage } from './features/templates/TemplateDetailPage.tsx';
 import { validateTemplateSearch } from './features/templates/templateTabs.ts';
-import { TemplateVariablesPage } from './features/templates/variables/TemplateVariablesPage.tsx';
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
@@ -302,7 +301,15 @@ const templateDetailRoute = createRoute({
   validateSearch: validateTemplateSearch,
   component: TemplateDetailPage,
 });
-const templateVariablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: TemplateVariablesPage });
+// The template's variables are a tab of its page now; the page they had of
+// their own redirects there, so links and bookmarks keep working.
+const templateVariablesRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/templates/$id/variables',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/templates/$id', params: { org: params.org, id: params.id }, search: { tab: 'variables' }, replace: true });
+  },
+});
 const schedulesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/schedules',

@@ -65,7 +65,7 @@ export function routes(extra: Record<string, MockRoute> = {}): Record<string, Mo
 export function renderPage(locale?: Locale) {
   return renderRoutes(
     [
-      { path: '/templates/$id/variables', component: TemplateVariablesPage },
+      { path: '/templates/$id/variables', component: () => <TemplateVariablesPage /> },
       { path: '/templates', component: () => <div>TEMPLATE LIST</div> },
     ],
     '/o/acme/templates/t1/variables',

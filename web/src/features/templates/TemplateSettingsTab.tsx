@@ -19,6 +19,8 @@ export interface TemplateSettingsTabProps {
   onEditingChange: (editing: boolean) => void;
   /** Reads the template again (Reload after a conflict). */
   onReload: () => Promise<Template | undefined>;
+  /** Told whether the edit holds changes not saved yet. */
+  onDirtyChange: (dirty: boolean) => void;
 }
 
 /**
@@ -27,11 +29,14 @@ export interface TemplateSettingsTabProps {
  * then Cancel and Save — the same save, under If-Match, with Reload after a
  * conflict. Edit needs `templates.write`; without it the form only shows.
  *
+ * Unsaved changes are reported up (`onDirtyChange`): the page asks before
+ * they are left, by another tab or another page.
+ *
  * The read-only form is mounted again for every new revision, so it always
  * shows the template as saved; the editing one keeps the revision it was
  * opened on as its base, whatever a background read brings meanwhile.
  */
-export function TemplateSettingsTab({ org, template, role, editing, onEditingChange, onReload }: TemplateSettingsTabProps) {
+export function TemplateSettingsTab({ org, template, role, editing, onEditingChange, onReload, onDirtyChange }: TemplateSettingsTabProps) {
   const t = useT();
   const s = t.templates.page.settings;
   const canWrite = may(role, 'templates.write');
@@ -70,6 +75,7 @@ export function TemplateSettingsTab({ org, template, role, editing, onEditingCha
         readOnly={!editable}
         onCancel={() => onEditingChange(false)}
         onDone={() => onEditingChange(false)}
+        onDirtyChange={editable ? onDirtyChange : undefined}
       />
     </div>
   );

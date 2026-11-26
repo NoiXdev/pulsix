@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider, useSearch } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
@@ -44,9 +44,17 @@ function renderPage() {
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
   const jobRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: () => <div>RUN VIEW</div> });
-  const variablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: () => <div>VARIABLES</div> });
+  const templateRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/templates/$id',
+    validateSearch: (s: Record<string, unknown>) => s,
+    component: function TemplatePage() {
+      const search = useSearch({ strict: false }) as { tab?: string };
+      return <div>TEMPLATE PAGE {search.tab ?? 'overview'}</div>;
+    },
+  });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute, variablesRoute])]),
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute, templateRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/templates'] }),
   });
   return render(
@@ -523,10 +531,10 @@ describe('TemplatesPage', () => {
     expect(screen.queryByText(/not sent to runs/)).not.toBeInTheDocument();
     await chooseRowAction(user, 'deploy-site', 'Edit');
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
-    expect(within(dialog).getByRole('link', { name: 'Variables' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
+    expect(within(dialog).getByRole('link', { name: 'Variables' })).toHaveAttribute('href', '/o/acme/templates/t1?tab=variables');
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await chooseRowAction(user, 'deploy-site', 'Variables');
-    expect(await screen.findByText('VARIABLES')).toBeInTheDocument();
+    expect(await screen.findByText('TEMPLATE PAGE variables')).toBeInTheDocument();
   });
 
   // v0.2e Task 5: a template's own labelled vault password set, added on

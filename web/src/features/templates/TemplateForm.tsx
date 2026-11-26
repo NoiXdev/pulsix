@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -24,6 +24,7 @@ import { mergeScope, mergeSetting, mergeVaultRows } from './rebase.ts';
 import { FollowUpsField } from './FollowUpsField.tsx';
 import { useDeleteTemplateCommand } from './useDeleteTemplateCommand.ts';
 import type { Existing } from './existing.ts';
+import { settingsChanged } from './formDirty.ts';
 
 export interface TemplateFormProps {
   org: string;
@@ -54,6 +55,9 @@ export interface TemplateFormProps {
   onCancel: () => void;
   /** After the template was saved, created or deleted. */
   onDone: () => void;
+  /** Told whether an existing template's settings differ from what was
+   * loaded (the Settings tab asks before they are left). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -70,7 +74,7 @@ export interface TemplateFormProps {
  * that keeps this person's changes (rebase.ts).
  */
 export function TemplateForm({
-  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, canEnrolAgents, initialPlaybookId, variant, readOnly = false, onCancel, onDone,
+  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, canEnrolAgents, initialPlaybookId, variant, readOnly = false, onCancel, onDone, onDirtyChange,
 }: TemplateFormProps) {
   const t = useT();
   const toast = useToast();
@@ -111,6 +115,8 @@ export function TemplateForm({
   const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inDialog = variant === 'dialog';
+  const dirty = !readOnly && loaded !== undefined && settingsChanged({ name, playbook, scope, limit, credentialId, vaultRows, followUps, agentEnrollment }, loaded);
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   /** playbookIdFor is the chosen playbook's id: a repository path nobody
    * picked before is registered first (null when that failed). */
@@ -235,8 +241,9 @@ export function TemplateForm({
             <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
               <span className="text-[11px] text-muted-foreground">{t.templates.dialog.variablesHint}</span>
               <Link
-                to="/o/$org/templates/$id/variables"
+                to="/o/$org/templates/$id"
                 params={{ org, id: existing.id }}
+                search={{ tab: 'variables' }}
                 className="shrink-0 text-xs font-medium text-primary hover:underline"
               >
                 {t.templates.dialog.variables}

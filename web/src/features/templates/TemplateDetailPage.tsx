@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
+import { useUnsavedGuard } from '../../ui/useUnsavedGuard.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useTemplate } from '../../api/hooks/useTemplates.ts';
 import { useSchedules } from '../../api/hooks/useSchedules.ts';
@@ -10,10 +11,13 @@ import type { Template } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { TemplateHeader } from './TemplateHeader.tsx';
 import { TemplateOverviewTab } from './TemplateOverviewTab.tsx';
-import { TemplatePendingTab } from './TemplatePendingTab.tsx';
+import { TemplateRunsTab } from './TemplateRunsTab.tsx';
+import { TemplateSchedulesTab } from './TemplateSchedulesTab.tsx';
+import { TemplateTriggersTab } from './TemplateTriggersTab.tsx';
 import { TemplateReviewNotice } from './TemplateReviewNotice.tsx';
 import { TemplateSettingsTab } from './TemplateSettingsTab.tsx';
 import { TemplateTabs, type TemplateTabItem } from './TemplateTabs.tsx';
+import { TemplateVariablesPage } from './variables/TemplateVariablesPage.tsx';
 import { TEMPLATE_PANEL_ID, parseTemplateTab, templateTabId, type TemplateTab } from './templateTabs.ts';
 import { pausedForReview } from './templateDetail.ts';
 
@@ -56,13 +60,20 @@ function TemplateDetail({ org, template, role, onReload }: TemplateDetailProps) 
   const tab = parseTemplateTab(search.tab);
   const tabs = t.templates.page.tabs;
   // Edit opens the Settings tab with its form editable; leaving the tab
-  // ends the edit (its unsaved changes go with it).
-  const [editing, setEditing] = useState(false);
+  // ends the edit. With changes not saved yet, leaving the tab or the page
+  // asks first (useUnsavedGuard: a tab switch is a navigation too).
+  const [editing, setEditingState] = useState(false);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const setEditing = (next: boolean) => {
+    setEditingState(next);
+    if (!next) setSettingsDirty(false);
+  };
   const [shownTab, setShownTab] = useState(tab);
   if (shownTab !== tab) {
     setShownTab(tab);
     if (tab !== 'settings') setEditing(false);
   }
+  useUnsavedGuard(editing && settingsDirty);
 
   const schedules = useSchedules(org, template.id);
   const triggers = useTriggers(org, { kind: 'template_run', id: template.id, name: template.name });
@@ -90,11 +101,11 @@ function TemplateDetail({ org, template, role, onReload }: TemplateDetailProps) 
 
   const panels: Record<TemplateTab, () => ReactNode> = {
     overview: () => <TemplateOverviewTab org={org} template={template} schedules={schedules.data ? scheduleList : undefined} triggers={triggers.data ? triggerList : undefined} onTab={select} />,
-    variables: () => <TemplatePendingTab org={org} template={template} role={role} tab="variables" />,
-    schedules: () => <TemplatePendingTab org={org} template={template} role={role} tab="schedules" />,
-    triggers: () => <TemplatePendingTab org={org} template={template} role={role} tab="triggers" />,
-    runs: () => <TemplatePendingTab org={org} template={template} role={role} tab="runs" />,
-    settings: () => <TemplateSettingsTab org={org} template={template} role={role} editing={editing} onEditingChange={setEditing} onReload={onReload} />,
+    variables: () => <TemplateVariablesPage embedded />,
+    schedules: () => <TemplateSchedulesTab org={org} template={template} role={role} schedules={schedules.data ? scheduleList : undefined} error={schedules.error} />,
+    triggers: () => <TemplateTriggersTab org={org} template={template} role={role} triggers={triggers.data ? triggerList : undefined} error={triggers.error} />,
+    runs: () => <TemplateRunsTab org={org} templateId={template.id} role={role} schedules={schedules.data ? scheduleList : undefined} triggers={triggers.data ? triggerList : undefined} />,
+    settings: () => <TemplateSettingsTab org={org} template={template} role={role} editing={editing} onEditingChange={setEditing} onReload={onReload} onDirtyChange={setSettingsDirty} />,
   };
 
   return (

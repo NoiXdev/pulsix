@@ -54,6 +54,7 @@ type jobDTO struct {
 
 	WithdrawnAtClaim bool   `json:"withdrawn_at_claim" doc:"The job was refused at its first claim because its run's approval was withdrawn; it ran nothing. Its status is still error"`
 	PinnedCommit     string `json:"pinned_commit,omitempty" doc:"The commit the run checks out instead of its repository's branch tip: the commit the person who approved its run request saw. Absent for a run of the branch tip"`
+	HostCount        int    `json:"host_count,omitempty" doc:"How many hosts the job targets; absent when none"`
 }
 
 func toJobDTO(j jobs.Job) jobDTO {
@@ -61,7 +62,7 @@ func toJobDTO(j jobs.Job) jobDTO {
 		ID: j.ID.String(), ZoneID: j.ZoneID.String(), Kind: string(j.Kind),
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(),
 		Trigger: j.Trigger, CheckMode: j.CheckMode, DryRun: toDryRunDTO(j.DryRun), CreatedAt: j.CreatedAt,
-		WithdrawnAtClaim: j.WithdrawnAtClaim(), PinnedCommit: j.PinnedCommit,
+		WithdrawnAtClaim: j.WithdrawnAtClaim(), PinnedCommit: j.PinnedCommit, HostCount: len(j.HostIDs),
 	}
 	if j.TemplateID != nil {
 		out.TemplateID = j.TemplateID.String()

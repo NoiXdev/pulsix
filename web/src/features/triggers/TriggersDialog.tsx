@@ -5,15 +5,7 @@ import { Button } from '../../ui/button.tsx';
 import { useCopy } from '../../ui/useCopy.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import type { Trigger, TriggerInput } from '../../api/types.ts';
-import {
-  type TriggerTarget,
-  useCreateTrigger,
-  useDeleteTrigger,
-  useRotateTriggerSecret,
-  useTestTrigger,
-  useTriggers,
-  useUpdateTrigger,
-} from '../../api/hooks/useTriggers.ts';
+import { type TriggerTarget, useCreateTrigger, useTestTrigger, useTriggers } from '../../api/hooks/useTriggers.ts';
 import { Deliveries } from './Deliveries.tsx';
 import { SecretBox } from './SecretBox.tsx';
 import { TriggerForm } from './TriggerForm.tsx';
@@ -21,6 +13,7 @@ import { presetLabel } from './presets.ts';
 import { outcomeLabel } from './outcome.ts';
 import { useT } from '../../i18n/useT.ts';
 import { snippets } from './snippets.ts';
+import { useTriggerCommands } from './useTriggerCommands.ts';
 import { ReviewNotice } from '../../ui/review-notice.tsx';
 import { reviewHref } from '../../ui/reviewHref.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
@@ -94,9 +87,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const toast = useToast();
   const ask = useConfirm();
   const copy = useCopy();
-  const update = useUpdateTrigger(org, t.id);
-  const remove = useDeleteTrigger(org);
-  const rotate = useRotateTriggerSecret(org);
+  const commands = useTriggerCommands(org, t);
   const test = useTestTrigger(org);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,22 +96,8 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const mapping = Object.entries(t.mapping.extra_vars ?? {});
 
   async function onRotate() {
-    if (!(await ask({ message: m.rotateConfirm(t.name), confirmLabel: m.rotate }))) return;
-    try {
-      const res = await rotate.mutateAsync(t.id);
-      onSecret(res.secret);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : m.rotateFailed, 'destructive');
-    }
-  }
-
-  async function onDelete() {
-    if (!(await ask({ message: m.deleteConfirm(t.name), confirmLabel: i18n.common.delete, destructive: true }))) return;
-    try {
-      await remove.mutateAsync(t.id);
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
-    }
+    const fresh = await commands.rotate();
+    if (fresh) onSecret(fresh.secret);
   }
 
   async function onTest() {
@@ -135,16 +112,13 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
 
   async function onSave(body: TriggerInput) {
     setError(null);
-    try {
-      await update.mutateAsync({ ...body, revision: t.revision });
-      setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : m.savingFailed);
-    }
+    const failed = await commands.save(body);
+    if (failed) setError(failed);
+    else setEditing(false);
   }
 
   if (editing) {
-    return <TriggerForm target={target} initial={t} submitLabel={i18n.common.save} pending={update.isPending} error={error} onSubmit={(b) => void onSave(b)} onCancel={() => setEditing(false)} />;
+    return <TriggerForm target={target} initial={t} submitLabel={i18n.common.save} pending={commands.saving} error={error} onSubmit={(b) => void onSave(b)} onCancel={() => setEditing(false)} />;
   }
 
   return (
@@ -203,7 +177,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
           <Button type="button" onClick={() => setEditing(true)}>
             {m.edit}
           </Button>
-          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => void onDelete()}>
+          <Button type="button" variant="destructive" disabled={commands.removing} onClick={() => void commands.remove()}>
             {i18n.common.delete}
           </Button>
         </div>

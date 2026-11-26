@@ -35,10 +35,11 @@ import { useConfirm } from '../../../ui/confirmContext.ts';
  * TemplateVariablesPage is a job template's variables (backlog 7.75, plan
  * decision 3): where they come from and how they follow the playbook
  * (SourcePanel, the preview), the full-width field editor and the values
- * form of the active fields. The template's other settings stay in its
- * dialog.
+ * form of the active fields. The template page shows it as its Variables
+ * tab (`embedded`): the page's header names the template and its review
+ * state, so the back link, the title and the badges are left out there.
  */
-export function TemplateVariablesPage() {
+export function TemplateVariablesPage({ embedded = false }: { embedded?: boolean }) {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
   const orgInfo = useOrg(org);
   const template = useTemplate(org, id);
@@ -69,6 +70,7 @@ export function TemplateVariablesPage() {
       data={variables.data}
       role={orgInfo.data?.org.role}
       onReload={reload}
+      embedded={embedded}
     />
   );
 }
@@ -80,9 +82,10 @@ interface BodyProps {
   data: TemplateVariables;
   role?: string;
   onReload: () => Promise<void>;
+  embedded: boolean;
 }
 
-function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
+function VariablesBody({ org, template, data, role, onReload, embedded }: BodyProps) {
   const t = useT();
   const v = t.templates.variables;
   const toast = useToast();
@@ -186,17 +189,19 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   const notSent = data.review ? data.review.not_sent : [];
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Link
-          to="/o/$org/templates"
-          params={{ org }}
-          className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          <ArrowLeft size={13} /> {v.back}
-        </Link>
-        <h1 className="text-xl font-semibold">{v.title(template.name)}</h1>
-        <ReviewBadges review={data.review} />
-      </div>
+      {!embedded && (
+        <div className="flex flex-col gap-2">
+          <Link
+            to="/o/$org/templates"
+            params={{ org }}
+            className="inline-flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <ArrowLeft size={13} /> {v.back}
+          </Link>
+          <h1 className="text-xl font-semibold">{v.title(template.name)}</h1>
+          <ReviewBadges review={data.review} />
+        </div>
+      )}
       {stale && (
         <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-4 py-3 text-xs">
           <span>{v.stale}</span>
