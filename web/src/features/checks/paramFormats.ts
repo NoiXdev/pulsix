@@ -322,7 +322,7 @@ function phpfpmFastCGI(s: string): boolean {
   return (
     socket.startsWith('/') &&
     !socket.startsWith('//') &&
-    byteLen(socket) <= 107 &&
+    byteLen(socket) <= 103 &&
     !hasControl(socket) &&
     PHPFPM_STATUS_PATH.test(rest.slice(colon + 1))
   );

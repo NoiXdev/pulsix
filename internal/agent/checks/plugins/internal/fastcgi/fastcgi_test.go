@@ -56,7 +56,7 @@ func TestGetSendsTheFixedRequest(t *testing.T) {
 	want := map[string]string{
 		"GATEWAY_INTERFACE": "CGI/1.1",
 		"REQUEST_METHOD":    "GET",
-		"SCRIPT_FILENAME":   "/status",
+		"SCRIPT_FILENAME":   "/",
 		"SCRIPT_NAME":       "/status",
 		"DOCUMENT_URI":      "/status",
 		"REQUEST_URI":       "/status?json",
@@ -108,6 +108,16 @@ func TestGetFraming(t *testing.T) {
 	resp, err := get(t, s)
 	mustBody(t, resp, err, 200, body)
 
+	// A record of the largest size: 65535 content bytes and 255 of padding.
+	big := strings.Repeat("y", 65535-len(fastcgitest.CGI(200, "")))
+	maxRec := fastcgitest.Record(fastcgitest.TypeStdout, 1, []byte(fastcgitest.CGI(200, big)), 255)
+	if len(maxRec) != 8+65535+255 {
+		t.Fatalf("record of %d bytes", len(maxRec))
+	}
+	s = fastcgitest.NewTCP(t, fastcgitest.Raw(append(append(maxRec, fastcgitest.Record(fastcgitest.TypeStdout, 1, nil, 0)...), fastcgitest.End(1, 0)...)))
+	resp, err = get(t, s)
+	mustBody(t, resp, err, 200, big)
+
 	s.SetHandler(fastcgitest.Raw(append(fastcgitest.Stdout(1, "Status: 404 Not Found\nContent-type: text/html\n\nFile not found.\n", 3), fastcgitest.End(1, 0)...)))
 	resp, err = get(t, s)
 	mustBody(t, resp, err, 404, "File not found.\n")
@@ -143,7 +153,9 @@ func TestGetMalformed(t *testing.T) {
 		"status out of range": append(fastcgitest.Stdout(1, "Status: 99\r\n\r\n{}", 100), fastcgitest.End(1, 0)...),
 		"empty stdout":        fastcgitest.End(1, 0),
 		"foreign request id":  append(fastcgitest.Stdout(2, fastcgitest.CGI(200, "{}"), 100), fastcgitest.End(2, 0)...),
-		"unknown record type": append(append([]byte{}, ok...), append(fastcgitest.Record(fastcgitest.TypeUnknownType, 0, make([]byte, 8), 0), fastcgitest.End(1, 0)...)...),
+		"management record":   append(append([]byte{}, ok...), append(fastcgitest.Record(fastcgitest.TypeUnknownType, 0, make([]byte, 8), 0), fastcgitest.End(1, 0)...)...),
+		"unknown record type": append(append([]byte{}, ok...), append(fastcgitest.Record(42, 1, []byte("x"), 0), fastcgitest.End(1, 0)...)...),
+		"stdin from server":   append(append([]byte{}, ok...), append(fastcgitest.Record(fastcgitest.TypeStdin, 1, []byte("x"), 0), fastcgitest.End(1, 0)...)...),
 		"short end request":   append(append([]byte{}, ok...), fastcgitest.Record(fastcgitest.TypeEndRequest, 1, []byte{0, 0}, 0)...),
 		"version 2":           {2, 6, 0, 1, 0, 0, 0, 0},
 		"http answer":         []byte("HTTP/1.1 400 Bad Request\r\n\r\n"),
@@ -184,6 +196,26 @@ func TestGetBounds(t *testing.T) {
 		head := "X-Big: " + strings.Repeat("h", 20<<10) + "\r\n\r\n{}"
 		s := fastcgitest.NewTCP(t, fastcgitest.Raw(append(fastcgitest.Stdout(1, head, 4096), fastcgitest.End(1, 0)...)))
 		_, err := get(t, s)
+		mustErr(t, err, fastcgi.ErrTooLarge)
+	})
+	t.Run("header without an end", func(t *testing.T) {
+		head := "X-Big: " + strings.Repeat("h", 20<<10)
+		s := fastcgitest.NewTCP(t, fastcgitest.Raw(append(fastcgitest.Stdout(1, head, 4096), fastcgitest.End(1, 0)...)))
+		_, err := get(t, s)
+		mustErr(t, err, fastcgi.ErrTooLarge)
+	})
+	// STDOUT past body + header bound fails while reading: this stream
+	// sends 20 KiB of STDOUT (under the raw bound) and then neither ends
+	// nor closes, so only the in-loop cap can answer before the deadline.
+	t.Run("stdout while reading", func(t *testing.T) {
+		var s *fastcgitest.Server
+		s = fastcgitest.NewTCP(t, func(_ fastcgitest.Request, conn net.Conn) {
+			_, _ = conn.Write(bytes.Repeat(fastcgitest.Record(fastcgitest.TypeStdout, 1, bytes.Repeat([]byte("z"), 1024), 0), 20))
+			<-s.Done()
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := fastcgi.Get(ctx, s.Network, s.Address, "/status", "json", 1000)
 		mustErr(t, err, fastcgi.ErrTooLarge)
 	})
 	t.Run("stderr", func(t *testing.T) {

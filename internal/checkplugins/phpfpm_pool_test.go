@@ -8,7 +8,7 @@ import (
 )
 
 func TestParsePHPFPMFastCGI(t *testing.T) {
-	sock107 := "/" + strings.Repeat("s", 106)
+	sock103 := "/" + strings.Repeat("s", 102)
 	path255 := "/" + strings.Repeat("p", 254)
 	ok := []struct {
 		in   string
@@ -19,7 +19,7 @@ func TestParsePHPFPMFastCGI(t *testing.T) {
 		{"fcgi://php-fpm.internal:1/a/b_c~d", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "php-fpm.internal:1", Path: "/a/b_c~d"}},
 		{"fcgi://localhost:65535/", checkplugins.PHPFPMFastCGI{Network: "tcp", Address: "localhost:65535", Path: "/"}},
 		{"unix:/run/php/php8.3-fpm.sock:/status", checkplugins.PHPFPMFastCGI{Network: "unix", Address: "/run/php/php8.3-fpm.sock", Path: "/status"}},
-		{"unix:" + sock107 + ":" + path255, checkplugins.PHPFPMFastCGI{Network: "unix", Address: sock107, Path: path255}},
+		{"unix:" + sock103 + ":" + path255, checkplugins.PHPFPMFastCGI{Network: "unix", Address: sock103, Path: path255}},
 	}
 	for _, tc := range ok {
 		if !checkplugins.IsPHPFPMFastCGI(tc.in) {
@@ -60,7 +60,7 @@ func TestParsePHPFPMFastCGI(t *testing.T) {
 		"unix:/run/php/fpm.sock:/a?json",   // query
 		"unix:/run/php/\x00.sock:/status",  // NUL
 		"unix:/run/php/\n.sock:/status",    // control
-		"unix:" + sock107 + "x:/status",    // socket of 108 bytes
+		"unix:" + sock103 + "x:/status",    // socket of 104 bytes
 		"unix:/s:" + path255 + "p",         // path of 256 bytes
 		"unix:///run/php/fpm.sock:/status", // URL spelling, not a path
 		"unix::/status",

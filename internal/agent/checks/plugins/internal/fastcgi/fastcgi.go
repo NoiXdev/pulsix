@@ -83,6 +83,17 @@ func Get(ctx context.Context, network, address, path, query string, maxBody int)
 	return resp, err
 }
 
+// scriptFilename is the SCRIPT_FILENAME of every request: the root
+// directory, which is never a regular file. PHP-FPM recognises its status
+// page by the request URI it derives from SCRIPT_NAME, so the path goes
+// there only; were it SCRIPT_FILENAME too, a path that is not the pool's
+// status path would name a file for FPM to run as PHP (any dotless file
+// once a pool empties security.limit_extensions), and the answer would
+// tell which files exist. With "/" FPM finds no script for every such
+// path and answers alike (pinned against real PHP-FPM in phpfpm's
+// container test).
+const scriptFilename = "/"
+
 // buildRequest is BEGIN_REQUEST (responder, no keep-conn), the fixed
 // params, the empty PARAMS record and the empty STDIN record.
 func buildRequest(path, query string) ([]byte, error) {
@@ -90,7 +101,7 @@ func buildRequest(path, query string) ([]byte, error) {
 	for _, p := range [][2]string{
 		{"GATEWAY_INTERFACE", "CGI/1.1"},
 		{"REQUEST_METHOD", "GET"},
-		{"SCRIPT_FILENAME", path},
+		{"SCRIPT_FILENAME", scriptFilename},
 		{"SCRIPT_NAME", path},
 		{"DOCUMENT_URI", path},
 		{"REQUEST_URI", path + "?" + query},

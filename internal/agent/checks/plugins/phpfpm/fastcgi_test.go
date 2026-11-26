@@ -54,7 +54,7 @@ func TestFastCGIPoolOverTCPAndSocket(t *testing.T) {
 			mustValueAt(t, obs, e, "phpfpm.requests_per_s", 10)
 
 			r := s.Requests()[0]
-			if r.Params["SCRIPT_FILENAME"] != "/status" || r.Params["SCRIPT_NAME"] != "/status" || r.Params["QUERY_STRING"] != "json" {
+			if r.Params["SCRIPT_FILENAME"] != "/" || r.Params["SCRIPT_NAME"] != "/status" || r.Params["QUERY_STRING"] != "json" {
 				t.Fatalf("params = %v", r.Params)
 			}
 		})

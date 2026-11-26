@@ -125,23 +125,54 @@ func TestAgainstARealServer(t *testing.T) {
 	mustValueAt(t, obs, url, "phpfpm.slow_requests_per_s", 0)
 }
 
-// startFPMDirect runs php:8.3-fpm-alpine with its status page on and its
-// FastCGI port mapped, no web server anywhere, and returns host:port.
-func startFPMDirect(t *testing.T) string {
+// openPoolConf is a second pool with every script extension allowed
+// (security.limit_extensions emptied, which FPM documents as "allow
+// all"), the setting under which only the request itself keeps an
+// arbitrary file from running as PHP.
+const openPoolConf = `[open]
+user = www-data
+group = www-data
+listen = 9001
+pm = static
+pm.max_children = 1
+pm.status_path = /status
+security.limit_extensions =
+`
+
+// runmeScript is a dotless file that is PHP: run, it leaves a marker and
+// prints a valid status page, so either would show.
+const runmeScript = `<?php file_put_contents('/tmp/executed', 'yes');
+header('Content-Type: application/json');
+echo '{"pool":"x","process manager":"static","start time":1,"start since":1,"accepted conn":1,"listen queue":0,` +
+	`"max listen queue":0,"listen queue len":0,"idle processes":1,"active processes":1,"total processes":2,` +
+	`"max active processes":1,"max children reached":0,"slow requests":0}';
+`
+
+// fpmDirect is a php:8.3-fpm-alpine container with no web server: the
+// image's www pool (default limit_extensions) on def, the open pool on
+// open, both with their status page on /status.
+type fpmDirect struct {
+	c         testcontainers.Container
+	def, open string
+}
+
+func startFPMDirect(t *testing.T) fpmDirect {
 	t.Helper()
 	ctx := context.Background()
+	files := []testcontainers.ContainerFile{
+		{Reader: strings.NewReader(poolConf), ContainerFilePath: "/usr/local/etc/php-fpm.d/zz-status.conf", FileMode: 0o644},
+		{Reader: strings.NewReader(openPoolConf), ContainerFilePath: "/usr/local/etc/php-fpm.d/zz-open.conf", FileMode: 0o644},
+		{Reader: strings.NewReader(runmeScript), ContainerFilePath: "/var/www/html/runme", FileMode: 0o755},
+	}
 	fpm, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "php:8.3-fpm-alpine",
-			ExposedPorts: []string{"9000/tcp"},
-			Files: []testcontainers.ContainerFile{{
-				Reader:            strings.NewReader(poolConf),
-				ContainerFilePath: "/usr/local/etc/php-fpm.d/zz-status.conf",
-				FileMode:          0o644,
-			}},
+			ExposedPorts: []string{"9000/tcp", "9001/tcp"},
+			Files:        files,
 			WaitingFor: wait.ForAll(
 				wait.ForLog("ready to handle connections"),
 				wait.ForListeningPort("9000/tcp"),
+				wait.ForListeningPort("9001/tcp"),
 			).WithDeadline(60 * time.Second),
 		},
 		Started: true,
@@ -154,44 +185,81 @@ func startFPMDirect(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port, err := fpm.MappedPort(ctx, "9000/tcp")
+	def, err := fpm.MappedPort(ctx, "9000/tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return net.JoinHostPort(host, port.Port())
+	open, err := fpm.MappedPort(ctx, "9001/tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fpmDirect{c: fpm, def: net.JoinHostPort(host, def.Port()), open: net.JoinHostPort(host, open.Port())}
+}
+
+// executed reports whether runme ran as PHP.
+func (f fpmDirect) executed(t *testing.T) bool {
+	t.Helper()
+	code, _, err := f.c.Exec(context.Background(), []string{"test", "-e", "/tmp/executed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code == 0
 }
 
 // TestFastCGIAgainstARealServer reads PHP-FPM 8.3's status page over
-// FastCGI with no web server in between (backlog 3.11a), and pins how real
-// FPM answers a path that is not its status path: a missing file is 404,
-// an existing file without a .php extension is refused by FPM's default
-// security.limit_extensions (403), so neither runs anything.
+// FastCGI with no web server in between (backlog 3.11a): from the
+// default pool and from a pool that allows every script extension.
 func TestFastCGIAgainstARealServer(t *testing.T) {
 	containertest.RequireLinuxDocker(t)
-	addr := startFPMDirect(t)
-	e := "fcgi://" + addr + "/status"
-	p, clk := newTestPlugin()
-	params := map[string]any{"urls": []any{e}}
+	f := startFPMDirect(t)
+	for _, addr := range []string{f.def, f.open} {
+		e := "fcgi://" + addr + "/status"
+		p, clk := newTestPlugin()
+		params := map[string]any{"urls": []any{e}}
 
-	obs := collect(t, p, params)
-	mustItems(t, obs, "", e)
-	mustValueAt(t, obs, "", "phpfpm.pools_down", 0)
-	mustValueAt(t, obs, e, "phpfpm.up", 1)
-	if o, ok := findAt(obs, e, "phpfpm.processes_total"); !ok || o.Value == nil || *o.Value < 1 {
-		t.Fatalf("processes_total = %+v, want >= 1", o)
+		obs := collect(t, p, params)
+		mustItems(t, obs, "", e)
+		mustValueAt(t, obs, "", "phpfpm.pools_down", 0)
+		mustValueAt(t, obs, e, "phpfpm.up", 1)
+		if o, ok := findAt(obs, e, "phpfpm.processes_total"); !ok || o.Value == nil || *o.Value < 1 {
+			t.Fatalf("processes_total = %+v, want >= 1", o)
+		}
+		clk.Advance(10 * time.Second)
+		obs = collect(t, p, params)
+		if o, ok := findAt(obs, e, "phpfpm.requests_per_s"); !ok || o.Value == nil || *o.Value <= 0 {
+			t.Fatalf("requests_per_s = %+v, want a positive rate", o)
+		}
 	}
-	clk.Advance(10 * time.Second)
-	obs = collect(t, p, params)
-	if o, ok := findAt(obs, e, "phpfpm.requests_per_s"); !ok || o.Value == nil || *o.Value <= 0 {
-		t.Fatalf("requests_per_s = %+v, want a positive rate", o)
-	}
+	t.Run("a path that is not the status path runs nothing", func(t *testing.T) {
+		testFastCGIUnknownPathIsNotRun(t, f)
+	})
+}
 
-	for path, want := range map[string]string{
-		"/nope":         "HTTP status 404",
-		"/etc/hostname": "permission denied (HTTP 403)",
-	} {
-		e := "fcgi://" + addr + path
-		obs := collect(t, p, map[string]any{"urls": []any{e}})
-		mustPoolDown(t, obs, e, want)
+// testFastCGIUnknownPathIsNotRun: a path that is not the pool's status
+// path never runs a file, not even a dotless PHP file in a pool whose
+// limit_extensions allows everything — the request never names the
+// operator's path as the script (SCRIPT_FILENAME is always "/"). Each such
+// path reads the same 404, so the answer tells nothing about which files
+// exist.
+func testFastCGIUnknownPathIsNotRun(t *testing.T, f fpmDirect) {
+	for _, addr := range []string{f.open, f.def} {
+		var reasons []string
+		for _, path := range []string{"/var/www/html/runme", "/nope", "/etc/hostname"} {
+			e := "fcgi://" + addr + path
+			p, _ := newTestPlugin()
+			obs := collect(t, p, map[string]any{"urls": []any{e}})
+			mustValueAt(t, obs, e, "phpfpm.up", 0)
+			o, _ := findAt(obs, e, "phpfpm.listen_queue")
+			reasons = append(reasons, o.Err)
+		}
+		if f.executed(t) {
+			t.Fatalf("a path that is not the status path ran a script on %s", addr)
+		}
+		if reasons[0] != reasons[1] || reasons[1] != reasons[2] {
+			t.Fatalf("answers differ by path on %s: %q", addr, reasons)
+		}
+		if reasons[0] != "phpfpm: HTTP status 404" {
+			t.Fatalf("%s answers %q, want FPM's no-script 404", addr, reasons[0])
+		}
 	}
 }
