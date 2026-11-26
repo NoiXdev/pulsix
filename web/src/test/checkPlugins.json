@@ -586,6 +586,34 @@
         {
           "name": "redis.evicted_keys_per_s",
           "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_last_bgsave_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.rdb_last_save_age_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_changes_since_last_save",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_enabled",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_last_write_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.aof_last_bgrewrite_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.loading",
+          "kind": "numeric"
         }
       ]
     },
