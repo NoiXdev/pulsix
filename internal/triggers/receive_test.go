@@ -30,6 +30,21 @@ type fakeRuns struct {
 	// onEnqueue, when set, runs at the start of every enqueue, outside
 	// the lock (a test holds an enqueue there).
 	onEnqueue func()
+	// keyed are the runs started under an idempotency key: a second
+	// enqueue with the key replays the first (as jobs.EnqueueRunWith).
+	keyed map[string]jobs.Job
+	// syncs are the syncs started per run group (EnqueueSyncOnceWith
+	// replays them); queuedSync, when set, is the repository's queued
+	// sync a settled sync joins.
+	syncs      map[uuid.UUID]jobs.Job
+	queuedSync *jobs.Job
+}
+
+func (f *fakeRuns) newGroup(req jobs.RunRequest) uuid.UUID {
+	if req.RunGroupID != uuid.Nil {
+		return req.RunGroupID
+	}
+	return uuid.Must(uuid.NewV7())
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -41,10 +56,29 @@ func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID
 	if f.err != nil {
 		return nil, f.err
 	}
+	if j, ok := f.keyed[req.IdempotencyKey]; ok && req.IdempotencyKey != "" {
+		return []jobs.Job{j}, nil
+	}
 	f.requests = append(f.requests, req)
-	group := uuid.Must(uuid.NewV7())
+	group := f.newGroup(req)
 	f.groups = append(f.groups, group)
-	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: group}}, nil
+	j := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: group}
+	if req.IdempotencyKey != "" {
+		if f.keyed == nil {
+			f.keyed = map[string]jobs.Job{}
+		}
+		f.keyed[req.IdempotencyKey] = j
+	}
+	return []jobs.Job{j}, nil
+}
+
+func (f *fakeRuns) StartedRunGroup(_ context.Context, _ uuid.UUID, key string) (*uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if j, ok := f.keyed[key]; ok {
+		return &j.RunGroupID, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeRuns) EnqueueSyncWith(_ context.Context, orgID, _ uuid.UUID, req jobs.RunRequest) (jobs.Job, error) {
@@ -57,6 +91,32 @@ func (f *fakeRuns) EnqueueSyncWith(_ context.Context, orgID, _ uuid.UUID, req jo
 	group := uuid.Must(uuid.NewV7())
 	f.groups = append(f.groups, group)
 	return jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, RunGroupID: group}, f.err
+}
+
+func (f *fakeRuns) EnqueueSyncOnceWith(_ context.Context, orgID, _ uuid.UUID, req jobs.RunRequest) (jobs.Job, bool, error) {
+	if f.onEnqueue != nil {
+		f.onEnqueue()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return jobs.Job{}, false, f.err
+	}
+	if j, ok := f.syncs[req.RunGroupID]; ok {
+		return j, true, nil
+	}
+	if f.queuedSync != nil {
+		return *f.queuedSync, true, nil
+	}
+	f.requests = append(f.requests, req)
+	group := f.newGroup(req)
+	f.groups = append(f.groups, group)
+	j := jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, RunGroupID: group}
+	if f.syncs == nil {
+		f.syncs = map[uuid.UUID]jobs.Job{}
+	}
+	f.syncs[group] = j
+	return j, false, nil
 }
 
 func (f *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {

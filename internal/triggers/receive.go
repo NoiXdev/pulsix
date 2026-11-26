@@ -206,6 +206,17 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 	if t.SettleSeconds > 0 {
 		return s.collect(ctx, t, d, ov)
 	}
+	window, err := s.supersede(ctx, t)
+	if err != nil {
+		return Result{}, d, err
+	}
+	res, d, err := s.startTemplate(ctx, t, d, ov)
+	s.noteSuperseded(ctx, t, window, res, d)
+	return res, d, err
+}
+
+// startTemplate starts the delivery's own run (no settle delay).
+func (s *Service) startTemplate(ctx context.Context, t Trigger, d Delivery, ov templates.Overrides) (Result, Delivery, error) {
 	// Check-then-enqueue, deliberately not serialised (backlog 2.62).
 	// Two deliveries landing in the same instant — or one racing the
 	// schedule ticker's own overlap=skip for the same template — can
@@ -243,6 +254,17 @@ func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, 
 	if t.SettleSeconds > 0 {
 		return s.collect(ctx, t, d, templates.Overrides{})
 	}
+	window, err := s.supersede(ctx, t)
+	if err != nil {
+		return Result{}, d, err
+	}
+	res, d, err := s.startSync(ctx, t, d)
+	s.noteSuperseded(ctx, t, window, res, d)
+	return res, d, err
+}
+
+// startSync starts the delivery's own sync (no settle delay).
+func (s *Service) startSync(ctx context.Context, t Trigger, d Delivery) (Result, Delivery, error) {
 	if t.OnActive == OnActiveSkip {
 		active, err := s.d.Runs.HasActiveSync(ctx, t.OrgID, *t.RepoID)
 		if err != nil {

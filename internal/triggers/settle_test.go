@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/triggers"
 )
@@ -92,6 +94,10 @@ func (f *fakePending) Collect(_ context.Context, c triggers.Collect, d triggers.
 	f.deliveries = append(f.deliveries, d)
 	return triggers.PendingRun{ID: id, OrgID: c.OrgID, TriggerID: c.TriggerID, FirstAt: c.At, LastAt: c.At,
 		DueAt: c.Due, DeadlineAt: c.Deadline, Deliveries: len(f.collects), LastDeliveryID: d.ID}, nil
+}
+
+func (f *fakePending) Supersede(context.Context, uuid.UUID, uuid.UUID) (*uuid.UUID, error) {
+	return nil, nil
 }
 
 func (rw *receiveWorld) withPending(p triggers.PendingStore) {

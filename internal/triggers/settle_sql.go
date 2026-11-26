@@ -14,11 +14,11 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
-// pendingWriteTimeout bounds one pending run's write-back (its savepoint,
-// delete and delivery update) and the batch's commit and rollback once
-// fire has returned: by then the run may have been enqueued, so the
-// bookkeeping must not be abandoned merely because the batch's own
-// deadline passed (the schedule ticker's rowWriteTimeout, same reasoning).
+// pendingWriteTimeout bounds one pending run's write-back (its delete and
+// delivery update), commit and rollback once fire has returned: by then
+// the run may have been enqueued, so the bookkeeping must not be abandoned
+// merely because the pass's own deadline passed (the schedule ticker's
+// rowWriteTimeout, same reasoning).
 const pendingWriteTimeout = 10 * time.Second
 
 // Collect implements PendingStore: the upsert and the delivery row share
@@ -105,62 +105,99 @@ func (st *SQLStore) DiscardPending(ctx context.Context, orgID, triggerID uuid.UU
 	})
 }
 
-// ProcessDue implements PendingStore: one raw-pool transaction per batch,
-// with no pulsix.org_id bound — the bypass policy applies, so the claim
-// sees every organization, and every other statement names its org_id.
-// fire runs while the rows are locked; its enqueue uses the jobs service's
+// Supersede implements PendingStore.
+func (st *SQLStore) Supersede(ctx context.Context, orgID, triggerID uuid.UUID) (*uuid.UUID, error) {
+	id, err := st.q.SupersedeTriggerPendingRun(ctx, gen.SupersedeTriggerPendingRunParams{OrgID: orgID, TriggerID: triggerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("supersede pending run: %w", err)
+	}
+	return &id, nil
+}
+
+// NoteWindow implements PendingStore.
+func (st *SQLStore) NoteWindow(ctx context.Context, orgID, triggerID, windowID uuid.UUID, note string) error {
+	return settleDeliveries(ctx, st.q, PendingRun{ID: windowID, OrgID: orgID, TriggerID: triggerID}, Firing{Outcome: OutcomeCollected, Note: note})
+}
+
+// ProcessDue implements PendingStore: every pending run is claimed and
+// written back in a raw-pool transaction of its own, with no pulsix.org_id
+// bound — the bypass policy applies, so the claim sees every organization,
+// and every other statement names its org_id. One row per transaction
+// keeps the row lock as short as one start: a delivery to a trigger never
+// waits behind other triggers' starts (review fix 5).
+//
+// fire runs while the row is locked; its enqueue uses the jobs service's
 // own org-scoped transactions on other connections and commits before the
 // row's write-back, so a failure in between leaves the row to be started
-// again, which the run's idempotency key (settleIdempotencyKey) turns into
-// a replay of the same run. Each row is written back in its own savepoint:
-// a bad row never takes the batch's other rows with it.
+// again — which fire turns into a replay of the same run (see fire).
 //
-// ctx bounds the claim, each fire and the start of every row; the write-
-// backs and the commit run detached from it under pendingWriteTimeout, so
-// a deadline hit while firing a later row never discards one already
-// started. The count is how many rows were started, dropped or recorded as
-// failed — not how many were locked.
+// ctx bounds the claims and each fire; the write-back and the commit run
+// detached from it under pendingWriteTimeout, so a deadline hit while
+// firing never discards a start already made. A row that is kept, or whose
+// write-back failed, is skipped for the rest of this pass. The count is how
+// many rows were started, dropped or recorded as failed.
 func (st *SQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, fire FireFunc) (int, error) {
+	skip := []uuid.UUID{}
+	applied := 0
+	for applied+len(skip) < limit {
+		if ctx.Err() != nil {
+			st.log.WarnContext(context.WithoutCancel(ctx), "settle pass deadline reached; leaving the remaining pending runs for the next tick", "started", applied)
+			return applied, nil
+		}
+		id, claimed, ok, err := st.processOne(ctx, now, skip, fire)
+		switch {
+		case err != nil:
+			return applied, err
+		case !claimed:
+			return applied, nil
+		case ok:
+			applied++
+		default:
+			skip = append(skip, id)
+		}
+	}
+	return applied, nil
+}
+
+// processOne claims one due pending run in its own transaction, fires it
+// and writes the outcome back. claimed is false when none was due; ok is
+// false when the row was kept or its write-back failed (it stays for the
+// next tick).
+func (st *SQLStore) processOne(ctx context.Context, now time.Time, skip []uuid.UUID, fire FireFunc) (id uuid.UUID, claimed, ok bool, err error) {
 	tx, err := st.d.Pool().Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin settle tick: %w", err)
+		return uuid.Nil, false, false, fmt.Errorf("begin settle claim: %w", err)
 	}
 	defer func() {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingWriteTimeout)
 		defer cancel()
 		tx.Rollback(rbCtx) //nolint:errcheck // no-op once committed
 	}()
-	q := gen.New(tx)
-	rows, err := q.LockDueTriggerPendingRuns(ctx, gen.LockDueTriggerPendingRunsParams{Now: now, Lim: int32(limit)}) //nolint:gosec // limit is settleBatchSize
+	r, err := gen.New(tx).LockDueTriggerPendingRun(ctx, gen.LockDueTriggerPendingRunParams{Skip: skip, Now: now})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, false, nil
+	}
 	if err != nil {
-		return 0, fmt.Errorf("lock due pending runs: %w", err)
+		return uuid.Nil, false, false, fmt.Errorf("lock due pending run: %w", err)
 	}
-	applied := 0
-	for i, r := range rows {
-		if ctx.Err() != nil {
-			st.logRemaining(ctx, i, len(rows))
-			break
-		}
-		if st.processRow(ctx, tx, r.TriggerPendingRun, r.JobTrigger, fire) {
-			applied++
-		}
+	id = r.TriggerPendingRun.TriggerID
+	if !st.processRow(ctx, tx, r.TriggerPendingRun, r.JobTrigger, fire) {
+		return id, true, false, nil
 	}
-	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingWriteTimeout)
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingWriteTimeout)
 	defer cancel()
-	if err := tx.Commit(commitCtx); err != nil {
-		return 0, fmt.Errorf("commit settle tick: %w", err)
+	if err := tx.Commit(wctx); err != nil {
+		st.log.ErrorContext(wctx, "commit pending run; leaving it for the next tick", "trigger", id, "org", r.TriggerPendingRun.OrgID, "err", err)
+		return id, true, false, nil
 	}
-	return applied, nil
+	return id, true, true, nil
 }
 
-func (st *SQLStore) logRemaining(ctx context.Context, done, locked int) {
-	st.log.WarnContext(context.WithoutCancel(ctx), "settle batch deadline reached; leaving the remaining pending runs for the next tick",
-		"started", done, "remaining", locked-done)
-}
-
-// processRow fires one locked row and writes the outcome back in its own
-// savepoint; false when the row was kept or its write-back failed (it
-// stays, and the next tick tries it again).
+// processRow fires one locked row and writes the outcome back on tx;
+// false when the row was kept or its write-back failed.
 func (st *SQLStore) processRow(ctx context.Context, tx pgx.Tx, p gen.TriggerPendingRun, t gen.JobTrigger, fire FireFunc) (applied bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -173,35 +210,63 @@ func (st *SQLStore) processRow(ctx context.Context, tx pgx.Tx, p gen.TriggerPend
 	f := Firing{Outcome: OutcomeFailed, Note: "the trigger could not be read (see the manager log)"}
 	if err != nil {
 		st.log.ErrorContext(ctx, "decode trigger of a pending run", "trigger", p.TriggerID, "org", p.OrgID, "err", err)
+		run = DueRun{Pending: toPendingRun(p)}
 	} else if f = fire(ctx, run); f.Keep {
 		return false
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingWriteTimeout)
 	defer cancel()
-	sp, err := tx.Begin(wctx)
-	if err != nil {
-		st.log.ErrorContext(wctx, "begin pending run savepoint; leaving it for the next tick", "trigger", p.TriggerID, "org", p.OrgID, "err", err)
-		return false
-	}
-	defer sp.Rollback(wctx) //nolint:errcheck // no-op once committed
-	if err := applyFiring(wctx, gen.New(sp), toPendingRun(p), f); err != nil {
+	if err := applyFiring(wctx, gen.New(tx), run.Pending, f); err != nil {
 		st.log.ErrorContext(wctx, "write back pending run; leaving it for the next tick", "trigger", p.TriggerID, "org", p.OrgID, "err", err)
-		return false
-	}
-	if err := sp.Commit(wctx); err != nil {
-		st.log.ErrorContext(wctx, "commit pending run savepoint; leaving it for the next tick", "trigger", p.TriggerID, "org", p.OrgID, "err", err)
 		return false
 	}
 	return true
 }
 
 // applyFiring deletes the started (or dropped) window and tells its
-// deliveries what became of them.
+// deliveries what became of them. On a replay (f.reopen) the deliveries
+// recorded after the run's first start stay pending as a new window of the
+// same row — whose collected values are the latest delivery's — and only
+// the earlier ones are counted into the run.
 func applyFiring(ctx context.Context, q *gen.Queries, p PendingRun, f Firing) error {
+	if f.reopen != nil {
+		reopened, err := reopenLater(ctx, q, p, *f.reopen)
+		if err != nil {
+			return err
+		}
+		if reopened {
+			return settleDeliveries(ctx, q, p, f)
+		}
+	}
 	if err := q.DeleteTriggerPendingRun(ctx, gen.DeleteTriggerPendingRunParams{OrgID: p.OrgID, TriggerID: p.TriggerID, ID: p.ID}); err != nil {
 		return fmt.Errorf("delete pending run: %w", err)
 	}
 	return settleDeliveries(ctx, q, p, f)
+}
+
+// reopenLater moves the window's deliveries after r.after into the new
+// window r.id; false when there are none (the row is then deleted).
+func reopenLater(ctx context.Context, q *gen.Queries, p PendingRun, r reopen) (bool, error) {
+	later, err := q.LaterTriggerDeliveries(ctx, gen.LaterTriggerDeliveriesParams{After: r.after, OrgID: p.OrgID, TriggerID: p.TriggerID, PendingID: p.ID})
+	if err != nil {
+		return false, fmt.Errorf("count later deliveries: %w", err)
+	}
+	if later.N == 0 {
+		return false, nil
+	}
+	deadline := later.FirstAt.Add(r.maxWait)
+	if err := q.ReopenTriggerPendingRun(ctx, gen.ReopenTriggerPendingRunParams{
+		NewID: r.id, FirstAt: later.FirstAt, LastAt: later.LastAt, Deliveries: later.N, Deadline: deadline,
+		Due: later.LastAt.Add(r.settle), OrgID: p.OrgID, TriggerID: p.TriggerID, ID: p.ID,
+	}); err != nil {
+		return false, fmt.Errorf("reopen pending run: %w", err)
+	}
+	if err := q.MoveLaterTriggerDeliveries(ctx, gen.MoveLaterTriggerDeliveriesParams{
+		NewID: r.id, OrgID: p.OrgID, TriggerID: p.TriggerID, PendingID: p.ID, After: r.after,
+	}); err != nil {
+		return false, fmt.Errorf("move later deliveries: %w", err)
+	}
+	return true, nil
 }
 
 func settleDeliveries(ctx context.Context, q *gen.Queries, p PendingRun, f Firing) error {

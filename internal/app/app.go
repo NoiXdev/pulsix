@@ -268,7 +268,7 @@ func (a *App) Close() {
 // App. It is the one place production wiring happens; cmd/manager/main.go
 // only calls it.
 func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error) {
-	o := buildOptions{scheduleNow: time.Now}
+	o := buildOptions{scheduleNow: time.Now, triggerNow: time.Now}
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -555,7 +555,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	triggersSvc := triggers.NewService(triggers.Deps{
 		Store: triggerStore, Pending: triggerStore, Templates: templatesSvc, Repos: reposSvc, Box: box,
 		Runs: jobsSvc, Audit: auditRec, PublicURL: cfg.PublicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
-		Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
+		Now: o.triggerNow, Rand: rand.Reader, Log: slog.Default(),
 	})
 	jobsQueue.SetSyncSink(jobsSvc)
 	// The variable sources a successful sync read (backlog 7.75) are
@@ -863,10 +863,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	dueStore.SetOutbox(outbox)
 	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, dueStore, cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
 	// The webhook settle ticker (backlog 2.137): starts the collected run
-	// of a trigger with a settle delay once its deliveries settled. One
-	// per manager; the claim's SKIP LOCKED makes several safe. Stopped in
-	// Close and on every early return below.
-	settleStop := startLoop(triggers.NewSettleTicker(triggersSvc, o.settleTick, o.scheduleNow, nil, slog.Default()).Run)
+	// of a trigger with a settle delay once its deliveries settled. It
+	// reads triggersSvc's clock, the receive path's. One per manager; the
+	// claim's SKIP LOCKED makes several safe. Stopped in Close and on
+	// every early return below.
+	settleStop := startLoop(triggers.NewSettleTicker(triggersSvc, o.settleTick, nil, slog.Default()).Run)
 	chainStarter := chain.NewStarter(chainStore, jobsSvc, NewChainTemplateNames(templatesSvc), maintenanceSvc, NewChainScheduleGuards(schedulesSvc), auditRec, time.Now, slog.Default(), chain.WithTick(o.chainTick))
 	chainStarter.SetNotifier(NewChainNotifier(outbox))
 	chainStop := startLoop(chainStarter.Run)

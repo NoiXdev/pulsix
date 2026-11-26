@@ -28,9 +28,12 @@ type buildOptions struct {
 	// continue without waiting seconds.
 	chainTick time.Duration
 	// settleTick overrides the webhook settle ticker's interval (0 keeps
-	// triggers.DefaultSettleTick); a test seam like chainTick. The ticker
-	// reads scheduleNow, the schedule ticker's clock.
+	// triggers.DefaultSettleTick); a test seam like chainTick.
 	settleTick time.Duration
+	// triggerNow is the webhook triggers' one clock: the receive path
+	// stamps deliveries and due times with it and the settle ticker
+	// compares against it.
+	triggerNow func() time.Time
 	// probeGuard replaces the synthetic-check probe runner's dial guard
 	// (nil keeps the production guard, probeGuardFor); probeTick and
 	// probeRefresh override its tick and refresh (0 keeps
@@ -79,6 +82,13 @@ func WithChainTick(d time.Duration) Option {
 // seam; production passes no option and keeps the 5 s default.
 func WithSettleTick(d time.Duration) Option {
 	return func(o *buildOptions) { o.settleTick = d }
+}
+
+// WithTriggerClock injects the webhook triggers' clock, which the receive
+// path and the settle ticker share — a test seam; production keeps
+// time.Now.
+func WithTriggerClock(now func() time.Time) Option {
+	return func(o *buildOptions) { o.triggerNow = now }
 }
 
 // WithProbeGuard replaces the synthetic-check probe runner's dial guard —

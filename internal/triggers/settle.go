@@ -6,13 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/audit"
-	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/templates"
 )
@@ -77,6 +74,17 @@ type Firing struct {
 	// RunID is the first job of the started run.
 	RunID *uuid.UUID
 	Note  string
+	// reopen, on a replay (the window's run had already been started and
+	// its bookkeeping was lost), moves the deliveries recorded after that
+	// start into a new window instead of counting them into the run.
+	reopen *reopen
+}
+
+// reopen is the new window a replay leaves the later deliveries in.
+type reopen struct {
+	after           time.Time
+	id              uuid.UUID
+	settle, maxWait time.Duration
 }
 
 // FireFunc decides a locked pending run.
@@ -98,11 +106,16 @@ type PendingStore interface {
 	// DiscardPending deletes the trigger's pending run and appends note
 	// to its deliveries' reason (ErrNothingPending).
 	DiscardPending(ctx context.Context, orgID, triggerID uuid.UUID, note string) error
-	// ProcessDue locks up to limit pending runs, across organizations,
-	// that are due with no run of their trigger active, whose trigger's
-	// settle delay was turned off, or whose trigger is disabled — skipping
-	// rows another manager holds — and applies fire's decision to each. It
-	// returns how many it applied.
+	// Supersede deletes the trigger's pending run, waiting for a ticker
+	// that is starting it, and returns its id (nil when there was none).
+	Supersede(ctx context.Context, orgID, triggerID uuid.UUID) (*uuid.UUID, error)
+	// NoteWindow appends note to the reason of the window's deliveries.
+	NoteWindow(ctx context.Context, orgID, triggerID, windowID uuid.UUID, note string) error
+	// ProcessDue claims, one at a time and each in its own transaction, up
+	// to limit pending runs across organizations that are due with no run
+	// of their trigger active, whose trigger's settle delay was turned off,
+	// or whose trigger is disabled — skipping rows another manager holds —
+	// and applies fire's decision to each. It returns how many it applied.
 	ProcessDue(ctx context.Context, now time.Time, limit int, fire FireFunc) (int, error)
 }
 
@@ -112,10 +125,10 @@ func PendingAAD(orgID, triggerID uuid.UUID) []byte {
 	return []byte("trigger-pending:" + orgID.String() + ":" + triggerID.String())
 }
 
-// settleIdempotencyKey is the key a collected run is enqueued under: a
-// retried start of the same window (its bookkeeping lost after the enqueue
-// committed) replays the run instead of starting another.
-func settleIdempotencyKey(pendingID uuid.UUID) string { return "trigger-settle:" + pendingID.String() }
+// SettleIdempotencyKey is the key a collected template run is enqueued
+// under: a retried start of the same window (its bookkeeping lost after
+// the enqueue committed) replays the run instead of starting another.
+func SettleIdempotencyKey(pendingID uuid.UUID) string { return "trigger-settle:" + pendingID.String() }
 
 // Notes a collected delivery's reason gets when its window did not start.
 const (
@@ -189,124 +202,4 @@ func (s *Service) openPending(r DueRun) (templates.Overrides, error) {
 		return templates.Overrides{}, fmt.Errorf("decode collected values: %w", err)
 	}
 	return ov, nil
-}
-
-// fire starts a locked pending run: one run (or sync) with the collected
-// values, untrusted exactly as a delivery's own, or nothing when the
-// trigger is disabled. A refused start is recorded on the deliveries; an
-// interrupted one (the context ended) is kept for the next try.
-func (s *Service) fire(ctx context.Context, r DueRun) (f Firing) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			s.d.Log.ErrorContext(context.WithoutCancel(ctx), "starting a collected webhook run panicked", "trigger", r.Trigger.ID, "org", r.Trigger.OrgID,
-				"panic", rec, "stack", string(debug.Stack()))
-			f = Firing{Outcome: OutcomeFailed, Note: "could not enqueue (see the manager log)"}
-		}
-	}()
-	t := r.Trigger
-	if !t.Enabled {
-		return Firing{Outcome: OutcomeCollected, Note: noteDisabled}
-	}
-	ctx = db.WithOrgScope(ctx, t.OrgID)
-	ref := t.ID
-	req := jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref}
-	var group, runID uuid.UUID
-	var err error
-	objectType, objectID := "repo", ""
-	if t.Kind == KindRepoSync {
-		objectID = t.RepoID.String()
-		var j jobs.Job
-		if j, err = s.d.Runs.EnqueueSyncWith(ctx, t.OrgID, *t.RepoID, req); err == nil {
-			group, runID = j.RunGroupID, j.ID
-		}
-	} else {
-		objectType, objectID = "job_template", t.TemplateID.String()
-		ov, oerr := s.openPending(r)
-		if oerr != nil {
-			s.d.Log.ErrorContext(ctx, "collected webhook values could not be read", "trigger", t.ID, "org", t.OrgID, "err", oerr)
-			return Firing{Outcome: OutcomeFailed, Note: "the collected values could not be read (see the manager log)"}
-		}
-		req.Overrides = webhookOverrides(ov)
-		req.IdempotencyKey = settleIdempotencyKey(r.Pending.ID)
-		var created []jobs.Job
-		if created, err = s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, req); err == nil {
-			group, runID = created[0].RunGroupID, created[0].ID
-		}
-	}
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return Firing{Keep: true}
-		}
-		s.d.Log.ErrorContext(ctx, "collected webhook run could not be enqueued", "trigger", t.ID, "org", t.OrgID, "err", err)
-		return Firing{Outcome: OutcomeFailed, Note: failureReason(err)}
-	}
-	s.auditCollected(ctx, t, r.Pending, group, objectType, objectID)
-	return Firing{Outcome: OutcomeCollected, JobGroupID: &group, RunID: &runID}
-}
-
-func (s *Service) auditCollected(ctx context.Context, t Trigger, p PendingRun, group uuid.UUID, objectType, objectID string) {
-	if s.d.Audit == nil {
-		return
-	}
-	orgID, actor := t.OrgID, t.ID
-	if err := s.d.Audit.Record(ctx, audit.Event{
-		OrgID: &orgID, ActorKind: audit.ActorKindWebhook, ActorID: &actor, Action: "webhook.run",
-		ObjectType: objectType, ObjectID: objectID,
-		Summary: fmt.Sprintf("webhook %q started a run for %d collected deliveries", t.Name, p.Deliveries),
-		Meta: map[string]any{"trigger_id": t.ID.String(), "job_group_id": group.String(), "pending_id": p.ID.String(),
-			"deliveries": p.Deliveries},
-	}); err != nil {
-		s.d.Log.ErrorContext(ctx, "audit webhook run", "trigger", t.ID, "err", err)
-	}
-}
-
-// Pending is the trigger's collected run while it waits; nil when there is
-// none (ErrNotFound for an unknown trigger).
-func (s *Service) Pending(ctx context.Context, orgID, id uuid.UUID) (*PendingRun, error) {
-	if _, err := s.d.Store.Get(ctx, orgID, id); err != nil {
-		return nil, err
-	}
-	if s.d.Pending == nil {
-		return nil, nil
-	}
-	return s.d.Pending.Pending(ctx, orgID, id)
-}
-
-// RunPending starts the trigger's collected run now, without waiting for
-// the deliveries to settle or for an active run of the trigger to end:
-// OutcomeTriggered with the run, OutcomeFailed when the jobs service
-// refused it (its deliveries say why), OutcomeDisabled when the trigger is
-// disabled (the run is dropped). ErrNothingPending when none waits,
-// ErrNotFound for an unknown trigger.
-func (s *Service) RunPending(ctx context.Context, orgID, id uuid.UUID) (Result, error) {
-	if _, err := s.d.Store.Get(ctx, orgID, id); err != nil {
-		return Result{}, err
-	}
-	if s.d.Pending == nil {
-		return Result{}, ErrNothingPending
-	}
-	f, err := s.d.Pending.FirePending(ctx, orgID, id, s.fire)
-	switch {
-	case err != nil:
-		return Result{}, err
-	case f.Keep:
-		return Result{}, errors.New("starting the collected run was interrupted; it is still pending")
-	case f.RunID != nil:
-		return Result{Outcome: OutcomeTriggered, RunID: f.RunID}, nil
-	case f.Outcome == OutcomeFailed:
-		return Result{Outcome: OutcomeFailed}, nil
-	}
-	return Result{Outcome: OutcomeDisabled}, nil
-}
-
-// DiscardPending drops the trigger's collected run; its deliveries say so.
-// ErrNothingPending when none waits, ErrNotFound for an unknown trigger.
-func (s *Service) DiscardPending(ctx context.Context, orgID, id uuid.UUID) error {
-	if _, err := s.d.Store.Get(ctx, orgID, id); err != nil {
-		return err
-	}
-	if s.d.Pending == nil {
-		return ErrNothingPending
-	}
-	return s.d.Pending.DiscardPending(ctx, orgID, id, noteDiscarded)
 }

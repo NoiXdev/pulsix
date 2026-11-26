@@ -1083,10 +1083,14 @@ func (s *Service) syncJob(ctx context.Context, orgID, repoID uuid.UUID, req RunR
 	if err != nil {
 		return Job{}, nil, fmt.Errorf("encode sync payload: %w", err)
 	}
+	group := req.RunGroupID
+	if group == uuid.Nil {
+		group = s.newID()
+	}
 	j := Job{
 		ID: s.newID(), OrgID: orgID, ZoneID: zoneID,
 		Kind: KindSyncRepo, HostIDs: []uuid.UUID{},
-		Status: StatusQueued, RunGroupID: s.newID(), Trigger: req.Trigger,
+		Status: StatusQueued, RunGroupID: group, Trigger: req.Trigger,
 		TriggerRef: req.TriggerRef, ActorID: req.Actor, CreatedAt: s.now(),
 	}
 	return j, payload, nil

@@ -95,7 +95,10 @@ type RunRequest struct {
 	// already claimed instead of enqueueing it a second time. Empty for
 	// every other trigger: a manual run, a webhook delivery and a retry are
 	// each their own occurrence, with no natural key to dedupe repeats
-	// against.
+	// against. Two other callers set one too: an approved run request (its
+	// request id) and a webhook trigger's collected run (backlog 2.137, its
+	// pending window's id), whose start the trigger's pending row lock
+	// serialises the same way SKIP LOCKED serialises the schedule ticker.
 	//
 	// The key dedupes RETRIES, not CONCURRENT callers. The claim and the
 	// job creation it guards are separate statements: a second caller that
@@ -310,6 +313,39 @@ func (s *Service) EnqueueSyncWith(ctx context.Context, orgID, repoID uuid.UUID, 
 		return Job{}, fmt.Errorf("%w: a repository sync takes no overrides", ErrInvalidInput)
 	}
 	return s.enqueueSync(ctx, orgID, repoID, req)
+}
+
+// EnqueueSyncOnceWith is EnqueueSync with an explicit trigger: a settled
+// repo_sync webhook (backlog 2.137). The trigger's collected run names its
+// run group (req.RunGroupID, its pending window): when a job of that group
+// exists already, an earlier call started it and lost its bookkeeping, and
+// that job comes back (existing true) whatever its status, so a replay
+// never queues a second sync. Otherwise it joins the repository's queued
+// sync like EnqueueSync (existing true), or queues one in req.RunGroupID. A
+// sync takes no overrides. Callers of one group are serialised by the
+// trigger's pending row lock.
+func (s *Service) EnqueueSyncOnceWith(ctx context.Context, orgID, repoID uuid.UUID, req RunRequest) (Job, bool, error) {
+	if err := req.validate(); err != nil {
+		return Job{}, false, err
+	}
+	if !req.Overrides.empty() {
+		return Job{}, false, fmt.Errorf("%w: a repository sync takes no overrides", ErrInvalidInput)
+	}
+	if req.RunGroupID != uuid.Nil {
+		group := req.RunGroupID
+		started, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &group}, "", 1)
+		if err != nil {
+			return Job{}, false, fmt.Errorf("list the sync's run group: %w", err)
+		}
+		if len(started) > 0 {
+			return started[0], true, nil
+		}
+	}
+	j, payload, err := s.syncJob(ctx, orgID, repoID, req)
+	if err != nil {
+		return Job{}, false, err
+	}
+	return s.store.CreateSyncJobOnce(ctx, j, payload, repoID)
 }
 
 // HasActiveRun reports whether a job of the template is not terminal yet.

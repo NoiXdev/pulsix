@@ -145,90 +145,117 @@ func (q *Queries) GetTriggerPendingRun(ctx context.Context, arg GetTriggerPendin
 	return i, err
 }
 
-const lockDueTriggerPendingRuns = `-- name: LockDueTriggerPendingRuns :many
+const laterTriggerDeliveries = `-- name: LaterTriggerDeliveries :one
+SELECT count(*)::int AS n, COALESCE(min(at), $1::timestamptz)::timestamptz AS first_at,
+       COALESCE(max(at), $1::timestamptz)::timestamptz AS last_at
+FROM trigger_deliveries
+WHERE org_id = $2 AND trigger_id = $3 AND pending_id = $4::uuid
+  AND at > $1::timestamptz
+`
+
+type LaterTriggerDeliveriesParams struct {
+	After     time.Time `json:"after"`
+	OrgID     uuid.UUID `json:"org_id"`
+	TriggerID uuid.UUID `json:"trigger_id"`
+	PendingID uuid.UUID `json:"pending_id"`
+}
+
+type LaterTriggerDeliveriesRow struct {
+	N       int32     `json:"n"`
+	FirstAt time.Time `json:"first_at"`
+	LastAt  time.Time `json:"last_at"`
+}
+
+// The window's deliveries recorded after its run was (first) started: on a
+// replay they open a new window instead of being counted into that run.
+func (q *Queries) LaterTriggerDeliveries(ctx context.Context, arg LaterTriggerDeliveriesParams) (LaterTriggerDeliveriesRow, error) {
+	row := q.db.QueryRow(ctx, laterTriggerDeliveries,
+		arg.After,
+		arg.OrgID,
+		arg.TriggerID,
+		arg.PendingID,
+	)
+	var i LaterTriggerDeliveriesRow
+	err := row.Scan(&i.N, &i.FirstAt, &i.LastAt)
+	return i, err
+}
+
+const lockDueTriggerPendingRun = `-- name: LockDueTriggerPendingRun :one
 SELECT p.trigger_id, p.org_id, p.id, p.first_at, p.last_at, p.due_at, p.deadline_at, p.deliveries, p.last_delivery_id, p.overrides, t.id, t.org_id, t.kind, t.template_id, t.repo_id, t.name, t.enabled, t.preset, t.auth, t.signature_header, t.timestamp_header, t.secret, t.allow_cidrs, t.mapping, t.on_active, t.rate_limit, t.created_by, t.created_at, t.updated_at, t.revision, t.disabled_reason, t.settle_seconds, t.max_wait_seconds
 FROM trigger_pending_runs p
 JOIN job_triggers t ON t.org_id = p.org_id AND t.id = p.trigger_id
-WHERE NOT t.enabled
-   OR ((p.due_at <= $1::timestamptz OR t.settle_seconds = 0)
+WHERE NOT (p.trigger_id = ANY($1::uuid[]))
+  AND (NOT t.enabled OR t.settle_seconds = 0
+   OR (p.due_at <= $2::timestamptz
        AND NOT EXISTS (
          SELECT 1 FROM jobs j
          WHERE j.org_id = p.org_id AND j.trigger_ref = p.trigger_id AND j.trigger = 'webhook'
-           AND j.status NOT IN ('succeeded', 'failed', 'cancelled', 'error')))
+           AND j.status NOT IN ('succeeded', 'failed', 'cancelled', 'error'))))
 ORDER BY p.due_at
-LIMIT $2
+LIMIT 1
 FOR UPDATE OF p SKIP LOCKED
 `
 
-type LockDueTriggerPendingRunsParams struct {
-	Now time.Time `json:"now"`
-	Lim int32     `json:"lim"`
+type LockDueTriggerPendingRunParams struct {
+	Skip []uuid.UUID `json:"skip"`
+	Now  time.Time   `json:"now"`
 }
 
-type LockDueTriggerPendingRunsRow struct {
+type LockDueTriggerPendingRunRow struct {
 	TriggerPendingRun TriggerPendingRun `json:"trigger_pending_run"`
 	JobTrigger        JobTrigger        `json:"job_trigger"`
 }
 
-// The settle ticker's claim: runs in a raw-pool transaction without
-// pulsix.org_id (bypass policy), across every organization; SKIP LOCKED
-// hands each row to one manager. A row is claimed when its trigger is
-// disabled (to drop it), or when it is due — or its trigger's settle delay
-// was turned off — and no run the trigger started is still active (owner
-// decision 3: the collected run waits for that one; jobs_trigger_ref_idx
-// finds them). Only the pending row is locked, never the trigger.
-func (q *Queries) LockDueTriggerPendingRuns(ctx context.Context, arg LockDueTriggerPendingRunsParams) ([]LockDueTriggerPendingRunsRow, error) {
-	rows, err := q.db.Query(ctx, lockDueTriggerPendingRuns, arg.Now, arg.Lim)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LockDueTriggerPendingRunsRow
-	for rows.Next() {
-		var i LockDueTriggerPendingRunsRow
-		if err := rows.Scan(
-			&i.TriggerPendingRun.TriggerID,
-			&i.TriggerPendingRun.OrgID,
-			&i.TriggerPendingRun.ID,
-			&i.TriggerPendingRun.FirstAt,
-			&i.TriggerPendingRun.LastAt,
-			&i.TriggerPendingRun.DueAt,
-			&i.TriggerPendingRun.DeadlineAt,
-			&i.TriggerPendingRun.Deliveries,
-			&i.TriggerPendingRun.LastDeliveryID,
-			&i.TriggerPendingRun.Overrides,
-			&i.JobTrigger.ID,
-			&i.JobTrigger.OrgID,
-			&i.JobTrigger.Kind,
-			&i.JobTrigger.TemplateID,
-			&i.JobTrigger.RepoID,
-			&i.JobTrigger.Name,
-			&i.JobTrigger.Enabled,
-			&i.JobTrigger.Preset,
-			&i.JobTrigger.Auth,
-			&i.JobTrigger.SignatureHeader,
-			&i.JobTrigger.TimestampHeader,
-			&i.JobTrigger.Secret,
-			&i.JobTrigger.AllowCidrs,
-			&i.JobTrigger.Mapping,
-			&i.JobTrigger.OnActive,
-			&i.JobTrigger.RateLimit,
-			&i.JobTrigger.CreatedBy,
-			&i.JobTrigger.CreatedAt,
-			&i.JobTrigger.UpdatedAt,
-			&i.JobTrigger.Revision,
-			&i.JobTrigger.DisabledReason,
-			&i.JobTrigger.SettleSeconds,
-			&i.JobTrigger.MaxWaitSeconds,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// The settle ticker's claim, one pending run per transaction so a delivery
+// to a trigger never waits behind other triggers' starts: runs in a
+// raw-pool transaction without pulsix.org_id (bypass policy), across every
+// organization; SKIP LOCKED hands each row to one manager, and skip leaves
+// out the rows this pass already kept. A row is claimed when its trigger is
+// disabled (to drop it) or its settle delay was turned off (it starts at
+// once, active run or not: a later delivery would otherwise supersede it,
+// and older values must never start after newer ones), or when it is due
+// and no run the trigger started is still active (owner decision 3: the
+// collected run waits for that one; jobs_trigger_ref_idx finds them). Only
+// the pending row is locked, never the trigger.
+func (q *Queries) LockDueTriggerPendingRun(ctx context.Context, arg LockDueTriggerPendingRunParams) (LockDueTriggerPendingRunRow, error) {
+	row := q.db.QueryRow(ctx, lockDueTriggerPendingRun, arg.Skip, arg.Now)
+	var i LockDueTriggerPendingRunRow
+	err := row.Scan(
+		&i.TriggerPendingRun.TriggerID,
+		&i.TriggerPendingRun.OrgID,
+		&i.TriggerPendingRun.ID,
+		&i.TriggerPendingRun.FirstAt,
+		&i.TriggerPendingRun.LastAt,
+		&i.TriggerPendingRun.DueAt,
+		&i.TriggerPendingRun.DeadlineAt,
+		&i.TriggerPendingRun.Deliveries,
+		&i.TriggerPendingRun.LastDeliveryID,
+		&i.TriggerPendingRun.Overrides,
+		&i.JobTrigger.ID,
+		&i.JobTrigger.OrgID,
+		&i.JobTrigger.Kind,
+		&i.JobTrigger.TemplateID,
+		&i.JobTrigger.RepoID,
+		&i.JobTrigger.Name,
+		&i.JobTrigger.Enabled,
+		&i.JobTrigger.Preset,
+		&i.JobTrigger.Auth,
+		&i.JobTrigger.SignatureHeader,
+		&i.JobTrigger.TimestampHeader,
+		&i.JobTrigger.Secret,
+		&i.JobTrigger.AllowCidrs,
+		&i.JobTrigger.Mapping,
+		&i.JobTrigger.OnActive,
+		&i.JobTrigger.RateLimit,
+		&i.JobTrigger.CreatedBy,
+		&i.JobTrigger.CreatedAt,
+		&i.JobTrigger.UpdatedAt,
+		&i.JobTrigger.Revision,
+		&i.JobTrigger.DisabledReason,
+		&i.JobTrigger.SettleSeconds,
+		&i.JobTrigger.MaxWaitSeconds,
+	)
+	return i, err
 }
 
 const lockTriggerPendingRun = `-- name: LockTriggerPendingRun :one
@@ -292,6 +319,68 @@ func (q *Queries) LockTriggerPendingRun(ctx context.Context, arg LockTriggerPend
 	return i, err
 }
 
+const moveLaterTriggerDeliveries = `-- name: MoveLaterTriggerDeliveries :exec
+UPDATE trigger_deliveries SET pending_id = $1::uuid
+WHERE org_id = $2 AND trigger_id = $3 AND pending_id = $4::uuid
+  AND at > $5::timestamptz
+`
+
+type MoveLaterTriggerDeliveriesParams struct {
+	NewID     uuid.UUID `json:"new_id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	TriggerID uuid.UUID `json:"trigger_id"`
+	PendingID uuid.UUID `json:"pending_id"`
+	After     time.Time `json:"after"`
+}
+
+func (q *Queries) MoveLaterTriggerDeliveries(ctx context.Context, arg MoveLaterTriggerDeliveriesParams) error {
+	_, err := q.db.Exec(ctx, moveLaterTriggerDeliveries,
+		arg.NewID,
+		arg.OrgID,
+		arg.TriggerID,
+		arg.PendingID,
+		arg.After,
+	)
+	return err
+}
+
+const reopenTriggerPendingRun = `-- name: ReopenTriggerPendingRun :exec
+UPDATE trigger_pending_runs
+SET id = $1, first_at = $2::timestamptz, last_at = $3::timestamptz,
+    deliveries = $4::int, deadline_at = $5::timestamptz,
+    due_at = LEAST($6::timestamptz, $5::timestamptz)
+WHERE org_id = $7 AND trigger_id = $8 AND id = $9
+`
+
+type ReopenTriggerPendingRunParams struct {
+	NewID      uuid.UUID `json:"new_id"`
+	FirstAt    time.Time `json:"first_at"`
+	LastAt     time.Time `json:"last_at"`
+	Deliveries int32     `json:"deliveries"`
+	Deadline   time.Time `json:"deadline"`
+	Due        time.Time `json:"due"`
+	OrgID      uuid.UUID `json:"org_id"`
+	TriggerID  uuid.UUID `json:"trigger_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+// A replayed window keeps its row (and its newest collected values, which
+// belong to the latest delivery) as a new window of the later deliveries.
+func (q *Queries) ReopenTriggerPendingRun(ctx context.Context, arg ReopenTriggerPendingRunParams) error {
+	_, err := q.db.Exec(ctx, reopenTriggerPendingRun,
+		arg.NewID,
+		arg.FirstAt,
+		arg.LastAt,
+		arg.Deliveries,
+		arg.Deadline,
+		arg.Due,
+		arg.OrgID,
+		arg.TriggerID,
+		arg.ID,
+	)
+	return err
+}
+
 const settleTriggerDeliveries = `-- name: SettleTriggerDeliveries :exec
 UPDATE trigger_deliveries
 SET outcome = $1::text,
@@ -324,4 +413,24 @@ func (q *Queries) SettleTriggerDeliveries(ctx context.Context, arg SettleTrigger
 		arg.PendingID,
 	)
 	return err
+}
+
+const supersedeTriggerPendingRun = `-- name: SupersedeTriggerPendingRun :one
+DELETE FROM trigger_pending_runs WHERE org_id = $1 AND trigger_id = $2
+RETURNING id
+`
+
+type SupersedeTriggerPendingRunParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	TriggerID uuid.UUID `json:"trigger_id"`
+}
+
+// A delivery to a trigger whose settle delay is off takes the leftover
+// pending run out before it starts its own run; waits for a ticker that is
+// starting it (then the leftover started first and nothing is left).
+func (q *Queries) SupersedeTriggerPendingRun(ctx context.Context, arg SupersedeTriggerPendingRunParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, supersedeTriggerPendingRun, arg.OrgID, arg.TriggerID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }

@@ -223,3 +223,43 @@ func TestSyncFinishMovesItsWaiters(t *testing.T) {
 		}
 	}
 }
+
+// TestEnqueueSyncOnceWithReplaysItsGroupAndJoinsAQueuedSync (backlog
+// 2.137): a settled repository sync webhook names its own run group. A
+// second call with that group (a replay after lost bookkeeping) returns the
+// sync it already started, whatever its status, and a call with another
+// group joins the repository's queued sync instead of queuing another.
+func TestEnqueueSyncOnceWithReplaysItsGroupAndJoinsAQueuedSync(t *testing.T) {
+	org, repoID, trig := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zs := &fakeZones{}
+	zs.add(org, uuid.Must(uuid.NewV7()), hosts.DefaultZoneSlug)
+	store := newFakeStore()
+	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{}, zs)
+	req := func(group uuid.UUID) jobs.RunRequest {
+		return jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &trig, RunGroupID: group}
+	}
+	window := uuid.Must(uuid.NewV7())
+	first, existing, err := svc.EnqueueSyncOnceWith(ctx, org, repoID, req(window))
+	if err != nil || existing || first.RunGroupID != window || first.Trigger != jobs.TriggerWebhook || *first.TriggerRef != trig {
+		t.Fatalf("first = %+v %v %v", first, existing, err)
+	}
+	store.mu.Lock()
+	sj := store.jobs[first.ID]
+	sj.j.Status = jobs.StatusRunning
+	store.jobs[first.ID] = sj
+	store.mu.Unlock()
+	if again, existing, err := svc.EnqueueSyncOnceWith(ctx, org, repoID, req(window)); err != nil || !existing || again.ID != first.ID {
+		t.Fatalf("replay = %+v %v %v, want %s", again, existing, err, first.ID)
+	}
+	queued, _, err := svc.EnqueueSync(ctx, org, repoID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined, existing, err := svc.EnqueueSyncOnceWith(ctx, org, repoID, req(uuid.Must(uuid.NewV7()))); err != nil || !existing || joined.ID != queued.ID {
+		t.Fatalf("with a queued sync = %+v %v %v, want %s", joined, existing, err, queued.ID)
+	}
+	if _, _, err := svc.EnqueueSyncOnceWith(ctx, org, repoID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &trig,
+		Overrides: &jobs.RunOverrides{ExtraVars: map[string]any{"a": 1}}}); !errors.Is(err, jobs.ErrInvalidInput) {
+		t.Fatalf("a sync takes no overrides: %v", err)
+	}
+}

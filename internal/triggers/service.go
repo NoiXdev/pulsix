@@ -98,6 +98,13 @@ type Sealer interface {
 type Runner interface {
 	EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
 	EnqueueSyncWith(ctx context.Context, orgID, repoID uuid.UUID, req jobs.RunRequest) (jobs.Job, error)
+	// EnqueueSyncOnceWith is a settled sync: req.RunGroupID's sync when one
+	// was started already, else the repository's queued sync, else a new
+	// one (existing false).
+	EnqueueSyncOnceWith(ctx context.Context, orgID, repoID uuid.UUID, req jobs.RunRequest) (jobs.Job, bool, error)
+	// StartedRunGroup is the run group an enqueue under the key started
+	// already, nil when none.
+	StartedRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string) (*uuid.UUID, error)
 	HasActiveRun(ctx context.Context, orgID, templateID uuid.UUID) (bool, error)
 	HasActiveSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error)
 }
