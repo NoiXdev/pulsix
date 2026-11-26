@@ -90,14 +90,14 @@ type slotView struct {
 
 // HostVantages returns, keyed by check key, the vantages of every check of
 // resolved (a host's resolved synthetic checks) that names vantage groups.
-// A check naming a secret has none, as the runner never gives it agent
-// vantages. Agents are named with one host read for all checks.
+// A check probed only from the manager (a secret, an http custom
+// request) has none, as the runner never gives it agent vantages. Agents are named with one host read for all checks.
 func (v *View) HostVantages(ctx context.Context, org, host uuid.UUID, resolved []checks.Resolved) (map[string]CheckVantages, error) {
 	var slots []slotView
 	var agentIDs []uuid.UUID
 	for _, c := range resolved {
 		vant := checkplugins.VantageOf(c.Params)
-		if len(vant.Groups) == 0 || v.secretNamed(c) {
+		if len(vant.Groups) == 0 || v.managerOnly(c) {
 			continue
 		}
 		rows, err := v.store.VantageCurrent(ctx, org, host, c.Key)
@@ -162,15 +162,11 @@ func (v *View) HostVantages(ctx context.Context, org, host uuid.UUID, resolved [
 	return out, nil
 }
 
-// secretNamed reports whether c's check names a secret (the runner's
-// secretName rule).
-func (v *View) secretNamed(c checks.Resolved) bool {
+// managerOnly reports whether c's check is probed only from the manager
+// (the runner's managerOnly rule).
+func (v *View) managerOnly(c checks.Resolved) bool {
 	d, ok := v.describe(c.Plugin)
-	if !ok {
-		return false
-	}
-	_, named := d.SecretNameOf(c.Params)
-	return named
+	return ok && d.ProbedOnlyFromManager(c.Params)
 }
 
 func statusOf(s vantageState) string {

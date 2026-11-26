@@ -510,6 +510,22 @@
         {
           "name": "pg.databases_unreported",
           "kind": "numeric"
+        },
+        {
+          "name": "pg.replicas",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_state",
+          "kind": "discrete"
         }
       ]
     },
@@ -525,6 +541,11 @@
           "max_bytes": 64,
           "non_empty": true,
           "format": "secretName"
+        },
+        {
+          "name": "schema_sizes",
+          "type": "bool",
+          "default": false
         }
       ],
       "metrics": [
@@ -554,6 +575,14 @@
         },
         {
           "name": "mysql.slow_queries_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schema_size_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schemas_unreported",
           "kind": "numeric"
         }
       ]
@@ -606,6 +635,34 @@
         },
         {
           "name": "redis.evicted_keys_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_last_bgsave_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.rdb_last_save_age_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_changes_since_last_save",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_enabled",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_last_write_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.aof_last_bgrewrite_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.loading",
           "kind": "numeric"
         }
       ]
@@ -776,7 +833,7 @@
           "example": "http://127.0.0.1/status",
           "max_entries": 16,
           "max_bytes": 500,
-          "format": "statusURL"
+          "format": "phpfpmPool"
         },
         {
           "name": "secret",
@@ -1051,8 +1108,34 @@
           "default": "GET",
           "options": [
             "GET",
-            "HEAD"
+            "HEAD",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
           ]
+        },
+        {
+          "name": "headers",
+          "type": "list",
+          "example": "Accept: application/json",
+          "max_entries": 16,
+          "max_bytes": 1024,
+          "format": "httpHeader"
+        },
+        {
+          "name": "body",
+          "type": "string",
+          "max_bytes": 8192,
+          "non_empty": true
+        },
+        {
+          "name": "content_type",
+          "type": "string",
+          "example": "application/json",
+          "max_bytes": 255,
+          "format": "mediaType"
         },
         {
           "name": "secret",

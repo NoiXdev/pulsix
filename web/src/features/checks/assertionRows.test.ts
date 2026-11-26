@@ -53,7 +53,7 @@ describe('the assertion editor rows', () => {
   it('finds the entry an API error names', () => {
     const entries = ['ok=status == 200', 'a=body matches "("', 'b=html("p") exists'];
     expect(entryNamedBy(entries, 'http: assertions must be name=assertion such as ok=status == 200 (see the docs): "a=body matches \\"(\\"": the regular expression does not compile')).toBe(1);
-    expect(entryNamedBy(entries, 'http: assertion "b" reads the body and needs method GET: a HEAD response has no body')).toBe(2);
+    expect(entryNamedBy(entries, 'http: assertion "b" reads the body and needs a method other than HEAD: a HEAD response has no body')).toBe(2);
     expect(entryNamedBy(entries, 'http: json_values and assertions both name "ok"')).toBe(0);
     expect(entryNamedBy(entries, 'http: json_values names "ok" twice')).toBe(-1);
     expect(entryNamedBy(entries, 'http: url must be an http:// URL')).toBe(-1);

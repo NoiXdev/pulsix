@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -102,8 +103,12 @@ func startServer(t *testing.T, fl flavor, opts ...func(*testcontainers.Container
 }
 
 func openAdmin(host, port string) (*sql.DB, error) {
+	return openAs(host, port, "root", rootPassword)
+}
+
+func openAs(host, port, user, password string) (*sql.DB, error) {
 	cfg := gosql.NewConfig()
-	cfg.User, cfg.Passwd = "root", rootPassword
+	cfg.User, cfg.Passwd = user, password
 	cfg.Net, cfg.Addr = "tcp", host+":"+port
 	cfg.Timeout = 3 * time.Second
 	cfg.Logger = &gosql.NopLogger{}
@@ -168,6 +173,82 @@ func TestAgainstARealServer(t *testing.T) {
 				mustValue(t, obs, "", "mysql.replication_lag_seconds", 0)
 				if _, ok := find(obs, "", "mysql.slow_queries_per_s"); ok {
 					t.Error("a slow-query rate in the first round")
+				}
+			})
+
+			t.Run("schema sizes", func(t *testing.T) {
+				exec(`CREATE DATABASE sized`)
+				exec(`CREATE DATABASE empty_db`)
+				exec(`CREATE TABLE sized.bulk (id INT PRIMARY KEY, pad VARCHAR(200))`)
+				exec(`INSERT INTO sized.bulk VALUES (1, REPEAT('x', 200)), (2, REPEAT('y', 200))`)
+				// The grant the docs name: table sizes become visible, data
+				// does not.
+				exec(`CREATE USER 'sizer'@'%' IDENTIFIED BY 'sizer-pw'`)
+				exec(`GRANT ` + fl.grants + `, SHOW VIEW ON *.* TO 'sizer'@'%'`)
+				on := map[string]any{"schema_sizes": true}
+
+				obs, err := p.CollectWithSecret(ctx, on, fields(map[string]string{"user": "sizer", "password": "sizer-pw"}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				mustValue(t, obs, "", "mysql.up", 1)
+				if o, ok := find(obs, "sized", "mysql.schema_size_bytes"); !ok || o.Value == nil || *o.Value <= 0 {
+					t.Errorf("sized = %+v", o)
+				}
+				mustValue(t, obs, "", "mysql.schemas_unreported", 0)
+				mustValue(t, obs, "empty_db", "mysql.schema_size_bytes", 0)
+				for _, sys := range []string{"mysql", "information_schema", "performance_schema", "sys"} {
+					if _, ok := find(obs, sys, "mysql.schema_size_bytes"); ok {
+						t.Errorf("system schema %s reported", sys)
+					}
+				}
+
+				sizer, err := openAs(host, port, "sizer", "sizer-pw")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = sizer.Close() }()
+				var n int
+				if err := sizer.QueryRowContext(ctx, `SELECT COUNT(*) FROM sized.bulk`).Scan(&n); err == nil {
+					t.Error("SHOW VIEW lets the user read data")
+				}
+
+				// Without SHOW VIEW the tables are not visible: nothing to
+				// report, and nothing fails.
+				obs, err = p.CollectWithSecret(ctx, on, fields(nil))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if o, ok := find(obs, "sized", "mysql.schema_size_bytes"); ok {
+					t.Errorf("sized reported without a privilege on its tables: %+v", o)
+				}
+				mustValue(t, obs, "", "mysql.schemas_unreported", 0)
+			})
+
+			t.Run("the server stops a bounded statement itself", func(t *testing.T) {
+				// MySQL refuses the MariaDB form as a syntax error, which moves
+				// Schemas on to the hinted form; MariaDB takes it.
+				_, err := admin.ExecContext(ctx, boundedSelect(dialectMariaDB, time.Second, "SELECT 1"))
+				var me *gosql.MySQLError
+				if fl.name == "mysql" {
+					if !errors.As(err, &me) || me.Number != errSyntax {
+						t.Fatalf("MariaDB form on MySQL: %v, want a syntax error", err)
+					}
+				} else if err != nil {
+					t.Fatalf("MariaDB form on MariaDB: %v", err)
+				}
+				// The form the server takes ends a long statement long before
+				// it would end on its own (and no client deadline is set).
+				d := dialectMariaDB
+				if fl.name == "mysql" {
+					d = dialectMySQL
+				}
+				start := time.Now()
+				var r any
+				err = admin.QueryRowContext(ctx, boundedSelect(d, 300*time.Millisecond, "SELECT SLEEP(5)")).Scan(&r)
+				t.Logf("bounded SLEEP(5): %v after %v", err, time.Since(start))
+				if elapsed := time.Since(start); elapsed > 3*time.Second {
+					t.Fatalf("the server ran the bounded statement for %v", elapsed)
 				}
 			})
 

@@ -37,7 +37,8 @@ var (
 	errTooManyRedirects = errors.New("too many redirects")
 )
 
-// probeHTTP requests url (with {address} replaced) and reports whether a
+// probeHTTP requests url (with {address} replaced) with the check's
+// method, headers and body (requestOf) and reports whether a
 // response arrived, its status, the time to the end of the body read, its
 // breakdown (lookups, connects, handshakes, time to first byte, transfer),
 // the redirects followed, the body's size and, over https, the final hop's
@@ -56,10 +57,17 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	if err != nil {
 		return fail(err.Error())
 	}
-	method := probe.StrParam(params, "method", http.MethodGet)
-	if method != http.MethodGet && method != http.MethodHead {
-		return fail(errBadMethod.Error())
+	rq, err := requestOf(params)
+	if err != nil {
+		return fail(err.Error())
 	}
+	// A request that may change its target goes out only while the
+	// operator allows it; a check stored while it was allowed reads this
+	// error after it is turned off, never a plain GET.
+	if rq.writes() && !g.WritesAllowed() {
+		return fail(errWritesOff.Error())
+	}
+	method := rq.method
 	cred, err := credentialsFor(probe.StrParam(params, "secret", ""), secret)
 	if err != nil {
 		return fail(err.Error())
@@ -75,13 +83,14 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport:     transport,
-		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true), cred.header),
+		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true), append(rq.headerNames(), cred.header)),
 	}
-	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), rq.bodyReader())
 	if err != nil {
 		return fail(errBadURL.Error())
 	}
 	req.Header.Set("User-Agent", httpUserAgent)
+	rq.apply(req)
 	cred.apply(req)
 
 	// hop owns the failure reason, phases the timing breakdown; the
@@ -244,11 +253,12 @@ func httpTLSConfig(verify bool, roots *x509.CertPool) *tls.Config {
 }
 
 // redirectPolicy follows at most httpMaxRedirects redirects, or none: then
-// the 3xx itself is the response. The credential header (none when "")
-// goes along only while every hop keeps the first request's scheme, host
-// and port: once a redirect leaves that origin, or goes from https to
-// http, it is removed and stays removed.
-func redirectPolicy(follow bool, header string) func(*http.Request, []*http.Request) error {
+// the 3xx itself is the response. The configured headers (the check's
+// plain headers and its credential header; "" names none) go along only
+// while every hop keeps the first request's scheme, host and port: once a
+// redirect leaves that origin, or goes from https to http, they are
+// removed and stay removed.
+func redirectPolicy(follow bool, headers []string) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if !follow {
 			return http.ErrUseLastResponse
@@ -256,8 +266,12 @@ func redirectPolicy(follow bool, header string) func(*http.Request, []*http.Requ
 		if len(via) > httpMaxRedirects {
 			return errTooManyRedirects
 		}
-		if header != "" && !sameOriginThroughout(req, via) {
-			req.Header.Del(header)
+		if !sameOriginThroughout(req, via) {
+			for _, h := range headers {
+				if h != "" {
+					req.Header.Del(h)
+				}
+			}
 		}
 		return nil
 	}

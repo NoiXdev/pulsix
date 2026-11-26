@@ -128,6 +128,8 @@ var listParamsNotItems = map[string]bool{
 	// http's assertions name items too, but json_values is the ItemParam;
 	// the ItemAsked hook reads both lists (backlog 3.13b).
 	"http.assertions": true,
+	// http's request headers (backlog 3.84): sent, not reported on.
+	"http.headers": true,
 	// zfs's optional pools name items too, but pools is the ItemParam; the
 	// ItemAsked hook reads both lists (backlog 3.74).
 	"zfs.optional_pools": true,
@@ -215,9 +217,17 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 		if p.Name != "url" {
 			params["url"] = "http://x"
 		}
+		// A content type goes with a body, a body with POST (backlog 3.84).
+		if p.Name == "content_type" {
+			params["method"], params["body"] = "POST", "x"
+		}
 	case "script":
 		if p.Name != "commands" {
 			params["commands"] = []any{"x"}
+		}
+	case "mysql":
+		if p.Name != "secret" {
+			params["secret"] = "db"
 		}
 	case "snmp":
 		if p.Name != "secret" {
@@ -262,7 +272,7 @@ func TestDescriptorsMarshalWithoutHooks(t *testing.T) {
 		`{"name":"devices","type":"list","max_entries":64,"max_bytes":255,"format":"devicePath"}`,
 		`"item_param":"devices","host_item_always_asked":true`,
 		`{"name":"timeout_s","type":"integer","default":10,"min":1,"max":60}`,
-		`{"name":"method","type":"enum","default":"GET","options":["GET","HEAD"]}`,
+		`{"name":"method","type":"enum","default":"GET","options":["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"]}`,
 		`{"name":"url","type":"string","required":true,"example":"https://{address}/","max_bytes":500,"format":"url"}`,
 		`{"name":"units","type":"list","required":true,"non_empty":true,"format":"notBlank"}`,
 		`{"name":"raid.state","kind":"discrete"}`,

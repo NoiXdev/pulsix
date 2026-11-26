@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { en } from '../../i18n/en/index.ts';
 import { CHECK_PLUGINS, checkPlugin } from '../../test/checkPlugins.ts';
 import {
+  changesState,
+  customRequest,
+  isMultiline,
   keyAfterPluginChange,
   paramsFrom,
   paramText,
@@ -279,5 +282,39 @@ describe('placeholderOf', () => {
     expect(paramText(en, 'tcp', 'nope')).toBeUndefined();
     expect(paramText(en, 'nope', 'port')).toBeUndefined();
     expect(paramText(en, 'constructor', 'name')).toBeUndefined();
+  });
+});
+
+describe('the http request (backlog 3.84)', () => {
+  it('counts a method other than GET or HEAD, headers, a body or a content type as a custom request', () => {
+    expect(customRequest('http', {})).toBe(false);
+    expect(customRequest('http', { method: 'GET', headers: '\n  \n', body: '' })).toBe(false);
+    expect(customRequest('http', { method: 'HEAD' })).toBe(false);
+    expect(customRequest('http', { method: 'OPTIONS' })).toBe(true);
+    expect(customRequest('http', { headers: 'X-A: 1' })).toBe(true);
+    expect(customRequest('http', { body: ' ' })).toBe(true);
+    expect(customRequest('http', { content_type: 'text/plain' })).toBe(true);
+    expect(customRequest('tcp', { method: 'POST' })).toBe(false);
+  });
+
+  it('warns only on methods that change something', () => {
+    expect(['POST', 'PUT', 'PATCH', 'DELETE'].map((m) => changesState('http', { method: m }))).toEqual([true, true, true, true]);
+    expect(['GET', 'HEAD', 'OPTIONS'].map((m) => changesState('http', { method: m }))).toEqual([false, false, false]);
+    expect(changesState('http', {})).toBe(false);
+  });
+
+  it('sends the body verbatim, line breaks and surrounding spaces included', () => {
+    expect(isMultiline('http', 'body')).toBe(true);
+    expect(isMultiline('http', 'body_contains')).toBe(false);
+    const http = checkPlugin('http');
+    expect(paramsFrom(http, { url: 'https://x/', method: 'POST', body: ' a\n b ' })).toEqual({ url: 'https://x/', method: 'POST', body: ' a\n b ' });
+    expect(paramValuesFrom(http, { body: 'a\nb', headers: ['X-A: 1', 'X-B: 2'] })).toEqual({ body: 'a\nb', headers: 'X-A: 1\nX-B: 2' });
+  });
+
+  it('refuses a bad header, a bad content type and a body over 8 KiB before the round trip', () => {
+    const http = checkPlugin('http');
+    const errors = validateParams(http, { url: 'https://x/', headers: 'X-A: 1\nHost: y', content_type: 'json', body: 'b'.repeat(8193) }, en);
+    expect(Object.keys(errors).sort()).toEqual(['body', 'content_type', 'headers']);
+    expect(errors.headers).toMatch(/set by Pulsix/);
   });
 });

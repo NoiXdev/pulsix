@@ -1,5 +1,6 @@
 // Package postgres is the agent's PostgreSQL check plugin: reachability,
-// connections against the maximum, replication lag, the oldest open
+// connections against the maximum, replication lag (a standby's own, and on
+// any server each replica it sends WAL to, replicas.go), the oldest open
 // transaction and database sizes, read with one connection per round. It is
 // a checks.SecretPlugin: where the server is and how to log in come from a
 // secret in agent.yaml (config.go), never from the manager. Errors are
@@ -40,7 +41,7 @@ const (
 var hostMetrics = []string{
 	"pg.connections", "pg.max_connections", "pg.connections_pct", "pg.in_recovery",
 	"pg.replication_lag_seconds", "pg.replication_lag_bytes", "pg.oldest_xact_seconds",
-	metricUnreported,
+	metricUnreported, metricReplicas,
 }
 
 type plugin struct {
@@ -122,11 +123,26 @@ func (p plugin) CollectWithSecret(ctx context.Context, params map[string]any, fi
 	if err != nil {
 		return down(err)
 	}
+	// Last, and on its own: a failed replica read errors pg.replicas only.
+	var (
+		rs        []replica
+		replTotal int
+		replErr   string
+	)
+	if !stats.LimitedView {
+		if rs, replTotal, err = sess.Replicas(cctx, maxReplicas); err != nil {
+			replErr = classify(err)
+			if cctx.Err() != nil {
+				replErr = "timed out"
+			}
+		}
+	}
 	if perr := ctx.Err(); perr != nil {
 		return nil, perr
 	}
 	obs, advisory := observe(stats, dbs, total, filter)
-	return obs, advisory
+	robs, radvisory := observeReplicas(rs, replTotal, stats.LimitedView, replErr)
+	return append(obs, robs...), errors.Join(advisory, radvisory)
 }
 
 func b2f(b bool) float64 {

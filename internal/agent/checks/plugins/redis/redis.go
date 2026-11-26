@@ -1,7 +1,7 @@
 // Package redis is the agent's Redis check plugin (Redis 5 and later, and
 // Valkey or any server that speaks the protocol): reachability, memory
-// against its limit, clients, the replication role, link and lag, and the
-// eviction rate, read from INFO over one connection per round. It is a
+// against its limit, clients, the replication role, link and lag, the
+// eviction rate and the persistence state (persistence.go), read from INFO over one connection per round. It is a
 // checks.SecretPlugin: where the server is and how to log in come from an
 // optional secret in agent.yaml (config.go), never from the manager; with no
 // secret it reads 127.0.0.1:6379 without logging in. It is also a
@@ -25,15 +25,16 @@ import (
 
 const metricUp = "redis.up"
 
-// hostMetrics are the metrics besides up. All but the eviction rate are
-// reported on every successful round, as a value or as an error when INFO
+// hostMetrics are the metrics besides up, the persistence ones
+// (persistence.go) included. All but the eviction rate are reported on
+// every successful round, as a value or as an error when INFO
 // lacks what they need, so one odd field never hides the others; the
 // eviction rate is absent on the first round and after a reset. All get the
 // failure on a failed round.
-var hostMetrics = []string{
+var hostMetrics = append([]string{
 	"redis.memory_used_bytes", "redis.memory_max_bytes", "redis.memory_pct", "redis.clients",
 	"redis.role", "redis.replication_link", "redis.replication_lag_seconds", "redis.evicted_keys_per_s",
-}
+}, persistenceMetrics...)
 
 type plugin struct {
 	// timeout overrides dbcheck.CollectTimeout; zero means the default.
@@ -139,7 +140,7 @@ func notReported(field string) error { return errors.New("redis: " + field + " i
 
 // observe maps INFO to observations and moves the eviction baseline.
 func (p *plugin) observe(kv map[string]string) []checks.Observation {
-	obs := make([]checks.Observation, 0, 9)
+	obs := make([]checks.Observation, 0, 1+len(hostMetrics))
 	obs = append(obs, checks.ValueObservation("", metricUp, 1))
 	obs = append(obs, p.memory(kv)...)
 	if n, ok := uintField(kv, "connected_clients"); ok {
@@ -149,6 +150,7 @@ func (p *plugin) observe(kv map[string]string) []checks.Observation {
 	}
 	obs = append(obs, replication(kv)...)
 	obs = append(obs, p.evictions(kv))
+	obs = append(obs, persistence(kv, p.now())...)
 	return dropNil(obs)
 }
 

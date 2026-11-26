@@ -273,6 +273,19 @@ the item its metrics are reported on (the agent adds the query key `json` when
 it is missing); item `""` carries `phpfpm.pools_down`, which is also where a
 missing secret is reported. Nothing is seeded and there is no schema change.
 
+Since backlog 3.11a a `phpfpm` `urls` entry may also be the pool's own FastCGI
+address with its status path (`fcgi://127.0.0.1:9000/status`,
+`unix:/run/php/php8.3-fpm.sock:/status`), read with no web server in between.
+No schema change and nothing seeded; existing entries behave as before. Version
+skew: an older manager refuses such an entry when a check is saved. An older
+agent hands it to its HTTP client, which refuses the scheme without connecting,
+so that pool reads down ("connection failed", `phpfpm.pools_down` counts it)
+until the agent is updated; it never reads anything else in its place. An older
+agent also refuses a local `agent.yaml` `phpfpm` check with such an entry. Update
+the agents before using the new entries. The agent needs access to the pool's
+socket (usually membership of the pool's `listen.group`) or its TCP address
+(`listen.allowed_clients`).
+
 The `script` plugin (backlog 3.6g) follows the same rule for the check: an older
 agent skips a `script` check, warns on every configuration push and shows no
 readings until it is updated, and the manager does not gate on it. **The
@@ -1193,6 +1206,56 @@ trigger tools carry the two fields. **An older manager alongside** ignores the d
 two columns as they are), starts no collected run, and shows `collected` deliveries as
 an unknown outcome; stop every manager instance first, as above.
 
+Request methods, headers and a body on the `http` check (backlog 3.84) add no migration,
+no proto change and no dependency. The `http` parameter `method` now also takes `POST`,
+`PUT`, `PATCH`, `DELETE` and `OPTIONS`, and three parameters are new: `headers` (at most 16
+`Name: value` entries of 1 024 bytes; reserved, hop-by-hop, routing, override and credential
+headers refused; dropped when a redirect leaves the first origin), `body` (UTF-8 text without
+NUL, at most 8 KiB, only with `POST`, `PUT` or `PATCH`) and `content_type` (only with a body;
+`application/json` when a body is sent without one). `POST`, `PUT`, `PATCH`, `DELETE` and a
+body need the new manager setting `PULSIX_PROBE_WRITE_METHODS` (default `false`; see the
+behaviour changes below). Existing checks behave exactly as before. Two validation
+messages change wording: `json_values` and body-reading assertions with `HEAD` now say
+"needs a method other than HEAD" instead of "needs method GET". **Skew with agents:** an
+agent of an earlier release would drop the headers and the body and send a plain GET, so a
+check with a method other than GET or HEAD, headers or a body refuses `vantage_groups` (like
+a check with a secret) and the probe runner never assigns one to an agent; such a check is
+probed from the Pulsix server only, whatever agent versions run. **An older manager
+alongside** refuses the new parameters on write, but if it holds the probe lock it probes a
+stored check with headers or a body as a plain GET of its URL, and one with a new method as
+"invalid method" (unknown); set these up only once every manager instance runs this version.
+
+## Behaviour changes to check after an upgrade
+
+- **http checks can send other methods, headers and a body (backlog 3.84, no
+  migration):** any member who may write checks can now make the manager send
+  `OPTIONS` and request headers to every address it reaches outside
+  `PULSIX_PROBE_DENY_CIDRS` (the manager's own loopback, link-local and cloud
+  metadata addresses stay refused). Requests that may change their target —
+  `POST`, `PUT`, `PATCH`, `DELETE` or any request body — stay off until the
+  operator sets `PULSIX_PROBE_WRITE_METHODS=true` on the manager: off, such a
+  check is refused on save (400 naming the variable) and a stored one reads
+  that error on every metric instead of probing, never a plain GET. Before
+  turning it on, list in `PULSIX_PROBE_DENY_CIDRS` every internal network
+  that organization members must not write to (container engines, databases,
+  admin APIs, mail relays); a check sends its request every interval. Routing
+  and override headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`,
+  `X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`,
+  `X-HTTP-Method`, `X-Method-Override`) are always refused. With the switch
+  turned off, a check stored while it was on can still be disabled or edited
+  as long as its method, headers, body and content type stay as they are.
+- **A secret whose header names a reserved or routing header now fails
+  (backlog 3.84, no migration):** an http check's secret in the "header and
+  value" form may no longer name a header the probe sets (Host,
+  Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive,
+  Proxy-Connection, TE, Trailer, Upgrade, Expect, Accept-Encoding),
+  Content-Type, or a routing or override header (`X-Forwarded-*`,
+  `Forwarded`, `X-Real-IP`, `X-Original-URL`, `X-Rewrite-URL`, the method
+  overrides). Such a check sends nothing and reads `secret "<name>": field
+  "header" must not be …` on every metric until the secret names another
+  header. Before, only Host, Content-Length, Transfer-Encoding, Connection
+  and User-Agent were refused.
+
 Sibling combinators and more pseudo-classes in `html(…)` assertions (backlog 3.90) add
 no migration, no proto change and no dependency. The selector subset gains `+`, `~`,
 `:only-child`, `:nth-last-child()`, `:first-of-type`, `:last-of-type`, `:only-of-type`,
@@ -2106,6 +2169,32 @@ check's vantage groups before using the new forms.
   `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
   `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
   which now also carries the values of the host's groups and their parent groups.
+- **More database metrics (backlog 3.10b, no migration):** the updated agent reports
+  new metrics; nothing existing changes. `postgres`: `pg.replicas` on item "" every
+  round (an error "no privilege to see replication" for a login without `pg_monitor`,
+  and a failure on a failed round like the other host metrics), and per replica item
+  `replica:<application_name>@<client address>` (`replica:<name>@local` over a Unix
+  socket) `pg.replica_lag_bytes`, `pg.replica_lag_seconds` and `pg.replica_state`;
+  these items are asked whatever `databases` lists. Only senders that replay count:
+  `pg_basebackup`, `pg_receivewal`, `barman_receive_wal` and logical table-sync workers
+  are left out, and a standby counts from its first reply. A failed replica read errors
+  `pg.replicas` only; the round stays up. A replica that is retired or changes address
+  leaves a stale item behind; **Forget** it, or let the item expiry remove it. `redis`: seven persistence metrics
+  on item "" (`redis.rdb_last_bgsave_status`, `redis.rdb_last_save_age_seconds`,
+  `redis.rdb_changes_since_last_save`, `redis.aof_enabled`, `redis.aof_last_write_status`,
+  `redis.aof_last_bgrewrite_status`, `redis.loading`); a Redis-protocol server whose INFO
+  lacks them reports an error on each. `mysql`: a new optional parameter
+  `schema_sizes` (default false) adds `mysql.schema_size_bytes` per schema and
+  `mysql.schemas_unreported` (a schema without tables reads 0); the login needs a privilege on the tables
+  (`GRANT SHOW VIEW ON *.*` suffices and reads no data). Version skew: an older agent
+  reports none of these and ignores `schema_sizes`; a manager older than this release
+  stores the new metrics but refuses rules on them, and refuses a `mysql` check that
+  carries `schema_sizes` (unknown parameter), so roll the managers before setting it.
+  Two more skew cases: a `mysql` check defined in a host's `agent.yaml` with
+  `schema_sizes` is ignored as a whole by an older manager (the plugin refuses its
+  parameters), `mysql.up` included, until the manager is updated; and an older manager
+  has no rule that asks for replica items on a `postgres` check with a `databases`
+  list, so it shows them as not asked until it is updated.
 
 ## Roll order
 

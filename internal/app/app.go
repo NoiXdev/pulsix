@@ -400,7 +400,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		checks.WithAlertCloser(alertsSvc),
 		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)),
-		checks.WithLocalChecks(NewChecksLocalChecks(agents.NewService(agents.NewSQLStore(appDB)))))
+		checks.WithLocalChecks(NewChecksLocalChecks(agents.NewService(agents.NewSQLStore(appDB)))),
+		checks.WithProbeWrites(cfg.ProbeWriteMethods))
 	// Why an alert fired (backlog 3.13b): the executor asks the checks
 	// store and service through this port, which is why it is wired only
 	// now, after checksSvc — the same post-construction shape as
@@ -429,7 +430,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// backs api.Deps.Shared (Task 4's instance-admin CRUD over definitions,
 	// registerSharedRepoRoutes) — one Service, no Principal or org state of
 	// its own to make sharing it across both callers unsafe.
-	sharedSvc := shared.NewService(shared.NewSQLStore(appDB))
+	sharedSvc := shared.NewService(shared.NewSQLStore(appDB), shared.WithProbeWrites(cfg.ProbeWriteMethods))
 	// Discovery and item decisions (v0.3b-3): one store, two lifecycles —
 	// itemsStore is also what the evaluation ticker's own EvalSQLStore
 	// discovers items and resolves decisions through (see evalTicker

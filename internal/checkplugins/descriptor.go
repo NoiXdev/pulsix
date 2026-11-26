@@ -152,6 +152,19 @@ type Descriptor struct {
 	// hook, because the metric expiry applies it in SQL (HeldStates). Nil
 	// means the item's state never matters.
 	HeldWhile *HeldState `json:"-"`
+	// ManagerOnly returns why a check with params is probed only from the
+	// Pulsix server, whatever its vantage groups say, or "" when it is not
+	// (backlog 3.84: http's custom requests, which an agent of an earlier
+	// release would send as a plain GET). The reason completes "checks
+	// that … are probed only from the Pulsix server". A named secret
+	// always is; see ProbedOnlyFromManager. Nil means only the secret
+	// decides.
+	ManagerOnly func(params map[string]any) string `json:"-"`
+	// Writes reports whether a check with params may change something on
+	// its target (http: POST, PUT, PATCH, DELETE or a body). The manager
+	// accepts and sends such a check only while its operator allows it
+	// (PULSIX_PROBE_WRITE_METHODS); see SendsWrites. Nil means never.
+	Writes func(params map[string]any) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes

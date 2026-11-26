@@ -57,7 +57,7 @@ func TestPrimaryMetrics(t *testing.T) {
 	if !sess.closed {
 		t.Error("session not closed")
 	}
-	if len(obs) != 9+2 {
+	if len(obs) != 10+2 {
 		t.Errorf("%d observations: %+v", len(obs), obs)
 	}
 }

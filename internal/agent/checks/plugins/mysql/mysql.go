@@ -1,6 +1,7 @@
 // Package mysql is the agent's MySQL and MariaDB check plugin: reachability,
-// connections against the maximum, replication state and lag, and the rate
-// of slow queries, read with one connection per round. It is a
+// connections against the maximum, replication state and lag, the rate of
+// slow queries and, when the check asks with schema_sizes, the size of each
+// schema (schemas.go), read with one connection per round. It is a
 // checks.SecretPlugin: where the server is and how to log in come from a
 // secret in agent.yaml (config.go), never from the manager. It is also a
 // checks.StatefulPlugin: the slow-query rate needs the previous counter, so
@@ -13,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,7 +84,7 @@ func errObs(err error) []checks.Observation {
 // CollectWithSecret connects, reads and reports. A caller context that
 // ends returns nothing but its error (the Plugin contract); the plugin's
 // own deadline is a server that did not answer in time.
-func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields map[string]string) ([]checks.Observation, error) {
+func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, fields map[string]string) ([]checks.Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -97,6 +99,7 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 		return errObs(fmt.Errorf("mysql: %w", err)), nil
 	}
 
+	sizes := schemaSizesAsked(params)
 	settings.queryTimeout = p.queryTimeout
 	timeout := p.timeout
 	if timeout <= 0 {
@@ -113,7 +116,11 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 		if cctx.Err() != nil {
 			reason = "timed out"
 		}
-		return dbcheck.Down("mysql", metricUp, hostMetrics, reason), nil
+		others := hostMetrics
+		if sizes {
+			others = append(slices.Clone(hostMetrics), metricSchemasUnreported)
+		}
+		return dbcheck.Down("mysql", metricUp, others, reason), nil
 	}
 
 	sess, err := p.connect(cctx, settings)
@@ -126,6 +133,22 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 	if err != nil {
 		return down(err)
 	}
+	var (
+		schemaObs []checks.Observation
+		advisory  error
+	)
+	if sizes {
+		// Last: a timeout here leaves the connection closed, and only the
+		// sizes are lost.
+		ss, total, serr := sess.Schemas(cctx)
+		if perr := ctx.Err(); perr != nil {
+			return nil, perr
+		}
+		if serr != nil && cctx.Err() != nil {
+			serr = context.DeadlineExceeded
+		}
+		schemaObs, advisory = observeSchemas(ss, total, serr)
+	}
 	if perr := ctx.Err(); perr != nil {
 		return nil, perr
 	}
@@ -135,7 +158,7 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 	}
 	p.uptime = stats.Uptime
 	rate, haveRate := p.slow.Rate(p.now(), stats.SlowQueries)
-	return observe(stats, rate, haveRate), nil
+	return append(observe(stats, rate, haveRate), schemaObs...), advisory
 }
 
 // observe maps the server's answers to observations.

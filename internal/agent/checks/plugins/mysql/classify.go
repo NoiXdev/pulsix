@@ -26,6 +26,10 @@ func classify(err error) string {
 			return "authentication failed (error " + n + ")"
 		case 1142, 1143, 1227, 1370:
 			return "permission denied (error " + n + ")"
+		case 1969, 3024:
+			// The server's own statement bound (MariaDB max_statement_time,
+			// MySQL MAX_EXECUTION_TIME) ended the query.
+			return "timed out"
 		default:
 			return "server error (error " + n + ")"
 		}

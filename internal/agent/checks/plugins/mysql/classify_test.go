@@ -29,6 +29,8 @@ func TestClassify(t *testing.T) {
 		{"table denied", myErr(1142, "x"), "permission denied (error 1142)"},
 		{"column denied", myErr(1143, "x"), "permission denied (error 1143)"},
 		{"procedure denied", myErr(1370, "x"), "permission denied (error 1370)"},
+		{"MariaDB statement time exceeded", myErr(1969, "Query execution was interrupted (max_statement_time exceeded)"), "timed out"},
+		{"MySQL execution time exceeded", myErr(3024, "Query execution was interrupted, maximum statement execution time exceeded"), "timed out"},
 		{"other server error", myErr(1040, "Too many connections"), "server error (error 1040)"},
 		{"wrapped", fmt.Errorf("query: %w", myErr(1045, "x")), "authentication failed (error 1045)"},
 		{"no TLS", mysql.ErrNoTLS, "TLS handshake failed"},
