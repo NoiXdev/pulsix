@@ -84,28 +84,39 @@ export function useTestTrigger(org: string) {
 }
 
 /** PENDING_POLL_MS is how often a waiting collected run is read again, so
- * the card notices when it starts. */
+ * the card notices when it starts; SETTLING_POLL_MS how often a settling
+ * trigger is asked whether one started waiting. */
 const PENDING_POLL_MS = 5000;
+const SETTLING_POLL_MS = 10000;
+
+/** pendingPollInterval is how often the pending run is read: quickly while
+ * one waits, slowly while the trigger has a settle delay, never otherwise. */
+export function pendingPollInterval(settling: boolean, waiting: boolean): number | false {
+  if (waiting) return PENDING_POLL_MS;
+  return settling ? SETTLING_POLL_MS : false;
+}
 
 /**
- * useTriggerPending reads a settling trigger's collected run while it
- * waits (backlog 2.137), again every few seconds while one waits. When the
- * one it showed is gone (started, discarded or dropped) the delivery log is
- * read again, so its deliveries say what became of them.
+ * useTriggerPending reads a trigger's collected run while it waits
+ * (backlog 2.137): every few seconds while one waits and, for a trigger
+ * with a settle delay (settling), every ten seconds otherwise, so a run that
+ * starts waiting while the page is open shows. When the run it showed
+ * changes (one started waiting, or it started, was discarded or dropped)
+ * the delivery log is read again, so its deliveries say what became of them.
  */
-export function useTriggerPending(org: string, id: string, enabled: boolean) {
+export function useTriggerPending(org: string, id: string, enabled: boolean, settling = false) {
   const qc = useQueryClient();
   const key = ['trigger-pending', org, id];
   return useQuery({
     queryKey: key,
     queryFn: async () => {
-      const before = qc.getQueryData<{ pending?: { id: string } }>(key)?.pending?.id;
+      const before = qc.getQueryData<{ pending?: { id: string } }>(key);
       const res = await unwrap(api.GET('/api/v1/orgs/{org}/triggers/{id}/pending', { params: { path: { org, id } } }));
-      if (before && before !== res.pending?.id) void qc.invalidateQueries({ queryKey: ['trigger-deliveries', org, id] });
+      if (before && before.pending?.id !== res.pending?.id) void qc.invalidateQueries({ queryKey: ['trigger-deliveries', org, id] });
       return res;
     },
     enabled: enabled && !!org && !!id,
-    refetchInterval: (q) => (q.state.data?.pending ? PENDING_POLL_MS : false),
+    refetchInterval: (q) => pendingPollInterval(settling, !!q.state.data?.pending),
   });
 }
 

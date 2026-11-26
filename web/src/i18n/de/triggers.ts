@@ -26,6 +26,7 @@ export const deTriggers: Messages['triggers'] = {
   rateAction: {
     skip: 'überspringen',
     queue: 'einreihen',
+    wait: 'warten, danach einmal starten',
   },
   edit: 'Bearbeiten',
   rotate: 'Secret rotieren',
@@ -42,7 +43,10 @@ export const deTriggers: Messages['triggers'] = {
     template_run: (name: string) =>
       `Testaufruf ${name}? Dadurch wird die Job-Vorlage jetzt tatsächlich ausgeführt; die Prüfung der erlaubten Quellen entfällt.`,
   },
+  testConfirmSettling: (name: string) =>
+    `Testaufruf ${name}? Er landet im wartenden gesammelten Lauf und ersetzt dessen Werte durch die des Testaufrufs; dieser Lauf startet wirklich, sobald die Aufrufe zur Ruhe kommen. Die Prüfung der erlaubten Quellen entfällt.`,
   testResult: (outcome: string) => `Testaufruf: ${outcome}`,
+  testCollected: (at: string) => `Testaufruf: gesammelt — läuft um ${at}, wenn nichts mehr kommt`,
   testFailed: 'Testaufruf fehlgeschlagen',
   deleteConfirm: (name: string) => `Trigger ${name} löschen?`,
   deleteFailed: 'Der Trigger konnte nicht gelöscht werden',
@@ -65,6 +69,7 @@ export const deTriggers: Messages['triggers'] = {
   },
   settle: {
     label: 'Auf Ruhe warten',
+    onActive: 'wartet darauf, startet danach einmal',
     off: 'aus — jeder Aufruf startet einen Lauf',
     summary: (wait: string, latest: string) => `${wait} nach dem letzten Aufruf, spätestens ${latest} nach dem ersten`,
     pendingTitle: 'Ein gesammelter Lauf wartet',
@@ -110,7 +115,8 @@ export const deTriggers: Messages['triggers'] = {
     mapVariable: '+ Variable zuordnen',
     limitPath: 'Limit-Pfad',
     settle: 'Auf Ruhe warten (Sekunden)',
-    settleHint: '0 = aus: Jeder Aufruf startet einen Lauf. Sonst werden Aufrufe gesammelt, und ein Lauf startet, sobald so lange keiner mehr kam – mit den Werten des letzten Aufrufs.',
+    settleHint: '0 = aus: Jeder Aufruf startet einen Lauf. Sonst werden Aufrufe gesammelt, und ein Lauf startet, sobald so lange keiner mehr kam – mit den Werten des letzten Aufrufs. Auch ein Testaufruf landet im wartenden Lauf und ersetzt dessen Werte.',
+    onActiveSettling: 'Gilt nicht, solange auf Ruhe gewartet wird: Der gesammelte Lauf wartet auf einen aktiven Lauf und startet danach einmal.',
     maxWait: 'Spätestens ausführen nach (Sekunden)',
     maxWaitPlaceholder: (n: number) => `${n} (10 × die Wartezeit)`,
     settleRange: 'Wartezeit 0 (aus) oder 5 bis 3600 Sekunden.',

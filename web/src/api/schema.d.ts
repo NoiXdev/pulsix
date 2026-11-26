@@ -9580,6 +9580,11 @@ export interface components {
              * @example https://example.com/schemas/TriggerTestOutputBody.json
              */
             readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description collected (a trigger with a settle delay): when the collected run the call joined starts unless more deliveries arrive
+             */
+            due_at?: string;
             outcome: string;
             run_id?: string;
         };

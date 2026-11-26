@@ -34,6 +34,8 @@ export const enTriggers = {
   rateAction: {
     skip: 'skip',
     queue: 'queue',
+    /** A settling trigger's collected run waits for an active run. */
+    wait: 'wait, then start once',
   },
   edit: 'Edit',
   rotate: 'Rotate secret',
@@ -48,7 +50,11 @@ export const enTriggers = {
     repo_sync: (name: string) => `Test call ${name}? This will sync the repository for real, right now; the allowed-sources check is skipped.`,
     template_run: (name: string) => `Test call ${name}? This will run the job template for real, right now; the allowed-sources check is skipped.`,
   },
+  /** A test call on a trigger with a settle delay (backlog 2.137). */
+  testConfirmSettling: (name: string) =>
+    `Test call ${name}? It joins the waiting collected run and replaces its values with this test call's; that run starts for real once the calls settle. The allowed-sources check is skipped.`,
   testResult: (outcome: string) => `Test call: ${outcome}`,
+  testCollected: (at: string) => `Test call: collected — runs at ${at} unless more arrive`,
   testFailed: 'Test call failed',
   deleteConfirm: (name: string) => `Delete trigger ${name}?`,
   deleteFailed: 'Deleting the trigger failed',
@@ -74,6 +80,7 @@ export const enTriggers = {
    * waits (backlog 2.137). */
   settle: {
     label: 'Wait for a quiet moment',
+    onActive: 'waits for it, then starts once',
     off: 'off — every call starts a run',
     summary: (wait: string, latest: string) => `${wait} after the last call, at the latest ${latest} after the first`,
     pendingTitle: 'A collected run is waiting',
@@ -119,7 +126,8 @@ export const enTriggers = {
     mapVariable: '+ Map a variable',
     limitPath: 'Limit path',
     settle: 'Wait for a quiet moment (seconds)',
-    settleHint: "0 = off: every call starts a run. Otherwise calls are collected, and one run starts once none arrived for this long, with the last call's values.",
+    settleHint: "0 = off: every call starts a run. Otherwise calls are collected, and one run starts once none arrived for this long, with the last call's values. A test call joins the waiting run too and replaces its values.",
+    onActiveSettling: 'Does not apply while waiting for a quiet moment: the collected run waits for an active run, then starts once.',
     maxWait: 'Run at the latest after (seconds)',
     maxWaitPlaceholder: (n: number) => `${n} (10 × the wait)`,
     settleRange: 'Wait 0 (off) or 5 to 3600 seconds.',

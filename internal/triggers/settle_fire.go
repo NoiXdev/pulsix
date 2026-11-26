@@ -85,6 +85,14 @@ func (s *Service) fire(ctx context.Context, r DueRun, actor *uuid.UUID) (f Firin
 	f = Firing{Outcome: OutcomeCollected, JobGroupID: &group, RunID: &runID}
 	switch {
 	case replay:
+		// The split compares the first job's created_at (the jobs clock of
+		// the manager that enqueued it) with the deliveries' at (the trigger
+		// clock of the managers that received them). It assumes the
+		// managers' clocks agree: with a receiving manager's clock ahead, a
+		// delivery recorded before the crashed start can count as later and
+		// reopen a window whose values the first run already used. That
+		// needs a crash between enqueue and write-back plus clock skew;
+		// accepted (final review 2), managers are expected to run NTP.
 		first := started[0].CreatedAt
 		for _, j := range started[1:] {
 			if j.CreatedAt.Before(first) {
@@ -171,7 +179,8 @@ func (s *Service) Pending(ctx context.Context, orgID, id uuid.UUID) (*PendingRun
 // to end: OutcomeTriggered with the run, OutcomeFailed when the jobs
 // service refused it (its deliveries say why), OutcomeDisabled when the
 // trigger is disabled (the run is dropped). ErrNothingPending when none
-// waits, ErrNotFound for an unknown trigger.
+// waits, ErrNotFound for an unknown trigger. A run that started although
+// writing back its pending run failed is OutcomeTriggered (logged).
 func (s *Service) RunPending(ctx context.Context, orgID, id, actor uuid.UUID) (Result, error) {
 	if _, err := s.d.Store.Get(ctx, orgID, id); err != nil {
 		return Result{}, err
@@ -181,6 +190,13 @@ func (s *Service) RunPending(ctx context.Context, orgID, id, actor uuid.UUID) (R
 	}
 	f, err := s.d.Pending.FirePending(ctx, orgID, id, func(ctx context.Context, r DueRun) Firing { return s.fire(ctx, r, &actor) })
 	switch {
+	case err != nil && f.RunID != nil:
+		// The run's enqueue committed; only the pending row's write-back
+		// failed. The row stays, and the ticker replays the same run group
+		// (no second run), so the person is told the run started (final
+		// review 7).
+		s.d.Log.ErrorContext(ctx, "collected run started, but its pending run could not be written back", "trigger", id, "org", orgID, "err", err)
+		return Result{Outcome: OutcomeTriggered, RunID: f.RunID}, nil
 	case err != nil:
 		return Result{}, err
 	case f.Keep:

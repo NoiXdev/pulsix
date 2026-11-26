@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -71,8 +72,9 @@ type triggerTestInput struct {
 
 type triggerTestOutput struct {
 	Body struct {
-		Outcome string `json:"outcome"`
-		RunID   string `json:"run_id,omitempty"`
+		Outcome string     `json:"outcome"`
+		RunID   string     `json:"run_id,omitempty"`
+		DueAt   *time.Time `json:"due_at,omitempty" doc:"collected (a trigger with a settle delay): when the collected run the call joined starts unless more deliveries arrive"`
 	}
 }
 
@@ -330,6 +332,7 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		if res.RunID != nil {
 			out.Body.RunID = res.RunID.String()
 		}
+		out.Body.DueAt = res.DueAt
 		return out, nil
 	}, withAudit("testTrigger", "trigger"))
 

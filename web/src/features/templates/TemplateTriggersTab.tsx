@@ -176,7 +176,9 @@ function TriggerCard({ org, target, trigger: tr, canWrite, canRun, onSecret }: {
             <Fact label={p.sources}>
               <span title={sources.join(', ') || undefined}>{sources.length === 0 ? p.anySource : p.sourceCount(sources.length)}</span>
             </Fact>
-            <Fact label={p.onActive}>{t.triggers.form.onActive[tr.on_active === 'skip' ? 'skip' : 'queue']}</Fact>
+            <Fact label={p.onActive}>
+              {(tr.settle_seconds ?? 0) > 0 ? t.triggers.settle.onActive : t.triggers.form.onActive[tr.on_active === 'skip' ? 'skip' : 'queue']}
+            </Fact>
             <Fact label={t.triggers.settle.label}>{settle}</Fact>
           </dl>
           <PendingRun org={org} trigger={tr} canRun={canRun} canDiscard={canWrite} />

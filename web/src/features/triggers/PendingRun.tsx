@@ -11,8 +11,9 @@ import { useT } from '../../i18n/useT.ts';
  * 2.137): how many deliveries it holds, when it starts unless more arrive
  * and the latest it starts at. "Run now" starts it at once, as the person
  * (canRun: the test call's permission); "Discard" drops it after asking
- * (canDiscard). Nothing shows while none waits; a trigger without a
- * settle delay is not asked.
+ * (canDiscard). Nothing shows while none waits; a settling trigger is
+ * asked every ten seconds, so one that starts waiting shows; a trigger
+ * without a settle delay is not asked.
  */
 export function PendingRun({ org, trigger, canRun, canDiscard }: { org: string; trigger: Trigger; canRun: boolean; canDiscard: boolean }) {
   const t = useT();
@@ -20,7 +21,8 @@ export function PendingRun({ org, trigger, canRun, canDiscard }: { org: string; 
   const fmt = useFormat();
   const toast = useToast();
   const ask = useConfirm();
-  const pending = useTriggerPending(org, trigger.id, (trigger.settle_seconds ?? 0) > 0).data?.pending;
+  const settling = (trigger.settle_seconds ?? 0) > 0;
+  const pending = useTriggerPending(org, trigger.id, settling, settling).data?.pending;
   const run = useRunPendingTrigger(org);
   const discard = useDiscardPendingTrigger(org);
   if (!pending) return null;

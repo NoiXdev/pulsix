@@ -14,6 +14,7 @@ import { outcomeLabel } from './outcome.ts';
 import { useT } from '../../i18n/useT.ts';
 import { snippets } from './snippets.ts';
 import { useTriggerCommands } from './useTriggerCommands.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { PendingRun } from './PendingRun.tsx';
 import { useSettleSummary } from './useSettleSummary.ts';
 import { ReviewNotice } from '../../ui/review-notice.tsx';
@@ -97,6 +98,8 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const sn = snippets(t, i18n);
   const mapping = Object.entries(t.mapping.extra_vars ?? {});
   const settle = useSettleSummary(t);
+  const settling = (t.settle_seconds ?? 0) > 0;
+  const fmt = useFormat();
 
   async function onRotate() {
     const fresh = await commands.rotate();
@@ -104,10 +107,11 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   }
 
   async function onTest() {
-    if (!(await ask({ message: m.testConfirm[t.kind === 'repo_sync' ? 'repo_sync' : 'template_run'](t.name) }))) return;
+    const message = settling ? m.testConfirmSettling(t.name) : m.testConfirm[t.kind === 'repo_sync' ? 'repo_sync' : 'template_run'](t.name);
+    if (!(await ask({ message }))) return;
     try {
       const res = await test.mutateAsync({ id: t.id });
-      toast.show(m.testResult(outcomeLabel(res.outcome, i18n)));
+      toast.show(res.outcome === 'collected' && res.due_at ? m.testCollected(fmt.dateTime(res.due_at)) : m.testResult(outcomeLabel(res.outcome, i18n)));
     } catch (err) {
       toast.show(err instanceof Error ? err.message : m.testFailed, 'destructive');
     }
@@ -162,7 +166,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
           {t.mapping.limit && <li>{`${t.mapping.limit} → limit`}</li>}
         </ul>
       )}
-      <p className="text-xs">{m.rate(t.rate_limit.count, t.rate_limit.per, t.on_active === 'skip' ? m.rateAction.skip : m.rateAction.queue)}</p>
+      <p className="text-xs">{m.rate(t.rate_limit.count, t.rate_limit.per, settling ? m.rateAction.wait : t.on_active === 'skip' ? m.rateAction.skip : m.rateAction.queue)}</p>
       <p className="text-xs">{`${m.settle.label}: ${settle}`}</p>
       <PendingRun org={org} trigger={t} canRun={canWrite && (canRun || t.kind === 'repo_sync')} canDiscard={canWrite} />
       {canWrite && (

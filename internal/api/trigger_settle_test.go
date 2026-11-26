@@ -260,3 +260,23 @@ func TestTriggerRequestKeepsAndChangesTheSettleDelay(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+// A test call on a settling trigger joins its collected run, and its answer
+// says when that run starts (final review 9).
+func TestTriggerTestCallOnASettlingTriggerNamesTheDueTime(t *testing.T) {
+	f := newRunFixture(t, "trig-settle-test")
+	tr := f.createTrigger(t, func(in *triggers.Input) { in.SettleSeconds = 60 })
+	resp := postJSON(t, f.operatorC, f.triggersURL()+"/"+tr.Trigger.ID.String()+"/test", map[string]any{"payload": map[string]any{"ref": "v1"}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("test call: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Outcome string    `json:"outcome"`
+		RunID   string    `json:"run_id"`
+		DueAt   time.Time `json:"due_at"`
+	}
+	decodeInto(t, resp, &out)
+	if out.Outcome != "collected" || out.RunID != "" || out.DueAt.IsZero() {
+		t.Fatalf("test call = %+v", out)
+	}
+}

@@ -94,6 +94,7 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
         value={onActive}
         onChange={(value) => setOnActive(value as 'queue' | 'skip')}
       />
+      {settleValue > 0 && <p className="text-[11px] text-muted-foreground">{f.onActiveSettling}</p>}
       <div className="flex gap-2">
         <div className="flex flex-1 flex-col gap-1">
           <Label htmlFor="trigger-count">{f.calls}</Label>

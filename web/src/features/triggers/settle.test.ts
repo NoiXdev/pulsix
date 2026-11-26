@@ -14,6 +14,8 @@ describe('settleProblem', () => {
     ['abc', '', 'settle'],
     ['30', '30', null],
     ['30', '86400', null],
+    // 0 is the default, as the API takes it.
+    ['30', '0', null],
     ['30', '29', 'maxWait'],
     ['30', '86401', 'maxWait'],
     ['30', 'x', 'maxWait'],
@@ -28,6 +30,7 @@ describe('settleBody', () => {
   it('sends the delay and, with one, the maximum wait (0 is the default)', () => {
     expect(settleBody('30', '600')).toEqual({ settle_seconds: 30, max_wait_seconds: 600 });
     expect(settleBody('30', '')).toEqual({ settle_seconds: 30, max_wait_seconds: 0 });
+    expect(settleBody('30', '0')).toEqual({ settle_seconds: 30, max_wait_seconds: 0 });
     expect(settleBody('0', '600')).toEqual({ settle_seconds: 0 });
     expect(settleBody('', '')).toEqual({ settle_seconds: 0 });
   });

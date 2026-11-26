@@ -200,3 +200,39 @@ func TestReceiveRefusesASettlingTriggerWithoutAPendingStore(t *testing.T) {
 		t.Fatalf("Receive = %v, runs %d", err, len(rw.runs.requests))
 	}
 }
+
+// writeBackFails is a pending store whose run-now starts the run and then
+// fails to write the row back (the run's enqueue already committed).
+type writeBackFails struct {
+	*fakePending
+	run triggers.DueRun
+}
+
+func (f *writeBackFails) FirePending(ctx context.Context, _, _ uuid.UUID, fire triggers.FireFunc) (triggers.Firing, error) {
+	return fire(ctx, f.run), errors.New("write-back failed")
+}
+
+// TestRunPendingAnswersTheStartedRunWhenTheWriteBackFails: the run was
+// enqueued, so "Run now" says so; the row stays and the ticker replays
+// the same run group (final review 7). A failure before any run started
+// is still an error.
+func TestRunPendingAnswersTheStartedRunWhenTheWriteBackFails(t *testing.T) {
+	rw := newReceiveWorld(t)
+	p := &writeBackFails{fakePending: &fakePending{}}
+	rw.withPending(p)
+	in := rw.templateInput()
+	in.SettleSeconds = 30
+	c, err := rw.svc.Create(ctx, rw.org, rw.actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.run = triggers.DueRun{Pending: triggers.PendingRun{ID: uuid.Must(uuid.NewV7()), OrgID: rw.org, TriggerID: c.Trigger.ID, Deliveries: 1}, Trigger: c.Trigger}
+	res, err := rw.svc.RunPending(ctx, rw.org, c.Trigger.ID, rw.actor)
+	if err != nil || res.Outcome != triggers.OutcomeTriggered || res.RunID == nil || len(rw.runs.requests) != 1 {
+		t.Fatalf("RunPending = %+v, %v; runs %d", res, err, len(rw.runs.requests))
+	}
+	p.run.Trigger.Enabled = false
+	if _, err := rw.svc.RunPending(ctx, rw.org, c.Trigger.ID, rw.actor); err == nil {
+		t.Fatal("a failed write-back with no run started answered success")
+	}
+}

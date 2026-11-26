@@ -205,3 +205,64 @@ describe('Deliveries: collected deliveries', () => {
     expect(within(superseded).queryByText('superseded by run g2')).not.toBeInTheDocument();
   });
 });
+
+describe('final review: test calls, on_active and polling', () => {
+  it('says a test call joins the waiting run, and when that run starts', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [trigger({ settle_seconds: 30 })] },
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+      'GET /api/v1/orgs/acme/triggers/tr1/pending': {},
+      'POST /api/v1/orgs/acme/triggers/tr1/test': { outcome: 'collected', due_at: '2026-11-26T10:00:50Z' },
+    });
+    renderDialog();
+    await user.click(await screen.findByRole('button', { name: 'Test call' }));
+    expect(await acceptConfirm(user)).toMatch(/joins the waiting collected run and replaces its values/);
+    expect(await screen.findByText(/^Test call: collected — runs at .* unless more arrive$/)).toBeInTheDocument();
+  });
+
+  it('says on_active does not apply while waiting for a quiet moment', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/triggers': { triggers: [] } });
+    renderDialog();
+    await user.click(await screen.findByRole('button', { name: 'New trigger' }));
+    const hint = 'Does not apply while waiting for a quiet moment: the collected run waits for an active run, then starts once.';
+    expect(screen.queryByText(hint)).not.toBeInTheDocument();
+    expect(screen.getByText(/A test call joins the waiting run too and replaces its values/)).toBeInTheDocument();
+    const wait = screen.getByLabelText('Wait for a quiet moment (seconds)');
+    await user.clear(wait);
+    await user.type(wait, '30');
+    expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+
+  it('says a settling trigger waits for an active run on its card', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [trigger({ settle_seconds: 30 })] },
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+      'GET /api/v1/orgs/acme/triggers/tr1/pending': {},
+    });
+    renderDialog();
+    expect(await screen.findByText('10 per 1m · wait, then start once if a run is active')).toBeInTheDocument();
+  });
+
+  it('accepts a latest run time of 0 as the default', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [] },
+      'POST /api/v1/orgs/acme/triggers': (req: MockRequest) => {
+        posted = req.body;
+        return { trigger: trigger(), secret: 's', url: trigger().url };
+      },
+    });
+    renderDialog();
+    await user.click(await screen.findByRole('button', { name: 'New trigger' }));
+    await user.type(screen.getByLabelText('Name'), 'bursty');
+    const wait = screen.getByLabelText('Wait for a quiet moment (seconds)');
+    await user.clear(wait);
+    await user.type(wait, '30');
+    await user.type(screen.getByLabelText('Run at the latest after (seconds)'), '0');
+    await user.click(screen.getByRole('button', { name: 'Create trigger' }));
+    await waitFor(() => expect(posted).toMatchObject({ settle_seconds: 30, max_wait_seconds: 0 }));
+  });
+});

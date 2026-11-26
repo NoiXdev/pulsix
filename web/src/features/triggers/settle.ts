@@ -25,7 +25,8 @@ export function settleProblem(settle: string, maxWait: string): 'settle' | 'maxW
   if (s === null || (s !== 0 && (s < SETTLE_MIN || s > SETTLE_MAX))) return 'settle';
   if (s === 0 || maxWait.trim() === '') return null;
   const m = whole(maxWait);
-  if (m === null || m < s || m > MAX_WAIT_CAP) return 'maxWait';
+  // 0 is the default (ten times the wait), as the API takes it.
+  if (m === null || (m !== 0 && (m < s || m > MAX_WAIT_CAP))) return 'maxWait';
   return null;
 }
 
