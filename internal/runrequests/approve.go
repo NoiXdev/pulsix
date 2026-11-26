@@ -206,6 +206,26 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	return nil
 }
 
+// ConfirmWithdrawn is the claim guard's second look before a job refused
+// with errRequestNotApproved is failed (jobs.ClaimGuard): it reports
+// whether the run group's request is still not approved, reading it under
+// a share lock that the transaction ctx carries — the one that writes the
+// job's failure — holds to its commit. A re-approval's Decide waits for
+// that commit, so its replay of the run group sees the job failed and
+// enqueues its zone again; or the read waited for the re-approval and sees
+// it approved, and the job runs (backlog 2.127). A run group no request
+// owns is not approved.
+func (s *Service) ConfirmWithdrawn(ctx context.Context, orgID, runGroupID uuid.UUID) (bool, error) {
+	st, err := s.store.LockStatusByRunGroup(ctx, orgID, runGroupID)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("confirm the run's request is not approved: %w", err)
+	}
+	return st != StatusApproved, nil
+}
+
 // idempotencyKey is the key an approval enqueues with, a run or a retry
 // alike, so approving a request again after a failed enqueue replays what
 // the first attempt created instead of enqueueing it twice. A job of that

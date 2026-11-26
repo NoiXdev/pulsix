@@ -50,6 +50,10 @@ type terminalTransition struct {
 	// onMiss runs inside the transaction when no row matched; nil means a
 	// miss is not an error (the job moved on meanwhile).
 	onMiss func(ctx context.Context) error
+	// precondition runs first inside the transaction; false writes
+	// nothing (applied stays false). nil: no precondition. Its locks
+	// last until the transaction ends (failWithdrawn's request lock).
+	precondition func(ctx context.Context) (bool, error)
 }
 
 // terminate applies t in ONE transaction bound to the job's organization:
@@ -97,6 +101,15 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 	applied := false
 	var applyRepo uuid.UUID
 	err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
+		if t.precondition != nil {
+			ok, err := t.precondition(ctx)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+		}
 		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest || (Kind(kind) == KindRun && q.runGroups != nil) {
 			if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
 				finishGroupLockKeyPrefix+groupID.String()); err != nil {

@@ -28,6 +28,12 @@ func (g *refuseGuard) CheckRunClaim(_ context.Context, _, _ uuid.UUID, run jobs.
 	return g.reason
 }
 
+// ConfirmWithdrawn confirms every withdrawn refusal: the guard's answer
+// does not change.
+func (g *refuseGuard) ConfirmWithdrawn(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 // TestQueueClaimGuardRefusalMarksTheJob: a run job the claim guard refuses
 // as withdrawn fails with the fixed text jobs.WithdrawnAtClaimError, the
 // mark a replay of its run group and the group's outcome read; the claim

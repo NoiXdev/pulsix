@@ -20,6 +20,12 @@ func (g staticGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID, Approv
 	return g.err
 }
 
+// ConfirmWithdrawn confirms every withdrawn refusal: the guard's answer
+// does not change.
+func (staticGuard) ConfirmWithdrawn(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 // refuseAtClaim enqueues one run job of group in a zone of its own and has
 // the claim guard refuse it with reason at its first claim, the real path
 // a job of a withdrawn approval takes. It returns the job as stored. The
