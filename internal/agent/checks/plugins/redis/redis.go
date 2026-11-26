@@ -87,6 +87,9 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 	if fields == nil && p.defaultAddr != "" {
 		s.addr = p.defaultAddr
 	}
+	if s, err = s.withTLS(); err != nil {
+		return errObs(fmt.Errorf("redis: %w", err)), nil
+	}
 
 	timeout := p.timeout
 	if timeout <= 0 {
