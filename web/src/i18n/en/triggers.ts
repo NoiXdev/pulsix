@@ -62,6 +62,35 @@ export const enTriggers = {
     invalid_payload: 'invalid_payload',
     disabled: 'disabled',
     failed: 'failed',
+    collected: 'collected',
+  },
+  /** A collected delivery's fate in the delivery log (backlog 2.137). */
+  delivery: {
+    waiting: (at: string) => `Collected — runs at ${at} unless more arrive`,
+    collapsed: 'Collapsed into run',
+    superseded: 'Superseded by run',
+  },
+  /** The settle delay on a trigger's card and its collected run while it
+   * waits (backlog 2.137). */
+  settle: {
+    label: 'Wait for a quiet moment',
+    off: 'off — every call starts a run',
+    summary: (wait: string, latest: string) => `${wait} after the last call, at the latest ${latest} after the first`,
+    pendingTitle: 'A collected run is waiting',
+    deliveries: (n: number) => (n === 1 ? '1 delivery collected' : `${n} deliveries collected`),
+    due: (at: string) => `Runs at ${at} unless more arrive`,
+    deadline: (at: string) => `At the latest at ${at}`,
+    runNow: 'Run now',
+    discard: 'Discard',
+    discardConfirm: (name: string) => `Discard the collected run of ${name}? The collected deliveries start nothing.`,
+    started: {
+      triggered: 'The collected run started.',
+      failed: 'The collected run could not start; the delivery log says why.',
+      disabled: 'The trigger is disabled; the collected run was dropped.',
+    },
+    runNowFailed: 'Starting the collected run failed',
+    discarded: 'The collected run was discarded.',
+    discardFailed: 'Discarding the collected run failed',
   },
   preset: {
     pulsix: 'Pulsix signature',
@@ -89,6 +118,12 @@ export const enTriggers = {
     path: (n: number) => `Path ${n}`,
     mapVariable: '+ Map a variable',
     limitPath: 'Limit path',
+    settle: 'Wait for a quiet moment (seconds)',
+    settleHint: "0 = off: every call starts a run. Otherwise calls are collected, and one run starts once none arrived for this long, with the last call's values.",
+    maxWait: 'Run at the latest after (seconds)',
+    maxWaitPlaceholder: (n: number) => `${n} (10 × the wait)`,
+    settleRange: 'Wait 0 (off) or 5 to 3600 seconds.',
+    maxWaitRange: (min: number) => `Run at the latest after ${min} to 86400 seconds, or leave it empty for 10 × the wait.`,
   },
   /** A trigger request on the run request page (spec 2026-11-25 C): an
    * assistant asks to create, change or rotate the secret of a webhook
@@ -121,6 +156,7 @@ export const enTriggers = {
     ifActive: 'If a run is active',
     rate: 'Rate limit',
     ratePer: (count: number, per: string) => `${count} per ${per}`,
+    settle: 'Wait for a quiet moment',
     none: '—',
     mappingNote: 'Values the mapping takes from a call reach the run as untrusted text: never as a template, never as a name Ansible acts on.',
     templateRevision: (n: number) => `Template revision ${n}`,

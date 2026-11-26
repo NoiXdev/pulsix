@@ -3,6 +3,7 @@ import { Section } from '../../ui/detail-layout.tsx';
 import type { RunPicture } from '../../api/hooks/useRunRequests.ts';
 import { useT } from '../../i18n/useT.ts';
 import { presetLabel } from '../triggers/presets.ts';
+import { describeSettle } from '../triggers/settle.ts';
 
 export type PictureTrigger = NonNullable<RunPicture['trigger']>;
 type TriggerState = NonNullable<PictureTrigger['new']>;
@@ -67,6 +68,7 @@ export function TriggerRequestSections({
     { key: 'mapping', label: r.mapping, value: mapping, mono: true },
     { key: 'onActive', label: r.ifActive, value: (s) => m.form.onActive[s.on_active === 'skip' ? 'skip' : 'queue'] },
     { key: 'rate', label: r.rate, value: (s) => r.ratePer(s.rate_limit.count, s.rate_limit.per) },
+    { key: 'settle', label: r.settle, value: (s) => describeSettle(s.settle_seconds, s.max_wait_seconds, m.settle) },
   ];
   const mapped = columns.some((c) => mapping(c.state) !== r.none);
 

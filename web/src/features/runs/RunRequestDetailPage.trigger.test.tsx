@@ -86,6 +86,21 @@ describe('RunRequestDetailPage trigger requests (spec 2026-11-25 C)', () => {
     expect(screen.queryByRole('region', { name: 'Targets' })).not.toBeInTheDocument();
   });
 
+  // Backlog 2.137: the settle delay is a row of the picture like any setting.
+  it('shows a change of the settle delay', async () => {
+    renderTrigger({
+      action: 'update',
+      current: { ...current, settle_seconds: 30, max_wait_seconds: 600 },
+      new: { ...current, settle_seconds: 60, revision: undefined },
+    });
+    const section = await screen.findByRole('region', { name: 'Webhook trigger' });
+    const settle = within(within(section).getByRole('table')).getByRole('row', { name: /Wait for a quiet moment/ });
+    expect(within(settle).getByText('30 s after the last call, at the latest 10 min after the first')).toBeInTheDocument();
+    expect(within(settle).getByText('1 min after the last call, at the latest 10 min after the first')).toBeInTheDocument();
+    const name = within(within(section).getByRole('table')).getByRole('row', { name: /Name/ });
+    expect(within(name).queryByText('changes')).not.toBeInTheDocument();
+  });
+
   it('names the repository a sync trigger syncs, and asks for repos.write', async () => {
     renderTrigger(
       {

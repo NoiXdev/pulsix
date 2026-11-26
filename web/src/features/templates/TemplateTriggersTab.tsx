@@ -15,6 +15,8 @@ import { presetLabel } from '../triggers/presets.ts';
 import { TriggerForm } from '../triggers/TriggerForm.tsx';
 import { TriggerSecretDialog } from '../triggers/TriggerSecretDialog.tsx';
 import { useTriggerCommands, type FreshSecret } from '../triggers/useTriggerCommands.ts';
+import { PendingRun } from '../triggers/PendingRun.tsx';
+import { useSettleSummary } from '../triggers/useSettleSummary.ts';
 
 export interface TemplateTriggersTabProps {
   org: string;
@@ -31,8 +33,10 @@ export interface TemplateTriggersTabProps {
  * TemplateTriggersTab is the template page's Triggers tab: one card per
  * webhook trigger that starts this template (the triggers list's own
  * `template_id` filter) with its URL, sender, timestamp header, allowed
- * sources, what it does while a run is active and whether it is enabled
- * (or disabled for review after an assistant's change). With
+ * sources, what it does while a run is active, its settle delay and
+ * whether it is enabled (or disabled for review after an assistant's
+ * change), and a collected run while one waits (Run now with jobs.run,
+ * Discard with templates.write). With
  * `templates.write` a card is edited in place, gets a new secret (shown
  * once, in the trigger secret dialog) or is deleted; anyone sees its
  * deliveries. "New trigger" creates one for this template and shows its
@@ -42,6 +46,7 @@ export function TemplateTriggersTab({ org, template, role, triggers, error }: Te
   const t = useT();
   const p = t.templates.page.triggers;
   const canWrite = may(role, 'templates.write');
+  const canRun = canWrite && may(role, 'jobs.run');
   const target: TriggerTarget = { kind: 'template_run', id: template.id, name: template.name };
   const create = useCreateTrigger(org);
   const [creating, setCreating] = useState(false);
@@ -99,7 +104,7 @@ export function TemplateTriggersTab({ org, template, role, triggers, error }: Te
       ) : (
         <div className="grid items-start gap-4 xl:grid-cols-2">
           {triggers.map((tr) => (
-            <TriggerCard key={tr.id} org={org} target={target} trigger={tr} canWrite={canWrite} onSecret={setSecret} />
+            <TriggerCard key={tr.id} org={org} target={target} trigger={tr} canWrite={canWrite} canRun={canRun} onSecret={setSecret} />
           ))}
         </div>
       )}
@@ -108,11 +113,12 @@ export function TemplateTriggersTab({ org, template, role, triggers, error }: Te
   );
 }
 
-function TriggerCard({ org, target, trigger: tr, canWrite, onSecret }: {
+function TriggerCard({ org, target, trigger: tr, canWrite, canRun, onSecret }: {
   org: string;
   target: TriggerTarget;
   trigger: Trigger;
   canWrite: boolean;
+  canRun: boolean;
   onSecret: (fresh: FreshSecret) => void;
 }) {
   const t = useT();
@@ -123,6 +129,7 @@ function TriggerCard({ org, target, trigger: tr, canWrite, onSecret }: {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState(false);
   const sources = tr.allow_cidrs ?? [];
+  const settle = useSettleSummary(tr);
 
   async function onSave(body: TriggerInput) {
     setSaveError(null);
@@ -170,7 +177,9 @@ function TriggerCard({ org, target, trigger: tr, canWrite, onSecret }: {
               <span title={sources.join(', ') || undefined}>{sources.length === 0 ? p.anySource : p.sourceCount(sources.length)}</span>
             </Fact>
             <Fact label={p.onActive}>{t.triggers.form.onActive[tr.on_active === 'skip' ? 'skip' : 'queue']}</Fact>
+            <Fact label={t.triggers.settle.label}>{settle}</Fact>
           </dl>
+          <PendingRun org={org} trigger={tr} canRun={canRun} canDiscard={canWrite} />
           <div className="flex flex-wrap gap-2">
             {canWrite && (
               <>

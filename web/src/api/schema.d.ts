@@ -3544,6 +3544,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/triggers/{id}/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org triggers by ID pending */
+        get: operations["get-api-v1-orgs-by-org-triggers-by-id-pending"];
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org triggers by ID pending */
+        delete: operations["discardPendingTrigger"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/triggers/{id}/pending/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org triggers by ID pending run */
+        post: operations["runPendingTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/triggers/{id}/rotate-requests": {
         parameters: {
             query?: never;
@@ -5556,13 +5591,18 @@ export interface components {
              * @example https://example.com/schemas/HookOutputBody.json
              */
             readonly $schema?: string;
+            /**
+             * Format: date-time
+             * @description collected: when the pending run starts unless more calls arrive
+             */
+            due_at?: string;
             /** @description The started run's first job */
             run_id?: string;
             /**
-             * @description skipped when on_active is skip and a run is active
+             * @description skipped when on_active is skip and a run is active; collected when the trigger waits for a quiet moment: the call joined its pending run, which starts at due_at unless more calls arrive
              * @enum {string}
              */
-            status?: "skipped";
+            status?: "skipped" | "collected";
         };
         HopKeyDTO: {
             bastion_id: string;
@@ -7413,6 +7453,26 @@ export interface components {
             invited_by_name: string;
             role: string;
         };
+        PendingRunDTO: {
+            /**
+             * Format: date-time
+             * @description The latest it starts at, a still active run of the trigger aside
+             */
+            deadline_at: string;
+            /** Format: int64 */
+            deliveries: number;
+            /**
+             * Format: date-time
+             * @description When it starts unless more deliveries arrive (or a run the trigger started is still active then)
+             */
+            due_at: string;
+            /** Format: date-time */
+            first_at: string;
+            /** @description The pending run; its deliveries carry it as pending_id */
+            id: string;
+            /** Format: date-time */
+            last_at: string;
+        };
         PersonalGrantDTO: {
             /** Format: date-time */
             last_used_at?: string;
@@ -9253,6 +9313,11 @@ export interface components {
             /** @enum {string} */
             kind: "template_run" | "repo_sync";
             mapping?: components["schemas"]["TriggerMappingDTO"];
+            /**
+             * Format: int64
+             * @description With a settle delay: the longest the collected run waits after the first delivery, settle_seconds-86400; 0 is the default, ten times settle_seconds; left out on an update keeps it (turning the settle delay off drops it)
+             */
+            max_wait_seconds?: number;
             name: string;
             /** @enum {string} */
             on_active?: "queue" | "skip";
@@ -9260,6 +9325,11 @@ export interface components {
             preset: "pulsix" | "github" | "gitea" | "gitlab" | "bearer";
             rate_limit?: components["schemas"]["RateLimitDTO"];
             repo_id?: string;
+            /**
+             * Format: int64
+             * @description 0 (off) or 5-3600 seconds to wait for a quiet moment before one run starts for the deliveries collected meanwhile; left out on an update keeps it
+             */
+            settle_seconds?: number;
             template_id?: string;
             timestamp_header?: string;
         };
@@ -9279,6 +9349,11 @@ export interface components {
             /** @enum {string} */
             kind: "template_run" | "repo_sync";
             mapping: components["schemas"]["TriggerMappingDTO"];
+            /**
+             * Format: int64
+             * @description The collected run starts at the latest this long after the first delivery; absent: ten times settle_seconds
+             */
+            max_wait_seconds?: number;
             name: string;
             /** @enum {string} */
             on_active: "queue" | "skip";
@@ -9290,6 +9365,11 @@ export interface components {
             review_request_id?: string;
             /** Format: int64 */
             revision: number;
+            /**
+             * Format: int64
+             * @description Seconds the trigger waits for a quiet moment: deliveries are collected into one run that starts this long after the last of them, with the last one's values; 0 starts a run per delivery
+             */
+            settle_seconds: number;
             signature_header: string;
             template_id?: string;
             timestamp_header?: string;
@@ -9310,11 +9390,19 @@ export interface components {
             /** Format: date-time */
             at: string;
             id: string;
+            /** @description The run the delivery started, or (collected) collapsed into */
             job_group_id?: string;
-            /** @enum {string} */
-            outcome: "triggered" | "skipped_active" | "rejected_ip" | "rejected_auth" | "rate_limited" | "invalid_payload" | "disabled" | "failed";
+            /**
+             * @description collected: joined the trigger's pending run (pending_id), which starts once the deliveries settle; job_group_id names that run once it started, superseded_by the run that took its place when the settle delay was turned off meanwhile
+             * @enum {string}
+             */
+            outcome: "triggered" | "skipped_active" | "rejected_ip" | "rejected_auth" | "rate_limited" | "invalid_payload" | "disabled" | "failed" | "collected";
+            /** @description collected: the pending run it joined; it is still waiting while the trigger's pending run has this id */
+            pending_id?: string;
             reason?: string;
             source_ip?: string;
+            /** @description collected: the run a later delivery started in place of the pending run, after the settle delay was turned off */
+            superseded_by?: string;
         };
         TriggerListOutputBody: {
             /**
@@ -9341,6 +9429,16 @@ export interface components {
             readonly $schema?: string;
             trigger: components["schemas"]["TriggerDTO"];
         };
+        TriggerPendingOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerPendingOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The trigger's collected run while it waits; absent when none waits */
+            pending?: components["schemas"]["PendingRunDTO"];
+        };
         TriggerRequestBody: {
             /**
              * Format: uri
@@ -9361,6 +9459,11 @@ export interface components {
             kind: "template_run" | "repo_sync";
             /** @description Payload JSONPaths onto extra vars (never a secret field or a name Ansible or Pulsix acts on) and the limit; a run receives the values as untrusted text */
             mapping?: components["schemas"]["TriggerMappingDTO"];
+            /**
+             * Format: int64
+             * @description With a settle delay: the longest the collected run waits after the first call, settle_seconds-86400; 0 or left out is ten times settle_seconds
+             */
+            max_wait_seconds?: number;
             name: string;
             /** @enum {string} */
             on_active?: "queue" | "skip";
@@ -9371,6 +9474,11 @@ export interface components {
             reason: string;
             /** @description The repository a repo_sync trigger syncs */
             repo_id?: string;
+            /**
+             * Format: int64
+             * @description 0 (off, default) or 5-3600 seconds to wait for a quiet moment: calls meanwhile are collected into one run with the last call's values
+             */
+            settle_seconds?: number;
             /** @description The job template a template_run trigger runs */
             template_id?: string;
             timestamp_header?: string;
@@ -9389,6 +9497,21 @@ export interface components {
             expires_in?: number;
             /** @description Why the trigger needs a new secret, shown to the person who approves it. The new secret is drawn when a person approves the request and shown to that person only; it never appears here */
             reason: string;
+        };
+        TriggerRunPendingOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TriggerRunPendingOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description triggered: the run started (run_id); failed: it could not start (its deliveries say why); disabled: the trigger is disabled, the collected run was dropped
+             * @enum {string}
+             */
+            outcome: "triggered" | "failed" | "disabled";
+            /** @description The started run's first job */
+            run_id?: string;
         };
         TriggerSecretOutputBody: {
             /**
@@ -9410,6 +9533,11 @@ export interface components {
             kind: "template_run" | "repo_sync";
             /** @description Payload JSONPaths mapped onto extra vars and the limit; a run receives the values as untrusted text */
             mapping: components["schemas"]["Mapping"];
+            /**
+             * Format: int64
+             * @description The longest the collected run waits after the first delivery; absent with a settle delay: ten times the delay
+             */
+            max_wait_seconds?: number;
             name: string;
             /** @enum {string} */
             on_active: "queue" | "skip";
@@ -9422,6 +9550,11 @@ export interface components {
             repo_url?: string;
             /** Format: int64 */
             revision?: number;
+            /**
+             * Format: int64
+             * @description Seconds the trigger waits for a quiet moment before it starts one run for the deliveries collected meanwhile; absent: off, every delivery starts a run
+             */
+            settle_seconds?: number;
             /** @description The header senders put the signature or token in */
             signature_header: string;
             template_id?: string;
@@ -9468,6 +9601,11 @@ export interface components {
             expires_in?: number;
             /** @description The complete new mapping; left out keeps it */
             mapping?: components["schemas"]["TriggerMappingDTO"];
+            /**
+             * Format: int64
+             * @description The longest the collected run waits after the first call, settle_seconds-86400; 0 is ten times settle_seconds; left out keeps it (turning the settle delay off drops it)
+             */
+            max_wait_seconds?: number;
             name?: string;
             /** @enum {string} */
             on_active?: "queue" | "skip";
@@ -9476,6 +9614,11 @@ export interface components {
             rate_limit?: components["schemas"]["RateLimitDTO"];
             /** @description Why the change is needed, shown to the person who approves it */
             reason: string;
+            /**
+             * Format: int64
+             * @description 0 (off) or 5-3600 seconds to wait for a quiet moment; left out keeps it
+             */
+            settle_seconds?: number;
             /** @description An empty text removes it */
             timestamp_header?: string;
         };
@@ -19618,6 +19761,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriggerOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-triggers-by-id-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerPendingOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    discardPendingTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    runPendingTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerRunPendingOutputBody"];
                 };
             };
             /** @description Error */

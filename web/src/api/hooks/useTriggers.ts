@@ -16,6 +16,7 @@ function useInvalidate(org: string) {
   return () => {
     void qc.invalidateQueries({ queryKey: ['triggers', org] });
     void qc.invalidateQueries({ queryKey: ['trigger-deliveries', org] });
+    void qc.invalidateQueries({ queryKey: ['trigger-pending', org] });
     void qc.invalidateQueries({ queryKey: ['jobs', org] });
   };
 }
@@ -78,6 +79,48 @@ export function useTestTrigger(org: string) {
   return useMutation({
     mutationFn: ({ id, payload }: { id: string; payload?: Record<string, unknown> }) =>
       unwrap(api.POST('/api/v1/orgs/{org}/triggers/{id}/test', { params: { path: { org, id } }, body: payload ? { payload } : {} })),
+    onSuccess: invalidate,
+  });
+}
+
+/** PENDING_POLL_MS is how often a waiting collected run is read again, so
+ * the card notices when it starts. */
+const PENDING_POLL_MS = 5000;
+
+/**
+ * useTriggerPending reads a settling trigger's collected run while it
+ * waits (backlog 2.137), again every few seconds while one waits. When the
+ * one it showed is gone (started, discarded or dropped) the delivery log is
+ * read again, so its deliveries say what became of them.
+ */
+export function useTriggerPending(org: string, id: string, enabled: boolean) {
+  const qc = useQueryClient();
+  const key = ['trigger-pending', org, id];
+  return useQuery({
+    queryKey: key,
+    queryFn: async () => {
+      const before = qc.getQueryData<{ pending?: { id: string } }>(key)?.pending?.id;
+      const res = await unwrap(api.GET('/api/v1/orgs/{org}/triggers/{id}/pending', { params: { path: { org, id } } }));
+      if (before && before !== res.pending?.id) void qc.invalidateQueries({ queryKey: ['trigger-deliveries', org, id] });
+      return res;
+    },
+    enabled: enabled && !!org && !!id,
+    refetchInterval: (q) => (q.state.data?.pending ? PENDING_POLL_MS : false),
+  });
+}
+
+export function useRunPendingTrigger(org: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/triggers/{id}/pending/run', { params: { path: { org, id } } })),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDiscardPendingTrigger(org: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/orgs/{org}/triggers/{id}/pending', { params: { path: { org, id } } })),
     onSuccess: invalidate,
   });
 }

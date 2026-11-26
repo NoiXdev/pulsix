@@ -7,6 +7,7 @@ import type { Trigger, TriggerInput } from '../../api/types.ts';
 import type { TriggerTarget } from '../../api/hooks/useTriggers.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PRESETS, presetLabel } from './presets.ts';
+import { MAX_WAIT_FACTOR, settleBody, settleProblem } from './settle.ts';
 
 const RATE_WINDOWS = ['1m', '5m', '1h'];
 
@@ -16,7 +17,9 @@ interface Row {
 }
 
 /** TriggerForm edits one trigger: name, sender preset, replay header,
- * allowed sources, what happens while a run is active, the rate limit and
+ * allowed sources, what happens while a run is active, the rate limit, the
+ * settle delay (wait for a quiet moment, run at the latest after; backlog
+ * 2.137, checked against the server's bounds before it is sent) and
  * (template runs only) the payload mapping. */
 export function TriggerForm({ target, initial, submitLabel, pending, error, onSubmit, onCancel }: {
   target: TriggerTarget;
@@ -38,9 +41,16 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
   const [per, setPer] = useState(initial?.rate_limit.per ?? '1m');
   const [rows, setRows] = useState<Row[]>(Object.entries(initial?.mapping.extra_vars ?? {}).map(([n, p]) => ({ name: n, path: p })));
   const [limitPath, setLimitPath] = useState(initial?.mapping.limit ?? '');
+  const [settle, setSettle] = useState(String(initial?.settle_seconds ?? 0));
+  const [maxWait, setMaxWait] = useState(initial?.max_wait_seconds ? String(initial.max_wait_seconds) : '');
+  const [problem, setProblem] = useState<'settle' | 'maxWait' | null>(null);
+  const settleValue = /^\d+$/.test(settle.trim()) ? Number(settle.trim()) : 0;
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    const refused = settleProblem(settle, maxWait);
+    setProblem(refused);
+    if (refused) return;
     const allow = sources.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
     const vars = Object.fromEntries(rows.filter((r) => r.name && r.path).map((r) => [r.name, r.path]));
     onSubmit({
@@ -53,6 +63,7 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
       allow_cidrs: allow,
       on_active: onActive,
       rate_limit: { count, per },
+      ...settleBody(settle, maxWait),
       ...(target.kind === 'template_run' ? { mapping: { extra_vars: vars, ...(limitPath ? { limit: limitPath } : {}) } } : {}),
     });
   }
@@ -93,6 +104,19 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
           <Select id="trigger-per" options={RATE_WINDOWS.map((p) => ({ value: p, label: p }))} value={per} onChange={setPer} />
         </div>
       </div>
+      <Label htmlFor="trigger-settle">{f.settle}</Label>
+      <Input id="trigger-settle" inputMode="numeric" value={settle} onChange={(e) => setSettle(e.target.value)} aria-describedby="trigger-settle-hint" />
+      <p id="trigger-settle-hint" className="text-[11px] text-muted-foreground">
+        {f.settleHint}
+      </p>
+      {problem === 'settle' && <p className="text-xs text-[var(--px-crit)]">{f.settleRange}</p>}
+      {settleValue > 0 && (
+        <>
+          <Label htmlFor="trigger-max-wait">{f.maxWait}</Label>
+          <Input id="trigger-max-wait" inputMode="numeric" value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder={f.maxWaitPlaceholder(MAX_WAIT_FACTOR * settleValue)} />
+          {problem === 'maxWait' && <p className="text-xs text-[var(--px-crit)]">{f.maxWaitRange(settleValue)}</p>}
+        </>
+      )}
       {target.kind === 'template_run' && (
         <fieldset className="flex flex-col gap-1">
           <legend className="text-[11px] font-medium text-muted-foreground">{f.mapping}</legend>

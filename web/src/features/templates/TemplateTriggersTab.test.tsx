@@ -157,4 +157,50 @@ describe('TemplateTriggersTab', () => {
     expect(await acceptConfirm(user)).toMatch(/Delete trigger push-w1/);
     await waitFor(() => expect(deleted).toBe(true));
   });
+
+  // Backlog 2.137: the settle delay is a fact of the card, and a waiting
+  // collected run shows with Run now (jobs.run) and Discard; a viewer sees
+  // it without either.
+  it("shows a trigger's settle delay and its waiting collected run", async () => {
+    const user = userEvent.setup();
+    let ran = 0;
+    const pending = { id: 'p1', first_at: '2026-11-26T10:00:00Z', last_at: '2026-11-26T10:00:20Z', due_at: '2026-11-26T10:00:50Z', deadline_at: '2026-11-26T10:10:00Z', deliveries: 2 };
+    mockApi(
+      pageRoutes({
+        over: {
+          'GET /api/v1/orgs/acme/triggers': { triggers: [trigger('w1', { settle_seconds: 60, max_wait_seconds: 3600 }), trigger('w2')] },
+          'GET /api/v1/orgs/acme/triggers/w1/pending': () => (ran ? {} : { pending }),
+          'POST /api/v1/orgs/acme/triggers/w1/pending/run': () => (ran++, { outcome: 'triggered', run_id: 'j1' }),
+        },
+      }),
+    );
+    renderTemplatePage(TRIGGERS);
+    const w1 = await card('push-w1');
+    expect(fact(w1, 'Wait for a quiet moment')).toHaveTextContent('1 min after the last call, at the latest 1 h after the first');
+    expect(fact(await card('push-w2'), 'Wait for a quiet moment')).toHaveTextContent('off — every call starts a run');
+    const box = within(await w1.findByRole('region', { name: 'A collected run is waiting' }));
+    expect(box.getByText('2 deliveries collected')).toBeInTheDocument();
+    expect(box.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    await user.click(box.getByRole('button', { name: 'Run now' }));
+    await waitFor(() => expect(ran).toBe(1));
+    await waitFor(() => expect(w1.queryByRole('region', { name: 'A collected run is waiting' })).not.toBeInTheDocument());
+  });
+
+  it('shows a viewer the waiting collected run without Run now or Discard', async () => {
+    const pending = { id: 'p1', first_at: '2026-11-26T10:00:00Z', last_at: '2026-11-26T10:00:20Z', due_at: '2026-11-26T10:00:50Z', deadline_at: '2026-11-26T10:10:00Z', deliveries: 1 };
+    mockApi(
+      pageRoutes({
+        role: 'viewer',
+        over: {
+          'GET /api/v1/orgs/acme/triggers': { triggers: [trigger('w1', { settle_seconds: 30 })] },
+          'GET /api/v1/orgs/acme/triggers/w1/pending': { pending },
+        },
+      }),
+    );
+    renderTemplatePage(TRIGGERS);
+    const box = within(await (await card('push-w1')).findByRole('region', { name: 'A collected run is waiting' }));
+    expect(box.getByText('1 delivery collected')).toBeInTheDocument();
+    expect(box.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument();
+    expect(box.queryByRole('button', { name: 'Discard' })).not.toBeInTheDocument();
+  });
 });

@@ -14,6 +14,8 @@ import { outcomeLabel } from './outcome.ts';
 import { useT } from '../../i18n/useT.ts';
 import { snippets } from './snippets.ts';
 import { useTriggerCommands } from './useTriggerCommands.ts';
+import { PendingRun } from './PendingRun.tsx';
+import { useSettleSummary } from './useSettleSummary.ts';
 import { ReviewNotice } from '../../ui/review-notice.tsx';
 import { reviewHref } from '../../ui/reviewHref.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
@@ -94,6 +96,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const [tab, setTab] = useState<'curl' | 'github' | 'gitlab' | 'gitea'>('curl');
   const sn = snippets(t, i18n);
   const mapping = Object.entries(t.mapping.extra_vars ?? {});
+  const settle = useSettleSummary(t);
 
   async function onRotate() {
     const fresh = await commands.rotate();
@@ -160,6 +163,8 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
         </ul>
       )}
       <p className="text-xs">{m.rate(t.rate_limit.count, t.rate_limit.per, t.on_active === 'skip' ? m.rateAction.skip : m.rateAction.queue)}</p>
+      <p className="text-xs">{`${m.settle.label}: ${settle}`}</p>
+      <PendingRun org={org} trigger={t} canRun={canWrite && (canRun || t.kind === 'repo_sync')} canDiscard={canWrite} />
       {canWrite && (
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={() => void onRotate()}>
