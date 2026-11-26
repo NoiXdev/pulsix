@@ -988,7 +988,7 @@ or trigger request's picture lists the open change reviews of what it would run
 (`open_change_reviews`, each with its item's kind and name): those of the template's
 items and those whose changes name the template, a template it starts through
 follow-ups, the playbook of one of them or that playbook's repository (for a
-repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing; hosts joining or leaving a group never do (an assistant's change of inventory values does, see the next paragraph). A review
+repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing, inventory maintenance included; an assistant's inventory change does (decisions D6 and D7, see below). A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
 repository sync trigger) and resumes (enables) the item at the revision shown (one a
@@ -1029,26 +1029,46 @@ inventory writes — `setInventoryGroupVars`, `setInventoryGroupSchema`,
 run live) and records an assistant's inventory writes unmarked; stop every manager
 instance first, as above. Workers and agents are not affected.
 
-An assistant's change of inventory values also pauses what runs unattended (same
-decision D6, no migration): a write made with an assistant token that sets, changes or
-removes a group's value (`PUT …/inventory/groups/{id}/vars`), a schema default
-(`PUT …/schema`; a field's removal counts when it had a default) or an existing
-membership's value (`PUT …/members/{host}`) pauses every active schedule and disables
-every enabled webhook trigger whose run would receive the changed value, in the same
-transaction as the write, with the C2 review requests above. Reached are the managed hosts
-of the group and of its descendant groups (a membership: its host); a template's run
-reaches one when the template's scope selects it and its limit matches its name or cannot
-be decided (fail closed); a schedule with its own limit decides on that limit, and a
-trigger that maps its limit from the payload counts as reaching every host its template's
-scope selects; templates that start a reached one through follow-ups are included. The
-review's picture lists each change as subject `inventory_group` or `inventory_membership`
-(with `host_id`, `host_name`), fields `vars.<key>` / `default.<field>`, old and new value
-(secrets masked) and the token; the activity entries read "an assistant changed inventory
-group …" or "the values of host … in inventory group …". A person's change, an accept, a
-host joining a group (with values) or leaving it, and a write that moves nothing pause
-nothing. The three inventory writes now run in one write transaction each. **An older
-manager alongside** pauses nothing after an assistant's inventory change; stop every
-manager instance first, as above.
+An assistant's inventory change also pauses what runs unattended (decisions D6 and D7, no
+migration). Writes made with an assistant token that pause:
+- a group's values (`PUT …/inventory/groups/{id}/vars`: a key set, changed or removed);
+- a group's schema (`PUT …/schema`): a default set, changed or removed, and any edit that
+  changes a value as runs receive it (a field made inactive, retyped, removed, moved between
+  group and host scope, made overridable or not), for the group and each member;
+- a membership (`PUT …/members/{host}`): a host joining the group, with or without values,
+  or a change of an existing membership's values; `DELETE …/members/{host}`: a host leaving;
+- a group's parent (`PATCH …/inventory/groups/{id}` with another `parent_id`), and a group
+  deleted with its members (`DELETE …/inventory/groups/{id}`);
+- a managed host created (`POST …/hosts`) or made managed (`PATCH …/hosts/{id}`,
+  `PATCH …/hosts/{id}/capabilities`).
+
+Each pauses every active schedule and disables every enabled webhook trigger whose run then
+receives other values or reaches other hosts, in the same transaction as the write, with the
+C2 review requests above. Reached are the managed hosts of the changed group and of its
+descendant groups (a membership: its host; a move: the moved subtree), and a template reaches
+one when its scope selects it after the change or its scope group held it before (a host that
+left, a group that moved away or was deleted). A template's or schedule's limit does not narrow
+this: a limited run still renders every scoped host of its zones and a play reads their values
+through `hostvars`. Templates that start a reached one through follow-ups are included; an
+organization without any schedule or template trigger reads nothing more. The review's picture
+lists each change as subject `inventory_group`, `inventory_membership` (with `host_id`,
+`host_name`) or `host`, with fields `vars.<key>`, `<host>: vars.<key>`, `default.<field>`,
+`member`, `members`, `parent`, `host` or `managed`, old and new value (secrets masked) and the
+token, and says that approving leaves the assistant's values plain text until a person changes
+or accepts them. A person's change, an accept, a rename and a write that moves nothing pause
+nothing. These writes now run in one write transaction each; a membership write locks the row
+(`FOR NO KEY UPDATE`) and tells a join from a change by the upsert itself.
+
+**Host addresses** (decision D7, controller's call): `POST`/`PATCH …/hosts` now refuse an
+address that is not empty, an IP address or a host name (the jump host address rule; 400), for
+every caller. Stored addresses are not rewritten: check them before upgrading with
+`SELECT id, name, address FROM hosts WHERE address <> '' AND address !~ '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'`
+(it also lists IPv6 literals, which the API accepts). Every run's inventory
+now carries `ansible_host` as plain text (`{"__ansible_unsafe": …}`), so a stored address is
+never evaluated; the worker is unchanged. The system jobs the worker renders itself (bootstrap,
+key rotation) still carry the address as is; the write rule keeps new ones clean. **An older
+manager alongside** pauses nothing after an assistant's inventory change, accepts any address
+and renders `ansible_host` live; stop every manager instance first, as above.
 
 ## Behaviour changes to check after an upgrade
 
