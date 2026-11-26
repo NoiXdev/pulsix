@@ -29,12 +29,15 @@
 - R12 **Skew:** agent-local only. An older agent refuses a secret with a new field ("secret field `tls_ca` is not known"), loudly, on that check only. No manager or protocol change.
 - R13 **Real-server tests:** each plugin's testcontainer test gains a TLS-with-client-certificate case (server requires a client certificate signed by a throwaway CA): `redis:7.4-alpine` with `--tls-auth-clients yes`, `mysql:8.4` with a `REQUIRE X509` user, `postgres` with a `hostssl … cert` rule. The PKI comes from a test-only helper package `plugins/internal/testpki` (CA, server and client certificates, PEM files written with chosen modes). Named pipes are covered by parse/selection tests on every OS and a go-winio listener test that only runs on Windows.
 
+- R14 **Fix round 1 (review M1–M6):** (M1) `mysql`/`redis` skip leading `EC PARAMETERS` blocks in a key file (`openssl ecparam -genkey` output); `postgres` keeps the first-block rule (`TLSFiles.FirstBlockOnly`, pgx reads only that block) and a key after other blocks reads "does not start with the private key; remove the PEM blocks before it (such as EC PARAMETERS)". (M2) a TLS file is opened once (non-blocking on Unix, so a FIFO cannot hang the round) and the regular-file, size and permission checks run on the opened descriptor (`fstat`). (M3) no code change: any local user can create a pipe under the server's name while MySQL is down, and under `tls: preferred` the impostor gets the password (the driver's RSA exchange with the impostor's key); the user docs recommend `tls: true` with `tls_ca` for `pipe`. (M4) `postgres` refuses `sslcert`/`sslkey` with a socket-directory `host` ("needs a TCP host, not a socket directory"; pgx and libpq use no TLS over a socket). (M5) `sslrootcert: system` is pinned by a test. (M6) Windows key ACLs stay unchecked (R6); the user docs say so. The relative-`sslrootcert` break stays (controller ruling).
+
 ## Review Focus
 - Error texts never carry the path or content of a file field (`TestTLSFilesErrorsNeverCarryThePath`, each plugin's `…NameTheFieldNeverTheValue`).
 - Encrypted, mismatched, wrong-type and world-readable keys (`TestTLSFilesKey*`).
 - Pair and mode rules (`TestParseSettingsTLSFieldRules` in mysql/redis, `TestParseSettingsClientCert` in postgres).
 - A custom CA verifies and the server name is honoured; an unknown CA is still refused (redis `TestTLSWithACustomCA`, mysql `TestTLSConfig`).
 - Client certificate actually sent; a server requiring one without it reads "TLS handshake failed" (redis `TestTLSClientCertificate`, integration cases).
+- Key files from `openssl ecparam -genkey` and FIFOs (`TestTLSFilesKeyWithECParameters`, `TestTLSFilesFIFODoesNotHang`, postgres `TestKeyWithECParametersIsNamed`); postgres socket host with a client certificate (`TestBadSecretFields`), `system` (`TestRootCertSystem`).
 - Pipe: non-Windows refusal, name forms, remote refusal, dialer selection (`TestParseSettingsPipe`, `TestBuildConfigPipe`, Windows-only `TestDialPipe`).
 
 ---
