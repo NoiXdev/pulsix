@@ -21,6 +21,10 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 			s.d.Log.ErrorContext(ctx, "webhook trigger's stored mapping failed to compile", "trigger", t.ID, "org", t.OrgID, "err", err)
 			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)")
 		}
+		if errors.Is(err, errSecretCheck) {
+			s.d.Log.ErrorContext(ctx, "webhook delivery's mapped values could not be checked against the run's secrets", "trigger", t.ID, "org", t.OrgID, "err", err)
+			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the mapped values could not be checked against the run's secrets (see the manager log)")
+		}
 		if field == "" {
 			return Result{}, d, err
 		}

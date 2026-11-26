@@ -39,6 +39,13 @@ const HookIPLimit = 300
 // OutcomeFailed instead of OutcomeInvalidPayload (Task 10 review, Minor 4).
 var errMappingCompile = errors.New("stored mapping failed to compile")
 
+// errSecretCheck marks a delivery whose mapped values could not be checked
+// against the run's secrets (backlog 2.139: the scope or the playbook could
+// not be read, or the check is not wired). Nothing starts; runTemplate
+// records it as OutcomeFailed, as a refused enqueue, so the sender gets the
+// 409 of a start that failed rather than a 5xx it would retry.
+var errSecretCheck = errors.New("mapped values could not be checked against the run's secrets")
+
 // Request is one call to a hook endpoint.
 type Request struct {
 	TriggerID string                   // raw path segment
@@ -240,6 +247,9 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	// change, a sync that found a vault value) refuses the delivery before
 	// anything starts or is collected (backlog 2.139).
 	if field, err := s.refuseSecretShadows(ctx, t, checked); err != nil {
+		if field == "" {
+			err = fmt.Errorf("%w: %w", errSecretCheck, err)
+		}
 		return templates.Overrides{}, field, err
 	}
 	return checked, "", nil

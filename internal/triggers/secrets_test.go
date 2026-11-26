@@ -309,8 +309,39 @@ func TestDeliveryWithoutSecretChecksFailsClosed(t *testing.T) {
 	}
 	rw.svc = triggers.NewService(triggers.Deps{Store: rw.rec, Templates: rw.tmpls, Repos: rw.repos, Box: fakeBox{}, Runs: rw.runs, Audit: rw.audit})
 	res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1"}`))
-	if err == nil || res.Outcome == triggers.OutcomeTriggered || len(rw.runs.requests) != 0 {
+	if err != nil || res.Outcome != triggers.OutcomeFailed || len(rw.runs.requests) != 0 {
 		t.Fatalf("Receive without secret checks = %+v, %v; runs %d", res, err, len(rw.runs.requests))
+	}
+}
+
+// TestDeliveryCheckFailureIsRecordedAsFailed: a secret check that cannot be
+// done (the scope or the playbook cannot be read) starts nothing and
+// collects nothing; the delivery is recorded as failed with a generic
+// reason and answered as a start that failed (409), never as an internal
+// error a sender would retry.
+func TestDeliveryCheckFailureIsRecordedAsFailed(t *testing.T) {
+	for _, settle := range []int{0, 30} {
+		rw := newReceiveWorld(t)
+		p := &fakePending{}
+		rw.withPending(p)
+		in := rw.templateInput()
+		in.SettleSeconds = settle
+		c, err := rw.svc.Create(ctx, rw.org, rw.actor, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rw.scope.err = errors.New("boom: group 7 is gone")
+		res, err := rw.svc.Receive(ctx, rw.signed(t, c, `{"ref":"v1"}`))
+		if err != nil || res.Outcome != triggers.OutcomeFailed || len(rw.runs.requests) != 0 || len(p.collects) != 0 {
+			t.Fatalf("settle %d: Receive = %+v, %v; runs %d, collects %d", settle, res, err, len(rw.runs.requests), len(p.collects))
+		}
+		if len(rw.rec.deliveries) != 1 {
+			t.Fatalf("settle %d: deliveries = %+v", settle, rw.rec.deliveries)
+		}
+		d := rw.rec.deliveries[0]
+		if d.Outcome != triggers.OutcomeFailed || d.Reason != "the mapped values could not be checked against the run's secrets (see the manager log)" {
+			t.Fatalf("settle %d: delivery = %+v", settle, d)
+		}
 	}
 }
 

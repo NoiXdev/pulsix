@@ -65,8 +65,8 @@ func TestSettleCheckFailureAtStart(t *testing.T) {
 	if p := w.pending(t, c.Trigger.ID); p != nil || len(w.started()) != 0 {
 		t.Fatalf("a failed check kept the pending run (%+v) or started one (%d)", p, len(w.started()))
 	}
-	if ds := w.deliveries(t, c.Trigger.ID); ds[0].Outcome != triggers.OutcomeFailed || strings.Contains(ds[0].Reason, "boom") ||
+	if ds := w.deliveries(t, c.Trigger.ID); len(ds) != 1 || ds[0].Outcome != triggers.OutcomeFailed || strings.Contains(ds[0].Reason, "boom") ||
 		!strings.Contains(ds[0].Reason, "could not be checked") {
-		t.Fatalf("delivery = %+v", ds[0])
+		t.Fatalf("deliveries = %+v", ds)
 	}
 }

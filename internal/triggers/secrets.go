@@ -105,9 +105,9 @@ func (s *Service) refuseSecretShadows(ctx context.Context, t Trigger, ov templat
 // collected fails the window, its deliveries naming the variable and the
 // kind of secret, never a value. A check the context ended is kept for the
 // next try, as an interrupted enqueue is; any other failure to check fails
-// the window, as a refused enqueue does. ok is false when the run may
-// start.
-func (s *Service) refuseCollected(ctx context.Context, t Trigger, ov templates.Overrides) (Firing, bool) {
+// the window, as a refused enqueue does. refused is true when the run must
+// not start; f is then what becomes of the pending run.
+func (s *Service) refuseCollected(ctx context.Context, t Trigger, ov templates.Overrides) (f Firing, refused bool) {
 	field, err := s.refuseSecretShadows(ctx, t, ov)
 	switch {
 	case err == nil:
