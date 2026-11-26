@@ -1177,9 +1177,12 @@ an unknown outcome; stop every manager instance first, as above.
 Request methods, headers and a body on the `http` check (backlog 3.84) add no migration,
 no proto change and no dependency. The `http` parameter `method` now also takes `POST`,
 `PUT`, `PATCH`, `DELETE` and `OPTIONS`, and three parameters are new: `headers` (at most 16
-`Name: value` entries of 1 024 bytes; reserved, hop-by-hop and credential headers refused),
-`body` (at most 8 KiB, only with `POST`, `PUT` or `PATCH`) and `content_type` (only with a
-body, default `application/json`). Existing checks behave exactly as before. Two validation
+`Name: value` entries of 1 024 bytes; reserved, hop-by-hop, routing, override and credential
+headers refused; dropped when a redirect leaves the first origin), `body` (UTF-8 text without
+NUL, at most 8 KiB, only with `POST`, `PUT` or `PATCH`) and `content_type` (only with a body;
+`application/json` when a body is sent without one). `POST`, `PUT`, `PATCH`, `DELETE` and a
+body need the new manager setting `PULSIX_PROBE_WRITE_METHODS` (default `false`; see the
+behaviour changes below). Existing checks behave exactly as before. Two validation
 messages change wording: `json_values` and body-reading assertions with `HEAD` now say
 "needs a method other than HEAD" instead of "needs method GET". **Skew with agents:** an
 agent of an earlier release would drop the headers and the body and send a plain GET, so a
@@ -1192,6 +1195,21 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
 
 ## Behaviour changes to check after an upgrade
 
+- **http checks can send other methods, headers and a body (backlog 3.84, no
+  migration):** any member who may write checks can now make the manager send
+  `OPTIONS` and request headers to every address it reaches outside
+  `PULSIX_PROBE_DENY_CIDRS` (the manager's own loopback, link-local and cloud
+  metadata addresses stay refused). Requests that may change their target —
+  `POST`, `PUT`, `PATCH`, `DELETE` or any request body — stay off until the
+  operator sets `PULSIX_PROBE_WRITE_METHODS=true` on the manager: off, such a
+  check is refused on save (400 naming the variable) and a stored one reads
+  that error on every metric instead of probing, never a plain GET. Before
+  turning it on, list in `PULSIX_PROBE_DENY_CIDRS` every internal network
+  that organization members must not write to (container engines, databases,
+  admin APIs, mail relays); a check sends its request every interval. Routing
+  and override headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`,
+  `X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`,
+  `X-HTTP-Method`, `X-Method-Override`) are always refused.
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
   migration):** the `smart` check leaves a disk in standby asleep, as before, but used
   to report nothing for it, so its readings turned stale, the host read unknown, and a
