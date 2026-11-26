@@ -2041,6 +2041,23 @@ an unknown outcome; stop every manager instance first, as above.
   `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
   `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
   which now also carries the values of the host's groups and their parent groups.
+- **More database metrics (backlog 3.10b, no migration):** the updated agent reports
+  new metrics; nothing existing changes. `postgres`: `pg.replicas` on item "" every
+  round (an error "no privilege to see replication" for a login without `pg_monitor`,
+  and a failure on a failed round like the other host metrics), and per replica item
+  `replica:<application_name>@<client address>` (`replica:<name>@local` over a Unix
+  socket) `pg.replica_lag_bytes`, `pg.replica_lag_seconds` and `pg.replica_state`;
+  these items are asked whatever `databases` lists. `redis`: seven persistence metrics
+  on item "" (`redis.rdb_last_bgsave_status`, `redis.rdb_last_save_age_seconds`,
+  `redis.rdb_changes_since_last_save`, `redis.aof_enabled`, `redis.aof_last_write_status`,
+  `redis.aof_last_bgrewrite_status`, `redis.loading`); a Redis-protocol server whose INFO
+  lacks them reports an error on each. `mysql`: a new optional parameter
+  `schema_sizes` (default false) adds `mysql.schema_size_bytes` per schema and
+  `mysql.schemas_unreported`; the login needs a privilege on the tables
+  (`GRANT SHOW VIEW ON *.*` suffices and reads no data). Version skew: an older agent
+  reports none of these and ignores `schema_sizes`; a manager older than this release
+  stores the new metrics but refuses rules on them, and refuses a `mysql` check that
+  carries `schema_sizes` (unknown parameter), so roll the managers before setting it.
 
 ## Roll order
 
