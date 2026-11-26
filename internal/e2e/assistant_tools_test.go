@@ -99,9 +99,16 @@ func (a *assistantSuite) inventoryWrites(cs *sdk.ClientSession) map[string]any {
 	var host struct {
 		Host idOut `json:"host"`
 	}
-	a.recordOK(cs, "create_host", map[string]any{"name": "e2e-asst-h2", "zone_id": s.zoneID, "address": "192.0.2.21", "managed": true}, &host)
+	// The address of a host that is not managed yet is the assistant's to
+	// set; once managed, where it is reached is a person's to change
+	// (controller's ruling N1).
+	a.recordOK(cs, "create_host", map[string]any{"name": "e2e-asst-h2", "zone_id": s.zoneID, "address": "192.0.2.21"}, &host)
 	h2 := host.Host.ID
-	a.recordOK(cs, "update_host", map[string]any{"host_id": h2, "fields": map[string]any{"address": "192.0.2.22"}}, nil)
+	a.recordOK(cs, "update_host", map[string]any{"host_id": h2, "fields": map[string]any{"address": "192.0.2.22", "managed": true}}, nil)
+	if text, isErr := a.record(cs, "update_host", map[string]any{"host_id": h2, "fields": map[string]any{"address": "192.0.2.23"}}); !isErr ||
+		!strings.Contains(text, "a person has to change where a managed host is reached") {
+		s.t.Fatalf("an assistant's address change of a managed host = %v %s", isErr, text)
+	}
 	var hostRead struct {
 		Host struct {
 			Name    string `json:"name"`
