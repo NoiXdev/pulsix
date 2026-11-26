@@ -8153,6 +8153,8 @@ export interface components {
             notes: components["schemas"]["VarSourceNoteDTO"][] | null;
             /** Format: date-time */
             synced_at: string;
+            /** @description The variables the read found set to values encrypted with Ansible Vault, by name and file, never a value; absent when the read did not report them (a worker older than this feature), so they are unknown */
+            vault?: components["schemas"]["RepoVaultDTO"];
             /** @description False when the last sync came from a worker that reads no variable sources; the record is the read before */
             worker_reads: boolean;
         };
@@ -8181,6 +8183,21 @@ export interface components {
             url: string;
             vault_credential_id?: string;
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
+        };
+        RepoVaultDTO: {
+            /** @description A limit or the time limit left files unread: names may be missing */
+            cut: boolean;
+            /** @description Variable files encrypted as a whole: the names they set are not known */
+            encrypted_files: string[] | null;
+            /** @description Variables set to a vault-encrypted value, by name then file */
+            names: components["schemas"]["RepoVaultNameDTO"][] | null;
+            /** @description Variable files that could not be read: the names they set are not known */
+            unread: string[] | null;
+        };
+        RepoVaultNameDTO: {
+            /** @description The file that sets it, relative to the repository subpath */
+            file: string;
+            name: string;
         };
         RequestRetryRequest: {
             /**

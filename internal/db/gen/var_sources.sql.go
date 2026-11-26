@@ -28,7 +28,7 @@ func (q *Queries) DeleteRepoPlaybookSources(ctx context.Context, arg DeleteRepoP
 }
 
 const getPlaybookVarSource = `-- name: GetPlaybookVarSource :one
-SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes, r.synced_ref,
+SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes, r.synced_ref, r.vault_names,
        p.path, p.result
 FROM repo_var_sources r
 LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = $1
@@ -49,6 +49,7 @@ type GetPlaybookVarSourceRow struct {
 	LeftOut     []byte    `json:"left_out"`
 	Notes       []byte    `json:"notes"`
 	SyncedRef   *string   `json:"synced_ref"`
+	VaultNames  []byte    `json:"vault_names"`
 	Path        *string   `json:"path"`
 	Result      []byte    `json:"result"`
 }
@@ -68,6 +69,7 @@ func (q *Queries) GetPlaybookVarSource(ctx context.Context, arg GetPlaybookVarSo
 		&i.LeftOut,
 		&i.Notes,
 		&i.SyncedRef,
+		&i.VaultNames,
 		&i.Path,
 		&i.Result,
 	)
@@ -115,7 +117,7 @@ func (q *Queries) GetRepoPlaybookText(ctx context.Context, arg GetRepoPlaybookTe
 }
 
 const getRepoVarSources = `-- name: GetRepoVarSources :one
-SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at
+SELECT commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at, vault_names
 FROM repo_var_sources
 WHERE org_id = $1 AND repo_id = $2
 `
@@ -134,6 +136,7 @@ type GetRepoVarSourcesRow struct {
 	Notes         []byte             `json:"notes"`
 	SyncedRef     *string            `json:"synced_ref"`
 	SyncClaimedAt pgtype.Timestamptz `json:"sync_claimed_at"`
+	VaultNames    []byte             `json:"vault_names"`
 }
 
 func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesParams) (GetRepoVarSourcesRow, error) {
@@ -148,6 +151,7 @@ func (q *Queries) GetRepoVarSources(ctx context.Context, arg GetRepoVarSourcesPa
 		&i.Notes,
 		&i.SyncedRef,
 		&i.SyncClaimedAt,
+		&i.VaultNames,
 	)
 	return i, err
 }
@@ -301,15 +305,15 @@ func (q *Queries) MarkRepoVarSourcesUnread(ctx context.Context, arg MarkRepoVarS
 }
 
 const upsertRepoVarSources = `-- name: UpsertRepoVarSources :execrows
-INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at)
+INSERT INTO repo_var_sources (repo_id, org_id, commit_sha, synced_at, worker_reads, incomplete, left_out, notes, synced_ref, sync_claimed_at, vault_names)
 SELECT r.id, r.org_id, $1::text, $2::timestamptz, true, $3::boolean, $4::jsonb, $5::jsonb,
-       $6::text, $7::timestamptz
+       $6::text, $7::timestamptz, $8::jsonb
 FROM git_repos r
-WHERE r.org_id = $8 AND r.id = $9
+WHERE r.org_id = $9 AND r.id = $10
 ON CONFLICT (repo_id) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha, synced_at = EXCLUDED.synced_at, worker_reads = true,
   incomplete = EXCLUDED.incomplete, left_out = EXCLUDED.left_out, notes = EXCLUDED.notes,
-  synced_ref = EXCLUDED.synced_ref, sync_claimed_at = EXCLUDED.sync_claimed_at
+  synced_ref = EXCLUDED.synced_ref, sync_claimed_at = EXCLUDED.sync_claimed_at, vault_names = EXCLUDED.vault_names
 `
 
 type UpsertRepoVarSourcesParams struct {
@@ -320,11 +324,14 @@ type UpsertRepoVarSourcesParams struct {
 	Notes         []byte             `json:"notes"`
 	SyncedRef     *string            `json:"synced_ref"`
 	SyncClaimedAt pgtype.Timestamptz `json:"sync_claimed_at"`
+	VaultNames    []byte             `json:"vault_names"`
 	OrgID         uuid.UUID          `json:"org_id"`
 	RepoID        uuid.UUID          `json:"repo_id"`
 }
 
-// A worker's read: the record is replaced, worker_reads set. Like
+// A worker's read: the record is replaced, worker_reads set. vault_names
+// is NULL when the read does not name the vault-encrypted variables (an
+// older worker's, migration 00132). Like
 // MarkRepoVarSourcesUnread it selects the repository instead of naming it:
 // a repository deleted while its sync ran inserts nothing (zero rows),
 // where a plain INSERT would fail its foreign key and abort the whole
@@ -338,6 +345,7 @@ func (q *Queries) UpsertRepoVarSources(ctx context.Context, arg UpsertRepoVarSou
 		arg.Notes,
 		arg.SyncedRef,
 		arg.SyncClaimedAt,
+		arg.VaultNames,
 		arg.OrgID,
 		arg.RepoID,
 	)

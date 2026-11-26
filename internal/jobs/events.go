@@ -489,14 +489,16 @@ const eventSeqLockKeyPrefix = "job-event-seq:"
 
 // AppendJobEventSQL is the append statement: the manager assigns the next
 // seq for the job under the advisory lock. The max(seq) subquery filters
-// `at >= $9` — the job's created_at less EventClockSlack, derived from the
-// created_at every append path carries (the pinned binding from the claim
-// row, the adoption branch, or the row fallback) — so TimescaleDB prunes
-// the scan to the chunks the job's own events live in instead of running
-// max() across every chunk (backlog 2.50). The bound is safe as an
-// exclusion: the append clamps an event's `at` to no earlier than it
-// (clampEventTime, backlog 2.138). Exported only for the SQL-text
-// regression guard.
+// `at >= $9` — the job's created_at less EventClockSlack (the same bound
+// the log read uses), carried by every append path (the pinned binding
+// from the claim row, the adoption branch, or the row fallback) — so
+// TimescaleDB prunes the scan to the chunks the job's own events live in
+// instead of running max() across every chunk (backlog 2.50). The slack
+// matters: a worker whose clock lags stamps events before created_at, and
+// a strict bound would miss them and reuse their seq (backlog 2.135); the
+// append also clamps an event's `at` to no earlier than the bound
+// (clampEventTime, backlog 2.138), so the bound is a safe exclusion.
+// Exported only for the SQL-text regression guard.
 const AppendJobEventSQL = `INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
 		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1 AND at >= $9), 0) + 1, $2, $3, $4, $5, $6, $7, $8
 		 RETURNING seq`
