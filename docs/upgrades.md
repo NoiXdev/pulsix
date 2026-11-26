@@ -188,6 +188,12 @@ can be bound to any host, and the check shows no readings on the host page until
 its agent is updated. Nothing is seeded into organizations, so no existing host
 gains the check by itself, and there is no schema change.
 
+The `docker` check's `resources` option (backlog 3.12a, off by default) needs an
+agent at the version that ships it. An older agent ignores the option and keeps
+reporting the container states; the usage metrics simply never appear. An older
+manager never sends the option, so a newer agent never reads usage for it. There
+is no schema or protocol change and no manager-side gating.
+
 The same holds for the `temperature`, `smart` and `raid` plugins (backlog 3.9):
 an older agent skips such a check, warns on every configuration push and shows
 no readings until it is updated, and the manager does not gate on it. Nothing is
@@ -1176,6 +1182,25 @@ an unknown outcome; stop every manager instance first, as above.
 
 ## Behaviour changes to check after an upgrade
 
+- **Container resource usage on the docker check (backlog 3.12a, no migration):**
+  a new option `resources` (off by default; existing checks are unchanged) makes the
+  agent read each running or paused container's CPU, memory, network and block I/O
+  once per round from the engine's one-shot stats, after the state readings and
+  within the same 10-second bound, at most 8 requests at once and for at most 100
+  running containers (the first by name; the rest are counted in
+  `docker.containers_unsampled`). New per-container metrics: `docker.cpu_percent`
+  (100 is one core), `docker.memory_bytes` (without the file cache, as `docker stats`
+  shows it), `docker.memory_percent` (of the limit, or of the host's memory without
+  one; not for Windows containers while they run), `docker.net_rx_bytes_per_s`,
+  `docker.net_tx_bytes_per_s` (only for a container with a network of its own, not
+  `host`, `none` or `container:…`), `docker.block_read_bytes_per_s` and
+  `docker.block_write_bytes_per_s`. Rates appear from the second round on, and again
+  one round after a container is recreated or its counters reset. A container that is
+  not running reads 0 instead of turning stale. Each option-on round adds up to seven
+  tuples per container towards the per-host cap of 4 096; switching the option off
+  reads the usage values as no longer asked and closes their alerts as `stale`. On an
+  engine older than API 1.41 (Docker 20.10) each stats request waits a second or two,
+  so with many containers some read "did not answer in time".
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
   migration):** the `smart` check leaves a disk in standby asleep, as before, but used
   to report nothing for it, so its readings turned stale, the host read unknown, and a
