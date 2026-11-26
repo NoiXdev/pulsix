@@ -41,9 +41,9 @@ type jobLogArgs struct {
 	Host        string   `json:"host,omitempty" jsonschema:"only this host's events (its exact name)"`
 	Task        string   `json:"task,omitempty" jsonschema:"only events whose task name contains this text, in any case"`
 	Role        string   `json:"role,omitempty" jsonschema:"only the tasks of this role (task names read 'role : task'), in any case"`
-	State       []string `json:"state,omitempty" jsonschema:"only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap"`
-	FailedOnly  bool     `json:"failed_only,omitempty" jsonschema:"only failed and unreachable events (instead of state)"`
-	ChangedOnly bool     `json:"changed_only,omitempty" jsonschema:"instead of the log, per host the names of the tasks that changed something (among the next limit changed events)"`
+	State       []string `json:"state,omitempty" jsonschema:"only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap, run_start, run_end, error, fatal"`
+	FailedOnly  bool     `json:"failed_only,omitempty" jsonschema:"only the failed, unreachable, error and fatal events (instead of state)"`
+	ChangedOnly bool     `json:"changed_only,omitempty" jsonschema:"instead of the log, per host the names of the tasks that changed something (among the next limit changed events; truncated says the limit was hit and more may follow)"`
 }
 
 // failedLogStates are the states failed_only reads.
@@ -235,7 +235,7 @@ func jobTools() []toolDef {
 			tenancy.AreaJobsRead, readTool, boundWaitSeconds, func(ctx context.Context, c *caller, in jobGetArgs) (any, error) {
 				return passGet(ctx, c, waitQuery(in.WaitSeconds, in.Unless), "/jobs/%s", in.JobID)
 			}),
-		define("get_job_log", "Get job log", "A job's log, one line per event (sequence, host, task, state, text), narrowed by host, task (text in the task name), role and state as asked. Call again with next_after to read on; a running job's log grows. With changed_only the answer is, per host, the tasks that changed something instead of the log.",
+		define("get_job_log", "Get job log", "A job's log, one line per event (sequence, host, task, state, text), narrowed by host, task (text in the task name), role and state as asked. Call again with next_after to read on; a running job's log grows. An empty page means nothing new yet: call again with the same next_after. With changed_only the answer is, per host, the tasks that changed something instead of the log.",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobLogArgs) (any, error) {
 				limit := in.Limit
 				if limit == 0 {
@@ -260,7 +260,11 @@ func jobTools() []toolDef {
 					return nil, err
 				}
 				if in.ChangedOnly {
-					return map[string]any{"changed": changedTasks(body.Events), "next_after": body.NextAfter}, nil
+					out := map[string]any{"changed": changedTasks(body.Events), "next_after": body.NextAfter}
+					if len(body.Events) >= limit {
+						out["truncated"] = true
+					}
+					return out, nil
 				}
 				return map[string]any{"log": renderEvents(body.Events), "next_after": body.NextAfter}, nil
 			}),

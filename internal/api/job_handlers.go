@@ -397,7 +397,7 @@ type jobEventsInput struct {
 	Org   string   `path:"org"`
 	ID    string   `path:"id"`
 	After int64    `query:"after" doc:"Only events with a greater sequence number come back"`
-	Limit int      `query:"limit" minimum:"1" maximum:"1000" default:"1000" doc:"At most this many events (in sequence order); continue with after=next_after"`
+	Limit int      `query:"limit" minimum:"1" maximum:"1000" default:"1000" doc:"At most this many events (in sequence order); continue with after=next_after. An empty list means nothing new yet: ask again with the same after"`
 	Host  string   `query:"host" maxLength:"255" doc:"Only this host's events (exact name)"`
 	Task  string   `query:"task" maxLength:"255" doc:"Only events whose task name contains this, in any case"`
 	Role  string   `query:"role" maxLength:"255" doc:"Only events of this role's tasks (task names reading \"<role> : <task>\"), in any case"`
@@ -452,7 +452,7 @@ func normalizeEventPayload(raw json.RawMessage) map[string]any {
 type jobEventsOutput struct {
 	Body struct {
 		Events    []jobEventDTO `json:"events"`
-		NextAfter int64         `json:"next_after" doc:"The sequence number of the last event returned (the request's after when none was): pass it as after to read on"`
+		NextAfter int64         `json:"next_after" doc:"The sequence number of the last event returned (the request's after when none was): pass it as after to read on; with no events it stays the same"`
 	}
 }
 

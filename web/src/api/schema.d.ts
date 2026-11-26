@@ -6288,7 +6288,7 @@ export interface components {
             events: components["schemas"]["JobEventDTO"][] | null;
             /**
              * Format: int64
-             * @description The sequence number of the last event returned (the request's after when none was): pass it as after to read on
+             * @description The sequence number of the last event returned (the request's after when none was): pass it as after to read on; with no events it stays the same
              */
             next_after: number;
         };
@@ -15644,7 +15644,7 @@ export interface operations {
             query?: {
                 /** @description Only events with a greater sequence number come back */
                 after?: number;
-                /** @description At most this many events (in sequence order); continue with after=next_after */
+                /** @description At most this many events (in sequence order); continue with after=next_after. An empty list means nothing new yet: ask again with the same after */
                 limit?: number;
                 /** @description Only this host's events (exact name) */
                 host?: string;

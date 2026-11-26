@@ -574,3 +574,46 @@ func TestWaitSecondsIsBoundedInTheSchema(t *testing.T) {
 		t.Fatalf("saw %d of the two tools", seen)
 	}
 }
+
+// TestJobLogChangedOnlyTruncated: changed_only says when its filtered fetch
+// hit the limit, so the per-host summary may be incomplete.
+func TestJobLogChangedOnlyTruncated(t *testing.T) {
+	f := newOrgFixture(t)
+	id := f.startJob(t, []jobs.Event{
+		{Seq: 1, Host: "web-1", Task: "A", State: "changed", Payload: payload("")},
+		{Seq: 2, Host: "web-1", Task: "B", State: "changed", Payload: payload("")},
+		{Seq: 3, Host: "web-1", Task: "C", State: "changed", Payload: payload("")},
+	})
+	cs := mustConnect(t, f.s, f.token)
+	for limit, want := range map[int]bool{2: true, 3: true, 4: false} {
+		var out struct {
+			Truncated bool `json:"truncated"`
+		}
+		callOK(t, cs, "get_job_log", map[string]any{"job_id": id.String(), "changed_only": true, "limit": limit}, &out)
+		if out.Truncated != want {
+			t.Errorf("limit %d: truncated = %v, want %v", limit, out.Truncated, want)
+		}
+	}
+}
+
+// TestJobLogDescriptions: the log tool says what an empty page means and
+// names the states the service accepts.
+func TestJobLogDescriptions(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range res.Tools {
+		if tl.Name != "get_job_log" {
+			continue
+		}
+		raw, _ := json.Marshal(tl)
+		for _, want := range []string{"nothing new yet", "run_start", "run_end", "fatal", "failed, unreachable, error and fatal"} {
+			if !strings.Contains(string(raw), want) {
+				t.Errorf("get_job_log definition lacks %q: %s", want, raw)
+			}
+		}
+	}
+}
