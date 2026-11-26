@@ -2,7 +2,9 @@ package jobs_test
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +92,65 @@ func TestEventsSearchFiltersInSQL(t *testing.T) {
 				t.Fatalf("seqs %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAppendClampsAnEventStampedLongBeforeItsJob (backlog 2.138): both the
+// append's max(seq) read and the log read are bounded at created_at minus
+// EventClockSlack, so an event stored earlier than that would be invisible
+// to both — the next append could reuse its seq and the log would hide it.
+// The append clamps the stored time into the window and keeps the worker's
+// own stamp in the payload.
+func TestAppendClampsAnEventStampedLongBeforeItsJob(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-events-clamp")
+	zone := seedZone(t, d, org)
+	queue := newTestQueue(d)
+	svc := jobs.NewService(jobs.NewSQLStore(d), queue, emptySources{}, nil, nil, nil, fakeSealer{}, time.Now, rand.Reader)
+	claim := claimOne(t, d, org, zone, queue)
+	jobID := uuid.MustParse(claim.Job.GetId())
+	octx := db.WithOrgScope(ctx, org)
+	job, err := svc.Get(octx, org, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	early := job.CreatedAt.Add(-2 * time.Hour)
+	for _, e := range []jobs.Event{
+		{Host: "a", Task: "first", State: "ok", At: time.Now()},
+		{Host: "b", Task: "early", State: "ok", Payload: []byte(`{"k":1}`), At: early},
+		{Host: "c", Task: "third", State: "ok", At: time.Now()},
+	} {
+		if err := queue.AppendEvent(ctx, jobID, e); err != nil {
+			t.Fatalf("AppendEvent %+v: %v", e, err)
+		}
+	}
+
+	events, err := svc.Events(octx, org, jobID, jobs.EventFilter{})
+	if err != nil || len(events) != 3 {
+		t.Fatalf("Events = %+v, %v; want all 3 events", events, err)
+	}
+	for i, e := range events {
+		if e.Seq != uint64(i+1) {
+			t.Fatalf("event %d has seq %d; want %d (unique, increasing)", i, e.Seq, i+1)
+		}
+	}
+	floor := job.CreatedAt.Add(-jobs.EventClockSlack)
+	if got := events[1].At; got.Before(floor.Add(-time.Millisecond)) || got.After(floor.Add(time.Millisecond)) {
+		t.Fatalf("early event stored at %v; want clamped to %v", got, floor)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(events[1].Payload, &p); err != nil || p["k"] != float64(1) {
+		t.Fatalf("early payload = %s, %v; want the worker's payload kept", events[1].Payload, err)
+	}
+	workerAt, _ := p["worker_at"].(string)
+	if parsed, err := time.Parse(time.RFC3339Nano, workerAt); err != nil || !parsed.Equal(early) {
+		t.Fatalf("worker_at = %q (%v); want the worker's stamp %v", workerAt, err, early)
+	}
+	for _, i := range []int{0, 2} {
+		if strings.Contains(string(events[i].Payload), "worker_at") {
+			t.Fatalf("unclamped event %d carries worker_at: %s", i, events[i].Payload)
+		}
 	}
 }
