@@ -2,6 +2,7 @@ package phpfpm
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -122,4 +123,75 @@ func TestAgainstARealServer(t *testing.T) {
 	}
 	mustValueAt(t, obs, url, "phpfpm.max_children_reached_per_s", 0)
 	mustValueAt(t, obs, url, "phpfpm.slow_requests_per_s", 0)
+}
+
+// startFPMDirect runs php:8.3-fpm-alpine with its status page on and its
+// FastCGI port mapped, no web server anywhere, and returns host:port.
+func startFPMDirect(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	fpm, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "php:8.3-fpm-alpine",
+			ExposedPorts: []string{"9000/tcp"},
+			Files: []testcontainers.ContainerFile{{
+				Reader:            strings.NewReader(poolConf),
+				ContainerFilePath: "/usr/local/etc/php-fpm.d/zz-status.conf",
+				FileMode:          0o644,
+			}},
+			WaitingFor: wait.ForAll(
+				wait.ForLog("ready to handle connections"),
+				wait.ForListeningPort("9000/tcp"),
+			).WithDeadline(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("start php:8.3-fpm-alpine: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(fpm) })
+	host, err := fpm.Host(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := fpm.MappedPort(ctx, "9000/tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return net.JoinHostPort(host, port.Port())
+}
+
+// TestFastCGIAgainstARealServer reads PHP-FPM 8.3's status page over
+// FastCGI with no web server in between (backlog 3.11a), and pins how real
+// FPM answers a path that is not its status path: a missing file is 404,
+// an existing file without a .php extension is refused by FPM's default
+// security.limit_extensions (403), so neither runs anything.
+func TestFastCGIAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
+	addr := startFPMDirect(t)
+	e := "fcgi://" + addr + "/status"
+	p, clk := newTestPlugin()
+	params := map[string]any{"urls": []any{e}}
+
+	obs := collect(t, p, params)
+	mustItems(t, obs, "", e)
+	mustValueAt(t, obs, "", "phpfpm.pools_down", 0)
+	mustValueAt(t, obs, e, "phpfpm.up", 1)
+	if o, ok := findAt(obs, e, "phpfpm.processes_total"); !ok || o.Value == nil || *o.Value < 1 {
+		t.Fatalf("processes_total = %+v, want >= 1", o)
+	}
+	clk.Advance(10 * time.Second)
+	obs = collect(t, p, params)
+	if o, ok := findAt(obs, e, "phpfpm.requests_per_s"); !ok || o.Value == nil || *o.Value <= 0 {
+		t.Fatalf("requests_per_s = %+v, want a positive rate", o)
+	}
+
+	for path, want := range map[string]string{
+		"/nope":         "HTTP status 404",
+		"/etc/hostname": "permission denied (HTTP 403)",
+	} {
+		e := "fcgi://" + addr + path
+		obs := collect(t, p, map[string]any{"urls": []any{e}})
+		mustPoolDown(t, obs, e, want)
+	}
 }
