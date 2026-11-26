@@ -21,8 +21,8 @@ func (s *Service) Assign(ctx context.Context, orgID, groupID, hostID uuid.UUID, 
 // fields and overrides of its overridable group-scoped fields. A non-nil
 // revision makes the write conditional on the stored membership's
 // revision. An assistant's write marks the keys it set or changed and may
-// not set one Ansible or Pulsix act on; a person's clears every mark of
-// the membership (decision D6, marks.go).
+// not set one Ansible or Pulsix act on; a person's clears the marks of the
+// values it changes (decision D6, marks.go).
 func (s *Service) AssignBy(ctx context.Context, orgID, groupID, hostID uuid.UUID, vars map[string]any, revision *int64, actor assistantchange.Actor) (MemberView, error) {
 	g, err := s.store.GetGroup(ctx, orgID, groupID)
 	if err != nil {

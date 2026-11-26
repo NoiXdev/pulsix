@@ -3,7 +3,7 @@ package schema
 // Marks names the top-level fields of one group or membership whose stored
 // value (Values) or schema default (Defaults) an assistant wrote (decision
 // D6, spec 2026-11-25 assistant API gaps): such values reach a run as plain
-// text until a person saves them.
+// text until a person changes or accepts them.
 type Marks struct {
 	Values   map[string]bool
 	Defaults map[string]bool

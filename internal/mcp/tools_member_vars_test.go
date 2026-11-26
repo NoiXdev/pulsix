@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -149,15 +150,28 @@ func TestAssistantInventoryNamesAreRefused(t *testing.T) {
 	f := newOrgFixture(t)
 	cs := mustConnect(t, f.s, f.token)
 	g := f.group.String()
-	callOK(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": map[string]any{"fields": []any{
+	// An assistant may not add a field under such a name.
+	if text, isErr := call(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": map[string]any{"fields": []any{
 		map[string]any{"name": "omit", "type": "string"},
-		map[string]any{"name": "greeting", "type": "string"},
-	}}}, nil)
+	}}}); !isErr || !strings.Contains(text, "reserved") {
+		t.Fatalf("adding omit = %v %s, want the reserved-name refusal", isErr, text)
+	}
+	// A person may; the assistant then may not set its value or default.
+	cur, err := f.s.Deps.Inventory.GetGroup(f.scoped, f.org, f.group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.s.Deps.Inventory.SetSchema(f.scoped, f.org, f.group, cur.Revision, schema.Schema{Fields: []schema.Field{
+		{Name: "omit", Type: schema.TypeString}, {Name: "greeting", Type: schema.TypeString},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if text, isErr := call(t, cs, "set_group_vars", map[string]any{"group_id": g, "vars": map[string]any{"omit": "x"}}); !isErr || !strings.Contains(text, "reserved") {
 		t.Fatalf("omit = %v %s, want the reserved-name refusal", isErr, text)
 	}
 	if text, isErr := call(t, cs, "set_group_schema", map[string]any{"group_id": g, "schema": map[string]any{"fields": []any{
 		map[string]any{"name": "omit", "type": "string", "default": "x"},
+		map[string]any{"name": "greeting", "type": "string"},
 	}}}); !isErr || !strings.Contains(text, "reserved") {
 		t.Fatalf("a default for omit = %v %s, want the reserved-name refusal", isErr, text)
 	}

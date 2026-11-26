@@ -70,7 +70,7 @@ describe('HostInventoryCard', () => {
     expect(screen.getByText('1 to fill in')).toBeInTheDocument();
   });
 
-  it('flags the values an assistant wrote as plain text until a person saves them', async () => {
+  it('flags the values an assistant wrote as plain text until a person changes or accepts them', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': {
         groups: [
@@ -82,7 +82,7 @@ describe('HostInventoryCard', () => {
     renderCard(true);
     const row = (await screen.findByRole('link', { name: 'webserver' })).closest('li')!;
     const pill = within(row).getByText('assistant values');
-    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role — used as plain text until a person saves the values');
+    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role — used as plain text until a person changes or accepts them');
     const other = screen.getByRole('link', { name: 'database' }).closest('li')!;
     expect(within(other).queryByText('assistant values')).not.toBeInTheDocument();
   });
@@ -174,6 +174,27 @@ describe('HostInventoryCard', () => {
       await screen.findByText('Values of web-01 saved');
       expect(put?.body).toEqual({ vars: { domain: 'b.io' } });
       expect(put?.headers.get('If-Match')).toBe('"4"');
+    });
+
+    it('accepts a value an assistant wrote as live from the values dialog', async () => {
+      const user = userEvent.setup();
+      let accepted: MockRequest | undefined;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [{ ...MEMBERSHIP, assistant_keys: ['domain'] }] },
+        'POST /api/v1/orgs/acme/inventory/groups/g1/members/h1/accept': (req: MockRequest) => {
+          accepted = req;
+          return { member: { ...MEMBERSHIP, assistant_keys: [], revision: 5 } };
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
+      const dialog = await screen.findByRole('dialog');
+      const mark = await within(dialog).findByTestId('assistant-member-domain');
+      expect(mark).toHaveTextContent('domain: Written by an assistant — used as plain text until a person changes or accepts it');
+      await user.click(within(mark).getByRole('button', { name: 'Accept domain as live' }));
+      await screen.findByText('domain is live now');
+      expect(accepted?.headers.get('If-Match')).toBe('"4"');
+      expect(accepted?.body).toEqual({ keys: ['domain'] });
     });
 
     it('asks before removing the host from a group and then unassigns it', async () => {

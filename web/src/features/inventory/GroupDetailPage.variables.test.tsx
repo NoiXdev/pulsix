@@ -46,22 +46,64 @@ describe('GroupDetailPage variables', () => {
     expect(screen.getByTestId('variable-region').querySelectorAll('p')).toHaveLength(0);
   });
 
-  it('marks the values and defaults an assistant wrote as plain text until a person saves them', async () => {
+  it('marks the values and defaults an assistant wrote as plain text until a person changes or accepts them', async () => {
+    const user = userEvent.setup();
+    const accepts: MockRequest[] = [];
     mockApi(
       routes('admin', {
         'GET /api/v1/orgs/acme/inventory/groups/g1': group({
           schema: SCHEMA, vars: { env: 'prod', ntp: 'ntp.example.test' }, assistant_keys: ['ntp'], assistant_default_keys: ['level', 'env'],
         }),
         ...preview({ web: { vars: { env: 'prod' } } }),
+        'POST /api/v1/orgs/acme/inventory/groups/g1/vars/accept': (req: MockRequest) => {
+          accepts.push(req);
+          return group({ schema: SCHEMA, revision: 4, assistant_default_keys: ['level', 'env'] });
+        },
+        'POST /api/v1/orgs/acme/inventory/groups/g1/schema/accept': (req: MockRequest) => {
+          accepts.push(req);
+          return group({ schema: SCHEMA, revision: 5 });
+        },
       }),
     );
     renderAt('/o/acme/groups/g1');
     await screen.findByLabelText('Environment');
-    expect(await screen.findByTestId('assistant-ntp')).toHaveTextContent('Written by an assistant — used as plain text until a person saves it');
-    expect(screen.getByTestId('assistant-level')).toHaveTextContent('Default set by an assistant — used as plain text until a person saves the fields');
+    expect(await screen.findByTestId('assistant-ntp')).toHaveTextContent('Written by an assistant — used as plain text until a person changes or accepts it');
+    expect(screen.getByTestId('assistant-level')).toHaveTextContent('Default set by an assistant — used as plain text until a person changes or accepts it');
     // env holds a person's value, so its (assistant's) default does not apply.
     expect(screen.queryByTestId('assistant-env')).not.toBeInTheDocument();
     expect(screen.queryByTestId('assistant-region')).not.toBeInTheDocument();
+
+    await user.click(within(screen.getByTestId('assistant-ntp')).getByRole('button', { name: 'Accept ntp as live' }));
+    await screen.findByText('ntp is live now');
+    expect(accepts[0].path).toContain('/vars/accept');
+    expect(accepts[0].headers.get('If-Match')).toBe('"3"');
+    expect(accepts[0].body).toEqual({ keys: ['ntp'] });
+    await user.click(within(screen.getByTestId('assistant-level')).getByRole('button', { name: 'Accept level as live' }));
+    await screen.findByText('level is live now');
+    expect(accepts[1].path).toContain('/schema/accept');
+    expect(accepts[1].body).toEqual({ keys: ['level'] });
+  });
+
+  it('offers no accept to a reader', async () => {
+    mockApi(
+      routes('viewer', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema: SCHEMA, vars: { env: 'prod', ntp: 'x' }, assistant_keys: ['ntp'] }),
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    expect(await screen.findByTestId('assistant-ntp')).toBeInTheDocument();
+    expect(within(screen.getByTestId('assistant-ntp')).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('quotes an inherited plain-text value unwrapped, saying it is plain text', async () => {
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema: SCHEMA, vars: { env: 'prod' } }),
+        ...preview({ prod: { vars: { ntp: { __ansible_unsafe: '{{ x }}' } } } }),
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await waitFor(() => expect(row('ntp').getByText('inherits {{ x }} (plain text) from prod')).toBeInTheDocument());
   });
 
   it('follows the draft: a value typed over an inherited one overrides it', async () => {

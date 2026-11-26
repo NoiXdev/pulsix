@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { fieldsDialog, openFields, routes, renderAt, saveFields, schemaSaved } from './groupPageTestKit.tsx';
+import { fieldsDialog, group, openFields, routes, renderAt, saveFields, schemaSaved } from './groupPageTestKit.tsx';
 
 /** The Manage fields dialog end to end: an edit made with a row's badges
  * is what the save sends, on the group's revision, and a save that stored
@@ -63,5 +63,31 @@ describe('GroupDetailPage fields dialog', () => {
     expect(await within(dialog).findByText(/The schema has 1 problem/)).toBeInTheDocument();
     // env is selected, so its name shows the problem.
     expect(within(within(dialog).getByRole('tabpanel')).getByText('is taken')).toBeInTheDocument();
+  });
+
+  it('flags the defaults an assistant set and accepts one as live', async () => {
+    const user = userEvent.setup();
+    let accepted: MockRequest | undefined;
+    const schema = { fields: [{ name: 'env', type: 'string', default: '{{ x }}' }, { name: 'domain', type: 'string', scope: 'host', default: 'a.io' }] };
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({ schema, assistant_default_keys: ['env'] }),
+        'POST /api/v1/orgs/acme/inventory/groups/g1/schema/accept': (req: MockRequest) => {
+          accepted = req;
+          return group({ schema, revision: 4 });
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    const dialog = await openFields(user);
+    const rows = within(within(dialog).getByRole('list', { name: 'Fields' })).getAllByRole('listitem');
+    expect(within(rows[0]).getByText('assistant default')).toBeInTheDocument();
+    expect(within(rows[1]).queryByText('assistant default')).not.toBeInTheDocument();
+    const mark = within(dialog).getByTestId('assistant-default-env');
+    expect(mark).toHaveTextContent('Default set by an assistant — used as plain text until a person changes or accepts it');
+    await user.click(within(mark).getByRole('button', { name: 'Accept env as live' }));
+    await screen.findByText('env is live now');
+    expect(accepted?.headers.get('If-Match')).toBe('"3"');
+    expect(accepted?.body).toEqual({ keys: ['env'] });
   });
 });

@@ -1,11 +1,15 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -104,7 +108,7 @@ func TestAssistantInventoryWritesAreMarkedAndPlainText(t *testing.T) {
 	withHostvars := append(slices.Clone(fields), map[string]any{"name": "hostvars", "type": "string", "default": "x"})
 	locs = assistantLocations(t, s.AssistantDo(t, http.MethodPut, tok, rel+web.Group.ID+"/schema", `"4"`,
 		map[string]any{"schema": map[string]any{"fields": withHostvars}}))
-	if !slices.Equal(locs, []string{"body.schema.fields[4].default"}) {
+	if !slices.Equal(locs, []string{"body.schema.fields[4].name", "body.schema.fields[4].default"}) {
 		t.Fatalf("reserved default refused at %v", locs)
 	}
 
@@ -131,28 +135,83 @@ func TestAssistantInventoryWritesAreMarkedAndPlainText(t *testing.T) {
 		t.Fatalf("host preview assistant_written = %v", hostPreview.AssistantWritten)
 	}
 
-	// A person saves the group's values and schema: those marks clear; the
-	// membership keeps its own.
+	// A person resends the group's values and fields unchanged — the
+	// browser, or a script with an API token reading and writing back: the
+	// marks stay (controller's refinement of D6: only a change, or an
+	// accept, makes an assistant's value live).
 	resp := requestWithHeaders(t, f.c, http.MethodPut, f.base+"/inventory/groups/"+web.Group.ID+"/vars",
 		map[string]any{"vars": map[string]any{"greeting": planted, "omit": "x"}}, map[string]string{"If-Match": `"4"`})
 	var pg markedGroup
 	decodeInto(t, resp, &pg)
-	if pg.Group.AssistantKeys == nil || len(pg.Group.AssistantKeys) != 0 {
-		t.Fatalf("after a person's vars save: %#v", pg.Group.AssistantKeys)
+	if !slices.Equal(pg.Group.AssistantKeys, []string{"greeting"}) {
+		t.Fatalf("after a person's resend: %#v", pg.Group.AssistantKeys)
 	}
-	resp = requestWithHeaders(t, f.c, http.MethodPut, f.base+"/inventory/groups/"+web.Group.ID+"/schema",
-		map[string]any{"schema": map[string]any{"fields": fields}}, map[string]string{"If-Match": `"5"`})
+	_, apiTok := s.PersonalToken(t, owner, map[uuid.UUID]tenancy.Role{orgID: tenancy.RoleAdmin})
+	bearer := func(rev string) map[string]string {
+		h := map[string]string{"Authorization": "Bearer " + apiTok}
+		if rev != "" {
+			h["If-Match"] = rev
+		}
+		return h
+	}
+	resp = requestWithHeaders(t, http.DefaultClient, http.MethodPut, f.base+"/inventory/groups/"+web.Group.ID+"/schema",
+		map[string]any{"schema": map[string]any{"fields": fields}}, bearer(`"5"`))
+	decodeInto(t, resp, &pg)
+	if !slices.Equal(pg.Group.AssistantDefaultKeys, []string{"motd"}) {
+		t.Fatalf("after an API token's schema resend: %v", pg.Group.AssistantDefaultKeys)
+	}
+
+	// Accepting is a person's, in an interactive session: an API token and
+	// an assistant token are refused.
+	accept := map[string]any{"keys": []string{"greeting"}}
+	if resp := requestWithHeaders(t, http.DefaultClient, http.MethodPost, f.base+"/inventory/groups/"+web.Group.ID+"/vars/accept", accept, bearer(`"6"`)); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("accept with an API token = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if resp := s.AssistantDo(t, http.MethodPost, tok, rel+web.Group.ID+"/vars/accept", `"6"`, accept); resp.Code != http.StatusForbidden {
+		t.Fatalf("accept with an assistant token = %d %s", resp.Code, resp.Body)
+	}
+	if resp := requestWithHeaders(t, f.c, http.MethodPost, f.base+"/inventory/groups/"+web.Group.ID+"/vars/accept",
+		map[string]any{"keys": []string{"omit"}}, map[string]string{"If-Match": `"6"`}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("accepting an unmarked key = %d", resp.StatusCode)
+	}
+	resp = requestWithHeaders(t, f.c, http.MethodPost, f.base+"/inventory/groups/"+web.Group.ID+"/vars/accept", accept, map[string]string{"If-Match": `"6"`})
+	decodeInto(t, resp, &pg)
+	if pg.Group.AssistantKeys == nil || len(pg.Group.AssistantKeys) != 0 || pg.Group.Revision != 7 {
+		t.Fatalf("after accepting greeting: %#v (revision %d)", pg.Group.AssistantKeys, pg.Group.Revision)
+	}
+	resp = requestWithHeaders(t, f.c, http.MethodPost, f.base+"/inventory/groups/"+web.Group.ID+"/schema/accept",
+		map[string]any{"keys": []string{"motd"}}, map[string]string{"If-Match": `"7"`})
 	decodeInto(t, resp, &pg)
 	if len(pg.Group.AssistantDefaultKeys) != 0 {
-		t.Fatalf("after a person's schema save: %v", pg.Group.AssistantDefaultKeys)
+		t.Fatalf("after accepting motd: %v", pg.Group.AssistantDefaultKeys)
 	}
 	var hostGroups struct {
 		Groups []struct {
 			AssistantKeys []string `json:"assistant_keys"`
+			Revision      int64    `json:"revision"`
 		} `json:"groups"`
 	}
 	decodeInto(t, requestJSON(t, f.c, http.MethodGet, f.base+"/hosts/"+host+"/inventory/groups", nil), &hostGroups)
 	if len(hostGroups.Groups) != 1 || !slices.Equal(hostGroups.Groups[0].AssistantKeys, []string{"note"}) {
 		t.Fatalf("host groups = %+v", hostGroups.Groups)
+	}
+	resp = requestWithHeaders(t, f.c, http.MethodPost, f.base+"/inventory/groups/"+web.Group.ID+"/members/"+host+"/accept",
+		map[string]any{"keys": []string{"note"}}, map[string]string{"If-Match": `"` + strconv.FormatInt(hostGroups.Groups[0].Revision, 10) + `"`})
+	var pm markedMember
+	decodeInto(t, resp, &pm)
+	if pm.Member.AssistantKeys == nil || len(pm.Member.AssistantKeys) != 0 {
+		t.Fatalf("after accepting note: %#v", pm.Member.AssistantKeys)
+	}
+	var after struct {
+		AssistantWritten []map[string]any `json:"assistant_written"`
+	}
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, f.base+"/inventory/preview", nil), &after)
+	if len(after.AssistantWritten) != 0 {
+		t.Fatalf("preview after the accepts = %v", after.AssistantWritten)
+	}
+	// Each accept is in the activity log.
+	var n int
+	if err := s.DB.Pool().QueryRow(context.Background(), `SELECT count(*) FROM audit_events WHERE org_id = $1 AND summary LIKE 'accepted%'`, orgID).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("accept activity entries = %d, %v", n, err)
 	}
 }

@@ -29,8 +29,9 @@ import (
 // (spec 2026-11-25 assistant API gaps): a group variable and a membership
 // variable an assistant wrote — here a lookup that would run a command on
 // the worker — reach the worker's inventory document in the inert form, so
-// Ansible keeps them as literal text. Once a person saves the same values
-// they are the person's and the next claim ships them live.
+// Ansible keeps them as literal text. A person resending them unchanged
+// leaves them so; once a person accepts them the next claim ships them
+// live.
 func TestClaimShipsAssistantInventoryValuesInert(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -114,16 +115,24 @@ func TestClaimShipsAssistantInventoryValuesInert(t *testing.T) {
 		t.Fatalf("assistant-written values shipped as group vars %#v, host vars %#v; want both inert", vars, hv)
 	}
 
-	// A person saves the same values: they are live from the next claim on.
-	if _, err := invSvc.SetVars(scoped, org, grp.ID, grp.Revision, map[string]any{"banner": planted}); err != nil {
+	// A person resending the same values leaves them plain text: only a
+	// change, or an explicit accept, makes an assistant's value live.
+	if grp, err = invSvc.SetVars(scoped, org, grp.ID, grp.Revision, map[string]any{"banner": planted}); err != nil {
 		t.Fatal(err)
 	}
-	rev := member.Revision
-	if _, err := invSvc.Assign(scoped, org, grp.ID, host.ID, map[string]any{"note": planted}, &rev); err != nil {
+	vars, hv = claimDoc()
+	if !reflect.DeepEqual(vars["banner"], inert) || !reflect.DeepEqual(hv["note"], inert) {
+		t.Fatalf("after a person resent the value shipped group vars %#v, host vars %#v; want both still inert", vars, hv)
+	}
+	// A person accepts both as they are: live from the next claim on.
+	if _, err := invSvc.AcceptVars(scoped, org, grp.ID, grp.Revision, []string{"banner"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invSvc.AcceptMemberVars(scoped, org, grp.ID, host.ID, member.Revision, []string{"note"}); err != nil {
 		t.Fatal(err)
 	}
 	vars, hv = claimDoc()
 	if vars["banner"] != planted || hv["note"] != planted {
-		t.Fatalf("after a person's save shipped group vars %#v, host vars %#v; want both live", vars, hv)
+		t.Fatalf("after a person's accept shipped group vars %#v, host vars %#v; want both live", vars, hv)
 	}
 }

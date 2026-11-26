@@ -58,9 +58,43 @@ export function provenanceOf(field: SchemaField, own: unknown, ancestors: readon
 
 const MAX = 48;
 
+/** The key of the plain-text wrapper the renderer puts around every string
+ * an assistant wrote (decision D6: Ansible's unsafe marker). */
+const PLAIN = '__ansible_unsafe';
+
+/** unwrapPlain returns v with every plain-text wrapper replaced by the
+ * string it holds, and whether there was one. */
+export function unwrapPlain(v: unknown): { value: unknown; plain: boolean } {
+  if (isRecord(v)) {
+    const keys = Object.keys(v);
+    if (keys.length === 1 && keys[0] === PLAIN && typeof v[PLAIN] === 'string') return { value: v[PLAIN], plain: true };
+    let plain = false;
+    const out: Record<string, unknown> = {};
+    for (const k of keys) {
+      const u = unwrapPlain(v[k]);
+      out[k] = u.value;
+      plain ||= u.plain;
+    }
+    return { value: out, plain };
+  }
+  if (Array.isArray(v)) {
+    let plain = false;
+    const out = v.map((e) => {
+      const u = unwrapPlain(e);
+      plain ||= u.plain;
+      return u.value;
+    });
+    return { value: out, plain };
+  }
+  return { value: v, plain: false };
+}
+
 /** formatValue is a value as a provenance line quotes it: a string as is,
- * anything else as JSON, cut to one short line. */
-export function formatValue(v: unknown): string {
-  const text = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
-  return text.length > MAX ? `${text.slice(0, MAX - 1)}…` : text;
+ * anything else as JSON, cut to one short line. A value an assistant wrote
+ * reads unwrapped, followed by `plainLabel` in parentheses when given. */
+export function formatValue(v: unknown, plainLabel?: string): string {
+  const { value, plain } = unwrapPlain(v);
+  const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
+  const cut = text.length > MAX ? `${text.slice(0, MAX - 1)}…` : text;
+  return plain && plainLabel ? `${cut} (${plainLabel})` : cut;
 }

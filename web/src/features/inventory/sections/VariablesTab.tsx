@@ -5,7 +5,14 @@ import { DisabledHint } from '../../../ui/detail-layout.tsx';
 import { CardSaveBar, SettingsCard } from '../../../ui/settings.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
-import { toVarSchema, useInventoryPreview, useReloadInventory, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
+import {
+  toVarSchema,
+  useAcceptGroupDefaults,
+  useAcceptGroupVars,
+  useInventoryPreview,
+  useReloadInventory,
+  useSetGroupVars,
+} from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { activeFields } from '../../variables/origin.ts';
@@ -121,6 +128,22 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
   }
 
   const reload = useReloadInventory(org);
+  const acceptVars = useAcceptGroupVars(org, group.id);
+  const acceptDefaults = useAcceptGroupDefaults(org, group.id);
+
+  // A person accepts an assistant's value (or default) as live as it
+  // stands, on the group's revision (decision D6). It changes no value, so
+  // an edited draft may follow it like any of the page's own writes.
+  async function onAccept(name: string, kind: 'value' | 'default') {
+    const accept = kind === 'value' ? acceptVars : acceptDefaults;
+    try {
+      const res = await accept.mutateAsync({ keys: [name], revision: group.revision });
+      own.record({ from: group.revision, to: res.group.revision, kind: 'content' });
+      toast.show(t.inventory.assistant.accepted(name));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.inventory.assistant.acceptFailed, 'destructive');
+    }
+  }
 
   // A reload that brings other content starts the draft over; one that
   // does not keeps it, which then saves on the reloaded revision.
@@ -206,6 +229,8 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
             canWrite={canWrite}
             ancestors={ancestors}
             assistant={assistantMark(group, f.name, draft)}
+            onAccept={canWrite ? (kind) => void onAccept(f.name, kind) : undefined}
+            accepting={acceptVars.isPending || acceptDefaults.isPending}
           />
         ))}
       </form>
@@ -226,7 +251,7 @@ function assistantMark(group: InventoryGroup, name: string, draft: Vars): 'value
  * comes from when the data at hand says, and whether an assistant wrote
  * it. */
 function VariableRow({
-  field, draft, onChange, problems, canWrite, ancestors, assistant,
+  field, draft, onChange, problems, canWrite, ancestors, assistant, onAccept, accepting,
 }: {
   field: SchemaField;
   draft: Vars;
@@ -235,15 +260,19 @@ function VariableRow({
   canWrite: boolean;
   ancestors: readonly AncestorVars[];
   assistant: 'value' | 'default' | null;
+  /** Absent for a reader. */
+  onAccept?: (kind: 'value' | 'default') => void;
+  accepting: boolean;
 }) {
   const t = useT();
   const v = t.inventory.groupPage.variables;
   const types = t.inventory.fields.types;
   const from = provenanceOf(field, draft[field.name], ancestors);
   let line: string | null = null;
-  if (from?.kind === 'overrides') line = v.overrides(from.group, formatValue(from.value));
-  else if (from?.kind === 'inherits') line = v.inherits(formatValue(from.value), from.group);
-  else if (from?.kind === 'default') line = v.schemaDefault(formatValue(from.value));
+  const plain = t.inventory.assistant.plainText;
+  if (from?.kind === 'overrides') line = v.overrides(from.group, formatValue(from.value, plain));
+  else if (from?.kind === 'inherits') line = v.inherits(formatValue(from.value, plain), from.group);
+  else if (from?.kind === 'default') line = v.schemaDefault(formatValue(from.value, plain));
 
   return (
     <div data-testid={`variable-${field.name}`} className="grid gap-x-6 gap-y-1.5 border-t border-border px-5 py-3.5 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
@@ -262,6 +291,13 @@ function VariableRow({
           <AssistantMark
             testId={`assistant-${field.name}`}
             text={assistant === 'value' ? t.inventory.assistant.written : t.inventory.assistant.defaultSet}
+            action={
+              onAccept && (
+                <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting} onClick={() => onAccept(assistant)}>
+                  {t.inventory.assistant.accept}
+                </Button>
+              )
+            }
           />
         )}
       </div>

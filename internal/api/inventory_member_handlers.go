@@ -21,7 +21,7 @@ type inventoryMemberDTO struct {
 	Orphaned  []string       `json:"orphaned"`
 	// AssistantKeys is decision D6's mark (spec 2026-11-25 assistant API
 	// gaps).
-	AssistantKeys []string `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the membership"`
+	AssistantKeys []string `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person changes the value or accepts it (POST …/accept)"`
 	Revision      int64    `json:"revision"`
 }
 
@@ -99,7 +99,7 @@ type hostPreviewOutput struct {
 		Connection *render.Connection `json:"connection,omitempty"`
 		Warnings   []render.Warning   `json:"warnings"`
 		// AssistantWritten: decision D6 (spec 2026-11-25 assistant API gaps).
-		AssistantWritten []string `json:"assistant_written" doc:"The variables whose value an assistant wrote: a run receives them as plain text (never templated) until a person saves them"`
+		AssistantWritten []string `json:"assistant_written" doc:"The variables whose value an assistant wrote: a run receives them as plain text (never templated) until a person changes or accepts them"`
 	}
 }
 

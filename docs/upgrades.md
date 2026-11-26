@@ -1002,6 +1002,33 @@ assistant's change, nor shows or approves a review (unknown kind), and its resum
 schedule (enabling of a trigger) paused for review fails on the new CHECK, since it
 does not clear the reason; stop every manager instance first, as above.
 
+Inventory values an assistant writes (same spec, decision D6, backlog 2.136) add
+migration 00131: `inventory_groups.assistant_keys`, `inventory_groups.assistant_default_keys`
+and `inventory_memberships.assistant_keys` (text[], NOT NULL DEFAULT '{}'), catalog
+changes with a constant default that rewrite nothing; a backup carries them. A write
+made with an assistant token marks the top-level keys of group values, schema defaults
+and membership values it sets or changes, and the run's inventory carries a marked value
+(a marked default wherever it fills in) as plain text (`{"__ansible_unsafe": …}`), so
+Ansible never templates, looks up or decrypts it; the worker is unchanged. A person's
+save makes live only the values it changes: a value resent unchanged, by the browser or
+by a script with an API token, keeps its mark. To make an assistant's value live as it
+stands, a person accepts it (`POST …/inventory/groups/{id}/vars/accept`,
+`…/schema/accept`, `…/members/{host}/accept`, body `{"keys": […]}`, If-Match; an
+interactive session only, no API or assistant token; logged as
+`POST acceptInventoryGroupVars`, `acceptInventoryGroupDefaults`, `acceptInventoryMemberVars`).
+An assistant's inventory write is refused (422) for a key, a default or a new field
+(sub-fields included) under a name Ansible or Pulsix act on (`ansible_…`, `pulsix_…`,
+`__ansible…`, magic variables such as `hostvars`, `groups`, `omit`, `vars`) and for a
+value holding an `__ansible…` object key; a person may still use such names. The group,
+member and preview reads carry `assistant_keys`, `assistant_default_keys` and
+`assistant_written`. **Values assistants wrote before this release stay unmarked and
+live**: nothing marks them after the fact (the activity log names earlier assistant
+inventory writes — `setInventoryGroupVars`, `setInventoryGroupSchema`,
+`assignInventoryHost` by an assistant token — for an owner who wants to check them).
+**An older manager alongside** ships claims without the marks (an assistant's values
+run live) and records an assistant's inventory writes unmarked; stop every manager
+instance first, as above. Workers and agents are not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

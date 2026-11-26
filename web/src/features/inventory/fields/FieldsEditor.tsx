@@ -19,6 +19,11 @@ export interface FieldsEditorProps {
   /** Schema problems from the server (fields[0].name). */
   problems?: readonly Problem[];
   readOnly?: boolean;
+  /** The stored fields whose default an assistant set (decision D6). */
+  assistantDefaults?: readonly string[];
+  /** Accepts such a default as live; absent for a reader. */
+  onAcceptDefault?: (name: string) => void;
+  accepting?: boolean;
 }
 
 /**
@@ -31,7 +36,7 @@ export interface FieldsEditorProps {
  * Every change of an existing field goes through editLocked, as in the
  * VariableEditor, so a field locked to a source would turn adjusted.
  */
-export function FieldsEditor({ schema, onChange, problems, readOnly }: FieldsEditorProps) {
+export function FieldsEditor({ schema, onChange, problems, readOnly, assistantDefaults = [], onAcceptDefault, accepting }: FieldsEditorProps) {
   const t = useT();
   const f = t.inventory.fields;
   const fields = schema.fields;
@@ -112,6 +117,7 @@ export function FieldsEditor({ schema, onChange, problems, readOnly }: FieldsEdi
               rowKey={stable[i]}
               field={x}
               selected={i === selected}
+              assistantDefault={assistantDefaults.includes(x.name)}
               hasProblems={hasProblemUnder(problems, fieldPath('', i))}
               readOnly={readOnly}
               canMoveUp={i > 0}
@@ -154,6 +160,9 @@ export function FieldsEditor({ schema, onChange, problems, readOnly }: FieldsEdi
               path={fieldPath('', selected)}
               problems={problems}
               readOnly={readOnly}
+              assistantDefault={assistantDefaults.includes(field.name)}
+              onAcceptDefault={onAcceptDefault && (() => onAcceptDefault(field.name))}
+              accepting={accepting}
               onRemove={removable ? () => remove(selected) : undefined}
               onChange={(next) => update(selected, next)}
             />

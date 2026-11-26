@@ -61,8 +61,8 @@ type groupDTO struct {
 	Problems    []problemDTO   `json:"problems"`
 	Orphaned    []string       `json:"orphaned" doc:"Stored keys the schema no longer declares; the next save drops them"`
 	// The marks of decision D6 (spec 2026-11-25 assistant API gaps).
-	AssistantKeys        []string  `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the values"`
-	AssistantDefaultKeys []string  `json:"assistant_default_keys" doc:"Schema fields whose default an assistant set: a run receives the default as plain text until a person saves the schema"`
+	AssistantKeys        []string  `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person changes the value or accepts it (POST …/vars/accept)"`
+	AssistantDefaultKeys []string  `json:"assistant_default_keys" doc:"Schema fields whose default an assistant set: a run receives the default as plain text until a person changes the default or accepts it (POST …/schema/accept)"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }

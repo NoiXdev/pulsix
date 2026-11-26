@@ -96,11 +96,18 @@ func TestAssistantGroupVarsAreMarked(t *testing.T) {
 	}
 	wantKeys(t, "after a rename", g.AssistantKeys, "greeting")
 
+	// A person's save makes live only what it changed: greeting resent
+	// unchanged keeps its mark.
 	g, err = f.svc.SetVars(ctx, f.org, g.ID, g.Revision, map[string]any{"owner": "ops", "greeting": planted, "pw": keepPW})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKeys(t, "after a person saved the same values", g.AssistantKeys)
+	wantKeys(t, "after a person resent the same values", g.AssistantKeys, "greeting")
+	g, err = f.svc.SetVars(ctx, f.org, g.ID, g.Revision, map[string]any{"owner": "ops", "greeting": "hello", "pw": keepPW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "after a person changed greeting", g.AssistantKeys)
 }
 
 // TestAssistantMembershipVarsAreMarked: the same rule for a membership's
@@ -177,11 +184,121 @@ func TestAssistantSchemaDefaultsAreMarked(t *testing.T) {
 	}
 	wantKeys(t, "after removing a field and a default", g.AssistantDefaultKeys, "obj")
 
-	g, _, err = f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: fewer})
+	// A person's save that leaves the default alone (a label edit) keeps
+	// its mark; one that changes it makes it the person's.
+	labelled := slices.Clone(fewer)
+	labelled[3].Label = "Object"
+	g, _, err = f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: labelled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKeys(t, "after a person saved the schema", g.AssistantDefaultKeys)
+	wantKeys(t, "after a person's label-only save", g.AssistantDefaultKeys, "obj")
+	labelled = slices.Clone(labelled) // the fake store keeps the slice it was given
+	labelled[3].Fields = []schema.Field{{Name: "x", Type: schema.TypeString, Default: "plain"}}
+	g, _, err = f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: labelled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "after a person changed the default", g.AssistantDefaultKeys)
+}
+
+// TestInactiveFieldKeepsItsMarkThroughAPersonsSave is review finding 1: an
+// assistant's value under a field it then made inactive is not shown by
+// the values form, which still resends it; that save must not make it
+// live, so reactivating the field leaves it plain text.
+func TestInactiveFieldKeepsItsMarkThroughAPersonsSave(t *testing.T) {
+	f := newFixture()
+	g := f.group(t, "web", nil)
+	fields := []schema.Field{{Name: "banner", Type: schema.TypeString}, {Name: "owner", Type: schema.TypeString}}
+	g, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: fields})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, err = f.svc.SetVarsBy(ctx, f.org, g.ID, g.Revision, map[string]any{"banner": planted}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	inactive := slices.Clone(fields)
+	inactive[0].Active = &off
+	if g, _, err = f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: inactive}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	// The person's form shows owner only and resends banner as stored.
+	if g, err = f.svc.SetVars(ctx, f.org, g.ID, g.Revision, map[string]any{"banner": planted, "owner": "ops"}); err != nil {
+		t.Fatal(err)
+	}
+	if g, _, err = f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, schema.Schema{Fields: fields}, assistant); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "banner after the round trip", g.AssistantKeys, "banner")
+	r := inventory.NewRenderer(f.store, f.store.hosts, fakeSSH{zones: map[uuid.UUID]uuid.UUID{}}, fakeCreds{}, testBox())
+	if err := f.svcAssign(t, g.ID); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := r.Snapshot(ctx, f.org, render.Scope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snap.Doc["web"].(map[string]any)["vars"].(map[string]any)["banner"]; !reflect.DeepEqual(got, map[string]any{"__ansible_unsafe": planted}) {
+		t.Fatalf("banner renders %#v, want it inert", got)
+	}
+}
+
+func (f fixture) svcAssign(t *testing.T, group uuid.UUID) error {
+	t.Helper()
+	_, err := f.svc.Assign(ctx, f.org, group, f.web01, nil, nil)
+	return err
+}
+
+// TestAcceptMakesAssistantValuesLive: a person accepts named values (or
+// defaults) as live unchanged; a key that holds no assistant value is
+// refused, and the revision guards the accept.
+func TestAcceptMakesAssistantValuesLive(t *testing.T) {
+	f := newFixture()
+	g := f.marksGroup(t)
+	g, err := f.svc.SetVarsBy(ctx, f.org, g.ID, g.Revision, map[string]any{"greeting": planted, "owner": "x"}, assistant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.AcceptVars(ctx, f.org, g.ID, g.Revision, []string{"count"}); !errors.Is(err, inventory.ErrInvalidInput) {
+		t.Fatalf("accepting an unmarked key = %v", err)
+	}
+	if _, err := f.svc.AcceptVars(ctx, f.org, g.ID, g.Revision, nil); !errors.Is(err, inventory.ErrInvalidInput) {
+		t.Fatalf("accepting nothing = %v", err)
+	}
+	if _, err := f.svc.AcceptVars(ctx, f.org, g.ID, g.Revision-1, []string{"greeting"}); !errors.Is(err, inventory.ErrRevisionMismatch) {
+		t.Fatalf("a stale accept = %v", err)
+	}
+	if g, err = f.svc.AcceptVars(ctx, f.org, g.ID, g.Revision, []string{"greeting"}); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "after accepting greeting", g.AssistantKeys, "owner")
+	if g.Vars["greeting"] != planted {
+		t.Fatalf("accept changed the value: %v", g.Vars["greeting"])
+	}
+
+	sc := marksSchema()
+	sc.Fields[0].Default = "hi"
+	sc.Fields[1].Default = "ops"
+	if g, _, err = f.svc.SetSchemaBy(ctx, f.org, g.ID, g.Revision, sc, assistant); err != nil {
+		t.Fatal(err)
+	}
+	if g, err = f.svc.AcceptDefaults(ctx, f.org, g.ID, g.Revision, []string{"owner"}); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "default marks after accepting owner", g.AssistantDefaultKeys, "greeting")
+
+	m, err := f.svc.AssignBy(ctx, f.org, g.ID, f.web01, map[string]any{"note": planted}, nil, assistant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err = f.svc.AcceptMemberVars(ctx, f.org, g.ID, f.web01, m.Revision, []string{"note"}); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys(t, "member marks after accepting note", m.AssistantKeys)
+	if m.HostName != "web-01" || m.GroupName != "web" {
+		t.Fatalf("accepted member view = %+v", m.Membership)
+	}
 }
 
 // TestAssistantInventoryWritesRefuseExecutionNames pins the write-time
@@ -217,8 +334,22 @@ func TestAssistantInventoryWritesRefuseExecutionNames(t *testing.T) {
 	_, _, err = f.svc.SetSchemaBy(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{{Name: "cfg", Type: schema.TypeObject,
 		Fields: []schema.Field{{Name: "__ansible_unsafe", Type: schema.TypeString, Default: "x"}}}}}, assistant)
 	problemAt(t, err, "fields[0].default", "__ansible")
-	if _, _, err := f.svc.SetSchemaBy(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{{Name: "hostvars", Type: schema.TypeString}}}, assistant); err != nil {
-		t.Fatalf("a field without a default carries no value: %v", err)
+	// Review finding 5: an assistant may not add a field (or sub-field)
+	// under a name Ansible or Pulsix act on, default or not.
+	_, _, err = f.svc.SetSchemaBy(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{{Name: "hostvars", Type: schema.TypeString}}}, assistant)
+	problemAt(t, err, "fields[0].name", "reserved")
+	_, _, err = f.svc.SetSchemaBy(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{{Name: "cfg", Type: schema.TypeObject,
+		Fields: []schema.Field{{Name: "a", Type: schema.TypeString}, {Name: "__ansible_vault", Type: schema.TypeString}}}}}, assistant)
+	problemAt(t, err, "fields[0].fields[1].name", "reserved")
+	// A person may; the assistant then keeps the person's field.
+	h, _, err = f.svc.SetSchema(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{{Name: "hostvars", Type: schema.TypeString}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.svc.SetSchemaBy(ctx, f.org, h.ID, h.Revision, schema.Schema{Fields: []schema.Field{
+		{Name: "hostvars", Type: schema.TypeString, Label: "x"}, {Name: "plain", Type: schema.TypeString},
+	}}, assistant); err != nil {
+		t.Fatalf("keeping a person's field: %v", err)
 	}
 }
 
@@ -270,12 +401,11 @@ func TestRendererEmitsMarkedValuesInert(t *testing.T) {
 		t.Fatalf("HostPreview greeting = %#v, AssistantWritten = %v", hp.Vars["greeting"], hp.AssistantWritten)
 	}
 
-	// A person saves both, unchanged: the values are live.
-	if _, err := f.svc.SetVars(ctx, f.org, g.ID, g.Revision, map[string]any{"owner": "ops", "greeting": planted}); err != nil {
+	// A person accepts both as they are: the values are live.
+	if _, err := f.svc.AcceptVars(ctx, f.org, g.ID, g.Revision, []string{"greeting"}); err != nil {
 		t.Fatal(err)
 	}
-	rev := m.Revision
-	if _, err := f.svc.Assign(ctx, f.org, g.ID, f.web01, map[string]any{"note": planted}, &rev); err != nil {
+	if _, err := f.svc.AcceptMemberVars(ctx, f.org, g.ID, f.web01, m.Revision, []string{"note"}); err != nil {
 		t.Fatal(err)
 	}
 	if snap, err = r.Snapshot(ctx, f.org, render.Scope{}); err != nil {
@@ -284,9 +414,9 @@ func TestRendererEmitsMarkedValuesInert(t *testing.T) {
 	vars = snap.Doc["web"].(map[string]any)["vars"].(map[string]any)
 	hv = snap.Doc["_meta"].(map[string]any)["hostvars"].(map[string]any)["web-01"].(map[string]any)
 	if vars["greeting"] != planted || hv["note"] != planted || snap.AssistantWritten != nil {
-		t.Fatalf("after a person's save: group vars = %#v, web-01 = %#v, written = %+v", vars, hv, snap.AssistantWritten)
+		t.Fatalf("after a person's accept: group vars = %#v, web-01 = %#v, written = %+v", vars, hv, snap.AssistantWritten)
 	}
 	if hp, err = r.HostPreview(ctx, f.org, f.web01); err != nil || len(hp.AssistantWritten) != 0 {
-		t.Fatalf("HostPreview after a person's save = %v, %v", hp.AssistantWritten, err)
+		t.Fatalf("HostPreview after a person's accept = %v, %v", hp.AssistantWritten, err)
 	}
 }

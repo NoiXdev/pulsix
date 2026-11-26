@@ -1,16 +1,21 @@
+import type { ReactNode } from 'react';
 import { Bot } from 'lucide-react';
 import { Pill } from '../../ui/badge.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 /** AssistantMark says, beside a value, that an assistant wrote it and that
- * a run receives it as plain text until a person saves it (decision D6:
- * the server renders such values inert). The caller picks the text. */
-export function AssistantMark({ text, testId }: { text: string; testId?: string }) {
+ * a run receives it as plain text until a person changes or accepts it
+ * (decision D6: the server renders such values inert). The caller picks
+ * the text and may add an action (Accept as live). */
+export function AssistantMark({ text, testId, action }: { text: string; testId?: string; action?: ReactNode }) {
   return (
-    <p data-testid={testId} className="flex items-start gap-1.5 text-[12px] text-warn">
-      <Bot size={13} aria-hidden="true" className="mt-px shrink-0" />
-      <span>{text}</span>
-    </p>
+    <div data-testid={testId} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-warn">
+      <span className="flex items-start gap-1.5">
+        <Bot size={13} aria-hidden="true" className="mt-px shrink-0" />
+        <span>{text}</span>
+      </span>
+      {action}
+    </div>
   );
 }
 

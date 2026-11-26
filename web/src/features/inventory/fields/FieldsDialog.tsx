@@ -6,6 +6,9 @@ import type { InventoryGroup } from '../../../api/types.ts';
 import { StaleNotice } from '../sections/StaleNotice.tsx';
 import { FieldsEditor } from './FieldsEditor.tsx';
 import { useSchemaDraft } from './useSchemaDraft.ts';
+import { useAcceptGroupDefaults } from '../../../api/hooks/useInventory.ts';
+import { useToast } from '../../../ui/toastContext.ts';
+import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
 import { useAskOnEscape } from '../../shared/useAskOnEscape.ts';
 
@@ -44,6 +47,22 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
     onClose();
   }
 
+  // A person accepts an assistant's default as live as it stands, on the
+  // group's revision (decision D6). It changes no field, so an edited
+  // draft may follow it like any of the page's own writes.
+  const accept = useAcceptGroupDefaults(org, group.id);
+  const own = useOwnSteps();
+  const toast = useToast();
+  async function acceptDefault(name: string) {
+    try {
+      const res = await accept.mutateAsync({ keys: [name], revision: group.revision });
+      own.record({ from: group.revision, to: res.group.revision, kind: 'content' });
+      toast.show(t.inventory.assistant.accepted(name));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.inventory.assistant.acceptFailed, 'destructive');
+    }
+  }
+
   async function save() {
     if (await s.save()) onClose();
   }
@@ -72,7 +91,16 @@ export function FieldsDialog({ org, group, canWrite, open, onClose }: FieldsDial
             {t.inventory.schemaTab.problems(s.problems.length)}
           </p>
         )}
-        <FieldsEditor key={s.generation} schema={s.draft} onChange={s.edit} problems={s.problems} readOnly={!canWrite} />
+        <FieldsEditor
+          key={s.generation}
+          schema={s.draft}
+          onChange={s.edit}
+          problems={s.problems}
+          readOnly={!canWrite}
+          assistantDefaults={group.assistant_default_keys ?? []}
+          onAcceptDefault={canWrite ? (name) => void acceptDefault(name) : undefined}
+          accepting={accept.isPending}
+        />
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
           {dirty && (
             <span className="flex items-center gap-1.5 text-xs text-[var(--px-warn)]">

@@ -3,7 +3,7 @@ import { Dialog } from '../../../ui/dialog.tsx';
 import { Button } from '../../../ui/button.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
-import { toVarSchema, useAssignHost, useGroup } from '../../../api/hooks/useInventory.ts';
+import { toVarSchema, useAcceptMemberVars, useAssignHost, useGroup } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { groupFields, membershipFields, problemsFromError } from '../../variables/paths.ts';
@@ -88,13 +88,33 @@ function AssignForm({
   const [vars, setVars] = useState<Vars>(() => (member ? toKeepMarkers(fields, declaredOnly(fields, (member.vars ?? {}) as Vars)) : {}));
   const [problems, setProblems] = useState<Problem[]>(() => (member?.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [error, setError] = useState<string | null>(null);
+  // The membership's revision and marks as this dialog last learned them:
+  // an accept moves both, and a later save sends the new revision.
+  const [revision, setRevision] = useState(member?.revision);
+  const [marked, setMarked] = useState<readonly string[]>(member?.assistant_keys ?? []);
+  const accept = useAcceptMemberVars(org, group.id);
+
+  // A person accepts a value an assistant wrote as live as it stands
+  // (decision D6), on the revision this dialog holds.
+  async function onAccept(key: string) {
+    if (!member || revision === undefined) return;
+    try {
+      const res = await accept.mutateAsync({ hostId: member.host_id, keys: [key], revision });
+      setRevision(res.member.revision);
+      setMarked(res.member.assistant_keys ?? []);
+      toast.show(t.inventory.assistant.accepted(key));
+    } catch (err) {
+      if (errorStatus(err) === 412) return setError(t.inventory.assign.stale);
+      setError(err instanceof Error ? err.message : t.inventory.assistant.acceptFailed);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setProblems([]);
     setError(null);
     try {
-      await assign.mutateAsync({ hostId, vars: declaredOnly(fields, vars), revision: member?.revision });
+      await assign.mutateAsync({ hostId, vars: declaredOnly(fields, vars), revision });
       assign.reset();
       toast.show(member ? t.inventory.assign.valuesSaved(member.host_name) : t.inventory.assign.assigned(group.name));
       onClose();
@@ -110,9 +130,18 @@ function AssignForm({
     <>
       <form onSubmit={submit} className="flex flex-col gap-4">
         {!member && !fixedHost && <ManagedHostPicker org={org} existing={existing} value={hostId} onChange={setHostId} />}
-        {(member?.assistant_keys ?? []).length > 0 && (
-          <AssistantMark testId="assistant-member-values" text={t.inventory.assistant.keys((member?.assistant_keys ?? []).join(', '))} />
-        )}
+        {marked.map((key) => (
+          <AssistantMark
+            key={key}
+            testId={`assistant-member-${key}`}
+            text={`${key}: ${t.inventory.assistant.written}`}
+            action={
+              <Button type="button" aria-label={t.inventory.assistant.acceptFor(key)} disabled={accept.isPending} onClick={() => void onAccept(key)}>
+                {t.inventory.assistant.accept}
+              </Button>
+            }
+          />
+        ))}
         <SchemaForm fields={fields} value={vars} onChange={setVars} problems={problems} idPrefix="assign" />
         {ownFields.length > 0 && (
           <details className="rounded-md border border-border p-3">

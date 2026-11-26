@@ -294,7 +294,7 @@ describe('GroupDetailPage', () => {
     });
     renderAt('/o/acme/groups/g1?tab=inventory');
     expect(await screen.findByTestId('assistant-written')).toHaveTextContent(
-      'Written by an assistant: webserver: motd, web-01: note — used as plain text until a person saves the values',
+      'Written by an assistant: webserver: motd, web-01: note — used as plain text until a person changes or accepts them',
     );
   });
 

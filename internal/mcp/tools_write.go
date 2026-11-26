@@ -193,7 +193,7 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "group", groupKeys, in.updateArgs, nil, true, "/inventory/groups/%s", in.GroupID)
 			}),
-		define("set_group_schema", "Set group schema", "Replace a group's variable schema ("+groupSchemaFieldWords+"). Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type. A default you set or change reaches a run as plain text (never templated, looked up or decrypted) until a person saves the schema; assistant_default_keys lists them. Defaults under names Ansible or Pulsix act on (magic variables such as hostvars, groups, omit or vars) are refused.",
+		define("set_group_schema", "Set group schema", "Replace a group's variable schema ("+groupSchemaFieldWords+"). Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type. A default you set or change reaches a run as plain text (never templated, looked up or decrypted) until a person changes or accepts it in Pulsix; assistant_default_keys lists them. Field names Ansible or Pulsix act on (ansible_…, pulsix_…, __ansible…, magic variables such as hostvars, groups, omit or vars), sub-fields included, are refused for fields you add.",
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupSchemaArgs) (any, error) {
 				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -314,7 +314,7 @@ const pausesForReview = "A change of what runs (a template's playbook, scope, li
 
 // plainTextValues tells the assistant what becomes of the inventory values
 // it writes (spec 2026-11-25, decision D6).
-const plainTextValues = "Every value you set or change reaches a run as plain text: Ansible never templates, looks it up or decrypts it (no {{ … }}, lookups or vault), until a person saves it in Pulsix; assistant_keys lists them. Names Ansible or Pulsix act on (ansible_…, pulsix_…, magic variables such as hostvars, groups, omit or vars) are refused."
+const plainTextValues = "Every value you set or change reaches a run as plain text: Ansible never templates, looks it up or decrypts it (no {{ … }}, lookups or vault), until a person changes or accepts it in Pulsix; assistant_keys lists them. Names Ansible or Pulsix act on (ansible_…, pulsix_…, magic variables such as hostvars, groups, omit or vars) are refused."
 
 // templateSecrets applies the secret rules to a merged template body: the
 // stored schema's secret fields keep their type, and extra vars pass the

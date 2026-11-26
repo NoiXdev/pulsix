@@ -5,7 +5,7 @@
 -- defaults of a group (assistant_default_keys) and which values of a
 -- membership (assistant_keys) an assistant wrote: the renderer emits them
 -- in the inert form Ansible never templates, looks up or decrypts, until a
--- person saves the object, which clears its marks. Additive, with a
+-- person changes such a value or accepts it as live. Additive, with a
 -- constant default: a catalog change, every existing value stays a
 -- person's.
 ALTER TABLE inventory_groups ADD COLUMN assistant_keys text[] NOT NULL DEFAULT '{}';

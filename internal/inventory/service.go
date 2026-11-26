@@ -66,7 +66,7 @@ type Group struct {
 	// AssistantKeys names the keys of Vars an assistant wrote and
 	// AssistantDefaultKeys the fields whose schema default an assistant
 	// set (decision D6, marks.go): the renderer emits them as plain text
-	// until a person saves the values or the schema.
+	// until a person changes them or accepts them (marks_accept.go).
 	AssistantKeys        []string
 	AssistantDefaultKeys []string
 	Revision             int64
@@ -362,8 +362,9 @@ func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision i
 // are never rewritten; the second result counts the members whose values
 // no longer satisfy the new schema. A group holds manual fields only. An
 // assistant's save marks the fields whose defaults it set or changed and
-// may not set a default under a name Ansible or Pulsix act on; a person's
-// clears every default mark (decision D6, marks.go).
+// may neither add a field under a name Ansible or Pulsix act on nor set a
+// default under one; a person's clears the marks of the defaults it
+// changes (decision D6, marks.go).
 func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema, actor assistantchange.Actor) (GroupView, int, error) {
 	if sc.Fields == nil {
 		sc.Fields = []schema.Field{}
@@ -380,7 +381,7 @@ func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision
 	}
 	changed := ChangedDefaults(cur.Schema, sc)
 	if actor.Assistant {
-		if err := checkAssistantDefaults(sc, changed); err != nil {
+		if err := joinProblems(checkAssistantFieldNames(cur.Schema, sc), checkAssistantDefaults(sc, changed)); err != nil {
 			return GroupView{}, 0, err
 		}
 	}
@@ -412,8 +413,8 @@ func (s *Service) SetVars(ctx context.Context, orgID, id uuid.UUID, revision int
 // SetVarsBy replaces a group's group-scoped values on actor's behalf after
 // strict validation. Plaintext secrets are sealed; keep markers keep the
 // stored secret. An assistant's save marks the keys it set or changed and
-// may not set one Ansible or Pulsix act on; a person's clears every mark
-// of the group (decision D6, marks.go).
+// may not set one Ansible or Pulsix act on; a person's clears the marks of
+// the values it changes (decision D6, marks.go).
 func (s *Service) SetVarsBy(ctx context.Context, orgID, id uuid.UUID, revision int64, vars map[string]any, actor assistantchange.Actor) (GroupView, error) {
 	cur, err := s.store.GetGroup(ctx, orgID, id)
 	if err != nil {
