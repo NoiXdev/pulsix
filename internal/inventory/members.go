@@ -6,59 +6,130 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
-// Assign creates or replaces a host's membership in a group. The host must
-// be managed. vars may carry the group's host-scoped fields and overrides of
-// its overridable group-scoped fields. A non-nil revision makes the write
-// conditional on the stored membership's revision.
+// Assign is AssignBy for a person.
 func (s *Service) Assign(ctx context.Context, orgID, groupID, hostID uuid.UUID, vars map[string]any, revision *int64) (MemberView, error) {
-	g, err := s.store.GetGroup(ctx, orgID, groupID)
-	if err != nil {
-		return MemberView{}, err
-	}
-	h, err := s.hosts.GetHost(ctx, orgID, hostID)
-	if errors.Is(err, hosts.ErrNotFound) {
-		return MemberView{}, ErrNotFound
-	}
-	if err != nil {
-		return MemberView{}, err
-	}
-	if !h.Managed {
-		return MemberView{}, ErrNotManaged
-	}
-	prev, err := s.store.GetMembership(ctx, orgID, groupID, hostID)
-	exists := err == nil
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return MemberView{}, err
-	}
-	if revision != nil && (!exists || prev.Revision != *revision) {
-		return MemberView{}, ErrRevisionMismatch
-	}
-	sealed, err := s.prepareVars(MemberAAD(orgID, groupID, hostID), g.Schema.MembershipFields(), vars, prev.Vars)
-	if err != nil {
-		return MemberView{}, err
-	}
-	m := Membership{GroupID: groupID, HostID: hostID, OrgID: orgID, Vars: sealed}
-	var saved Membership
-	if revision != nil {
-		m.Revision = *revision
-		saved, err = s.store.UpdateMembership(ctx, m)
-	} else {
-		saved, err = s.store.PutMembership(ctx, m)
-	}
-	if err != nil {
-		return MemberView{}, err
-	}
-	saved.HostName, saved.GroupName = h.Name, g.Name
-	return memberView(g, saved), nil
+	return s.AssignBy(ctx, orgID, groupID, hostID, vars, revision, assistantchange.Actor{})
 }
 
-// Unassign removes a host from a group.
+// AssignBy creates or replaces a host's membership in a group on actor's
+// behalf. The host must be managed. vars may carry the group's host-scoped
+// fields and overrides of its overridable group-scoped fields. A non-nil
+// revision makes the write conditional on the stored membership's
+// revision. An assistant's write marks the keys it set or changed and may
+// not set one Ansible or Pulsix act on; a person's clears the marks of the
+// values it changes (decision D6, marks.go). An assistant's write is
+// handed to the watcher in the write's transaction: a host joining the
+// group (decision D7) or a change of an existing membership's values. The
+// membership read is locked until the write commits, and whether the host
+// joined is the upsert's own answer.
+func (s *Service) AssignBy(ctx context.Context, orgID, groupID, hostID uuid.UUID, vars map[string]any, revision *int64, actor assistantchange.Actor) (MemberView, error) {
+	var result MemberView
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		g, err := s.store.GetGroup(ctx, orgID, groupID)
+		if err != nil {
+			return err
+		}
+		h, err := s.hosts.GetHost(ctx, orgID, hostID)
+		if errors.Is(err, hosts.ErrNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if !h.Managed {
+			return ErrNotManaged
+		}
+		prev, err := s.store.GetMembershipForUpdate(ctx, orgID, groupID, hostID)
+		exists := err == nil
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if revision != nil && (!exists || prev.Revision != *revision) {
+			return ErrRevisionMismatch
+		}
+		sealed, err := s.prepareVars(MemberAAD(orgID, groupID, hostID), g.Schema.MembershipFields(), vars, prev.Vars)
+		if err != nil {
+			return err
+		}
+		changed := ChangedKeys(prev.Vars, sealed)
+		if actor.Assistant {
+			if err := checkAssistantValues(sealed, changed); err != nil {
+				return err
+			}
+		}
+		m := Membership{GroupID: groupID, HostID: hostID, OrgID: orgID, Vars: sealed,
+			AssistantKeys: valueMarks(prev.AssistantKeys, sealed, changed, actor)}
+		var saved Membership
+		joined := false
+		if revision != nil {
+			m.Revision = *revision
+			saved, err = s.store.UpdateMembership(ctx, m)
+		} else {
+			saved, joined, err = s.store.PutMembership(ctx, m)
+		}
+		if err != nil {
+			return err
+		}
+		saved.HostName, saved.GroupName = h.Name, g.Name
+		result = memberView(g, saved)
+		if joined {
+			prev.Vars = nil
+		}
+		fields := valueChanges(g.Schema.MembershipFields(), prev.Vars, sealed)
+		if joined {
+			fields = append([]assistantchange.Field{{Name: "member", Old: nil, New: h.Name}}, fields...)
+		}
+		return s.handOnMembership(ctx, orgID, actor, g, hostID, h.Name, fields, &assistantchange.Reach{Hosts: []uuid.UUID{hostID}})
+	})
+	if err != nil {
+		return MemberView{}, err
+	}
+	return result, nil
+}
+
+// Unassign is UnassignBy for a person.
 func (s *Service) Unassign(ctx context.Context, orgID, groupID, hostID uuid.UUID) error {
-	return s.store.DeleteMembership(ctx, orgID, groupID, hostID)
+	return s.UnassignBy(ctx, orgID, groupID, hostID, assistantchange.Actor{})
+}
+
+// UnassignBy removes a host from a group on actor's behalf. An assistant's
+// removal is handed to the watcher in the removal's transaction (decision
+// D7): the host no longer receives the group's values, and runs scoped to
+// the group or one of its ancestors no longer reach it.
+func (s *Service) UnassignBy(ctx context.Context, orgID, groupID, hostID uuid.UUID, actor assistantchange.Actor) error {
+	if !s.watches(actor) {
+		return s.store.DeleteMembership(ctx, orgID, groupID, hostID)
+	}
+	return s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		prev, err := s.store.GetMembershipForUpdate(ctx, orgID, groupID, hostID)
+		if err != nil {
+			return err
+		}
+		g, err := s.store.GetGroup(ctx, orgID, groupID)
+		if err != nil {
+			return err
+		}
+		former, err := s.selfAndAncestors(ctx, orgID, groupID)
+		if err != nil {
+			return err
+		}
+		name := hostID.String()
+		if h, err := s.hosts.GetHost(ctx, orgID, hostID); err == nil {
+			name = h.Name
+		}
+		if err := s.store.DeleteMembership(ctx, orgID, groupID, hostID); err != nil {
+			return err
+		}
+		fields := append([]assistantchange.Field{{Name: "member", Old: name, New: nil}},
+			valueChanges(g.Schema.MembershipFields(), prev.Vars, nil)...)
+		return s.handOnMembership(ctx, orgID, actor, g, hostID, name, fields,
+			&assistantchange.Reach{Hosts: []uuid.UUID{hostID}, FormerGroups: former})
+	})
 }
 
 // ListMemberships returns every membership of the organization, unfiltered.

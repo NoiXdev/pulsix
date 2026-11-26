@@ -111,3 +111,12 @@ func (s *SQLStore) LatestReviews(ctx context.Context, orgID uuid.UUID, kind Kind
 	}
 	return out, nil
 }
+
+// HasAutomation implements ReviewStore.
+func (s *SQLStore) HasAutomation(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	has, err := s.q.HasAutomation(ctx, orgID)
+	if err != nil {
+		return false, fmt.Errorf("look for schedules and triggers: %w", err)
+	}
+	return has, nil
+}

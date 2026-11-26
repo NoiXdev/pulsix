@@ -14,7 +14,8 @@ const TD = 'border-t border-border px-4 py-2 align-top';
  * ReviewRequestSections is the picture of a review (spec 2026-11-25 C2): an
  * assistant changed what a schedule or webhook trigger runs, which paused
  * (disabled) it. It shows the item as it is now and, per change, the job
- * template or repository with each field's value before and after — a
+ * template, repository, playbook, inventory group or a host's values in a
+ * group (decision D6) with each field's value before and after — a
  * secret only as "hidden" — and the token that made it. It says when the
  * item is no longer stopped for the review and when it is gone, and who had
  * paused it before the change (approving then leaves it paused).
@@ -93,8 +94,16 @@ export function ReviewRequestSections({ review, tokenName, tokenId, personName }
           </dl>
         )}
         <h3 className="text-xs font-semibold">{r.changes}</h3>
+        {(review.changes ?? []).some((c) => c.subject.startsWith('inventory_')) && (
+          <p role="note" aria-label={r.inventoryPlainTitle} className="rounded-md border border-border px-3 py-2 text-xs">
+            {r.inventoryPlain}
+          </p>
+        )}
         {(review.changes ?? []).map((c, i) => {
-          const caption = `${r.subject[c.subject] ?? c.subject} ${c.name}`;
+          const caption =
+            c.subject === 'inventory_membership'
+              ? r.membership(c.host_name || c.host_id || '', c.name)
+              : `${r.subject[c.subject] ?? c.subject} ${c.name}`;
           const by = c.token_id && tokenId && c.token_id !== tokenId ? r.otherToken(c.token_id) : r.changedBy(tokenName || c.token_id || '');
           return (
             <Card key={`${c.id}-${i}`}>

@@ -50,4 +50,12 @@ describe('formatValue', () => {
     expect(formatValue(['a', 'b'])).toBe('["a","b"]');
     expect(formatValue('x'.repeat(60))).toBe(`${'x'.repeat(47)}…`);
   });
+
+  it('reads a value an assistant wrote unwrapped and says it is plain text', () => {
+    expect(formatValue({ __ansible_unsafe: '{{ x }}' }, 'plain text')).toBe('{{ x }} (plain text)');
+    expect(formatValue({ a: [{ __ansible_unsafe: 'b' }, 1] }, 'plain text')).toBe('{"a":["b",1]} (plain text)');
+    expect(formatValue({ __ansible_unsafe: 'y' })).toBe('y');
+    // An object that only looks alike stays as it is.
+    expect(formatValue({ __ansible_unsafe: 1 }, 'plain text')).toBe('{"__ansible_unsafe":1}');
+  });
 });

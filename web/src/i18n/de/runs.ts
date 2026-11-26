@@ -432,8 +432,8 @@ export const deRuns: Messages['runs'] = {
         title: { schedule: 'Pausierten Zeitplan prüfen', trigger: 'Deaktivierten Webhook-Trigger prüfen' } as Record<string, string>,
         section: 'Prüfung',
         intro: {
-          schedule: 'Ein Assistent hat geändert, was dieser Zeitplan ausführt, deshalb wurde er pausiert. Die Freigabe setzt ihn ab jetzt mit den Änderungen unten fort; eine Ablehnung lässt ihn pausiert.',
-          trigger: 'Ein Assistent hat geändert, was dieser Webhook-Trigger ausführt oder synchronisiert, deshalb wurde er deaktiviert. Die Freigabe aktiviert ihn mit den Änderungen unten wieder; eine Ablehnung lässt ihn deaktiviert.',
+          schedule: 'Ein Assistent hat geändert, was dieser Zeitplan ausführt, welche Inventarwerte seine Läufe erhalten oder welche Hosts sie erreichen, deshalb wurde er pausiert. Die Freigabe setzt ihn ab jetzt mit den Änderungen unten fort; eine Ablehnung lässt ihn pausiert.',
+          trigger: 'Ein Assistent hat geändert, was dieser Webhook-Trigger ausführt oder synchronisiert, welche Inventarwerte seine Läufe erhalten oder welche Hosts sie erreichen, deshalb wurde er deaktiviert. Die Freigabe aktiviert ihn mit den Änderungen unten wieder; eine Ablehnung lässt ihn deaktiviert.',
         } as Record<string, string>,
         item: { schedule: 'Zeitplan', trigger: 'Webhook-Trigger' } as Record<string, string>,
         timetable: 'Zeitplan',
@@ -442,7 +442,11 @@ export const deRuns: Messages['runs'] = {
         paused: 'pausiert',
         active: 'aktiv',
         changes: 'Was der Assistent geändert hat',
-        subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook' } as Record<string, string>,
+        subject: { job_template: 'Vorlage', repo: 'Repository', playbook: 'Playbook', inventory_group: 'Inventargruppe', host: 'Host', zone: 'Jump-Host der Zone' } as Record<string, string>,
+        inventoryPlainTitle: 'Inventarwerte',
+        inventoryPlain:
+          'Die Freigabe macht die Inventarwerte des Assistenten nicht wirksam: Sie bleiben reiner Text, bis eine Person sie auf der Gruppen- oder Host-Seite ändert oder übernimmt.',
+        membership: (host: string, group: string) => `Werte von Host ${host} in Inventargruppe ${group}`,
         byAssistant: (token: string) => `Ein Assistent (Token ${token})`,
         pausedBefore: {
           schedule: (who: string) =>

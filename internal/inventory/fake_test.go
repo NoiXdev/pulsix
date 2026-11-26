@@ -105,11 +105,16 @@ func (f *fakeStore) MemberCounts(_ context.Context, orgID uuid.UUID) (map[uuid.U
 	return out, nil
 }
 
-func (f *fakeStore) PutMembership(_ context.Context, m inventory.Membership) (inventory.Membership, error) {
+func (f *fakeStore) PutMembership(_ context.Context, m inventory.Membership) (inventory.Membership, bool, error) {
 	k := memberKey{m.GroupID, m.HostID}
+	_, existed := f.members[k]
 	m.Revision = f.members[k].Revision + 1
 	f.members[k] = m
-	return m, nil
+	return m, !existed, nil
+}
+
+func (f *fakeStore) GetMembershipForUpdate(ctx context.Context, orgID, groupID, hostID uuid.UUID) (inventory.Membership, error) {
+	return f.GetMembership(ctx, orgID, groupID, hostID)
 }
 
 func (f *fakeStore) UpdateMembership(_ context.Context, m inventory.Membership) (inventory.Membership, error) {
@@ -170,6 +175,11 @@ func (f *fakeStore) ListGroupMembers(_ context.Context, orgID, groupID uuid.UUID
 // The integration test in concurrency_test.go covers the real lock.
 func (f *fakeStore) WithTreeLock(ctx context.Context, orgID uuid.UUID, fn func(inventory.Store) error) error {
 	return fn(f)
+}
+
+// InTx runs fn directly against ctx: the fake has no transactions.
+func (f *fakeStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
 // WithReadTx runs fn directly against ctx: the fake has no transactions or

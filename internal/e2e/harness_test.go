@@ -476,7 +476,11 @@ if "ansible_user" in hv:
 cmd += ["-o", "ConnectTimeout=10"]
 cmd += shlex.split(effective("ansible_ssh_common_args"))
 cmd += shlex.split(effective("ansible_ssh_extra_args"))
-cmd += [hv.get("ansible_host", host), "true"]
+# ansible_host arrives in the inert form (decision D7), as Ansible's
+# script inventory reads it: the plain text inside.
+def plain(v):
+    return v["__ansible_unsafe"] if isinstance(v, dict) and "__ansible_unsafe" in v else v
+cmd += [plain(hv.get("ansible_host", host)), "true"]
 
 # copy_key_to (assistant_runs_test.go): a copy of the SSH key the run
 # logs in with, so a test can look for that key in what it reads back.

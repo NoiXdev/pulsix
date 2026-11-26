@@ -11,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/triggers"
@@ -32,6 +33,10 @@ type ReviewStore interface {
 	// LatestReview is the newest review of kind for target, whatever its
 	// state; ErrNotFound when there is none.
 	LatestReview(ctx context.Context, orgID uuid.UUID, kind Kind, target uuid.UUID) (Request, error)
+	// HasAutomation reports whether the organization has any schedule or
+	// any template trigger, in whatever state: without one an inventory
+	// change has nothing to pause.
+	HasAutomation(ctx context.Context, orgID uuid.UUID) (bool, error)
 }
 
 // The services the Reviewer reads and stops, each narrowed to what it uses.
@@ -43,6 +48,14 @@ type (
 		IDsOfRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]uuid.UUID, error)
 		IDsOfPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]uuid.UUID, error)
 		IDsReaching(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error)
+		// List lists every template with its scope and limit: which of
+		// them an inventory change reaches.
+		List(ctx context.Context, orgID uuid.UUID) ([]templates.Template, error)
+	}
+	// ReviewReach says which hosts an inventory change reaches in each
+	// template's run (jobs.ScopeReach).
+	ReviewReach interface {
+		Overlap(ctx context.Context, orgID uuid.UUID, changed []render.Scope, scopes map[uuid.UUID]render.Scope) (map[uuid.UUID][]string, error)
 	}
 	// ReviewHistory names who last did one of actions to an object (the
 	// activity log, audit.SQLStore): who had paused an item before.
@@ -75,6 +88,9 @@ type ReviewSources struct {
 	Triggers  ReviewTriggers
 	// History names who had stopped an item before; nil names nobody.
 	History ReviewHistory
+	// Reach decides which templates an inventory change reaches; without
+	// one an inventory change is refused.
+	Reach ReviewReach
 }
 
 // The activity log actions that stop a schedule or a trigger (the API's
@@ -90,7 +106,8 @@ var (
 
 // Reviewer stops what runs unattended after an assistant's change to what
 // it runs (spec 2026-11-25 assistant API gaps, C2, decision D5): it
-// implements assistantchange.Watcher for templates and repositories, and
+// implements assistantchange.Watcher for templates, repositories,
+// playbooks and the inventory (decision D6, reviewer_inventory.go), and
 // closes a review when a person resumes or enables its item directly
 // (schedules.Reviews, triggers.Reviews). Every call runs inside the
 // caller's transaction: it opens none of its own.
@@ -116,7 +133,9 @@ func NewReviewer(store ReviewStore, src ReviewSources, auditor Auditor, now func
 // a person had paused or disabled gets the reason and a review as well,
 // which remembers who stopped it (PausedBefore), so the notice shows before
 // anyone resumes it; approving that review leaves it stopped. An item
-// already stopped for review gets c added to its open review instead.
+// already stopped for review gets c added to its open review instead. An
+// inventory change pauses what runs on the hosts it reaches
+// (inventoryChanged).
 func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantchange.Change) error {
 	var templateIDs []uuid.UUID
 	var repoID *uuid.UUID
@@ -135,6 +154,8 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 			return fmt.Errorf("list the playbook's templates: %w", err)
 		}
 		templateIDs = ids
+	case assistantchange.SubjectInventoryGroup, assistantchange.SubjectInventoryMembership, assistantchange.SubjectHost, assistantchange.SubjectZone:
+		return rv.inventoryChanged(ctx, orgID, c)
 	default:
 		return fmt.Errorf("an assistant change of an unknown subject %q", c.Subject)
 	}
@@ -148,18 +169,23 @@ func (rv *Reviewer) Changed(ctx context.Context, orgID uuid.UUID, c assistantcha
 		templateIDs = reaching
 	}
 	revisions := map[uuid.UUID]int64{}
-	if err := rv.pauseSchedules(ctx, orgID, c, templateIDs, revisions); err != nil {
+	if err := rv.pauseSchedules(ctx, orgID, c, templateIDs, nil, revisions); err != nil {
 		return err
 	}
-	return rv.disableTriggers(ctx, orgID, c, templateIDs, repoID, revisions)
+	return rv.disableTriggers(ctx, orgID, c, templateIDs, repoID, nil, revisions)
 }
 
-func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assistantchange.Change, templateIDs []uuid.UUID, revisions map[uuid.UUID]int64) error {
+// pauseSchedules pauses the schedules of templateIDs that keep keeps (nil
+// keeps every one).
+func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assistantchange.Change, templateIDs []uuid.UUID, keep func(schedules.Schedule) bool, revisions map[uuid.UUID]int64) error {
 	list, err := rv.src.Schedules.ListOfTemplates(ctx, orgID, templateIDs)
 	if err != nil {
 		return fmt.Errorf("list the schedules to pause: %w", err)
 	}
 	for _, listed := range list {
+		if keep != nil && !keep(listed) {
+			continue
+		}
 		// Decide on the row as committed, locked until the change commits
 		// (final review 3): a person's concurrent resume is seen or waits.
 		s, err := rv.src.Schedules.LockForReview(ctx, orgID, listed.ID)
@@ -203,12 +229,17 @@ func (rv *Reviewer) pauseSchedules(ctx context.Context, orgID uuid.UUID, c assis
 	return nil
 }
 
-func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assistantchange.Change, templateIDs []uuid.UUID, repoID *uuid.UUID, revisions map[uuid.UUID]int64) error {
+// disableTriggers disables the triggers of templateIDs (and of repoID)
+// that keep keeps (nil keeps every one).
+func (rv *Reviewer) disableTriggers(ctx context.Context, orgID uuid.UUID, c assistantchange.Change, templateIDs []uuid.UUID, repoID *uuid.UUID, keep func(triggers.Trigger) bool, revisions map[uuid.UUID]int64) error {
 	list, err := rv.src.Triggers.ListForReview(ctx, orgID, templateIDs, repoID)
 	if err != nil {
 		return fmt.Errorf("list the triggers to disable: %w", err)
 	}
 	for _, listed := range list {
+		if keep != nil && !keep(listed) {
+			continue
+		}
 		t, err := rv.src.Triggers.LockForReview(ctx, orgID, listed.ID)
 		if errors.Is(err, triggers.ErrNotFound) {
 			continue
@@ -347,18 +378,26 @@ func (rv *Reviewer) review(ctx context.Context, orgID uuid.UUID, kind Kind, targ
 
 // reviewReason is a review's one line: what the assistant changed.
 func reviewReason(c assistantchange.Change) string {
-	return fmt.Sprintf("An assistant changed %s %s; a person reviews the change before this runs unattended again", subjectWords(c.Subject), c.Name)
+	return fmt.Sprintf("An assistant changed %s; a person reviews the change before this runs unattended again", changeWords(c))
 }
 
-// subjectWords names a change's subject in a sentence.
-func subjectWords(s assistantchange.Subject) string {
-	switch s {
+// changeWords names what a change touched in a sentence.
+func changeWords(c assistantchange.Change) string {
+	switch c.Subject {
 	case assistantchange.SubjectRepo:
-		return "repository"
+		return "repository " + c.Name
 	case assistantchange.SubjectPlaybook:
-		return "playbook"
+		return "playbook " + c.Name
+	case assistantchange.SubjectInventoryGroup:
+		return "inventory group " + c.Name
+	case assistantchange.SubjectInventoryMembership:
+		return "host " + c.HostName + " in inventory group " + c.Name
+	case assistantchange.SubjectHost:
+		return "host " + c.Name
+	case assistantchange.SubjectZone:
+		return "the jump host of zone " + c.Name
 	}
-	return "job template"
+	return "job template " + c.Name
 }
 
 // record writes the activity entry of one pause, as the assistant's token
@@ -369,7 +408,6 @@ func (rv *Reviewer) record(ctx context.Context, orgID uuid.UUID, c assistantchan
 	for i, f := range c.Fields {
 		names[i] = f.Name
 	}
-	what := subjectWords(c.Subject)
 	user, kind := c.UserID, audit.ActorKindToken
 	if c.TokenID == nil {
 		kind = audit.ActorKindUser
@@ -377,7 +415,7 @@ func (rv *Reviewer) record(ctx context.Context, orgID uuid.UUID, c assistantchan
 	err := rv.audit.Record(ctx, audit.Event{
 		OrgID: &orgID, ActorID: &user, ActorKind: kind, TokenID: c.TokenID,
 		Action: action, ObjectType: objectType, ObjectID: id.String(),
-		Summary: fmt.Sprintf("%s for review: an assistant changed %s %s (%s)", did, what, c.Name, strings.Join(names, ", ")),
+		Summary: fmt.Sprintf("%s for review: an assistant changed %s (%s)", did, changeWords(c), strings.Join(names, ", ")),
 		Meta:    map[string]any{"review_request_id": review.String(), "changed": string(c.Subject), "changed_id": c.ID.String()},
 	})
 	if err != nil {

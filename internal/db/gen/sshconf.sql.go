@@ -131,6 +131,24 @@ func (q *Queries) GetHostSSH(ctx context.Context, arg GetHostSSHParams) (HostSsh
 	return i, err
 }
 
+const getZoneBastionForUpdate = `-- name: GetZoneBastionForUpdate :one
+SELECT bastion_id FROM zones WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE
+`
+
+type GetZoneBastionForUpdateParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// A zone's default jump host, the zone row locked until the transaction
+// ends.
+func (q *Queries) GetZoneBastionForUpdate(ctx context.Context, arg GetZoneBastionForUpdateParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getZoneBastionForUpdate, arg.OrgID, arg.ID)
+	var bastion_id pgtype.UUID
+	err := row.Scan(&bastion_id)
+	return bastion_id, err
+}
+
 const listBastions = `-- name: ListBastions :many
 SELECT id, org_id, name, address, port, username, credential_id, via_bastion_id, created_at, updated_at, ssh_host_key, ssh_host_public_key FROM bastions WHERE org_id = $1 ORDER BY name
 `
@@ -230,6 +248,25 @@ func (q *Queries) ListZoneBastions(ctx context.Context, orgID uuid.UUID) ([]List
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockHostForSSH = `-- name: LockHostForSSH :one
+SELECT id FROM hosts WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE
+`
+
+type LockHostForSSHParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	ID    uuid.UUID `json:"id"`
+}
+
+// The host row locked FOR NO KEY UPDATE until the transaction ends: every
+// write of a host's SSH settings bumps this row, so an assistant's change
+// reads the settings it replaces under this lock.
+func (q *Queries) LockHostForSSH(ctx context.Context, arg LockHostForSSHParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockHostForSSH, arg.OrgID, arg.ID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const setZoneBastion = `-- name: SetZoneBastion :execrows

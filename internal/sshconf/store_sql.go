@@ -25,6 +25,28 @@ type SQLStore struct {
 // NewSQLStore builds the store.
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{db: d, q: gen.New(d)} }
 
+// LockHost implements Store.
+func (s *SQLStore) LockHost(ctx context.Context, orgID, hostID uuid.UUID) error {
+	if _, err := s.q.LockHostForSSH(ctx, gen.LockHostForSSHParams{OrgID: orgID, ID: hostID}); err != nil {
+		return mapErr(err)
+	}
+	return nil
+}
+
+// ZoneBastionForUpdate implements Store.
+func (s *SQLStore) ZoneBastionForUpdate(ctx context.Context, orgID, zoneID uuid.UUID) (*uuid.UUID, error) {
+	id, err := s.q.GetZoneBastionForUpdate(ctx, gen.GetZoneBastionForUpdateParams{OrgID: orgID, ID: zoneID})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return db.UUIDPtr(id), nil
+}
+
+// InTx implements Store: db.WithWriteTx.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
 // chainLockKeyPrefix namespaces this lock's key within hashtext's output
 // space, the same way inventory.treeLockKeyPrefix does for the sibling
 // group-tree lock (see its doc comment): without a distinct prefix,
@@ -219,5 +241,6 @@ func toHostSSH(r gen.HostSsh) HostSSH {
 	return HostSSH{
 		HostID: r.HostID, OrgID: r.OrgID, Username: r.Username, Port: int(r.Port),
 		CredentialID: db.UUIDPtr(r.CredentialID), BastionMode: BastionMode(r.BastionMode), BastionID: db.UUIDPtr(r.BastionID),
+		KeyPinned: r.SshHostKey != nil && *r.SshHostKey != "",
 	}
 }

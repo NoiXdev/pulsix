@@ -273,7 +273,7 @@ func TestInventoryMembers(t *testing.T) {
 	}
 	resp = requestJSON(t, f.c, http.MethodGet, f.base+"/hosts/"+managed+"/inventory/preview", nil)
 	body = mustReadBody(t, resp)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"password":"********"`) || !strings.Contains(body, `"ansible_host":"web-01"`) || strings.Contains(body, "hunter2") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"password":"********"`) || !strings.Contains(body, `"ansible_host":{"__ansible_unsafe":"web-01"}`) || strings.Contains(body, "hunter2") {
 		t.Fatalf("host preview: %d %s", resp.StatusCode, body)
 	}
 	if resp := requestJSON(t, f.c, http.MethodDelete, url+"/members/"+managed, nil); resp.StatusCode != http.StatusOK {

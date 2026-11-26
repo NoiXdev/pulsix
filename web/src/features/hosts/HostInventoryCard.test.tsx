@@ -70,6 +70,23 @@ describe('HostInventoryCard', () => {
     expect(screen.getByText('1 to fill in')).toBeInTheDocument();
   });
 
+  it('flags the values an assistant wrote as plain text until a person changes or accepts them', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': {
+        groups: [
+          { group_id: 'g1', group_name: 'webserver', host_id: 'h1', host_name: 'web-01', vars: {}, complete: true, problems: [], orphaned: [], assistant_keys: ['note', 'role'], revision: 1 },
+          { group_id: 'g2', group_name: 'database', host_id: 'h1', host_name: 'web-01', vars: {}, complete: true, problems: [], orphaned: [], assistant_keys: [], revision: 1 },
+        ],
+      },
+    });
+    renderCard(true);
+    const row = (await screen.findByRole('link', { name: 'webserver' })).closest('li')!;
+    const pill = within(row).getByText('assistant values');
+    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role — used as plain text until a person changes or accepts them');
+    const other = screen.getByRole('link', { name: 'database' }).closest('li')!;
+    expect(within(other).queryByText('assistant values')).not.toBeInTheDocument();
+  });
+
   describe('managing memberships', () => {
     const summary = (id: string, name: string, parent_id: string | null = null) => ({
       id, name, description: '', parent_id, members: 0, group_fields: 1, host_fields: 1, complete: true, revision: 1,
@@ -157,6 +174,46 @@ describe('HostInventoryCard', () => {
       await screen.findByText('Values of web-01 saved');
       expect(put?.body).toEqual({ vars: { domain: 'b.io' } });
       expect(put?.headers.get('If-Match')).toBe('"4"');
+    });
+
+    it('accepts a value an assistant wrote as live from the values dialog', async () => {
+      const user = userEvent.setup();
+      let accepted: MockRequest | undefined;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [{ ...MEMBERSHIP, assistant_keys: ['domain'] }] },
+        'POST /api/v1/orgs/acme/inventory/groups/g1/members/h1/accept': (req: MockRequest) => {
+          accepted = req;
+          return { member: { ...MEMBERSHIP, assistant_keys: [], revision: 5 } };
+        },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
+      const dialog = await screen.findByRole('dialog');
+      const mark = await within(dialog).findByTestId('assistant-member-domain');
+      expect(mark).toHaveTextContent('domain: Written by an assistant — used as plain text until a person changes or accepts it');
+      await user.click(within(mark).getByRole('button', { name: 'Accept domain as live' }));
+      await screen.findByText('domain is live now');
+      expect(accepted?.headers.get('If-Match')).toBe('"4"');
+      expect(accepted?.body).toEqual({ keys: ['domain'] });
+    });
+
+    it('offers accept only for a shown value, and not while it is edited (final review M3)', async () => {
+      const user = userEvent.setup();
+      const schema = { fields: [{ name: 'domain', type: 'string', scope: 'host', required: true }, { name: 'old', type: 'string', scope: 'host', active: false }] };
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [{ ...MEMBERSHIP, vars: { domain: 'a.io', old: 'x', gone: 'y' }, assistant_keys: ['domain', 'old', 'gone'] }] },
+        'GET /api/v1/orgs/acme/inventory/groups/g1': { group: { ...full('g1', 'webserver').group, schema } },
+      }));
+      renderCard(true, true);
+      await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
+      const dialog = await screen.findByRole('dialog');
+      const mark = await within(dialog).findByTestId('assistant-member-domain');
+      expect(within(dialog).queryByTestId('assistant-member-old')).not.toBeInTheDocument();
+      expect(within(dialog).queryByTestId('assistant-member-gone')).not.toBeInTheDocument();
+      const accept = within(mark).getByRole('button', { name: 'Accept domain as live' });
+      expect(accept).toBeEnabled();
+      await user.type(within(dialog).getByRole('textbox', { name: /^domain/ }), 'x');
+      expect(accept).toBeDisabled();
     });
 
     it('asks before removing the host from a group and then unassigns it', async () => {

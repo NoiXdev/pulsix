@@ -514,27 +514,30 @@ type InstanceSetting struct {
 }
 
 type InventoryGroup struct {
-	ID          uuid.UUID   `json:"id"`
-	OrgID       uuid.UUID   `json:"org_id"`
-	ParentID    pgtype.UUID `json:"parent_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Schema      []byte      `json:"schema"`
-	Vars        []byte      `json:"vars"`
-	BastionID   pgtype.UUID `json:"bastion_id"`
-	Revision    int64       `json:"revision"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+	ID                   uuid.UUID   `json:"id"`
+	OrgID                uuid.UUID   `json:"org_id"`
+	ParentID             pgtype.UUID `json:"parent_id"`
+	Name                 string      `json:"name"`
+	Description          string      `json:"description"`
+	Schema               []byte      `json:"schema"`
+	Vars                 []byte      `json:"vars"`
+	BastionID            pgtype.UUID `json:"bastion_id"`
+	Revision             int64       `json:"revision"`
+	CreatedAt            time.Time   `json:"created_at"`
+	UpdatedAt            time.Time   `json:"updated_at"`
+	AssistantKeys        []string    `json:"assistant_keys"`
+	AssistantDefaultKeys []string    `json:"assistant_default_keys"`
 }
 
 type InventoryMembership struct {
-	GroupID   uuid.UUID `json:"group_id"`
-	HostID    uuid.UUID `json:"host_id"`
-	OrgID     uuid.UUID `json:"org_id"`
-	Vars      []byte    `json:"vars"`
-	Revision  int64     `json:"revision"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	GroupID       uuid.UUID `json:"group_id"`
+	HostID        uuid.UUID `json:"host_id"`
+	OrgID         uuid.UUID `json:"org_id"`
+	Vars          []byte    `json:"vars"`
+	Revision      int64     `json:"revision"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	AssistantKeys []string  `json:"assistant_keys"`
 }
 
 type Invite struct {

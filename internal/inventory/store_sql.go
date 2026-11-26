@@ -62,6 +62,13 @@ func (s *SQLStore) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx 
 	return s.db.WithReadTx(ctx, orgID, fn)
 }
 
+// InTx implements Store: one organization-scoped write transaction that
+// every store built on the same database joins through the context
+// (db.WithWriteTx). Not nested: db.WithWriteTx always opens its own.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
 func (s *SQLStore) CreateGroup(ctx context.Context, g Group) (Group, error) {
 	sc, vars, err := encodeGroup(g)
 	if err != nil {
@@ -106,7 +113,8 @@ func (s *SQLStore) UpdateGroup(ctx context.Context, g Group) (Group, error) {
 	}
 	row, err := s.q.UpdateInventoryGroup(ctx, gen.UpdateInventoryGroupParams{
 		ParentID: db.NullUUID(g.ParentID), Name: g.Name, Description: g.Description, Schema: sc, Vars: vars,
-		BastionID: db.NullUUID(g.BastionID), OrgID: g.OrgID, ID: g.ID, Revision: g.Revision,
+		BastionID: db.NullUUID(g.BastionID), AssistantKeys: marks(g.AssistantKeys),
+		AssistantDefaultKeys: marks(g.AssistantDefaultKeys), OrgID: g.OrgID, ID: g.ID, Revision: g.Revision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, getErr := s.q.GetInventoryGroup(ctx, gen.GetInventoryGroupParams{OrgID: g.OrgID, ID: g.ID}); getErr != nil {
@@ -146,16 +154,19 @@ func (s *SQLStore) MemberCounts(ctx context.Context, orgID uuid.UUID) (map[uuid.
 	return out, nil
 }
 
-func (s *SQLStore) PutMembership(ctx context.Context, m Membership) (Membership, error) {
+func (s *SQLStore) PutMembership(ctx context.Context, m Membership) (Membership, bool, error) {
 	vars, err := json.Marshal(m.Vars)
 	if err != nil {
-		return Membership{}, fmt.Errorf("encode membership vars: %w", err)
+		return Membership{}, false, fmt.Errorf("encode membership vars: %w", err)
 	}
-	row, err := s.q.UpsertInventoryMembership(ctx, gen.UpsertInventoryMembershipParams{GroupID: m.GroupID, HostID: m.HostID, OrgID: m.OrgID, Vars: vars})
+	row, err := s.q.UpsertInventoryMembership(ctx, gen.UpsertInventoryMembershipParams{
+		GroupID: m.GroupID, HostID: m.HostID, OrgID: m.OrgID, Vars: vars, AssistantKeys: marks(m.AssistantKeys),
+	})
 	if err != nil {
-		return Membership{}, mapWriteErr(err)
+		return Membership{}, false, mapWriteErr(err)
 	}
-	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	saved, err := toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	return saved, row.Inserted, err
 }
 
 func (s *SQLStore) UpdateMembership(ctx context.Context, m Membership) (Membership, error) {
@@ -163,7 +174,9 @@ func (s *SQLStore) UpdateMembership(ctx context.Context, m Membership) (Membersh
 	if err != nil {
 		return Membership{}, fmt.Errorf("encode membership vars: %w", err)
 	}
-	row, err := s.q.UpdateInventoryMembership(ctx, gen.UpdateInventoryMembershipParams{Vars: vars, OrgID: m.OrgID, GroupID: m.GroupID, HostID: m.HostID, Revision: m.Revision})
+	row, err := s.q.UpdateInventoryMembership(ctx, gen.UpdateInventoryMembershipParams{
+		Vars: vars, AssistantKeys: marks(m.AssistantKeys), OrgID: m.OrgID, GroupID: m.GroupID, HostID: m.HostID, Revision: m.Revision,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, getErr := s.GetMembership(ctx, m.OrgID, m.GroupID, m.HostID); getErr != nil {
 			return Membership{}, getErr
@@ -173,7 +186,7 @@ func (s *SQLStore) UpdateMembership(ctx context.Context, m Membership) (Membersh
 	if err != nil {
 		return Membership{}, err
 	}
-	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
 }
 
 func (s *SQLStore) GetMembership(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error) {
@@ -181,7 +194,17 @@ func (s *SQLStore) GetMembership(ctx context.Context, orgID, groupID, hostID uui
 	if err != nil {
 		return Membership{}, mapErr(err)
 	}
-	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
+}
+
+// GetMembershipForUpdate implements Store: GetMembership, the row locked
+// until the transaction ends.
+func (s *SQLStore) GetMembershipForUpdate(ctx context.Context, orgID, groupID, hostID uuid.UUID) (Membership, error) {
+	row, err := s.q.GetInventoryMembershipForUpdate(ctx, gen.GetInventoryMembershipForUpdateParams{OrgID: orgID, GroupID: groupID, HostID: hostID})
+	if err != nil {
+		return Membership{}, mapErr(err)
+	}
+	return toMembership(row.GroupID, row.HostID, row.OrgID, row.Vars, row.AssistantKeys, row.Revision, row.CreatedAt, row.UpdatedAt, "", "")
 }
 
 func (s *SQLStore) DeleteMembership(ctx context.Context, orgID, groupID, hostID uuid.UUID) error {
@@ -202,7 +225,7 @@ func (s *SQLStore) ListMemberships(ctx context.Context, orgID uuid.UUID) ([]Memb
 	}
 	out := make([]Membership, len(rows))
 	for i, r := range rows {
-		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.Revision, r.CreatedAt, r.UpdatedAt, "", ""); err != nil {
+		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.AssistantKeys, r.Revision, r.CreatedAt, r.UpdatedAt, "", ""); err != nil {
 			return nil, err
 		}
 	}
@@ -216,7 +239,7 @@ func (s *SQLStore) ListGroupMembers(ctx context.Context, orgID, groupID uuid.UUI
 	}
 	out := make([]Membership, len(rows))
 	for i, r := range rows {
-		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.Revision, r.CreatedAt, r.UpdatedAt, r.HostName, ""); err != nil {
+		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.AssistantKeys, r.Revision, r.CreatedAt, r.UpdatedAt, r.HostName, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -230,7 +253,7 @@ func (s *SQLStore) ListHostMemberships(ctx context.Context, orgID, hostID uuid.U
 	}
 	out := make([]Membership, len(rows))
 	for i, r := range rows {
-		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.Revision, r.CreatedAt, r.UpdatedAt, "", r.GroupName); err != nil {
+		if out[i], err = toMembership(r.GroupID, r.HostID, r.OrgID, r.Vars, r.AssistantKeys, r.Revision, r.CreatedAt, r.UpdatedAt, "", r.GroupName); err != nil {
 			return nil, err
 		}
 	}
@@ -274,7 +297,8 @@ func encodeGroup(g Group) ([]byte, []byte, error) {
 func toGroup(r gen.InventoryGroup) (Group, error) {
 	g := Group{
 		ID: r.ID, OrgID: r.OrgID, ParentID: db.UUIDPtr(r.ParentID), Name: r.Name, Description: r.Description,
-		BastionID: db.UUIDPtr(r.BastionID), Revision: r.Revision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		BastionID: db.UUIDPtr(r.BastionID), AssistantKeys: marks(r.AssistantKeys),
+		AssistantDefaultKeys: marks(r.AssistantDefaultKeys), Revision: r.Revision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 	if err := json.Unmarshal(r.Schema, &g.Schema); err != nil {
 		return Group{}, fmt.Errorf("decode schema of group %s: %w", r.ID, err)
@@ -291,8 +315,11 @@ func toGroup(r gen.InventoryGroup) (Group, error) {
 	return g, nil
 }
 
-func toMembership(groupID, hostID, orgID uuid.UUID, rawVars []byte, revision int64, created, updated time.Time, hostName, groupName string) (Membership, error) {
-	m := Membership{GroupID: groupID, HostID: hostID, OrgID: orgID, Revision: revision, CreatedAt: created, UpdatedAt: updated, HostName: hostName, GroupName: groupName}
+func toMembership(groupID, hostID, orgID uuid.UUID, rawVars []byte, assistantKeys []string, revision int64, created, updated time.Time, hostName, groupName string) (Membership, error) {
+	m := Membership{
+		GroupID: groupID, HostID: hostID, OrgID: orgID, AssistantKeys: marks(assistantKeys), Revision: revision,
+		CreatedAt: created, UpdatedAt: updated, HostName: hostName, GroupName: groupName,
+	}
 	if err := json.Unmarshal(rawVars, &m.Vars); err != nil {
 		return Membership{}, fmt.Errorf("decode membership vars: %w", err)
 	}
@@ -300,4 +327,12 @@ func toMembership(groupID, hostID, orgID uuid.UUID, rawVars []byte, revision int
 		m.Vars = map[string]any{}
 	}
 	return m, nil
+}
+
+// marks is a mark list as the NOT NULL text[] columns hold it: never nil.
+func marks(keys []string) []string {
+	if keys == nil {
+		return []string{}
+	}
+	return keys
 }

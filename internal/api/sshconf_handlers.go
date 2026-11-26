@@ -409,7 +409,7 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.SSH.SetZoneBastion(ctx, scope.OrgID, zoneID, bastionID); err != nil {
+		if err := deps.SSH.SetZoneBastionBy(ctx, scope.OrgID, zoneID, bastionID, changeActor(scope)); err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
 		summary := "cleared the zone's default jump host"
@@ -464,11 +464,11 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		h, err := deps.SSH.SetHostSSH(ctx, scope.OrgID, id, sshconf.HostSSHInput{
+		h, err := deps.SSH.SetHostSSHBy(ctx, scope.OrgID, id, sshconf.HostSSHInput{
 			Username: in.Body.Username, Port: in.Body.Port, CredentialID: cred,
 			BastionMode: sshconf.BastionMode(in.Body.BastionMode), BastionID: bastion,
 			IfRevision: ifRev,
-		})
+		}, changeActor(scope))
 		if err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
@@ -489,6 +489,8 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 
 func mapSSHErr(ctx context.Context, err error) error {
 	switch {
+	case errors.Is(err, sshconf.ErrAssistantPasswordTest):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, sshconf.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, sshconf.ErrRevisionMismatch):

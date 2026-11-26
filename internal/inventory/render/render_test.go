@@ -158,7 +158,7 @@ func TestRenderWholeOrganization(t *testing.T) {
 
 	w1 := hostvars(t, inv, "web-01")
 	want := map[string]any{
-		"ansible_host": "10.0.0.11", "ansible_user": "deploy", "ansible_port": 2222,
+		"ansible_host": map[string]any{"__ansible_unsafe": "10.0.0.11"}, "ansible_user": "deploy", "ansible_port": 2222,
 		"ansible_ssh_common_args": "-o ProxyJump=ops@bastion-a.example:22",
 		"php_default":             "8.4",
 		"vhosts":                  []any{map[string]any{"domain": "acme.io", "ssl": true, "basic_auth": map[string]any{"user": "u", "password": "********"}}},
@@ -172,7 +172,7 @@ func TestRenderWholeOrganization(t *testing.T) {
 	}
 
 	w2 := hostvars(t, inv, "web-02")
-	if w2["ansible_host"] != "web-02" || w2["ansible_ssh_common_args"] != nil || inv.Connections["web-02"].BastionSource != render.SourceNone {
+	if !reflect.DeepEqual(w2["ansible_host"], map[string]any{"__ansible_unsafe": "web-02"}) || w2["ansible_ssh_common_args"] != nil || inv.Connections["web-02"].BastionSource != render.SourceNone {
 		t.Errorf("web-02 (mode none, no address) = %v %+v", w2, inv.Connections["web-02"])
 	}
 	if _, ok := w2["ansible_port"]; ok {

@@ -282,6 +282,22 @@ describe('GroupDetailPage', () => {
     expect(await navigator.clipboard.readText()).toContain('"webserver"');
   });
 
+  it('names the values of the preview an assistant wrote', async () => {
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/inventory/preview': {
+        inventory: { all: { children: ['webserver'] }, webserver: { vars: { motd: { __ansible_unsafe: 'hi' } } } },
+        connections: {},
+        warnings: [],
+        assistant_written: [{ group: 'webserver', key: 'motd' }, { group: 'webserver', host: 'web-01', key: 'note' }],
+      },
+    });
+    renderAt('/o/acme/groups/g1?tab=inventory');
+    expect(await screen.findByTestId('assistant-written')).toHaveTextContent(
+      'Written by an assistant: webserver: motd, web-01: note — used as plain text until a person changes or accepts them',
+    );
+  });
+
   it('saves the settings dialog with the jump host and reports a refused delete', async () => {
     const user = userEvent.setup();
     let patched: MockRequest | undefined;

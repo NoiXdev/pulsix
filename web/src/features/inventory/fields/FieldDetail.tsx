@@ -9,6 +9,7 @@ import type { FieldScope, Problem, SchemaField } from '../../variables/types.ts'
 import { DefaultControl } from './DefaultControl.tsx';
 import { FieldMore } from './FieldMore.tsx';
 import { TypeCards } from './TypeCards.tsx';
+import { AssistantMark } from '../AssistantMark.tsx';
 import { withActive, withRequired, withScope, withText } from './fieldEdits.ts';
 import { useT } from '../../../i18n/useT.ts';
 
@@ -18,6 +19,13 @@ export interface FieldDetailProps {
   path: string;
   problems?: readonly Problem[];
   readOnly?: boolean;
+  /** An assistant set the stored default (decision D6). */
+  assistantDefault?: boolean;
+  /** Accepts that default as live; absent for a reader. */
+  onAcceptDefault?: () => void;
+  /** The draft holds another default than the stored one: accept waits. */
+  defaultEdited?: boolean;
+  accepting?: boolean;
   /** Absent when the field may not be removed (read-only, from a source). */
   onRemove?: () => void;
   onChange: (next: SchemaField) => void;
@@ -30,8 +38,9 @@ export interface FieldDetailProps {
  * below them every other setting the field has (FieldMore). A reader gets
  * all of it disabled.
  */
-export function FieldDetail({ field, path, problems, readOnly, onRemove, onChange }: FieldDetailProps) {
-  const f = useT().inventory.fields;
+export function FieldDetail({ field, path, problems, readOnly, assistantDefault, onAcceptDefault, defaultEdited, accepting, onRemove, onChange }: FieldDetailProps) {
+  const t = useT();
+  const f = t.inventory.fields;
   const idBase = `mf-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
   const id = (k: string) => `${idBase}-${k}`;
   const problem = (k: string) => problemAt(problems, `${path}.${k}`);
@@ -65,6 +74,20 @@ export function FieldDetail({ field, path, problems, readOnly, onRemove, onChang
         </div>
       </div>
       <DefaultControl field={field} id={id('default')} error={problem('default')} optionsError={problem('options')} onChange={onChange} />
+      {assistantDefault && (
+        <AssistantMark
+          testId={`assistant-default-${field.name}`}
+          text={t.inventory.assistant.defaultSet}
+          action={
+            onAcceptDefault && (
+              <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting || defaultEdited} onClick={onAcceptDefault}>
+                {t.inventory.assistant.accept}
+              </Button>
+            )
+          }
+          note={onAcceptDefault && defaultEdited ? t.inventory.assistant.acceptEdited : undefined}
+        />
+      )}
       <FieldMore field={field} path={path} idBase={idBase} problems={problems} readOnly={readOnly} onChange={onChange} />
       {!readOnly && onRemove && (
         <Button type="button" variant="destructive" className="self-start" onClick={onRemove}>

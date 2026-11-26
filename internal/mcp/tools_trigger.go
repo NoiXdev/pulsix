@@ -149,7 +149,7 @@ func triggerTools() []toolDef {
 				}
 				return c.requestAt(ctx, "/trigger-requests", nil, body, triggerNote)
 			}),
-		defineExact("update_trigger", "Change a webhook trigger", "Disable a webhook trigger at once (enabled false and nothing else), or ask for a change of one: give only the fields that change. A change, enabling included, waits for a person's approval in Pulsix; the picture shows the trigger as it is next to how it will be. The kind and target never change. A trigger your change of its job template or repository disabled (disabled_reason assistant_change) is enabled only by a person approving its review request.",
+		defineExact("update_trigger", "Change a webhook trigger", "Disable a webhook trigger at once (enabled false and nothing else), or ask for a change of one: give only the fields that change. A change, enabling included, waits for a person's approval in Pulsix; the picture shows the trigger as it is next to how it will be. The kind and target never change. A trigger your change of its job template, a repository or the inventory disabled (disabled_reason assistant_change) is enabled only by a person approving its review request.",
 			area, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in triggerUpdateArgs) (any, error) {
 				if in.disablesOnly() {
 					return send(ctx, c, http.MethodPost, nil, "", "/triggers/%s/disable", in.TriggerID)

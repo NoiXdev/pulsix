@@ -14,7 +14,8 @@ SELECT * FROM inventory_groups WHERE org_id = $1 ORDER BY name;
 -- a stale revision or an unknown group (the store tells the two apart).
 UPDATE inventory_groups
 SET parent_id = @parent_id, name = @name, description = @description, schema = @schema,
-    vars = @vars, bastion_id = @bastion_id, revision = revision + 1, updated_at = now()
+    vars = @vars, bastion_id = @bastion_id, assistant_keys = COALESCE(sqlc.narg(assistant_keys)::text[], '{}'),
+    assistant_default_keys = COALESCE(sqlc.narg(assistant_default_keys)::text[], '{}'), revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
@@ -26,20 +27,31 @@ SELECT group_id, count(*)::int AS members
 FROM inventory_memberships WHERE org_id = $1 GROUP BY group_id;
 
 -- name: UpsertInventoryMembership :one
-INSERT INTO inventory_memberships (group_id, host_id, org_id, vars)
-VALUES ($1, $2, $3, $4)
+-- inserted says whether the row is new (a host joining the group) or an
+-- existing membership whose values were replaced. A nil mark list stores
+-- none: the column is NOT NULL.
+INSERT INTO inventory_memberships (group_id, host_id, org_id, vars, assistant_keys)
+VALUES (@group_id, @host_id, @org_id, @vars, COALESCE(sqlc.narg(assistant_keys)::text[], '{}'))
 ON CONFLICT (group_id, host_id) DO UPDATE
-SET vars = EXCLUDED.vars, revision = inventory_memberships.revision + 1, updated_at = now()
-RETURNING *;
+SET vars = EXCLUDED.vars, assistant_keys = EXCLUDED.assistant_keys,
+    revision = inventory_memberships.revision + 1, updated_at = now()
+RETURNING inventory_memberships.*, (xmax = 0)::boolean AS inserted;
 
 -- name: UpdateInventoryMembership :one
 UPDATE inventory_memberships
-SET vars = @vars, revision = revision + 1, updated_at = now()
+SET vars = @vars, assistant_keys = COALESCE(sqlc.narg(assistant_keys)::text[], '{}'), revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND group_id = @group_id AND host_id = @host_id AND revision = @revision
 RETURNING *;
 
 -- name: GetInventoryMembership :one
 SELECT * FROM inventory_memberships WHERE org_id = $1 AND group_id = $2 AND host_id = $3;
+
+-- name: GetInventoryMembershipForUpdate :one
+-- The membership locked until the write's transaction ends, so the values
+-- a change replaces are the ones it read (FOR NO KEY UPDATE: the lock C2
+-- takes on schedules and triggers).
+SELECT * FROM inventory_memberships WHERE org_id = $1 AND group_id = $2 AND host_id = $3
+FOR NO KEY UPDATE;
 
 -- name: DeleteInventoryMembership :execrows
 DELETE FROM inventory_memberships WHERE org_id = $1 AND group_id = $2 AND host_id = $3;

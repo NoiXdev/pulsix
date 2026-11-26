@@ -209,6 +209,20 @@ export const enInventory = {
     discardBody: 'Your changes to the fields are not saved.',
     discard: 'Discard',
   },
+  assistant: {
+    written: 'Written by an assistant — used as plain text until a person changes or accepts it',
+    defaultSet: 'Default set by an assistant — used as plain text until a person changes or accepts it',
+    keys: (keys: string) => `Written by an assistant: ${keys} — used as plain text until a person changes or accepts them`,
+    badge: 'assistant values',
+    defaultBadge: 'assistant default',
+    accept: 'Accept as live',
+    /** Accept waits while the form shows something else than the stored value (final review M3). */
+    acceptEdited: 'Save or discard your edit before accepting the stored value',
+    acceptFor: (key: string) => `Accept ${key} as live`,
+    accepted: (key: string) => `${key} is live now`,
+    acceptFailed: 'Accepting failed',
+    plainText: 'plain text',
+  },
   valuesTab: {
     saved: 'Group values saved',
     saveFailed: 'Saving the values failed',

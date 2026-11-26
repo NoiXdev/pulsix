@@ -324,6 +324,32 @@ func (f *fakeHostStore) ListHostsByIDs(_ context.Context, orgID uuid.UUID, ids [
 	return out, nil
 }
 
+func (f *fakeHostStore) GetHostForUpdate(ctx context.Context, orgID, id uuid.UUID) (hosts.Host, error) {
+	return f.GetHost(ctx, orgID, id)
+}
+
+// GetRoute is the defaults with the jump host the last write set.
+func (f *fakeHostStore) GetRoute(ctx context.Context, orgID, hostID uuid.UUID) (hosts.Route, error) {
+	j, _ := f.GetJump(ctx, orgID, hostID)
+	return hosts.Route{Port: 22, JumpMode: j.Mode}, nil
+}
+
+// GetJump is the jump host the last write carrying one set; inherit before.
+func (f *fakeHostStore) GetJump(_ context.Context, _, hostID uuid.UUID) (hosts.Jump, error) {
+	if x, ok := f.extras[hostID]; ok && x.Jump != nil {
+		return *x.Jump, nil
+	}
+	return hosts.Jump{Mode: "inherit"}, nil
+}
+
+func (f *fakeHostStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+func (f *fakeHostStore) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
+	return f.ListAllHosts(ctx, orgID)
+}
+
 func (f *fakeHostStore) ListAllHosts(_ context.Context, orgID uuid.UUID) ([]hosts.Host, error) {
 	if err := f.take("ListAllHosts"); err != nil {
 		return nil, err

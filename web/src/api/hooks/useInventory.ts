@@ -168,6 +168,40 @@ export function useAssignHost(org: string, groupId: string) {
   });
 }
 
+/** The accept routes (decision D6): a person makes values or defaults an
+ * assistant wrote live as they stand, on the revision they saw. */
+export function useAcceptGroupVars(org: string, id: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: ({ keys, revision }: { keys: string[]; revision: number }) =>
+      unwrap(api.POST('/api/v1/orgs/{org}/inventory/groups/{id}/vars/accept', { params: { path: { org, id }, header: ifMatch(revision) }, body: { keys } })),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAcceptGroupDefaults(org: string, id: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: ({ keys, revision }: { keys: string[]; revision: number }) =>
+      unwrap(api.POST('/api/v1/orgs/{org}/inventory/groups/{id}/schema/accept', { params: { path: { org, id }, header: ifMatch(revision) }, body: { keys } })),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAcceptMemberVars(org: string, groupId: string) {
+  const invalidate = useInvalidate(org);
+  return useMutation({
+    mutationFn: ({ hostId, keys, revision }: { hostId: string; keys: string[]; revision: number }) =>
+      unwrap(
+        api.POST('/api/v1/orgs/{org}/inventory/groups/{id}/members/{host}/accept', {
+          params: { path: { org, id: groupId, host: hostId }, header: ifMatch(revision) },
+          body: { keys },
+        }),
+      ),
+    onSuccess: invalidate,
+  });
+}
+
 export function useUnassignHost(org: string, groupId: string) {
   const invalidate = useInvalidate(org);
   return useMutation({

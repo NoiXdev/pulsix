@@ -163,15 +163,15 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				return passGet(ctx, c, nil, "/zones")
 			}),
-		define("create_host", "Create host", "Add a host to the inventory.",
+		define("create_host", "Create host", "Add a host to the inventory. The address must be an IP address or a host name. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostCreateArgs) (any, error) {
 				return send(ctx, c, http.MethodPost, in, "", "/hosts")
 			}),
-		define("update_host", "Update host", "Change a host's name, address, zone, managed, monitored or kind. Fields: "+strings.Join(hostKeys, ", ")+".",
+		define("update_host", "Update host", "Change a host's name, address, zone, managed, monitored or kind. Fields: "+strings.Join(hostKeys, ", ")+". The address must be an IP address or a host name. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "host", hostKeys, in.updateArgs, nil, true, "/hosts/%s", in.HostID)
 			}),
-		define("set_host_ssh", "Set host SSH", "Set how the host is reached: user, port, SSH credential (by reference) and jump host.",
+		define("set_host_ssh", "Set host SSH", "Set how the host is reached: user, port, SSH credential (by reference) and jump host. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in hostSSHArgs) (any, error) {
 				body := map[string]any{"username": in.Username, "port": in.Port, "bastion_mode": in.BastionMode}
 				if in.CredentialID != nil {
@@ -189,11 +189,11 @@ func writeTools() []toolDef {
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupCreateArgs) (any, error) {
 				return send(ctx, c, http.MethodPost, in, "", "/inventory/groups")
 			}),
-		define("update_group", "Update group", "Change a group's name, description, parent or jump host. Fields: "+strings.Join(groupKeys, ", ")+".",
+		define("update_group", "Update group", "Change a group's name, description, parent or jump host. Fields: "+strings.Join(groupKeys, ", ")+". "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupUpdateArgs) (any, error) {
 				return update(ctx, c, http.MethodPatch, "group", groupKeys, in.updateArgs, nil, true, "/inventory/groups/%s", in.GroupID)
 			}),
-		define("set_group_schema", "Set group schema", "Replace a group's variable schema ("+groupSchemaFieldWords+"). Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type.",
+		define("set_group_schema", "Set group schema", "Replace a group's variable schema ("+groupSchemaFieldWords+"). Variables need a schema field first. Fields may be added and marked secret while they hold no value (a person fills them in); a secret field keeps its type. A default you set or change reaches a run as plain text (never templated, looked up or decrypted) until a person changes or accepts it in Pulsix; assistant_default_keys lists them. Field names Ansible or Pulsix act on (ansible_…, pulsix_…, __ansible…, magic variables such as hostvars, groups, omit or vars), sub-fields included, are refused for fields you add. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupSchemaArgs) (any, error) {
 				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -242,7 +242,7 @@ func writeTools() []toolDef {
 				}
 				return res, nil
 			}),
-		define("set_group_vars", "Set group variables", "Replace a group's values (only keys its schema declares). Secret fields take only {\"$secret\": \"keep\"}.",
+		define("set_group_vars", "Set group variables", "Replace a group's values (only keys its schema declares). Secret fields take only {\"$secret\": \"keep\"}. "+plainTextValues+" "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in groupVarsArgs) (any, error) {
 				cur, err := getObject(ctx, c, "group", "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -258,15 +258,15 @@ func writeTools() []toolDef {
 				}
 				return send(ctx, c, http.MethodPut, map[string]any{"vars": vars}, ifMatch(in.Revision, cur), "/inventory/groups/%s/vars", in.GroupID)
 			}),
-		define("add_group_member", "Add group member", "Put a host into a group, with its host-scoped values. Secret fields take only {\"$secret\": \"keep\"}.",
+		define("add_group_member", "Add group member", "Put a host into a group, with its host-scoped values. Secret fields take only {\"$secret\": \"keep\"}. "+plainTextValues+" "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberArgs) (any, error) {
 				return putMember(ctx, c, in.GroupID, in.HostID, in.Vars, "")
 			}),
-		define("set_member_vars", "Set member variables", "Replace the values a host has in a group (its membership's host-scoped and overridable values; only keys the group's schema declares), guarded by the membership's revision (get it from get_group's members). Secret fields take only {\"$secret\": \"keep\"}. See the result with get_host_vars.",
+		define("set_member_vars", "Set member variables", "Replace the values a host has in a group (its membership's host-scoped and overridable values; only keys the group's schema declares), guarded by the membership's revision (get it from get_group's members). Secret fields take only {\"$secret\": \"keep\"}. See the result with get_host_vars. "+plainTextValues+" "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberVarsArgs) (any, error) {
 				return putMember(ctx, c, in.GroupID, in.HostID, in.Vars, `"`+strconv.FormatInt(in.Revision, 10)+`"`)
 			}),
-		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays.",
+		define("remove_group_member", "Remove group member", "Take a host out of a group. This drops its membership values in that group; the host itself stays. "+inventoryPauses,
 			tenancy.AreaInventoryWrite, writeTool, func(ctx context.Context, c *caller, in memberRemoveArgs) (any, error) {
 				return send(ctx, c, http.MethodDelete, nil, "", "/inventory/groups/%s/members/%s", in.GroupID, in.HostID)
 			}),
@@ -311,6 +311,14 @@ func writeTools() []toolDef {
 // pausesForReview tells the assistant what a change of what runs does to
 // the schedules and triggers that run it unattended (spec 2026-11-25 C2).
 const pausesForReview = "A change of what runs (a template's playbook, scope, limit, extra vars or their schema, credential or vault identities; a repository's URL, branch, subpath, credential or vault identities) pauses every schedule and disables every webhook trigger that runs it, or runs a template that starts it as a follow-up, a stopped one included, until a person approves the review request each gets; the answer does not list them, list_run_requests does."
+
+// plainTextValues tells the assistant what becomes of the inventory values
+// it writes (spec 2026-11-25, decision D6).
+const plainTextValues = "Every value you set or change reaches a run as plain text: Ansible never templates, looks it up or decrypts it (no {{ … }}, lookups or vault), until a person changes or accepts it in Pulsix; assistant_keys lists them. Names Ansible or Pulsix act on (ansible_…, pulsix_…, magic variables such as hostvars, groups, omit or vars) are refused."
+
+// inventoryPauses tells the assistant what its change of the inventory's
+// values does to what runs unattended (decision D6).
+const inventoryPauses = "Your change pauses every schedule and disables every webhook trigger whose runs then reach other hosts, reach a host another way or receive other values, or that start such a run as a follow-up, until a person approves the review request each gets: a change of a group's values or schema (defaults, and any edit that changes the values a run receives), of a member's values, a host joining or leaving a group, a group renamed, moved, given another jump host or deleted with its members, a managed host you create or make managed, a managed host renamed, moved to another zone or given other SSH settings or another jump host, and a zone's jump host. A run's limit does not narrow this. You may not change where a managed host is reached (its address, or its name while it has no address): a person has to. The answer does not list them, list_run_requests does."
 
 // templateSecrets applies the secret rules to a merged template body: the
 // stored schema's secret fields keep their type, and extra vars pass the

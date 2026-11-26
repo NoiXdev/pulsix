@@ -200,3 +200,10 @@ WHERE rr.org_id = sqlc.arg(org_id) AND rr.kind IN ('schedule_review', 'trigger_r
     OR EXISTS (SELECT 1 FROM subjects sb
                WHERE rr.payload->'changes' @> jsonb_build_array(jsonb_build_object('subject', sb.subject, 'id', sb.id))))
 ORDER BY rr.created_at, rr.id;
+
+-- name: HasAutomation :one
+-- Whether the organization has any schedule or any template trigger, in
+-- whatever state: an assistant's inventory change has something to pause
+-- (a stopped item gets its review too).
+SELECT (EXISTS (SELECT 1 FROM schedules s WHERE s.org_id = $1)
+    OR EXISTS (SELECT 1 FROM job_triggers t WHERE t.org_id = $1 AND t.kind = 'template_run'))::boolean AS has;

@@ -12,6 +12,12 @@ import "slices"
 // passed through. An inactive field is left out, its value and its default
 // alike.
 func Resolve(fields []Field, values map[string]any) map[string]any {
+	return resolveFields(fields, values, nil)
+}
+
+// resolveFields is Resolve with fill, when not nil, applied to every schema
+// default it fills in, at any depth.
+func resolveFields(fields []Field, values map[string]any, fill func(any) any) map[string]any {
 	out := make(map[string]any, len(fields))
 	for _, f := range fields {
 		if !f.IsActive() {
@@ -19,28 +25,35 @@ func Resolve(fields []Field, values map[string]any) map[string]any {
 		}
 		v, ok := values[f.Name]
 		if ok && v != nil {
-			if rv, fits := resolveValue(f, v); fits {
+			if rv, fits := resolveValue(f, v, fill); fits {
 				out[f.Name] = rv
 				continue
 			}
 		}
 		if f.Default != nil {
-			out[f.Name] = f.Default
+			out[f.Name] = filled(f.Default, fill)
 		}
 	}
 	return out
 }
 
+func filled(d any, fill func(any) any) any {
+	if fill == nil {
+		return d
+	}
+	return fill(d)
+}
+
 // resolveValue returns v resolved against f, and false when v's shape does
 // not match f.
-func resolveValue(f Field, v any) (any, bool) {
+func resolveValue(f Field, v any, fill func(any) any) (any, bool) {
 	switch f.Type {
 	case TypeObject:
 		obj, ok := v.(map[string]any)
 		if !ok {
 			return nil, false
 		}
-		return Resolve(f.Fields, obj), true
+		return resolveFields(f.Fields, obj, fill), true
 	case TypeRepeater:
 		items, ok := v.([]any)
 		if !ok {
@@ -49,7 +62,7 @@ func resolveValue(f Field, v any) (any, bool) {
 		out := make([]any, 0, len(items))
 		for _, it := range items {
 			if obj, isObj := it.(map[string]any); isObj {
-				out = append(out, Resolve(f.Fields, obj))
+				out = append(out, resolveFields(f.Fields, obj, fill))
 			}
 		}
 		return out, true

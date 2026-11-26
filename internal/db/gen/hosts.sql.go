@@ -265,6 +265,76 @@ func (q *Queries) GetHost(ctx context.Context, arg GetHostParams) (Host, error) 
 	return i, err
 }
 
+const getHostForUpdate = `-- name: GetHostForUpdate :one
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE
+`
+
+type GetHostForUpdateParams struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// GetHost with the row locked until the transaction ends. FOR NO KEY
+// UPDATE: it does not conflict with the FOR KEY SHARE a job insert takes on
+// its target hosts, so the schedule ticker's enqueue never waits on it.
+func (q *Queries) GetHostForUpdate(ctx context.Context, arg GetHostForUpdateParams) (Host, error) {
+	row := q.db.QueryRow(ctx, getHostForUpdate, arg.ID, arg.OrgID)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.Address,
+		&i.Managed,
+		&i.Monitored,
+		&i.Facts,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Revision,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const getHostRoute = `-- name: GetHostRoute :one
+SELECT hs.username, hs.port, hs.bastion_mode, COALESCE(c.name, '')::text AS credential_name, COALESCE(b.name, '')::text AS bastion_name
+FROM host_ssh hs
+LEFT JOIN credentials c ON c.org_id = hs.org_id AND c.id = hs.credential_id
+LEFT JOIN bastions b ON b.org_id = hs.org_id AND b.id = hs.bastion_id
+WHERE hs.org_id = $1 AND hs.host_id = $2
+`
+
+type GetHostRouteParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+type GetHostRouteRow struct {
+	Username       string `json:"username"`
+	Port           int32  `json:"port"`
+	BastionMode    string `json:"bastion_mode"`
+	CredentialName string `json:"credential_name"`
+	BastionName    string `json:"bastion_name"`
+}
+
+// How runs reach a host, as a person reads it: its SSH user and port, the
+// credential's and the jump host's names. No row when the host has no SSH
+// settings stored (the defaults apply).
+func (q *Queries) GetHostRoute(ctx context.Context, arg GetHostRouteParams) (GetHostRouteRow, error) {
+	row := q.db.QueryRow(ctx, getHostRoute, arg.OrgID, arg.HostID)
+	var i GetHostRouteRow
+	err := row.Scan(
+		&i.Username,
+		&i.Port,
+		&i.BastionMode,
+		&i.CredentialName,
+		&i.BastionName,
+	)
+	return i, err
+}
+
 const getZone = `-- name: GetZone :one
 SELECT id, org_id, slug, name, created_at, bastion_id FROM zones WHERE id = $1 AND org_id = $2
 `
@@ -740,6 +810,45 @@ func (q *Queries) ListHostsPageSorted(ctx context.Context, arg ListHostsPageSort
 			&i.UpdatedAt,
 			&i.Revision,
 			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listScopeHosts = `-- name: ListScopeHosts :many
+SELECT id, name, zone_id, managed FROM hosts WHERE org_id = $1 ORDER BY name
+`
+
+type ListScopeHostsRow struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	ZoneID  uuid.UUID `json:"zone_id"`
+	Managed bool      `json:"managed"`
+}
+
+// Every host of the organization with only what a scope selects on (id,
+// name, zone, managed): what an inventory change reaches, read inside the
+// change's transaction without the facts.
+func (q *Queries) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]ListScopeHostsRow, error) {
+	rows, err := q.db.Query(ctx, listScopeHosts, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListScopeHostsRow
+	for rows.Next() {
+		var i ListScopeHostsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ZoneID,
+			&i.Managed,
 		); err != nil {
 			return nil, err
 		}

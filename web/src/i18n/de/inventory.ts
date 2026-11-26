@@ -219,6 +219,20 @@ export const deInventory: Messages['inventory'] = {
     discardBody: 'Deine Änderungen an den Feldern sind nicht gespeichert.',
     discard: 'Verwerfen',
   },
+  assistant: {
+    written: 'Von einem Assistenten geschrieben – wird als reiner Text verwendet, bis eine Person es ändert oder übernimmt',
+    defaultSet: 'Standardwert von einem Assistenten gesetzt – wird als reiner Text verwendet, bis eine Person ihn ändert oder übernimmt',
+    keys: (keys: string) => `Von einem Assistenten geschrieben: ${keys} – wird als reiner Text verwendet, bis eine Person die Werte ändert oder übernimmt`,
+    badge: 'Assistentenwerte',
+    defaultBadge: 'Assistenten-Standardwert',
+    accept: 'Als live übernehmen',
+    /** Accept waits while the form shows something else than the stored value (final review M3). */
+    acceptEdited: 'Speichern oder verwerfen Sie Ihre Änderung, bevor Sie den gespeicherten Wert übernehmen',
+    acceptFor: (key: string) => `${key} als live übernehmen`,
+    accepted: (key: string) => `${key} ist jetzt live`,
+    acceptFailed: 'Übernehmen fehlgeschlagen',
+    plainText: 'reiner Text',
+  },
   valuesTab: {
     saved: 'Gruppenwerte gespeichert',
     saveFailed: 'Die Werte konnten nicht gespeichert werden',

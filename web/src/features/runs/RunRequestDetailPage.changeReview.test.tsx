@@ -144,6 +144,54 @@ describe('RunRequestDetailPage reviews of an assistant change (spec 2026-11-25 C
     expect(await screen.findByRole('table', { name: 'Playbook deploy' })).toBeInTheDocument();
   });
 
+  it('names the inventory group, or the host and its group, an assistant changed (decision D6)', async () => {
+    const inventoryChanges = [
+      { subject: 'inventory_group', id: 'g1', name: 'web', user_id: 'u1', fields: [{ field: 'vars.port', old: 80, new: 8080 }] },
+      {
+        subject: 'inventory_membership',
+        id: 'g2',
+        name: 'db',
+        host_id: 'h2',
+        host_name: 'web-2',
+        user_id: 'u1',
+        fields: [{ field: 'vars.pw', old: { $secret: 'set' }, new: null }],
+      },
+    ];
+    renderReview({ item: 'schedule', schedule, changes: inventoryChanges });
+    const section = await screen.findByRole('region', { name: 'Review' });
+    expect(within(section).getByText(/the inventory values its runs receive or the hosts they reach/)).toBeInTheDocument();
+    expect(within(section).getByRole('note', { name: 'Inventory values' })).toHaveTextContent(
+      'Approving does not make the assistant\'s inventory values live: they stay plain text until a person changes or accepts them on the group or host page.',
+    );
+    const group = within(section).getByRole('table', { name: /Inventory group web/ });
+    const port = within(group).getByRole('row', { name: /vars.port/ });
+    expect(within(port).getByText('80')).toBeInTheDocument();
+    expect(within(port).getByText('8080')).toBeInTheDocument();
+    const member = within(section).getByRole('table', { name: /Values of host web-2 in inventory group db/ });
+    const pw = within(member).getByRole('row', { name: /vars.pw/ });
+    expect(within(pw).getByText('secret (hidden)')).toBeInTheDocument();
+  });
+
+  it('names a host an assistant created', async () => {
+    const hostChange = [{ subject: 'host', id: 'h9', name: 'web-9', user_id: 'u1', fields: [{ field: 'host', old: null, new: 'web-9' }] }];
+    renderReview({ item: 'schedule', schedule, changes: hostChange });
+    expect(await screen.findByRole('table', { name: /Host web-9/ })).toBeInTheDocument();
+  });
+
+  it('names a zone whose jump host an assistant changed', async () => {
+    const zoneChange = [{ subject: 'zone', id: 'z1', name: 'fra', user_id: 'u1', fields: [{ field: 'jump_host', old: null, new: 'jump' }] }];
+    renderReview({ item: 'schedule', schedule, changes: zoneChange });
+    expect(await screen.findByRole('table', { name: /Zone jump host fra/ })).toBeInTheDocument();
+  });
+
+  it('names an inventory change in German', async () => {
+    const inventoryChanges = [
+      { subject: 'inventory_membership', id: 'g2', name: 'db', host_id: 'h2', host_name: 'web-2', user_id: 'u1', fields: [{ field: 'vars.note', old: 'a', new: 'b' }] },
+    ];
+    renderReview({ item: 'schedule', schedule, changes: inventoryChanges }, 'operator', 'schedule_review', {}, 'de');
+    expect(await screen.findByRole('table', { name: /Werte von Host web-2 in Inventargruppe db/ })).toBeInTheDocument();
+  });
+
   it('speaks German', async () => {
     renderReview({ item: 'schedule', schedule }, 'operator', 'schedule_review', {}, 'de');
     expect(await screen.findByRole('heading', { name: 'Pausierten Zeitplan prüfen' })).toBeInTheDocument();

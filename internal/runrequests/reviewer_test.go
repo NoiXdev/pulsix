@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -26,6 +27,13 @@ type memReviews struct {
 	// refreshMiss makes the next RefreshReview find no pending row (a
 	// person decided it in between).
 	refreshMiss bool
+	// noAutomation answers HasAutomation: the org has no schedule or
+	// template trigger.
+	noAutomation bool
+}
+
+func (m *memReviews) HasAutomation(context.Context, uuid.UUID) (bool, error) {
+	return !m.noAutomation, nil
 }
 
 func (m *memReviews) LatestReview(_ context.Context, _ uuid.UUID, kind runrequests.Kind, target uuid.UUID) (runrequests.Request, error) {
@@ -92,6 +100,14 @@ type reviewWorld struct {
 	// templates that start it.
 	locked   map[uuid.UUID]schedules.Schedule
 	reaching map[uuid.UUID][]uuid.UUID
+	// overlap is the hosts an inventory change reaches in each template's
+	// run, limits each template's limit; changed records what the reach
+	// was asked for.
+	overlap map[uuid.UUID][]string
+	limits  map[uuid.UUID]string
+	changed [][]render.Scope
+	// scopeA is template A's scope group.
+	scopeA uuid.UUID
 }
 
 func (w *reviewWorld) LockForReview(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
@@ -201,11 +217,11 @@ func (w *reviewWorld) Record(_ context.Context, e audit.Event) error {
 func newReviewWorld() *reviewWorld {
 	w := &reviewWorld{
 		org: uuid.Must(uuid.NewV7()), tmplA: uuid.Must(uuid.NewV7()), tmplB: uuid.Must(uuid.NewV7()), repo: uuid.Must(uuid.NewV7()),
-		playbook:  uuid.Must(uuid.NewV7()),
+		playbook: uuid.Must(uuid.NewV7()), scopeA: uuid.Must(uuid.NewV7()),
 		schedules: map[uuid.UUID]schedules.Schedule{}, triggers: map[uuid.UUID]triggers.Trigger{},
 		reviews: &memReviews{}, now: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}
-	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, w,
+	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w, Reach: w}, w,
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
@@ -364,7 +380,7 @@ func (failingAudit) Record(context.Context, audit.Event) error { return errors.N
 func TestAReviewerFailureFailsTheChange(t *testing.T) {
 	w := newReviewWorld()
 	w.schedule("a", w.tmplA, false, "")
-	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, failingAudit{},
+	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w, Reach: w}, failingAudit{},
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	if err := r.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err == nil {
 		t.Fatal("a change whose pause could not be recorded succeeded")

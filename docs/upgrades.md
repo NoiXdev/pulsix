@@ -988,7 +988,7 @@ or trigger request's picture lists the open change reviews of what it would run
 (`open_change_reviews`, each with its item's kind and name): those of the template's
 items and those whose changes name the template, a template it starts through
 follow-ups, the playbook of one of them or that playbook's repository (for a
-repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing; inventory changes never do. A review
+repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing, inventory maintenance included; an assistant's inventory change does (decisions D6 and D7, see below). A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
 repository sync trigger) and resumes (enables) the item at the revision shown (one a
@@ -1001,6 +1001,99 @@ schedule and trigger reads carry `paused_reason` / `disabled_reason` and
 assistant's change, nor shows or approves a review (unknown kind), and its resume of a
 schedule (enabling of a trigger) paused for review fails on the new CHECK, since it
 does not clear the reason; stop every manager instance first, as above.
+
+Inventory values an assistant writes (same spec, decision D6, backlog 2.136) add
+migration 00131: `inventory_groups.assistant_keys`, `inventory_groups.assistant_default_keys`
+and `inventory_memberships.assistant_keys` (text[], NOT NULL DEFAULT '{}'), catalog
+changes with a constant default that rewrite nothing; a backup carries them. A write
+made with an assistant token marks the top-level keys of group values, schema defaults
+and membership values it sets or changes, and the run's inventory carries a marked value
+(a marked default wherever it fills in) as plain text (`{"__ansible_unsafe": …}`), so
+Ansible never templates, looks up or decrypts it; the worker is unchanged. A person's
+save makes live only the values it changes: a value resent unchanged, by the browser or
+by a script with an API token, keeps its mark. To make an assistant's value live as it
+stands, a person accepts it (`POST …/inventory/groups/{id}/vars/accept`,
+`…/schema/accept`, `…/members/{host}/accept`, body `{"keys": […]}`, If-Match; an
+interactive session only, no API or assistant token; logged as
+`POST acceptInventoryGroupVars`, `acceptInventoryGroupDefaults`, `acceptInventoryMemberVars`).
+An assistant's inventory write is refused (422) for a key, a default or a new field
+(sub-fields included) under a name Ansible or Pulsix act on (`ansible_…`, `pulsix_…`,
+`__ansible…`, magic variables such as `hostvars`, `groups`, `omit`, `vars`) and for a
+value holding an `__ansible…` object key; a person may still use such names. The group,
+member and preview reads carry `assistant_keys`, `assistant_default_keys` and
+`assistant_written`. **Values assistants wrote before this release stay unmarked and
+live**: nothing marks them after the fact (the activity log names earlier assistant
+inventory writes — `setInventoryGroupVars`, `setInventoryGroupSchema`,
+`assignInventoryHost` by an assistant token — for an owner who wants to check them).
+**An older manager alongside** ships claims without the marks (an assistant's values
+run live) and records an assistant's inventory writes unmarked; stop every manager
+instance first, as above. Workers and agents are not affected.
+
+An assistant's inventory change also pauses what runs unattended (decisions D6 and D7, no
+migration). Writes made with an assistant token that pause:
+- a group's values (`PUT …/inventory/groups/{id}/vars`: a key set, changed or removed);
+- a group's schema (`PUT …/schema`): a default set, changed or removed, and any edit that
+  changes a value as runs receive it (a field made inactive, retyped, removed, moved between
+  group and host scope, made overridable or not), for the group and each member;
+- a membership (`PUT …/members/{host}`): a host joining the group, with or without values,
+  or a change of an existing membership's values; `DELETE …/members/{host}`: a host leaving;
+- a group renamed (the `group_names` and `groups[…]` a run sees), moved to another parent or
+  given another jump host (`PATCH …/inventory/groups/{id}`), and a group deleted with its
+  members (`DELETE …/inventory/groups/{id}`);
+- a managed host created (`POST …/hosts`), made managed (`PATCH …/hosts/{id}`,
+  `PATCH …/hosts/{id}/capabilities`), moved to another zone or given another jump host
+  (`PATCH …/hosts/{id}`);
+- how a run reaches a host: its SSH user, port, credential or jump host
+  (`PUT …/hosts/{id}/ssh`), and a zone's default jump host (`PUT …/zones/{id}/bastion`, which
+  reaches every managed host of the zone).
+
+Deleting a host pauses nothing (runs reach fewer hosts), nor does editing a jump host itself
+(`PUT …/bastions/{id}`). A managed host renamed by an assistant pauses too (when it has an
+address; see below), and a host an assistant creates managed or makes managed shows its address,
+zone, SSH user, port, credential and jump host in the picture.
+
+**Assistant limits on managed hosts' connection** (controller's ruling N1): an assistant token
+may not change where a managed host is reached — its address, or its name while it has no
+address (`PATCH …/hosts/{id}` answers 403 "a person has to change where a managed host is
+reached"); an unmanaged host stays editable as before. An assistant's connection test
+(`POST …/hosts/{id}/connection-test`) is refused (403 "the host key must be pinned before an
+assistant tests with a password") while the host logs in with a password credential and its
+host key is not pinned. People are not affected. The pause on an assistant's host rename hands
+the change to the reviewer before the rename locks the host row, so a schedule tick enqueueing
+for that host never waits on it.
+
+Each pauses every active schedule and disables every enabled webhook trigger whose run then
+receives other values or reaches other hosts, in the same transaction as the write, with the
+C2 review requests above. Reached are the managed hosts of the changed group and of its
+descendant groups (a membership: its host; a move: the moved subtree), and a template reaches
+one when its scope selects it after the change or its scope group held it before (a host that
+left, a group that moved away or was deleted). A template's or schedule's limit does not narrow
+this: a limited run still renders every scoped host of its zones and a play reads their values
+through `hostvars`. Templates that start a reached one through follow-ups are included; an
+organization without any schedule or template trigger reads nothing more. The review's picture
+lists each change as subject `inventory_group`, `inventory_membership` (with `host_id`,
+`host_name`), `host` or `zone`, with fields `vars.<key>`, `<host>: vars.<key>`, `default.<field>`,
+`member`, `members`, `name`, `parent`, `jump_host`, `host`, `managed`, `zone`, `ssh_user`,
+`ssh_port` or `ssh_credential`, old and new value (secrets masked) and the
+token, and says that approving leaves the assistant's values plain text until a person changes
+or accepts them. A person's change, an accept, a rename and a write that moves nothing pause
+nothing. These writes now run in one write transaction each; a membership write locks the row
+(`FOR NO KEY UPDATE`) and tells a join from a change by the upsert itself.
+
+**Host addresses** (decision D7, controller's call): `POST`/`PATCH …/hosts` now refuse an
+address that is not empty, an IP address or a host name (the jump host address rule; 400), for
+every caller. The check applies to new writes only: stored addresses are not rewritten, and
+an address stored before the upgrade that is neither an IP address nor a host name (for
+example one containing `{{`) stays as it is. **After the upgrade, review and correct such
+addresses** (edit the host and save a valid address); runs carry them as plain text, but the
+worker's own system jobs (bootstrap, key rotation) do not. Find them, read-only, with
+`SELECT id, name, address FROM hosts WHERE address <> '' AND address !~ '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'`
+(it also lists IPv6 literals, which the API accepts). Every run's inventory
+now carries `ansible_host` as plain text (`{"__ansible_unsafe": …}`), so a stored address is
+never evaluated; the worker is unchanged. The system jobs the worker renders itself (bootstrap,
+key rotation) still carry the address as is; the write rule keeps new ones clean. **An older
+manager alongside** pauses nothing after an assistant's inventory change, accepts any address
+and renders `ansible_host` live; stop every manager instance first, as above.
 
 ## Behaviour changes to check after an upgrade
 

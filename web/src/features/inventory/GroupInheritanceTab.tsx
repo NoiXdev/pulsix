@@ -146,6 +146,7 @@ function InheritanceTable({ inh, m }: { inh: Inheritance; m: M }) {
  * in words for a screen reader, which hears neither colour nor strike. A
  * masked secret is the renderer's mask and stays one. */
 function CellValue({ cell, m }: { cell: Cell; m: M }) {
+  const plainText = useT().inventory.assistant.plainText;
   if (cell.state === 'unset') {
     return (
       <span className="text-muted-foreground">
@@ -154,7 +155,7 @@ function CellValue({ cell, m }: { cell: Cell; m: M }) {
       </span>
     );
   }
-  const text = formatValue(cell.value);
+  const text = formatValue(cell.value, plainText);
   const full = typeof cell.value === 'string' ? cell.value : JSON.stringify(cell.value);
   if (cell.state === 'win') {
     return (

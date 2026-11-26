@@ -1179,14 +1179,22 @@ type probeBastion struct {
 }
 
 // connAddress reads the host's ansible_host from the rendered snapshot —
-// the address ansible itself will dial.
+// the address ansible itself will dial — whether plain or in the inert
+// form.
 func connAddress(doc map[string]any, name string) string {
 	vars, _ := docHostVars(doc)[name]
 	if vars == nil {
 		return ""
 	}
-	s, _ := vars["ansible_host"].(string)
-	return s
+	switch v := vars["ansible_host"].(type) {
+	case string:
+		return v
+	case map[string]any:
+		// The inert form the renderer emits (decision D7).
+		s, _ := v["__ansible_unsafe"].(string)
+		return s
+	}
+	return ""
 }
 
 // connPortAndUser reads the host's effective port and login user the same

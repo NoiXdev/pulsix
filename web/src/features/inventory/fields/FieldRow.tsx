@@ -14,6 +14,8 @@ export interface FieldRowProps {
   /** Stable identity of the row, for the focus after a move. */
   rowKey: string;
   selected: boolean;
+  /** An assistant set the stored default (decision D6). */
+  assistantDefault?: boolean;
   /** The server reported a problem at or under this field. */
   hasProblems: boolean;
   readOnly?: boolean;
@@ -30,7 +32,7 @@ export interface FieldRowProps {
  * scope and required (each a one-click toggle). The text part is a button
  * that selects the field for the panel beside the list.
  */
-export function FieldRow({ field, rowKey, selected, hasProblems, readOnly, canMoveUp, canMoveDown, onSelect, onChange, onMove }: FieldRowProps) {
+export function FieldRow({ field, rowKey, selected, assistantDefault, hasProblems, readOnly, canMoveUp, canMoveDown, onSelect, onChange, onMove }: FieldRowProps) {
   const t = useT();
   const f = t.inventory.fields;
   const shownDefault = field.type === 'secret' || field.default === undefined ? f.noDefault : f.defaultIs(formatValue(field.default));
@@ -57,6 +59,7 @@ export function FieldRow({ field, rowKey, selected, hasProblems, readOnly, canMo
         <span className="flex max-w-full items-center gap-1.5">
           <span className={cn('truncate font-mono text-[13px]', !isActive(field) && 'text-muted-foreground line-through')}>{field.name}</span>{' '}
           {!isActive(field) && <Tag>{f.inactive}</Tag>}{' '}
+          {assistantDefault && <Tag className="text-warn">{t.inventory.assistant.defaultBadge}</Tag>}{' '}
           {hasProblems && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" role="img" aria-label={f.hasProblems} />}
         </span>{' '}
         <span className="max-w-full truncate text-[11px] text-muted-foreground">

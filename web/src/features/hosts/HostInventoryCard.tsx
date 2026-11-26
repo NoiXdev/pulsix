@@ -11,6 +11,7 @@ import type { InventoryMember } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { HostGroupDialog } from './HostGroupDialog.tsx';
 import { inheritedGroups } from './inheritedGroups.ts';
+import { AssistantPill } from '../inventory/AssistantMark.tsx';
 
 /** HostInventoryCard lists the inventory groups a managed host is a member
  * of, with whether its values are complete. The direct groups come first; a
@@ -95,6 +96,7 @@ function DirectRow({ org, member, canWrite, onEdit }: { org: string; member: Inv
       </Link>
       <span className="flex items-center gap-2">
         {member.complete ? <Pill tone="ok">{t.hosts.inventory.complete}</Pill> : <Pill tone="warn">{t.hosts.inventory.toFill((member.problems ?? []).length)}</Pill>}
+        <AssistantPill keys={member.assistant_keys} />
         {canWrite && (
           <>
             <Button aria-label={t.hosts.inventory.editValuesFor(member.group_name)} onClick={onEdit}>

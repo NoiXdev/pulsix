@@ -1819,6 +1819,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/members/{host}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org inventory groups by ID members by host accept */
+        post: operations["acceptInventoryMemberVars"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/inventory/groups/{id}/schema": {
         parameters: {
             query?: never;
@@ -1836,6 +1853,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/schema/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org inventory groups by ID schema accept */
+        post: operations["acceptInventoryGroupDefaults"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/inventory/groups/{id}/vars": {
         parameters: {
             query?: never;
@@ -1847,6 +1881,23 @@ export interface paths {
         /** Put API v1 orgs by org inventory groups by ID vars */
         put: operations["setInventoryGroupVars"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/inventory/groups/{id}/vars/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 orgs by org inventory groups by ID vars accept */
+        post: operations["acceptInventoryGroupVars"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3720,6 +3771,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AcceptKeysBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AcceptKeysBody.json
+             */
+            readonly $schema?: string;
+            /** @description The keys whose assistant-written value (or default) becomes live, each currently marked */
+            keys: string[] | null;
+        };
         ActivityListOutputBody: {
             /**
              * Format: uri
@@ -4311,6 +4372,11 @@ export interface components {
             /** @description Whether assistant tokens of this organization may use the assistant endpoint; omitted keeps it */
             assistant_enabled?: boolean;
         };
+        AssistantValue: {
+            group: string;
+            host?: string;
+            key: string;
+        };
         BackupItem: {
             /**
              * Format: uuid
@@ -4662,7 +4728,7 @@ export interface components {
             reason?: string;
         };
         ChangedField: {
-            /** @description The field; an extra var as extra_vars.<name> */
+            /** @description The field; an extra var as extra_vars.<name>, an inventory value as vars.<key> (a member's as <host>: vars.<key>), a schema default as default.<field>; member, members, name, parent, jump_host, host, managed, zone, ssh_user, ssh_port and ssh_credential for who is in a group, where it sits and how runs reach a host */
             field: string;
             /** @description The value after; null for none. A secret is {"$secret":"set"} */
             new: unknown;
@@ -4671,13 +4737,19 @@ export interface components {
         };
         ChangedObject: {
             fields: components["schemas"]["ChangedField"][] | null;
+            /** @description The host whose membership values changed (inventory_membership only) */
+            host_id?: string;
+            /** @description The host's name (inventory_membership only) */
+            host_name?: string;
+            /** @description The changed object's id; the group's for a membership */
             id: string;
+            /** @description The changed object's name; the group's for a membership */
             name: string;
             /**
-             * @description What the assistant changed: a job template, a repository or an editor playbook
+             * @description What the assistant changed: a job template, a repository, an editor playbook, an inventory group (its values, schema, name, place, jump host or members), one host's membership in a group (joining, leaving or its values), a host (created or made managed, its zone, SSH settings or jump host), or a zone's default jump host
              * @enum {string}
              */
-            subject: "job_template" | "repo" | "playbook";
+            subject: "job_template" | "repo" | "playbook" | "inventory_group" | "inventory_membership" | "host" | "zone";
             /** @description The assistant token that made the change */
             token_id?: string;
             /** @description The person whose assistant token made the change */
@@ -5344,6 +5416,10 @@ export interface components {
             parent_id?: string;
         };
         GroupDTO: {
+            /** @description Schema fields whose default an assistant set: a run receives the default as plain text until a person changes the default or accepts it (POST …/schema/accept) */
+            assistant_default_keys: string[] | null;
+            /** @description Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person changes the value or accepts it (POST …/vars/accept) */
+            assistant_keys: string[] | null;
             bastion_id?: string;
             /** Format: date-time */
             created_at: string;
@@ -5803,6 +5879,8 @@ export interface components {
              * @example https://example.com/schemas/HostPreviewOutputBody.json
              */
             readonly $schema?: string;
+            /** @description The variables whose value an assistant wrote: a run receives them as plain text (never templated) until a person changes or accepts them */
+            assistant_written: string[] | null;
             connection?: components["schemas"]["Connection"];
             /** @description Where each variable comes from: the name of the group that gave it, or "host" for the host's own (address, SSH settings, facts) */
             sources: {
@@ -5931,6 +6009,8 @@ export interface components {
             test: components["schemas"]["HostTestDTO"];
         };
         InventoryMemberDTO: {
+            /** @description Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person changes the value or accepts it (POST …/accept) */
+            assistant_keys: string[] | null;
             complete: boolean;
             group_id: string;
             group_name: string;
@@ -7616,7 +7696,7 @@ export interface components {
             job_id: string;
         };
         PictureReview: {
-            /** @description The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token */
+            /** @description The assistant's changes that paused the item: the job template, repository, playbook, inventory group or membership, each field's old and new value (secrets masked) and the token */
             changes: components["schemas"]["ChangedObject"][] | null;
             gone?: boolean;
             /**
@@ -7880,6 +7960,8 @@ export interface components {
              * @example https://example.com/schemas/PreviewOutputBody.json
              */
             readonly $schema?: string;
+            /** @description The values the inventory carries as plain text (never templated) because an assistant wrote them: a group's own (no host) or a host's in that group; a person saving them makes them live */
+            assistant_written: components["schemas"]["AssistantValue"][] | null;
             connections: {
                 [key: string]: components["schemas"]["Connection"];
             };
@@ -14548,6 +14630,47 @@ export interface operations {
             };
         };
     };
+    acceptInventoryMemberVars: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The membership's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptKeysBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryMemberOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     setInventoryGroupSchema: {
         parameters: {
             query?: never;
@@ -14588,6 +14711,46 @@ export interface operations {
             };
         };
     };
+    acceptInventoryGroupDefaults: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The group's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptKeysBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     setInventoryGroupVars: {
         parameters: {
             query?: never;
@@ -14604,6 +14767,46 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["GroupVarsInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    acceptInventoryGroupVars: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The group's ETag; required */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptKeysBody"];
             };
         };
         responses: {

@@ -726,7 +726,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// worker claims it: the claim recomputes the run picture and compares
 	// the job's pinned commit with the one the approval stored.
 	jobsQueue.SetClaimGuard(runRequestsSvc)
-	WireChangeReviews(appDB, templatesSvc, reposSvc, playbooksSvc, schedulesSvc, triggersSvc, auditRec)
+	WireChangeReviews(appDB, templatesSvc, reposSvc, playbooksSvc, inventorySvc, hostsSvc, sshSvc, schedulesSvc, triggersSvc, auditRec)
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment, ScreenLock: screenlock.NewService(screenlock.NewSQLStore(q)), Preferences: preferences.NewService(preferences.NewSQLStore(q)),
 		Tenancy: tenancySvc, Accounts: accountsSvc, PersonalTokens: personaltokens.NewService(personaltokens.NewSQLStore(appDB), tenancySvc, time.Now, personaltokens.WithSessionCheck(sessions)),

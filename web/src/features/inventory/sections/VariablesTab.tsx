@@ -5,10 +5,17 @@ import { DisabledHint } from '../../../ui/detail-layout.tsx';
 import { CardSaveBar, SettingsCard } from '../../../ui/settings.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
-import { toVarSchema, useInventoryPreview, useReloadInventory, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
+import {
+  toVarSchema,
+  useAcceptGroupDefaults,
+  useAcceptGroupVars,
+  useInventoryPreview,
+  useReloadInventory,
+  useSetGroupVars,
+} from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
-import { activeFields } from '../../variables/origin.ts';
+import { activeFields, sameValue } from '../../variables/origin.ts';
 import { groupFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
 import type { Problem, SchemaField, Vars } from '../../variables/types.ts';
@@ -19,6 +26,7 @@ import { useOwnSteps } from '../ownSteps.ts';
 import { ancestorVarsFrom, formatValue, provenanceOf, type AncestorVars } from '../provenance.ts';
 import { ancestorsOf } from '../tree.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { AssistantMark } from '../AssistantMark.tsx';
 
 interface VariablesTabProps {
   org: string;
@@ -88,6 +96,9 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
   const { draft, revision, generation, touched, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.vars, group.revision, draftOf, own);
+  // The stored values as the form shows them: an accept makes these live,
+  // so it waits while the draft shows something else (final review M3).
+  const stored = draftOf(group.vars);
   const orphaned = group.orphaned ?? [];
   // Stored values of removed fields are something to save too: a save
   // drops them. Only an edit counts for the leave question, though.
@@ -120,6 +131,22 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
   }
 
   const reload = useReloadInventory(org);
+  const acceptVars = useAcceptGroupVars(org, group.id);
+  const acceptDefaults = useAcceptGroupDefaults(org, group.id);
+
+  // A person accepts an assistant's value (or default) as live as it
+  // stands, on the group's revision (decision D6). It changes no value, so
+  // an edited draft may follow it like any of the page's own writes.
+  async function onAccept(name: string, kind: 'value' | 'default') {
+    const accept = kind === 'value' ? acceptVars : acceptDefaults;
+    try {
+      const res = await accept.mutateAsync({ keys: [name], revision: group.revision });
+      own.record({ from: group.revision, to: res.group.revision, kind: 'content' });
+      toast.show(t.inventory.assistant.accepted(name));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.inventory.assistant.acceptFailed, 'destructive');
+    }
+  }
 
   // A reload that brings other content starts the draft over; one that
   // does not keeps it, which then saves on the reloaded revision.
@@ -196,17 +223,39 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
             repeater's entry keys); a draft replaced wholesale remounts them,
             as the section's key did before (backlog 7.90). */}
         {shown.map((f) => (
-          <VariableRow key={`${generation}:${f.name}`} field={f} draft={draft} onChange={edit} problems={problems} canWrite={canWrite} ancestors={ancestors} />
+          <VariableRow
+            key={`${generation}:${f.name}`}
+            field={f}
+            draft={draft}
+            onChange={edit}
+            problems={problems}
+            canWrite={canWrite}
+            ancestors={ancestors}
+            assistant={assistantMark(group, f.name, draft)}
+            edited={!sameValue(stored[f.name], draft[f.name])}
+            onAccept={canWrite ? (kind) => void onAccept(f.name, kind) : undefined}
+            accepting={acceptVars.isPending || acceptDefaults.isPending}
+          />
         ))}
       </form>
     </SettingsCard>
   );
 }
 
-/** One variable: its key and type, its input, and where its effective
- * value comes from when the data at hand says. */
+/** What an assistant wrote of a field, as the stored group says (decision
+ * D6): its value, or — while the group leaves it unset — its default. A
+ * person's save of the values (or of the fields) clears it. */
+function assistantMark(group: InventoryGroup, name: string, draft: Vars): 'value' | 'default' | null {
+  if ((group.assistant_keys ?? []).includes(name)) return 'value';
+  if (draft[name] === undefined && (group.assistant_default_keys ?? []).includes(name)) return 'default';
+  return null;
+}
+
+/** One variable: its key and type, its input, where its effective value
+ * comes from when the data at hand says, and whether an assistant wrote
+ * it. */
 function VariableRow({
-  field, draft, onChange, problems, canWrite, ancestors,
+  field, draft, onChange, problems, canWrite, ancestors, assistant, edited, onAccept, accepting,
 }: {
   field: SchemaField;
   draft: Vars;
@@ -214,15 +263,22 @@ function VariableRow({
   problems: readonly Problem[];
   canWrite: boolean;
   ancestors: readonly AncestorVars[];
+  assistant: 'value' | 'default' | null;
+  /** The draft holds another value than the stored one: an accept waits. */
+  edited: boolean;
+  /** Absent for a reader. */
+  onAccept?: (kind: 'value' | 'default') => void;
+  accepting: boolean;
 }) {
   const t = useT();
   const v = t.inventory.groupPage.variables;
   const types = t.inventory.fields.types;
   const from = provenanceOf(field, draft[field.name], ancestors);
   let line: string | null = null;
-  if (from?.kind === 'overrides') line = v.overrides(from.group, formatValue(from.value));
-  else if (from?.kind === 'inherits') line = v.inherits(formatValue(from.value), from.group);
-  else if (from?.kind === 'default') line = v.schemaDefault(formatValue(from.value));
+  const plain = t.inventory.assistant.plainText;
+  if (from?.kind === 'overrides') line = v.overrides(from.group, formatValue(from.value, plain));
+  else if (from?.kind === 'inherits') line = v.inherits(formatValue(from.value, plain), from.group);
+  else if (from?.kind === 'default') line = v.schemaDefault(formatValue(from.value, plain));
 
   return (
     <div data-testid={`variable-${field.name}`} className="grid gap-x-6 gap-y-1.5 border-t border-border px-5 py-3.5 sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)]">
@@ -237,6 +293,20 @@ function VariableRow({
       <div className="flex min-w-0 flex-col gap-1.5">
         <SchemaForm fields={[field]} value={draft} onChange={onChange} problems={problems} disabled={!canWrite} idPrefix="values" hideLabels />
         {line && <p className="text-[12px] text-muted-foreground">{line}</p>}
+        {assistant && (
+          <AssistantMark
+            testId={`assistant-${field.name}`}
+            text={assistant === 'value' ? t.inventory.assistant.written : t.inventory.assistant.defaultSet}
+            action={
+              onAccept && (
+                <Button type="button" aria-label={t.inventory.assistant.acceptFor(field.name)} disabled={accepting || edited} onClick={() => onAccept(assistant)}>
+                  {t.inventory.assistant.accept}
+                </Button>
+              )
+            }
+            note={onAccept && edited ? t.inventory.assistant.acceptEdited : undefined}
+          />
+        )}
       </div>
     </div>
   );

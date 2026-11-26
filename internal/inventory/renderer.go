@@ -3,6 +3,7 @@ package inventory
 import (
 	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"strings"
 
@@ -61,6 +62,9 @@ type HostPreview struct {
 	Sources    map[string]string
 	Connection *render.Connection
 	Warnings   []render.Warning
+	// AssistantWritten lists, sorted, the variables of Vars whose value an
+	// assistant wrote and a run receives as plain text (decision D6).
+	AssistantWritten []string
 }
 
 // Preview renders scope with every secret replaced by render.MaskedSecret.
@@ -101,15 +105,28 @@ func (r *Renderer) HostPreview(ctx context.Context, orgID, hostID uuid.UUID) (Ho
 		// groups the host is in (ancestors before descendants, then by
 		// name, as Ansible merges them), then the host's own variables,
 		// which include the membership values.
+		written := map[render.AssistantValue]bool{}
+		for _, w := range inv.AssistantWritten {
+			written[w] = true
+		}
+		plain := map[string]bool{}
 		for _, gv := range hostGroupVars(inv.Doc, name) {
 			for k, v := range gv.vars {
 				out.Vars[k], out.Sources[k] = v, gv.group
+				plain[k] = written[render.AssistantValue{Group: gv.group, Key: k}]
 			}
 		}
 		for k, v := range hv {
 			out.Vars[k], out.Sources[k] = v, "host"
+			plain[k] = false
 			if g, ok := inv.Origins[name][k]; ok {
 				out.Sources[k] = g
+				plain[k] = written[render.AssistantValue{Group: g, Host: name, Key: k}]
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(plain)) {
+			if plain[k] {
+				out.AssistantWritten = append(out.AssistantWritten, k)
 			}
 		}
 	}
@@ -185,10 +202,13 @@ func (r *Renderer) renderIn(ctx context.Context, orgID uuid.UUID, scope render.S
 		hostNames[h.ID] = h.Name
 	}
 	for _, g := range groups {
-		in.Groups = append(in.Groups, render.Group{ID: g.ID, ParentID: g.ParentID, Name: g.Name, Schema: g.Schema, Vars: g.Vars, BastionID: g.BastionID})
+		in.Groups = append(in.Groups, render.Group{
+			ID: g.ID, ParentID: g.ParentID, Name: g.Name, Schema: g.Schema, Vars: g.Vars, BastionID: g.BastionID,
+			AssistantKeys: g.AssistantKeys, AssistantDefaultKeys: g.AssistantDefaultKeys,
+		})
 	}
 	for _, m := range memberships {
-		in.Memberships = append(in.Memberships, render.Membership{GroupID: m.GroupID, HostID: m.HostID, Vars: m.Vars})
+		in.Memberships = append(in.Memberships, render.Membership{GroupID: m.GroupID, HostID: m.HostID, Vars: m.Vars, AssistantKeys: m.AssistantKeys})
 	}
 	for _, h := range hostList {
 		in.Hosts = append(in.Hosts, render.Host{ID: h.ID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address, Managed: h.Managed, Facts: h.Facts})

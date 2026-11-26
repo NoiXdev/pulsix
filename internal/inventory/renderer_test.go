@@ -3,6 +3,7 @@ package inventory_test
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -96,7 +97,7 @@ func TestHostPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hp.Connection == nil || hp.Connection.BastionSource != render.SourceNone || hp.Vars["ansible_host"] != "web-01" {
+	if hp.Connection == nil || hp.Connection.BastionSource != render.SourceNone || !reflect.DeepEqual(hp.Vars["ansible_host"], map[string]any{"__ansible_unsafe": "web-01"}) {
 		t.Fatalf("HostPreview = %+v", hp)
 	}
 	// Each value says where it comes from: the group that set it, or the

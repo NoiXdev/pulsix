@@ -331,7 +331,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		h, err := deps.Hosts.CreateHost(ctx, scope.OrgID, hostIn)
+		h, err := deps.Hosts.CreateHostBy(ctx, scope.OrgID, hostIn, changeActor(scope))
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
@@ -409,7 +409,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		h, err := deps.Hosts.UpdateHost(ctx, scope.OrgID, id, rev, hostIn)
+		h, err := deps.Hosts.UpdateHostBy(ctx, scope.OrgID, id, rev, hostIn, changeActor(scope))
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
@@ -444,7 +444,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid host id")
 		}
-		h, err := deps.Hosts.SetCapabilities(ctx, scope.OrgID, id, in.Body.Managed, in.Body.Monitored)
+		h, err := deps.Hosts.SetCapabilitiesBy(ctx, scope.OrgID, id, in.Body.Managed, in.Body.Monitored, changeActor(scope))
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
@@ -535,6 +535,8 @@ func mapHostsErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, hosts.ErrNameTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, hosts.ErrAssistantConnection):
+		return huma.Error403Forbidden(err.Error())
 	case errors.Is(err, hosts.ErrInvalidCursor):
 		return huma.Error400BadRequest("invalid cursor")
 	default:

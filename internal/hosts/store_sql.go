@@ -236,6 +236,61 @@ func (s *SQLStore) ActiveRuns(ctx context.Context, orgID uuid.UUID, ids []uuid.U
 // ListAllHosts returns every host of orgID ordered by name, unpaginated, for
 // the inventory renderer (see ListAllHosts's own comment,
 // internal/db/queries/hosts.sql).
+// GetHostForUpdate implements Store.
+func (s *SQLStore) GetHostForUpdate(ctx context.Context, orgID, id uuid.UUID) (Host, error) {
+	row, err := s.q.GetHostForUpdate(ctx, gen.GetHostForUpdateParams{ID: id, OrgID: orgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Host{}, ErrNotFound
+	}
+	if err != nil {
+		return Host{}, fmt.Errorf("get host for update: %w", err)
+	}
+	return fromHostRow(row)
+}
+
+// GetRoute implements Store.
+func (s *SQLStore) GetRoute(ctx context.Context, orgID, hostID uuid.UUID) (Route, error) {
+	row, err := s.q.GetHostRoute(ctx, gen.GetHostRouteParams{OrgID: orgID, HostID: hostID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Route{Port: 22, JumpMode: "inherit"}, nil
+	}
+	if err != nil {
+		return Route{}, fmt.Errorf("get host route: %w", err)
+	}
+	return Route{User: row.Username, Port: int(row.Port), Credential: row.CredentialName, JumpMode: row.BastionMode, JumpHost: row.BastionName}, nil
+}
+
+// GetJump implements Store.
+func (s *SQLStore) GetJump(ctx context.Context, orgID, hostID uuid.UUID) (Jump, error) {
+	row, err := s.q.GetHostSSH(ctx, gen.GetHostSSHParams{OrgID: orgID, HostID: hostID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Jump{Mode: "inherit"}, nil
+	}
+	if err != nil {
+		return Jump{}, fmt.Errorf("get host jump host: %w", err)
+	}
+	return Jump{Mode: row.BastionMode, BastionID: db.UUIDPtr(row.BastionID)}, nil
+}
+
+// InTx implements Store: db.WithWriteTx.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
+// ListScopeHosts implements Store: every host of orgID with its id, name,
+// zone and managed flag only.
+func (s *SQLStore) ListScopeHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
+	rows, err := s.q.ListScopeHosts(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Host, len(rows))
+	for i, r := range rows {
+		out[i] = Host{ID: r.ID, OrgID: orgID, Name: r.Name, ZoneID: r.ZoneID, Managed: r.Managed}
+	}
+	return out, nil
+}
+
 func (s *SQLStore) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, error) {
 	rows, err := s.q.ListAllHosts(ctx, orgID)
 	if err != nil {

@@ -2,6 +2,7 @@ import { Pill } from '../../../ui/badge.tsx';
 import type { DataListColumn } from '../../../ui/data-list/index.ts';
 import type { InventoryMember } from '../../../api/types.ts';
 import type { Messages } from '../../../i18n/types.ts';
+import { AssistantPill } from '../AssistantMark.tsx';
 
 /**
  * memberColumns is every column a group's member list offers (list id
@@ -29,7 +30,12 @@ export function memberColumns(t: Messages): DataListColumn<InventoryMember>[] {
       sortKey: 'values',
       sortValue: (r) => (r.problems ?? []).length,
       defaultVisible: true,
-      render: (r) => (r.complete ? <Pill tone="ok">{m.complete}</Pill> : <Pill tone="warn">{m.toFill((r.problems ?? []).length)}</Pill>),
+      render: (r) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          {r.complete ? <Pill tone="ok">{m.complete}</Pill> : <Pill tone="warn">{m.toFill((r.problems ?? []).length)}</Pill>}
+          <AssistantPill keys={r.assistant_keys} />
+        </span>
+      ),
     },
   ];
 }
