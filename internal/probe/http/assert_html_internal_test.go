@@ -328,7 +328,9 @@ func TestSelectAllBoundsHostilePages(t *testing.T) {
 		{"many sibling chain parts", strings.Repeat("<p></p>", 150_000), strings.TrimSuffix(strings.Repeat("p~p~p~p~p~p~p~p,", 15), ","), true},
 		{"sibling chains over deep nesting", chain(500, 190), strings.TrimSuffix(strings.Repeat("div~div+div~div div+div~div div,", 7), ","), false},
 		{"distinct sibling names counted by type", distinctSiblings(60_000), strings.TrimSuffix(strings.Repeat(":nth-last-of-type(2) b,", 10), ","), false},
-		{"nots at the simple cap", chain(500, 190), strings.TrimSuffix(strings.Repeat(":not(.a,.b) p,", 15), ","), false},
+		// Four parts (the 256 bytes hold no more) of a :not at the cap of
+		// 16 simple selectors: 15 class tests per element and part.
+		{"nots at the simple cap", chain(500, 190), strings.TrimSuffix(strings.Repeat(":not(.a,.b,.c,.d,.e,.f,.g,.h,.i,.j,.k,.l,.m,.n,.o) p,", 4), ","), false},
 		// Each of the 15 compounds inside the :not reads the 600 KB
 		// attribute and fails: 9 M steps per element.
 		{"nots reading a huge attribute", huge + huge, ":not(" + strings.TrimSuffix(strings.Repeat(`[title*="zz"],`, 15), ",") + ")", true},

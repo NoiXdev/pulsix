@@ -114,6 +114,9 @@ func TestParseSelectorRefuses(t *testing.T) {
 		{"p:nth-child(2", "needs ) to close :nth-child"},
 		{"p:nth-child()", "An+B"},
 		{"p:nth-child(2n+1 of .a)", "of S"},
+		{"p:nth-child(2n+1\tof .a)", "of S"},
+		{"p:nth-child(odd\nof p)", "of S"},
+		{"p:nth-child(2n+1  OF p)", "of S"},
 		{"p:nth-of-type(x)", "An+B"},
 		{"p:first-child()", `cannot use '('`},
 		{"p::before", "pseudo-elements"},
@@ -142,6 +145,9 @@ func TestParseSelectorRefuses(t *testing.T) {
 		{"a" + strings.Repeat(".c", 13) + ":not(.d)", ""},
 		{"a" + strings.Repeat(".c", 13) + ":not(.d.e)", "at most 16 simple"},
 		{"a:not(" + strings.Repeat(".c", 15) + ")", "at most 16 simple"},
+		{":not(" + strings.Repeat(".c", 15) + ")", ""},
+		{":not(.a,.b,.c,.d,.e,.f,.g,.h,.i,.j,.k,.l,.m,.n,.o) p", ""},
+		{":not(.a,.b,.c,.d,.e,.f,.g,.h,.i,.j,.k,.l,.m,.n,.o,.p) p", "at most 16 simple"},
 	}
 	for _, tc := range cases {
 		_, err := assert.ParseSelector(tc.sel)
@@ -169,6 +175,9 @@ func TestParseNth(t *testing.T) {
 		{"n", 1, 0}, {"+n", 1, 0}, {"-n", -1, 0}, {"N", 1, 0}, {"2n", 2, 0}, {"2n+1", 2, 1}, {"2N-1", 2, -1},
 		{"-n+3", -1, 3}, {"+3n-2", 3, -2}, {" 2n + 1 ", 2, 1}, {"2n- 1", 2, -1}, {"0n+5", 0, 5},
 		{"1000000n+1000000", 1_000_000, 1_000_000}, {"-1000000n-1000000", -1_000_000, -1_000_000},
+		// Leading zeros, which 3.13b's whole numbers allowed in any count.
+		{"00000001", 0, 1}, {"0001000000", 0, 1_000_000}, {strings.Repeat("0", 200) + "7", 0, 7},
+		{"0002n+00003", 2, 3}, {"000", 0, 0},
 	}
 	for _, tc := range valid {
 		sel, err := assert.ParseSelector("p:nth-child(" + tc.arg + ")")
@@ -184,6 +193,7 @@ func TestParseNth(t *testing.T) {
 	for _, arg := range []string{
 		"", " ", "x", "2 n", "- n", "+ 2", "n-", "n+", "2n+", "n - -1", "n++1", "2n+1n", "1.5", "2n+1.5",
 		"n1", "--n", "+-2", "1000001", "1000001n", "n+1000001", "-1000001", "99999999999999999999", "2n 1", "odd2",
+		"0001000001", strings.Repeat("0", 200) + "99999999",
 	} {
 		if _, err := assert.ParseSelector("p:nth-child(" + arg + ")"); err == nil || !strings.Contains(err.Error(), "An+B") {
 			t.Errorf("nth-child(%s) = %v, want an An+B refusal", arg, err)

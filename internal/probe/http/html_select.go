@@ -43,7 +43,7 @@ func selectAll(ctx context.Context, doc *html.Node, sel *assert.Selector, perSel
 		desc, child := v.desc, []uint16(nil)
 		if v.n.Type == html.ElementNode {
 			e := element{n: v.n, pos: v.pos}
-			matched, out, enough := s.states(&e, v)
+			matched, out, enough := s.states(&e, &v)
 			if !enough {
 				return nil, errHTMLTooMuch
 			}
@@ -91,8 +91,8 @@ type visit struct {
 // 1-based index of count, and among those of its name typeIndex of
 // typeCount (counted only for a selector with an of-type pseudo-class).
 type position struct {
-	index, count         int
-	typeIndex, typeCount int
+	index, count         int32
+	typeIndex, typeCount int32
 }
 
 // siblings is what one parent's element children so far hand on to the
@@ -118,6 +118,8 @@ type selection struct {
 	left     *int64
 	ofType   bool
 	siblings bool
+	// typeIndex is scratch for pushChildren's of-type places.
+	typeIndex []int32
 }
 
 // spend takes n steps from the budgets, or reports that they do not fit.
@@ -133,21 +135,25 @@ func (s *selection) spend(n int64) bool {
 // states matches e against every compound its inherited states (and
 // state 0, open everywhere) allow: matched when a part's last compound
 // matched; out the states it hands on, by the combinator that hands them.
-func (s *selection) states(e *element, v visit) (matched bool, out [4][]uint16, enough bool) {
+func (s *selection) states(e *element, v *visit) (matched bool, out [4][]uint16, enough bool) {
 	parts := s.sel.Parts
+	var adjacent, general []uint16
+	if v.sib != nil {
+		adjacent, general = v.sib.adjacent, v.sib.general
+	}
 	for p, part := range parts {
 		avail := uint16(1)
-		for _, in := range [][]uint16{v.desc, v.child} {
-			if in != nil {
-				avail |= in[p]
-			}
+		if v.desc != nil {
+			avail |= v.desc[p]
 		}
-		if v.sib != nil {
-			for _, in := range [][]uint16{v.sib.adjacent, v.sib.general} {
-				if in != nil {
-					avail |= in[p]
-				}
-			}
+		if v.child != nil {
+			avail |= v.child[p]
+		}
+		if adjacent != nil {
+			avail |= adjacent[p]
+		}
+		if general != nil {
+			avail |= general[p]
 		}
 		for i, c := range part.Compounds {
 			if avail&(1<<i) == 0 {
@@ -205,17 +211,16 @@ func (s *selection) pushChildren(stack []visit, n *html.Node, desc, child []uint
 	if !s.spend(int64(children + names)) {
 		return stack, false
 	}
-	var types map[string]*typeTally
+	var types map[string]int32
 	if s.ofType && elements > 0 {
-		types = make(map[string]*typeTally)
+		// Forward: each element's 1-based place among its name
+		// (s.typeIndex, reused across parents); types ends as the counts.
+		types = make(map[string]int32, elements)
+		s.typeIndex = s.typeIndex[:0]
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.ElementNode {
-				t := types[c.Data]
-				if t == nil {
-					t = &typeTally{}
-					types[c.Data] = t
-				}
-				t.count++
+				types[c.Data]++
+				s.typeIndex = append(s.typeIndex, types[c.Data])
 			}
 		}
 	}
@@ -223,25 +228,18 @@ func (s *selection) pushChildren(stack []visit, n *html.Node, desc, child []uint
 	if s.siblings && elements > 1 {
 		sib = &siblings{}
 	}
-	index := elements
+	index := int32(elements)
 	for c := n.LastChild; c != nil; c = c.PrevSibling {
-		v := visit{n: c, pos: position{index: index, count: elements}, desc: desc, child: child, sib: sib}
+		v := visit{n: c, pos: position{index: index, count: int32(elements)}, desc: desc, child: child, sib: sib}
 		if c.Type == html.ElementNode {
-			if t := types[c.Data]; t != nil {
-				v.pos.typeIndex, v.pos.typeCount = t.count-t.seen, t.count
-				t.seen++
+			if types != nil {
+				v.pos.typeIndex, v.pos.typeCount = s.typeIndex[index-1], types[c.Data]
 			}
 			index--
 		}
 		stack = append(stack, v)
 	}
 	return stack, true
-}
-
-// typeTally counts one name among a parent's element children: count in
-// all, seen from the last one back while pushing.
-type typeTally struct {
-	count, seen int
 }
 
 // compound tests every condition of c on e, cheapest first.

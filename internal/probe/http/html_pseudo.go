@@ -48,7 +48,8 @@ func (s *selection) pseudoHolds(p assert.Pseudo, e *element) (ok, enough bool) {
 
 // nthHolds reports whether the 1-based position i is A·n+B for some
 // n >= 0.
-func nthHolds(p assert.Pseudo, i int) bool {
+func nthHolds(p assert.Pseudo, i32 int32) bool {
+	i := int(i32)
 	if i < 1 {
 		return false
 	}

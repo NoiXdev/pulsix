@@ -3,6 +3,7 @@ package assert
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -128,7 +129,7 @@ func (p *selParser) notList() (Pseudo, int, error) {
 func parseNth(arg, name string) (a, b int, err error) {
 	refuse := fmt.Errorf("a CSS selector of html(…) takes An+B (such as 3, 2n+1 or -n+3), odd or even in :%s(…), with A and B up to %d, not %q", name, maxNth, arg)
 	s := strings.ToLower(strings.Trim(arg, " \t\n\r\f"))
-	if strings.Contains(s, " of ") {
+	if fields := strings.Fields(s); len(fields) > 1 && slices.Contains(fields[1:], "of") {
 		return 0, 0, fmt.Errorf("a CSS selector of html(…) may not use :%s(An+B of S)", name)
 	}
 	switch s {
@@ -176,18 +177,33 @@ func parseNth(arg, name string) (a, b int, err error) {
 }
 
 // nthInt reads a decimal integer of at most maxNth, with a leading sign
-// when signed allows it.
+// when signed allows it. Leading zeros are allowed in any number, as
+// 3.13b's whole numbers allowed them; only the digits after them are
+// bounded.
 func nthInt(s string, signed bool) (int, bool) {
-	digits := s
+	neg, digits := false, s
 	if signed && s != "" && (s[0] == '+' || s[0] == '-') {
-		digits = s[1:]
+		neg, digits = s[0] == '-', s[1:]
 	}
-	if digits == "" || len(digits) > 7 || strings.Trim(digits, "0123456789") != "" {
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
 		return 0, false
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n > maxNth || n < -maxNth {
+	significant := strings.TrimLeft(digits, "0")
+	if len(significant) > 7 {
 		return 0, false
+	}
+	n := 0
+	if significant != "" {
+		var err error
+		if n, err = strconv.Atoi(significant); err != nil {
+			return 0, false
+		}
+	}
+	if n > maxNth {
+		return 0, false
+	}
+	if neg {
+		n = -n
 	}
 	return n, true
 }
