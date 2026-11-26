@@ -1174,6 +1174,22 @@ trigger tools carry the two fields. **An older manager alongside** ignores the d
 two columns as they are), starts no collected run, and shows `collected` deliveries as
 an unknown outcome; stop every manager instance first, as above.
 
+Request methods, headers and a body on the `http` check (backlog 3.84) add no migration,
+no proto change and no dependency. The `http` parameter `method` now also takes `POST`,
+`PUT`, `PATCH`, `DELETE` and `OPTIONS`, and three parameters are new: `headers` (at most 16
+`Name: value` entries of 1 024 bytes; reserved, hop-by-hop and credential headers refused),
+`body` (at most 8 KiB, only with `POST`, `PUT` or `PATCH`) and `content_type` (only with a
+body, default `application/json`). Existing checks behave exactly as before. Two validation
+messages change wording: `json_values` and body-reading assertions with `HEAD` now say
+"needs a method other than HEAD" instead of "needs method GET". **Skew with agents:** an
+agent of an earlier release would drop the headers and the body and send a plain GET, so a
+check with a method other than GET or HEAD, headers or a body refuses `vantage_groups` (like
+a check with a secret) and the probe runner never assigns one to an agent; such a check is
+probed from the Pulsix server only, whatever agent versions run. **An older manager
+alongside** refuses the new parameters on write, but if it holds the probe lock it probes a
+stored check with headers or a body as a plain GET of its URL, and one with a new method as
+"invalid method" (unknown); set these up only once every manager instance runs this version.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
