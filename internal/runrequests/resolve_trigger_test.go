@@ -46,7 +46,8 @@ func (f *fakeTriggerSource) Validate(_ context.Context, _, id uuid.UUID, in trig
 		return triggers.Trigger{}, f.validateErr
 	}
 	t := triggers.Trigger{ID: id, Kind: in.Kind, TemplateID: in.TemplateID, RepoID: in.RepoID, Name: in.Name, Enabled: in.Enabled,
-		Preset: in.Preset, TimestampHeader: in.TimestampHeader, Mapping: in.Mapping, OnActive: in.OnActive, RateLimit: in.RateLimit}
+		Preset: in.Preset, TimestampHeader: in.TimestampHeader, Mapping: in.Mapping, OnActive: in.OnActive, RateLimit: in.RateLimit,
+		SettleSeconds: in.SettleSeconds, MaxWaitSeconds: in.MaxWaitSeconds}
 	if t.OnActive == "" {
 		t.OnActive = triggers.OnActiveQueue
 	}

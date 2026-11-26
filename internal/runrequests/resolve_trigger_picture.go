@@ -90,6 +90,7 @@ func (r *Resolver) triggerState(ctx context.Context, orgID uuid.UUID, spec Trigg
 		Kind: string(spec.Kind), Name: spec.Name, Enabled: spec.Enabled, Preset: string(spec.Preset),
 		SignatureHeader: triggers.Trigger{Preset: spec.Preset}.SignatureHeader(), TimestampHeader: spec.TimestampHeader,
 		AllowCIDRs: spec.AllowCIDRs, Mapping: spec.Mapping, OnActive: string(spec.OnActive), RateLimit: spec.RateLimit,
+		SettleSeconds: spec.SettleSeconds, MaxWaitSeconds: cloneInt(spec.MaxWaitSeconds),
 	}
 	if s.AllowCIDRs == nil {
 		s.AllowCIDRs = []string{}

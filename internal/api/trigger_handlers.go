@@ -261,6 +261,8 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// A body that leaves the settle delay out keeps it (backlog 2.137).
+		input.SettleSeconds, input.MaxWaitSeconds = triggers.ChangeSettle(t.SettleSeconds, t.MaxWaitSeconds, in.Body.SettleSeconds, in.Body.MaxWaitSeconds)
 		up, err := deps.Triggers.UpdateBy(ctx, scope.OrgID, t.ID, scope.UserID, rev, input)
 		if err != nil {
 			return nil, mapTriggersErr(ctx, err)
@@ -308,12 +310,9 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("rotateTriggerSecret", "trigger"))
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/triggers/{id}/test", func(ctx context.Context, in *triggerTestInput) (*triggerTestOutput, error) {
-		scope, t, err := loadTrigger(ctx, deps, in.Org, in.ID, triggerWrite)
+		scope, t, err := loadTriggerToRun(ctx, deps, in.Org, in.ID)
 		if err != nil {
 			return nil, err
-		}
-		if t.Kind == triggers.KindTemplateRun && !tenancy.Allows(scope.Role, tenancy.PermJobsRun) {
-			return nil, huma.Error403Forbidden("insufficient role")
 		}
 		var body []byte
 		if in.Body.Payload != nil {
@@ -350,39 +349,22 @@ func registerTriggerRoutes(hapi huma.API, deps Deps) {
 		}
 		return out, nil
 	})
+
+	registerTriggerPendingRoutes(hapi, deps)
 }
 
-func triggerInput(b TriggerBody) (triggers.Input, error) {
-	in := triggers.Input{
-		Kind: triggers.Kind(b.Kind), Name: b.Name, Enabled: b.Enabled == nil || *b.Enabled, Preset: triggers.Preset(b.Preset),
-		TimestampHeader: b.TimestampHeader, AllowCIDRs: b.AllowCIDRs, OnActive: triggers.OnActive(b.OnActive),
+// loadTriggerToRun is loadTrigger for the routes that start what a trigger
+// starts (its test call, its collected run): changing the trigger, and for
+// a template run trigger jobs.run too.
+func loadTriggerToRun(ctx context.Context, deps Deps, org, rawID string) (Scope, triggers.Trigger, error) {
+	scope, t, err := loadTrigger(ctx, deps, org, rawID, triggerWrite)
+	if err != nil {
+		return Scope{}, triggers.Trigger{}, err
 	}
-	var err error
-	if in.TemplateID, err = optionalUUID(b.TemplateID, "template id"); err != nil {
-		return in, err
+	if t.Kind == triggers.KindTemplateRun && !tenancy.Allows(scope.Role, tenancy.PermJobsRun) {
+		return Scope{}, triggers.Trigger{}, huma.Error403Forbidden("insufficient role")
 	}
-	if in.RepoID, err = optionalUUID(b.RepoID, "repo id"); err != nil {
-		return in, err
-	}
-	if b.Mapping != nil {
-		in.Mapping = triggers.Mapping{ExtraVars: b.Mapping.ExtraVars, Limit: b.Mapping.Limit}
-	}
-	if b.RateLimit != nil {
-		in.RateLimit = triggers.RateLimit{Count: b.RateLimit.Count, Per: b.RateLimit.Per}
-	}
-	return in, nil
-}
-
-func triggerOut(deps Deps, t triggers.Trigger) *triggerOutput {
-	out := &triggerOutput{ETag: revisionETag(t.Revision)}
-	out.Body.Trigger = toTriggerDTO(t, deps.Triggers.URL(t))
-	return out
-}
-
-func triggerSecret(c triggers.Created) *triggerSecretOutput {
-	out := &triggerSecretOutput{}
-	out.Body.Trigger, out.Body.Secret, out.Body.URL = toTriggerDTO(c.Trigger, c.URL), c.Secret, c.URL
-	return out
+	return scope, t, nil
 }
 
 func mapTriggersErr(ctx context.Context, err error) error {
@@ -395,6 +377,8 @@ func mapTriggersErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict("a trigger with this name already exists")
 	case errors.Is(err, triggers.ErrRevisionMismatch):
 		return huma.Error412PreconditionFailed("this changed since you loaded it; reload and apply your change again")
+	case errors.Is(err, triggers.ErrNothingPending):
+		return huma.Error409Conflict("no collected run is pending")
 	}
 	slog.ErrorContext(ctx, "unmapped triggers error", "err", err)
 	return huma.Error500InternalServerError("internal error")

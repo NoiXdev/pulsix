@@ -149,3 +149,48 @@ func TestCreateTriggerToolRefusesAReservedMapping(t *testing.T) {
 		t.Fatalf("a reserved mapping = %v %s", isErr, text)
 	}
 }
+
+// create_trigger and update_trigger carry the settle delay (backlog
+// 2.137); a change that leaves it out keeps it; get_trigger and
+// list_triggers show it.
+func TestTriggerToolsCarryTheSettleDelay(t *testing.T) {
+	f := newOrgFixture(t, tenancy.AreaAutomationRequest, tenancy.AreaTemplatesRead)
+	cs := mustConnect(t, f.s, f.token)
+	var req triggerRequestResult
+	callOK(t, cs, "create_trigger", map[string]any{
+		"kind": "template_run", "template_id": f.template.String(), "name": "settling hook", "preset": "github",
+		"settle_seconds": 30, "max_wait_seconds": 600, "reason": "one run per burst of pushes",
+	}, &req)
+	if req.Picture.Trigger.New["settle_seconds"] != float64(30) || req.Picture.Trigger.New["max_wait_seconds"] != float64(600) {
+		t.Fatalf("create_trigger picture = %+v", req.Picture.Trigger.New)
+	}
+	f.approveTrigger(t, req.RequestID)
+	id := req.Picture.Trigger.TriggerID
+	for _, tool := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"get_trigger", map[string]any{"trigger_id": id}},
+		{"list_triggers", map[string]any{"template_id": f.template.String()}},
+	} {
+		if out := callOK(t, cs, tool.name, tool.args, nil); !strings.Contains(out, `"settle_seconds":30`) || !strings.Contains(out, `"max_wait_seconds":600`) {
+			t.Fatalf("%s output = %s", tool.name, out)
+		}
+	}
+	var upd triggerRequestResult
+	callOK(t, cs, "update_trigger", map[string]any{"trigger_id": id, "name": "renamed", "reason": "clearer"}, &upd)
+	f.approveTrigger(t, upd.RequestID)
+	tr, err := f.s.Deps.Triggers.Get(f.scoped, f.org, uuid.MustParse(id))
+	if err != nil || tr.SettleSeconds != 30 || tr.MaxWaitSeconds == nil || *tr.MaxWaitSeconds != 600 {
+		t.Fatalf("a rename changed the settle delay: %+v %v", tr, err)
+	}
+	upd = triggerRequestResult{}
+	callOK(t, cs, "update_trigger", map[string]any{"trigger_id": id, "settle_seconds": 0, "reason": "every push again"}, &upd)
+	if _, ok := upd.Picture.Trigger.New["settle_seconds"]; ok {
+		t.Fatalf("settle off pictured = %+v", upd.Picture.Trigger.New)
+	}
+	f.approveTrigger(t, upd.RequestID)
+	if tr, _ := f.s.Deps.Triggers.Get(f.scoped, f.org, uuid.MustParse(id)); tr.SettleSeconds != 0 || tr.MaxWaitSeconds != nil {
+		t.Fatalf("settle off = %+v", tr)
+	}
+}

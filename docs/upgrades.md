@@ -1095,6 +1095,44 @@ key rotation) still carry the address as is; the write rule keeps new ones clean
 manager alongside** pauses nothing after an assistant's inventory change, accepts any address
 and renders `ansible_host` live; stop every manager instance first, as above.
 
+A webhook trigger's settle delay (backlog 2.137) adds migration 00133:
+`job_triggers.settle_seconds` (int, NOT NULL DEFAULT 0; a CHECK allows 0 or 5 to 3600)
+and the nullable `job_triggers.max_wait_seconds` (a CHECK allows it only with a settle
+delay, from the delay to 86400), the table `trigger_pending_runs` (one row per trigger
+whose collected run waits; row-level security like `job_triggers`, deleted with its
+trigger), the nullable `trigger_deliveries.pending_id` and the delivery outcome
+`collected` (the outcome CHECK is widened). Catalog changes with a constant default
+that rewrite nothing; every existing trigger keeps settle 0, so nothing changes until
+someone sets a delay. A backup carries the columns and the table. With a delay set, a
+delivery that passes every check a run would (address, signature, rate limit, mapping)
+starts no run: it joins the trigger's collected run (outcome `collected`, its
+`pending_id`), which starts `settle_seconds` after the last delivery, at the latest
+`max_wait_seconds` (default ten times the delay) after the first, with the last
+delivery's mapped values, for template runs and repository syncs alike. `on_active`
+does not apply to it: when the moment comes while a run the trigger started is still
+active, it waits for that run and then starts once with the newest values. A settle
+ticker on every manager (every 5 seconds, `FOR UPDATE SKIP LOCKED`, so two managers
+never start one twice) starts due collected runs; a disabled trigger drops its
+collected run, and one whose delay is turned off starts it at the next tick (a delivery
+that arrives first supersedes it: its deliveries are noted "superseded by run …").
+API additions, all additive: `settle_seconds` and `max_wait_seconds` on the trigger
+read, create and update (an update that leaves them out keeps them; `max_wait_seconds`
+0 is the default; turning the delay off drops the maximum wait), on the trigger
+request bodies (create and update) and in the trigger request picture (left out when
+off or default, so the fingerprint of a picture without a delay is unchanged); the
+delivery read's outcome `collected` with `pending_id` and `superseded_by` (and
+`job_group_id`, the run it collapsed into, once started); the hook endpoints answer a
+collected delivery with 202, `status: collected` and `due_at`; `GET …/triggers/{id}/pending`
+(the waiting collected run: deliveries, first, last, due and deadline times; never the
+collected values), `POST …/triggers/{id}/pending/run` (starts it now, as the person,
+with the test call's permission; logged as `POST runPendingTrigger`) and
+`DELETE …/triggers/{id}/pending` (discards it, with the permission that disables a
+trigger; logged as `DELETE discardPendingTrigger`), both 409 when none waits. The MCP
+trigger tools carry the two fields. **An older manager alongside** ignores the delay
+(every delivery it receives starts a run as before, and its trigger update leaves the
+two columns as they are), starts no collected run, and shows `collected` deliveries as
+an unknown outcome; stop every manager instance first, as above.
+
 ## Behaviour changes to check after an upgrade
 
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no

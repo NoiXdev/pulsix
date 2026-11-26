@@ -35,6 +35,8 @@ type TriggerRequestBody struct {
 	Mapping         *triggerMappingDTO `json:"mapping,omitempty" doc:"Payload JSONPaths onto extra vars (never a secret field or a name Ansible or Pulsix acts on) and the limit; a run receives the values as untrusted text"`
 	OnActive        string             `json:"on_active,omitempty" enum:"queue,skip"`
 	RateLimit       *rateLimitDTO      `json:"rate_limit,omitempty"`
+	SettleSeconds   *int               `json:"settle_seconds,omitempty" minimum:"0" maximum:"3600" doc:"0 (off, default) or 5-3600 seconds to wait for a quiet moment: calls meanwhile are collected into one run with the last call's values"`
+	MaxWaitSeconds  *int               `json:"max_wait_seconds,omitempty" minimum:"0" maximum:"86400" doc:"With a settle delay: the longest the collected run waits after the first call, settle_seconds-86400; 0 or left out is ten times settle_seconds"`
 	Reason          string             `json:"reason" maxLength:"300" doc:"Why the trigger is needed, shown to the person who approves it. The trigger's secret is drawn when a person approves the request and shown to that person only; it never appears here"`
 	ExpiresIn       int                `json:"expires_in,omitempty" minimum:"5" maximum:"1440" doc:"Minutes the request stays approvable, 5 to 1440; 60 when omitted"`
 }
@@ -51,6 +53,8 @@ type TriggerUpdateRequestBody struct {
 	Mapping         *triggerMappingDTO `json:"mapping,omitempty" doc:"The complete new mapping; left out keeps it"`
 	OnActive        *string            `json:"on_active,omitempty" enum:"queue,skip"`
 	RateLimit       *rateLimitDTO      `json:"rate_limit,omitempty"`
+	SettleSeconds   *int               `json:"settle_seconds,omitempty" minimum:"0" maximum:"3600" doc:"0 (off) or 5-3600 seconds to wait for a quiet moment; left out keeps it"`
+	MaxWaitSeconds  *int               `json:"max_wait_seconds,omitempty" minimum:"0" maximum:"86400" doc:"The longest the collected run waits after the first call, settle_seconds-86400; 0 is ten times settle_seconds; left out keeps it (turning the settle delay off drops it)"`
 	Reason          string             `json:"reason" maxLength:"300" doc:"Why the change is needed, shown to the person who approves it"`
 	ExpiresIn       int                `json:"expires_in,omitempty" minimum:"5" maximum:"1440" doc:"Minutes the request stays approvable, 5 to 1440; 60 when omitted"`
 }
@@ -64,6 +68,7 @@ func (b TriggerRequestBody) input() (runrequests.CreateInput, error) {
 	in, err := triggerInput(TriggerBody{
 		Kind: b.Kind, TemplateID: b.TemplateID, RepoID: b.RepoID, Name: b.Name, Enabled: b.Enabled, Preset: b.Preset,
 		TimestampHeader: b.TimestampHeader, AllowCIDRs: b.AllowCIDRs, Mapping: b.Mapping, OnActive: b.OnActive, RateLimit: b.RateLimit,
+		SettleSeconds: b.SettleSeconds, MaxWaitSeconds: b.MaxWaitSeconds,
 	})
 	if err != nil {
 		return runrequests.CreateInput{}, err
@@ -71,13 +76,15 @@ func (b TriggerRequestBody) input() (runrequests.CreateInput, error) {
 	spec := &runrequests.TriggerSpec{
 		Kind: in.Kind, TemplateID: in.TemplateID, RepoID: in.RepoID, Name: in.Name, Enabled: in.Enabled, Preset: in.Preset,
 		TimestampHeader: in.TimestampHeader, AllowCIDRs: in.AllowCIDRs, Mapping: in.Mapping, OnActive: in.OnActive, RateLimit: in.RateLimit,
+		SettleSeconds: in.SettleSeconds, MaxWaitSeconds: in.MaxWaitSeconds,
 	}
 	return runrequests.CreateInput{Kind: runrequests.KindTrigger, Reason: b.Reason, ExpiresInMinutes: b.ExpiresIn,
 		Trigger: &runrequests.TriggerInput{Action: runrequests.TriggerCreate, Spec: spec}}, nil
 }
 
 func (b TriggerUpdateRequestBody) input(id uuid.UUID) runrequests.CreateInput {
-	patch := &runrequests.TriggerPatch{Name: b.Name, Enabled: b.Enabled, TimestampHeader: b.TimestampHeader}
+	patch := &runrequests.TriggerPatch{Name: b.Name, Enabled: b.Enabled, TimestampHeader: b.TimestampHeader,
+		SettleSeconds: b.SettleSeconds, MaxWaitSeconds: b.MaxWaitSeconds}
 	if b.Preset != nil {
 		p := triggers.Preset(*b.Preset)
 		patch.Preset = &p

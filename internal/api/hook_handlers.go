@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -31,8 +32,9 @@ func (in *hookInput) Resolve(ctx huma.Context) []error {
 
 type hookOutput struct {
 	Body struct {
-		RunID  string `json:"run_id,omitempty" doc:"The started run's first job"`
-		Status string `json:"status,omitempty" enum:"skipped" doc:"skipped when on_active is skip and a run is active"`
+		RunID  string     `json:"run_id,omitempty" doc:"The started run's first job"`
+		Status string     `json:"status,omitempty" enum:"skipped,collected" doc:"skipped when on_active is skip and a run is active; collected when the trigger waits for a quiet moment: the call joined its pending run, which starts at due_at unless more calls arrive"`
+		DueAt  *time.Time `json:"due_at,omitempty" doc:"collected: when the pending run starts unless more calls arrive"`
 	}
 }
 
@@ -93,7 +95,8 @@ func hookResponse(res triggers.Result) (*hookOutput, error) {
 		return out, nil
 	case triggers.OutcomeCollected:
 		// Accepted into the trigger's pending run (backlog 2.137): no run
-		// to name yet.
+		// to name yet, only when it starts.
+		out.Body.Status, out.Body.DueAt = "collected", res.DueAt
 		return out, nil
 	case triggers.OutcomeRateLimited:
 		secs := int(math.Ceil(res.RetryAfter.Seconds()))

@@ -37,6 +37,8 @@ type triggerCreateArgs struct {
 	Mapping         *triggerMappingArg `json:"mapping,omitempty" jsonschema:"template_run only: payload values mapped onto extra vars and the limit"`
 	OnActive        string             `json:"on_active,omitempty" jsonschema:"queue (default) or skip: what a call does while a run or sync it would start is active"`
 	RateLimit       *rateLimitArg      `json:"rate_limit,omitempty" jsonschema:"calls allowed per period (default 10 per minute)"`
+	SettleSeconds   *int               `json:"settle_seconds,omitempty" jsonschema:"wait for a quiet moment: 0 (default, every call starts a run) or 5 to 3600 seconds; calls meanwhile are collected and one run starts this long after the last of them, with the last call's values, also when a run is active (it waits for that run and then starts once)"`
+	MaxWaitSeconds  *int               `json:"max_wait_seconds,omitempty" jsonschema:"with settle_seconds: the collected run starts at the latest this long after the first call, from settle_seconds to 86400; 0 or left out is ten times settle_seconds"`
 	Reason          string             `json:"reason" jsonschema:"one line on why; the person approving reads it"`
 	ExpiresIn       int                `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
 }
@@ -51,6 +53,8 @@ type triggerUpdateArgs struct {
 	Mapping         *triggerMappingArg `json:"mapping,omitempty" jsonschema:"the complete new mapping (template_run only)"`
 	OnActive        string             `json:"on_active,omitempty" jsonschema:"queue or skip"`
 	RateLimit       *rateLimitArg      `json:"rate_limit,omitempty"`
+	SettleSeconds   *int               `json:"settle_seconds,omitempty" jsonschema:"0 (off: every call starts a run) or 5 to 3600 seconds to wait for a quiet moment; left out keeps it"`
+	MaxWaitSeconds  *int               `json:"max_wait_seconds,omitempty" jsonschema:"the longest the collected run waits after the first call, settle_seconds to 86400; 0 is ten times settle_seconds; left out keeps it (turning settle_seconds off drops it)"`
 	Reason          string             `json:"reason,omitempty" jsonschema:"one line on why; the person approving reads it (required unless only disabling)"`
 	ExpiresIn       int                `json:"expires_in,omitempty" jsonschema:"minutes the request stays approvable, 5 to 1440, default 60"`
 }
@@ -59,7 +63,7 @@ type triggerUpdateArgs struct {
 // stops runs, so it needs no approval.
 func (in triggerUpdateArgs) disablesOnly() bool {
 	return in.Enabled != nil && !*in.Enabled && in.Name == "" && in.Preset == "" && in.TimestampHeader == nil &&
-		in.AllowCIDRs == nil && in.Mapping == nil && in.OnActive == "" && in.RateLimit == nil
+		in.AllowCIDRs == nil && in.Mapping == nil && in.OnActive == "" && in.RateLimit == nil && in.SettleSeconds == nil && in.MaxWaitSeconds == nil
 }
 
 func (in triggerUpdateArgs) body() map[string]any {
@@ -82,7 +86,18 @@ func (in triggerUpdateArgs) body() map[string]any {
 	if in.RateLimit != nil {
 		body["rate_limit"] = in.RateLimit
 	}
+	putSettle(body, in.SettleSeconds, in.MaxWaitSeconds)
 	return body
+}
+
+// putSettle adds the settle delay fields a tool call gave.
+func putSettle(body map[string]any, settle, maxWait *int) {
+	if settle != nil {
+		body["settle_seconds"] = *settle
+	}
+	if maxWait != nil {
+		body["max_wait_seconds"] = *maxWait
+	}
 }
 
 type triggerRotateArgs struct {
@@ -116,18 +131,18 @@ func triggerTools() []toolDef {
 	const area = tenancy.AreaAutomationRequest
 	const templatesRead = tenancy.AreaTemplatesRead
 	return []toolDef{
-		define("list_triggers", "List webhook triggers", "The webhook triggers of one job template (template_id) or repository (repo_id): URL, sender preset, allowed addresses, mapping, rate limit and whether each is enabled. Never a secret.",
+		define("list_triggers", "List webhook triggers", "The webhook triggers of one job template (template_id) or repository (repo_id): URL, sender preset, allowed addresses, mapping, rate limit, settle delay (settle_seconds, 0 = off; max_wait_seconds, absent = ten times settle_seconds) and whether each is enabled. Never a secret.",
 			templatesRead, readTool, func(ctx context.Context, c *caller, in triggerListArgs) (any, error) {
 				q := url.Values{}
 				setIf(q, "template_id", in.TemplateID)
 				setIf(q, "repo_id", in.RepoID)
 				return passGet(ctx, c, q, "/triggers")
 			}),
-		define("get_trigger", "Get webhook trigger", "One webhook trigger: its URL and settings. Never its secret.",
+		define("get_trigger", "Get webhook trigger", "One webhook trigger: its URL and settings, the settle delay among them (settle_seconds: calls are collected and one run starts once no call arrived for that long, at the latest max_wait_seconds after the first; 0 = every call starts a run). Never its secret.",
 			templatesRead, readTool, func(ctx context.Context, c *caller, in triggerIDArgs) (any, error) {
 				return passGet(ctx, c, nil, "/triggers/%s", in.TriggerID)
 			}),
-		defineExact("create_trigger", "Create a webhook trigger", "Ask for a webhook trigger: a URL that runs a job template (template_run) or syncs a repository (repo_sync) when a sender calls it, with the sender preset, allowed addresses, a rate limit and, for a template run, a mapping of payload values onto extra vars. Nothing is created until a person approves the request in Pulsix; the trigger's secret is shown to that person only, never to you. The result carries the link to give them and the picture they see.",
+		defineExact("create_trigger", "Create a webhook trigger", "Ask for a webhook trigger: a URL that runs a job template (template_run) or syncs a repository (repo_sync) when a sender calls it, with the sender preset, allowed addresses, a rate limit, optionally a settle delay (settle_seconds: one run per burst of calls instead of one per call) and, for a template run, a mapping of payload values onto extra vars. Nothing is created until a person approves the request in Pulsix; the trigger's secret is shown to that person only, never to you. The result carries the link to give them and the picture they see.",
 			area, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in triggerCreateArgs) (any, error) {
 				body := requestBody(in.Reason, in.ExpiresIn)
 				body["kind"], body["name"], body["preset"] = in.Kind, in.Name, in.Preset
@@ -147,9 +162,10 @@ func triggerTools() []toolDef {
 				if in.RateLimit != nil {
 					body["rate_limit"] = in.RateLimit
 				}
+				putSettle(body, in.SettleSeconds, in.MaxWaitSeconds)
 				return c.requestAt(ctx, "/trigger-requests", nil, body, triggerNote)
 			}),
-		defineExact("update_trigger", "Change a webhook trigger", "Disable a webhook trigger at once (enabled false and nothing else), or ask for a change of one: give only the fields that change. A change, enabling included, waits for a person's approval in Pulsix; the picture shows the trigger as it is next to how it will be. The kind and target never change. A trigger your change of its job template, a repository or the inventory disabled (disabled_reason assistant_change) is enabled only by a person approving its review request.",
+		defineExact("update_trigger", "Change a webhook trigger", "Disable a webhook trigger at once (enabled false and nothing else), or ask for a change of one: give only the fields that change; the settle delay (settle_seconds, max_wait_seconds) stays as it is unless given. A change, enabling included, waits for a person's approval in Pulsix; the picture shows the trigger as it is next to how it will be. The kind and target never change. A trigger your change of its job template, a repository or the inventory disabled (disabled_reason assistant_change) is enabled only by a person approving its review request.",
 			area, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in triggerUpdateArgs) (any, error) {
 				if in.disablesOnly() {
 					return send(ctx, c, http.MethodPost, nil, "", "/triggers/%s/disable", in.TriggerID)

@@ -35,12 +35,19 @@ type TriggerSpec struct {
 	Mapping         triggers.Mapping   `json:"mapping"`
 	OnActive        triggers.OnActive  `json:"on_active"`
 	RateLimit       triggers.RateLimit `json:"rate_limit"`
+	// SettleSeconds and MaxWaitSeconds are the settle delay (backlog
+	// 2.137); both are left out of the JSON when off or default, so a
+	// request stored before they existed reads as it did.
+	SettleSeconds  int  `json:"settle_seconds,omitempty"`
+	MaxWaitSeconds *int `json:"max_wait_seconds,omitempty"`
 }
 
 // TriggerPatch is an update request's change: a nil field keeps the
 // trigger's value. A trigger's kind and target never change. AllowCIDRs,
 // when given (an empty list included), is the complete new list; Mapping,
-// when given, the complete new mapping.
+// when given, the complete new mapping. SettleSeconds and MaxWaitSeconds
+// change as triggers.ChangeSettle does (a MaxWaitSeconds of 0 is the
+// default, turning the delay off drops the maximum wait).
 type TriggerPatch struct {
 	Name            *string
 	Enabled         *bool
@@ -50,6 +57,8 @@ type TriggerPatch struct {
 	Mapping         *triggers.Mapping
 	OnActive        *triggers.OnActive
 	RateLimit       *triggers.RateLimit
+	SettleSeconds   *int
+	MaxWaitSeconds  *int
 }
 
 // TriggerInput is what a trigger request asks for: Spec for a create,
@@ -117,6 +126,11 @@ type TriggerState struct {
 	Mapping         triggers.Mapping   `json:"mapping" doc:"Payload JSONPaths mapped onto extra vars and the limit; a run receives the values as untrusted text"`
 	OnActive        string             `json:"on_active" enum:"queue,skip"`
 	RateLimit       triggers.RateLimit `json:"rate_limit"`
+	// SettleSeconds and MaxWaitSeconds are the settle delay (backlog
+	// 2.137), left out when off or default so the canonical JSON, and the
+	// fingerprint, of a trigger without one is unchanged.
+	SettleSeconds  int  `json:"settle_seconds,omitempty" doc:"Seconds the trigger waits for a quiet moment before it starts one run for the deliveries collected meanwhile; absent: off, every delivery starts a run"`
+	MaxWaitSeconds *int `json:"max_wait_seconds,omitempty" doc:"The longest the collected run waits after the first delivery; absent with a settle delay: ten times the delay"`
 	// Revision is the stored trigger's (Current only): a change to the
 	// trigger changes the picture, and the approval writes exactly the
 	// revision the person saw.

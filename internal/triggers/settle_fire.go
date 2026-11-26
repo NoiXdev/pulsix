@@ -146,7 +146,7 @@ func (s *Service) noteSuperseded(ctx context.Context, t Trigger, window *uuid.UU
 	}
 	note := "superseded by a later delivery"
 	if res.Outcome == OutcomeTriggered && d.JobGroupID != nil {
-		note = "superseded by run " + d.JobGroupID.String()
+		note = supersededByRun + d.JobGroupID.String()
 	}
 	if err := s.d.Pending.NoteWindow(ctx, t.OrgID, t.ID, *window, note); err != nil {
 		s.d.Log.ErrorContext(ctx, "note superseded deliveries", "trigger", t.ID, "org", t.OrgID, "err", err)

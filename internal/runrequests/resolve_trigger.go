@@ -163,7 +163,7 @@ func triggerInput(s TriggerSpec) triggers.Input {
 	return triggers.Input{
 		Kind: s.Kind, TemplateID: s.TemplateID, RepoID: s.RepoID, Name: s.Name, Enabled: s.Enabled, Preset: s.Preset,
 		TimestampHeader: s.TimestampHeader, AllowCIDRs: slices.Clone(s.AllowCIDRs), Mapping: s.Mapping, OnActive: s.OnActive,
-		RateLimit: s.RateLimit,
+		RateLimit: s.RateLimit, SettleSeconds: s.SettleSeconds, MaxWaitSeconds: cloneInt(s.MaxWaitSeconds),
 	}
 }
 
@@ -172,8 +172,16 @@ func triggerSpecOf(t triggers.Trigger) TriggerSpec {
 	return TriggerSpec{
 		Kind: t.Kind, TemplateID: t.TemplateID, RepoID: t.RepoID, Name: t.Name, Enabled: t.Enabled, Preset: t.Preset,
 		TimestampHeader: t.TimestampHeader, AllowCIDRs: prefixStrings(t.AllowCIDRs), Mapping: t.Mapping, OnActive: t.OnActive,
-		RateLimit: t.RateLimit,
+		RateLimit: t.RateLimit, SettleSeconds: t.SettleSeconds, MaxWaitSeconds: cloneInt(t.MaxWaitSeconds),
 	}
+}
+
+func cloneInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }
 
 func prefixStrings(ps []netip.Prefix) []string {
@@ -212,5 +220,6 @@ func mergeTriggerPatch(cur TriggerSpec, patch TriggerPatch) TriggerSpec {
 	if patch.RateLimit != nil {
 		spec.RateLimit = *patch.RateLimit
 	}
+	spec.SettleSeconds, spec.MaxWaitSeconds = triggers.ChangeSettle(cur.SettleSeconds, cur.MaxWaitSeconds, patch.SettleSeconds, patch.MaxWaitSeconds)
 	return spec
 }
