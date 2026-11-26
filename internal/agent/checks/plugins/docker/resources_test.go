@@ -222,26 +222,113 @@ func TestDockerResourcesRecreatedContainerRebaselines(t *testing.T) {
 	}
 }
 
-// TestDockerResourcesStoppedContainerReadsZero: a container that is not
-// running uses nothing; it reads zero without a stats request, so its
-// usage does not turn stale while it is stopped (R7).
+// TestDockerResourcesStoppedContainerReadsZero: a container that stops
+// uses nothing; it reads zero, without a stats request, on the values its
+// last running reading had, so they do not turn stale while it is stopped
+// (R7).
 func TestDockerResourcesStoppedContainerReadsZero(t *testing.T) {
 	for _, state := range []string{"exited", "created", "restarting", "dead"} {
 		f := resourcesFake()
-		f.containers = append(f.containers, containerSummary{ID: "b", Name: "job", State: state, NetworkMode: "bridge"})
-		f.details["b"] = containerDetail{Health: "none"}
-		obs, err := collect(t, newTestDocker(f, nil), withResources)
+		p := newTestDocker(f, nil)
+		_, _ = collect(t, p, withResources)
+		f.containers[0].State = state
+		f.statsCalls = nil
+		obs, err := collect(t, p, withResources)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if slices.Contains(f.statsCalls, "b") {
+		if len(f.statsCalls) != 0 {
 			t.Errorf("%s: stats asked for a stopped container", state)
 		}
 		for _, m := range append(slices.Clone(rateMetrics), usageMetrics...) {
-			if v := valueOf(t, obs, "job", m); v != 0 {
+			if v := valueOf(t, obs, "web", m); v != 0 {
 				t.Errorf("%s: %s = %v", state, m, v)
 			}
 		}
+		// Still stopped a round later: still zero.
+		obs, _ = collect(t, p, withResources)
+		if v := valueOf(t, obs, "web", "docker.cpu_percent"); v != 0 {
+			t.Errorf("%s: cpu a round later = %v", state, v)
+		}
+	}
+}
+
+// TestDockerResourcesNeverSeenRunningReportsNothing: a container this check
+// never saw running has no usage values to keep from going stale; it
+// reports none.
+func TestDockerResourcesNeverSeenRunningReportsNothing(t *testing.T) {
+	f := resourcesFake()
+	f.containers = append(f.containers, containerSummary{ID: "b", Name: "job", State: "exited", NetworkMode: "bridge"})
+	f.details["b"] = containerDetail{Health: "none"}
+	obs, _ := collect(t, newTestDocker(f, nil), withResources)
+	for _, m := range append(slices.Clone(rateMetrics), usageMetrics...) {
+		if hasObs(obs, "job", m) {
+			t.Errorf("%s reported for a container never seen running", m)
+		}
+	}
+	if slices.Contains(f.statsCalls, "b") {
+		t.Error("stats asked for a stopped container")
+	}
+}
+
+// TestDockerResourcesStoppedWindowsContainer: a Windows container reports
+// no memory percent while it runs (its reading has no limit), so it reports
+// none while stopped either.
+func TestDockerResourcesStoppedWindowsContainer(t *testing.T) {
+	f := resourcesFake()
+	st := reading(0, 0, 0, 0, 0, 0)
+	st.MemoryLimit = 0
+	f.stats["a"] = st
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	f.containers[0].State = "exited"
+	obs, _ := collect(t, p, withResources)
+	if hasObs(obs, "web", "docker.memory_percent") {
+		t.Error("memory percent reported while stopped, never while running")
+	}
+	if v := valueOf(t, obs, "web", "docker.memory_bytes"); v != 0 {
+		t.Errorf("memory = %v", v)
+	}
+}
+
+// TestDockerResourcesStoppedWithoutNetworksInTheReading: a container with
+// a network mode of its own whose readings carry no networks reports no
+// traffic while stopped either.
+func TestDockerResourcesStoppedWithoutNetworksInTheReading(t *testing.T) {
+	f := resourcesFake()
+	st := reading(0, 0, 0, 0, 0, 0)
+	st.Net = false
+	f.stats["a"] = st
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	f.containers[0].State = "exited"
+	obs, _ := collect(t, p, withResources)
+	if hasObs(obs, "web", "docker.net_rx_bytes_per_s") || hasObs(obs, "web", "docker.net_tx_bytes_per_s") {
+		t.Error("traffic reported while stopped, never while running")
+	}
+	if v := valueOf(t, obs, "web", "docker.cpu_percent"); v != 0 {
+		t.Errorf("cpu = %v", v)
+	}
+}
+
+// TestDockerResourcesForgetsWhatAVanishedContainerReported: the remembered
+// values hold only listed containers, so a container that went and came
+// back stopped reports nothing.
+func TestDockerResourcesForgetsWhatAVanishedContainerReported(t *testing.T) {
+	f := resourcesFake()
+	p := newTestDocker(f, nil)
+	_, _ = collect(t, p, withResources)
+	all := f.containers
+	f.containers = nil
+	_, _ = collect(t, p, withResources)
+	if len(p.reported) != 0 {
+		t.Errorf("remembered = %v", p.reported)
+	}
+	f.containers = all
+	f.containers[0].State = "exited"
+	obs, _ := collect(t, p, withResources)
+	if hasObs(obs, "web", "docker.cpu_percent") {
+		t.Error("a forgotten container reported usage")
 	}
 }
 
@@ -285,14 +372,16 @@ func TestDockerResourcesHostNetworkReportsNoTraffic(t *testing.T) {
 		{ID: "a", Name: "web", State: "running", NetworkMode: "host"},
 		{ID: "b", Name: "side", State: "running", NetworkMode: "container:a"},
 		{ID: "c", Name: "off", State: "exited", NetworkMode: "none"},
-		{ID: "d", Name: "job", State: "exited", NetworkMode: "default"},
+		{ID: "d", Name: "job", State: "running", NetworkMode: "default"},
 	}
 	for _, id := range []string{"b", "c", "d"} {
 		f.details[id] = containerDetail{Health: "none"}
 	}
 	f.stats["b"] = reading(0, 0, 0, 0, 0, 0)
+	f.stats["d"] = reading(0, 0, 0, 0, 0, 0)
 	p := newTestDocker(f, nil)
 	_, _ = collect(t, p, withResources)
+	f.containers[3].State = "exited"
 	f.stats["a"] = reading(10*time.Second, 1e9, 500, 500, 0, 0)
 	f.stats["b"] = reading(10*time.Second, 1e9, 500, 500, 0, 0)
 	obs, _ := collect(t, p, withResources)
@@ -353,8 +442,8 @@ func TestDockerResourcesCapsSampledContainers(t *testing.T) {
 	if hasObs(obs, "c100", "docker.memory_bytes") || !hasObs(obs, "c099", "docker.memory_bytes") {
 		t.Error("memory reported for the wrong containers")
 	}
-	if v := valueOf(t, obs, "a-stopped", "docker.memory_bytes"); v != 0 {
-		t.Errorf("stopped memory = %v", v)
+	if hasObs(obs, "a-stopped", "docker.memory_bytes") {
+		t.Error("memory reported for a container never seen running")
 	}
 }
 
@@ -481,8 +570,12 @@ func TestDockerResourcesDeadlineKeepsStateMetrics(t *testing.T) {
 	if l := findObs(t, obs, "web", "docker.state").Label; l == nil || *l != "running" {
 		t.Errorf("state = %v", l)
 	}
-	if o := findObs(t, obs, "web", "docker.memory_bytes"); !strings.Contains(o.Err, "deadline") {
-		t.Errorf("memory = %+v", o)
+	// Never read yet: the error lands on the metrics every reading has.
+	if o := findObs(t, obs, "web", "docker.cpu_percent"); !strings.Contains(o.Err, "deadline") {
+		t.Errorf("cpu = %+v", o)
+	}
+	if hasObs(obs, "web", "docker.memory_percent") || hasObs(obs, "web", "docker.net_rx_bytes_per_s") {
+		t.Error("an error on a metric the container may never report")
 	}
 	if v := valueOf(t, obs, "", "docker.containers_total"); v != 1 {
 		t.Errorf("total = %v", v)

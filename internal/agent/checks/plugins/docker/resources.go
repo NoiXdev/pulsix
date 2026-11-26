@@ -57,23 +57,44 @@ func hasOwnNetwork(mode string) bool {
 	return mode != "host" && mode != "none" && !strings.HasPrefix(mode, "container:")
 }
 
-// resourceMetrics are the per-container usage metrics c reports.
-func resourceMetrics(c containerSummary) []string {
-	ms := []string{metricCPU, metricMemory, metricMemoryPct, metricBlockRead, metricBlockWrite}
-	if hasOwnNetwork(c.NetworkMode) {
+// readingMetrics are the usage metrics a running container with reading st
+// reports, once it has a baseline: CPU and block I/O always, memory when
+// the reading has it (its percent only with a limit, so not on Windows),
+// traffic only for a container with a network of its own whose reading
+// carries networks.
+func readingMetrics(c containerSummary, st containerStats) []string {
+	ms := []string{metricCPU, metricBlockRead, metricBlockWrite}
+	if st.MemoryKnown {
+		ms = append(ms, metricMemory)
+		if st.MemoryLimit > 0 {
+			ms = append(ms, metricMemoryPct)
+		}
+	}
+	if hasOwnNetwork(c.NetworkMode) && st.Net {
 		ms = append(ms, metricNetRx, metricNetTx)
 	}
 	return ms
 }
 
-// zeroUsage is the usage of a container that is not running: nothing.
-// Reporting it, rather than nothing, keeps a stopped container's usage
-// from turning stale while it is stopped.
-func zeroUsage(c containerSummary) []checks.Observation {
-	ms := resourceMetrics(c)
+// errorMetrics are the metrics a failed reading of a container is reported
+// on: what its last running reading had, or, for a container not read
+// yet, the ones every reading has.
+func errorMetrics(known []string, seen bool) []string {
+	if seen {
+		return known
+	}
+	return []string{metricCPU, metricBlockRead, metricBlockWrite}
+}
+
+// zeroUsage is the usage of a container that is not running: nothing, on
+// the metrics ms its last running reading had. Reporting it, rather than
+// nothing, keeps a stopped container's usage from turning stale while it
+// is stopped; a metric it never reported while running is not reported
+// while stopped either, or that one would turn stale once it runs again.
+func zeroUsage(name string, ms []string) []checks.Observation {
 	obs := make([]checks.Observation, 0, len(ms))
 	for _, m := range ms {
-		obs = append(obs, checks.ValueObservation(c.Name, m, 0))
+		obs = append(obs, checks.ValueObservation(name, m, 0))
 	}
 	return obs
 }
@@ -85,7 +106,8 @@ type statsResult struct {
 
 // sampleResources reports the usage of cs, the containers this round
 // counted. A container that is neither running nor paused reads zero
-// without a request. Of the others, the first dockerMaxSampled by name are
+// without a request, on the metrics its last running reading had (none
+// when this instance never read it running). Of the others, the first dockerMaxSampled by name are
 // read, at most dockerMaxStats at once; the rest are only counted
 // (unsampled) and named by count in err. Memory is reported from one
 // reading; CPU, network and block I/O are rates against the container's
@@ -94,15 +116,20 @@ type statsResult struct {
 // backwards or no time passed. A failed reading is an error on each of the
 // container's metrics and keeps its old baseline; a container that is gone
 // reports nothing. The baselines are replaced by this round's, so they
-// never hold more than the containers read.
+// never hold more than the containers read, and the remembered metrics
+// hold only containers listed this round and not over the cap.
 func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine, cs []containerSummary) (obs []checks.Observation, unsampled int, err error) {
+	reported := make(map[string][]string, len(cs))
 	live := make([]containerSummary, 0, len(cs))
 	for _, c := range cs {
 		if c.State == "running" || c.State == "paused" {
 			live = append(live, c)
 			continue
 		}
-		obs = append(obs, zeroUsage(c)...)
+		if ms, ok := p.reported[c.ID]; ok {
+			reported[c.ID] = ms
+			obs = append(obs, zeroUsage(c.Name, ms)...)
+		}
 	}
 	sort.SliceStable(live, func(i, j int) bool { return live[i].Name < live[j].Name })
 	if len(live) > dockerMaxSampled {
@@ -119,6 +146,7 @@ func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine,
 	next := make(map[string]statsSample, len(live))
 	for i, c := range live {
 		r := res[i]
+		known, wasRead := p.reported[c.ID]
 		switch {
 		case errors.Is(r.err, errContainerGone):
 			continue
@@ -126,22 +154,29 @@ func (p *dockerPlugin) sampleResources(ctx context.Context, engine dockerEngine,
 			if old, ok := p.prev[c.ID]; ok {
 				next[c.ID] = old
 			}
+			if wasRead {
+				reported[c.ID] = known
+			}
 			e := containerError("stats", opStats, c.Name, r.err)
-			for _, m := range resourceMetrics(c) {
+			for _, m := range errorMetrics(known, wasRead) {
 				obs = append(obs, checks.ErrObservation(c.Name, m, e))
 			}
 			continue
 		case r.stats.Read.IsZero():
 			// Stopped after the list: the engine answered an empty reading.
-			obs = append(obs, zeroUsage(c)...)
+			if wasRead {
+				reported[c.ID] = known
+				obs = append(obs, zeroUsage(c.Name, known)...)
+			}
 			continue
 		}
 		cur := sampleOf(r.stats)
 		next[c.ID] = cur
+		reported[c.ID] = readingMetrics(c, r.stats)
 		old, seen := p.prev[c.ID]
 		obs = append(obs, usage(c, r.stats, cur, old, seen)...)
 	}
-	p.prev = next
+	p.prev, p.reported = next, reported
 	return obs, unsampled, err
 }
 

@@ -47,6 +47,10 @@ type dockerPlugin struct {
 	// prev is each sampled container's previous reading, by container ID
 	// (resources.go); nil while the resources option is off.
 	prev map[string]statsSample
+	// reported is, by container ID, the usage metrics the container's last
+	// running reading had: what it reports as zero while stopped
+	// (resources.go); nil while the resources option is off.
+	reported map[string][]string
 }
 
 // New returns the docker plugin wired to the engine API client. It is a
@@ -119,7 +123,7 @@ func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]ch
 
 	cfg := parseDockerParams(params)
 	if !cfg.resources {
-		p.prev = nil
+		p.prev, p.reported = nil, nil
 	}
 
 	engine, err := p.engine(cfg.socket)
