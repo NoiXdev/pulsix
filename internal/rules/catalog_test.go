@@ -145,6 +145,10 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"pg.oldest_xact_seconds":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.database_size_bytes":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.databases_unreported":    {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replicas":                {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replica_lag_bytes":       {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replica_lag_seconds":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replica_state":           {CheckKey: "postgres", Kind: rules.MetricDiscrete},
 
 		"mysql.up":                      {CheckKey: "mysql", Kind: rules.MetricNumeric},
 		"mysql.connections":             {CheckKey: "mysql", Kind: rules.MetricNumeric},

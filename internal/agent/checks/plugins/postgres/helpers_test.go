@@ -27,6 +27,12 @@ type fakeSession struct {
 	gotLimit  int
 	closed    bool
 	dbQueried bool
+
+	replicas        []replica
+	replicasTotal   *int // overrides the matched count; nil means len(replicas)
+	replicasErr     error
+	gotReplicaLimit int
+	replicasQueried bool
 }
 
 func (f *fakeSession) Server(context.Context) (serverStats, error) { return f.stats, f.statsErr }
@@ -46,6 +52,22 @@ func (f *fakeSession) Databases(_ context.Context, names []string, limit int) ([
 		return out, *f.total, nil
 	}
 	return out, len(f.dbs), nil
+}
+
+func (f *fakeSession) Replicas(_ context.Context, limit int) ([]replica, int, error) {
+	f.replicasQueried = true
+	f.gotReplicaLimit = limit
+	if f.replicasErr != nil {
+		return nil, 0, f.replicasErr
+	}
+	out := f.replicas
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	if f.replicasTotal != nil {
+		return out, *f.replicasTotal, nil
+	}
+	return out, len(f.replicas), nil
 }
 
 func (f *fakeSession) Close() { f.closed = true }
@@ -89,6 +111,17 @@ func mustValue(t *testing.T, obs []checks.Observation, item, metric string, want
 	}
 	if o.Value == nil || *o.Value != want {
 		t.Fatalf("%q/%q = %+v, want value %v", item, metric, o, want)
+	}
+}
+
+func mustLabel(t *testing.T, obs []checks.Observation, item, metric, want string) {
+	t.Helper()
+	o, ok := find(obs, item, metric)
+	if !ok {
+		t.Fatalf("no observation %q/%q in %+v", item, metric, obs)
+	}
+	if o.Label == nil || *o.Label != want || o.Value != nil {
+		t.Fatalf("%q/%q = %+v, want label %q", item, metric, o, want)
 	}
 }
 

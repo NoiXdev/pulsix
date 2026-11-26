@@ -1,5 +1,10 @@
 package checkplugins
 
+import (
+	"slices"
+	"strings"
+)
+
 // Bounds of the postgres plugin's databases list (backlog 3.10). The agent
 // trusts params that pass here, so these and internal/agent/checks/plugins/
 // postgres agree: a PostgreSQL identifier is at most 63 bytes.
@@ -8,11 +13,19 @@ const (
 	maxPostgresDatabaseBytes = 63
 )
 
+// PostgresReplicaItemPrefix starts the item of a replica the server sends
+// WAL to (backlog 3.10b): "replica:<application_name>@<client host>", or
+// "replica:<client host>" for one that sends no name. The agent's postgres
+// plugin builds its items from it, and postgresItemAsked asks for every
+// such item whatever the databases list says.
+const PostgresReplicaItemPrefix = "replica:"
+
 // postgresPlugin: PostgreSQL server health (backlog 3.10). Where the server
 // is and how to log in is the host's knowledge: it lives in the secret
 // named by the required secret parameter, never in the manager. databases
 // optionally limits the size metric to the listed databases; the server's
-// own item "" is asked whatever the list says.
+// own item "" is asked whatever the list says, and so is every replica
+// item (backlog 3.10b): the list names databases, not replicas.
 func postgresPlugin() Descriptor {
 	secret := SecretParam()
 	secret.Required = true
@@ -25,6 +38,7 @@ func postgresPlugin() Descriptor {
 		},
 		ItemParam:           "databases",
 		HostItemAlwaysAsked: true,
+		ItemAsked:           postgresItemAsked,
 		Metrics: []MetricSpec{
 			{Name: "pg.up", Kind: Numeric},
 			{Name: "pg.connections", Kind: Numeric},
@@ -38,6 +52,22 @@ func postgresPlugin() Descriptor {
 			// Databases left out of a round (beyond the agent's cap, or a
 			// name the item contract refuses), reported on item "".
 			{Name: "pg.databases_unreported", Kind: Numeric},
+			// The servers this one sends WAL to (backlog 3.10b): their count on
+			// item "", and per replica (PostgresReplicaItemPrefix) how far
+			// behind its replay is and the sender's state.
+			{Name: "pg.replicas", Kind: Numeric},
+			{Name: "pg.replica_lag_bytes", Kind: Numeric},
+			{Name: "pg.replica_lag_seconds", Kind: Numeric},
+			{Name: "pg.replica_state", Kind: Discrete},
 		},
 	}
+}
+
+// postgresItemAsked: a replica item is always asked; a database item is
+// asked when databases is absent or empty, or lists it.
+func postgresItemAsked(_ map[string]any, entries []string, item string) bool {
+	if strings.HasPrefix(item, PostgresReplicaItemPrefix) {
+		return true
+	}
+	return len(entries) == 0 || slices.Contains(entries, item)
 }

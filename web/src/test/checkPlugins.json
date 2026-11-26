@@ -473,6 +473,22 @@
         {
           "name": "pg.databases_unreported",
           "kind": "numeric"
+        },
+        {
+          "name": "pg.replicas",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_state",
+          "kind": "discrete"
         }
       ]
     },
