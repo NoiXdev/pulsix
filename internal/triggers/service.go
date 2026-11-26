@@ -122,7 +122,12 @@ type Deps struct {
 	Runs      Runner
 	// Pending keeps the collected runs of triggers with a settle delay
 	// (backlog 2.137); nil refuses a delivery to such a trigger.
-	Pending   PendingStore
+	Pending PendingStore
+	// Secrets and Scope refuse a mapping target named like a secret of the
+	// template's run (backlog 2.139, secrets.go), on save and at every
+	// delivery; either nil refuses a mapping with extra vars.
+	Secrets   SecretShadows
+	Scope     ScopeTargets
 	Audit     Auditor
 	PublicURL string
 	// IPLimit bounds failed calls per source address across every
@@ -466,6 +471,9 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 			return Trigger{}, err
 		}
 		if err := checkMappingTargets(in.Mapping, tmpl); err != nil {
+			return Trigger{}, err
+		}
+		if err := s.checkMappingSecrets(ctx, orgID, tmpl, in.Mapping); err != nil {
 			return Trigger{}, err
 		}
 	case KindRepoSync:

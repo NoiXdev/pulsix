@@ -7,6 +7,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/secretshadow"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -23,7 +24,13 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 		if field == "" {
 			return Result{}, d, err
 		}
-		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field)
+		reason := "invalid value at " + field
+		if errors.Is(err, secretshadow.ErrShadow) {
+			// Names the variable and the kind of secret, never a value;
+			// the sender's answer names only the field.
+			reason += ": " + err.Error()
+		}
+		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, reason)
 	}
 	if t.SettleSeconds > 0 {
 		return s.collect(ctx, t, d, ov)

@@ -64,6 +64,7 @@ import (
 	"github.com/noixdev/pulsix/internal/schedule"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/screenlock"
+	"github.com/noixdev/pulsix/internal/secretshadow"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -554,6 +555,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	triggerStore := triggers.NewSQLStore(appDB)
 	triggersSvc := triggers.NewService(triggers.Deps{
 		Store: triggerStore, Pending: triggerStore, Templates: templatesSvc, Repos: reposSvc, Box: box,
+		// A mapping target may not name a secret of the template's run
+		// (backlog 2.139): the run request's check, over the template's
+		// hosts before any limit.
+		Secrets: secretshadow.Checker{Inventory: inventorySvc, Playbooks: playbooksSvc}, Scope: jobsSvc,
 		Runs: jobsSvc, Audit: auditRec, PublicURL: cfg.PublicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
 		Now: o.triggerNow, Rand: rand.Reader, Log: slog.Default(),
 	})

@@ -76,7 +76,7 @@ func newSettleWorld(t *testing.T, slug string) *settleWorld {
 // database are two managers.
 func (w *settleWorld) manager(st *triggers.SQLStore) *triggers.Service {
 	return triggers.NewService(triggers.Deps{
-		Store: st, Pending: st, Box: fakeBox{}, Runs: w.runs, Audit: w.audit, Now: w.clock.Now, Rand: rand.Reader,
+		Store: st, Pending: st, Box: fakeBox{}, Runs: w.runs, Secrets: noSecrets(), Scope: &fakeScope{}, Audit: w.audit, Now: w.clock.Now, Rand: rand.Reader,
 		Templates: fakeTemplates{byID: map[uuid.UUID]templates.Template{w.tmpl: {ID: w.tmpl, OrgID: w.org, Name: "deploy"}}},
 		Repos:     fakeRepos{byID: map[uuid.UUID]repos.Repo{w.repo: {ID: w.repo, OrgID: w.org}}},
 	})

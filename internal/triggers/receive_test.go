@@ -180,7 +180,7 @@ func newReceiveWorld(t *testing.T) *receiveWorld {
 	w := newWorld(t)
 	rw := &receiveWorld{world: w, rec: &recording{fakeStore: w.store}, runs: &fakeRuns{}, audit: &fakeAudit{}}
 	rw.svc = triggers.NewService(triggers.Deps{
-		Store: rw.rec, Templates: w.tmpls, Repos: w.repos, Box: fakeBox{},
+		Store: rw.rec, Templates: w.tmpls, Repos: w.repos, Secrets: w.secrets(), Scope: w.scope, Box: fakeBox{},
 		Runs: rw.runs, Audit: rw.audit, PublicURL: "https://pulsix.example.test",
 		Now: func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }, Rand: rand.Reader,
 	})
@@ -377,7 +377,7 @@ func TestReceiveRepoSyncAndTestCall(t *testing.T) {
 func (rw *receiveWorld) withIPLimit(limit int) {
 	now := func() time.Time { return time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC) }
 	rw.svc = triggers.NewService(triggers.Deps{
-		Store: rw.rec, Templates: rw.tmpls, Repos: rw.repos, Box: fakeBox{},
+		Store: rw.rec, Templates: rw.tmpls, Repos: rw.repos, Secrets: rw.secrets(), Scope: rw.scope, Box: fakeBox{},
 		Runs: rw.runs, Audit: rw.audit, PublicURL: "https://pulsix.example.test",
 		IPLimit: clientip.NewLimiter(limit, time.Minute, now), Now: now, Rand: rand.Reader,
 	})

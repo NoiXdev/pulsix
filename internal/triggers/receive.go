@@ -228,13 +228,21 @@ func (s *Service) mapPayload(ctx context.Context, t Trigger, body []byte) (templ
 	var ve *schema.ValidationError
 	switch {
 	case err == nil:
-		return checked, "", nil
 	case errors.As(err, &ve) && len(ve.Problems) > 0:
 		return templates.Overrides{}, "extra_vars." + firstSegment(ve.Problems[0].Path), err
 	case errors.Is(err, templates.ErrInvalidInput):
 		return templates.Overrides{}, "limit", err
+	default:
+		return templates.Overrides{}, "", err
 	}
-	return templates.Overrides{}, "", err
+	// The save checked the targets against the secrets of the template's
+	// run; one that appeared since (a new inventory secret, a playbook
+	// change, a sync that found a vault value) refuses the delivery before
+	// anything starts or is collected (backlog 2.139).
+	if field, err := s.refuseSecretShadows(ctx, t, checked); err != nil {
+		return templates.Overrides{}, field, err
+	}
+	return checked, "", nil
 }
 
 func (s *Service) finish(ctx context.Context, d Delivery, res Result, reason string) (Result, Delivery, error) {

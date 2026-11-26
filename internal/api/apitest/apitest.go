@@ -66,6 +66,7 @@ import (
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/screenlock"
+	"github.com/noixdev/pulsix/internal/secretshadow"
 	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -727,6 +728,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	triggerStore := triggers.NewSQLStore(d)
 	triggersSvc := triggers.NewService(triggers.Deps{
 		Store: triggerStore, Pending: triggerStore, Templates: templatesSvc, Repos: reposSvc, Box: crypto.NewBox(testMasterKey),
+		Secrets: secretshadow.Checker{Inventory: inventorySvc, Playbooks: playbooksSvc}, Scope: jobsSvc,
 		Runs: jobsSvc, Audit: auditRec, PublicURL: publicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
 		Now: time.Now, Rand: rand.Reader,
 	})
