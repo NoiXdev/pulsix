@@ -222,7 +222,16 @@ type Service struct {
 	// offsets is what ingest learned about each host's clock, kept in
 	// this process for the host page to read back (skew.go).
 	offsets *clockOffsets
+	// probeWrites is the operator's PULSIX_PROBE_WRITE_METHODS: whether a
+	// definition may make the manager send a state-changing request
+	// (RefuseWrites). Off unless WithProbeWrites turns it on.
+	probeWrites bool
 }
+
+// WithProbeWrites sets whether definitions may send state-changing
+// requests (an http check's POST, PUT, PATCH, DELETE or body), the
+// manager's PULSIX_PROBE_WRITE_METHODS. Without it they are refused.
+func WithProbeWrites(allowed bool) Option { return func(s *Service) { s.probeWrites = allowed } }
 
 // Option configures a Service.
 type Option func(*Service)

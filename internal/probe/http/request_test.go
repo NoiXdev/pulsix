@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,9 @@ func recorder(t *testing.T) (*httptest.Server, chan received) {
 	t.Cleanup(srv.Close)
 	return srv, got
 }
+
+// writer is a loopback guard that allows state-changing requests.
+func writer() *probe.Guard { return probetest.LoopbackGuard().WithWrites(true) }
 
 // next is the next request the server received, failing the test when
 // none arrives within five seconds.
@@ -69,7 +73,7 @@ func TestProbeSendsMethodHeadersAndBody(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			params := httpParams(srv.URL, c.params)
 			params["headers"] = []any{"X-Api-Version: 2", "accept:  application/json ", "X-Empty:"}
-			obs := run(context.Background(), probetest.LoopbackGuard(), params, "")
+			obs := run(context.Background(), writer(), params, "")
 			probetest.WantUp(t, obs, "http")
 			s := next(t, got)
 			if s.method != c.method || s.body != c.body {
@@ -95,52 +99,115 @@ func TestProbeSendsMethodHeadersAndBody(t *testing.T) {
 // last, so a plain header of the same name never goes out with it.
 func TestSecretHeaderReplacesPlainHeader(t *testing.T) {
 	srv, got := recorder(t)
-	params := httpParams(srv.URL, map[string]any{"secret": "api", "headers": []any{"X-Api-Key: plain", "X-Other: 1"}})
-	obs := runWith(context.Background(), probetest.LoopbackGuard(), params, "", map[string]string{"header": "X-Api-Key", "value": "s3cret"})
+	params := httpParams(srv.URL, map[string]any{"secret": "api", "headers": []any{"X-Tenant: plain", "X-Other: 1"}})
+	obs := runWith(context.Background(), probetest.LoopbackGuard(), params, "", map[string]string{"header": "X-Tenant", "value": "s3cret"})
 	probetest.WantUp(t, obs, "http")
 	s := next(t, got)
-	if v := s.header.Values("X-Api-Key"); len(v) != 1 || v[0] != "s3cret" {
-		t.Fatalf("X-Api-Key = %v, want only the secret's value", v)
+	if v := s.header.Values("X-Tenant"); len(v) != 1 || v[0] != "s3cret" {
+		t.Fatalf("X-Tenant = %v, want only the secret's value", v)
 	}
 	if s.header.Get("X-Other") != "1" {
 		t.Fatalf("headers = %v", s.header)
 	}
 }
 
-// TestRedirectBodyFollowsBrowserRules: a 307 resends the method and the
-// body, a 303 turns into a GET without one; plain headers go along on the
-// same origin.
+// TestRedirectBodyFollowsBrowserRules: a 307 or 308 resends the method
+// and the body; a 301, 302 or 303 turns a POST into a GET without the
+// body and its Content-Type; plain headers go along on the same origin.
 func TestRedirectBodyFollowsBrowserRules(t *testing.T) {
 	got := make(chan received, 8)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		got <- received{method: r.Method, header: r.Header.Clone(), body: string(b), path: r.URL.Path}
-		switch r.URL.Path {
-		case "/307":
-			http.Redirect(w, r, "/end", http.StatusTemporaryRedirect)
-		case "/303":
-			http.Redirect(w, r, "/end", http.StatusSeeOther)
+		if code, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/")); err == nil {
+			http.Redirect(w, r, "/end", code)
 		}
 	}))
 	defer srv.Close()
 	for _, c := range []struct {
-		path, method, body string
+		code             int
+		method, body, ct string
 	}{
-		{"/307", "POST", "payload"},
-		{"/303", "GET", ""},
+		{http.StatusMovedPermanently, "GET", "", ""},
+		{http.StatusFound, "GET", "", ""},
+		{http.StatusSeeOther, "GET", "", ""},
+		{http.StatusTemporaryRedirect, "POST", "payload", "text/plain"},
+		{http.StatusPermanentRedirect, "POST", "payload", "text/plain"},
 	} {
-		params := httpParams(srv.URL+c.path, map[string]any{"method": "POST", "body": "payload", "headers": []any{"X-Trace: t1"}})
-		obs := run(context.Background(), probetest.LoopbackGuard(), params, "")
+		params := httpParams(srv.URL+"/"+strconv.Itoa(c.code), map[string]any{
+			"method": "POST", "body": "payload", "content_type": "text/plain", "headers": []any{"X-Trace: t1"},
+		})
+		obs := run(context.Background(), writer(), params, "")
 		probetest.WantUp(t, obs, "http")
 		first, second := next(t, got), next(t, got)
 		if first.method != "POST" || first.body != "payload" {
-			t.Fatalf("%s: first hop %s %q", c.path, first.method, first.body)
+			t.Fatalf("%d: first hop %s %q", c.code, first.method, first.body)
 		}
 		if second.path != "/end" || second.method != c.method || second.body != c.body {
-			t.Fatalf("%s: second hop %s %s %q, want %s %q", c.path, second.path, second.method, second.body, c.method, c.body)
+			t.Fatalf("%d: second hop %s %s %q, want %s %q", c.code, second.path, second.method, second.body, c.method, c.body)
+		}
+		if ct := second.header.Get("Content-Type"); ct != c.ct {
+			t.Fatalf("%d: second hop Content-Type %q, want %q", c.code, ct, c.ct)
 		}
 		if second.header.Get("X-Trace") != "t1" {
-			t.Fatalf("%s: plain header lost on the redirect: %v", c.path, second.header)
+			t.Fatalf("%d: plain header lost on a same-origin redirect: %v", c.code, second.header)
+		}
+	}
+}
+
+// TestCrossOriginRedirectDropsConfiguredHeaders: once a redirect leaves
+// the first request's origin, neither the secret's header nor any plain
+// header goes along (fix round 1, M1), also not one named like the
+// secret's.
+func TestCrossOriginRedirectDropsConfiguredHeaders(t *testing.T) {
+	other, got := recorder(t)
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/landed", http.StatusTemporaryRedirect)
+	}))
+	defer first.Close()
+	params := httpParams(first.URL, map[string]any{"secret": "api", "headers": []any{"X-Tenant: a", "X-Session-Id: s"}})
+	obs := runWith(context.Background(), probetest.LoopbackGuard(), params, "", map[string]string{"header": "X-Tenant", "value": "from-secret"})
+	probetest.WantUp(t, obs, "http")
+	s := next(t, got)
+	if s.path != "/landed" {
+		t.Fatalf("path = %s", s.path)
+	}
+	for _, h := range []string{"X-Tenant", "X-Session-Id"} {
+		if v := s.header.Values(h); len(v) != 0 {
+			t.Fatalf("%s = %v went to another origin", h, v)
+		}
+	}
+	if s.header.Get("User-Agent") != "Pulsix-Probe/1" {
+		t.Fatalf("headers = %v, want the probe's own kept", s.header)
+	}
+}
+
+// TestWritesNeedTheOperatorsSwitch: POST, PUT, PATCH, DELETE or a body
+// go out only through a guard that allows writes
+// (PULSIX_PROBE_WRITE_METHODS); otherwise the attempt fails with that
+// reason and nothing is sent, never a plain GET. GET, HEAD and OPTIONS
+// with headers need no switch.
+func TestWritesNeedTheOperatorsSwitch(t *testing.T) {
+	srv, got := recorder(t)
+	off := probetest.LoopbackGuard()
+	for _, extra := range []map[string]any{
+		{"method": "POST"}, {"method": "PUT", "body": "x"}, {"method": "PATCH", "body": "x"}, {"method": "DELETE"},
+	} {
+		obs := run(context.Background(), off, httpParams(srv.URL, extra), "")
+		if o := probetest.ByMetric(t, obs)["http.up"]; o.Err != "state-changing requests are turned off on this server (PULSIX_PROBE_WRITE_METHODS)" {
+			t.Fatalf("%v: http.up = %+v", extra, o)
+		}
+		select {
+		case r := <-got:
+			t.Fatalf("%v: the server saw %+v", extra, r)
+		default:
+		}
+	}
+	for _, m := range []string{"GET", "HEAD", "OPTIONS"} {
+		obs := run(context.Background(), off, httpParams(srv.URL, map[string]any{"method": m, "headers": []any{"X-A: 1"}}), "")
+		probetest.WantUp(t, obs, "http")
+		if r := next(t, got); r.method != m || r.header.Get("X-A") != "1" {
+			t.Fatalf("server saw %+v", r)
 		}
 	}
 }
@@ -171,9 +238,10 @@ func TestRequestValuesNeverInObservations(t *testing.T) {
 			}
 		}
 	}
-	check(run(context.Background(), probetest.LoopbackGuard(), params, ""))
+	check(run(context.Background(), writer(), params, ""))
 	next(t, got)
 	srv.Close()
+	check(run(context.Background(), writer(), params, ""))
 	check(run(context.Background(), probetest.LoopbackGuard(), params, ""))
 }
 
@@ -197,10 +265,13 @@ func TestProbeRefusesUnvalidatedRequest(t *testing.T) {
 		{"a body over 8 KiB", map[string]any{"method": "POST", "body": strings.Repeat("S", 8193)}, "invalid request body"},
 		{"a bad content type", map[string]any{"method": "POST", "body": "x", "content_type": "SECRET\r\nX: 1"}, "invalid request body"},
 		{"a content type without a body", map[string]any{"method": "POST", "content_type": "text/plain"}, "invalid request body"},
+		{"a body with NUL", map[string]any{"method": "POST", "body": "SECRET\x00"}, "invalid request body"},
+		{"a body not UTF-8", map[string]any{"method": "POST", "body": "SECRET\xff"}, "invalid request body"},
+		{"a routing header", map[string]any{"headers": []any{"X-Forwarded-For: SECRET"}}, "invalid request header"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, c.params), "")
+			obs := run(context.Background(), writer(), httpParams(srv.URL, c.params), "")
 			m := probetest.ByMetric(t, obs)
 			if o := m["http.up"]; o.Err != c.want {
 				t.Fatalf("http.up = %+v, want the error %q", o, c.want)

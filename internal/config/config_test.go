@@ -762,3 +762,43 @@ func TestMFAOptional(t *testing.T) {
 		})
 	}
 }
+
+// TestProbeWriteMethods: PULSIX_PROBE_WRITE_METHODS lets the synthetic
+// http check send POST, PUT, PATCH, DELETE and a body (backlog 3.84). It
+// is off by default, parsed like every other boolean PULSIX_ variable, and
+// an unreadable value fails start-up naming it.
+func TestProbeWriteMethods(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{raw: "", want: false},
+		{raw: "true", want: true},
+		{raw: "1", want: true},
+		{raw: "false", want: false},
+		{raw: "on", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			cfg, err := config.Load(env(map[string]string{
+				"PULSIX_DATABASE_URL":        "postgres://u:p@db/pulsix",
+				"PULSIX_MASTER_KEY":          strings.Repeat("ab", 32),
+				"PULSIX_PUBLIC_URL":          "https://pulsix.example.test",
+				"PULSIX_PROBE_WRITE_METHODS": tc.raw,
+			}))
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "PULSIX_PROBE_WRITE_METHODS") {
+					t.Fatalf("PULSIX_PROBE_WRITE_METHODS=%q: err = %v, want one naming the variable", tc.raw, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ProbeWriteMethods != tc.want {
+				t.Errorf("ProbeWriteMethods = %v, want %v", cfg.ProbeWriteMethods, tc.want)
+			}
+		})
+	}
+}

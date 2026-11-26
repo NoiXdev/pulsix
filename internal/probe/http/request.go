@@ -12,6 +12,9 @@ import (
 var (
 	errBadHeader = errors.New("invalid request header")
 	errBadBody   = errors.New("invalid request body")
+	// errWritesOff is the error of a state-changing request while the
+	// manager's operator has not turned them on; it names the setting.
+	errWritesOff = errors.New("state-changing requests are turned off on this server (PULSIX_PROBE_WRITE_METHODS)")
 )
 
 // request is what a check asks to send besides its URL (backlog 3.84):
@@ -47,7 +50,7 @@ func requestOf(params map[string]any) (request, error) {
 	r.headers = headers
 	if raw, ok := params["body"]; ok {
 		body, isString := raw.(string)
-		if !isString || body == "" || len(body) > httpreq.MaxBodyLen || !httpreq.TakesBody(r.method) {
+		if !isString || body == "" || len(body) > httpreq.MaxBodyLen || !httpreq.TakesBody(r.method) || httpreq.BodyProblem(body) != "" {
 			return request{}, errBadBody
 		}
 		r.body, r.hasBody = body, true
@@ -110,6 +113,19 @@ func headersOf(raw any) ([][2]string, error) {
 		out = append(out, [2]string{name, value})
 	}
 	return out, nil
+}
+
+// writes reports whether r may change something on its target
+// (httpreq.Writes).
+func (r request) writes() bool { return httpreq.Writes(r.method, r.hasBody) }
+
+// headerNames are the names of r's plain headers.
+func (r request) headerNames() []string {
+	out := make([]string, len(r.headers))
+	for i, h := range r.headers {
+		out[i] = h[0]
+	}
+	return out
 }
 
 // bodyReader is the request body to hand http.NewRequest, nil for none. A

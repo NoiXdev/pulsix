@@ -257,11 +257,26 @@ type Store interface {
 // against from here.
 type Service struct {
 	store Store
+	// probeWrites is the manager's PULSIX_PROBE_WRITE_METHODS
+	// (checks.RefuseWrites); off unless WithProbeWrites turns it on.
+	probeWrites bool
 }
 
+// Option configures a Service.
+type Option func(*Service)
+
+// WithProbeWrites sets whether check definitions may send state-changing
+// requests (checks.RefuseWrites), the manager's
+// PULSIX_PROBE_WRITE_METHODS. Without it they are refused.
+func WithProbeWrites(allowed bool) Option { return func(s *Service) { s.probeWrites = allowed } }
+
 // NewService wires the store.
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func NewService(store Store, opts ...Option) *Service {
+	s := &Service{store: store}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // CreateRepo defines a new shared repository and projects it into every
@@ -621,6 +636,9 @@ func (s *Service) CreateCheckDefinition(ctx context.Context, in CheckDefinitionI
 	if err != nil {
 		return CheckDefinition{}, err
 	}
+	if err := checks.RefuseWrites(strings.TrimSpace(in.Plugin), in.Params, s.probeWrites); err != nil {
+		return CheckDefinition{}, asInvalidInput(err)
+	}
 	existing, err := s.store.ExistingCheckDefinitionNames(ctx, uuid.Nil)
 	if err != nil {
 		return CheckDefinition{}, fmt.Errorf("list existing check definition keys: %w", err)
@@ -649,6 +667,9 @@ func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in Ch
 	key, err := validateCheckDefinitionShape(in)
 	if err != nil {
 		return CheckDefinition{}, err
+	}
+	if err := checks.RefuseWrites(strings.TrimSpace(in.Plugin), in.Params, s.probeWrites); err != nil {
+		return CheckDefinition{}, asInvalidInput(err)
 	}
 	if refusal := reservedKeyRefusal(key); refusal != nil {
 		current, err := s.store.GetCheckDefinition(ctx, id)

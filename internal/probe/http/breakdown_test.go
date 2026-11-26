@@ -92,7 +92,11 @@ func TestHTTPBreakdownResolvesAName(t *testing.T) {
 }
 
 // TestHTTPBreakdownSlowBody: a body that arrives slowly shows in
-// transfer_ms, not in ttfb_ms.
+// transfer_ms, not in ttfb_ms. The 200 ms pause bounds response_ms
+// exactly; transfer_ms is the difference of two client-side readings, the
+// first taken on the transport's read goroutine, which may be scheduled
+// late under load and move part of the pause into ttfb, so it gets a
+// floor with slack.
 func TestHTTPBreakdownSlowBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("first "))
@@ -102,7 +106,8 @@ func TestHTTPBreakdownSlowBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := probetest.WantUp(t, run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), ""), "http")
-	wantAtLeast(t, m, "http.transfer_ms", 200)
+	wantAtLeast(t, m, "http.response_ms", 200)
+	wantAtLeast(t, m, "http.transfer_ms", 100)
 	if v := probetest.WantValue(t, m, "http.ttfb_ms"); v >= 200 {
 		t.Fatalf("http.ttfb_ms = %v, want the first byte before the pause", v)
 	}

@@ -955,6 +955,27 @@ func TestCreateCheckDefinitionCallsCreateCheckDefinitionWithProjectionsOnce(t *t
 	}
 }
 
+// TestCheckDefinitionsRefuseWritesUnlessAllowed: a shared http check that
+// sends POST, PUT, PATCH, DELETE or a body follows the organizations'
+// rule, PULSIX_PROBE_WRITE_METHODS (backlog 3.84 fix round 1).
+func TestCheckDefinitionsRefuseWritesUnlessAllowed(t *testing.T) {
+	in := shared.CheckDefinitionInput{
+		Key: "ping", Plugin: "http", Interval: time.Minute,
+		Params: map[string]any{"url": "https://{address}/", "method": "POST", "body": "x"},
+	}
+	off := shared.NewService(newFakeStore())
+	if _, err := off.CreateCheckDefinition(ctx, in); !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "PULSIX_PROBE_WRITE_METHODS") {
+		t.Fatalf("create with writes off = %v, want a refusal naming the setting", err)
+	}
+	if _, err := off.UpdateCheckDefinition(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("update with writes off = %v, want ErrInvalidInput", err)
+	}
+	on := shared.NewService(newFakeStore(), shared.WithProbeWrites(true))
+	if _, err := on.CreateCheckDefinition(ctx, in); err != nil {
+		t.Fatalf("create with writes on = %v", err)
+	}
+}
+
 // TestCreateCheckDefinitionDefaultsAnEmptyKeyBeforeCheckingReservedKeys
 // proves Service.CreateCheckDefinition applies the SAME key-defaulting rule
 // an organization's own checks.Service.CreateDefinition does (both now

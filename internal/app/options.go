@@ -105,12 +105,14 @@ func WithProbeGuard(g *probe.Guard) Option {
 // probeGuardFor is the probe runner's dial guard: the one WithProbeGuard
 // injected, else the production guard — the webhook egress policy's
 // refused ranges seen through cfg's NAT64 prefixes, plus
-// PULSIX_PROBE_DENY_CIDRS.
+// PULSIX_PROBE_DENY_CIDRS, allowing state-changing requests exactly when
+// PULSIX_PROBE_WRITE_METHODS does. An injected guard keeps its own write
+// setting (probe.Guard.WithWrites).
 func (o buildOptions) probeGuardFor(cfg config.Config) *probe.Guard {
 	if o.probeGuard != nil {
 		return o.probeGuard
 	}
-	return probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes)
+	return probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes).WithWrites(cfg.ProbeWriteMethods)
 }
 
 // WithProbeTick overrides how often the probe runner looks for due checks

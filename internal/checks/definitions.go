@@ -151,6 +151,21 @@ func RefuseLocalKey(key string) error {
 	return nil
 }
 
+// RefuseWrites refuses a check of plugin with params that may change
+// something on its target (checkplugins.Descriptor.SendsWrites: an http
+// check's POST, PUT, PATCH, DELETE or body) unless allowed, the manager's
+// PULSIX_PROBE_WRITE_METHODS (backlog 3.84). The refusal names the
+// setting, so whoever reads it knows whom to ask. Exported for
+// internal/shared, whose installation-owned definitions follow the same
+// rule.
+func RefuseWrites(plugin string, params map[string]any, allowed bool) error {
+	d, ok := checkplugins.Get(plugin)
+	if allowed || !ok || !d.SendsWrites(params) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: checks that send POST, PUT, PATCH, DELETE or a body are turned off on this server; its operator turns them on with PULSIX_PROBE_WRITE_METHODS", ErrInvalidInput, plugin)
+}
+
 // normalizeDefinition validates in into a definition's mutable fields; id,
 // org, origin and the timestamps are the caller's (CreateDefinition,
 // UpdateDefinition, SeedForOrg each set them their own way).
@@ -188,6 +203,9 @@ func normalizeDefinition(in DefinitionInput) (Definition, error) {
 func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in DefinitionInput, origin string) (Definition, error) {
 	d, err := normalizeDefinition(in)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := RefuseWrites(d.Plugin, d.Params, s.probeWrites); err != nil {
 		return Definition{}, err
 	}
 	if err := RefuseLocalKey(d.Key); err != nil {
@@ -279,6 +297,9 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	}
 	d, err := normalizeDefinition(in)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := RefuseWrites(d.Plugin, d.Params, s.probeWrites); err != nil {
 		return Definition{}, err
 	}
 	if err := s.refuseUnknownVantageGroups(ctx, orgID, d.Params); err != nil {
