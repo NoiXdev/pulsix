@@ -15,8 +15,9 @@ interface TemplateHeaderProps {
   org: string;
   template: Template;
   role: string;
-  /** Opens the Settings tab with its form editable. */
-  onEdit: () => void;
+  /** Opens the Settings tab with its form editable; absent on the
+   * Settings tab, which offers its own Edit. */
+  onEdit?: () => void;
 }
 
 /**
@@ -26,8 +27,8 @@ interface TemplateHeaderProps {
  * playbook, where it comes from, the commit last synced, the target hosts
  * — and on the right the actions: Run (asking first when the run enrols
  * agents or has follow-ups, useRunTemplate), Dry run (the playbook's Dry
- * run tab), Edit (the Settings tab, editable) and the "⋯" menu with
- * Delete. Each keeps the gating it has on the templates list.
+ * run tab), Edit (the Settings tab, editable; left to the tab itself
+ * while it is open) and the "⋯" menu with Delete. Each keeps the gating it has on the templates list.
  */
 export function TemplateHeader({ org, template, role, onEdit }: TemplateHeaderProps) {
   const t = useT();
@@ -87,7 +88,7 @@ function TemplateHeaderActions({ org, template, role, onEdit }: TemplateHeaderPr
           <FlaskConical size={14} /> {p.actions.dryRun}
         </Button>
       )}
-      {canWrite && (
+      {canWrite && onEdit && (
         <Button onClick={onEdit}>
           <Pencil size={14} /> {p.actions.edit}
         </Button>

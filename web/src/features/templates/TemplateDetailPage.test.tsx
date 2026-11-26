@@ -175,6 +175,19 @@ describe('TemplateDetailPage', () => {
     await waitFor(() => expect([...new Set(asked)].sort()).toEqual(['jobs:t1', 'schedules:t1', 'triggers:t1']));
   });
 
+  it('leaves out what the server does not let the person read', async () => {
+    const forbidden = () => new Response(JSON.stringify({ detail: 'forbidden' }), { status: 403, headers: { 'Content-Type': 'application/problem+json' } });
+    mockApi(pageRoutes({ role: 'viewer', over: { 'GET /api/v1/orgs/acme/repos': forbidden, 'GET /api/v1/orgs/acme/run-requests': forbidden } }));
+    renderTemplatePage();
+    const facts = within(await screen.findByTestId('template-facts'));
+    // The repository is named by a piece of its id, without branch or commit.
+    expect(await facts.findByText('r1')).toBeInTheDocument();
+    expect(facts.queryByText('Commit')).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Recent runs' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Open run requests' })).not.toBeInTheDocument());
+    expect(screen.queryByText('forbidden')).not.toBeInTheDocument();
+  });
+
   it('shows the error of a template that cannot be read', async () => {
     mockApi(pageRoutes({ over: { 'GET /api/v1/orgs/acme/job-templates/t1': () => new Response(JSON.stringify({ detail: 'template not found' }), { status: 404, headers: { 'Content-Type': 'application/problem+json' } }) } }));
     renderTemplatePage();

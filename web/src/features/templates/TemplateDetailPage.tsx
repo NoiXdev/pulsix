@@ -99,7 +99,8 @@ function TemplateDetail({ org, template, role, onReload }: TemplateDetailProps) 
 
   return (
     <div className="flex flex-col gap-5">
-      <TemplateHeader org={org} template={template} role={role} onEdit={edit} />
+      {/* The Settings tab has its own Edit: the header's is left out there. */}
+      <TemplateHeader org={org} template={template} role={role} onEdit={tab === 'settings' ? undefined : edit} />
       {paused && <TemplateReviewNotice org={org} templateId={template.id} paused={paused} />}
       <TemplateTabs label={tabs.label} tabs={items} active={tab} onSelect={select} />
       <div role="tabpanel" id={TEMPLATE_PANEL_ID} aria-labelledby={templateTabId(tab)} className="flex min-w-0 flex-col gap-8">

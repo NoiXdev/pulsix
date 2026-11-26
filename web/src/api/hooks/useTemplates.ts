@@ -37,13 +37,20 @@ export function useCreateTemplate(org: string) {
 
 /** useUpdateTemplate saves a template's settings under If-Match (its
  * revision, quoted like the ETag): a stale one answers 412, an ApiError
- * with that status — an automatic variables sync moves the revision too. */
+ * with that status — an automatic variables sync moves the revision too.
+ * The saved template the response carries goes into the template's own
+ * query at once, so a page showing it never shows the values it had
+ * before the save while the read again is under way. */
 export function useUpdateTemplate(org: string, id: string) {
+  const qc = useQueryClient();
   const invalidate = useInvalidate(org);
   return useMutation({
     mutationFn: ({ body, revision }: { body: TemplateInput; revision: number }) =>
       unwrap(api.PUT('/api/v1/orgs/{org}/job-templates/{id}', { params: { path: { org, id }, header: ifMatch(revision) }, body })),
-    onSuccess: invalidate,
+    onSuccess: (saved) => {
+      qc.setQueryData(['templates', org, id], saved);
+      invalidate();
+    },
   });
 }
 

@@ -6,6 +6,7 @@ import { Card } from '../../ui/table.tsx';
 import { useRunRequests } from '../../api/hooks/useRunRequests.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { errorStatus } from '../../lib/apiError.ts';
 import { requestTone } from '../runs/runRequestStatus.ts';
 import { shortId } from '../runs/status.ts';
 import { openRequests } from './templateDetail.ts';
@@ -18,7 +19,8 @@ const COLUMNS = 'minmax(0,1fr) 140px 150px';
  * and triggers) that still waits — for a decision, or approved and waiting
  * for its sync. The requests list has no template filter on the server, so
  * the organization's list is narrowed here; the link beside the title opens
- * the requests page narrowed the same way.
+ * the requests page narrowed the same way. Someone the server does not
+ * let read the requests (403) does not get the section at all.
  */
 export function TemplateRequestsSection({ org, templateId }: { org: string; templateId: string }) {
   const t = useT();
@@ -27,6 +29,7 @@ export function TemplateRequestsSection({ org, templateId }: { org: string; temp
   const r = t.runs.requests;
   const requests = useRunRequests(org);
   const open = openRequests(requests.data?.requests, templateId);
+  if (errorStatus(requests.error) === 403) return null;
 
   return (
     <Section

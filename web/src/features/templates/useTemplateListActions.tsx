@@ -20,8 +20,9 @@ export interface TemplateListActionsOptions {
 }
 
 /**
- * useTemplateListActions is the templates list's row menu for every row:
- * Open (the template's page), Run (a template with follow-ups asks first, in the "run with follow-ups"
+ * useTemplateListActions is the templates list's row menu for every row
+ * (also the playbook page's "Used by" menu): Open (the template's page),
+ * Run (a template with follow-ups asks first, in the "run with follow-ups"
  * dialog, so they can be changed for this run), Variables, Triggers,
  * Schedules, Edit and Delete (not for a projected template: its dialog
  * offers none either). `dialogs` holds the one dialog an entry opened;

@@ -71,6 +71,39 @@ describe('TemplateSettingsTab', () => {
     expect((await form()).getByLabelText('Limit pattern')).toHaveValue('web*');
   });
 
+  it('shows the saved settings at once, before the template is read again', async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    let saved = false;
+    mockApi(
+      pageRoutes({
+        over: {
+          // After the save the read again never answers: what shows is the
+          // template the save answered with.
+          'GET /api/v1/orgs/acme/job-templates/t1': () => (reads++, saved ? new Promise(() => undefined) : { template: template() }),
+          'PUT /api/v1/orgs/acme/job-templates/t1': () => ((saved = true), { template: template({ revision: 2, limit: 'web*' }) }),
+        },
+      }),
+    );
+    renderTemplatePage(SETTINGS);
+    await user.click(within(await screen.findByRole('tabpanel')).getByRole('button', { name: 'Edit' }));
+    await user.type((await form()).getByLabelText('Limit pattern'), 'web*');
+    await user.click((await form()).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site saved');
+    const f = await form();
+    expect(f.getByLabelText('Limit pattern')).toBeDisabled();
+    expect(f.getByLabelText('Limit pattern')).toHaveValue('web*');
+    expect(reads).toBeGreaterThan(0);
+  });
+
+  it("offers Edit once on the Settings tab: the tab's, not the header's", async () => {
+    mockApi(pageRoutes());
+    renderTemplatePage(SETTINGS);
+    await form();
+    expect(within(screen.getByRole('tabpanel')).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
+  });
+
   it('drops the changes on Cancel', async () => {
     const user = userEvent.setup();
     mockApi(pageRoutes());
