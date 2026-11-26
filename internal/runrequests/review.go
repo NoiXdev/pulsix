@@ -54,7 +54,7 @@ type PictureReview struct {
 	// approval then changes nothing about it).
 	PausedForReview bool `json:"paused_for_review" doc:"Whether the item is still paused (disabled) because of the changes; approving resumes (enables) it"`
 	// Changes are the assistant changes, oldest first.
-	Changes []ChangedObject `json:"changes" doc:"The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token"`
+	Changes []ChangedObject `json:"changes" doc:"The assistant's changes that paused the item: the job template, repository, playbook, inventory group or membership, each field's old and new value (secrets masked) and the token"`
 	// Gone is set when the item, or what it starts, no longer exists.
 	Gone bool `json:"gone,omitempty"`
 	// PausedBefore is set when a person had paused (disabled) the item
@@ -92,17 +92,20 @@ const (
 // ChangedObject is one assistant change as a review's picture shows it
 // (assistantchange.Change).
 type ChangedObject struct {
-	Subject string         `json:"subject" enum:"job_template,repo,playbook" doc:"What the assistant changed: a job template, a repository or an editor playbook"`
-	ID      string         `json:"id"`
-	Name    string         `json:"name"`
-	Fields  []ChangedField `json:"fields"`
-	UserID  string         `json:"user_id" doc:"The person whose assistant token made the change"`
-	TokenID string         `json:"token_id,omitempty" doc:"The assistant token that made the change"`
+	Subject string `json:"subject" enum:"job_template,repo,playbook,inventory_group,inventory_membership" doc:"What the assistant changed: a job template, a repository, an editor playbook, an inventory group's values or schema defaults, or the values of one host's membership in a group"`
+	ID      string `json:"id" doc:"The changed object's id; the group's for a membership"`
+	Name    string `json:"name" doc:"The changed object's name; the group's for a membership"`
+	// HostID and HostName name the host of a membership change.
+	HostID   string         `json:"host_id,omitempty" doc:"The host whose membership values changed (inventory_membership only)"`
+	HostName string         `json:"host_name,omitempty" doc:"The host's name (inventory_membership only)"`
+	Fields   []ChangedField `json:"fields"`
+	UserID   string         `json:"user_id" doc:"The person whose assistant token made the change"`
+	TokenID  string         `json:"token_id,omitempty" doc:"The assistant token that made the change"`
 }
 
 // ChangedField is one field an assistant change moved (assistantchange.Field).
 type ChangedField struct {
-	Field string `json:"field" doc:"The field; an extra var as extra_vars.<name>"`
+	Field string `json:"field" doc:"The field; an extra var as extra_vars.<name>, an inventory value as vars.<key>, a schema default as default.<field>"`
 	Old   any    `json:"old" doc:"The value before; null for none. A secret is {\"$secret\":\"set\"}"`
 	New   any    `json:"new" doc:"The value after; null for none. A secret is {\"$secret\":\"set\"}"`
 }
@@ -111,7 +114,10 @@ type ChangedField struct {
 func changedObjects(changes []assistantchange.Change) []ChangedObject {
 	out := make([]ChangedObject, len(changes))
 	for i, c := range changes {
-		o := ChangedObject{Subject: string(c.Subject), ID: c.ID.String(), Name: c.Name, UserID: c.UserID.String(), Fields: make([]ChangedField, len(c.Fields))}
+		o := ChangedObject{Subject: string(c.Subject), ID: c.ID.String(), Name: c.Name, HostName: c.HostName, UserID: c.UserID.String(), Fields: make([]ChangedField, len(c.Fields))}
+		if c.HostID != nil {
+			o.HostID = c.HostID.String()
+		}
 		if c.TokenID != nil {
 			o.TokenID = c.TokenID.String()
 		}

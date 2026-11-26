@@ -176,6 +176,13 @@ type Store interface {
 	// transaction per statement. The renderer is the one caller that needs
 	// this, since its reads span several domain stores.
 	WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
+	// InTx runs fn inside one organization-scoped write transaction: every
+	// store call fn makes with the context it is handed — this store's and
+	// any other built on the same database — joins it, and all of it
+	// commits together or none of it does. A values or schema write and
+	// the pause an assistant's change causes (SetChangeWatcher) are one.
+	// Not nested: fn must not call InTx again.
+	InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error
 }
 
 // HostLookup is the slice of hosts.Service this package needs.
@@ -200,6 +207,9 @@ type Service struct {
 	hosts    HostLookup
 	bastions BastionLookup
 	box      Sealer
+	// watcher is handed an assistant's change of the values a run
+	// receives (assistant_change.go); nil hands on nothing.
+	watcher assistantchange.Watcher
 }
 
 // NewService wires the store, the lookups and the sealing box.
@@ -364,7 +374,8 @@ func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision i
 // assistant's save marks the fields whose defaults it set or changed and
 // may neither add a field under a name Ansible or Pulsix act on nor set a
 // default under one; a person's clears the marks of the defaults it
-// changes (decision D6, marks.go).
+// changes (decision D6, marks.go). An assistant's save that moves a
+// default is handed to the watcher in the save's transaction.
 func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema, actor assistantchange.Actor) (GroupView, int, error) {
 	if sc.Fields == nil {
 		sc.Fields = []schema.Field{}
@@ -375,34 +386,42 @@ func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision
 	if err := sc.CheckManualOnly(); err != nil {
 		return GroupView{}, 0, err
 	}
-	cur, err := s.store.GetGroup(ctx, orgID, id)
-	if err != nil {
-		return GroupView{}, 0, err
-	}
-	changed := ChangedDefaults(cur.Schema, sc)
-	if actor.Assistant {
-		if err := joinProblems(checkAssistantFieldNames(cur.Schema, sc), checkAssistantDefaults(sc, changed)); err != nil {
-			return GroupView{}, 0, err
-		}
-	}
-	next := cur
-	next.Schema, next.Revision = sc, revision
-	next.AssistantDefaultKeys = defaultMarks(cur.AssistantDefaultKeys, sc, changed, actor)
-	updated, err := s.store.UpdateGroup(ctx, next)
-	if err != nil {
-		return GroupView{}, 0, err
-	}
-	members, err := s.store.ListGroupMembers(ctx, orgID, id)
-	if err != nil {
-		return GroupView{}, 0, err
-	}
+	var result GroupView
 	incomplete := 0
-	for _, m := range members {
-		if schema.ValidateStored(sc.MembershipFields(), m.Vars) != nil {
-			incomplete++
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		cur, err := s.store.GetGroup(ctx, orgID, id)
+		if err != nil {
+			return err
 		}
+		changed := ChangedDefaults(cur.Schema, sc)
+		if actor.Assistant {
+			if err := joinProblems(checkAssistantFieldNames(cur.Schema, sc), checkAssistantDefaults(sc, changed)); err != nil {
+				return err
+			}
+		}
+		next := cur
+		next.Schema, next.Revision = sc, revision
+		next.AssistantDefaultKeys = defaultMarks(cur.AssistantDefaultKeys, sc, changed, actor)
+		updated, err := s.store.UpdateGroup(ctx, next)
+		if err != nil {
+			return err
+		}
+		members, err := s.store.ListGroupMembers(ctx, orgID, id)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			if schema.ValidateStored(sc.MembershipFields(), m.Vars) != nil {
+				incomplete++
+			}
+		}
+		result = groupView(updated)
+		return s.handOnGroup(ctx, orgID, actor, updated, defaultChanges(cur.Schema, sc))
+	})
+	if err != nil {
+		return GroupView{}, 0, err
 	}
-	return groupView(updated), incomplete, nil
+	return result, incomplete, nil
 }
 
 // SetVars is SetVarsBy for a person.
@@ -414,30 +433,39 @@ func (s *Service) SetVars(ctx context.Context, orgID, id uuid.UUID, revision int
 // strict validation. Plaintext secrets are sealed; keep markers keep the
 // stored secret. An assistant's save marks the keys it set or changed and
 // may not set one Ansible or Pulsix act on; a person's clears the marks of
-// the values it changes (decision D6, marks.go).
+// the values it changes (decision D6, marks.go). An assistant's save that
+// moves a value is handed to the watcher in the save's transaction.
 func (s *Service) SetVarsBy(ctx context.Context, orgID, id uuid.UUID, revision int64, vars map[string]any, actor assistantchange.Actor) (GroupView, error) {
-	cur, err := s.store.GetGroup(ctx, orgID, id)
-	if err != nil {
-		return GroupView{}, err
-	}
-	sealed, err := s.prepareVars(GroupAAD(orgID, id), cur.Schema.GroupFields(), vars, cur.Vars)
-	if err != nil {
-		return GroupView{}, err
-	}
-	changed := ChangedKeys(cur.Vars, sealed)
-	if actor.Assistant {
-		if err := checkAssistantValues(sealed, changed); err != nil {
-			return GroupView{}, err
+	var result GroupView
+	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
+		cur, err := s.store.GetGroup(ctx, orgID, id)
+		if err != nil {
+			return err
 		}
-	}
-	next := cur
-	next.Vars, next.Revision = sealed, revision
-	next.AssistantKeys = valueMarks(cur.AssistantKeys, sealed, changed, actor)
-	updated, err := s.store.UpdateGroup(ctx, next)
+		sealed, err := s.prepareVars(GroupAAD(orgID, id), cur.Schema.GroupFields(), vars, cur.Vars)
+		if err != nil {
+			return err
+		}
+		changed := ChangedKeys(cur.Vars, sealed)
+		if actor.Assistant {
+			if err := checkAssistantValues(sealed, changed); err != nil {
+				return err
+			}
+		}
+		next := cur
+		next.Vars, next.Revision = sealed, revision
+		next.AssistantKeys = valueMarks(cur.AssistantKeys, sealed, changed, actor)
+		updated, err := s.store.UpdateGroup(ctx, next)
+		if err != nil {
+			return err
+		}
+		result = groupView(updated)
+		return s.handOnGroup(ctx, orgID, actor, updated, valueChanges(cur.Schema.GroupFields(), cur.Vars, sealed))
+	})
 	if err != nil {
 		return GroupView{}, err
 	}
-	return groupView(updated), nil
+	return result, nil
 }
 
 // treeVia reads st's groups and builds the structural tree from them. It

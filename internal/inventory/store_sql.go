@@ -62,6 +62,13 @@ func (s *SQLStore) WithReadTx(ctx context.Context, orgID uuid.UUID, fn func(ctx 
 	return s.db.WithReadTx(ctx, orgID, fn)
 }
 
+// InTx implements Store: one organization-scoped write transaction that
+// every store built on the same database joins through the context
+// (db.WithWriteTx). Not nested: db.WithWriteTx always opens its own.
+func (s *SQLStore) InTx(ctx context.Context, orgID uuid.UUID, fn func(ctx context.Context) error) error {
+	return s.db.WithWriteTx(ctx, orgID, fn)
+}
+
 func (s *SQLStore) CreateGroup(ctx context.Context, g Group) (Group, error) {
 	sc, vars, err := encodeGroup(g)
 	if err != nil {

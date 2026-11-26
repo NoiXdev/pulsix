@@ -988,7 +988,7 @@ or trigger request's picture lists the open change reviews of what it would run
 (`open_change_reviews`, each with its item's kind and name): those of the template's
 items and those whose changes name the template, a template it starts through
 follow-ups, the playbook of one of them or that playbook's repository (for a
-repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing; inventory changes never do. A review
+repository sync trigger: the repository). The new row locks are `FOR NO KEY UPDATE`. A person's change pauses nothing; hosts joining or leaving a group never do (an assistant's change of inventory values does, see the next paragraph). A review
 does not count against its token's pending cap and expires after 30 days (the item
 stays paused). Approving needs `jobs.run` and `templates.write` (`repos.write` for a
 repository sync trigger) and resumes (enables) the item at the revision shown (one a
@@ -1028,6 +1028,27 @@ inventory writes — `setInventoryGroupVars`, `setInventoryGroupSchema`,
 **An older manager alongside** ships claims without the marks (an assistant's values
 run live) and records an assistant's inventory writes unmarked; stop every manager
 instance first, as above. Workers and agents are not affected.
+
+An assistant's change of inventory values also pauses what runs unattended (same
+decision D6, no migration): a write made with an assistant token that sets, changes or
+removes a group's value (`PUT …/inventory/groups/{id}/vars`), a schema default
+(`PUT …/schema`; a field's removal counts when it had a default) or an existing
+membership's value (`PUT …/members/{host}`) pauses every active schedule and disables
+every enabled webhook trigger whose run would receive the changed value, in the same
+transaction as the write, with the C2 review requests above. Reached are the managed hosts
+of the group and of its descendant groups (a membership: its host); a template's run
+reaches one when the template's scope selects it and its limit matches its name or cannot
+be decided (fail closed); a schedule with its own limit decides on that limit, and a
+trigger that maps its limit from the payload counts as reaching every host its template's
+scope selects; templates that start a reached one through follow-ups are included. The
+review's picture lists each change as subject `inventory_group` or `inventory_membership`
+(with `host_id`, `host_name`), fields `vars.<key>` / `default.<field>`, old and new value
+(secrets masked) and the token; the activity entries read "an assistant changed inventory
+group …" or "the values of host … in inventory group …". A person's change, an accept, a
+host joining a group (with values) or leaving it, and a write that moves nothing pause
+nothing. The three inventory writes now run in one write transaction each. **An older
+manager alongside** pauses nothing after an assistant's inventory change; stop every
+manager instance first, as above.
 
 ## Behaviour changes to check after an upgrade
 

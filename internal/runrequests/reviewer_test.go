@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/audit"
+	"github.com/noixdev/pulsix/internal/inventory/render"
 	"github.com/noixdev/pulsix/internal/runrequests"
 	"github.com/noixdev/pulsix/internal/schedules"
 	"github.com/noixdev/pulsix/internal/templates"
@@ -92,6 +93,12 @@ type reviewWorld struct {
 	// templates that start it.
 	locked   map[uuid.UUID]schedules.Schedule
 	reaching map[uuid.UUID][]uuid.UUID
+	// overlap is the hosts an inventory change reaches in each template's
+	// run, limits each template's limit; changed records what the reach
+	// was asked for.
+	overlap map[uuid.UUID][]string
+	limits  map[uuid.UUID]string
+	changed []render.Scope
 }
 
 func (w *reviewWorld) LockForReview(_ context.Context, _, id uuid.UUID) (schedules.Schedule, error) {
@@ -205,7 +212,7 @@ func newReviewWorld() *reviewWorld {
 		schedules: map[uuid.UUID]schedules.Schedule{}, triggers: map[uuid.UUID]triggers.Trigger{},
 		reviews: &memReviews{}, now: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC),
 	}
-	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, w,
+	w.reviewer = runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w, Reach: w}, w,
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	return w
 }
@@ -364,7 +371,7 @@ func (failingAudit) Record(context.Context, audit.Event) error { return errors.N
 func TestAReviewerFailureFailsTheChange(t *testing.T) {
 	w := newReviewWorld()
 	w.schedule("a", w.tmplA, false, "")
-	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w}, failingAudit{},
+	r := runrequests.NewReviewer(w.reviews, runrequests.ReviewSources{Templates: w, Schedules: w, Triggers: worldTriggers{w}, History: w, Reach: w}, failingAudit{},
 		func() time.Time { return w.now }, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 	if err := r.Changed(ctx, w.org, assistantchange.Change{Subject: assistantchange.SubjectTemplate, ID: w.tmplA}); err == nil {
 		t.Fatal("a change whose pause could not be recorded succeeded")

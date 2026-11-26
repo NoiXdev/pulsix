@@ -1,8 +1,9 @@
 // Package assistantchange describes a change an assistant made to what
-// runs unattended (spec 2026-11-25 assistant API gaps, C2, decision D5):
-// who made it, which job template or repository it touched and which of
-// its run-relevant fields moved from what to what. The services that own
-// those objects (templates, repos) decide that a change is an assistant's
+// runs unattended (spec 2026-11-25 assistant API gaps, C2, decisions D5
+// and D6): who made it, which job template, repository, playbook,
+// inventory group or membership it touched and which of its run-relevant
+// fields moved from what to what. The services that own those objects
+// (templates, repos, playbooks, inventory) decide that a change is an assistant's
 // and run-relevant, and hand it to a Watcher inside the change's own
 // transaction; the watcher pauses what runs the object until a person
 // reviews it. The types live here, apart from both, so neither owner
@@ -27,18 +28,27 @@ type Actor struct {
 // Subject is the kind of object a change touched.
 type Subject string
 
-// The subjects a change can touch. Inventory changes are not among them
-// (spec C2: hosts joining or leaving a group are everyday work).
+// The subjects a change can touch. Hosts joining or leaving a group are
+// not among them (spec C2: everyday work); the values a group or a
+// membership hands its hosts are (decision D6).
 const (
 	SubjectTemplate Subject = "job_template"
 	SubjectRepo     Subject = "repo"
 	// SubjectPlaybook is an editor playbook's text: what every template
 	// that runs it runs.
 	SubjectPlaybook Subject = "playbook"
+	// SubjectInventoryGroup is a group's values or schema defaults: what
+	// every member of the group and of its descendant groups receives.
+	SubjectInventoryGroup Subject = "inventory_group"
+	// SubjectInventoryMembership is the values of one host's membership in
+	// a group: what that host receives. The change's ID and Name are the
+	// group's, HostID and HostName the host's.
+	SubjectInventoryMembership Subject = "inventory_membership"
 )
 
 // Field is one run-relevant field the change moved: its name (a template's
-// extra var as "extra_vars.<name>") and its values before and after, as a
+// extra var as "extra_vars.<name>", an inventory value as "vars.<key>", a
+// schema default as "default.<field>") and its values before and after, as a
 // person reads them. A secret value is the masked marker, never the
 // secret; nil is "none".
 type Field struct {
@@ -47,12 +57,16 @@ type Field struct {
 	New  any    `json:"new"`
 }
 
-// Change is one assistant change of a job template or a repository.
+// Change is one assistant change of a job template, a repository, a
+// playbook, an inventory group or a membership.
 type Change struct {
 	Subject Subject   `json:"subject"`
 	ID      uuid.UUID `json:"id"`
 	Name    string    `json:"name"`
-	Fields  []Field   `json:"fields"`
+	// HostID and HostName name the host of a membership change.
+	HostID   *uuid.UUID `json:"host_id,omitempty"`
+	HostName string     `json:"host_name,omitempty"`
+	Fields   []Field    `json:"fields"`
 	// UserID and TokenID are the actor's (Actor without its kind: a
 	// change handed on is always an assistant's).
 	UserID  uuid.UUID  `json:"user_id"`

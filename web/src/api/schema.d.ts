@@ -4728,7 +4728,7 @@ export interface components {
             reason?: string;
         };
         ChangedField: {
-            /** @description The field; an extra var as extra_vars.<name> */
+            /** @description The field; an extra var as extra_vars.<name>, an inventory value as vars.<key>, a schema default as default.<field> */
             field: string;
             /** @description The value after; null for none. A secret is {"$secret":"set"} */
             new: unknown;
@@ -4737,13 +4737,19 @@ export interface components {
         };
         ChangedObject: {
             fields: components["schemas"]["ChangedField"][] | null;
+            /** @description The host whose membership values changed (inventory_membership only) */
+            host_id?: string;
+            /** @description The host's name (inventory_membership only) */
+            host_name?: string;
+            /** @description The changed object's id; the group's for a membership */
             id: string;
+            /** @description The changed object's name; the group's for a membership */
             name: string;
             /**
-             * @description What the assistant changed: a job template, a repository or an editor playbook
+             * @description What the assistant changed: a job template, a repository, an editor playbook, an inventory group's values or schema defaults, or the values of one host's membership in a group
              * @enum {string}
              */
-            subject: "job_template" | "repo" | "playbook";
+            subject: "job_template" | "repo" | "playbook" | "inventory_group" | "inventory_membership";
             /** @description The assistant token that made the change */
             token_id?: string;
             /** @description The person whose assistant token made the change */
@@ -7685,7 +7691,7 @@ export interface components {
             job_id: string;
         };
         PictureReview: {
-            /** @description The assistant's changes that paused the item: the job template or repository, each field's old and new value (secrets masked) and the token */
+            /** @description The assistant's changes that paused the item: the job template, repository, playbook, inventory group or membership, each field's old and new value (secrets masked) and the token */
             changes: components["schemas"]["ChangedObject"][] | null;
             gone?: boolean;
             /**

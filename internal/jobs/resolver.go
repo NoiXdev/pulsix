@@ -3,15 +3,12 @@ package jobs
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/hosts"
-	"github.com/noixdev/pulsix/internal/inventory"
-	"github.com/noixdev/pulsix/internal/inventory/grouptree"
 	"github.com/noixdev/pulsix/internal/inventory/render"
 )
 
@@ -50,52 +47,13 @@ func NewScopeResolver(groups GroupSource, memberships MembershipSource, hosts Ho
 // depth). Callers without a limit (RunTargets, the maintenance guard's
 // group look-ahead) resolve the full scope.
 func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string) ([]ZoneTargets, error) {
-	groupList, err := r.groups.ListGroups(ctx, orgID)
+	ix, err := loadScopeIndex(ctx, orgID, r.groups, r.memberships, r.hosts)
 	if err != nil {
-		return nil, fmt.Errorf("list inventory groups: %w", err)
+		return nil, err
 	}
-	nodes := make([]grouptree.Node, len(groupList))
-	byID := make(map[uuid.UUID]bool, len(groupList))
-	for i, g := range groupList {
-		nodes[i] = grouptree.Node{ID: g.ID, ParentID: g.ParentID, Name: g.Name}
-		byID[g.ID] = true
-	}
-	tree := grouptree.New(nodes)
-
-	var subtree map[uuid.UUID]bool
-	if scope.GroupID != nil {
-		if !byID[*scope.GroupID] {
-			return nil, ErrNotFound
-		}
-		subtree = map[uuid.UUID]bool{*scope.GroupID: true}
-		for _, d := range tree.Descendants(*scope.GroupID) {
-			subtree[d] = true
-		}
-	}
-	inScopeGroup := func(hostID uuid.UUID, memberList []inventory.Membership) bool {
-		if subtree == nil {
-			return true
-		}
-		for _, m := range memberList {
-			if m.HostID == hostID && subtree[m.GroupID] {
-				return true
-			}
-		}
-		return false
-	}
-
-	memberList, err := r.memberships.ListMemberships(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list inventory memberships: %w", err)
-	}
-	hostWant := map[uuid.UUID]bool{}
-	for _, id := range scope.HostIDs {
-		hostWant[id] = true
-	}
-
-	all, err := r.hosts.ListAllHosts(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list hosts: %w", err)
+	selects, known := ix.selector(scope)
+	if !known {
+		return nil, ErrNotFound
 	}
 	// The limit gates zones by host NAME; an undecidable pattern keeps
 	// every zone (fail-open — limit.go's contract). The verdict is per
@@ -108,14 +66,8 @@ func (r *scopeResolver) Resolve(ctx context.Context, orgID uuid.UUID, scope rend
 	}
 	zoneHit := map[uuid.UUID]bool{}
 	byZone := map[uuid.UUID][]uuid.UUID{}
-	for _, h := range all {
-		if !h.Managed {
-			continue
-		}
-		if len(hostWant) > 0 && !hostWant[h.ID] {
-			continue
-		}
-		if !inScopeGroup(h.ID, memberList) {
+	for _, h := range ix.hosts {
+		if !selects(h) {
 			continue
 		}
 		byZone[h.ZoneID] = append(byZone[h.ZoneID], h.ID)
