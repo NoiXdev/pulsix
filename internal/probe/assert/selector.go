@@ -3,7 +3,6 @@ package assert
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -12,25 +11,36 @@ import (
 // matches itself (internal/probe/http), so a match is one walk of the
 // page that can stop at any node:
 //
-//	group     = part *( "," part )
-//	part      = compound *( combinator compound )      ; at most 8 compounds
+//	group      = part *( "," part )
+//	part       = compound *( combinator compound )      ; at most 8 compounds
 //	combinator = whitespace (descendant) | ">" (child)
-//	compound  = [ type | "*" ] *simple                  ; at most 16 selectors
-//	simple    = "#" ident | "." ident | attribute | pseudo
-//	attribute = "[" name [ ( "=" | "~=" | "^=" | "$=" | "*=" ) value ] "]"
-//	pseudo    = ":first-child" | ":last-child" | ":nth-child(" ( N | "odd" | "even" ) ")"
+//	           | "+" (next sibling) | "~" (any later sibling)
+//	compound   = [ type | "*" ] *simple                  ; at most 16 selectors
+//	simple     = "#" ident | "." ident | attribute | pseudo
+//	attribute  = "[" name [ ( "=" | "~=" | "^=" | "$=" | "*=" ) value ] "]"
+//	pseudo     = ":first-child" | ":last-child" | ":only-child"
+//	           | ":first-of-type" | ":last-of-type" | ":only-of-type"
+//	           | ":empty" | ":root"
+//	           | ( ":nth-child(" | ":nth-last-child(" | ":nth-of-type("
+//	             | ":nth-last-of-type(" ) nth ")"
+//	           | ":not(" compound *( "," compound ) ")"  ; no :not inside
+//	nth        = "odd" | "even" | An+B                  ; |A|, |B| <= 1000000
+//
+// A :not counts as one simple selector of its compound, and so does
+// every simple selector inside it (backlog 3.90).
 //
 // Type and attribute names are compared without ASCII case (the HTML
 // parser lowers them, but keeps SVG's linearGradient and viewBox), ids,
 // classes and attribute values exactly; namespaced attributes (SVG's
 // xlink:href) are never matched. A value is an
-// identifier or a quoted string; nothing is escaped. Everything else — other
-// combinators, pseudo-classes, pseudo-elements, escapes, comments — is
-// refused, naming what is not supported.
+// identifier or a quoted string; nothing is escaped. Everything else —
+// other pseudo-classes (:has, :is, user-action and form states),
+// pseudo-elements, escapes, comments — is refused, naming what is not
+// supported.
 const (
 	maxCompounds = 8
 	maxSimple    = 16
-	// maxNth bounds :nth-child(N).
+	// maxNth bounds A and B of an nth pseudo-class's An+B.
 	maxNth = 1_000_000
 )
 
@@ -40,12 +50,43 @@ type Selector struct {
 	Parts []Part
 }
 
-// Part is one comma-separated part: Compounds from the outermost to the
-// selected element; Child[i] (i >= 1) says Compounds[i] must be a child
-// (>) of the element Compounds[i-1] matched rather than any descendant.
+// OfType reports whether a compound of s, or one inside a :not, uses an
+// of-type pseudo-class, which needs each element's place among its
+// siblings of the same name.
+func (s *Selector) OfType() bool {
+	for _, part := range s.Parts {
+		for _, c := range part.Compounds {
+			if c.ofType() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Combinator is how a compound relates to the element the compound
+// before it matched.
+type Combinator uint8
+
+// The combinators.
+const (
+	// Descendant (whitespace): any descendant.
+	Descendant Combinator = iota
+	// Child (>): a child.
+	Child
+	// Adjacent (+): the next element sibling.
+	Adjacent
+	// Sibling (~): any later element sibling.
+	Sibling
+)
+
+// Part is one comma-separated part: Compounds from the first written to
+// the selected element; Combinators[i] (i >= 1) is how Compounds[i]
+// relates to the element Compounds[i-1] matched. Combinators[0] is
+// Descendant: the first compound may match anywhere.
 type Part struct {
-	Compounds []Compound
-	Child     []bool
+	Compounds   []Compound
+	Combinators []Combinator
 }
 
 // Compound is what one element must be: all of its conditions hold.
@@ -56,6 +97,22 @@ type Compound struct {
 	Classes []string
 	Attrs   []AttrTest
 	Pseudos []Pseudo
+}
+
+func (c Compound) ofType() bool {
+	for _, ps := range c.Pseudos {
+		switch ps.Kind {
+		case PseudoFirstOfType, PseudoLastOfType, PseudoOnlyOfType, PseudoNthOfType, PseudoNthLastOfType:
+			return true
+		case PseudoNot:
+			for _, n := range ps.Not {
+				if n.ofType() {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // AttrOp is an attribute test's operator; AttrExists has no value.
@@ -76,24 +133,6 @@ type AttrTest struct {
 	Name  string
 	Op    AttrOp
 	Value string
-}
-
-// PseudoKind is a supported pseudo-class.
-type PseudoKind int
-
-// The pseudo-classes; PseudoNth carries N.
-const (
-	PseudoFirst PseudoKind = iota
-	PseudoLast
-	PseudoNth
-	PseudoOdd
-	PseudoEven
-)
-
-// Pseudo is one pseudo-class of a compound.
-type Pseudo struct {
-	Kind PseudoKind
-	N    int
 }
 
 // ParseSelector parses an html(…) selector in the supported subset.
@@ -137,35 +176,47 @@ func (p *selParser) ws() bool {
 
 func (p *selParser) part() (Part, error) {
 	var part Part
-	child := false
+	comb := Descendant
 	for {
-		c, err := p.compound()
+		c, err := p.compound(false)
 		if err != nil {
 			return Part{}, err
 		}
 		part.Compounds = append(part.Compounds, c)
-		part.Child = append(part.Child, child)
+		part.Combinators = append(part.Combinators, comb)
 		if len(part.Compounds) > maxCompounds {
 			return Part{}, fmt.Errorf("a CSS selector of html(…) may have at most %d compound selectors in each comma-separated part", maxCompounds)
 		}
 		spaced := p.ws()
-		switch {
-		case p.done() || p.peek() == ',':
+		if p.done() || p.peek() == ',' {
 			return part, nil
-		case p.peek() == '>':
+		}
+		if next, ok := combinators[p.peek()]; ok {
 			p.i++
 			p.ws()
-			child = true
-		case spaced:
-			child = false
-		default:
+			comb = next
+			continue
+		}
+		if !spaced {
 			return Part{}, p.unexpected()
 		}
+		comb = Descendant
 	}
 }
 
-// compound reads a type or * and the simple selectors after it.
-func (p *selParser) compound() (Compound, error) {
+// combinators are the combinators written with a character.
+var combinators = map[byte]Combinator{'>': Child, '+': Adjacent, '~': Sibling}
+
+// compound reads a type or * and the simple selectors after it. Inside a
+// :not (inNot) it may not hold another :not.
+func (p *selParser) compound(inNot bool) (Compound, error) {
+	c, _, err := p.weighedCompound(inNot)
+	return c, err
+}
+
+// weighedCompound is compound with the number of simple selectors it
+// holds, a :not's own counted with it.
+func (p *selParser) weighedCompound(inNot bool) (Compound, int, error) {
 	var c Compound
 	n := 0
 	if !p.done() && p.peek() == '*' {
@@ -177,10 +228,11 @@ func (p *selParser) compound() (Compound, error) {
 	}
 	for !p.done() {
 		var err error
+		weight := 1
 		switch p.peek() {
 		case '#':
 			if c.ID != "" {
-				return Compound{}, errors.New("a CSS selector of html(…) may name one #id per compound")
+				return Compound{}, 0, errors.New("a CSS selector of html(…) may name one #id per compound")
 			}
 			p.i++
 			c.ID, err = p.needIdent("#")
@@ -195,25 +247,25 @@ func (p *selParser) compound() (Compound, error) {
 			c.Attrs = append(c.Attrs, at)
 		case ':':
 			var ps Pseudo
-			ps, err = p.pseudo()
+			ps, weight, err = p.pseudo(inNot)
 			c.Pseudos = append(c.Pseudos, ps)
 		default:
 			if n == 0 {
-				return Compound{}, p.unexpected()
+				return Compound{}, 0, p.unexpected()
 			}
-			return c, nil
+			return c, n, nil
 		}
 		if err != nil {
-			return Compound{}, err
+			return Compound{}, 0, err
 		}
-		if n++; n > maxSimple {
-			return Compound{}, fmt.Errorf("a CSS selector of html(…) may have at most %d simple selectors in one compound", maxSimple)
+		if n += weight; n > maxSimple {
+			return Compound{}, 0, fmt.Errorf("a CSS selector of html(…) may have at most %d simple selectors in one compound", maxSimple)
 		}
 	}
 	if n == 0 {
-		return Compound{}, errors.New("a CSS selector of html(…) ends where a selector was expected")
+		return Compound{}, 0, errors.New("a CSS selector of html(…) ends where a selector was expected")
 	}
-	return c, nil
+	return c, n, nil
 }
 
 func isIdentByte(c byte, first bool) bool {
@@ -302,58 +354,12 @@ func (p *selParser) value() (string, error) {
 	return p.needIdent("the attribute operator")
 }
 
-// pseudo reads one of the supported pseudo-classes.
-func (p *selParser) pseudo() (Pseudo, error) {
-	p.i++
-	if !p.done() && p.peek() == ':' {
-		return Pseudo{}, errors.New("a CSS selector of html(…) may not use pseudo-elements (::)")
-	}
-	name := strings.ToLower(p.ident())
-	switch name {
-	case "first-child":
-		return Pseudo{Kind: PseudoFirst}, nil
-	case "last-child":
-		return Pseudo{Kind: PseudoLast}, nil
-	case "nth-child":
-	default:
-		return Pseudo{}, fmt.Errorf("a CSS selector of html(…) may not use :%s (only :first-child, :last-child and :nth-child(N), (odd) or (even) are supported)", name)
-	}
-	if p.done() || p.peek() != '(' {
-		return Pseudo{}, errors.New("a CSS selector of html(…) needs :nth-child(N), (odd) or (even)")
-	}
-	p.i++
-	p.ws()
-	start := p.i
-	for !p.done() && p.peek() != ')' && strings.IndexByte(" \t\n\r\f", p.peek()) < 0 {
-		p.i++
-	}
-	arg := strings.ToLower(p.s[start:p.i])
-	p.ws()
-	if p.done() || p.peek() != ')' {
-		return Pseudo{}, errors.New("a CSS selector of html(…) takes a whole number, odd or even in :nth-child(…)")
-	}
-	p.i++
-	switch arg {
-	case "odd":
-		return Pseudo{Kind: PseudoOdd}, nil
-	case "even":
-		return Pseudo{Kind: PseudoEven}, nil
-	}
-	n, err := strconv.Atoi(arg)
-	if err != nil || n < 1 || n > maxNth || arg[0] < '0' || arg[0] > '9' {
-		return Pseudo{}, fmt.Errorf("a CSS selector of html(…) takes a whole number from 1 to %d, odd or even in :nth-child(…), not %q", maxNth, arg)
-	}
-	return Pseudo{Kind: PseudoNth, N: n}, nil
-}
-
 // unexpected names what stops the parse at i.
 func (p *selParser) unexpected() error {
 	if p.done() {
 		return errors.New("a CSS selector of html(…) ends where a selector was expected")
 	}
 	switch c := p.peek(); {
-	case c == '~' || c == '+':
-		return fmt.Errorf("a CSS selector of html(…) may not use the combinator %c (only a space and > are supported)", c)
 	case c == '\\':
 		return errors.New("a CSS selector of html(…) may not use escapes (\\)")
 	case strings.HasPrefix(p.s[p.i:], "/*"):

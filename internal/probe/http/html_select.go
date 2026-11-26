@@ -10,19 +10,25 @@ import (
 
 // selectAll is the elements under doc that sel selects, in document
 // order. It is one pre-order walk of the page that keeps, per
-// comma-separated part, the set of states reached on the way down (state
-// i: compounds 0..i-1 matched by ancestors in the order the part needs);
-// a descendant combinator hands a state to the whole subtree, > only to
-// the children. So the work is linear in nodes x compounds x simple
-// selectors, with no backtracking.
+// comma-separated part, the set of states reached on the way (state i:
+// compounds 0..i-1 matched in the relations the part needs). An element
+// matching compound i-1 hands state i on by the combinator before
+// compound i: a descendant combinator to its whole subtree, > to its
+// children, + to its next element sibling and ~ to every later one. A
+// parent's children share one siblings record, and the walk visits them
+// in order with each one's subtree finished before the next, so the
+// sibling states are exact there. The work is linear in nodes x
+// compounds x simple selectors, with no backtracking and no sibling
+// visited twice.
 //
 // Every step is charged before it is taken — one per node, per child
 // counted and per condition tested, plus the attribute bytes read and
-// compared — to the assertion's budget (at most perSelector) and to *left,
-// the check's; past either the walk stops with errHTMLTooMuch. It looks at
+// compared and, for an of-type pseudo-class, the element names counted —
+// to the assertion's budget (at most perSelector) and to *left, the
+// check's; past either the walk stops with errHTMLTooMuch. It looks at
 // ctx before every node and stops with errOutOfTime once it has ended.
 func selectAll(ctx context.Context, doc *html.Node, sel *assert.Selector, perSelector int64, left *int64) ([]*html.Node, string) {
-	s := selection{sel: sel, budget: min(perSelector, *left), left: left}
+	s := selection{sel: sel, budget: min(perSelector, *left), left: left, ofType: sel.OfType(), siblings: usesSiblings(sel)}
 	var matches []*html.Node
 	stack := []visit{{n: doc}}
 	for len(stack) > 0 {
@@ -36,15 +42,19 @@ func selectAll(ctx context.Context, doc *html.Node, sel *assert.Selector, perSel
 		}
 		desc, child := v.desc, []uint16(nil)
 		if v.n.Type == html.ElementNode {
-			e := element{n: v.n, index: v.index, count: v.count}
-			matched, newDesc, newChild, enough := s.states(&e, v)
+			e := element{n: v.n, pos: v.pos}
+			matched, out, enough := s.states(&e, v)
 			if !enough {
 				return nil, errHTMLTooMuch
 			}
 			if matched {
 				matches = append(matches, v.n)
 			}
-			desc, child = orStates(v.desc, newDesc), newChild
+			desc, child = orStates(v.desc, out[assert.Descendant]), out[assert.Child]
+			if v.sib != nil {
+				v.sib.adjacent = out[assert.Adjacent]
+				v.sib.general = orStates(v.sib.general, out[assert.Sibling])
+			}
 		}
 		var ok bool
 		if stack, ok = s.pushChildren(stack, v.n, desc, child); !ok {
@@ -54,29 +64,60 @@ func selectAll(ctx context.Context, doc *html.Node, sel *assert.Selector, perSel
 	return matches, ""
 }
 
-// visit is a node to match: its place among its element siblings
-// (1-based index, count) and the part states it inherits — desc from any
-// ancestor, child from its parent alone; nil is none.
+// usesSiblings reports whether a part of sel has a + or ~ combinator.
+func usesSiblings(sel *assert.Selector) bool {
+	for _, part := range sel.Parts {
+		for _, c := range part.Combinators {
+			if c == assert.Adjacent || c == assert.Sibling {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// visit is a node to match: its place among its siblings and the part
+// states it inherits — desc from any ancestor, child from its parent
+// alone, and through sib what its earlier element siblings hand on; nil
+// is none.
 type visit struct {
-	n            *html.Node
-	index, count int
-	desc, child  []uint16
+	n           *html.Node
+	pos         position
+	desc, child []uint16
+	sib         *siblings
+}
+
+// position is an element's place among its parent's element children:
+// 1-based index of count, and among those of its name typeIndex of
+// typeCount (counted only for a selector with an of-type pseudo-class).
+type position struct {
+	index, count         int
+	typeIndex, typeCount int
+}
+
+// siblings is what one parent's element children so far hand on to the
+// later ones: adjacent the states of the latest (for +), general those
+// of all of them (for ~).
+type siblings struct {
+	adjacent, general []uint16
 }
 
 // element is a node being matched, with its class list read once.
 type element struct {
-	n            *html.Node
-	index, count int
-	classesRead  bool
-	classes      []string
-	classSet     map[string]bool
+	n           *html.Node
+	pos         position
+	classesRead bool
+	classes     []string
+	classSet    map[string]bool
 }
 
 // selection is one walk's selector and budgets.
 type selection struct {
-	sel    *assert.Selector
-	budget int64
-	left   *int64
+	sel      *assert.Selector
+	budget   int64
+	left     *int64
+	ofType   bool
+	siblings bool
 }
 
 // spend takes n steps from the budgets, or reports that they do not fit.
@@ -91,16 +132,22 @@ func (s *selection) spend(n int64) bool {
 
 // states matches e against every compound its inherited states (and
 // state 0, open everywhere) allow: matched when a part's last compound
-// matched; newDesc and newChild the states it hands down.
-func (s *selection) states(e *element, v visit) (matched bool, newDesc, newChild []uint16, enough bool) {
+// matched; out the states it hands on, by the combinator that hands them.
+func (s *selection) states(e *element, v visit) (matched bool, out [4][]uint16, enough bool) {
 	parts := s.sel.Parts
 	for p, part := range parts {
 		avail := uint16(1)
-		if v.desc != nil {
-			avail |= v.desc[p]
+		for _, in := range [][]uint16{v.desc, v.child} {
+			if in != nil {
+				avail |= in[p]
+			}
 		}
-		if v.child != nil {
-			avail |= v.child[p]
+		if v.sib != nil {
+			for _, in := range [][]uint16{v.sib.adjacent, v.sib.general} {
+				if in != nil {
+					avail |= in[p]
+				}
+			}
 		}
 		for i, c := range part.Compounds {
 			if avail&(1<<i) == 0 {
@@ -109,28 +156,24 @@ func (s *selection) states(e *element, v visit) (matched bool, newDesc, newChild
 			ok, enough := s.compound(e, c)
 			switch {
 			case !enough:
-				return false, nil, nil, false
+				return false, out, false
 			case !ok:
 				continue
 			case i+1 == len(part.Compounds):
 				matched = true
-			case part.Child[i+1]:
-				if newChild == nil {
-					newChild = make([]uint16, len(parts))
-				}
-				newChild[p] |= 1 << (i + 1)
 			default:
-				if newDesc == nil {
-					newDesc = make([]uint16, len(parts))
+				comb := part.Combinators[i+1]
+				if out[comb] == nil {
+					out[comb] = make([]uint16, len(parts))
 				}
-				newDesc[p] |= 1 << (i + 1)
+				out[comb][p] |= 1 << (i + 1)
 			}
 		}
 	}
-	return matched, newDesc, newChild, true
+	return matched, out, true
 }
 
-// orStates is a | b, sharing a when b adds nothing.
+// orStates is a | b, sharing a when b adds nothing; neither is changed.
 func orStates(a, b []uint16) []uint16 {
 	if b == nil {
 		return a
@@ -146,26 +189,59 @@ func orStates(a, b []uint16) []uint16 {
 }
 
 // pushChildren pushes n's children last-first, so the first is visited
-// first, with their element index and count.
+// first, with their position, the states n hands down and, for a
+// selector with sibling combinators, one siblings record they share.
 func (s *selection) pushChildren(stack []visit, n *html.Node, desc, child []uint16) ([]visit, bool) {
-	children, elements := 0, 0
+	children, elements, names := 0, 0, 0
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		children++
 		if c.Type == html.ElementNode {
 			elements++
+			if s.ofType {
+				names += 1 + len(c.Data)
+			}
 		}
 	}
-	if !s.spend(int64(children)) {
+	if !s.spend(int64(children + names)) {
 		return stack, false
+	}
+	var types map[string]*typeTally
+	if s.ofType && elements > 0 {
+		types = make(map[string]*typeTally)
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode {
+				t := types[c.Data]
+				if t == nil {
+					t = &typeTally{}
+					types[c.Data] = t
+				}
+				t.count++
+			}
+		}
+	}
+	var sib *siblings
+	if s.siblings && elements > 1 {
+		sib = &siblings{}
 	}
 	index := elements
 	for c := n.LastChild; c != nil; c = c.PrevSibling {
-		stack = append(stack, visit{n: c, index: index, count: elements, desc: desc, child: child})
+		v := visit{n: c, pos: position{index: index, count: elements}, desc: desc, child: child, sib: sib}
 		if c.Type == html.ElementNode {
+			if t := types[c.Data]; t != nil {
+				v.pos.typeIndex, v.pos.typeCount = t.count-t.seen, t.count
+				t.seen++
+			}
 			index--
 		}
+		stack = append(stack, v)
 	}
 	return stack, true
+}
+
+// typeTally counts one name among a parent's element children: count in
+// all, seen from the last one back while pushing.
+type typeTally struct {
+	count, seen int
 }
 
 // compound tests every condition of c on e, cheapest first.
@@ -181,8 +257,8 @@ func (s *selection) compound(e *element, c assert.Compound) (ok, enough bool) {
 		return false, true
 	}
 	for _, p := range c.Pseudos {
-		if !pseudoHolds(p, e.index, e.count) {
-			return false, true
+		if ok, enough := s.pseudoHolds(p, e); !ok || !enough {
+			return false, enough
 		}
 	}
 	if c.ID != "" {
@@ -318,24 +394,6 @@ func attrHolds(t assert.AttrTest, v string) bool {
 				return true
 			}
 		}
-	}
-	return false
-}
-
-// pseudoHolds tests a pseudo-class on the element at index of count
-// element siblings.
-func pseudoHolds(p assert.Pseudo, index, count int) bool {
-	switch p.Kind {
-	case assert.PseudoFirst:
-		return index == 1
-	case assert.PseudoLast:
-		return index == count
-	case assert.PseudoNth:
-		return index == p.N
-	case assert.PseudoOdd:
-		return index%2 == 1
-	case assert.PseudoEven:
-		return index%2 == 0
 	}
 	return false
 }

@@ -13,10 +13,12 @@ const (
 	errHTMLTooMuch = "the selector took too much work"
 	// htmlSelectBudget bounds the steps one html assertion's walk may
 	// take (selectAll: one per node, child and condition, plus attribute
-	// bytes). The walk is linear in the page; a step took at most about
-	// 17 ns (measured: 15 comma parts of 8 compounds over 500-deep
-	// chains 16 ns, 150 000 siblings 17 ns, a 900 KB class list 11 ns),
-	// so this is about a quarter of a second of CPU. Ordinary selectors
+	// bytes and, for an of-type pseudo-class, element names). The walk
+	// is linear in the page; a step took at most about 17 ns (measured:
+	// 15 comma parts of 8 compounds over 500-deep chains 16 ns, 150 000
+	// siblings 17 ns, a 900 KB class list 11 ns; 15 parts of 8-compound
+	// ~ chains over 150 000 siblings at most 12 ns, backlog 3.90), so
+	// this is about a quarter of a second of CPU. Ordinary selectors
 	// on a real 800 KiB page (20 000 elements) take 140 000 to 420 000.
 	htmlSelectBudget = 15_000_000
 	// htmlCheckBudget bounds all of a check's html assertions together,
