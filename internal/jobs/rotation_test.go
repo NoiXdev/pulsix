@@ -148,7 +148,7 @@ func (s *rotationOnlyStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (St
 	return "", ErrNotRunning
 }
 
-func (s *rotationOnlyStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, int64) ([]Event, error) {
+func (s *rotationOnlyStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, time.Time, EventFilter) ([]Event, error) {
 	return nil, nil
 }
 
@@ -562,7 +562,7 @@ func (plainRotationStore) ListJobsPage(context.Context, uuid.UUID, Filter, pagin
 func (plainRotationStore) CancelJob(context.Context, uuid.UUID, uuid.UUID) (Status, error) {
 	return "", ErrNotRunning
 }
-func (plainRotationStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, int64) ([]Event, error) {
+func (plainRotationStore) ListJobEvents(context.Context, uuid.UUID, uuid.UUID, time.Time, EventFilter) ([]Event, error) {
 	return nil, nil
 }
 func (plainRotationStore) RecordSyncResult(context.Context, uuid.UUID, uuid.UUID, time.Time, string, string, string) error {

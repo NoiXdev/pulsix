@@ -212,8 +212,20 @@ func (s *SQLStore) CancelJob(ctx context.Context, orgID, id uuid.UUID) (Status, 
 	return Status(status), nil
 }
 
-func (s *SQLStore) ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, after int64) ([]Event, error) {
-	rows, err := s.q.ListJobEvents(ctx, gen.ListJobEventsParams{OrgID: orgID, JobID: jobID, Seq: after})
+func (s *SQLStore) ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, since time.Time, f EventFilter) ([]Event, error) {
+	p := gen.ListJobEventsParams{
+		OrgID: orgID, JobID: jobID, After: f.After, Since: since,
+		TaskLike: likeArg(f.Task, "%", "%"),
+		RoleLike: likeArg(f.Role, "", " : %"),
+		MaxRows:  int32(min(max(f.Limit, 1), MaxEventLimit)), //nolint:gosec // clamped to 1..MaxEventLimit
+	}
+	if f.Host != "" {
+		p.Host = &f.Host
+	}
+	if len(f.States) > 0 {
+		p.States = f.States
+	}
+	rows, err := s.q.ListJobEvents(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("list job events: %w", err)
 	}

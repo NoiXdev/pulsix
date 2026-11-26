@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -393,9 +394,24 @@ type jobCancelOutput struct {
 }
 
 type jobEventsInput struct {
-	Org   string `path:"org"`
-	ID    string `path:"id"`
-	After int64  `query:"after" doc:"Only events with a greater sequence number come back"`
+	Org   string   `path:"org"`
+	ID    string   `path:"id"`
+	After int64    `query:"after" doc:"Only events with a greater sequence number come back"`
+	Limit int      `query:"limit" minimum:"1" maximum:"1000" default:"1000" doc:"At most this many events (in sequence order); continue with after=next_after"`
+	Host  string   `query:"host" maxLength:"255" doc:"Only this host's events (exact name)"`
+	Task  string   `query:"task" maxLength:"255" doc:"Only events whose task name contains this, in any case"`
+	Role  string   `query:"role" maxLength:"255" doc:"Only events of this role's tasks (task names reading \"<role> : <task>\"), in any case"`
+	State []string `query:"state,explode" doc:"Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end). Repeat the parameter or join states with commas"`
+}
+
+// eventStates splits the state parameter: each value may itself be a comma
+// list. An empty entry is kept so the service refuses it.
+func eventStates(values []string) []string {
+	var out []string
+	for _, v := range values {
+		out = append(out, strings.Split(v, ",")...)
+	}
+	return out
 }
 
 type jobEventDTO struct {
@@ -435,7 +451,8 @@ func normalizeEventPayload(raw json.RawMessage) map[string]any {
 
 type jobEventsOutput struct {
 	Body struct {
-		Events []jobEventDTO `json:"events"`
+		Events    []jobEventDTO `json:"events"`
+		NextAfter int64         `json:"next_after" doc:"The sequence number of the last event returned (the request's after when none was): pass it as after to read on"`
 	}
 }
 
@@ -662,14 +679,19 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		list, err := deps.Jobs.Events(ctx, scope.OrgID, id, in.After)
+		list, err := deps.Jobs.Events(ctx, scope.OrgID, id, jobs.EventFilter{
+			After: in.After, Limit: in.Limit, Host: in.Host, Task: in.Task, Role: in.Role,
+			States: eventStates(in.State),
+		})
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
 		out := &jobEventsOutput{}
 		out.Body.Events = make([]jobEventDTO, len(list))
+		out.Body.NextAfter = in.After
 		for i, e := range list {
 			out.Body.Events[i] = toJobEventDTO(e)
+			out.Body.NextAfter = int64(e.Seq) //nolint:gosec // a job's seq counts its events
 		}
 		return out, nil
 	})

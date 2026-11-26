@@ -83,7 +83,7 @@ func TestSubscribeReceivesAppendedEvents(t *testing.T) {
 	if _, _, err := svc.Subscribe(octx, other, jobID, 0); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("other org's Subscribe: %v", err)
 	}
-	if _, err := svc.Events(octx, other, jobID, 0); !errors.Is(err, jobs.ErrNotFound) {
+	if _, err := svc.Events(octx, other, jobID, jobs.EventFilter{}); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("other org's Events: %v", err)
 	}
 	if _, _, err := svc.Subscribe(sctx, org, uuid.Must(uuid.NewV7()), 0); !errors.Is(err, jobs.ErrNotFound) {

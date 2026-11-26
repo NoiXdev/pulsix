@@ -234,14 +234,27 @@ export function isTerminal(status: string | undefined | null): boolean {
   return status !== undefined && status !== null && TERMINAL.has(status);
 }
 
-/** fetchJobEvents fetches one page of a run's events after a sequence
- * number — the poll fallback's and the seed's fetch primitive (a plain
- * async function, so an interval can drive it). */
+/** EVENTS_PAGE is the most events the events route answers in one read. */
+const EVENTS_PAGE = 1000;
+
+/** fetchJobEvents fetches all of a run's events after a sequence number —
+ * the poll fallback's and the seed's fetch primitive (a plain async
+ * function, so an interval can drive it). The route answers at most
+ * EVENTS_PAGE events a read, so it reads on from each full page's last
+ * event until a page comes back short. */
 export async function fetchJobEvents(org: string, id: string, after: number): Promise<JobEvent[]> {
-  const body = await unwrap(
-    api.GET('/api/v1/orgs/{org}/jobs/{id}/events', { params: { path: { org, id }, query: { after } } }),
-  );
-  return body.events ?? [];
+  const all: JobEvent[] = [];
+  let cursor = after;
+  for (;;) {
+    const body = await unwrap(
+      api.GET('/api/v1/orgs/{org}/jobs/{id}/events', { params: { path: { org, id }, query: { after: cursor, limit: EVENTS_PAGE } } }),
+    );
+    const page = body.events ?? [];
+    all.push(...page);
+    const last = page.length > 0 ? page[page.length - 1].seq : cursor;
+    if (page.length < EVENTS_PAGE || last <= cursor) return all;
+    cursor = last;
+  }
 }
 
 export type RunLogTransport = 'sse' | 'poll';

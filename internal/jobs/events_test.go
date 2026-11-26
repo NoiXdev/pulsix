@@ -66,7 +66,7 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 		}
 	}
 
-	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 0)
+	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{})
 	if err != nil || len(events) != 3 {
 		t.Fatalf("Events = %d, %v", len(events), err)
 	}
@@ -84,14 +84,14 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 		t.Fatalf("JSON payload must round trip: %s, %v", events[2].Payload, err)
 	}
 
-	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 2)
+	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{After: 2})
 	if err != nil || len(tail) != 1 || tail[0].Seq != 3 {
 		t.Fatalf("Events(after 2) = %+v, %v", tail, err)
 	}
 	_ = tail
 
 	// Another organization must neither see the job nor its events.
-	if _, err := svc.Events(db.WithOrgScope(ctx, other), other, jobID, 0); !errors.Is(err, jobs.ErrNotFound) {
+	if _, err := svc.Events(db.WithOrgScope(ctx, other), other, jobID, jobs.EventFilter{}); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("other org's Events: %v", err)
 	}
 
@@ -112,7 +112,7 @@ func TestAppendPersistsMonotonicSeqsAndEventsPaginate(t *testing.T) {
 	if err := queue.AppendEvent(ctx, jobID, late); err != nil {
 		t.Fatalf("event after finish: %v", err)
 	}
-	tail, err = svc.Events(db.WithOrgScope(ctx, org), org, jobID, 3)
+	tail, err = svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{After: 3})
 	// The worker's seq 9 is not what is stored: the manager assigns the
 	// next seq of the job's log.
 	if err != nil || len(tail) != 1 || tail[0].Seq != 4 || tail[0].State != "run_end" {
@@ -267,7 +267,7 @@ func TestAppendKeepsSeqMonotonicAcrossAttempts(t *testing.T) {
 		}
 	}
 
-	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 0)
+	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestAppendKeepsSeqMonotonicAcrossAttempts(t *testing.T) {
 	}
 	// The poll cursor after the first attempt's last seq returns exactly
 	// the second attempt.
-	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 2)
+	tail, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{After: 2})
 	if err != nil || len(tail) != 2 || tail[0].Task != "second" {
 		t.Fatalf("Events(after 2) = %+v, %v", tail, err)
 	}
@@ -342,7 +342,7 @@ func TestOldAttemptStreamStampsItsOwnAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, 0)
+	events, err := svc.Events(db.WithOrgScope(ctx, org), org, jobID, jobs.EventFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

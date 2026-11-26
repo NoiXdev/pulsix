@@ -399,10 +399,12 @@ type Store interface {
 	// own GetJob that means the job left the cancellable set (or was
 	// deleted in between, which is the same "nothing to cancel" answer).
 	CancelJob(ctx context.Context, orgID, id uuid.UUID) (Status, error)
-	// ListJobEvents returns the job's events with seq > after, ordered by
-	// seq. The org_id filter is what keeps one tenant from reading
-	// another's events on the RLS-free job_events table.
-	ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, after int64) ([]Event, error)
+	// ListJobEvents returns the job's events matching f (seq > f.After, at
+	// most f.Limit, every narrowing applied), ordered by seq, reading only
+	// rows stamped at or after since. The org_id filter is what keeps one
+	// tenant from reading another's events on the RLS-free job_events
+	// table.
+	ListJobEvents(ctx context.Context, orgID, jobID uuid.UUID, since time.Time, f EventFilter) ([]Event, error)
 	// RecordSyncResult stamps a sync_repo job's terminal outcome onto the
 	// repository row it ran for: last_sync carries at, last_sync_error the
 	// failure reason (an empty errText clears it). ErrNotFound when no
@@ -1350,13 +1352,21 @@ func (s *Service) ListPage(ctx context.Context, orgID uuid.UUID, f Filter, p pag
 	return s.store.ListJobsPage(ctx, orgID, f, p)
 }
 
-// Events returns the job's events with seq greater than after, ordered by
-// seq. The job is resolved first, so a job id from another organization is
-// exactly as invisible as one that does not exist — and the event read
-// below is filtered by the resolved org, never by the caller's claim.
-func (s *Service) Events(ctx context.Context, orgID, id uuid.UUID, after int64) ([]Event, error) {
-	if _, err := s.store.GetJob(ctx, orgID, id); err != nil {
+// Events returns the job's events matching f, ordered by seq, at most
+// f.Limit (MaxEventLimit when unset); ErrInvalidInput for a limit or state
+// outside the contract. The job is resolved first, so a job id from another
+// organization is exactly as invisible as one that does not exist — and
+// the event read below is filtered by the resolved org, never by the
+// caller's claim. The job's creation time (less EventClockSlack) bounds
+// the read so it touches only the job's own chunks.
+func (s *Service) Events(ctx context.Context, orgID, id uuid.UUID, f EventFilter) ([]Event, error) {
+	f, err := f.normalize()
+	if err != nil {
 		return nil, err
 	}
-	return s.store.ListJobEvents(ctx, orgID, id, after)
+	j, err := s.store.GetJob(ctx, orgID, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ListJobEvents(ctx, orgID, id, j.CreatedAt.Add(-EventClockSlack), f)
 }

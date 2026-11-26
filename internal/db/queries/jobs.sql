@@ -347,14 +347,25 @@ WHERE org_id = $1 AND id = $2 AND status IN ('queued', 'claimed', 'running')
 RETURNING status;
 
 -- name: ListJobEvents :many
--- The run view's event log. job_events has no row-level security (see
--- 00018_jobs.sql), so the org filter here — after Service.Events has
--- resolved the job and its organization — is what keeps one tenant from
--- reading another's events.
+-- The run view's event log and its search. job_events has no row-level
+-- security (see 00018_jobs.sql), so the org filter here — after
+-- Service.Events has resolved the job and its organization — is what keeps
+-- one tenant from reading another's events. `at >= since` (the job's
+-- created_at less a clock slack) lets TimescaleDB prune the scan to the
+-- job's own chunks. Each narrowing is off when its argument is NULL: host
+-- is an exact match, task_like and role_like are ILIKE patterns the store
+-- builds with % and _ escaped, states is a list of states.
 SELECT seq, at, host, task, state, payload, attempt
 FROM job_events
-WHERE org_id = $1 AND job_id = $2 AND seq > $3
-ORDER BY seq;
+WHERE org_id = sqlc.arg(org_id) AND job_id = sqlc.arg(job_id)
+  AND seq > sqlc.arg(after)::bigint
+  AND at >= sqlc.arg(since)::timestamptz
+  AND (sqlc.narg(host)::text IS NULL OR host = sqlc.narg(host)::text)
+  AND (sqlc.narg(task_like)::text IS NULL OR task ILIKE sqlc.narg(task_like)::text ESCAPE '\')
+  AND (sqlc.narg(role_like)::text IS NULL OR task ILIKE sqlc.narg(role_like)::text ESCAPE '\')
+  AND (sqlc.narg(states)::text[] IS NULL OR state = ANY(sqlc.narg(states)::text[]))
+ORDER BY seq
+LIMIT sqlc.arg(max_rows)::int;
 
 -- name: LockActiveWorker :execrows
 -- Backlog 7.36: binds a worker claim to the worker's current state. Run in

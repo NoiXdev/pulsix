@@ -6286,6 +6286,11 @@ export interface components {
              */
             readonly $schema?: string;
             events: components["schemas"]["JobEventDTO"][] | null;
+            /**
+             * Format: int64
+             * @description The sequence number of the last event returned (the request's after when none was): pass it as after to read on
+             */
+            next_after: number;
         };
         JobGroupMemberDTO: {
             id: string;
@@ -15639,6 +15644,16 @@ export interface operations {
             query?: {
                 /** @description Only events with a greater sequence number come back */
                 after?: number;
+                /** @description At most this many events (in sequence order); continue with after=next_after */
+                limit?: number;
+                /** @description Only this host's events (exact name) */
+                host?: string;
+                /** @description Only events whose task name contains this, in any case */
+                task?: string;
+                /** @description Only events of this role's tasks (task names reading "<role> : <task>"), in any case */
+                role?: string;
+                /** @description Only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap (also run_start, run_end). Repeat the parameter or join states with commas */
+                state?: string[] | null;
             };
             header?: never;
             path: {

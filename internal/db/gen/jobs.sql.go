@@ -833,14 +833,27 @@ func (q *Queries) ListExhaustedStaleJobs(ctx context.Context, arg ListExhaustedS
 const listJobEvents = `-- name: ListJobEvents :many
 SELECT seq, at, host, task, state, payload, attempt
 FROM job_events
-WHERE org_id = $1 AND job_id = $2 AND seq > $3
+WHERE org_id = $1 AND job_id = $2
+  AND seq > $3::bigint
+  AND at >= $4::timestamptz
+  AND ($5::text IS NULL OR host = $5::text)
+  AND ($6::text IS NULL OR task ILIKE $6::text ESCAPE '\')
+  AND ($7::text IS NULL OR task ILIKE $7::text ESCAPE '\')
+  AND ($8::text[] IS NULL OR state = ANY($8::text[]))
 ORDER BY seq
+LIMIT $9::int
 `
 
 type ListJobEventsParams struct {
-	OrgID uuid.UUID `json:"org_id"`
-	JobID uuid.UUID `json:"job_id"`
-	Seq   int64     `json:"seq"`
+	OrgID    uuid.UUID `json:"org_id"`
+	JobID    uuid.UUID `json:"job_id"`
+	After    int64     `json:"after"`
+	Since    time.Time `json:"since"`
+	Host     *string   `json:"host"`
+	TaskLike *string   `json:"task_like"`
+	RoleLike *string   `json:"role_like"`
+	States   []string  `json:"states"`
+	MaxRows  int32     `json:"max_rows"`
 }
 
 type ListJobEventsRow struct {
@@ -853,12 +866,26 @@ type ListJobEventsRow struct {
 	Attempt int32     `json:"attempt"`
 }
 
-// The run view's event log. job_events has no row-level security (see
-// 00018_jobs.sql), so the org filter here — after Service.Events has
-// resolved the job and its organization — is what keeps one tenant from
-// reading another's events.
+// The run view's event log and its search. job_events has no row-level
+// security (see 00018_jobs.sql), so the org filter here — after
+// Service.Events has resolved the job and its organization — is what keeps
+// one tenant from reading another's events. `at >= since` (the job's
+// created_at less a clock slack) lets TimescaleDB prune the scan to the
+// job's own chunks. Each narrowing is off when its argument is NULL: host
+// is an exact match, task_like and role_like are ILIKE patterns the store
+// builds with % and _ escaped, states is a list of states.
 func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([]ListJobEventsRow, error) {
-	rows, err := q.db.Query(ctx, listJobEvents, arg.OrgID, arg.JobID, arg.Seq)
+	rows, err := q.db.Query(ctx, listJobEvents,
+		arg.OrgID,
+		arg.JobID,
+		arg.After,
+		arg.Since,
+		arg.Host,
+		arg.TaskLike,
+		arg.RoleLike,
+		arg.States,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}

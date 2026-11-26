@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,11 +35,55 @@ type jobArgs struct {
 }
 
 type jobLogArgs struct {
-	JobID      string `json:"job_id"`
-	After      int64  `json:"after,omitempty" jsonschema:"only events after this sequence number (the next_after of the previous call)"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"events per call, default 200, at most 1000"`
-	Host       string `json:"host,omitempty" jsonschema:"only this host's events"`
-	FailedOnly bool   `json:"failed_only,omitempty" jsonschema:"only failed and unreachable events"`
+	JobID       string   `json:"job_id"`
+	After       int64    `json:"after,omitempty" jsonschema:"only events after this sequence number (the next_after of the previous call)"`
+	Limit       int      `json:"limit,omitempty" jsonschema:"events per call, default 200, at most 1000"`
+	Host        string   `json:"host,omitempty" jsonschema:"only this host's events (its exact name)"`
+	Task        string   `json:"task,omitempty" jsonschema:"only events whose task name contains this text, in any case"`
+	Role        string   `json:"role,omitempty" jsonschema:"only the tasks of this role (task names read 'role : task'), in any case"`
+	State       []string `json:"state,omitempty" jsonschema:"only events in these states: ok, changed, skipped, failed, unreachable, task, stdout, recap"`
+	FailedOnly  bool     `json:"failed_only,omitempty" jsonschema:"only failed and unreachable events (instead of state)"`
+	ChangedOnly bool     `json:"changed_only,omitempty" jsonschema:"instead of the log, per host the names of the tasks that changed something (among the next limit changed events)"`
+}
+
+// failedLogStates are the states failed_only reads.
+var failedLogStates = []string{"failed", "unreachable", "error", "fatal"}
+
+// states is the state filter the arguments ask for: state itself, or what
+// failed_only or changed_only stand for. Only one of the three may be set.
+func (in jobLogArgs) states() ([]string, error) {
+	set := 0
+	for _, on := range []bool{len(in.State) > 0, in.FailedOnly, in.ChangedOnly} {
+		if on {
+			set++
+		}
+	}
+	switch {
+	case set > 1:
+		return nil, fmt.Errorf("give only one of state, failed_only and changed_only")
+	case in.FailedOnly:
+		return failedLogStates, nil
+	case in.ChangedOnly:
+		return []string{"changed"}, nil
+	}
+	return in.State, nil
+}
+
+// query is the REST query of a log read.
+func (in jobLogArgs) query(limit int, states []string) url.Values {
+	q := url.Values{"limit": {strconv.Itoa(limit)}}
+	if in.After > 0 {
+		q.Set("after", strconv.FormatInt(in.After, 10))
+	}
+	for k, v := range map[string]string{"host": in.Host, "task": in.Task, "role": in.Role} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	for _, s := range states {
+		q.Add("state", s)
+	}
+	return q
 }
 
 type runRequestArgs struct {
@@ -139,32 +184,29 @@ type jobEvent struct {
 	Payload map[string]any `json:"payload"`
 }
 
-var failedStates = map[string]bool{"failed": true, "unreachable": true, "error": true, "fatal": true}
-
-// renderEvents is the log text: one line per event, filtered, at most
-// limit lines, and the sequence number to continue after.
-func renderEvents(events []jobEvent, after int64, host string, failedOnly bool, limit int) (string, int64) {
+// renderEvents is the log text: one line per event.
+func renderEvents(events []jobEvent) string {
 	var b strings.Builder
-	next, n := after, 0
 	for _, e := range events {
-		if e.Seq <= after {
-			continue
-		}
-		if n == limit {
-			break
-		}
-		next = e.Seq
-		if (host != "" && e.Host != host) || (failedOnly && !failedStates[e.State]) {
-			continue
-		}
-		n++
 		fmt.Fprintf(&b, "%d %s %s %s", e.Seq, e.Host, e.Task, e.State)
 		if text := eventText(e.Payload); text != "" {
 			b.WriteString(": " + text)
 		}
 		b.WriteByte('\n')
 	}
-	return b.String(), next
+	return b.String()
+}
+
+// changedTasks is changed_only's answer: per host the names of the tasks
+// that changed something, each once, in the order they first did.
+func changedTasks(events []jobEvent) map[string][]string {
+	out := map[string][]string{}
+	for _, e := range events {
+		if !slices.Contains(out[e.Host], e.Task) {
+			out[e.Host] = append(out[e.Host], e.Task)
+		}
+	}
+	return out
 }
 
 // eventText is the part of a payload a log line shows.
@@ -193,7 +235,7 @@ func jobTools() []toolDef {
 			tenancy.AreaJobsRead, readTool, boundWaitSeconds, func(ctx context.Context, c *caller, in jobGetArgs) (any, error) {
 				return passGet(ctx, c, waitQuery(in.WaitSeconds, in.Unless), "/jobs/%s", in.JobID)
 			}),
-		define("get_job_log", "Get job log", "A job's log, one line per event (sequence, host, task, state, text). Call again with next_after to read on; a running job's log grows.",
+		define("get_job_log", "Get job log", "A job's log, one line per event (sequence, host, task, state, text), narrowed by host, task (text in the task name), role and state as asked. Call again with next_after to read on; a running job's log grows. With changed_only the answer is, per host, the tasks that changed something instead of the log.",
 			tenancy.AreaJobsRead, readTool, func(ctx context.Context, c *caller, in jobLogArgs) (any, error) {
 				limit := in.Limit
 				if limit == 0 {
@@ -202,22 +244,25 @@ func jobTools() []toolDef {
 				if limit < 1 || limit > maxLogLimit {
 					return nil, fmt.Errorf("limit must be between 1 and %d", maxLogLimit)
 				}
+				states, err := in.states()
+				if err != nil {
+					return nil, err
+				}
 				path, err := c.orgPath("/jobs/%s/events", in.JobID)
 				if err != nil {
 					return nil, err
 				}
 				var body struct {
-					Events []jobEvent `json:"events"`
+					Events    []jobEvent `json:"events"`
+					NextAfter int64      `json:"next_after"`
 				}
-				q := url.Values{}
-				if in.After > 0 {
-					q.Set("after", strconv.FormatInt(in.After, 10))
-				}
-				if _, err := c.get(ctx, path, q, &body); err != nil {
+				if _, err := c.get(ctx, path, in.query(limit, states), &body); err != nil {
 					return nil, err
 				}
-				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
-				return map[string]any{"log": text, "next_after": next}, nil
+				if in.ChangedOnly {
+					return map[string]any{"changed": changedTasks(body.Events), "next_after": body.NextAfter}, nil
+				}
+				return map[string]any{"log": renderEvents(body.Events), "next_after": body.NextAfter}, nil
 			}),
 		defineExact("request_run", "Request a run", "Ask for a run of a job template, optionally as a dry run (check_mode), with non-secret extra vars, narrowed to some hosts (host_ids) or a limit. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them and the picture the person sees. Requests expire after an hour unless expires_in says otherwise. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says. A playbook from a repository runs exactly the commit of the repository's last successful sync, which the picture shows (commit); while commit.blocked names a reason (the repository needs a sync, or a sync is running) the request cannot be approved. Follow-ups whose playbook comes from the same repository run the same commit; the others run their current state (each follow-up's commit says which). With sync_first the repository is synced first (a sync already queued and not yet started is the one used; one already running may have fetched before your change, so a new one is queued behind it): the request waits for it (status waiting_for_sync, sync_job_id) and becomes pending with the new commit once the sync succeeded, its expiry starting then; it fails (status failed, sync_error) when the sync fails or does not finish within an hour.",
 			tenancy.AreaJobsRequest, writeTool, boundExpiresIn, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {

@@ -85,7 +85,7 @@ func TestStoreReadsReportDatabaseFailures(t *testing.T) {
 	if _, err := st.CancelJob(dead, w.org, id); err == nil || errorIs(err, ErrNotRunning) {
 		t.Errorf("CancelJob = %v, want the database failure itself", err)
 	}
-	if _, err := st.ListJobEvents(dead, w.org, id, 0); err == nil {
+	if _, err := st.ListJobEvents(dead, w.org, id, time.Time{}, EventFilter{}); err == nil {
 		t.Error("ListJobEvents reported no error on a dead connection")
 	}
 	if err := st.RecordSyncResult(dead, w.org, id, time.Now(), "", "", ""); err == nil || errorIs(err, ErrNotFound) {

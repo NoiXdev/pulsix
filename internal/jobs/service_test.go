@@ -37,9 +37,12 @@ type fakeStore struct {
 	cancelled map[uuid.UUID]jobs.Status
 	events    []jobs.Event
 	eventsErr error
-	syncs     []fakeSyncResult
-	syncErr   error
-	nextErr   error
+	// eventsSince and eventsFilter are what the last ListJobEvents got.
+	eventsSince  time.Time
+	eventsFilter jobs.EventFilter
+	syncs        []fakeSyncResult
+	syncErr      error
+	nextErr      error
 
 	activeTemplates map[uuid.UUID]bool
 	activeRepos     map[uuid.UUID]bool
@@ -217,13 +220,14 @@ func (f *fakeStore) CancelJob(_ context.Context, orgID, id uuid.UUID) (jobs.Stat
 	return next, nil
 }
 
-func (f *fakeStore) ListJobEvents(_ context.Context, orgID, jobID uuid.UUID, after int64) ([]jobs.Event, error) {
+func (f *fakeStore) ListJobEvents(_ context.Context, orgID, jobID uuid.UUID, since time.Time, filter jobs.EventFilter) ([]jobs.Event, error) {
+	f.eventsSince, f.eventsFilter = since, filter
 	if f.eventsErr != nil {
 		return nil, f.eventsErr
 	}
 	var out []jobs.Event
 	for _, e := range f.events {
-		if e.Seq > uint64(after) {
+		if e.Seq > uint64(filter.After) {
 			out = append(out, e)
 		}
 	}
@@ -755,7 +759,7 @@ func TestGetAndEventsCheckTheOrgFirst(t *testing.T) {
 	if _, err := svc.Get(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("Get: %v", err)
 	}
-	if _, err := svc.Events(ctx, org, uuid.Must(uuid.NewV7()), 0); !errors.Is(err, jobs.ErrNotFound) {
+	if _, err := svc.Events(ctx, org, uuid.Must(uuid.NewV7()), jobs.EventFilter{}); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("Events: %v", err)
 	}
 	if len(store.events) != 0 {
@@ -765,9 +769,52 @@ func TestGetAndEventsCheckTheOrgFirst(t *testing.T) {
 	id := uuid.Must(uuid.NewV7())
 	store.jobs[id] = storedJob{j: jobs.Job{ID: id, OrgID: org, Kind: jobs.KindRun, Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7())}}
 	store.events = []jobs.Event{{Seq: 1, State: "ok"}, {Seq: 2, State: "ok"}}
-	events, err := svc.Events(ctx, org, id, 1)
+	events, err := svc.Events(ctx, org, id, jobs.EventFilter{After: 1})
 	if err != nil || len(events) != 1 || events[0].Seq != 2 {
 		t.Fatalf("Events(after 1) = %+v, %v", events, err)
+	}
+}
+
+// TestEventsBoundsTheRead: the service fills in the default limit, rejects
+// a limit or state outside the contract before reading, and bounds the
+// store's scan below by the job's creation time (less the clock slack).
+func TestEventsBoundsTheRead(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, &fakeQueue{}, &fakeTemplates{}, &fakeResolver{}, &fakeHosts{})
+	id := uuid.Must(uuid.NewV7())
+	created := time.Date(2026, 11, 26, 6, 0, 0, 0, time.UTC)
+	store.jobs[id] = storedJob{j: jobs.Job{ID: id, OrgID: org, Kind: jobs.KindRun, Status: jobs.StatusRunning, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: created}}
+
+	if _, err := svc.Events(ctx, org, id, jobs.EventFilter{Host: "web1", States: []string{"changed"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.eventsFilter; got.Limit != jobs.MaxEventLimit || got.Host != "web1" || len(got.States) != 1 {
+		t.Fatalf("filter = %+v, want the default limit %d and the caller's narrowing", got, jobs.MaxEventLimit)
+	}
+	if want := created.Add(-jobs.EventClockSlack); !store.eventsSince.Equal(want) {
+		t.Fatalf("since = %v, want %v", store.eventsSince, want)
+	}
+
+	for _, f := range []jobs.EventFilter{
+		{Limit: -1},
+		{Limit: jobs.MaxEventLimit + 1},
+		{States: []string{"changed", "bogus"}},
+		{States: []string{""}},
+	} {
+		store.eventsFilter = jobs.EventFilter{Limit: -42}
+		if _, err := svc.Events(ctx, org, id, f); !errors.Is(err, jobs.ErrInvalidInput) {
+			t.Fatalf("Events(%+v) = %v, want ErrInvalidInput", f, err)
+		}
+		if store.eventsFilter.Limit != -42 {
+			t.Fatalf("Events(%+v) read the store", f)
+		}
+	}
+
+	for _, s := range []string{"ok", "changed", "skipped", "failed", "unreachable", "task", "stdout", "recap", "run_start", "run_end", "error", "fatal"} {
+		if !jobs.ValidEventState(s) {
+			t.Errorf("state %q is not valid", s)
+		}
 	}
 }
 

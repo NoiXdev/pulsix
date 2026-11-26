@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,93 @@ func TestJobLogPagesWithoutGapsOrRepeats(t *testing.T) {
 	}
 	if after != 5 {
 		t.Fatalf("final next_after = %d, want 5", after)
+	}
+}
+
+// TestJobLogSearch: get_job_log hands host, task, role and state to the
+// REST route, which filters in the database; changed_only answers per host
+// the tasks that changed something instead of the log.
+func TestJobLogSearch(t *testing.T) {
+	f := newOrgFixture(t)
+	id := f.startJob(t, []jobs.Event{
+		{Seq: 1, Host: "web-1", Task: "common : Install packages", State: "changed", Payload: payload("")},
+		{Seq: 2, Host: "web-1", Task: "common : Install packages", State: "changed", Payload: payload("again")},
+		{Seq: 3, Host: "web-1", Task: "nginx : Write 100%_config", State: "changed", Payload: payload("")},
+		{Seq: 4, Host: "web-2", Task: "nginx : Write 100%_config", State: "ok", Payload: payload("")},
+		{Seq: 5, Host: "web-2", Task: "nginx : Restart", State: "unreachable", Payload: json.RawMessage(`{"msg":"gone"}`)},
+		{Seq: 6, Host: "web-2", Task: "Ping", State: "changed", Payload: payload("")},
+	})
+	cs := mustConnect(t, f.s, f.token)
+	type logPage struct {
+		Log     string              `json:"log"`
+		Changed map[string][]string `json:"changed"`
+		Next    int64               `json:"next_after"`
+	}
+	seqs := func(p logPage) []string {
+		var out []string
+		for _, line := range strings.Split(strings.TrimSpace(p.Log), "\n") {
+			if line != "" {
+				out = append(out, strings.Fields(line)[0])
+			}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want []string
+		next int64
+	}{
+		{"task", map[string]any{"task": "100%_"}, []string{"3", "4"}, 4},
+		{"role", map[string]any{"role": "NGINX"}, []string{"3", "4", "5"}, 5},
+		{"state", map[string]any{"state": []string{"ok", "unreachable"}}, []string{"4", "5"}, 5},
+		{"failed_only", map[string]any{"failed_only": true}, []string{"5"}, 5},
+		{"combined and limited", map[string]any{"host": "web-1", "state": []string{"changed"}, "limit": 2}, []string{"1", "2"}, 2},
+		{"nothing matches", map[string]any{"host": "db-1", "after": 2}, nil, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"job_id": id.String()}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			var p logPage
+			callOK(t, cs, "get_job_log", args, &p)
+			if got := seqs(p); !slices.Equal(got, tc.want) || p.Next != tc.next {
+				t.Fatalf("lines %v next %d, want %v next %d:\n%s", got, p.Next, tc.want, tc.next, p.Log)
+			}
+		})
+	}
+
+	var changed logPage
+	callOK(t, cs, "get_job_log", map[string]any{"job_id": id.String(), "changed_only": true}, &changed)
+	want := map[string][]string{
+		"web-1": {"common : Install packages", "nginx : Write 100%_config"},
+		"web-2": {"Ping"},
+	}
+	if len(changed.Changed) != len(want) || changed.Log != "" || changed.Next != 6 {
+		t.Fatalf("changed_only = %+v, want %v next 6", changed, want)
+	}
+	for host, tasks := range want {
+		if !slices.Equal(changed.Changed[host], tasks) {
+			t.Fatalf("changed_only[%s] = %v, want %v", host, changed.Changed[host], tasks)
+		}
+	}
+	changed = logPage{}
+	callOK(t, cs, "get_job_log", map[string]any{"job_id": id.String(), "changed_only": true, "role": "nginx"}, &changed)
+	if len(changed.Changed) != 1 || !slices.Equal(changed.Changed["web-1"], []string{"nginx : Write 100%_config"}) {
+		t.Fatalf("changed_only role=nginx = %+v", changed)
+	}
+
+	for name, args := range map[string]map[string]any{
+		"failed_only and state":        {"failed_only": true, "state": []string{"ok"}},
+		"changed_only and state":       {"changed_only": true, "state": []string{"ok"}},
+		"changed_only and failed_only": {"changed_only": true, "failed_only": true},
+		"unknown state":                {"state": []string{"bogus"}},
+	} {
+		args["job_id"] = id.String()
+		if text, isErr := call(t, cs, "get_job_log", args); !isErr {
+			t.Errorf("%s was accepted: %s", name, text)
+		}
 	}
 }
 
