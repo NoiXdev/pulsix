@@ -64,6 +64,52 @@ describe('CheckDialog — http JSON values and credentials', () => {
     });
   });
 
+  it('sends a method, headers and a body as typed (backlog 3.84)', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user);
+    await user.type(screen.getByLabelText('URL'), 'https://{{address}/api/ping');
+    await pickOption(screen, 'Method', { value: 'POST' });
+    await user.type(screen.getByLabelText('Request headers (one per line, Name: value)'), 'X-Api-Version: 2{Enter}Accept: application/json');
+    const body = screen.getByLabelText('Request body');
+    expect(body.tagName).toBe('TEXTAREA');
+    await user.type(body, '{{"ping":{Enter}  true}');
+    await user.type(screen.getByLabelText('Content type of the body'), 'application/json; charset=utf-8');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0].params).toEqual({
+      url: 'https://{address}/api/ping',
+      method: 'POST',
+      headers: ['X-Api-Version: 2', 'Accept: application/json'],
+      body: '{"ping":\n  true}',
+      content_type: 'application/json; charset=utf-8',
+    });
+  });
+
+  it('warns that a state-changing method runs at every interval', async () => {
+    const user = userEvent.setup();
+    await openNew(user);
+    const warning = /This request is sent at every interval/;
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      await pickOption(screen, 'Method', { value: method });
+      expect(screen.getByText(warning)).toBeInTheDocument();
+    }
+    for (const method of ['GET', 'HEAD', 'OPTIONS']) {
+      await pickOption(screen, 'Method', { value: method });
+      expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    }
+  });
+
+  it('points a credential header to the secret and sends nothing', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user);
+    await user.type(screen.getByLabelText('URL'), 'https://{{address}/');
+    await user.type(screen.getByLabelText('Request headers (one per line, Name: value)'), 'Authorization: Bearer abc');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/carry credentials: put them in the check’s secret/)).toBeInTheDocument();
+    expect(posted).toHaveLength(0);
+  });
+
   it('sends the assertions the rows compose', async () => {
     const user = userEvent.setup();
     const posted = await openNew(user);

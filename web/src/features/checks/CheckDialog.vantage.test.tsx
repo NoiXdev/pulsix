@@ -86,6 +86,23 @@ describe('CheckDialog — vantage points', () => {
     expect(screen.getByText('Checks with a secret are probed only from the Pulsix server.')).toBeInTheDocument();
   });
 
+  it('keeps a check with a custom request on the Pulsix server and says why (backlog 3.84)', async () => {
+    const user = userEvent.setup();
+    await openNew(user, 'http');
+    const groups = screen.getByRole('combobox', { name: 'Probe from the agents of these groups' });
+    await user.type(screen.getByLabelText('Request headers (one per line, Name: value)'), 'X-A: 1');
+    expect(groups).toBeDisabled();
+    const why = 'Checks that send a method other than GET or HEAD, headers or a body are probed only from the Pulsix server.';
+    expect(screen.getByText(why)).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Request headers (one per line, Name: value)'));
+    expect(groups).toBeEnabled();
+    await pickOption(screen, 'Method', { value: 'HEAD' });
+    expect(groups).toBeEnabled();
+    await pickOption(screen, 'Method', { value: 'DELETE' });
+    expect(groups).toBeDisabled();
+    expect(screen.getByText(why)).toBeInTheDocument();
+  });
+
   it('leaves groups chosen before the secret removable', async () => {
     const user = userEvent.setup();
     await openNew(user, 'http');
