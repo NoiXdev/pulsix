@@ -185,3 +185,31 @@ describe('vanished rows (3.88)', () => {
     expect(within(row).queryByRole('button', { name: /Vergessen/ })).not.toBeInTheDocument();
   });
 });
+
+describe('assertion items of a tcp check (3.87)', () => {
+  it('lists them in the assertion table with the rules of tcp.assertion', async () => {
+    const user = userEvent.setup();
+    const tcpRule = { ...rule, metric: 'tcp.assertion', form: { metric: 'tcp.assertion', op: '>=', value: 1 }, source: 'tcp.assertion >= 1' };
+    mockApi(routes({
+      host_id: 'h1',
+      monitored: true,
+      checks: [{
+        definition_id: 'd2', key: 'ssh', plugin: 'tcp',
+        params: { port: 22, assertions: ['banner=response matches "^SSH-2" @warn'] },
+        interval_seconds: 60, enabled: true, origin: 'custom', source: 'host',
+        values: [
+          v('', 'tcp.up', { value: 1, state: 'ok' }),
+          v('banner', 'tcp.assertion', { label: 'pass', state: 'ok' }),
+          v('banner', 'tcp.assertion_actual', { label: '"SSH-2.0-OpenSSH_9.6"' }),
+        ],
+      }],
+    }, [{ check_key: 'ssh', item: 'banner', metric: 'tcp.assertion', severity: 'warn', observed: true, winner: tcpRule, shadowed: [] }]));
+    await renderCard(true);
+    const table = await screen.findByRole('table', { name: 'Assertions of ssh' });
+    expect(within(table).getByText('response matches "^SSH-2"')).toBeInTheDocument();
+    expect(within(table).getByText('"SSH-2.0-OpenSSH_9.6"')).toBeInTheDocument();
+    expect(screen.queryByText('banner tcp.assertion')).not.toBeInTheDocument();
+    await user.click(within(table).getByRole('button', { name: 'Rules for ssh banner tcp.assertion' }));
+    expect(await within(table).findByText('Assertion rule')).toBeInTheDocument();
+  });
+});

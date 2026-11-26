@@ -1,6 +1,7 @@
 import type { CheckPluginDescriptor, CheckPluginParam } from '../../api/types.ts';
 import type { ParamText } from '../../i18n/en/checks.ts';
 import type { Messages } from '../../i18n/types.ts';
+import { isAssertionPlugin } from './assertionFormat.ts';
 import { formatProblem } from './paramFormats.ts';
 
 /**
@@ -37,10 +38,11 @@ export function takesEscapes(plugin: string, param: string): boolean {
   return ESCAPED.has(`${plugin}.${param}`);
 }
 
-/** isAssertions: the http check's assertions (backlog 3.13b), which the
- * forms edit with AssertionEditor rather than a plain textarea. */
+/** isAssertions: a check's assertions (backlog 3.13b for http, 3.87 for
+ * tcp, dns and tls), which the forms edit with AssertionEditor rather
+ * than a plain textarea. */
 export function isAssertions(plugin: string, param: string): boolean {
-  return plugin === 'http' && param === 'assertions';
+  return isAssertionPlugin(plugin) && param === 'assertions';
 }
 
 /** The vantage-point parameters every synthetic plugin takes (backlog

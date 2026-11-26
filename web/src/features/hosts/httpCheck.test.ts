@@ -170,7 +170,35 @@ describe('withoutAssertionRows', () => {
     expect(withoutAssertionRows(c).map((v) => v.metric)).toEqual(['http.up', 'http.dns_ms']);
   });
   it('leaves another plugin alone', () => {
-    const c = check([value('tcp.up', { value: 1 }), value('http.assertion', { item: 'x' })], {}, 'tcp');
+    const c = check([value('icmp.up', { value: 1 }), value('http.assertion', { item: 'x' })], {}, 'icmp');
     expect(withoutAssertionRows(c)).toHaveLength(2);
+  });
+  it('drops a tcp check\'s own assertion items (backlog 3.87), not another plugin\'s', () => {
+    const c = check([value('tcp.up', { value: 1 }), value('tcp.assertion', { item: 'x' }), value('tcp.assertion_actual', { item: 'x' }), value('http.assertion', { item: 'y' })], {}, 'tcp');
+    expect(withoutAssertionRows(c).map((v) => v.metric)).toEqual(['tcp.up', 'http.assertion']);
+  });
+});
+
+describe('assertions of tcp, dns and tls (backlog 3.87)', () => {
+  it('reads a dns check\'s rows from dns.assertion in its own dialect', () => {
+    const c = check(
+      [value('dns.assertion', { item: 'ip', label: 'crit' }), value('dns.assertion_actual', { item: 'ip', label: 'absent' })],
+      { assertions: ['ip=answer("192.0.2.1")   exists', 'n=answer_count >= 2 @warn'] },
+      'dns',
+    );
+    expect(assertionRows(c, en, formatter('en'), NOW)).toEqual([
+      { key: 'ip', name: 'ip', expression: 'answer("192.0.2.1") exists', severity: 'crit', status: { label: 'crit', tone: 'crit' }, actual: 'absent', age: '1 minute ago' },
+      { key: 'n', name: 'n', expression: 'answer_count >= 2', severity: 'warn', status: { label: 'no result', tone: 'unknown' }, actual: '—', age: '—' },
+    ]);
+  });
+
+  it('has no rows for a plugin without assertions', () => {
+    expect(assertionRows(check([], { assertions: ['a=status == 200'] }, 'icmp'), en, formatter('en'), NOW)).toEqual([]);
+  });
+
+  it('words tcp.assertion like http.assertion', () => {
+    expect(discreteText(de, 'tcp', 'tcp.assertion', 'crit')).toBe('kritisch');
+    expect(discreteText(en, 'tls', 'tls.assertion_actual', 'absent')).toBe('absent');
+    expect(discreteText(en, 'icmp', 'icmp.assertion', 'crit')).toBe('crit');
   });
 });
