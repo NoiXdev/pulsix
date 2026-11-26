@@ -955,6 +955,39 @@ func TestCreateCheckDefinitionCallsCreateCheckDefinitionWithProjectionsOnce(t *t
 	}
 }
 
+// TestCheckDefinitionsRefuseWritesUnlessAllowed: a shared http check that
+// sends POST, PUT, PATCH, DELETE or a body follows the organizations'
+// rule, PULSIX_PROBE_WRITE_METHODS (backlog 3.84 fix round 1).
+func TestCheckDefinitionsRefuseWritesUnlessAllowed(t *testing.T) {
+	in := shared.CheckDefinitionInput{
+		Key: "ping", Plugin: "http", Interval: time.Minute,
+		Params: map[string]any{"url": "https://{address}/", "method": "POST", "body": "x"},
+	}
+	off := shared.NewService(newFakeStore())
+	if _, err := off.CreateCheckDefinition(ctx, in); !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "PULSIX_PROBE_WRITE_METHODS") {
+		t.Fatalf("create with writes off = %v, want a refusal naming the setting", err)
+	}
+	store := newFakeStore()
+	on := shared.NewService(store, shared.WithProbeWrites(true))
+	created, err := on.CreateCheckDefinition(ctx, in)
+	if err != nil {
+		t.Fatalf("create with writes on = %v", err)
+	}
+	// Fix round 2 (N1): with the switch off, a stored write stays
+	// editable while its request is unchanged; changing it is refused.
+	offOnStore := shared.NewService(store)
+	slower := in
+	slower.Interval = 5 * time.Minute
+	if _, err := offOnStore.UpdateCheckDefinition(ctx, created.ID, slower); err != nil {
+		t.Fatalf("update leaving the request as it is = %v", err)
+	}
+	changed := in
+	changed.Params = map[string]any{"url": "https://{address}/", "method": "POST", "body": "y"}
+	if _, err := offOnStore.UpdateCheckDefinition(ctx, created.ID, changed); !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("update changing the body with writes off = %v, want ErrInvalidInput", err)
+	}
+}
+
 // TestCreateCheckDefinitionDefaultsAnEmptyKeyBeforeCheckingReservedKeys
 // proves Service.CreateCheckDefinition applies the SAME key-defaulting rule
 // an organization's own checks.Service.CreateDefinition does (both now

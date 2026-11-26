@@ -67,7 +67,9 @@ func TestBuildConfigTCP(t *testing.T) {
 	if cfg.User != s.user || cfg.Passwd != s.password {
 		t.Errorf("credentials were altered: %q %q", cfg.User, cfg.Passwd)
 	}
-	if cfg.TLSConfig != "true" || cfg.DBName != "" || len(cfg.Params) != 0 {
+	// TLS is a tls.Config built by withTLS, never a name in the driver's
+	// global registry.
+	if cfg.TLSConfig != "" || cfg.DBName != "" || len(cfg.Params) != 0 {
 		t.Errorf("tls %q db %q params %v", cfg.TLSConfig, cfg.DBName, cfg.Params)
 	}
 	if cfg.AllowCleartextPasswords || cfg.AllowOldPasswords || cfg.AllowAllFiles || cfg.ParseTime || !cfg.AllowNativePasswords {

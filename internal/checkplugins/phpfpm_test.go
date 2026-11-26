@@ -19,7 +19,7 @@ func TestPHPFPMDescriptor(t *testing.T) {
 	}
 	urls := d.Params[0]
 	if urls.Name != "urls" || urls.Type != checkplugins.TypeList || urls.MaxEntries != 16 || urls.MaxBytes != 500 ||
-		urls.Format != checkplugins.FormatStatusURL || urls.Default != nil || urls.Example != "http://127.0.0.1/status" || urls.Required {
+		urls.Format != checkplugins.FormatPHPFPMPool || urls.Default != nil || urls.Example != "http://127.0.0.1/status" || urls.Required {
 		t.Fatalf("urls = %+v", urls)
 	}
 	if !d.UsesSecret() || d.Params[1].Required {
@@ -49,5 +49,19 @@ func TestValidatePHPFPMParams(t *testing.T) {
 		{"an empty entry refused", "phpfpm", map[string]any{"urls": []any{""}}, false},
 		{"urls that is a string refused", "phpfpm", map[string]any{"urls": "http://127.0.0.1/status"}, false},
 		{"url (singular) refused", "phpfpm", map[string]any{"url": "http://127.0.0.1/status"}, false},
+	})
+}
+
+// TestValidatePHPFPMFastCGIEntries: urls takes FastCGI entries (backlog
+// 3.11a) next to status URLs, under the same list bounds.
+func TestValidatePHPFPMFastCGIEntries(t *testing.T) {
+	runParamCases(t, []paramCase{
+		{"a TCP and a socket pool accepted", "phpfpm", map[string]any{
+			"urls": []any{"fcgi://127.0.0.1:9000/status", "unix:/run/php/php8.3-fpm.sock:/status"}}, true},
+		{"FastCGI and HTTP pools mixed accepted", "phpfpm", map[string]any{
+			"urls": []any{"http://127.0.0.1/status", "fcgi://127.0.0.1:9001/fpm-status"}, "secret": "fpm-login"}, true},
+		{"a FastCGI entry without a port refused", "phpfpm", map[string]any{"urls": []any{"fcgi://127.0.0.1/status"}}, false},
+		{"a FastCGI entry without a path refused", "phpfpm", map[string]any{"urls": []any{"unix:/run/php/fpm.sock"}}, false},
+		{"a FastCGI path with a dot refused", "phpfpm", map[string]any{"urls": []any{"fcgi://127.0.0.1:9000/index.php"}}, false},
 	})
 }

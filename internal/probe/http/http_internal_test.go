@@ -100,7 +100,7 @@ func TestRedirectPolicyCredentials(t *testing.T) {
 				via[i] = req(u)
 			}
 			next := req(tc.next)
-			if err := redirectPolicy(true, "X-Api-Key")(next, via); err != nil {
+			if err := redirectPolicy(true, []string{"X-Api-Key"})(next, via); err != nil {
 				t.Fatal(err)
 			}
 			if kept := next.Header.Get("X-Api-Key") != ""; kept != tc.keep {

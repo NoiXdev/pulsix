@@ -2,6 +2,7 @@ package checkplugins
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -65,14 +66,15 @@ func withVantage(d Descriptor) Descriptor {
 				return err
 			}
 		}
-		return vantageCheck(params)
+		return vantageCheck(d, params)
 	}
 	return d
 }
 
 // vantageCheck is the cross-parameter rules; each value already passed its
-// own spec.
-func vantageCheck(params map[string]any) error {
+// own spec. d is the descriptor whose ManagerOnly hook keeps a check on
+// the Pulsix server.
+func vantageCheck(d Descriptor, params map[string]any) error {
 	groups, _ := stringList(params[paramVantageGroups])
 	if manager, ok := params[paramVantageManager].(bool); ok && !manager && len(groups) == 0 {
 		return errors.New("a check needs at least one vantage point")
@@ -86,6 +88,11 @@ func vantageCheck(params map[string]any) error {
 	}
 	if secret, _ := params[SecretParamName].(string); secret != "" && len(groups) > 0 {
 		return errors.New("checks with a secret are probed only from the Pulsix server")
+	}
+	if d.ManagerOnly != nil && len(groups) > 0 {
+		if reason := d.ManagerOnly(params); reason != "" {
+			return fmt.Errorf("checks that %s are probed only from the Pulsix server", reason)
+		}
 	}
 	return nil
 }

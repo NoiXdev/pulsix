@@ -8,6 +8,7 @@ package checks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -151,6 +152,59 @@ func RefuseLocalKey(key string) error {
 	return nil
 }
 
+// RefuseWrites refuses a check of plugin with params that may change
+// something on its target (checkplugins.Descriptor.SendsWrites: an http
+// check's POST, PUT, PATCH, DELETE or body) unless allowed, the manager's
+// PULSIX_PROBE_WRITE_METHODS (backlog 3.84). The refusal names the
+// setting, so whoever reads it knows whom to ask. Exported for
+// internal/shared, whose installation-owned definitions follow the same
+// rule.
+func RefuseWrites(plugin string, params map[string]any, allowed bool) error {
+	d, ok := checkplugins.Get(plugin)
+	if allowed || !ok || !d.SendsWrites(params) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: checks that send POST, PUT, PATCH, DELETE or a body are turned off on this server; its operator turns them on with PULSIX_PROBE_WRITE_METHODS", ErrInvalidInput, plugin)
+}
+
+// requestParams are the parameters that make up the request a check
+// sends (backlog 3.84): what RefuseWriteChange compares.
+var requestParams = []string{"method", "headers", "body", "content_type"}
+
+// SameRequest reports whether two params maps ask for the same request:
+// the same requestParams present with the same values (a list as []any
+// or []string alike). Other parameters do not matter.
+func SameRequest(a, b map[string]any) bool {
+	pick := func(p map[string]any) string {
+		out := make(map[string]any, len(requestParams))
+		for _, k := range requestParams {
+			if v, ok := p[k]; ok {
+				out[k] = v
+			}
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return "\x00unmarshalable"
+		}
+		return string(raw)
+	}
+	return pick(a) == pick(b)
+}
+
+// RefuseWriteChange is RefuseWrites for an update of a definition stored
+// as wasPlugin with before (fix round 2, N1): a stored write stays
+// editable while the switch is off as long as the update leaves its
+// plugin and request (SameRequest) as they are, so it can still be
+// disabled, moved or renamed; adding or changing a write is refused, also
+// on a disabled definition, which would send it once enabled again.
+// Exported for internal/shared.
+func RefuseWriteChange(wasPlugin string, before map[string]any, plugin string, after map[string]any, allowed bool) error {
+	if wasPlugin == plugin && SameRequest(before, after) {
+		return nil
+	}
+	return RefuseWrites(plugin, after, allowed)
+}
+
 // normalizeDefinition validates in into a definition's mutable fields; id,
 // org, origin and the timestamps are the caller's (CreateDefinition,
 // UpdateDefinition, SeedForOrg each set them their own way).
@@ -188,6 +242,9 @@ func normalizeDefinition(in DefinitionInput) (Definition, error) {
 func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in DefinitionInput, origin string) (Definition, error) {
 	d, err := normalizeDefinition(in)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := RefuseWrites(d.Plugin, d.Params, s.probeWrites); err != nil {
 		return Definition{}, err
 	}
 	if err := RefuseLocalKey(d.Key); err != nil {
@@ -286,6 +343,9 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	}
 	existing, err := s.store.GetDefinition(ctx, orgID, id)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := RefuseWriteChange(existing.Plugin, existing.Params, d.Plugin, d.Params, s.probeWrites); err != nil {
 		return Definition{}, err
 	}
 	// Only a rename takes a key; one kept from before the reservation

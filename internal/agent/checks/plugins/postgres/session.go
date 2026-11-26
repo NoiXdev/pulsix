@@ -35,6 +35,9 @@ type session interface {
 	// not empty, otherwise every non-template database that accepts
 	// connections. Ordered by name.
 	Databases(ctx context.Context, names []string, limit int) (dbs []database, total int, err error)
+	// Replicas lists at most limit of the WAL senders this server runs,
+	// without pg_basebackup's, and how many there are in all.
+	Replicas(ctx context.Context, limit int) (rs []replica, total int, err error)
 	Close()
 }
 

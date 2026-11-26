@@ -22,10 +22,31 @@ type fakeSession struct {
 	stats    serverStats
 	statsErr error
 	closed   bool
+
+	schemas        []schemaSize
+	schemasTotal   *int // overrides the matched count; nil means len(schemas)
+	schemasErr     error
+	schemasQueried bool
 }
 
 func (f *fakeSession) Server(context.Context) (serverStats, error) { return f.stats, f.statsErr }
 func (f *fakeSession) Close()                                      { f.closed = true }
+
+// Schemas returns at most maxSchemas rows, like the query's LIMIT.
+func (f *fakeSession) Schemas(context.Context) ([]schemaSize, int, error) {
+	f.schemasQueried = true
+	if f.schemasErr != nil {
+		return nil, 0, f.schemasErr
+	}
+	out := f.schemas
+	if len(out) > maxSchemas {
+		out = out[:maxSchemas]
+	}
+	if f.schemasTotal != nil {
+		return out, *f.schemasTotal, nil
+	}
+	return out, len(f.schemas), nil
+}
 
 // clock is a settable time source.
 type clock struct{ t time.Time }

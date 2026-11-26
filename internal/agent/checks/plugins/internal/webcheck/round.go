@@ -16,6 +16,10 @@ type Outcome[S any] struct {
 	Reason string
 }
 
+// Fetcher fetches one page of a RoundEach under the round's context and
+// options: the body, or nil and a fixed reason.
+type Fetcher func(ctx context.Context, opt Options) (body []byte, reason string)
+
 // Round is the shared round of the web server plugins: it checks the
 // secret fields, then fetches every one of rawURLs concurrently (each
 // under Fetch's own dbcheck.QueryTimeout, all under one
@@ -37,16 +41,29 @@ type Outcome[S any] struct {
 // the re-panic happens before the context is checked.
 func Round[S any](ctx context.Context, rawURLs []string, maxBody int, params map[string]any, fields map[string]string,
 	parse func(body []byte) (S, error)) ([]Outcome[S], error) {
+	fetch := make([]Fetcher, len(rawURLs))
+	for i, rawURL := range rawURLs {
+		fetch[i] = func(ctx context.Context, opt Options) ([]byte, string) { return Fetch(ctx, rawURL, opt) }
+	}
+	return RoundEach(ctx, fetch, maxBody, params, fields, parse)
+}
+
+// RoundEach is Round with a fetch function per page instead of a URL
+// (phpfpm reads some pools over FastCGI, backlog 3.11a); everything else,
+// the contract included, is Round's. A fetcher must honour its context and
+// bound its own request like Fetch does.
+func RoundEach[S any](ctx context.Context, fetch []Fetcher, maxBody int, params map[string]any, fields map[string]string,
+	parse func(body []byte) (S, error)) ([]Outcome[S], error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]Outcome[S], len(rawURLs))
+	out := make([]Outcome[S], len(fetch))
 	if auth, err := ParseAuth(fields); err != nil {
 		for i := range out {
 			out[i].Reason = err.Error()
 		}
 	} else {
-		fetchAll(ctx, rawURLs, Options{VerifyTLS: VerifyTLS(params), Auth: auth, MaxBody: maxBody}, parse, out)
+		fetchAll(ctx, fetch, Options{VerifyTLS: VerifyTLS(params), Auth: auth, MaxBody: maxBody}, parse, out)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -64,19 +81,19 @@ var errPagePanicked = errors.New("webcheck: page handler panicked")
 // is recovered and, once every page is done, raised again on the caller's
 // goroutine as errPagePanicked, where the scheduler's recovery of a
 // SecretPlugin turns it into its fixed observation.
-func fetchAll[S any](ctx context.Context, rawURLs []string, opt Options, parse func(body []byte) (S, error), out []Outcome[S]) {
+func fetchAll[S any](ctx context.Context, fetch []Fetcher, opt Options, parse func(body []byte) (S, error), out []Outcome[S]) {
 	cctx, cancel := context.WithTimeout(ctx, dbcheck.CollectTimeout)
 	defer cancel()
-	panicked := make([]bool, len(rawURLs))
+	panicked := make([]bool, len(fetch))
 	var wg sync.WaitGroup
-	for i, rawURL := range rawURLs {
+	for i, f := range fetch {
 		wg.Go(func() {
 			defer func() {
 				if recover() != nil {
 					panicked[i] = true
 				}
 			}()
-			body, reason := Fetch(cctx, rawURL, opt)
+			body, reason := f(cctx, opt)
 			if reason != "" {
 				out[i].Reason = reason
 				return

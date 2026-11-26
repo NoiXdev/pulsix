@@ -71,6 +71,11 @@ x-manager-base: &manager-base
     # database or the manager's neighbours. Setting it replaces the
     # default: include the subnet when you override it.
     PULSIX_PROBE_DENY_CIDRS: "${PULSIX_PROBE_DENY_CIDRS:-${PULSIX_NETWORK_SUBNET:-10.213.73.0/24}}"
+    # Whether http checks may send POST, PUT, PATCH, DELETE or a request
+    # body (true or false). Off by default: anyone who may write checks
+    # could otherwise send writes to every network the manager reaches
+    # outside PULSIX_PROBE_DENY_CIDRS.
+    PULSIX_PROBE_WRITE_METHODS: "${PULSIX_PROBE_WRITE_METHODS:-false}"
     # How long a quiet item, or a value an item stopped reporting, may stay
     # silent before it is forgotten (Go duration, at least 48h; 0 switches
     # the expiry off). Unset: 168h.

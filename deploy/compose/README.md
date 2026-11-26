@@ -359,6 +359,14 @@ the subnet. ICMP checks use unprivileged sockets and need
 `net.ipv4.ping_group_range` on the Docker host to include the manager's
 group (Docker's default does).
 
+`http` checks send GET, HEAD or OPTIONS. POST, PUT, PATCH, DELETE and a
+request body need `PULSIX_PROBE_WRITE_METHODS=true` (default `false`): with
+it, every member who may write checks can make the manager send writes to
+any address it reaches outside `PULSIX_PROBE_DENY_CIDRS`, every interval, so
+list every internal network those members must not reach there first.
+Turned off again, such checks are refused on save and stored ones read an
+error naming the variable instead of probing.
+
 ## Commands
 
 The manager's commands (`backup`, `restore`, `worker add`) run in the

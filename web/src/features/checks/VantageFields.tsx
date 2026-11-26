@@ -6,7 +6,7 @@ import { useT } from '../../i18n/useT.ts';
 import type { CheckPluginDescriptor, CheckPluginParam, MonitoringGroup } from '../../api/types.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
 import {
-  VANTAGE_AGENTS_PER_GROUP, VANTAGE_FAIL_POLICY, VANTAGE_GROUPS, VANTAGE_MANAGER, vantageGroupsOf, paramText, type ParamValues,
+  VANTAGE_AGENTS_PER_GROUP, VANTAGE_FAIL_POLICY, VANTAGE_GROUPS, VANTAGE_MANAGER, customRequest, vantageGroupsOf, paramText, type ParamValues,
 } from './paramForm.ts';
 
 /**
@@ -16,7 +16,8 @@ import {
  * and — once a group is chosen — how many agents per group and when the
  * check as a whole is down. A check whose secret is set is probed only
  * from the server (the plugins' own rule), so the group picker is
- * disabled with that reason while a secret is named.
+ * disabled with that reason while a secret is named; so is an http check
+ * with a custom request (backlog 3.84).
  *
  * The values stay in ParamFields' shape (the groups as one id per line),
  * so paramsFrom, paramValuesFrom and validateParams treat them like any
@@ -54,10 +55,16 @@ export function VantageFields({
 
   const chosen = vantageGroupsOf(values);
   const secret = typeof values.secret === 'string' && values.secret.trim() !== '';
+  const custom = customRequest(plugin.name, values);
+  const serverOnly = secret || custom;
   const managerId = `${idPrefix}-${VANTAGE_MANAGER}`;
   const groupsId = `${idPrefix}-${VANTAGE_GROUPS}`;
   const managerValue = values[VANTAGE_MANAGER];
-  const groupsHint = secret ? t.checks.vantage.secretOnlyServer : text(VANTAGE_GROUPS)?.hint;
+  const groupsHint = secret
+    ? t.checks.vantage.secretOnlyServer
+    : custom
+      ? t.checks.vantage.customRequestOnlyServer
+      : text(VANTAGE_GROUPS)?.hint;
 
   return (
     <fieldset className="flex flex-col gap-3 rounded-md border border-border p-3">
@@ -89,10 +96,10 @@ export function VantageFields({
           placeholder={t.checks.vantage.addGroup}
           options={groups.map((g) => ({ value: g.id, label: g.name }))}
           value={chosen}
-          // A secret closes the picker but leaves the chosen groups
-          // removable, so a form that picked groups before naming a secret
-          // is not stuck.
-          max={secret ? 0 : groupSpec.max_entries}
+          // A secret or a custom http request closes the picker but leaves
+          // the chosen groups removable, so a form that picked groups
+          // before is not stuck.
+          max={serverOnly ? 0 : groupSpec.max_entries}
           disabled={disabled}
           invalid={!!errors[VANTAGE_GROUPS]}
           aria-describedby={groupsHint ? `${groupsId}-hint` : undefined}

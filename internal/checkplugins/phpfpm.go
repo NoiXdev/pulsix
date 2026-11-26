@@ -5,7 +5,8 @@ package checkplugins
 const maxPHPFPMPools = 16
 
 // phpfpmPlugin: PHP-FPM pool health from each pool's status page (backlog
-// 3.11), served by the web server in front of FPM. Each urls entry is one
+// 3.11), served by the web server in front of FPM or read over FastCGI
+// from the pool's own address (backlog 3.11a). Each urls entry is one
 // pool and the item its metrics are reported on, so urls is the ItemParam;
 // item "" carries phpfpm.pools_down whatever the list says. Absent or
 // empty, urls means the one local default pool, shown as the example: a
@@ -17,7 +18,7 @@ func phpfpmPlugin() Descriptor {
 		Name: "phpfpm",
 		Runs: Agent,
 		Params: []ParamSpec{
-			{Name: "urls", Type: TypeList, MaxEntries: maxPHPFPMPools, MaxBytes: maxParamStringLen, Format: FormatStatusURL, Example: "http://127.0.0.1/status"},
+			{Name: "urls", Type: TypeList, MaxEntries: maxPHPFPMPools, MaxBytes: maxParamStringLen, Format: FormatPHPFPMPool, Example: "http://127.0.0.1/status"},
 			SecretParam(),
 			{Name: "verify_tls", Type: TypeBool, Default: true},
 		},

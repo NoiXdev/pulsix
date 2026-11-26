@@ -168,12 +168,18 @@ func TestHostVantagesExpectedOnly(t *testing.T) {
 		{Key: "sw", Plugin: "snmp", Interval: time.Minute, Params: map[string]any{
 			"secret": "community", "vantage_groups": []any{uuid.NewString()},
 		}},
+		{Key: "post", Plugin: "http", Interval: time.Minute, Params: map[string]any{
+			"url": "http://192.0.2.1/", "method": "POST", "vantage_groups": []any{uuid.NewString()},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := got["sw"]; ok {
 		t.Fatalf("a check with a secret has vantages: %+v", got["sw"])
+	}
+	if _, ok := got["post"]; ok {
+		t.Fatalf("a check with a custom request has vantages: %+v", got["post"])
 	}
 	web := got["web"]
 	if web.Policy != "any" {
