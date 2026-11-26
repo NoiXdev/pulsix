@@ -374,3 +374,27 @@ func TestRepoHookSyncsTheRepository(t *testing.T) {
 		t.Fatalf("wrong token: %d", resp.StatusCode)
 	}
 }
+
+// TestHookCollectsOnASettlingTrigger: a delivery to a trigger with a
+// settle delay (backlog 2.137) is accepted and starts no run yet; the
+// answer names no run.
+func TestHookCollectsOnASettlingTrigger(t *testing.T) {
+	f := newRunFixture(t, "hook-settle")
+	c := f.createTrigger(t, func(in *triggers.Input) { in.SettleSeconds = 60 })
+	body := []byte(`{"ref":"v1.2.3"}`)
+	resp := hook(t, c.URL, body, signedHeaders(c, body))
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("hook: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		RunID string `json:"run_id"`
+	}
+	decodeInto(t, resp, &out)
+	if out.RunID != "" {
+		t.Fatalf("a collected delivery answered run %s", out.RunID)
+	}
+	p, err := f.s.Deps.Triggers.Pending(db.WithOrgScope(context.Background(), f.orgID), f.orgID, c.Trigger.ID)
+	if err != nil || p == nil || p.Deliveries != 1 {
+		t.Fatalf("pending = %+v, %v", p, err)
+	}
+}

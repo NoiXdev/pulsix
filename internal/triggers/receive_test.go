@@ -23,25 +23,40 @@ import (
 type fakeRuns struct {
 	mu       sync.Mutex
 	requests []jobs.RunRequest
-	active   bool
-	err      error
+	// groups are the run groups of the started runs, in order.
+	groups []uuid.UUID
+	active bool
+	err    error
+	// onEnqueue, when set, runs at the start of every enqueue, outside
+	// the lock (a test holds an enqueue there).
+	onEnqueue func()
 }
 
 func (f *fakeRuns) EnqueueRunWith(_ context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
+	if f.onEnqueue != nil {
+		f.onEnqueue()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
 	f.requests = append(f.requests, req)
-	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: uuid.Must(uuid.NewV7())}}, nil
+	group := uuid.Must(uuid.NewV7())
+	f.groups = append(f.groups, group)
+	return []jobs.Job{{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, TemplateID: &templateID, RunGroupID: group}}, nil
 }
 
 func (f *fakeRuns) EnqueueSyncWith(_ context.Context, orgID, _ uuid.UUID, req jobs.RunRequest) (jobs.Job, error) {
+	if f.onEnqueue != nil {
+		f.onEnqueue()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
-	return jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, RunGroupID: uuid.Must(uuid.NewV7())}, f.err
+	group := uuid.Must(uuid.NewV7())
+	f.groups = append(f.groups, group)
+	return jobs.Job{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, RunGroupID: group}, f.err
 }
 
 func (f *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {

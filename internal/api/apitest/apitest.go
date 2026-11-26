@@ -724,8 +724,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	// production wiring (internal/app.Build) with PublicURL derived from
 	// this test server's own URL, so Created.URL from a test-created
 	// trigger already points at it.
+	triggerStore := triggers.NewSQLStore(d)
 	triggersSvc := triggers.NewService(triggers.Deps{
-		Store: triggers.NewSQLStore(d), Templates: templatesSvc, Repos: reposSvc, Box: crypto.NewBox(testMasterKey),
+		Store: triggerStore, Pending: triggerStore, Templates: templatesSvc, Repos: reposSvc, Box: crypto.NewBox(testMasterKey),
 		Runs: jobsSvc, Audit: auditRec, PublicURL: publicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
 		Now: time.Now, Rand: rand.Reader,
 	})

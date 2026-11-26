@@ -113,6 +113,9 @@ type Deps struct {
 	Repos     RepoLookup
 	Box       Sealer
 	Runs      Runner
+	// Pending keeps the collected runs of triggers with a settle delay
+	// (backlog 2.137); nil refuses a delivery to such a trigger.
+	Pending   PendingStore
 	Audit     Auditor
 	PublicURL string
 	// IPLimit bounds failed calls per source address across every
@@ -440,6 +443,9 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 	if _, err := compileMapping(in.Mapping); err != nil {
 		return Trigger{}, err
 	}
+	if err := checkSettle(in.SettleSeconds, in.MaxWaitSeconds); err != nil {
+		return Trigger{}, err
+	}
 	switch in.Kind {
 	case KindTemplateRun:
 		if in.TemplateID == nil || in.RepoID != nil {
@@ -474,6 +480,7 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, in Input) (Tri
 		ID: id, OrgID: orgID, Kind: in.Kind, TemplateID: in.TemplateID, RepoID: in.RepoID, Name: name,
 		Enabled: in.Enabled, Preset: in.Preset, TimestampHeader: in.TimestampHeader, AllowCIDRs: cidrs,
 		Mapping: in.Mapping, OnActive: onActive, RateLimit: rl,
+		SettleSeconds: in.SettleSeconds, MaxWaitSeconds: in.MaxWaitSeconds,
 	}, nil
 }
 

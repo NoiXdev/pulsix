@@ -105,6 +105,9 @@ type App struct {
 	stopReaper func()
 	stopRetest func()
 	stopTicker func()
+	// stopSettle stops the webhook settle ticker (backlog 2.137), waiting
+	// for a batch in flight.
+	stopSettle func()
 	// stopChain stops the follow-up starter (job chaining), waiting for a
 	// batch in flight.
 	stopChain func()
@@ -218,6 +221,9 @@ func (a *App) Close() {
 	}
 	if a.stopTicker != nil {
 		a.stopTicker()
+	}
+	if a.stopSettle != nil {
+		a.stopSettle()
 	}
 	if a.stopChain != nil {
 		a.stopChain()
@@ -545,8 +551,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// POST /hooks/jobs/{id} and POST /hooks/repos/{id}. IPLimit is the
 	// per-source-address limit (spec §9), in process like the reaper and
 	// ticker above — with several managers, each counts on its own.
+	triggerStore := triggers.NewSQLStore(appDB)
 	triggersSvc := triggers.NewService(triggers.Deps{
-		Store: triggers.NewSQLStore(appDB), Templates: templatesSvc, Repos: reposSvc, Box: box,
+		Store: triggerStore, Pending: triggerStore, Templates: templatesSvc, Repos: reposSvc, Box: box,
 		Runs: jobsSvc, Audit: auditRec, PublicURL: cfg.PublicURL, IPLimit: clientip.NewLimiter(triggers.HookIPLimit, time.Minute, time.Now),
 		Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
@@ -855,6 +862,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	dueStore := schedules.NewDueSQLStore(appDB, rand.Reader, slog.Default())
 	dueStore.SetOutbox(outbox)
 	tickerStop := startLoop(schedules.NewTicker(schedulesSvc, dueStore, cfg.ScheduleTick, o.scheduleNow, nil, slog.Default()).Run)
+	// The webhook settle ticker (backlog 2.137): starts the collected run
+	// of a trigger with a settle delay once its deliveries settled. One
+	// per manager; the claim's SKIP LOCKED makes several safe. Stopped in
+	// Close and on every early return below.
+	settleStop := startLoop(triggers.NewSettleTicker(triggersSvc, o.settleTick, o.scheduleNow, nil, slog.Default()).Run)
 	chainStarter := chain.NewStarter(chainStore, jobsSvc, NewChainTemplateNames(templatesSvc), maintenanceSvc, NewChainScheduleGuards(schedulesSvc), auditRec, time.Now, slog.Default(), chain.WithTick(o.chainTick))
 	chainStarter.SetNotifier(NewChainNotifier(outbox))
 	chainStop := startLoop(chainStarter.Run)
@@ -950,6 +962,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			authReaperStop()
 			inviteReaperStop()
 			tickerStop()
+			settleStop()
 			chainStop()
 			runRequestStop()
 			dispatchStop()
@@ -980,6 +993,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				authReaperStop()
 				inviteReaperStop()
 				tickerStop()
+				settleStop()
 				chainStop()
 				runRequestStop()
 				dispatchStop()
@@ -1006,7 +1020,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, locks: lockDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopChain: chainStop, stopRunRequests: runRequestStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopSettle: settleStop, stopChain: chainStop, stopRunRequests: runRequestStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

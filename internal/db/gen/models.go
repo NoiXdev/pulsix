@@ -670,6 +670,8 @@ type JobTrigger struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 	Revision        int64          `json:"revision"`
 	DisabledReason  *string        `json:"disabled_reason"`
+	SettleSeconds   int32          `json:"settle_seconds"`
+	MaxWaitSeconds  *int32         `json:"max_wait_seconds"`
 }
 
 type MaintenanceWindow struct {
@@ -1130,6 +1132,20 @@ type TriggerDelivery struct {
 	Outcome    string      `json:"outcome"`
 	Reason     string      `json:"reason"`
 	JobGroupID pgtype.UUID `json:"job_group_id"`
+	PendingID  pgtype.UUID `json:"pending_id"`
+}
+
+type TriggerPendingRun struct {
+	TriggerID      uuid.UUID `json:"trigger_id"`
+	OrgID          uuid.UUID `json:"org_id"`
+	ID             uuid.UUID `json:"id"`
+	FirstAt        time.Time `json:"first_at"`
+	LastAt         time.Time `json:"last_at"`
+	DueAt          time.Time `json:"due_at"`
+	DeadlineAt     time.Time `json:"deadline_at"`
+	Deliveries     int32     `json:"deliveries"`
+	LastDeliveryID uuid.UUID `json:"last_delivery_id"`
+	Overrides      []byte    `json:"overrides"`
 }
 
 type User struct {

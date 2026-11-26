@@ -68,6 +68,33 @@ func normalizeRateLimit(rl RateLimit) (RateLimit, error) {
 	return rl, nil
 }
 
+// Settle delay bounds (backlog 2.137): 0 or minSettleSeconds to
+// maxSettleSeconds; a maximum wait from the settle delay to
+// maxWaitSecondsCap, by default defaultMaxWaitFactor times the delay.
+const (
+	minSettleSeconds     = 5
+	maxSettleSeconds     = 3600
+	maxWaitSecondsCap    = 86400
+	defaultMaxWaitFactor = 10
+)
+
+// checkSettle checks a settle delay and its maximum wait.
+func checkSettle(settle int, maxWait *int) error {
+	if settle != 0 && (settle < minSettleSeconds || settle > maxSettleSeconds) {
+		return fmt.Errorf("%w: the settle delay is 0 (off) or %d-%d seconds", ErrInvalidInput, minSettleSeconds, maxSettleSeconds)
+	}
+	if maxWait == nil {
+		return nil
+	}
+	if settle == 0 {
+		return fmt.Errorf("%w: a maximum wait needs a settle delay", ErrInvalidInput)
+	}
+	if *maxWait < settle || *maxWait > maxWaitSecondsCap {
+		return fmt.Errorf("%w: the maximum wait is from the settle delay (%d seconds) to %d seconds", ErrInvalidInput, settle, maxWaitSecondsCap)
+	}
+	return nil
+}
+
 // capacityAndRefill turns a limit into bucket parameters.
 func capacityAndRefill(rl RateLimit) (capacity, perSecond float64) {
 	per, err := time.ParseDuration(rl.Per)

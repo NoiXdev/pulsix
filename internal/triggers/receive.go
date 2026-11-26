@@ -57,6 +57,8 @@ type Result struct {
 	RunID      *uuid.UUID    // the first job of the run (triggered)
 	Field      string        // invalid_payload: the offending field, never its value
 	RetryAfter time.Duration // rate_limited
+	PendingID  *uuid.UUID    // collected: the pending run the delivery joined
+	DueAt      *time.Time    // collected: when that run starts unless more deliveries arrive
 }
 
 // Receive runs spec §3's check order. The error is reserved for internal
@@ -201,6 +203,9 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 		}
 		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field)
 	}
+	if t.SettleSeconds > 0 {
+		return s.collect(ctx, t, d, ov)
+	}
 	// Check-then-enqueue, deliberately not serialised (backlog 2.62).
 	// Two deliveries landing in the same instant — or one racing the
 	// schedule ticker's own overlap=skip for the same template — can
@@ -222,15 +227,8 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 			return s.finish(ctx, d, Result{Outcome: OutcomeSkippedActive}, "a run of the template is still active")
 		}
 	}
-	var runOv *jobs.RunOverrides
-	if !ov.Empty() {
-		// A payload is untrusted input: the claim marks every mapped string
-		// unsafe for Ansible, so a "{{ lookup(…) }}" in a branch name stays
-		// text instead of running on the worker (final review C1).
-		runOv = &jobs.RunOverrides{Limit: ov.Limit, ExtraVars: ov.ExtraVars, Untrusted: true}
-	}
 	ref := t.ID
-	created, err := s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref, Overrides: runOv})
+	created, err := s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, jobs.RunRequest{Trigger: jobs.TriggerWebhook, TriggerRef: &ref, Overrides: webhookOverrides(ov)})
 	if err != nil {
 		s.d.Log.ErrorContext(ctx, "webhook run could not be enqueued", "trigger", t.ID, "org", t.OrgID, "err", err)
 		return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, failureReason(err))
@@ -242,6 +240,9 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 }
 
 func (s *Service) syncRepo(ctx context.Context, t Trigger, d Delivery) (Result, Delivery, error) {
+	if t.SettleSeconds > 0 {
+		return s.collect(ctx, t, d, templates.Overrides{})
+	}
 	if t.OnActive == OnActiveSkip {
 		active, err := s.d.Runs.HasActiveSync(ctx, t.OrgID, *t.RepoID)
 		if err != nil {

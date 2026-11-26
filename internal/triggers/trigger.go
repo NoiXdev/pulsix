@@ -18,6 +18,9 @@ var (
 	ErrInvalidInput     = errors.New("invalid input")
 	ErrNameTaken        = errors.New("name already in use")
 	ErrRevisionMismatch = errors.New("revision mismatch")
+	// ErrNothingPending answers a run-now or discard of a trigger that has
+	// no collected run waiting (none was collected, or it already started).
+	ErrNothingPending = errors.New("no collected run is pending")
 )
 
 type Kind string
@@ -92,6 +95,11 @@ const (
 	OutcomeInvalidPayload Outcome = "invalid_payload"
 	OutcomeDisabled       Outcome = "disabled"
 	OutcomeFailed         Outcome = "failed"
+	// OutcomeCollected is a delivery to a trigger with a settle delay: it
+	// joined the trigger's pending run (Delivery.PendingID), which starts
+	// once the deliveries settle; Delivery.JobGroupID names that run once
+	// it started (backlog 2.137).
+	OutcomeCollected Outcome = "collected"
 	// OutcomeNotFound answers an unknown id or a kind/endpoint mismatch;
 	// it is never stored (there is no trigger to attach it to).
 	OutcomeNotFound Outcome = "not_found"
@@ -122,17 +130,23 @@ func (m Mapping) empty() bool { return len(m.ExtraVars) == 0 && m.Limit == "" }
 
 // Trigger is a stored trigger without its secret.
 type Trigger struct {
-	ID, OrgID            uuid.UUID
-	Kind                 Kind
-	TemplateID, RepoID   *uuid.UUID
-	Name                 string
-	Enabled              bool
-	Preset               Preset
-	TimestampHeader      string
-	AllowCIDRs           []netip.Prefix
-	Mapping              Mapping
-	OnActive             OnActive
-	RateLimit            RateLimit
+	ID, OrgID          uuid.UUID
+	Kind               Kind
+	TemplateID, RepoID *uuid.UUID
+	Name               string
+	Enabled            bool
+	Preset             Preset
+	TimestampHeader    string
+	AllowCIDRs         []netip.Prefix
+	Mapping            Mapping
+	OnActive           OnActive
+	RateLimit          RateLimit
+	// SettleSeconds is the settle delay: 0 starts a run per delivery,
+	// otherwise deliveries are collected into one run that starts this
+	// long after the last of them, at the latest MaxWait after the first.
+	SettleSeconds int
+	// MaxWaitSeconds caps the wait; nil is ten times SettleSeconds.
+	MaxWaitSeconds       *int
 	CreatedBy            *uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 	Revision             int64
@@ -146,6 +160,19 @@ type Trigger struct {
 // to what it runs or syncs disabled until a person reviews it (spec
 // 2026-11-25 C2, migration 00130).
 const DisabledForReview = "assistant_change"
+
+// Settle is the settle delay; 0 is off.
+func (t Trigger) Settle() time.Duration { return time.Duration(t.SettleSeconds) * time.Second }
+
+// MaxWait is how long after the first collected delivery the run starts at
+// the latest: MaxWaitSeconds, or ten times the settle delay; 0 when the
+// settle delay is off.
+func (t Trigger) MaxWait() time.Duration {
+	if t.MaxWaitSeconds != nil {
+		return time.Duration(*t.MaxWaitSeconds) * time.Second
+	}
+	return defaultMaxWaitFactor * t.Settle()
+}
 
 // Auth is the preset's authentication mode.
 func (t Trigger) Auth() Auth { spec, _ := preset(t.Preset); return spec.auth }
@@ -166,6 +193,10 @@ type Input struct {
 	Mapping         Mapping
 	OnActive        OnActive
 	RateLimit       RateLimit
+	// SettleSeconds is 0 (off) or 5-3600; MaxWaitSeconds, only with a
+	// settle delay, is SettleSeconds-86400 or nil (ten times the delay).
+	SettleSeconds  int
+	MaxWaitSeconds *int
 }
 
 // Delivery is one received call; the body is never kept.
@@ -176,6 +207,8 @@ type Delivery struct {
 	Outcome              Outcome
 	Reason               string
 	JobGroupID           *uuid.UUID
+	// PendingID is the pending run a collected delivery joined.
+	PendingID *uuid.UUID
 }
 
 // Created carries the secret, shown once, and the URL.

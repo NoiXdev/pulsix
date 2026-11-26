@@ -1,9 +1,11 @@
 -- name: CreateTrigger :one
 INSERT INTO job_triggers (id, org_id, kind, template_id, repo_id, name, enabled, preset, auth, signature_header,
-                          timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by)
+                          timestamp_header, secret, allow_cidrs, mapping, on_active, rate_limit, created_by,
+                          settle_seconds, max_wait_seconds)
 VALUES (sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(kind), sqlc.narg(template_id), sqlc.narg(repo_id), sqlc.arg(name),
         sqlc.arg(enabled), sqlc.arg(preset), sqlc.arg(auth), sqlc.arg(signature_header), sqlc.arg(timestamp_header),
-        sqlc.arg(secret), sqlc.arg(allow_cidrs), sqlc.arg(mapping), sqlc.arg(on_active), sqlc.arg(rate_limit), sqlc.narg(created_by))
+        sqlc.arg(secret), sqlc.arg(allow_cidrs), sqlc.arg(mapping), sqlc.arg(on_active), sqlc.arg(rate_limit), sqlc.narg(created_by),
+        sqlc.arg(settle_seconds), sqlc.narg(max_wait_seconds))
 RETURNING *;
 
 -- name: GetTrigger :one
@@ -25,7 +27,8 @@ ORDER BY name;
 UPDATE job_triggers SET name = sqlc.arg(name), enabled = sqlc.arg(enabled), preset = sqlc.arg(preset), auth = sqlc.arg(auth),
   signature_header = sqlc.arg(signature_header), timestamp_header = sqlc.arg(timestamp_header),
   allow_cidrs = sqlc.arg(allow_cidrs), mapping = sqlc.arg(mapping), on_active = sqlc.arg(on_active),
-  rate_limit = sqlc.arg(rate_limit), revision = revision + 1, updated_at = now(),
+  rate_limit = sqlc.arg(rate_limit), settle_seconds = sqlc.arg(settle_seconds), max_wait_seconds = sqlc.narg(max_wait_seconds),
+  revision = revision + 1, updated_at = now(),
   disabled_reason = CASE WHEN sqlc.arg(enabled)::boolean THEN NULL ELSE disabled_reason END
 WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id) AND revision = sqlc.arg(revision)
 RETURNING *;
@@ -128,9 +131,10 @@ SELECT tokens, updated_at FROM trigger_buckets WHERE org_id = sqlc.arg(org_id) A
 -- under concurrent deliveries (Task 9 review, Minor 1). Every other
 -- outcome never matches that index, so it always inserts. 0 rows affected
 -- tells the caller nothing was written, so it can skip the trim (Minor 2).
-INSERT INTO trigger_deliveries (id, org_id, trigger_id, at, source_ip, outcome, reason, job_group_id)
+INSERT INTO trigger_deliveries (id, org_id, trigger_id, at, source_ip, outcome, reason, job_group_id, pending_id)
 VALUES (sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(trigger_id)::uuid, sqlc.arg(at)::timestamptz,
-        sqlc.arg(source_ip)::text, sqlc.arg(outcome)::text, sqlc.arg(reason)::text, sqlc.narg(job_group_id)::uuid)
+        sqlc.arg(source_ip)::text, sqlc.arg(outcome)::text, sqlc.arg(reason)::text, sqlc.narg(job_group_id)::uuid,
+        sqlc.narg(pending_id)::uuid)
 ON CONFLICT (trigger_id, outcome, (trigger_delivery_minute(at))) WHERE outcome IN (
   'rejected_ip', 'rejected_auth', 'disabled', 'rate_limited', 'invalid_payload'
 ) DO NOTHING;

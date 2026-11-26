@@ -27,6 +27,10 @@ type buildOptions struct {
 	// chain.DefaultTick); a test seam so an end-to-end test sees a chain
 	// continue without waiting seconds.
 	chainTick time.Duration
+	// settleTick overrides the webhook settle ticker's interval (0 keeps
+	// triggers.DefaultSettleTick); a test seam like chainTick. The ticker
+	// reads scheduleNow, the schedule ticker's clock.
+	settleTick time.Duration
 	// probeGuard replaces the synthetic-check probe runner's dial guard
 	// (nil keeps the production guard, probeGuardFor); probeTick and
 	// probeRefresh override its tick and refresh (0 keeps
@@ -69,6 +73,12 @@ func WithRetentionPurgeInterval(d time.Duration) Option {
 // production passes no option and keeps the 5 s default.
 func WithChainTick(d time.Duration) Option {
 	return func(o *buildOptions) { o.chainTick = d }
+}
+
+// WithSettleTick overrides the webhook settle ticker's interval — a test
+// seam; production passes no option and keeps the 5 s default.
+func WithSettleTick(d time.Duration) Option {
+	return func(o *buildOptions) { o.settleTick = d }
 }
 
 // WithProbeGuard replaces the synthetic-check probe runner's dial guard —

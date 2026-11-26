@@ -91,6 +91,10 @@ func hookResponse(res triggers.Result) (*hookOutput, error) {
 	case triggers.OutcomeSkippedActive:
 		out.Body.Status = "skipped"
 		return out, nil
+	case triggers.OutcomeCollected:
+		// Accepted into the trigger's pending run (backlog 2.137): no run
+		// to name yet.
+		return out, nil
 	case triggers.OutcomeRateLimited:
 		secs := int(math.Ceil(res.RetryAfter.Seconds()))
 		if secs < 1 {

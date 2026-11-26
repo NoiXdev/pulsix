@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/netip"
 	"time"
@@ -19,11 +20,12 @@ import (
 // SQLStore persists triggers. Resolve runs on whatever scope ctx carries —
 // the hook endpoints carry none (bypass policy) and look up by id alone.
 type SQLStore struct {
-	d *db.DB
-	q *gen.Queries
+	d   *db.DB
+	q   *gen.Queries
+	log *slog.Logger
 }
 
-func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
+func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d), log: slog.Default()} }
 
 func (st *SQLStore) Create(ctx context.Context, t Trigger, sealed []byte) (Trigger, error) {
 	mapping, rl, err := encode(t)
@@ -41,6 +43,7 @@ func (st *SQLStore) Create(ctx context.Context, t Trigger, sealed []byte) (Trigg
 			Name: t.Name, Enabled: t.Enabled, Preset: string(t.Preset), Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(),
 			TimestampHeader: t.TimestampHeader, Secret: sealed, AllowCidrs: cidrsOrEmpty(t.AllowCIDRs), Mapping: mapping,
 			OnActive: string(t.OnActive), RateLimit: rl, CreatedBy: db.NullUUID(t.CreatedBy),
+			SettleSeconds: int32(t.SettleSeconds), MaxWaitSeconds: int32Ptr(t.MaxWaitSeconds), //nolint:gosec // bounded by checkSettle
 		})
 		if err != nil {
 			return err
@@ -130,6 +133,7 @@ func (st *SQLStore) Update(ctx context.Context, t Trigger, revision int64) (Trig
 			OrgID: t.OrgID, ID: t.ID, Revision: revision, Name: t.Name, Enabled: t.Enabled, Preset: string(t.Preset),
 			Auth: string(t.Auth()), SignatureHeader: t.SignatureHeader(), TimestampHeader: t.TimestampHeader,
 			AllowCidrs: cidrsOrEmpty(t.AllowCIDRs), Mapping: mapping, OnActive: string(t.OnActive), RateLimit: rl,
+			SettleSeconds: int32(t.SettleSeconds), MaxWaitSeconds: int32Ptr(t.MaxWaitSeconds), //nolint:gosec // bounded by checkSettle
 		})
 		if err != nil {
 			return err
@@ -310,7 +314,7 @@ func (st *SQLStore) Deliveries(ctx context.Context, orgID, id uuid.UUID, limit i
 	out := make([]Delivery, len(rows))
 	for i, r := range rows {
 		out[i] = Delivery{ID: r.ID, OrgID: r.OrgID, TriggerID: r.TriggerID, At: r.At, SourceIP: r.SourceIp,
-			Outcome: Outcome(r.Outcome), Reason: r.Reason, JobGroupID: db.UUIDPtr(r.JobGroupID)}
+			Outcome: Outcome(r.Outcome), Reason: r.Reason, JobGroupID: db.UUIDPtr(r.JobGroupID), PendingID: db.UUIDPtr(r.PendingID)}
 	}
 	return out, nil
 }
@@ -350,9 +354,15 @@ func (st *SQLStore) TakeToken(ctx context.Context, orgID, id uuid.UUID, rl RateL
 // skipped: nothing changed, so there is nothing to trim for (Task 9
 // review, Minor 2).
 func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery) error {
-	rows, err := st.q.InsertTriggerDelivery(ctx, gen.InsertTriggerDeliveryParams{
+	return recordDelivery(ctx, st.q, d)
+}
+
+// recordDelivery is RecordDelivery on q (the store's own, or a
+// transaction's: Collect records inside its upsert's transaction).
+func recordDelivery(ctx context.Context, q *gen.Queries, d Delivery) error {
+	rows, err := q.InsertTriggerDelivery(ctx, gen.InsertTriggerDeliveryParams{
 		ID: d.ID, OrgID: d.OrgID, TriggerID: d.TriggerID, At: d.At, SourceIp: d.SourceIP,
-		Outcome: string(d.Outcome), Reason: d.Reason, JobGroupID: db.NullUUID(d.JobGroupID),
+		Outcome: string(d.Outcome), Reason: d.Reason, JobGroupID: db.NullUUID(d.JobGroupID), PendingID: db.NullUUID(d.PendingID),
 	})
 	if err != nil {
 		return fmt.Errorf("record delivery: %w", err)
@@ -360,7 +370,7 @@ func (st *SQLStore) RecordDelivery(ctx context.Context, d Delivery) error {
 	if rows == 0 {
 		return nil
 	}
-	if err := st.q.TrimTriggerDeliveries(ctx, gen.TrimTriggerDeliveriesParams{OrgID: d.OrgID, TriggerID: d.TriggerID}); err != nil {
+	if err := q.TrimTriggerDeliveries(ctx, gen.TrimTriggerDeliveriesParams{OrgID: d.OrgID, TriggerID: d.TriggerID}); err != nil {
 		return fmt.Errorf("trim deliveries: %w", err)
 	}
 	return nil
@@ -378,6 +388,15 @@ func (st *SQLStore) NoteRateLimited(ctx context.Context, orgID, triggerID uuid.U
 		return fmt.Errorf("note rate-limited delivery: %w", err)
 	}
 	return nil
+}
+
+// int32Ptr binds an optional int (bounded by its validation) as int4.
+func int32Ptr(v *int) *int32 {
+	if v == nil {
+		return nil
+	}
+	n := int32(*v) //nolint:gosec // callers pass validated, bounded values
+	return &n
 }
 
 // cidrsOrEmpty keeps allow_cidrs NOT NULL: a nil slice would bind NULL.
@@ -417,7 +436,11 @@ func toTrigger(r gen.JobTrigger) (Trigger, error) {
 		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), TemplateID: db.UUIDPtr(r.TemplateID), RepoID: db.UUIDPtr(r.RepoID),
 		Name: r.Name, Enabled: r.Enabled, Preset: Preset(r.Preset), TimestampHeader: r.TimestampHeader,
 		AllowCIDRs: r.AllowCidrs, OnActive: OnActive(r.OnActive), CreatedBy: db.UUIDPtr(r.CreatedBy),
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision, SettleSeconds: int(r.SettleSeconds),
+	}
+	if r.MaxWaitSeconds != nil {
+		v := int(*r.MaxWaitSeconds)
+		t.MaxWaitSeconds = &v
 	}
 	if r.DisabledReason != nil {
 		t.DisabledReason = *r.DisabledReason
