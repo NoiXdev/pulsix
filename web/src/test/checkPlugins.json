@@ -504,6 +504,11 @@
           "max_bytes": 64,
           "non_empty": true,
           "format": "secretName"
+        },
+        {
+          "name": "schema_sizes",
+          "type": "bool",
+          "default": false
         }
       ],
       "metrics": [
@@ -533,6 +538,14 @@
         },
         {
           "name": "mysql.slow_queries_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schema_size_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schemas_unreported",
           "kind": "numeric"
         }
       ]

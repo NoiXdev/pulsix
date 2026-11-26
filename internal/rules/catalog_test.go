@@ -157,6 +157,8 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"mysql.replication_state":       {CheckKey: "mysql", Kind: rules.MetricDiscrete},
 		"mysql.replication_lag_seconds": {CheckKey: "mysql", Kind: rules.MetricNumeric},
 		"mysql.slow_queries_per_s":      {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.schema_size_bytes":       {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.schemas_unreported":      {CheckKey: "mysql", Kind: rules.MetricNumeric},
 
 		"redis.up":                          {CheckKey: "redis", Kind: rules.MetricNumeric},
 		"redis.memory_used_bytes":           {CheckKey: "redis", Kind: rules.MetricNumeric},

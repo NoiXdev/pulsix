@@ -322,6 +322,10 @@ export const enChecks = {
         hint: 'Name of a secret in agent.yaml on each host: it holds the server address and login. The value never leaves the host.',
         placeholder: 'db-main',
       },
+      schema_sizes: {
+        label: 'Report the size of each schema',
+        hint: 'Data and indexes per schema, system schemas left out. The login needs a privilege on the tables, such as SHOW VIEW, which reads no data. Can be slow on a server with very many tables.',
+      },
     },
     redis: {
       secret: {

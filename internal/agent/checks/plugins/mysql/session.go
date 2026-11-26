@@ -38,6 +38,8 @@ type serverStats struct {
 // fake this.
 type session interface {
 	Server(ctx context.Context) (serverStats, error)
+	// Schemas reads the per-schema sizes (schemas.go).
+	Schemas(ctx context.Context) (sizes []schemaSize, total int, err error)
 	Close()
 }
 

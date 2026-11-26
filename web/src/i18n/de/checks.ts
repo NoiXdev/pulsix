@@ -289,6 +289,10 @@ export const deChecks: Messages['checks'] = {
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält Serveradresse und Login. Der Wert verlässt den Host nie.',
         placeholder: 'db-main',
       },
+      schema_sizes: {
+        label: 'Größe jedes Schemas melden',
+        hint: 'Daten und Indizes je Schema, ohne Systemschemas. Der Login braucht ein Recht auf die Tabellen, etwa SHOW VIEW, das keine Daten lesen lässt. Kann auf Servern mit sehr vielen Tabellen langsam sein.',
+      },
     },
     redis: {
       secret: {

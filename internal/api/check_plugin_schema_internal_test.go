@@ -40,7 +40,8 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"optional_pools (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"postgres: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"databases (list; at most 64 entries; each at most 63 bytes; each without control characters). " +
-		"mysql: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
+		"mysql: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
+		"schema_sizes (true or false; default false). " +
 		"redis: secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
 		"nginx: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/nginx_status), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
