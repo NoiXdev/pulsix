@@ -51,7 +51,7 @@
 - **R10 Every run request path keeps job hosts within the targets today:** the template's own limit (targets are the kept zones' full host lists, `LimitedRunTargets`, the same gate the enqueue uses), a request's overrides (the enqueue's `OnlyHosts` are the picture's narrowed targets, `runOverrides`), one host (`OnlyHost`), a retry (targets are the failed hosts, the retry's scope). So the check refuses only the race. This also corrects a concern raised in the 2.127 report: with a limit override the job is narrowed to the targets, so no unapproved host ships.
 
 ### Review Focus
-- The race itself, deterministically: an `AFTER UPDATE` trigger on `run_requests` makes a host managed inside the approval's decision (after the picture read, before the enqueue); the test unmanages it again before the claim, checks the fingerprint is unchanged, and expects zone B's job refused and zone A's claimed (`TestRunRequestClaimRefusesAHostTheApprovalDidNotInclude`, internal/api).
+- The race itself, deterministically: a request limited to `web-1*`; an `AFTER UPDATE` trigger on `run_requests` renames host B (`web-2`, managed throughout) to match inside the approval's decision (after the picture read, before the enqueue narrows the run to the matching hosts), and the test renames it back before the claim and checks the fingerprint is unchanged. Without the guard zone B's claim renders `web-2` with no limit (a real leak); with it the claim is refused and zone A's job is claimed (`TestRunRequestClaimRefusesAHostTheApprovalDidNotInclude`, internal/api, two sub-tests).
 - The subset test (`TestCheckRunClaimComparesTheJobsHosts`, internal/runrequests); the queue hands the job's hosts to the guard (`TestQueueClaimGuardSeesTheJobsPin`, internal/jobs).
 
 ### Task
