@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/judge"
 )
 
 // Agent vantage points (backlog 3.13a, spec
@@ -253,7 +254,9 @@ func (r *Runner) probeVantages(ctx context.Context, s slot, t target, p Poller) 
 // combine records the check's result from its expected vantages' latest
 // rounds (combineVantages): the representative's round re-stamped with
 // the combining time, or, with no vantage up or down, every metric failed
-// with errNoVantage (unknown, like a check that cannot be probed). When
+// with errNoVantage (unknown, like a check that cannot be probed); the
+// assertion entries an up representative round left out are
+// judge.ErrUnevaluated. When
 // the rows cannot be read, nothing is recorded; the next due time
 // retries.
 func (r *Runner) combine(ctx context.Context, s slot, t target) {
@@ -276,6 +279,10 @@ func (r *Runner) combine(ctx context.Context, s slot, t target) {
 		for i, row := range v.rows {
 			obs[i] = probe.Observation{Item: row.Item, Metric: row.Metric, Value: row.Value, Label: row.Label, Err: row.Err}
 		}
+		// An agent older than the plugin's assertions ignores them; the
+		// entries its up round left out read as an error saying so rather
+		// than going stale (backlog 3.87).
+		obs = append(obs, judge.Unevaluated(t.check.Plugin, t.check.Params, obs)...)
 	}
 	if ctx.Err() != nil || len(obs) == 0 {
 		return
