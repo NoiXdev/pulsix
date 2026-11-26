@@ -2096,6 +2096,16 @@ check's vantage groups before using the new forms.
   `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
   `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
   which now also carries the values of the host's groups and their parent groups.
+- **An approved run's job is refused when it would reach a host the approval did not
+  include (backlog 2.141, no migration):** a job keeps the hosts it was enqueued for,
+  and the claim of a run request's job now also checks them against the approved run
+  picture's targets. A host that joined the template's hosts between the approval's
+  look at the picture and the enqueue fails that job at its claim with `refused at
+  claim: the run's hosts changed after it was approved; ask for the run again (host
+  <id> was not part of the approved run)`; the run reports failed, like any other
+  change after approval. Fewer hosts than approved still run. Runs without a run
+  request are unaffected. A job enqueued before the upgrade is checked the same way
+  when it is claimed after it.
 
 ## Roll order
 

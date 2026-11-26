@@ -39,3 +39,20 @@
 
 ## Task 2: Docs
 - [ ] Backlog 2.127 → done (items 5 done, 3 and 1 recorded as not done with the reasons above); `docs/upgrades.md`: no upgrade effect (no migration, protocol or API change) — no entry. Commit `docs: backlog 2.127 done`.
+
+## Addendum: backlog 2.141 (the job's frozen hosts against the approved picture)
+
+**Goal:** a run request's job never renders a host the approval did not include. A job freezes its host list at enqueue, after the approval read the picture; a host that joins the template's hosts in between and leaves before the claim is in the job but in neither picture, so the fingerprint check passes. Ruling from the coordinator: fail closed at the claim, visibly; fewer hosts than approved is fine; ordinary runs unaffected.
+
+### Rulings
+- **R7 The approved target set is the live picture, read after the fingerprint matched.** `CheckRunClaim` already recomputes the picture and compares its fingerprint with the approved one; `Fingerprint` covers `Targets` (sorted by id), so a match means the live targets are the approved targets. Nothing new is stored, no migration. — Cost if wrong: none; a fingerprint mismatch already refuses the claim before this check.
+- **R8 The job's hosts reach the guard as `ApprovedRun.HostIDs`**, set by the claim only (`guardClaim`); an approval stores none and every other user ignores it. — Why: no signature change of the `ClaimGuard` port. Cost if wrong: a confusing field, documented on the type.
+- **R9 Any job host outside the targets refuses the claim with `ErrHostsChangedAfterApproval`** ("the run's hosts changed after it was approved; ask for the run again (host <id> was not part of the approved run)"), an ordinary refusal: the run reports failed and the job covers its zone (no refill on re-approval, which needs a new request anyway). Fewer hosts (a host left, the enqueue excluded one) pass. — Cost if wrong: a run fails that would have reached only approved hosts; impossible, since the check is a subset test.
+- **R10 Every run request path keeps job hosts within the targets today:** the template's own limit (targets are the kept zones' full host lists, `LimitedRunTargets`, the same gate the enqueue uses), a request's overrides (the enqueue's `OnlyHosts` are the picture's narrowed targets, `runOverrides`), one host (`OnlyHost`), a retry (targets are the failed hosts, the retry's scope). So the check refuses only the race. This also corrects a concern raised in the 2.127 report: with a limit override the job is narrowed to the targets, so no unapproved host ships.
+
+### Review Focus
+- The race itself, deterministically: an `AFTER UPDATE` trigger on `run_requests` makes a host managed inside the approval's decision (after the picture read, before the enqueue); the test unmanages it again before the claim, checks the fingerprint is unchanged, and expects zone B's job refused and zone A's claimed (`TestRunRequestClaimRefusesAHostTheApprovalDidNotInclude`, internal/api).
+- The subset test (`TestCheckRunClaimComparesTheJobsHosts`, internal/runrequests); the queue hands the job's hosts to the guard (`TestQueueClaimGuardSeesTheJobsPin`, internal/jobs).
+
+### Task
+**Files:** `internal/jobs/{run_request.go,claim_withdrawn.go}`, `internal/runrequests/approve.go` (+ `service_hosts_test.go`), `internal/jobs/claim_guard_store_test.go`, `internal/api/run_request_hosts_changed_test.go`, `docs/upgrades.md`, `docs/BACKLOG.md`. Commit `fix(runrequests): refuse a claim whose hosts the approval did not include`.
