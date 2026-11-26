@@ -509,15 +509,32 @@ func (f *fakeManager) RunEvents(ctx context.Context, _ ...grpc.CallOption) (grpc
 	return s, nil
 }
 
+// streamOpen reports whether the worker has opened the run's event stream.
+// The loop does that first thing for a claimed job (Loop.runOne), after
+// its startup sweep of the play uid has been reaped and before it spawns
+// anything of the run.
+func (f *fakeManager) streamOpen() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stream != nil
+}
+
 // cancel pushes a cancel directive down the run's stream, the way a real
 // manager's cancel endpoint reaches a worker: through the same RunEvents
 // bidi stream, not a side channel the loop never reads.
-func (f *fakeManager) cancel() {
+//
+// A cancel before the loop opened that stream fails the test at once. It
+// used to return silently, so a "the play has started" wait that released
+// too early (backlog 2.140: it caught the play uid's sweep, which runs
+// before the claim) lost the cancel, and the test sat out its whole report
+// timeout blaming a play that survived a cancel it never received.
+func (f *fakeManager) cancel(t *testing.T) {
+	t.Helper()
 	f.mu.Lock()
 	s := f.stream
 	f.mu.Unlock()
 	if s == nil {
-		return
+		t.Fatalf("cancel sent before the worker opened the run's event stream: the test's wait for the play released before the job was claimed")
 	}
 	s.directives <- &workerpb.ManagerDirective{Cancel: true}
 }

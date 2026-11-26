@@ -86,11 +86,11 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 	// cancel means anything — otherwise a worker that cancelled a run
 	// before it even spawned the helper would pass this test for the wrong
 	// reason.
-	if !waitUntil(time.Now().Add(60*time.Second), func() bool { return playUIDProcessExists(t) }) {
+	if !waitUntil(time.Now().Add(60*time.Second), func() bool { return playStarted(t, client) }) {
 		t.Fatalf("no process with uid %d appeared within 60s; the play never started:\n%s", playUID, logs.String())
 	}
 
-	client.cancel()
+	client.cancel(t)
 
 	select {
 	case <-client.reported:
@@ -120,12 +120,15 @@ func TestCancellingAPlayUnderThePlayUIDReportsCancelled(t *testing.T) {
 //
 // The test was written before that fix and was skipped until it landed; it
 // is unmodified from the version that first caught the defect apart from
-// the deleted t.Skip line. Its "the play has started" wait relies on
-// playUIDProcessExists leaving the supervisor out: under the supervisor the
-// first process of the play uid is the supervisor itself, and counting it
-// let the cancel land before ansible-runner existed. The wait releases on
-// ansible-runner, not on the play, so the cancel may land before the
-// `sleep` exists.
+// the deleted t.Skip line and backlog 2.140's start wait. Its "the play
+// has started" wait relies on playUIDProcessExists leaving the supervisor
+// out: under the supervisor the first process of the play uid is the
+// supervisor itself, and counting it let the cancel land before
+// ansible-runner existed. It waits for the run's event stream too
+// (playStarted): the play uid's sweep runs before the claim and released
+// the wait before the job existed at all (backlog 2.140). The wait
+// releases on ansible-runner, not on the play, so the cancel may land
+// before the `sleep` exists.
 //
 // Its closing check is the lenient one: playUIDProcessExists leaves the
 // supervisor out and does not count zombies. The strict proofs, which wait
@@ -163,11 +166,11 @@ func TestCancellingAPlayUnderThePlayUIDStopsIt(t *testing.T) {
 	// cancel means anything — otherwise a worker that cancelled a run
 	// before it even spawned the helper would pass this test for the wrong
 	// reason.
-	if !waitUntil(time.Now().Add(60*time.Second), func() bool { return playUIDProcessExists(t) }) {
+	if !waitUntil(time.Now().Add(60*time.Second), func() bool { return playStarted(t, client) }) {
 		t.Fatalf("no process with uid %d appeared within 60s; the play never started:\n%s", playUID, logs.String())
 	}
 
-	client.cancel()
+	client.cancel(t)
 
 	select {
 	case <-client.reported:
@@ -309,6 +312,24 @@ func TestACancelledPlayLeavesNoZombie(t *testing.T) {
 		t.Errorf("a /proc entry of uid %d, live or zombie, is left %v after the cancel:\n%s",
 			playUID, stopGrace+time.Second, debugPlayUIDProcesses(t))
 	}
+}
+
+// playStarted is the cancel tests' "the play has started under the play
+// uid": the worker has opened this run's event stream, so the job is
+// claimed and its cancel has somewhere to go, and a process of the play
+// uid that is not the worker's own is alive (playUIDProcessExists).
+//
+// The stream is checked first because the process scan alone released
+// before the claim: the loop's startup sweep runs as the play uid, and a
+// poll that caught it, or caught it exiting with its command line already
+// gone, sent the cancel before there was a run to cancel. The cancel was
+// lost, the play slept on, and the test failed 30 s later as if the
+// cancel had not stopped it (backlog 2.140). The startup sweep is reaped
+// before the claim, so once the stream is open every process of the play
+// uid belongs to this run.
+func playStarted(t *testing.T, client *fakeManager) bool {
+	t.Helper()
+	return client.streamOpen() && playUIDProcessExists(t)
 }
 
 // waitUntil polls cond every 100ms until it reports true or deadline
