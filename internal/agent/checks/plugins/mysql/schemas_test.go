@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -122,8 +124,77 @@ func TestDownRoundFailsTheUnreportedCountOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// The sizes query carries a server-side bound just below the client's
+// deadline, so the server stops it when the client gives up: MariaDB's SET
+// STATEMENT max_statement_time (seconds) or MySQL's MAX_EXECUTION_TIME hint
+// (milliseconds), which must follow SELECT directly.
+func TestBoundedSelectPerDialect(t *testing.T) {
+	const q = "SELECT a FROM b"
+	if got, want := boundedSelect(dialectMariaDB, 4500*time.Millisecond, q), "SET STATEMENT max_statement_time=4.500 FOR SELECT a FROM b"; got != want {
+		t.Errorf("mariadb = %q, want %q", got, want)
+	}
+	if got, want := boundedSelect(dialectMySQL, 4500*time.Millisecond, q), "SELECT /*+ MAX_EXECUTION_TIME(4500) */ a FROM b"; got != want {
+		t.Errorf("mysql = %q, want %q", got, want)
+	}
+}
+
+func TestServerBoundIsJustBelowTheClientDeadline(t *testing.T) {
+	tests := []struct{ client, want time.Duration }{
+		{0, 4500 * time.Millisecond}, // dbcheck.QueryTimeout, 5 s
+		{5 * time.Second, 4500 * time.Millisecond},
+		{time.Second, 900 * time.Millisecond},
+		{time.Microsecond, time.Millisecond}, // never 0, which means "no bound"
+	}
+	for _, tt := range tests {
+		if got := serverBound(tt.client); got != tt.want {
+			t.Errorf("serverBound(%v) = %v, want %v", tt.client, got, tt.want)
+		}
+	}
+}
+
+func sizeRows() fakeResult {
+	return fakeResult{
+		cols: []string{"TABLE_SCHEMA", "size", "total"},
+		rows: [][]any{{"app", "16384", 3}, {"shop", "0", 3}},
+	}
+}
+
+// MariaDB answers the first form; MySQL refuses SET STATEMENT as a syntax
+// error and answers the hinted one, like the replication chain.
+func TestSchemasQueryPicksTheDialectBySyntax(t *testing.T) {
+	bound := serverBound(0)
+	maria := boundedSelect(dialectMariaDB, bound, schemasQuery)
+	my := boundedSelect(dialectMySQL, bound, schemasQuery)
+
+	s, f := newFakeSession(t, map[string]fakeResult{maria: sizeRows()})
+	if _, _, err := s.Schemas(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.seen, []string{maria}) {
+		t.Errorf("mariadb statements %v", f.seen)
+	}
+
+	s, f = newFakeSession(t, map[string]fakeResult{maria: {err: &mysql.MySQLError{Number: 1064}}, my: sizeRows()})
+	got, total, err := s.Schemas(context.Background())
+	if err != nil || total != 3 || len(got) != 2 {
+		t.Fatalf("mysql: %+v %d %v", got, total, err)
+	}
+	if !slices.Equal(f.seen, []string{maria, my}) {
+		t.Errorf("mysql statements %v", f.seen)
+	}
+
+	// Any other error is the answer; no second statement.
+	s, f = newFakeSession(t, map[string]fakeResult{maria: {err: &mysql.MySQLError{Number: 1142}}})
+	if _, _, err := s.Schemas(context.Background()); err == nil {
+		t.Fatal("no error")
+	}
+	if len(f.seen) != 1 {
+		t.Errorf("statements %v", f.seen)
+	}
+}
+
 func TestSchemasQuery(t *testing.T) {
-	s, f := newFakeSession(t, map[string]fakeResult{schemasQuery: {
+	s, f := newFakeSession(t, map[string]fakeResult{boundedSelect(dialectMariaDB, serverBound(0), schemasQuery): {
 		cols: []string{"TABLE_SCHEMA", "size", "total"},
 		rows: [][]any{{"app", "16384", 3}, {"shop", "0", 3}},
 	}})
@@ -134,7 +205,7 @@ func TestSchemasQuery(t *testing.T) {
 	if total != 3 || len(got) != 2 || got[0] != (schemaSize{Name: "app", Bytes: 16384}) || got[1] != (schemaSize{Name: "shop"}) {
 		t.Fatalf("schemas %+v total %d", got, total)
 	}
-	if len(f.seen) != 1 || f.seen[0] != schemasQuery {
+	if len(f.seen) != 1 {
 		t.Fatalf("statements %v", f.seen)
 	}
 	if !strings.HasSuffix(schemasQuery, "LIMIT "+strconv.Itoa(maxSchemas)) {
@@ -148,7 +219,7 @@ func TestSchemasQuery(t *testing.T) {
 }
 
 func TestSchemasQueryErrorIsReturned(t *testing.T) {
-	s, _ := newFakeSession(t, map[string]fakeResult{schemasQuery: {err: &mysql.MySQLError{Number: 1142}}})
+	s, _ := newFakeSession(t, map[string]fakeResult{boundedSelect(dialectMariaDB, serverBound(0), schemasQuery): {err: &mysql.MySQLError{Number: 1142}}})
 	if _, _, err := s.Schemas(context.Background()); err == nil {
 		t.Fatal("no error")
 	}

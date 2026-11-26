@@ -2,10 +2,16 @@ package mysql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/dbcheck"
 )
 
 const (
@@ -25,20 +31,63 @@ type schemaSize struct {
 // left out (backlog 3.10b). It sees only the tables the user holds some
 // privilege on (SHOW VIEW is enough, and reads no data). MySQL 8 answers
 // from its statistics cache (information_schema_stats_expiry); MariaDB
-// opens every table, which is why the plugin asks only with schema_sizes.
+// opens every table, which is why the plugin asks only with schema_sizes,
+// and why Schemas sends it under a server-side bound (boundedSelect).
 // The LIMIT is maxSchemas; COUNT(*) OVER () counts every schema.
 const schemasQuery = `SELECT TABLE_SCHEMA, CAST(SUM(COALESCE(DATA_LENGTH, 0) + COALESCE(INDEX_LENGTH, 0)) AS UNSIGNED), COUNT(*) OVER () ` +
 	`FROM information_schema.TABLES ` +
 	`WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys') ` +
 	`GROUP BY TABLE_SCHEMA ORDER BY TABLE_SCHEMA LIMIT 256`
 
+// dialect is the SQL a statement bound is written in.
+type dialect int
+
+const (
+	dialectMariaDB dialect = iota
+	dialectMySQL
+)
+
+// boundedSelect makes the server itself stop query (a SELECT) after bound,
+// so a slow sizes query does not keep running once the client gave up on
+// it: MariaDB's SET STATEMENT max_statement_time (seconds) or MySQL's
+// MAX_EXECUTION_TIME optimizer hint (milliseconds, directly after SELECT).
+// MySQL refuses the first as a syntax error; MariaDB would read the hint as
+// a plain comment, which is why the MariaDB form is tried first.
+func boundedSelect(d dialect, bound time.Duration, query string) string {
+	if d == dialectMariaDB {
+		return fmt.Sprintf("SET STATEMENT max_statement_time=%.3f FOR %s", bound.Seconds(), query)
+	}
+	return fmt.Sprintf("SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s", bound.Milliseconds(), strings.TrimPrefix(query, "SELECT "))
+}
+
+// serverBound is the server-side limit for a statement whose client
+// deadline is client (zero: dbcheck.QueryTimeout): a tenth below it, so the
+// server's own timeout normally answers first, and never under 1 ms (0
+// would mean no limit).
+func serverBound(client time.Duration) time.Duration {
+	if client <= 0 {
+		client = dbcheck.QueryTimeout
+	}
+	return max((client - client/10).Truncate(time.Millisecond), time.Millisecond)
+}
+
 // Schemas reads at most maxSchemas schema sizes and how many schemas there
-// are in all.
+// are in all, under a server-side bound in the server's dialect, found the
+// way the replication chain finds its statement: a syntax error (1064) on
+// the MariaDB form moves to the MySQL one.
 func (s *mysqlSession) Schemas(parent context.Context) (out []schemaSize, total int, err error) {
 	ctx, cancel := s.queryCtx(parent)
 	defer cancel()
 	defer func() { err = fail(parent, ctx, err) }()
-	rows, err := s.conn.QueryContext(ctx, schemasQuery)
+	bound := serverBound(s.queryTimeout)
+	var rows *sql.Rows
+	for _, d := range []dialect{dialectMariaDB, dialectMySQL} {
+		rows, err = s.conn.QueryContext(ctx, boundedSelect(d, bound, schemasQuery))
+		var me *mysql.MySQLError
+		if !errors.As(err, &me) || me.Number != errSyntax {
+			break
+		}
+	}
 	if err != nil {
 		return nil, 0, err
 	}

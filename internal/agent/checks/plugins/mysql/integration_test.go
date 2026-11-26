@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -218,6 +219,33 @@ func TestAgainstARealServer(t *testing.T) {
 					t.Error("sized reported without a privilege on its tables")
 				}
 				mustValue(t, obs, "", "mysql.schemas_unreported", 0)
+			})
+
+			t.Run("the server stops a bounded statement itself", func(t *testing.T) {
+				// MySQL refuses the MariaDB form as a syntax error, which moves
+				// Schemas on to the hinted form; MariaDB takes it.
+				_, err := admin.ExecContext(ctx, boundedSelect(dialectMariaDB, time.Second, "SELECT 1"))
+				var me *gosql.MySQLError
+				if fl.name == "mysql" {
+					if !errors.As(err, &me) || me.Number != errSyntax {
+						t.Fatalf("MariaDB form on MySQL: %v, want a syntax error", err)
+					}
+				} else if err != nil {
+					t.Fatalf("MariaDB form on MariaDB: %v", err)
+				}
+				// The form the server takes ends a long statement long before
+				// it would end on its own (and no client deadline is set).
+				d := dialectMariaDB
+				if fl.name == "mysql" {
+					d = dialectMySQL
+				}
+				start := time.Now()
+				var r any
+				err = admin.QueryRowContext(ctx, boundedSelect(d, 300*time.Millisecond, "SELECT SLEEP(5)")).Scan(&r)
+				t.Logf("bounded SLEEP(5): %v after %v", err, time.Since(start))
+				if elapsed := time.Since(start); elapsed > 3*time.Second {
+					t.Fatalf("the server ran the bounded statement for %v", elapsed)
+				}
 			})
 
 			t.Run("every TLS mode the server can answer", func(t *testing.T) {
