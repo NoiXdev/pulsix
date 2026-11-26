@@ -59,7 +59,8 @@ func TestSeedRulesExcludesServiceState(t *testing.T) {
 // future edit that silently changes a threshold (rather than deliberately
 // updating both this test and the migrations) fails loudly. The first five
 // rows are migration 00045's, the two script rows migration 00094's
-// (backlog 3.6g), the two SNMP rows migration 00097's (backlog 3.13d), the seven synthetic-check rows migration 00104's (backlog 3.13b).
+// (backlog 3.6g), the two SNMP rows migration 00097's (backlog 3.13d), the seven synthetic-check rows migration 00104's (backlog 3.13b), the six
+// assertion rows migration 00134's (backlog 3.87).
 func TestSeedRulesExactSet(t *testing.T) {
 	want := []struct {
 		name       string
@@ -88,6 +89,12 @@ func TestSeedRulesExactSet(t *testing.T) {
 		{"HTTP check down", "http.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
 		{"TLS check down", "tls.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
 		{"DNS check down", "dns.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
+		{"TCP assertion failed", "tcp.assertion", rules.SeverityWarn, "in", 0, []string{"warn"}, "", 0, 0},
+		{"TCP assertion failed (critical)", "tcp.assertion", rules.SeverityCrit, "in", 0, []string{"crit"}, "", 0, 0},
+		{"DNS assertion failed", "dns.assertion", rules.SeverityWarn, "in", 0, []string{"warn"}, "", 0, 0},
+		{"DNS assertion failed (critical)", "dns.assertion", rules.SeverityCrit, "in", 0, []string{"crit"}, "", 0, 0},
+		{"TLS assertion failed", "tls.assertion", rules.SeverityWarn, "in", 0, []string{"warn"}, "", 0, 0},
+		{"TLS assertion failed (critical)", "tls.assertion", rules.SeverityCrit, "in", 0, []string{"crit"}, "", 0, 0},
 	}
 
 	got := rules.SeedRules()
@@ -120,11 +127,11 @@ func TestSeedRulesExactSet(t *testing.T) {
 	}
 }
 
-// TestSeedForOrgWritesSixteenSeedRows proves the service side of the seed: a
+// TestSeedForOrgWritesTwentyTwoSeedRows proves the service side of the seed: a
 // fresh organization's rules, seeded through Service.SeedForOrg against an
-// in-memory store (no database needed), are exactly the sixteen SeedRules()
+// in-memory store (no database needed), are exactly the twenty-two SeedRules()
 // entries, each org-scoped and stamped origin "seed".
-func TestSeedForOrgWritesSixteenSeedRows(t *testing.T) {
+func TestSeedForOrgWritesTwentyTwoSeedRows(t *testing.T) {
 	store := newFakeStore()
 	svc := rules.NewService(store)
 	orgID := uuid.Must(uuid.NewV7())
@@ -137,8 +144,8 @@ func TestSeedForOrgWritesSixteenSeedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 16 {
-		t.Fatalf("seeded %d rules, want exactly 16: %+v", len(got), got)
+	if len(got) != 22 {
+		t.Fatalf("seeded %d rules, want exactly 22: %+v", len(got), got)
 	}
 	seen := map[string]bool{}
 	for _, r := range got {
@@ -162,7 +169,7 @@ func TestSeedForOrgWritesSixteenSeedRows(t *testing.T) {
 
 // failingCreateStore wraps fakeStore, failing every Create from the nth
 // call onward — the shape needed to prove SeedForOrg stops and propagates
-// on a store failure partway through the sixteen inserts, rather than
+// on a store failure partway through the twenty-two inserts, rather than
 // swallowing it and leaving a partial seed set unreported.
 type failingCreateStore struct {
 	*fakeStore
@@ -179,7 +186,7 @@ func (f *failingCreateStore) Create(ctx context.Context, r rules.Rule) error {
 }
 
 // TestSeedForOrgPropagatesStoreError proves a store failure partway through
-// SeedForOrg's sixteen inserts is reported to the caller (CreateOrg's own
+// SeedForOrg's twenty-two inserts is reported to the caller (CreateOrg's own
 // propagation, tenancy.OrgCreatedHook) instead of silently leaving an
 // organization with an incomplete seed set nobody is told about.
 func TestSeedForOrgPropagatesStoreError(t *testing.T) {
