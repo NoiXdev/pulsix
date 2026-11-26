@@ -230,6 +230,16 @@ without logging in, and a check that names one needs the host's `agent.yaml`
 secret (backlog 3.5) as `postgres` does. Nothing is seeded and there is no
 schema change.
 
+The database checks' TLS fields (backlog 3.10a) are agent-local: `mysql` and
+`redis` secrets may carry `tls_ca`, `tls_server_name`, `tls_cert` and
+`tls_key`, `postgres` secrets `sslcert` and `sslkey`, and `mysql` secrets a
+Windows-only `pipe`. An older agent refuses a secret with one of them ("secret
+field `tls_ca` is not known") and reports that on the check's up metric until
+it is updated; there is no manager, protocol or schema change. One behaviour
+change: `postgres`'s `sslrootcert` must now be an absolute path (or `system`);
+a relative one, which resolved against the service's working directory, reads
+"secret field `sslrootcert` is not an absolute path or system".
+
 The same holds for the `nginx` plugin (backlog 3.11, the first of the web
 server checks): an older agent skips an `nginx` check, warns on every
 configuration push and shows no readings until it is updated, and the manager

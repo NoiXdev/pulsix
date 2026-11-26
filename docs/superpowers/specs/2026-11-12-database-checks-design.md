@@ -50,19 +50,24 @@ a typo is loud; a field with a bad value is named, its value never.
 | | `password` | empty | |
 | | `database` | `postgres` | database to connect to |
 | | `sslmode` | `prefer` | `disable`, `prefer`, `require`, `verify-ca`, `verify-full` |
-| | `sslrootcert` | system roots | path to a CA file for `verify-ca`/`verify-full` |
+| | `sslrootcert` | system roots | absolute path to a CA file for `verify-ca`/`verify-full`, or `system` (absolute since 3.10a) |
+| | `sslcert`, `sslkey` | — | client certificate and its unencrypted key, absolute paths, both or neither, not with `sslmode: disable` (3.10a) |
 | mysql | `host` | `127.0.0.1` | |
 | | `port` | `3306` | |
 | | `socket` | — | Unix socket path; when set, `host`/`port` are not used |
 | | `user` | — (required) | |
 | | `password` | empty | |
 | | `tls` | `preferred` | `false`, `preferred`, `true`, `skip-verify` |
+| | `tls_ca`, `tls_server_name` | system roots, `host` | CA file (absolute path) and the name the server certificate is verified against; only with `tls: true` (3.10a) |
+| | `tls_cert`, `tls_key` | — | client certificate and its unencrypted key, absolute paths, both or neither, not with `tls: false` (3.10a) |
+| | `pipe` | — | Windows only: a named pipe (`MySQL` or `\\.\pipe\MySQL`), local only, not with `socket`; `host`/`port` are not used (3.10a) |
 | redis | `host` | `127.0.0.1` | |
 | | `port` | `6379` | |
 | | `socket` | — | Unix socket path |
 | | `user` | — | ACL user (Redis 6+); without it `AUTH <password>` |
 | | `password` | — | without it no `AUTH` is sent |
 | | `tls` | `false` | `false`, `true`, `skip-verify` |
+| | `tls_ca`, `tls_server_name`, `tls_cert`, `tls_key` | — | as for mysql (`tls_cert`/`tls_key` with `true` or `skip-verify`) (3.10a) |
 
 The driver configuration is built from these fields directly — never by
 formatting a connection string — so a value cannot inject an option.
@@ -196,5 +201,7 @@ the descriptors. No rule seeding.
 
 - Query checks with user SQL, per-table or per-schema statistics, MySQL
   per-schema sizes, Redis keyspace statistics.
-- Client certificates; custom CAs for mysql and redis; Windows named pipes.
+- Client certificates; custom CAs for mysql and redis; Windows named pipes
+  (done in 3.10a, plan `docs/superpowers/plans/2026-11-26-db-tls-client-certs-3.10a.md`;
+  named pipes for mysql only).
 - Discovering servers on the host.
