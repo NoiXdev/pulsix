@@ -51,7 +51,8 @@ func TestParseAcceptsCommands(t *testing.T) {
 		{"with.empty-arg_1", []string{program(), "", "5", "30", "a\tb\nc\x7f"}},
 	}
 	for _, tt := range tests {
-		got, ok := set.Command(tt.name)
+		tmpl, ok := set.Command(tt.name)
+		got := tmpl.Argv()
 		if !ok || !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("Command(%q) = %q, %v; want %q", tt.name, got, ok, tt.want)
 		}
@@ -102,8 +103,8 @@ func TestParseRefusesBadCommandsWithoutQuotingThem(t *testing.T) {
 			"line 1, column 11: commands must map command names to their program and arguments"},
 		{"command a scalar", "commands:\n  a: " + argValue + "\n",
 			"line 2, column 6: a command must be a list of its program and arguments"},
-		{"command a mapping", "commands:\n  a:\n    x: " + argValue + "\n",
-			"line 3, column 5: a command must be a list of its program and arguments"},
+		{"command a mapping without run", "commands:\n  a:\n    x: " + argValue + "\n",
+			"line 3, column 5: a command mapping takes only run and args"},
 		{"command null", "commands:\n  a:\n",
 			"line 2, column 3: a command must be a list of its program and arguments"},
 		{"empty sequence", "commands:\n  a: []\n",
@@ -224,7 +225,8 @@ func TestParseAcceptsCommandsAtTheLimits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse = %v", err)
 	}
-	argv, _ := set.Command("a")
+	tmpl, _ := set.Command("a")
+	argv := tmpl.Argv()
 	if len(argv) != maxCommandArgs || argv[1] != entries[1] {
 		t.Fatalf("argv has %d entries", len(argv))
 	}
@@ -235,10 +237,11 @@ func TestCommandIsACopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	argv, _ := set.Command("a")
+	tmpl, _ := set.Command("a")
+	argv := tmpl.Argv()
 	argv[1] = "changed"
-	if again, _ := set.Command("a"); again[1] != "x" {
-		t.Fatalf("Command shares its slice: %q", again)
+	if again, _ := set.Command("a"); again.Argv()[1] != "x" {
+		t.Fatalf("Command shares its slice: %q", again.Argv())
 	}
 	names := set.CommandNames()
 	names[0] = "changed"

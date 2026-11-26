@@ -363,23 +363,23 @@ func TestCommandsSourceSaysWhyACommandIsMissing(t *testing.T) {
 	}, secrets.WithClock(clock))
 	src := commandsSource{w}
 
-	if argv, ok, problem := src.Command("disk"); ok || argv != nil || problem != "the file "+path+" does not exist" {
-		t.Fatalf("absent: %q, ok %v, problem %q", argv, ok, problem)
+	if cmd, ok, problem := src.Command("disk"); ok || cmd.Argv() != nil || problem != "the file "+path+" does not exist" {
+		t.Fatalf("absent: %q, ok %v, problem %q", cmd.Argv(), ok, problem)
 	}
 	writeSecretsFile(t, path, commandsFile())
 	now = now.Add(time.Minute)
 	want := []string{commandProgram(), "-p", commandArg}
-	if argv, ok, problem := src.Command("disk"); !ok || problem != "" || !reflect.DeepEqual(argv, want) {
-		t.Fatalf("defined: %q, %v, %q; want %q", argv, ok, problem, want)
+	if cmd, ok, problem := src.Command("disk"); !ok || problem != "" || !reflect.DeepEqual(cmd.Argv(), want) {
+		t.Fatalf("defined: %q, %v, %q; want %q", cmd.Argv(), ok, problem, want)
 	}
-	if argv, ok, problem := src.Command("other"); ok || argv != nil || problem != "" {
-		t.Fatalf("not defined in a good file: %q, ok %v, problem %q", argv, ok, problem)
+	if cmd, ok, problem := src.Command("other"); ok || cmd.Argv() != nil || problem != "" {
+		t.Fatalf("not defined in a good file: %q, ok %v, problem %q", cmd.Argv(), ok, problem)
 	}
 	refuse = true
 	now = now.Add(time.Minute)
 	wantProblem := "the file is not usable: configuration file " + path + " holds secrets or commands but is accessible to mode 0644; restrict it"
-	if argv, ok, problem := src.Command("disk"); ok || argv != nil || problem != wantProblem {
-		t.Fatalf("refused: %q, ok %v, problem %q, want %q", argv, ok, problem, wantProblem)
+	if cmd, ok, problem := src.Command("disk"); ok || cmd.Argv() != nil || problem != wantProblem {
+		t.Fatalf("refused: %q, ok %v, problem %q, want %q", cmd.Argv(), ok, problem, wantProblem)
 	}
 	// The secrets source names the same problem.
 	if _, _, problem := (secretsSource{w}).Secret("pg"); problem != wantProblem {
@@ -402,9 +402,9 @@ func (p *echoCommandPlugin) Collect(context.Context, map[string]any) ([]checks.O
 
 func (p *echoCommandPlugin) CollectWithCommands(_ context.Context, params map[string]any, commands checks.Commands) ([]checks.Observation, error) {
 	name, _ := params["command"].(string)
-	argv, ok, problem := commands.Command(name)
+	cmd, ok, problem := commands.Command(name)
 	p.mu.Lock()
-	p.argvs = append(p.argvs, argv)
+	p.argvs = append(p.argvs, cmd.Argv())
 	p.mu.Unlock()
 	if !ok {
 		return []checks.Observation{checks.ErrObservation(name, "script.status", fmt.Errorf("not defined (%s)", problem))}, nil

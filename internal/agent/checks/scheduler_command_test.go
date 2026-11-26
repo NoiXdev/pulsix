@@ -6,10 +6,11 @@ import (
 	"log/slog"
 	"maps"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // commandArg is a command argument no log line may ever carry.
@@ -45,7 +46,9 @@ func (p *fakeCommandPlugin) CollectWithCommands(_ context.Context, params map[st
 	p.lastParams = maps.Clone(params)
 	p.lookup = commands
 	name, _ := params["command"].(string)
-	p.argv, p.ok, p.problem = commands.Command(name)
+	var cmd scriptargs.Template
+	cmd, p.ok, p.problem = commands.Command(name)
+	p.argv = cmd.Argv()
 	return []Observation{ValueObservation(name, "script.exit_code", 0)},
 		errors.New("ran " + strings.Join(p.argv, " "))
 }
@@ -62,12 +65,12 @@ type fakeCommands struct {
 	problem  string
 }
 
-func (f *fakeCommands) Command(name string) ([]string, bool, string) {
+func (f *fakeCommands) Command(name string) (scriptargs.Template, bool, string) {
 	argv, ok := f.commands[name]
 	if !ok {
-		return nil, false, f.problem
+		return scriptargs.Template{}, false, f.problem
 	}
-	return slices.Clone(argv), true, ""
+	return scriptargs.Fixed(argv), true, ""
 }
 
 func TestSchedulerHandsACommandPluginTheLookup(t *testing.T) {

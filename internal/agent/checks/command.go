@@ -1,13 +1,19 @@
 package checks
 
-import "context"
+import (
+	"context"
+
+	"github.com/noixdev/pulsix/internal/scriptargs"
+)
 
 // CommandPlugin is a Plugin that runs commands defined on the host
 // (backlog 3.6g). The scheduler calls CollectWithCommands instead of
 // Collect, with the check's params exactly as they are and a lookup for
 // the commands the agent's configuration file (agent.yaml) defines. Only
-// command names travel from the manager; what a name runs comes from the
-// file through the lookup. The plugin never reads the file itself.
+// command names, and values for the placeholders a command's own
+// definition declares and validates, travel from the manager; what a name
+// runs comes from the file through the lookup. The plugin never reads the
+// file itself.
 //
 // A command's arguments may hold credentials: the plugin must not put an
 // argument other than the program path into an observation or its
@@ -26,10 +32,11 @@ type CommandPlugin interface {
 // secrets file watcher, adapted in internal/agent. ok is false when the
 // file does not define name; problem then says why the file has no
 // commands at all (missing, refused, broken), or is empty when only this
-// one is missing. argv is the program followed by its arguments, a copy
-// the caller may keep.
+// one is missing. cmd is the command line; its Bind, given the values the
+// check supplies for the command's placeholders (backlog 3.6j), is the
+// only way to the program and its arguments.
 type Commands interface {
-	Command(name string) (argv []string, ok bool, problem string)
+	Command(name string) (cmd scriptargs.Template, ok bool, problem string)
 }
 
 // WithCommands is where CommandPlugins look their commands up; the
@@ -46,4 +53,6 @@ func WithCommands(c Commands) SchedulerOption {
 // noCommands is the lookup of a scheduler without WithCommands.
 type noCommands struct{}
 
-func (noCommands) Command(string) ([]string, bool, string) { return nil, false, "" }
+func (noCommands) Command(string) (scriptargs.Template, bool, string) {
+	return scriptargs.Template{}, false, ""
+}
