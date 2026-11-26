@@ -64,7 +64,10 @@ test('a template takes its variables from the playbook, and a group keeps manual
 
   // --- Link: Manual opens the preview with both fields added ------------
   await chooseRowAction(page, TEMPLATE, 'Variables');
-  await expect(page.getByRole('heading', { name: `Variables of ${TEMPLATE}` })).toBeVisible();
+  // The variables live in the template page's Variables tab (backlog 1.53):
+  // the page header names the template, the tab is the open one.
+  await expect(page.getByRole('heading', { level: 1, name: TEMPLATE })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Variables' })).toHaveAttribute('aria-selected', 'true');
   // Linking goes through the preview: the radio stays on Off until the
   // apply links the variables.
   await page.getByRole('radiogroup', { name: 'Sync mode' }).getByRole('radio', { name: 'Manual' }).click();
