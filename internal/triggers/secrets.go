@@ -57,16 +57,27 @@ func (s *Service) checkSecretShadows(ctx context.Context, orgID uuid.UUID, tmpl 
 	case errors.Is(err, jobs.ErrEmptyScope), errors.Is(err, jobs.ErrTemplateNotReady):
 		hosts = nil
 	case err != nil:
-		return fmt.Errorf("resolve the template's hosts: %w", err)
+		return &scopeError{err: err}
 	}
 	return s.d.Secrets.Check(ctx, orgID, tmpl.PlaybookID, hosts, names, "mapping target")
 }
 
-// checkMappingSecrets is the save's check: a refusal is ErrInvalidInput.
+// scopeError is a failure to resolve the template's hosts.
+type scopeError struct{ err error }
+
+func (e *scopeError) Error() string { return "resolve the template's hosts: " + e.err.Error() }
+func (e *scopeError) Unwrap() error { return e.err }
+
+// checkMappingSecrets is the save's check: a refusal is ErrInvalidInput,
+// and so is a scope that names something that does not exist (the
+// operator's to fix). Any other failure is internal.
 func (s *Service) checkMappingSecrets(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, m Mapping) error {
 	err := s.checkSecretShadows(ctx, orgID, tmpl, slices.Collect(maps.Keys(m.ExtraVars)))
 	if errors.Is(err, secretshadow.ErrShadow) {
 		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	if se, ok := errors.AsType[*scopeError](err); ok && errors.Is(se.err, jobs.ErrNotFound) {
+		return fmt.Errorf("%w: the template's targets cannot be resolved, so the mapping cannot be checked against the inventory's secrets: %s", ErrInvalidInput, se.err.Error())
 	}
 	return err
 }
@@ -87,4 +98,25 @@ func (s *Service) refuseSecretShadows(ctx context.Context, t Trigger, ov templat
 		return "extra_vars." + r.Name, err
 	}
 	return "", err
+}
+
+// refuseCollected checks a pending run's collected values before the settle
+// ticker (or run now) starts it: a secret that appeared since they were
+// collected fails the window, its deliveries naming the variable and the
+// kind of secret, never a value. A check the context ended is kept for the
+// next try, as an interrupted enqueue is; any other failure to check fails
+// the window, as a refused enqueue does. ok is false when the run may
+// start.
+func (s *Service) refuseCollected(ctx context.Context, t Trigger, ov templates.Overrides) (Firing, bool) {
+	field, err := s.refuseSecretShadows(ctx, t, ov)
+	switch {
+	case err == nil:
+		return Firing{}, false
+	case field != "":
+		return Firing{Outcome: OutcomeFailed, Note: "not started: " + err.Error()}, true
+	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return Firing{Keep: true}, true
+	}
+	s.d.Log.ErrorContext(ctx, "collected webhook values could not be checked against the run's secrets", "trigger", t.ID, "org", t.OrgID, "err", err)
+	return Firing{Outcome: OutcomeFailed, Note: "the collected values could not be checked against the run's secrets (see the manager log)"}, true
 }

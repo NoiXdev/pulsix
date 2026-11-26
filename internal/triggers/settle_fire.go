@@ -71,6 +71,14 @@ func (s *Service) fire(ctx context.Context, r DueRun, actor *uuid.UUID) (f Firin
 		var prior *uuid.UUID
 		if prior, err = s.d.Runs.StartedRunGroup(ctx, t.OrgID, req.IdempotencyKey); err == nil {
 			replay = prior != nil
+			// A run started before (a replay) was checked then; a new one
+			// is checked against secrets that appeared since the values
+			// were collected (backlog 2.139).
+			if !replay {
+				if f, refused := s.refuseCollected(ctx, t, ov); refused {
+					return f
+				}
+			}
 			started, err = s.d.Runs.EnqueueRunWith(ctx, t.OrgID, *t.TemplateID, req)
 		}
 	}

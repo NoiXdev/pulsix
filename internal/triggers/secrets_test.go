@@ -3,6 +3,7 @@ package triggers_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -83,11 +84,6 @@ func (f *fakeScope) RunTargets(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UU
 
 func (w *world) secrets() secretshadow.Checker {
 	return secretshadow.Checker{Inventory: w.inv, Playbooks: w.pbs}
-}
-
-// noSecrets is a checker whose sources hold no secret.
-func noSecrets() secretshadow.Checker {
-	return secretshadow.Checker{Inventory: &fakeInvSecrets{}, Playbooks: &fakePbVars{}}
 }
 
 func vaultNames(names ...string) *varsource.Vault {
@@ -221,7 +217,15 @@ func TestSaveScopeThatReachesNoHost(t *testing.T) {
 			t.Fatalf("scope %v with a playbook secret = %v, want ErrInvalidInput", scopeErr, err)
 		}
 	}
+	// A scope naming something that does not exist is the operator's to
+	// fix: 400, not an internal error.
 	w := newWorld(t)
+	w.scope.err = fmt.Errorf("group 7: %w", jobs.ErrNotFound)
+	if _, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput()); !errors.Is(err, triggers.ErrInvalidInput) ||
+		!strings.Contains(err.Error(), "the template's targets cannot be resolved, so the mapping cannot be checked against the inventory's secrets") {
+		t.Fatalf("unresolvable scope = %v, want ErrInvalidInput", err)
+	}
+	w = newWorld(t)
 	boom := errors.New("boom")
 	w.scope.err = boom
 	if _, err := w.svc.Create(ctx, w.org, w.actor, w.templateInput()); !errors.Is(err, boom) || errors.Is(err, triggers.ErrInvalidInput) {
