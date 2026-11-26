@@ -1,8 +1,11 @@
 // Package docker is the agent's container check plugin: state, health,
 // restart count and last exit code of the watched containers, read from
 // the engine API over its local socket or named pipe (client.go,
-// dial_*.go). The Plugin contract and the shared observation helpers it
-// builds on are in internal/agent/checks.
+// dial_*.go), and, with the resources option, their CPU, memory, network
+// and block I/O usage (stats.go, resources.go). Rates need the previous
+// reading, so it is a checks.StatefulPlugin like network. The Plugin
+// contract and the shared observation helpers it builds on are in
+// internal/agent/checks.
 package docker
 
 import (
@@ -31,25 +34,43 @@ const (
 
 // dockerPlugin reports each watched container's state, health, restart count
 // and last exit code, plus how many containers are watched and how
-// many run. It observes only; whether "exited" is a problem is a rule's call.
+// many run, and with the resources option their usage. It observes only;
+// whether "exited" is a problem is a rule's call. Every check key collects
+// with its own instance (NewInstance), whose baselines are its own previous
+// round; an instance is collected by its key's one goroutine only, so it
+// holds no lock.
 type dockerPlugin struct {
 	engine func(socket string) (dockerEngine, error)
 	// timeout overrides dockerCollectTimeout; zero means the default.
 	timeout time.Duration
+
+	// prev is each sampled container's previous reading, by container ID
+	// (resources.go); nil while the resources option is off.
+	prev map[string]statsSample
 }
 
-// New returns the docker plugin wired to the engine API client.
+// New returns the docker plugin wired to the engine API client. It is a
+// checks.StatefulPlugin prototype: the scheduler collects only the
+// instances NewInstance hands out, one per check key.
 func New() checks.Plugin {
-	return dockerPlugin{engine: newDockerEngine}
+	return &dockerPlugin{engine: newDockerEngine}
 }
 
-func (dockerPlugin) Name() string { return "docker" }
+// NewInstance returns a plugin with the same engine and no baselines.
+func (p *dockerPlugin) NewInstance() checks.Plugin {
+	return &dockerPlugin{engine: p.engine, timeout: p.timeout}
+}
+
+func (*dockerPlugin) Name() string { return "docker" }
 
 // dockerParams is the parsed, defaulted configuration.
 type dockerParams struct {
 	labeled bool
 	label   string // "key" or "key=value"
 	socket  string // "" means the platform default
+	// resources asks for each container's usage (backlog 3.12a); off by
+	// default.
+	resources bool
 }
 
 // parseDockerParams reads the params defensively: a wire round trip can change
@@ -66,6 +87,7 @@ func parseDockerParams(params map[string]any) dockerParams {
 		p.label = dockerDefaultLabel
 	}
 	p.labeled = str("selection") == "labeled"
+	p.resources, _ = params["resources"].(bool)
 	return p
 }
 
@@ -77,11 +99,13 @@ func (p dockerParams) optOutKey() string {
 }
 
 // Collect lists the containers, inspects the selected ones and reports
-// them. The plugin's own deadline (timeout) firing is a slow engine: what was
-// gathered is reported, the rest as error observations. The caller's context
-// ending is the agent shutting down: Collect then returns nothing but
-// ctx.Err(), per the Plugin contract.
-func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+// them; with the resources option it then reads their usage with what is
+// left of the deadline (sampleResources), so a slow stats endpoint never
+// costs the state metrics. The plugin's own deadline (timeout) firing is a
+// slow engine: what was gathered is reported, the rest as error
+// observations. The caller's context ending is the agent shutting down:
+// Collect then returns nothing but ctx.Err(), per the Plugin contract.
+func (p *dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -94,10 +118,13 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 	defer cancel()
 
 	cfg := parseDockerParams(params)
+	if !cfg.resources {
+		p.prev = nil
+	}
 
 	engine, err := p.engine(cfg.socket)
 	if err != nil {
-		return dockerDown(fmt.Errorf("docker: %w", err))
+		return dockerDown(fmt.Errorf("docker: %w", err), cfg.resources)
 	}
 	filter := ""
 	if cfg.labeled {
@@ -111,7 +138,7 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 		if derr := ctx.Err(); derr != nil && errors.Is(err, derr) {
 			err = fmt.Errorf("docker: engine did not answer in time: %w", err)
 		}
-		return dockerDown(err)
+		return dockerDown(err, cfg.resources)
 	}
 
 	selected, errs := reportableContainers(selectContainers(list, cfg))
@@ -121,13 +148,15 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 		return nil, perr
 	}
 
-	obs := make([]checks.Observation, 0, len(selected)*4+3)
+	obs := make([]checks.Observation, 0, len(selected)*4+4)
+	present := make([]containerSummary, 0, len(selected))
 	var total, running float64
 	for i, c := range selected {
 		d := details[i]
 		if errors.Is(d.err, errContainerGone) {
 			continue
 		}
+		present = append(present, c)
 		total++
 		if c.State == "running" {
 			running++
@@ -153,6 +182,17 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 		checks.ValueObservation("", "docker.containers_total", total),
 		checks.ValueObservation("", "docker.containers_unreported", unreported),
 	)
+	if cfg.resources {
+		usage, unsampled, uerr := p.sampleResources(ctx, engine, present)
+		if perr := parent.Err(); perr != nil {
+			return nil, perr
+		}
+		obs = append(obs, usage...)
+		obs = append(obs, checks.ValueObservation("", "docker.containers_unsampled", float64(unsampled)))
+		if uerr != nil {
+			errs = append(errs, uerr)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		// The deadline hit mid-inspect: what was gathered is still reported.
 		errs = append(errs, fmt.Errorf("docker: %w", err))
@@ -192,23 +232,34 @@ func dockerLabel(item, metric, what, label string) checks.Observation {
 // already reads "docker: inspect container: <cause>"; the container's name
 // takes the place of that step instead of repeating it.
 func inspectError(name string, err error) error {
-	var ee *engineError
-	if errors.As(err, &ee) {
-		if ee.op == opInspect {
-			return fmt.Errorf("docker: inspect %s: %w", name, ee.err)
-		}
-		return fmt.Errorf("docker: inspect %s: %s: %w", name, ee.op, ee.err)
-	}
-	return fmt.Errorf("docker: inspect %s: %w", name, err)
+	return containerError("inspect", opInspect, name, err)
 }
 
-// dockerDown reports an unreachable engine on the three host-level metrics.
-func dockerDown(err error) ([]checks.Observation, error) {
-	return []checks.Observation{
+// containerError is "docker: <verb> <name>: <cause>" for a failed request
+// op about one container, the client's own step left out.
+func containerError(verb, op, name string, err error) error {
+	var ee *engineError
+	if errors.As(err, &ee) {
+		if ee.op == op {
+			return fmt.Errorf("docker: %s %s: %w", verb, name, ee.err)
+		}
+		return fmt.Errorf("docker: %s %s: %s: %w", verb, name, ee.op, ee.err)
+	}
+	return fmt.Errorf("docker: %s %s: %w", verb, name, err)
+}
+
+// dockerDown reports an unreachable engine on the host-level metrics: the
+// three counts, and the unsampled count while resources are on.
+func dockerDown(err error, resources bool) ([]checks.Observation, error) {
+	obs := []checks.Observation{
 		checks.ErrObservation("", "docker.containers_running", err),
 		checks.ErrObservation("", "docker.containers_total", err),
 		checks.ErrObservation("", "docker.containers_unreported", err),
-	}, err
+	}
+	if resources {
+		obs = append(obs, checks.ErrObservation("", "docker.containers_unsampled", err))
+	}
+	return obs, err
 }
 
 // selectContainers drops repeated IDs (first wins) and, in "all" mode, the
@@ -241,19 +292,30 @@ type inspectResult struct {
 // flight; results are index-aligned with cs.
 func inspectAll(ctx context.Context, engine dockerEngine, cs []containerSummary) []inspectResult {
 	res := make([]inspectResult, len(cs))
-	sem := make(chan struct{}, dockerMaxInspects)
+	forEachLimited(len(cs), dockerMaxInspects, func(i int) {
+		res[i].detail, res[i].err = engine.Inspect(ctx, cs[i].ID)
+	})
+	return res
+}
+
+// forEachLimited calls fn(i) for every i below n, at most limit at once,
+// and returns once every call has.
+func forEachLimited(n, limit int, fn func(i int)) {
+	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
-	for i, c := range cs {
+	for i := range n {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			res[i].detail, res[i].err = engine.Inspect(ctx, c.ID)
+			fn(i)
 		}()
 	}
 	wg.Wait()
-	return res
 }
 
-var _ checks.Plugin = dockerPlugin{}
+var (
+	_ checks.Plugin         = (*dockerPlugin)(nil)
+	_ checks.StatefulPlugin = (*dockerPlugin)(nil)
+)

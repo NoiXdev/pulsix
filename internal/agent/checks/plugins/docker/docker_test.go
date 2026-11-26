@@ -31,6 +31,45 @@ type fakeDockerEngine struct {
 	blockInspect bool
 	inspecting   chan struct{}
 	once         sync.Once
+
+	// stats answers Stats by ID; statsErr fails it. statsCalls records the
+	// IDs asked, in order of arrival.
+	stats      map[string]containerStats
+	statsErr   map[string]error
+	statsCalls []string
+	// statsDelay holds each Stats so concurrency is observable.
+	statsDelay    time.Duration
+	statsInflight atomic.Int32
+	statsPeak     atomic.Int32
+	// blockStats makes Stats wait for ctx; statsing is closed once the
+	// first Stats is in.
+	blockStats bool
+	statsing   chan struct{}
+	statsOnce  sync.Once
+}
+
+func (f *fakeDockerEngine) Stats(ctx context.Context, id string) (containerStats, error) {
+	n := f.statsInflight.Add(1)
+	defer f.statsInflight.Add(-1)
+	for {
+		p := f.statsPeak.Load()
+		if n <= p || f.statsPeak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	f.mu.Lock()
+	f.statsCalls = append(f.statsCalls, id)
+	st, err := f.stats[id], f.statsErr[id]
+	f.mu.Unlock()
+	if f.statsDelay > 0 {
+		time.Sleep(f.statsDelay)
+	}
+	if f.blockStats {
+		f.statsOnce.Do(func() { close(f.statsing) })
+		<-ctx.Done()
+		return containerStats{}, ctx.Err()
+	}
+	return st, err
 }
 
 func (f *fakeDockerEngine) List(ctx context.Context, labelFilter string) ([]containerSummary, error) {
@@ -71,12 +110,8 @@ func (f *fakeDockerEngine) Inspect(ctx context.Context, id string) (containerDet
 	return f.details[id], nil
 }
 
-func (f *fakeDockerEngine) Stats(context.Context, string) (containerStats, error) {
-	return containerStats{}, errors.New("no stats")
-}
-
-func newTestDocker(f *fakeDockerEngine, gotSocket *string) dockerPlugin {
-	return dockerPlugin{engine: func(socket string) (dockerEngine, error) {
+func newTestDocker(f *fakeDockerEngine, gotSocket *string) *dockerPlugin {
+	return &dockerPlugin{engine: func(socket string) (dockerEngine, error) {
 		if gotSocket != nil {
 			*gotSocket = socket
 		}
@@ -258,7 +293,7 @@ func TestDockerEngineDown(t *testing.T) {
 }
 
 func TestDockerEngineFactoryFails(t *testing.T) {
-	p := dockerPlugin{engine: func(string) (dockerEngine, error) { return nil, errors.New("no pipes here") }}
+	p := &dockerPlugin{engine: func(string) (dockerEngine, error) { return nil, errors.New("no pipes here") }}
 	obs, err := p.Collect(context.Background(), nil)
 	assertEngineDown(t, obs, err)
 }
