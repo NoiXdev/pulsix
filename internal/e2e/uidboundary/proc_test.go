@@ -49,10 +49,10 @@ func TestIsLiveUnderUID(t *testing.T) {
 	}
 }
 
-// TestIsSupervisorCmdline pins which processes playUIDProcessExists leaves
+// TestIsWorkerOwnCmdline pins which processes playUIDProcessExists leaves
 // out of "the play has started". It runs outside the image too: it reads a
 // cmdline, not /proc.
-func TestIsSupervisorCmdline(t *testing.T) {
+func TestIsWorkerOwnCmdline(t *testing.T) {
 	tests := []struct {
 		name    string
 		cmdline string
@@ -60,16 +60,20 @@ func TestIsSupervisorCmdline(t *testing.T) {
 	}{
 		{"the supervisor", "/uid-boundary.test\x00" + supervisor.Arg + "\x00--grace\x005s\x00--\x00/usr/bin/ansible-runner\x00run\x00", true},
 		{"the helper about to exec it", "/usr/local/bin/pulsix-setuid-exec\x0065533\x00/uid-boundary.test\x00" + supervisor.Arg + "\x00--grace\x005s\x00", true},
+		{"the sweep", "/uid-boundary.test\x00" + supervisor.SweepArg + "\x00", true},
+		{"the helper about to exec the sweep", "/usr/local/bin/pulsix-setuid-exec\x0065533\x00/uid-boundary.test\x00" + supervisor.SweepArg + "\x00", true},
 		{"ansible-runner", "/usr/bin/python3\x00/usr/bin/ansible-runner\x00run\x00/var/lib/pulsix-worker/job-1\x00", false},
 		{"the play's sleep", "sleep\x00300\x00", false},
 		{"the reserved word as argv[0] only", supervisor.Arg + "\x00", false},
 		{"the reserved word inside an argument", "sh\x00-c\x00echo " + supervisor.Arg + "\x00", false},
+		{"the sweep's word as argv[0] only", supervisor.SweepArg + "\x00", false},
+		{"the sweep's word inside an argument", "sh\x00-c\x00echo " + supervisor.SweepArg + "\x00", false},
 		{"empty, a zombie", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isSupervisorCmdline([]byte(tt.cmdline)); got != tt.want {
-				t.Errorf("isSupervisorCmdline(%q) = %v, want %v", tt.cmdline, got, tt.want)
+			if got := isWorkerOwnCmdline([]byte(tt.cmdline)); got != tt.want {
+				t.Errorf("isWorkerOwnCmdline(%q) = %v, want %v", tt.cmdline, got, tt.want)
 			}
 		})
 	}
@@ -148,8 +152,9 @@ func isLiveUnderUID(status, want string) bool {
 }
 
 // playUIDProcessExists scans /proc for a live process whose REAL uid (see
-// isLiveUnderUID) is the play uid and that is not the play supervisor (see
-// isSupervisorCmdline). It is read straight from the kernel rather than
+// isLiveUnderUID) is the play uid and that is not one of the worker's own
+// processes at that uid, the play supervisor or the sweep (see
+// isWorkerOwnCmdline). It is read straight from the kernel rather than
 // inferred from the playbook's own output, because the playbook's output is
 // exactly what a worker that failed to drop privilege could still fake.
 //
@@ -164,6 +169,17 @@ func isLiveUnderUID(status, want string) bool {
 // play's own processes may not exist yet. A test that must cancel a play
 // that is already running waits for the play's own process instead.
 //
+// The sweep is left out for the same reason: the loop sweeps the play uid
+// when it starts (Loop.Run, before its first claim), and the sweep runs as
+// the play uid, so a poll that caught it released "the play has started"
+// before the job was even claimed (backlog 2.140). Leaving it out by its
+// command line is not enough on its own, though: a process that is exiting
+// has already dropped its memory, so its cmdline reads empty while
+// isLiveUnderUID still counts it (a leader whose other threads are still
+// being torn down). The cancel tests therefore also wait for the run's
+// event stream (playStarted in cancel_test.go), which the loop opens only
+// after the startup sweep has been reaped.
+//
 // What a test asserts is GONE after a run must not skip anything, which is
 // why reapPlayUIDLeftovers uses livePlayUIDProcessExists and
 // TestACancelledPlayLeavesNoZombie uses playUIDEntryExists. A supervisor
@@ -174,13 +190,13 @@ func playUIDProcessExists(t *testing.T) bool {
 }
 
 // livePlayUIDProcessExists is playUIDProcessExists counting the supervisor
-// too: any live process of the play uid at all.
+// and the sweep too: any live process of the play uid at all.
 func livePlayUIDProcessExists(t *testing.T) bool {
 	t.Helper()
 	return scanLivePlayUID(t, true)
 }
 
-func scanLivePlayUID(t *testing.T, countSupervisor bool) bool {
+func scanLivePlayUID(t *testing.T, countWorkerOwn bool) bool {
 	t.Helper()
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -198,12 +214,12 @@ func scanLivePlayUID(t *testing.T, countSupervisor bool) bool {
 		if !isLiveUnderUID(string(data), want) {
 			continue
 		}
-		if !countSupervisor {
+		if !countWorkerOwn {
 			cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
 			if err != nil {
 				continue // it exited between the two reads
 			}
-			if isSupervisorCmdline(cmdline) {
+			if isWorkerOwnCmdline(cmdline) {
 				continue
 			}
 		}
@@ -212,9 +228,11 @@ func scanLivePlayUID(t *testing.T, countSupervisor bool) bool {
 	return false
 }
 
-// isSupervisorCmdline reports whether a raw /proc/<pid>/cmdline (NUL-
-// separated) belongs to the play supervisor: one of its arguments after
-// argv[0] is supervisor.Arg. For the supervisor itself that is argv[1]
+// isWorkerOwnCmdline reports whether a raw /proc/<pid>/cmdline (NUL-
+// separated) belongs to one of the worker's own processes that run as the
+// play uid without being the play: the play supervisor or the play uid's
+// sweep. One of its arguments after argv[0] is then supervisor.Arg or
+// supervisor.SweepArg. For the supervisor itself that is argv[1]
 // (`<binary> __pulsix-play-supervisor --grace …`). It is also argv[3] of
 // the setuid helper that is about to exec it
 // (`<helper> <uid> <binary> __pulsix-play-supervisor …`), which runs as the
@@ -223,11 +241,12 @@ func scanLivePlayUID(t *testing.T, countSupervisor bool) bool {
 // it either. cmdline rather than /proc/<pid>/exe because exe is a symlink
 // the kernel lets only the owner (or a ptrace-capable process) resolve, and
 // the supervisor runs as the play uid while this binary runs as the worker
-// uid; cmdline is world-readable.
-func isSupervisorCmdline(cmdline []byte) bool {
+// uid; cmdline is world-readable. The sweep is spelled the same way,
+// `<binary> __pulsix-play-sweep` and the helper about to exec it.
+func isWorkerOwnCmdline(cmdline []byte) bool {
 	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
 	for _, a := range args[min(1, len(args)):] {
-		if a == supervisor.Arg {
+		if a == supervisor.Arg || a == supervisor.SweepArg {
 			return true
 		}
 	}
