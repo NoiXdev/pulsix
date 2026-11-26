@@ -1,7 +1,9 @@
 package dbcheck
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -146,11 +148,49 @@ func TestTLSFilesKeyNotAKey(t *testing.T) {
 	cert := testpki.Write(t, dir, "c.pem", client.CertPEM, 0o644)
 	mustLoadErr(t, files("", cert, filepath.Join(dir, "missing.key")), "secret field `tls_key` cannot be read")
 	mustLoadErr(t, files("", cert, testpki.Write(t, dir, "junk.key", []byte("junk"), 0o600)), "secret field `tls_key` is not a private key file")
-	// The certificate first: the key must be the first block.
+	// The certificate first: only EC PARAMETERS may come before the key.
 	both := append(append([]byte{}, client.CertPEM...), client.KeyPEM...)
-	mustLoadErr(t, files("", cert, testpki.Write(t, dir, "both.key", both, 0o600)), "secret field `tls_key` is not a private key file")
+	mustLoadErr(t, files("", cert, testpki.Write(t, dir, "both.key", both, 0o600)), notFirst)
 	bad := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("garbage")})
 	mustLoadErr(t, files("", cert, testpki.Write(t, dir, "bad.key", bad, 0o600)), "secret field `tls_key` is not a private key file")
+}
+
+// notFirst is the reason for a key file whose key comes after other blocks.
+const notFirst = "secret field `tls_key` does not start with the private key; remove the PEM blocks before it (such as EC PARAMETERS)"
+
+// ecparamKey is what `openssl ecparam -name prime256v1 -genkey` writes: an
+// EC PARAMETERS block (the curve's OID) followed by the SEC 1 key.
+func ecparamKey(t *testing.T, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	oid, err := asn1.Marshal(asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(pem.EncodeToMemory(&pem.Block{Type: "EC PARAMETERS", Bytes: oid}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})...)
+}
+
+func TestTLSFilesKeyWithECParameters(t *testing.T) {
+	dir := tlsDir(t)
+	ca := testpki.NewCA(t)
+	client := ca.Client(t, "mon")
+	cert := testpki.Write(t, dir, "c.pem", client.CertPEM, 0o644)
+	key := testpki.Write(t, dir, "ecparam.key", ecparamKey(t, client.Key), 0o600)
+	m, err := files("", cert, key).Load()
+	if err != nil || len(m.Certificates) != 1 {
+		t.Fatalf("%+v, %v", m, err)
+	}
+	// Where only the first block is read (pgx), the parameters must go.
+	f := files("", cert, key)
+	f.FirstBlockOnly = true
+	mustLoadErr(t, f, notFirst)
+	// Parameters alone are no key.
+	params, _ := pem.Decode(ecparamKey(t, client.Key))
+	mustLoadErr(t, files("", cert, testpki.Write(t, dir, "params.key", pem.EncodeToMemory(params), 0o600)), "secret field `tls_key` is not a private key file")
 }
 
 func TestTLSFilesKeyEncrypted(t *testing.T) {

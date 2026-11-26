@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/dbcheck"
 )
@@ -53,11 +54,16 @@ func parseSettings(fields map[string]string) (connSettings, error) {
 		database: v["database"], sslmode: v["sslmode"], sslrootcert: v["sslrootcert"],
 		sslcert: v["sslcert"], sslkey: v["sslkey"],
 	}
-	if s.sslmode == "disable" {
-		for _, f := range []string{"sslcert", "sslkey"} {
-			if v[f] != "" {
-				return connSettings{}, errors.New("secret field `" + f + "` needs `sslmode` other than disable")
-			}
+	// A client certificate needs TLS: pgx (like libpq) uses none with
+	// sslmode disable or over a Unix socket, so the fields would be ignored.
+	overSocket, _ := pgconn.NetworkAddress(s.host, 5432)
+	for _, f := range []string{"sslcert", "sslkey"} {
+		switch {
+		case v[f] == "":
+		case s.sslmode == "disable":
+			return connSettings{}, errors.New("secret field `" + f + "` needs `sslmode` other than disable")
+		case overSocket == "unix":
+			return connSettings{}, errors.New("secret field `" + f + "` needs a TCP host, not a socket directory")
 		}
 	}
 	return s, nil
@@ -71,6 +77,8 @@ func checkFiles(s connSettings) error {
 	f := dbcheck.TLSFiles{
 		Cert: s.sslcert, Key: s.sslkey,
 		CAField: "sslrootcert", CertField: "sslcert", KeyField: "sslkey",
+		// pgx reads only the key file's first PEM block.
+		FirstBlockOnly: true,
 	}
 	if s.sslrootcert != "system" {
 		f.CA = s.sslrootcert

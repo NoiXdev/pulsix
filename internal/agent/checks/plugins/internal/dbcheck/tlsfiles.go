@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -27,6 +26,11 @@ func noNUL(s string) bool { return !strings.ContainsRune(s, 0) }
 type TLSFiles struct {
 	CA, Cert, Key                string
 	CAField, CertField, KeyField string
+	// FirstBlockOnly requires the key to be the key file's first PEM block,
+	// for a consumer that reads only that block (pgx). Otherwise leading
+	// EC PARAMETERS blocks, as `openssl ecparam -genkey` writes them, are
+	// skipped.
+	FirstBlockOnly bool
 }
 
 // TLSMaterial is what TLSFiles.Load read: the CA file as a pool (nil
@@ -87,7 +91,7 @@ func (f TLSFiles) loadPair() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	keyPEM, err := firstKeyBlock(keyData, f.KeyField)
+	keyPEM, err := keyBlock(keyData, f.KeyField, f.FirstBlockOnly)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -98,10 +102,18 @@ func (f TLSFiles) loadPair() (tls.Certificate, error) {
 	return cert, nil
 }
 
-// readTLSFile reads a regular file of at most maxTLSFileBytes. A key file
-// is refused first when other users have any permission on it.
+// readTLSFile reads a regular file of at most maxTLSFileBytes. The file is
+// opened once (non-blocking on Unix, so a FIFO cannot hold the round) and
+// every check runs on the opened descriptor, so a file swapped after a
+// check is not the one read. A key file is refused first when other users
+// have any permission on it.
 func readTLSFile(path, field string, isKey bool) ([]byte, error) {
-	fi, err := os.Stat(path)
+	fh, err := openTLSFile(path)
+	if err != nil {
+		return nil, fieldErr(field, "cannot be read")
+	}
+	defer func() { _ = fh.Close() }()
+	fi, err := fh.Stat()
 	if err != nil {
 		return nil, fieldErr(field, "cannot be read")
 	}
@@ -114,11 +126,6 @@ func readTLSFile(path, field string, isKey bool) ([]byte, error) {
 	if isKey && !keyModeOK(fi.Mode()) {
 		return nil, fieldErr(field, "is accessible to other users; remove their permissions, for example chmod 600")
 	}
-	fh, err := os.Open(path) // #nosec G304 -- the operator names the file in agent.yaml
-	if err != nil {
-		return nil, fieldErr(field, "cannot be read")
-	}
-	defer func() { _ = fh.Close() }()
 	data, err := io.ReadAll(io.LimitReader(fh, maxTLSFileBytes+1))
 	if err != nil {
 		return nil, fieldErr(field, "cannot be read")
@@ -149,21 +156,50 @@ func holdsCertificates(data []byte) bool {
 	}
 }
 
-// firstKeyBlock returns the key file's first PEM block, re-encoded alone,
-// when it is an unencrypted private key (PKCS#1, PKCS#8 or SEC 1 EC). The
-// first block, because that is the one pgx reads.
-func firstKeyBlock(data []byte, field string) ([]byte, error) {
-	b, _ := pem.Decode(data)
+// keyBlock returns the key file's private key block, re-encoded alone,
+// when it is an unencrypted PKCS#1, PKCS#8 or SEC 1 EC key. The key must
+// be the first block, except that leading EC PARAMETERS blocks are skipped
+// unless firstOnly is set.
+func keyBlock(data []byte, field string, firstOnly bool) ([]byte, error) {
+	b, rest := pem.Decode(data)
+	for !firstOnly && b != nil && b.Type == "EC PARAMETERS" {
+		b, rest = pem.Decode(rest)
+	}
 	if b == nil {
 		return nil, fieldErr(field, "is not a private key file")
 	}
-	if b.Type == "ENCRYPTED PRIVATE KEY" || strings.Contains(b.Headers["Proc-Type"], "ENCRYPTED") {
+	if isEncrypted(b) {
 		return nil, fieldErr(field, "is an encrypted key, which is not supported; store it unencrypted with owner-only permissions")
 	}
-	if !strings.HasSuffix(b.Type, "PRIVATE KEY") || !parsesAsKey(b.Bytes) {
+	if !isKeyBlock(b) {
+		if holdsKeyBlock(rest) {
+			return nil, fieldErr(field, "does not start with the private key; remove the PEM blocks before it (such as EC PARAMETERS)")
+		}
 		return nil, fieldErr(field, "is not a private key file")
 	}
 	return pem.EncodeToMemory(b), nil
+}
+
+func isEncrypted(b *pem.Block) bool {
+	return b.Type == "ENCRYPTED PRIVATE KEY" || strings.Contains(b.Headers["Proc-Type"], "ENCRYPTED")
+}
+
+func isKeyBlock(b *pem.Block) bool {
+	return strings.HasSuffix(b.Type, "PRIVATE KEY") && parsesAsKey(b.Bytes)
+}
+
+// holdsKeyBlock reports whether a later block of data is a private key.
+func holdsKeyBlock(data []byte) bool {
+	for {
+		var b *pem.Block
+		b, data = pem.Decode(data)
+		if b == nil {
+			return false
+		}
+		if isEncrypted(b) || isKeyBlock(b) {
+			return true
+		}
+	}
 }
 
 func parsesAsKey(der []byte) bool {
