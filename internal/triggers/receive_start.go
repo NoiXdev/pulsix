@@ -7,6 +7,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/secretshadow"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -20,10 +21,20 @@ func (s *Service) runTemplate(ctx context.Context, t Trigger, d Delivery, body [
 			s.d.Log.ErrorContext(ctx, "webhook trigger's stored mapping failed to compile", "trigger", t.ID, "org", t.OrgID, "err", err)
 			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the trigger's mapping is invalid (see the manager log)")
 		}
+		if errors.Is(err, errSecretCheck) {
+			s.d.Log.ErrorContext(ctx, "webhook delivery's mapped values could not be checked against the run's secrets", "trigger", t.ID, "org", t.OrgID, "err", err)
+			return s.finish(ctx, d, Result{Outcome: OutcomeFailed}, "the mapped values could not be checked against the run's secrets (see the manager log)")
+		}
 		if field == "" {
 			return Result{}, d, err
 		}
-		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, "invalid value at "+field)
+		reason := "invalid value at " + field
+		if errors.Is(err, secretshadow.ErrShadow) {
+			// Names the variable and the kind of secret, never a value;
+			// the sender's answer names only the field.
+			reason += ": " + err.Error()
+		}
+		return s.finish(ctx, d, Result{Outcome: OutcomeInvalidPayload, Field: field}, reason)
 	}
 	if t.SettleSeconds > 0 {
 		return s.collect(ctx, t, d, ov)

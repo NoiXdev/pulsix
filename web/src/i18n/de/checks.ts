@@ -201,7 +201,7 @@ export const deChecks: Messages['checks'] = {
     rowInvalid: 'Noch keine vollständige Zusicherung: Sie braucht einen Namen (Buchstaben, Ziffern und . _ -), ein Argument, wo der Gegenstand eines nimmt, und einen Wert.',
     cannotParse: (line: number) => `Zeile ${line} ist keine Zusicherung. Bitte hier korrigieren, bevor zu den Zeilen gewechselt wird.`,
     selectorHint:
-      'html(…) nimmt einen CSS-Selektor aus dieser Teilmenge: Elementnamen und *, #id, .class, [attr], [attr="v"], [attr~="v"], [attr^="v"], [attr$="v"], [attr*="v"], verbunden mit einem Leerzeichen (Nachfahre) oder > (Kind), mehrere Selektoren durch Kommas getrennt, sowie :first-child, :last-child und :nth-child(n, odd oder even).',
+      'html(…) nimmt einen CSS-Selektor aus dieser Teilmenge: Elementnamen und *, #id, .class, [attr], [attr="v"], [attr~="v"], [attr^="v"], [attr$="v"], [attr*="v"], verbunden mit einem Leerzeichen (Nachfahre), > (Kind), + (direkt folgendes Geschwister) oder ~ (später folgendes Geschwister), mehrere Selektoren durch Kommas getrennt, sowie :first-child, :last-child, :only-child, :nth-child(…), :nth-last-child(…), :first-of-type, :last-of-type, :only-of-type, :nth-of-type(…), :nth-last-of-type(…), :empty, :root und :not(…). Die nth-Formen nehmen eine Zahl, odd, even oder An+B wie 2n+1; :not nimmt Selektoren ohne Kombinatoren, durch Kommas getrennt, und lässt sich nicht verschachteln.',
   },
   assertionResults: { pass: 'bestanden', warn: 'Warnung', crit: 'kritisch' },
   assertionActual: { absent: 'nicht vorhanden', hidden: '(verborgen)' },
@@ -239,6 +239,10 @@ export const deChecks: Messages['checks'] = {
       socket: {
         label: 'Docker-Socket',
         hint: 'Ein absoluter Pfad oder eine Windows-Pipe. Leer bedeutet den Standard der Plattform: /var/run/docker.sock, unter Windows npipe:////./pipe/docker_engine.',
+      },
+      resources: {
+        label: 'Ressourcenverbrauch messen',
+        hint: 'CPU, Arbeitsspeicher, Netzwerk- und Datenträgerdurchsatz jedes Containers, für höchstens 100 Container (laufende zuerst, jeweils nach Name). Ein gestoppter Container zeigt 0.',
       },
     },
     temperature: {
@@ -291,6 +295,10 @@ export const deChecks: Messages['checks'] = {
         label: 'Secret',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält Serveradresse und Login. Der Wert verlässt den Host nie.',
         placeholder: 'db-main',
+      },
+      schema_sizes: {
+        label: 'Größe jedes Schemas melden',
+        hint: 'Daten und Indizes je Schema, ohne Systemschemas. Der Login braucht ein Recht auf die Tabellen, etwa SHOW VIEW, das keine Daten lesen lässt. Kann auf Servern mit sehr vielen Tabellen langsam sein.',
       },
     },
     redis: {

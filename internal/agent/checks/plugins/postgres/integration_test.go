@@ -3,12 +3,15 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/noixdev/pulsix/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -23,6 +26,8 @@ func TestAgainstARealServer(t *testing.T) {
 	ctx := context.Background()
 	c, err := tcpostgres.Run(ctx, testImage,
 		tcpostgres.WithDatabase("postgres"), tcpostgres.WithUsername("admin"), tcpostgres.WithPassword("admin-pw"),
+		// 5433 is the standby the replica subtest starts in the container.
+		testcontainers.WithExposedPorts("5433/tcp"),
 		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)))
 	if err != nil {
 		t.Fatalf("start postgres: %v", err)
@@ -91,6 +96,7 @@ func TestAgainstARealServer(t *testing.T) {
 		mustValue(t, obs, "", "pg.replication_lag_seconds", 0)
 		mustValue(t, obs, "", "pg.replication_lag_bytes", 0)
 		mustValue(t, obs, "", "pg.oldest_xact_seconds", 0)
+		mustValue(t, obs, "", "pg.replicas", 0)
 		size, ok := find(obs, "sized_db", "pg.database_size_bytes")
 		if !ok || size.Value == nil || *size.Value < 4_000_000 {
 			t.Errorf("sized_db size = %+v", size)
@@ -186,6 +192,127 @@ func TestAgainstARealServer(t *testing.T) {
 		mustValue(t, obs, "", "pg.up", 0)
 		mustErr(t, obs, "", "pg.connections", "postgres: TLS handshake failed")
 		noSecretIn(t, obs, err)
+	})
+
+	t.Run("replica on the primary", func(t *testing.T) {
+		// A real streaming standby in the same container, on port 5433,
+		// connected over the Unix socket (so its client host is "local").
+		run := func(cmd string) {
+			t.Helper()
+			code, out, err := c.Exec(ctx, []string{"gosu", "postgres", "sh", "-c", cmd}, tcexec.Multiplexed())
+			if err != nil || code != 0 {
+				b, _ := io.ReadAll(out)
+				t.Fatalf("%s: exit %d, %v: %s", cmd, code, err, b)
+			}
+		}
+		run(`pg_basebackup -h /var/run/postgresql -U admin -D /tmp/standby -R -X stream -c fast`)
+		run(`echo "primary_conninfo = 'host=/var/run/postgresql port=5432 user=admin application_name=standby1'" >> /tmp/standby/postgresql.auto.conf`)
+		run(`pg_ctl -D /tmp/standby -o "-p 5433 -k /tmp -c listen_addresses=*" -l /tmp/standby.log -w start`)
+		t.Cleanup(func() {
+			_, _, _ = c.Exec(ctx, []string{"gosu", "postgres", "pg_ctl", "-D", "/tmp/standby", "-m", "fast", "-w", "stop"})
+		})
+
+		const item = "replica:standby1@local"
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			obs, err := p.CollectWithSecret(ctx, nil, fields(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, ok := find(obs, item, "pg.replica_state")
+			if ok && st.Label != nil && *st.Label == "streaming" {
+				mustValue(t, obs, "", "pg.replicas", 1)
+				if o, _ := find(obs, item, "pg.replica_lag_bytes"); o.Value == nil || *o.Value < 0 {
+					t.Errorf("lag bytes = %+v", o)
+				}
+				if o, _ := find(obs, item, "pg.replica_lag_seconds"); o.Value == nil || *o.Value < 0 {
+					t.Errorf("lag seconds = %+v", o)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no streaming replica in %+v", obs)
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+
+		// A user without pg_monitor sees no sender's details.
+		obs, err := p.CollectWithSecret(ctx, nil, fields(map[string]string{"user": "plain", "password": "plain-pw"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustErr(t, obs, "", "pg.replicas", "postgres: no privilege to see replication")
+		if _, ok := find(obs, item, "pg.replica_state"); ok {
+			t.Error("replica reported to a user without pg_monitor")
+		}
+
+		t.Run("a base backup alongside is no replica", func(t *testing.T) {
+			// Throttled, so its -X stream WAL sender stays connected while
+			// the check runs.
+			run(`rm -rf /tmp/bb; nohup pg_basebackup -h /var/run/postgresql -U admin -D /tmp/bb -X stream -c fast -r 32k > /tmp/bb.log 2>&1 &`)
+			t.Cleanup(func() { _, _, _ = c.Exec(ctx, []string{"sh", "-c", "pkill pg_basebackup; rm -rf /tmp/bb"}) })
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				var n int
+				if err := admin.QueryRow(ctx, `SELECT count(*) FROM pg_stat_replication WHERE application_name = 'pg_basebackup' AND state = 'streaming'`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n > 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("the base backup's WAL sender did not start")
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+			obs, err := p.CollectWithSecret(ctx, nil, fields(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustValue(t, obs, "", "pg.replicas", 1)
+			for _, o := range obs {
+				if strings.Contains(o.Item, "pg_basebackup") {
+					t.Errorf("a base backup reported as a replica: %+v", o)
+				}
+			}
+			mustLabel(t, obs, item, "pg.replica_state", "streaming")
+		})
+
+		t.Run("a cascading standby reports its own replica", func(t *testing.T) {
+			// standby2 streams from standby1, which the check reads through
+			// the mapped 5433: the recovery branch of the byte lag.
+			run(`pg_basebackup -h /tmp -p 5433 -U admin -D /tmp/standby2 -R -X stream -c fast`)
+			run(`echo "primary_conninfo = 'host=/tmp port=5433 user=admin application_name=standby2'" >> /tmp/standby2/postgresql.auto.conf`)
+			run(`pg_ctl -D /tmp/standby2 -o "-p 5434 -k /tmp" -l /tmp/standby2.log -w start`)
+			t.Cleanup(func() {
+				_, _, _ = c.Exec(ctx, []string{"gosu", "postgres", "pg_ctl", "-D", "/tmp/standby2", "-m", "fast", "-w", "stop"})
+			})
+			mapped, err := c.MappedPort(ctx, "5433/tcp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			onStandby := fields(map[string]string{"port": mapped.Port()})
+			const cascaded = "replica:standby2@local"
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				obs, err := p.CollectWithSecret(ctx, nil, onStandby)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if st, ok := find(obs, cascaded, "pg.replica_state"); ok && st.Label != nil && *st.Label == "streaming" {
+					mustValue(t, obs, "", "pg.in_recovery", 1)
+					mustValue(t, obs, "", "pg.replicas", 1)
+					if o, _ := find(obs, cascaded, "pg.replica_lag_bytes"); o.Value == nil || *o.Value < 0 {
+						t.Errorf("cascaded lag bytes = %+v", o)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("no streaming cascaded replica in %+v", obs)
+				}
+				time.Sleep(300 * time.Millisecond)
+			}
+		})
 	})
 
 	t.Run("prefer falls back to plain", func(t *testing.T) {

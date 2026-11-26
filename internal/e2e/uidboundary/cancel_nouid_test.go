@@ -55,7 +55,7 @@ func cancelRun(t *testing.T, cfg worker.Config, job *workerpb.Job, started func(
 	}
 
 	cancelledAt := time.Now()
-	client.cancel()
+	client.cancel(t)
 
 	select {
 	case <-client.reported:

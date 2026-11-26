@@ -34,7 +34,7 @@ func TestPrimary(t *testing.T) {
 	mustLabel(t, obs, "redis.replication_link", "none")
 	mustValue(t, obs, "redis.replication_lag_seconds", 0)
 	mustAbsent(t, obs, "redis.evicted_keys_per_s") // first round
-	if len(obs) != 8 {
+	if len(obs) != 15 {
 		t.Fatalf("%d observations: %+v", len(obs), obs)
 	}
 	if got := s.received(); got != cmd("INFO") {

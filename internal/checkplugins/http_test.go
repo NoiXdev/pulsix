@@ -378,9 +378,18 @@ func TestAssertionFormat(t *testing.T) {
 		{`ok=html("main div p") exists`, true},
 		{`ok=html("nav ul li a") exists`, true},
 		{`ok=html("a b c d e f g h i") exists`, false},
-		{`ok=html("p:not(.a)") exists`, false},
+		{`ok=html("p:not(.a)") exists`, true},
 		{`ok=html("x/**/div/**/p") exists`, false},
-		{`ok=html("a ~ b ~ c") exists`, false},
+		// Sibling combinators and the pseudo-classes of backlog 3.90.
+		{`ok=html("a ~ b ~ c") exists`, true},
+		{`ok=html("h2 + p") count == 1`, true},
+		{`ok=html("tr:nth-child(2n+1) td:nth-last-of-type(1)") exists`, true},
+		{`ok=html("li:not(:last-child, .x):only-of-type, p:empty, :root") exists`, true},
+		{`ok=html("p:not(a b)") exists`, false},
+		{`ok=html("p:not(:not(a))") exists`, false},
+		{`ok=html("p:is(a)") exists`, false},
+		{`ok=html("p:nth-child(2n+1 of .a)") exists`, false},
+		{`ok=html("a + + b") exists`, false},
 	}
 	for _, tc := range cases {
 		if got := checkplugins.FormatAssertion.Valid(tc.in); got != tc.valid {

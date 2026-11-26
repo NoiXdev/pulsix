@@ -335,6 +335,8 @@
   {"format": "assertion", "input": "p=html(\"h1\") count == 1", "valid": true},
   {"format": "assertion", "input": "p=html(\"div.alert, #error\") !exists", "valid": true},
   {"format": "assertion", "input": "p=html(\"title\") !matches \"(?i)maintenance\"", "valid": true},
+  {"format": "assertion", "input": "p=html(\"h2 + p, h2 ~ ul > li:nth-child(2n+1)\") count >= 1", "valid": true},
+  {"format": "assertion", "input": "p=html(\"li:not(.ad, :last-of-type)\") exists", "valid": true},
   {"format": "assertion", "input": "ok=  status   ==  +200.0  ", "valid": true},
   {"format": "assertion", "input": "ok=status==200", "valid": true},
   {"format": "assertion", "input": "e=body contains \"a\\\"b\\\\c\\u00e9 @warn\" @warn", "valid": true},

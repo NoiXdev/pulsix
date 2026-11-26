@@ -115,6 +115,14 @@ func TestAgainstARealServer(t *testing.T) {
 		mustLabel(t, obs, "redis.role", "primary")
 		mustLabel(t, obs, "redis.replication_link", "none")
 		mustValue(t, obs, "redis.replication_lag_seconds", 0)
+		// A fresh server: no snapshot attempted yet, AOF off.
+		mustLabel(t, obs, "redis.rdb_last_bgsave_status", "ok")
+		mustValue(t, obs, "redis.aof_enabled", 0)
+		mustLabel(t, obs, "redis.aof_last_write_status", "ok")
+		mustValue(t, obs, "redis.loading", 0)
+		if age, _ := find(obs, "", "redis.rdb_last_save_age_seconds"); age.Value == nil || *age.Value < 0 || *age.Value > 600 {
+			t.Errorf("save age = %+v", age)
+		}
 	})
 
 	t.Run("an ACL user", func(t *testing.T) {

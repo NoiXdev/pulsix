@@ -188,6 +188,15 @@ can be bound to any host, and the check shows no readings on the host page until
 its agent is updated. Nothing is seeded into organizations, so no existing host
 gains the check by itself, and there is no schema change.
 
+The `docker` check's `resources` option (backlog 3.12a, off by default) needs an
+agent at the version that ships it. An older agent ignores the option in a check the
+manager pushes and keeps reporting the container states; the usage metrics simply never appear. An older
+manager never sends the option, so a newer agent never reads usage for it. A
+docker check in the agent's local `agent.yaml` that sets `resources` is refused by an
+older agent (an unknown parameter to it), and an older manager drops such a local
+check from a newer agent, reporting it as ignored by the server. There is no schema
+or protocol change and no manager-side gating.
+
 The same holds for the `temperature`, `smart` and `raid` plugins (backlog 3.9):
 an older agent skips such a check, warns on every configuration push and shows
 no readings until it is updated, and the manager does not gate on it. Nothing is
@@ -1223,6 +1232,43 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
   "header" must not be …` on every metric until the secret names another
   header. Before, only Host, Content-Length, Transfer-Encoding, Connection
   and User-Agent were refused.
+
+Sibling combinators and more pseudo-classes in `html(…)` assertions (backlog 3.90) add
+no migration, no proto change and no dependency. The selector subset gains `+`, `~`,
+`:only-child`, `:nth-last-child()`, `:first-of-type`, `:last-of-type`, `:only-of-type`,
+`:nth-of-type()`, `:nth-last-of-type()`, `:empty`, `:root` and `:not()`, and the nth
+pseudo-classes take `An+B`; every selector valid before selects what it selected
+before, under the same work budgets. **Skew:** the grammar is not gated by version.
+Every new construct is refused by the parser of earlier releases, so an older agent
+used as a probe vantage, or an older manager still running during a rolling upgrade,
+reports such an assertion as the error "the assertion is not valid" instead of judging
+it with another meaning (the item reads unknown whenever the check's result comes from
+that vantage); the check's other assertions run as before. Update the agents of a
+check's vantage groups before using the new forms.
+
+## Behaviour changes to check after an upgrade
+
+- **Container resource usage on the docker check (backlog 3.12a, no migration):**
+  a new option `resources` (off by default; existing checks are unchanged) makes the
+  agent read each running or paused container's CPU, memory, network and block I/O
+  once per round from the engine's one-shot stats, after the state readings and
+  within the same 10-second bound, at most 8 requests at once. At most 100
+  containers carry usage per round: running ones first, then stopped ones, each by
+  name; the rest are counted in `docker.containers_unsampled` and forgotten. New
+  per-container metrics: `docker.cpu_percent` (100 is one core on every platform;
+  `docker stats` on Windows shows 100 for all cores instead), `docker.memory_bytes`
+  (without the file cache, as `docker stats` shows it), `docker.memory_percent` (of
+  the limit, or of the host's memory without one; never for Windows containers), `docker.net_rx_bytes_per_s`,
+  `docker.net_tx_bytes_per_s` (only for a container with a network of its own, not
+  `host`, `none` or `container:…`), `docker.block_read_bytes_per_s` and
+  `docker.block_write_bytes_per_s`. Rates appear from the second round on, and again
+  one round after a container is recreated, restarted or its counters reset. A container that is
+  not running reads 0 instead of turning stale, on the values it reported while
+  running (a container the agent has not seen running since it started reports none). Each option-on round adds up to seven
+  tuples per container towards the per-host cap of 4 096; switching the option off
+  reads the usage values as no longer asked and closes their alerts as `stale`. On an
+  engine older than API 1.41 (Docker 20.10) each stats request waits a second or two,
+  so with many containers some read "did not answer in time".
 - **A sleeping disk reads `standby`, and its readings wait (backlog 3.9b, no
   migration):** the `smart` check leaves a disk in standby asleep, as before, but used
   to report nothing for it, so its readings turned stale, the host read unknown, and a
@@ -2069,6 +2115,18 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
   after the upgrade: look at your triggers' mappings and map such a value onto
   another variable name. Mappings onto playbook keywords (`tags`, `name`,
   `environment`, …) keep working.
+- **Webhook mappings onto secret names are refused (backlog 2.139, no migration):** a
+  mapping target named like a secret of the template's run (as for run request extra
+  vars above: an inventory secret of any host the template's scope reaches, a variable
+  the playbook declares secret, or one its repository encrypts with Ansible Vault) is
+  refused when the trigger is saved (400), and every delivery to a trigger saved
+  before with such a target fails (422 naming the field, outcome `invalid_payload`;
+  no run starts, nothing is collected). A run a settle delay collected is checked
+  again when it is due and is not started, its deliveries failed, when a secret of a
+  mapped name appeared meanwhile. A template whose scope names something that no
+  longer exists cannot be checked, so a trigger with mapped variables for it cannot
+  be saved (400) until the scope is fixed. To check after the upgrade: rename such a
+  mapping target.
 - **Numbers in run overrides stay exact (spec 2026-11-25 A):** a run with overrides
   (a schedule's, a webhook's, a run request's) sends the template's and the
   overrides' numbers as written: `1.0` stays `1.0` and an integer past 2^53 keeps
@@ -2088,6 +2146,32 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
   `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
   `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
   which now also carries the values of the host's groups and their parent groups.
+- **More database metrics (backlog 3.10b, no migration):** the updated agent reports
+  new metrics; nothing existing changes. `postgres`: `pg.replicas` on item "" every
+  round (an error "no privilege to see replication" for a login without `pg_monitor`,
+  and a failure on a failed round like the other host metrics), and per replica item
+  `replica:<application_name>@<client address>` (`replica:<name>@local` over a Unix
+  socket) `pg.replica_lag_bytes`, `pg.replica_lag_seconds` and `pg.replica_state`;
+  these items are asked whatever `databases` lists. Only senders that replay count:
+  `pg_basebackup`, `pg_receivewal`, `barman_receive_wal` and logical table-sync workers
+  are left out, and a standby counts from its first reply. A failed replica read errors
+  `pg.replicas` only; the round stays up. A replica that is retired or changes address
+  leaves a stale item behind; **Forget** it, or let the item expiry remove it. `redis`: seven persistence metrics
+  on item "" (`redis.rdb_last_bgsave_status`, `redis.rdb_last_save_age_seconds`,
+  `redis.rdb_changes_since_last_save`, `redis.aof_enabled`, `redis.aof_last_write_status`,
+  `redis.aof_last_bgrewrite_status`, `redis.loading`); a Redis-protocol server whose INFO
+  lacks them reports an error on each. `mysql`: a new optional parameter
+  `schema_sizes` (default false) adds `mysql.schema_size_bytes` per schema and
+  `mysql.schemas_unreported` (a schema without tables reads 0); the login needs a privilege on the tables
+  (`GRANT SHOW VIEW ON *.*` suffices and reads no data). Version skew: an older agent
+  reports none of these and ignores `schema_sizes`; a manager older than this release
+  stores the new metrics but refuses rules on them, and refuses a `mysql` check that
+  carries `schema_sizes` (unknown parameter), so roll the managers before setting it.
+  Two more skew cases: a `mysql` check defined in a host's `agent.yaml` with
+  `schema_sizes` is ignored as a whole by an older manager (the plugin refuses its
+  parameters), `mysql.up` included, until the manager is updated; and an older manager
+  has no rule that asks for replica items on a `postgres` check with a `databases`
+  list, so it shows them as not asked until it is updated.
 
 ## Roll order
 

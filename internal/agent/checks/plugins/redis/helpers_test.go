@@ -39,11 +39,16 @@ func info(pairs ...string) string {
 	return b.String()
 }
 
-// primaryInfo is a healthy primary with 100 MiB used of a 1 GiB maxmemory.
+// primaryInfo is a healthy primary with 100 MiB used of a 1 GiB maxmemory
+// that saved a snapshot a minute ago and has AOF off.
 func primaryInfo(extra ...string) string {
 	base := []string{
 		"used_memory", "104857600", "maxmemory", "1073741824", "total_system_memory", "8589934592",
 		"connected_clients", "7", "role", "master", "uptime_in_seconds", "1000", "evicted_keys", "10",
+		// Persistence: last saved 60 s before the test clock's 1_000_000.
+		"loading", "0", "rdb_changes_since_last_save", "12", "rdb_last_save_time", "999940",
+		"rdb_last_bgsave_status", "ok", "aof_enabled", "0", "aof_last_bgrewrite_status", "ok",
+		"aof_last_write_status", "ok",
 	}
 	return info(overlay(base, extra)...)
 }

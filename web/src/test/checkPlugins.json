@@ -162,6 +162,11 @@
           "default": "/var/run/docker.sock",
           "max_bytes": 255,
           "format": "dockerSocket"
+        },
+        {
+          "name": "resources",
+          "type": "bool",
+          "default": false
         }
       ],
       "metrics": [
@@ -191,6 +196,38 @@
         },
         {
           "name": "docker.containers_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.cpu_percent",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.memory_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.memory_percent",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.net_rx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.net_tx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.block_read_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.block_write_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.containers_unsampled",
           "kind": "numeric"
         }
       ]
@@ -473,6 +510,22 @@
         {
           "name": "pg.databases_unreported",
           "kind": "numeric"
+        },
+        {
+          "name": "pg.replicas",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replica_state",
+          "kind": "discrete"
         }
       ]
     },
@@ -488,6 +541,11 @@
           "max_bytes": 64,
           "non_empty": true,
           "format": "secretName"
+        },
+        {
+          "name": "schema_sizes",
+          "type": "bool",
+          "default": false
         }
       ],
       "metrics": [
@@ -517,6 +575,14 @@
         },
         {
           "name": "mysql.slow_queries_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schema_size_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.schemas_unreported",
           "kind": "numeric"
         }
       ]
@@ -569,6 +635,34 @@
         },
         {
           "name": "redis.evicted_keys_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_last_bgsave_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.rdb_last_save_age_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.rdb_changes_since_last_save",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_enabled",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.aof_last_write_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.aof_last_bgrewrite_status",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.loading",
           "kind": "numeric"
         }
       ]

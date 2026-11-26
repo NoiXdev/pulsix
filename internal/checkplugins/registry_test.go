@@ -225,6 +225,10 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 		if p.Name != "commands" {
 			params["commands"] = []any{"x"}
 		}
+	case "mysql":
+		if p.Name != "secret" {
+			params["secret"] = "db"
+		}
 	case "snmp":
 		if p.Name != "secret" {
 			params["secret"] = "sw"

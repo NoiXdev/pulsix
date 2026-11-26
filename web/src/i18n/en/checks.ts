@@ -226,7 +226,7 @@ export const enChecks = {
     rowInvalid: 'Not a complete assertion yet: it needs a name (letters, digits and . _ -), an argument where the subject takes one and a value.',
     cannotParse: (line: number) => `Line ${line} is not an assertion. Correct it here before switching to rows.`,
     selectorHint:
-      'html(…) takes a CSS selector from this subset: element names and *, #id, .class, [attr], [attr="v"], [attr~="v"], [attr^="v"], [attr$="v"], [attr*="v"], combined with a space (descendant) or > (child), several selectors separated by commas, and :first-child, :last-child and :nth-child(n, odd or even).',
+      'html(…) takes a CSS selector from this subset: element names and *, #id, .class, [attr], [attr="v"], [attr~="v"], [attr^="v"], [attr$="v"], [attr*="v"], combined with a space (descendant), > (child), + (next sibling) or ~ (later sibling), several selectors separated by commas, and :first-child, :last-child, :only-child, :nth-child(…), :nth-last-child(…), :first-of-type, :last-of-type, :only-of-type, :nth-of-type(…), :nth-last-of-type(…), :empty, :root and :not(…). The nth forms take a number, odd, even or An+B such as 2n+1; :not takes selectors without combinators, separated by commas, and cannot be nested.',
   },
   /** An assertion's result (http.assertion) and the two words its value
    * seen (http.assertion_actual) can be instead of a value. */
@@ -274,6 +274,10 @@ export const enChecks = {
       socket: {
         label: 'Docker socket',
         hint: 'An absolute path or a Windows pipe. Empty means the platform default: /var/run/docker.sock, on Windows npipe:////./pipe/docker_engine.',
+      },
+      resources: {
+        label: 'Measure resource usage',
+        hint: 'CPU, memory, network and disk throughput of each container, for at most 100 containers (running ones first, each by name). A stopped container reads 0.',
       },
     },
     temperature: {
@@ -326,6 +330,10 @@ export const enChecks = {
         label: 'Secret',
         hint: 'Name of a secret in agent.yaml on each host: it holds the server address and login. The value never leaves the host.',
         placeholder: 'db-main',
+      },
+      schema_sizes: {
+        label: 'Report the size of each schema',
+        hint: 'Data and indexes per schema, system schemas left out. The login needs a privilege on the tables, such as SHOW VIEW, which reads no data. Can be slow on a server with very many tables.',
       },
     },
     redis: {
