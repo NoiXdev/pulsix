@@ -337,12 +337,12 @@ export const deChecks: Messages['checks'] = {
     },
     phpfpm: {
       urls: {
-        label: 'URLs der Status-Seiten (eine pro Zeile, je ein Pool)',
-        hint: 'Die Status-Seite (pm.status_path) jedes PHP-FPM-Pools, ausgeliefert vom Webserver davor und gelesen vom Agent auf jedem Host; fehlt der Query-Schlüssel json, hängt der Agent ?json an. Jede URL ist ein Pool und benennt seine Messwerte. Leer heißt ein Pool unter http://127.0.0.1/status.',
+        label: 'Status-Seiten (eine pro Zeile, je ein Pool)',
+        hint: 'Die Status-Seite (pm.status_path) jedes PHP-FPM-Pools, gelesen vom Agent auf jedem Host. Entweder eine URL, ausgeliefert vom Webserver vor dem Pool (fehlt der Query-Schlüssel json, hängt der Agent ?json an), oder die eigene Listen-Adresse des Pools mit Status-Pfad, ohne Webserver dazwischen: fcgi://127.0.0.1:9000/status oder unix:/run/php/php8.3-fpm.sock:/status. Jeder Eintrag ist ein Pool und benennt seine Messwerte. Leer heißt ein Pool unter http://127.0.0.1/status.',
       },
       secret: {
         label: 'Secret (optional)',
-        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password), der an jeden Pool gesendet wird. Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password), der an jeden über eine URL gelesenen Pool gesendet wird. Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
@@ -465,6 +465,7 @@ export const deChecks: Messages['checks'] = {
       snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0, die mit 0, 1 oder 2 beginnt (nach 0 oder 1 ist die zweite Zahl höchstens 39)',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
+      phpfpmPool: 'jeder Eintrag muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment sein oder eine Pool-Adresse fcgi://Host:Port/Pfad bzw. unix:/Socket:/Pfad, deren Pfad aus / und Buchstaben, Ziffern und _ / - besteht (kein Punkt)',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
       uuid: 'jeder Eintrag muss die ID einer Überwachungsgruppe sein (eine UUID in Kleinbuchstaben)',

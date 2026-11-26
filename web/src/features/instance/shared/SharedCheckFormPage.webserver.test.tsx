@@ -14,7 +14,7 @@ const SINGLE = [
 ] as const;
 const ALL = ['nginx', 'apache', 'caddy', 'phpfpm'] as const;
 const SECRET = /^Secret \(optional\)/;
-const LIST = 'Status page URLs (one per line, one pool each)';
+const LIST = 'Status pages (one per line, one pool each)';
 
 async function openNew(plugin: string) {
   const posted = mockCreate();

@@ -833,7 +833,7 @@
           "example": "http://127.0.0.1/status",
           "max_entries": 16,
           "max_bytes": 500,
-          "format": "statusURL"
+          "format": "phpfpmPool"
         },
         {
           "name": "secret",

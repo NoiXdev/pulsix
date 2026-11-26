@@ -1,10 +1,11 @@
 // Package phpfpm is the agent's PHP-FPM check plugin: it reads each listed
-// pool's status page (?json, served by the web server in front of FPM) and
-// reports, per pool, reachability, the processes, the listen queue and the
+// pool's status page (?json, served by the web server in front of FPM, or
+// over FastCGI from the pool's own address with no web server in between,
+// backlog 3.11a) and reports, per pool, reachability, the processes, the listen queue and the
 // request, max-children and slow-request rates, plus on item "" how many
 // listed pools are down. Each entry of the urls parameter is one pool and
 // its item, as written; an optional agent.yaml secret holds HTTP
-// basic-authentication credentials, sent to every pool. It is a
+// basic-authentication credentials, sent to every pool read as a URL. It is a
 // checks.StatefulPlugin (the rates need each pool's previous counters, so
 // every check key collects with its own instance) and a
 // checks.SecretPlugin. The requests are made by the shared webcheck
@@ -75,7 +76,7 @@ func (p *plugin) Collect(ctx context.Context, params map[string]any) ([]checks.O
 }
 
 // CollectWithSecret fetches every pool's page concurrently through
-// webcheck.Round and reports each pool on its own item, then pools_down on
+// webcheck.RoundEach (each entry with its fetcher) and reports each pool on its own item, then pools_down on
 // item "". A caller context that ends returns nothing but its error (the
 // Plugin contract) and moves no baseline; the round's own deadline is a
 // pool that did not answer in time.
@@ -87,11 +88,11 @@ func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, f
 	if err != nil {
 		return []checks.Observation{checks.ErrObservation("", metricPoolsDown, fmt.Errorf("phpfpm: %w", err))}, nil
 	}
-	pages := make([]string, len(entries))
+	fetch := make([]webcheck.Fetcher, len(entries))
 	for i, e := range entries {
-		pages[i] = webcheck.WithQueryKey(e, "json")
+		fetch[i] = fetcher(e)
 	}
-	out, err := webcheck.Round(ctx, pages, maxPage, params, fields, parseStatus)
+	out, err := webcheck.RoundEach(ctx, fetch, maxPage, params, fields, parseStatus)
 	if err != nil {
 		return nil, err
 	}
