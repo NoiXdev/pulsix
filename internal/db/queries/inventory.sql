@@ -14,7 +14,8 @@ SELECT * FROM inventory_groups WHERE org_id = $1 ORDER BY name;
 -- a stale revision or an unknown group (the store tells the two apart).
 UPDATE inventory_groups
 SET parent_id = @parent_id, name = @name, description = @description, schema = @schema,
-    vars = @vars, bastion_id = @bastion_id, revision = revision + 1, updated_at = now()
+    vars = @vars, bastion_id = @bastion_id, assistant_keys = @assistant_keys,
+    assistant_default_keys = @assistant_default_keys, revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
 
@@ -26,15 +27,16 @@ SELECT group_id, count(*)::int AS members
 FROM inventory_memberships WHERE org_id = $1 GROUP BY group_id;
 
 -- name: UpsertInventoryMembership :one
-INSERT INTO inventory_memberships (group_id, host_id, org_id, vars)
-VALUES ($1, $2, $3, $4)
+INSERT INTO inventory_memberships (group_id, host_id, org_id, vars, assistant_keys)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (group_id, host_id) DO UPDATE
-SET vars = EXCLUDED.vars, revision = inventory_memberships.revision + 1, updated_at = now()
+SET vars = EXCLUDED.vars, assistant_keys = EXCLUDED.assistant_keys,
+    revision = inventory_memberships.revision + 1, updated_at = now()
 RETURNING *;
 
 -- name: UpdateInventoryMembership :one
 UPDATE inventory_memberships
-SET vars = @vars, revision = revision + 1, updated_at = now()
+SET vars = @vars, assistant_keys = @assistant_keys, revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND group_id = @group_id AND host_id = @host_id AND revision = @revision
 RETURNING *;
 

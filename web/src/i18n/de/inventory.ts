@@ -219,6 +219,12 @@ export const deInventory: Messages['inventory'] = {
     discardBody: 'Deine Änderungen an den Feldern sind nicht gespeichert.',
     discard: 'Verwerfen',
   },
+  assistant: {
+    written: 'Von einem Assistenten geschrieben – wird als reiner Text verwendet, bis eine Person es speichert',
+    defaultSet: 'Standardwert von einem Assistenten gesetzt – wird als reiner Text verwendet, bis eine Person die Felder speichert',
+    keys: (keys: string) => `Von einem Assistenten geschrieben: ${keys} – wird als reiner Text verwendet, bis eine Person die Werte speichert`,
+    badge: 'Assistentenwerte',
+  },
   valuesTab: {
     saved: 'Gruppenwerte gespeichert',
     saveFailed: 'Die Werte konnten nicht gespeichert werden',

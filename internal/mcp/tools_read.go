@@ -92,7 +92,7 @@ func readTools() []toolDef {
 				}
 				return passGet(ctx, c, q, "/hosts")
 			}),
-		define("get_host_vars", "Get host variables", "The effective variables of a host as the inventory renders them: the values of the groups it is in and of their parent groups (a deeper group wins), the values it has in its memberships, and its own (address and SSH settings as ansible_ variables, facts). sources names, per variable, the group the value comes from, or \"host\" for the host's own. A secret shows as {\"$secret\": \"set\"}, never its value. Change a host's values in a group with set_member_vars, a group's own with set_group_vars.",
+		define("get_host_vars", "Get host variables", "The effective variables of a host as the inventory renders them: the values of the groups it is in and of their parent groups (a deeper group wins), the values it has in its memberships, and its own (address and SSH settings as ansible_ variables, facts). sources names, per variable, the group the value comes from, or \"host\" for the host's own. A secret shows as {\"$secret\": \"set\"}, never its value. assistant_written names the variables whose value an assistant wrote: a run receives them as plain text ({\"__ansible_unsafe\": …}, never templated) until a person saves them. Change a host's values in a group with set_member_vars, a group's own with set_group_vars.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in hostInput) (any, error) {
 				path, err := c.orgPath("/hosts/%s/inventory/preview", in.HostID)
 				if err != nil {
@@ -136,7 +136,7 @@ func readTools() []toolDef {
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, _ noInput) (any, error) {
 				return passGet(ctx, c, nil, "/inventory/groups")
 			}),
-		define("get_group", "Get group", "One inventory group: description, parent, variable schema, variables (secret values read as {\"$secret\":\"set\"}) and its members with their membership variables.",
+		define("get_group", "Get group", "One inventory group: description, parent, variable schema, variables (secret values read as {\"$secret\":\"set\"}) and its members with their membership variables. assistant_keys (group and member) and assistant_default_keys name the values and schema defaults an assistant wrote: a run receives them as plain text until a person saves them.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in groupInput) (any, error) {
 				group, err := passGet(ctx, c, nil, "/inventory/groups/%s", in.GroupID)
 				if err != nil {
@@ -148,7 +148,7 @@ func readTools() []toolDef {
 				}
 				return map[string]any{"group": group, "members": members}, nil
 			}),
-		define("preview_inventory", "Preview inventory", "The inventory as a playbook run sees it (secret values masked).",
+		define("preview_inventory", "Preview inventory", "The inventory as a playbook run sees it (secret values masked). Values an assistant wrote appear as {\"__ansible_unsafe\": …} (plain text, never templated) and are listed in assistant_written until a person saves them.",
 			tenancy.AreaInventoryRead, readTool, func(ctx context.Context, c *caller, in previewInput) (any, error) {
 				q := url.Values{}
 				if in.GroupID != "" {

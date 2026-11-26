@@ -6,15 +6,24 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
-// Assign creates or replaces a host's membership in a group. The host must
-// be managed. vars may carry the group's host-scoped fields and overrides of
-// its overridable group-scoped fields. A non-nil revision makes the write
-// conditional on the stored membership's revision.
+// Assign is AssignBy for a person.
 func (s *Service) Assign(ctx context.Context, orgID, groupID, hostID uuid.UUID, vars map[string]any, revision *int64) (MemberView, error) {
+	return s.AssignBy(ctx, orgID, groupID, hostID, vars, revision, assistantchange.Actor{})
+}
+
+// AssignBy creates or replaces a host's membership in a group on actor's
+// behalf. The host must be managed. vars may carry the group's host-scoped
+// fields and overrides of its overridable group-scoped fields. A non-nil
+// revision makes the write conditional on the stored membership's
+// revision. An assistant's write marks the keys it set or changed and may
+// not set one Ansible or Pulsix act on; a person's clears every mark of
+// the membership (decision D6, marks.go).
+func (s *Service) AssignBy(ctx context.Context, orgID, groupID, hostID uuid.UUID, vars map[string]any, revision *int64, actor assistantchange.Actor) (MemberView, error) {
 	g, err := s.store.GetGroup(ctx, orgID, groupID)
 	if err != nil {
 		return MemberView{}, err
@@ -41,7 +50,14 @@ func (s *Service) Assign(ctx context.Context, orgID, groupID, hostID uuid.UUID, 
 	if err != nil {
 		return MemberView{}, err
 	}
-	m := Membership{GroupID: groupID, HostID: hostID, OrgID: orgID, Vars: sealed}
+	changed := ChangedKeys(prev.Vars, sealed)
+	if actor.Assistant {
+		if err := checkAssistantValues(sealed, changed); err != nil {
+			return MemberView{}, err
+		}
+	}
+	m := Membership{GroupID: groupID, HostID: hostID, OrgID: orgID, Vars: sealed,
+		AssistantKeys: valueMarks(prev.AssistantKeys, sealed, changed, actor)}
 	var saved Membership
 	if revision != nil {
 		m.Revision = *revision

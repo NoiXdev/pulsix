@@ -209,6 +209,12 @@ export const enInventory = {
     discardBody: 'Your changes to the fields are not saved.',
     discard: 'Discard',
   },
+  assistant: {
+    written: 'Written by an assistant — used as plain text until a person saves it',
+    defaultSet: 'Default set by an assistant — used as plain text until a person saves the fields',
+    keys: (keys: string) => `Written by an assistant: ${keys} — used as plain text until a person saves the values`,
+    badge: 'assistant values',
+  },
   valuesTab: {
     saved: 'Group values saved',
     saveFailed: 'Saving the values failed',

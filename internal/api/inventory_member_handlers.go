@@ -19,13 +19,17 @@ type inventoryMemberDTO struct {
 	Complete  bool           `json:"complete"`
 	Problems  []problemDTO   `json:"problems"`
 	Orphaned  []string       `json:"orphaned"`
-	Revision  int64          `json:"revision"`
+	// AssistantKeys is decision D6's mark (spec 2026-11-25 assistant API
+	// gaps).
+	AssistantKeys []string `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the membership"`
+	Revision      int64    `json:"revision"`
 }
 
 func toInventoryMemberDTO(m inventory.MemberView) inventoryMemberDTO {
 	return inventoryMemberDTO{
 		GroupID: m.GroupID.String(), GroupName: m.GroupName, HostID: m.HostID.String(), HostName: m.HostName,
-		Vars: m.Vars, Complete: m.Complete, Problems: toProblemDTOs(m.Problems), Orphaned: nonNilStrings(m.Orphaned), Revision: m.Revision,
+		Vars: m.Vars, Complete: m.Complete, Problems: toProblemDTOs(m.Problems), Orphaned: nonNilStrings(m.Orphaned),
+		AssistantKeys: nonNilStrings(m.AssistantKeys), Revision: m.Revision,
 	}
 }
 
@@ -70,9 +74,10 @@ type previewInput struct {
 
 type previewOutput struct {
 	Body struct {
-		Inventory   map[string]any               `json:"inventory"`
-		Connections map[string]render.Connection `json:"connections"`
-		Warnings    []render.Warning             `json:"warnings"`
+		Inventory        map[string]any               `json:"inventory"`
+		Connections      map[string]render.Connection `json:"connections"`
+		Warnings         []render.Warning             `json:"warnings"`
+		AssistantWritten []render.AssistantValue      `json:"assistant_written" doc:"The values the inventory carries as plain text (never templated) because an assistant wrote them: a group's own (no host) or a host's in that group; a person saving them makes them live"`
 	}
 }
 
@@ -93,6 +98,8 @@ type hostPreviewOutput struct {
 		Sources    map[string]string  `json:"sources" doc:"Where each variable comes from: the name of the group that gave it, or \"host\" for the host's own (address, SSH settings, facts)"`
 		Connection *render.Connection `json:"connection,omitempty"`
 		Warnings   []render.Warning   `json:"warnings"`
+		// AssistantWritten: decision D6 (spec 2026-11-25 assistant API gaps).
+		AssistantWritten []string `json:"assistant_written" doc:"The variables whose value an assistant wrote: a run receives them as plain text (never templated) until a person saves them"`
 	}
 }
 
@@ -144,7 +151,7 @@ func registerInventoryMemberRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		m, err := deps.Inventory.Assign(ctx, scope.OrgID, groupID, hostID, in.Body.Vars, rev)
+		m, err := deps.Inventory.AssignBy(ctx, scope.OrgID, groupID, hostID, in.Body.Vars, rev, changeActor(scope))
 		if err != nil {
 			return nil, mapInventoryErr(ctx, err, "body.vars")
 		}
@@ -189,6 +196,10 @@ func registerInventoryMemberRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &previewOutput{}
 		out.Body.Inventory, out.Body.Connections, out.Body.Warnings = inv.Doc, inv.Connections, nonNilWarnings(inv.Warnings)
+		out.Body.AssistantWritten = inv.AssistantWritten
+		if out.Body.AssistantWritten == nil {
+			out.Body.AssistantWritten = []render.AssistantValue{}
+		}
 		return out, nil
 	})
 
@@ -228,6 +239,7 @@ func registerInventoryMemberRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &hostPreviewOutput{}
 		out.Body.Vars, out.Body.Sources, out.Body.Connection, out.Body.Warnings = p.Vars, p.Sources, p.Connection, nonNilWarnings(p.Warnings)
+		out.Body.AssistantWritten = nonNilStrings(p.AssistantWritten)
 		return out, nil
 	})
 }

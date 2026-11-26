@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/assistantchange"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/grouptree"
 	"github.com/noixdev/pulsix/internal/inventory/render"
@@ -62,9 +63,15 @@ type Group struct {
 	Schema      schema.Schema
 	Vars        map[string]any
 	BastionID   *uuid.UUID
-	Revision    int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// AssistantKeys names the keys of Vars an assistant wrote and
+	// AssistantDefaultKeys the fields whose schema default an assistant
+	// set (decision D6, marks.go): the renderer emits them as plain text
+	// until a person saves the values or the schema.
+	AssistantKeys        []string
+	AssistantDefaultKeys []string
+	Revision             int64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // Membership assigns a managed host to a group with its host-scoped values
@@ -76,9 +83,11 @@ type Membership struct {
 	HostName  string
 	GroupName string
 	Vars      map[string]any
-	Revision  int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// AssistantKeys names the keys of Vars an assistant wrote (marks.go).
+	AssistantKeys []string
+	Revision      int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // GroupInput creates a group.
@@ -206,6 +215,7 @@ func (s *Service) CreateGroup(ctx context.Context, orgID uuid.UUID, in GroupInpu
 	g := Group{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ParentID: in.ParentID, Name: in.Name, Description: in.Description,
 		Schema: schema.Schema{Fields: []schema.Field{}}, Vars: map[string]any{},
+		AssistantKeys: []string{}, AssistantDefaultKeys: []string{},
 	}
 	if in.ParentID == nil {
 		// A root has nothing to check against the tree: no lock needed.
@@ -343,10 +353,18 @@ func (s *Service) DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error {
 	})
 }
 
-// SetSchema replaces a group's schema. Stored values are never rewritten;
-// the second result counts the members whose values no longer satisfy the
-// new schema. A group holds manual fields only.
+// SetSchema is SetSchemaBy for a person.
 func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema) (GroupView, int, error) {
+	return s.SetSchemaBy(ctx, orgID, id, revision, sc, assistantchange.Actor{})
+}
+
+// SetSchemaBy replaces a group's schema on actor's behalf. Stored values
+// are never rewritten; the second result counts the members whose values
+// no longer satisfy the new schema. A group holds manual fields only. An
+// assistant's save marks the fields whose defaults it set or changed and
+// may not set a default under a name Ansible or Pulsix act on; a person's
+// clears every default mark (decision D6, marks.go).
+func (s *Service) SetSchemaBy(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema, actor assistantchange.Actor) (GroupView, int, error) {
 	if sc.Fields == nil {
 		sc.Fields = []schema.Field{}
 	}
@@ -360,8 +378,15 @@ func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision i
 	if err != nil {
 		return GroupView{}, 0, err
 	}
+	changed := ChangedDefaults(cur.Schema, sc)
+	if actor.Assistant {
+		if err := checkAssistantDefaults(sc, changed); err != nil {
+			return GroupView{}, 0, err
+		}
+	}
 	next := cur
 	next.Schema, next.Revision = sc, revision
+	next.AssistantDefaultKeys = defaultMarks(cur.AssistantDefaultKeys, sc, changed, actor)
 	updated, err := s.store.UpdateGroup(ctx, next)
 	if err != nil {
 		return GroupView{}, 0, err
@@ -379,9 +404,17 @@ func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision i
 	return groupView(updated), incomplete, nil
 }
 
-// SetVars replaces a group's group-scoped values after strict validation.
-// Plaintext secrets are sealed; keep markers keep the stored secret.
+// SetVars is SetVarsBy for a person.
 func (s *Service) SetVars(ctx context.Context, orgID, id uuid.UUID, revision int64, vars map[string]any) (GroupView, error) {
+	return s.SetVarsBy(ctx, orgID, id, revision, vars, assistantchange.Actor{})
+}
+
+// SetVarsBy replaces a group's group-scoped values on actor's behalf after
+// strict validation. Plaintext secrets are sealed; keep markers keep the
+// stored secret. An assistant's save marks the keys it set or changed and
+// may not set one Ansible or Pulsix act on; a person's clears every mark
+// of the group (decision D6, marks.go).
+func (s *Service) SetVarsBy(ctx context.Context, orgID, id uuid.UUID, revision int64, vars map[string]any, actor assistantchange.Actor) (GroupView, error) {
 	cur, err := s.store.GetGroup(ctx, orgID, id)
 	if err != nil {
 		return GroupView{}, err
@@ -390,8 +423,15 @@ func (s *Service) SetVars(ctx context.Context, orgID, id uuid.UUID, revision int
 	if err != nil {
 		return GroupView{}, err
 	}
+	changed := ChangedKeys(cur.Vars, sealed)
+	if actor.Assistant {
+		if err := checkAssistantValues(sealed, changed); err != nil {
+			return GroupView{}, err
+		}
+	}
 	next := cur
 	next.Vars, next.Revision = sealed, revision
+	next.AssistantKeys = valueMarks(cur.AssistantKeys, sealed, changed, actor)
 	updated, err := s.store.UpdateGroup(ctx, next)
 	if err != nil {
 		return GroupView{}, err

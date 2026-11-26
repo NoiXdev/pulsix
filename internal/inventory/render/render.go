@@ -10,6 +10,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 
@@ -52,6 +53,11 @@ type Group struct {
 	Schema    schema.Schema
 	Vars      map[string]any
 	BastionID *uuid.UUID
+	// AssistantKeys names the keys of Vars an assistant wrote and
+	// AssistantDefaultKeys the fields whose schema default an assistant
+	// set (decision D6): both render inert (assistant.go).
+	AssistantKeys        []string
+	AssistantDefaultKeys []string
 }
 
 // Membership is one host in one group, vars decoded.
@@ -59,6 +65,9 @@ type Membership struct {
 	GroupID uuid.UUID
 	HostID  uuid.UUID
 	Vars    map[string]any
+	// AssistantKeys names the keys of Vars an assistant wrote; they
+	// render inert (assistant.go).
+	AssistantKeys []string
 }
 
 // Host is one host.
@@ -122,6 +131,10 @@ type Inventory struct {
 	// gave the host comes from (variable -> group name). A variable absent
 	// here is the host's own (address, SSH settings, facts).
 	Origins map[string]map[string]string
+	// AssistantWritten lists the values Doc carries as plain text because
+	// an assistant wrote them (decision D6), sorted; nil when there are
+	// none.
+	AssistantWritten []AssistantValue
 }
 
 type renderer struct {
@@ -131,6 +144,7 @@ type renderer struct {
 	hosts    map[uuid.UUID]Host
 	warnings []Warning
 	origins  map[string]map[string]string
+	written  []AssistantValue
 }
 
 // Render renders in. It fails with ErrUnrenderable, rather than guessing,
@@ -196,8 +210,12 @@ func (r *renderer) run() (Inventory, error) {
 			continue
 		}
 		entry := map[string]any{}
-		if vars := schema.Resolve(g.Schema.GroupFields(), g.Vars); len(vars) > 0 {
+		vars, marked := schema.ResolveMarked(g.Schema.GroupFields(), g.Vars, groupMarks(g), inert)
+		if len(vars) > 0 {
 			entry["vars"] = vars
+		}
+		for _, k := range marked {
+			r.written = append(r.written, AssistantValue{Group: g.Name, Key: k})
 		}
 		var children []string
 		for _, c := range r.tree.Children(g.ID) {
@@ -239,15 +257,16 @@ func (r *renderer) run() (Inventory, error) {
 	slices.SortFunc(r.warnings, func(a, b Warning) int {
 		return cmp.Or(cmp.Compare(a.Host, b.Host), cmp.Compare(a.Group, b.Group), cmp.Compare(a.Message, b.Message))
 	})
-	return Inventory{Doc: doc, Connections: conns, Warnings: r.warnings, Origins: r.origins}, nil
+	return Inventory{Doc: doc, Connections: conns, Warnings: r.warnings, Origins: r.origins, AssistantWritten: sortedWritten(r.written)}, nil
 }
 
 func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection, error) {
 	vars := map[string]any{}
 	origin := map[string]string{}
+	plain := map[string]bool{} // keys whose winning value is an assistant's
 	for _, m := range ms {
 		g := r.groups[m.GroupID]
-		resolved := schema.Resolve(g.Schema.MembershipFields(), m.Vars)
+		resolved, marked := schema.ResolveMarked(g.Schema.MembershipFields(), m.Vars, membershipMarks(g, m), inert)
 		keys := make([]string, 0, len(resolved))
 		for k := range resolved {
 			keys = append(keys, k)
@@ -260,6 +279,12 @@ func (r *renderer) hostVars(h Host, ms []Membership) (map[string]any, Connection
 					Message: fmt.Sprintf("%s is set by groups %s and %s; %s wins", k, origin[k], g.Name, g.Name)})
 			}
 			vars[k], origin[k] = v, g.Name
+			plain[k] = slices.Contains(marked, k)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(plain)) {
+		if plain[k] {
+			r.written = append(r.written, AssistantValue{Group: origin[k], Host: h.Name, Key: k})
 		}
 	}
 

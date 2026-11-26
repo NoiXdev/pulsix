@@ -4311,6 +4311,11 @@ export interface components {
             /** @description Whether assistant tokens of this organization may use the assistant endpoint; omitted keeps it */
             assistant_enabled?: boolean;
         };
+        AssistantValue: {
+            group: string;
+            host?: string;
+            key: string;
+        };
         BackupItem: {
             /**
              * Format: uuid
@@ -5344,6 +5349,10 @@ export interface components {
             parent_id?: string;
         };
         GroupDTO: {
+            /** @description Schema fields whose default an assistant set: a run receives the default as plain text until a person saves the schema */
+            assistant_default_keys: string[] | null;
+            /** @description Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the values */
+            assistant_keys: string[] | null;
             bastion_id?: string;
             /** Format: date-time */
             created_at: string;
@@ -5803,6 +5812,8 @@ export interface components {
              * @example https://example.com/schemas/HostPreviewOutputBody.json
              */
             readonly $schema?: string;
+            /** @description The variables whose value an assistant wrote: a run receives them as plain text (never templated) until a person saves them */
+            assistant_written: string[] | null;
             connection?: components["schemas"]["Connection"];
             /** @description Where each variable comes from: the name of the group that gave it, or "host" for the host's own (address, SSH settings, facts) */
             sources: {
@@ -5931,6 +5942,8 @@ export interface components {
             test: components["schemas"]["HostTestDTO"];
         };
         InventoryMemberDTO: {
+            /** @description Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the membership */
+            assistant_keys: string[] | null;
             complete: boolean;
             group_id: string;
             group_name: string;
@@ -7875,6 +7888,8 @@ export interface components {
              * @example https://example.com/schemas/PreviewOutputBody.json
              */
             readonly $schema?: string;
+            /** @description The values the inventory carries as plain text (never templated) because an assistant wrote them: a group's own (no host) or a host's in that group; a person saving them makes them live */
+            assistant_written: components["schemas"]["AssistantValue"][] | null;
             connections: {
                 [key: string]: components["schemas"]["Connection"];
             };

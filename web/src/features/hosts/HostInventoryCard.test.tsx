@@ -70,6 +70,23 @@ describe('HostInventoryCard', () => {
     expect(screen.getByText('1 to fill in')).toBeInTheDocument();
   });
 
+  it('flags the values an assistant wrote as plain text until a person saves them', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': {
+        groups: [
+          { group_id: 'g1', group_name: 'webserver', host_id: 'h1', host_name: 'web-01', vars: {}, complete: true, problems: [], orphaned: [], assistant_keys: ['note', 'role'], revision: 1 },
+          { group_id: 'g2', group_name: 'database', host_id: 'h1', host_name: 'web-01', vars: {}, complete: true, problems: [], orphaned: [], assistant_keys: [], revision: 1 },
+        ],
+      },
+    });
+    renderCard(true);
+    const row = (await screen.findByRole('link', { name: 'webserver' })).closest('li')!;
+    const pill = within(row).getByText('assistant values');
+    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role — used as plain text until a person saves the values');
+    const other = screen.getByRole('link', { name: 'database' }).closest('li')!;
+    expect(within(other).queryByText('assistant values')).not.toBeInTheDocument();
+  });
+
   describe('managing memberships', () => {
     const summary = (id: string, name: string, parent_id: string | null = null) => ({
       id, name, description: '', parent_id, members: 0, group_fields: 1, host_fields: 1, complete: true, revision: 1,

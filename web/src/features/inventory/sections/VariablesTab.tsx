@@ -19,6 +19,7 @@ import { useOwnSteps } from '../ownSteps.ts';
 import { ancestorVarsFrom, formatValue, provenanceOf, type AncestorVars } from '../provenance.ts';
 import { ancestorsOf } from '../tree.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { AssistantMark } from '../AssistantMark.tsx';
 
 interface VariablesTabProps {
   org: string;
@@ -196,17 +197,36 @@ function ValuesForm({ org, group, groups, canWrite, onDirtyChange }: Omit<Variab
             repeater's entry keys); a draft replaced wholesale remounts them,
             as the section's key did before (backlog 7.90). */}
         {shown.map((f) => (
-          <VariableRow key={`${generation}:${f.name}`} field={f} draft={draft} onChange={edit} problems={problems} canWrite={canWrite} ancestors={ancestors} />
+          <VariableRow
+            key={`${generation}:${f.name}`}
+            field={f}
+            draft={draft}
+            onChange={edit}
+            problems={problems}
+            canWrite={canWrite}
+            ancestors={ancestors}
+            assistant={assistantMark(group, f.name, draft)}
+          />
         ))}
       </form>
     </SettingsCard>
   );
 }
 
-/** One variable: its key and type, its input, and where its effective
- * value comes from when the data at hand says. */
+/** What an assistant wrote of a field, as the stored group says (decision
+ * D6): its value, or — while the group leaves it unset — its default. A
+ * person's save of the values (or of the fields) clears it. */
+function assistantMark(group: InventoryGroup, name: string, draft: Vars): 'value' | 'default' | null {
+  if ((group.assistant_keys ?? []).includes(name)) return 'value';
+  if (draft[name] === undefined && (group.assistant_default_keys ?? []).includes(name)) return 'default';
+  return null;
+}
+
+/** One variable: its key and type, its input, where its effective value
+ * comes from when the data at hand says, and whether an assistant wrote
+ * it. */
 function VariableRow({
-  field, draft, onChange, problems, canWrite, ancestors,
+  field, draft, onChange, problems, canWrite, ancestors, assistant,
 }: {
   field: SchemaField;
   draft: Vars;
@@ -214,6 +234,7 @@ function VariableRow({
   problems: readonly Problem[];
   canWrite: boolean;
   ancestors: readonly AncestorVars[];
+  assistant: 'value' | 'default' | null;
 }) {
   const t = useT();
   const v = t.inventory.groupPage.variables;
@@ -237,6 +258,12 @@ function VariableRow({
       <div className="flex min-w-0 flex-col gap-1.5">
         <SchemaForm fields={[field]} value={draft} onChange={onChange} problems={problems} disabled={!canWrite} idPrefix="values" hideLabels />
         {line && <p className="text-[12px] text-muted-foreground">{line}</p>}
+        {assistant && (
+          <AssistantMark
+            testId={`assistant-${field.name}`}
+            text={assistant === 'value' ? t.inventory.assistant.written : t.inventory.assistant.defaultSet}
+          />
+        )}
       </div>
     </div>
   );

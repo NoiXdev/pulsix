@@ -60,15 +60,19 @@ type groupDTO struct {
 	Vars        map[string]any `json:"vars" doc:"Group-scoped values; secrets read as {\"$secret\": \"set\"}"`
 	Problems    []problemDTO   `json:"problems"`
 	Orphaned    []string       `json:"orphaned" doc:"Stored keys the schema no longer declares; the next save drops them"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	// The marks of decision D6 (spec 2026-11-25 assistant API gaps).
+	AssistantKeys        []string  `json:"assistant_keys" doc:"Keys of vars an assistant wrote: a run receives them as plain text (never templated) until a person saves the values"`
+	AssistantDefaultKeys []string  `json:"assistant_default_keys" doc:"Schema fields whose default an assistant set: a run receives the default as plain text until a person saves the schema"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 func toGroupDTO(v inventory.GroupView) groupDTO {
 	return groupDTO{
 		ID: v.ID.String(), Name: v.Name, Description: v.Description, ParentID: optionalString(v.ParentID),
 		BastionID: optionalString(v.BastionID), Revision: v.Revision, Schema: v.Schema, Vars: v.Vars,
-		Problems: toProblemDTOs(v.Problems), Orphaned: nonNilStrings(v.Orphaned), CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+		Problems: toProblemDTOs(v.Problems), Orphaned: nonNilStrings(v.Orphaned), AssistantKeys: nonNilStrings(v.AssistantKeys),
+		AssistantDefaultKeys: nonNilStrings(v.AssistantDefaultKeys), CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}
 }
 
@@ -268,7 +272,7 @@ func registerInventoryRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		g, incomplete, err := deps.Inventory.SetSchema(ctx, scope.OrgID, id, rev, in.Body.Schema)
+		g, incomplete, err := deps.Inventory.SetSchemaBy(ctx, scope.OrgID, id, rev, in.Body.Schema, changeActor(scope))
 		if err != nil {
 			return nil, mapInventoryErr(ctx, err, "body.schema")
 		}
@@ -291,7 +295,7 @@ func registerInventoryRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		g, err := deps.Inventory.SetVars(ctx, scope.OrgID, id, rev, in.Body.Vars)
+		g, err := deps.Inventory.SetVarsBy(ctx, scope.OrgID, id, rev, in.Body.Vars, changeActor(scope))
 		if err != nil {
 			return nil, mapInventoryErr(ctx, err, "body.vars")
 		}

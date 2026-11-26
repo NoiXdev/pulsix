@@ -12,6 +12,7 @@ import type { Problem, Vars } from '../../variables/types.ts';
 import { GroupPicker } from './GroupPicker.tsx';
 import { ManagedHostPicker } from './ManagedHostPicker.tsx';
 import { useT } from '../../../i18n/useT.ts';
+import { AssistantMark } from '../AssistantMark.tsx';
 
 /** AssignHostDialog is the generated assignment form (SchemaBuilder mockup,
  * right column): a managed host, the group's host-scoped fields and
@@ -109,6 +110,9 @@ function AssignForm({
     <>
       <form onSubmit={submit} className="flex flex-col gap-4">
         {!member && !fixedHost && <ManagedHostPicker org={org} existing={existing} value={hostId} onChange={setHostId} />}
+        {(member?.assistant_keys ?? []).length > 0 && (
+          <AssistantMark testId="assistant-member-values" text={t.inventory.assistant.keys((member?.assistant_keys ?? []).join(', '))} />
+        )}
         <SchemaForm fields={fields} value={vars} onChange={setVars} problems={problems} idPrefix="assign" />
         {ownFields.length > 0 && (
           <details className="rounded-md border border-border p-3">

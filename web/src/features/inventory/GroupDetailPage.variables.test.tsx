@@ -46,6 +46,24 @@ describe('GroupDetailPage variables', () => {
     expect(screen.getByTestId('variable-region').querySelectorAll('p')).toHaveLength(0);
   });
 
+  it('marks the values and defaults an assistant wrote as plain text until a person saves them', async () => {
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': group({
+          schema: SCHEMA, vars: { env: 'prod', ntp: 'ntp.example.test' }, assistant_keys: ['ntp'], assistant_default_keys: ['level', 'env'],
+        }),
+        ...preview({ web: { vars: { env: 'prod' } } }),
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await screen.findByLabelText('Environment');
+    expect(await screen.findByTestId('assistant-ntp')).toHaveTextContent('Written by an assistant — used as plain text until a person saves it');
+    expect(screen.getByTestId('assistant-level')).toHaveTextContent('Default set by an assistant — used as plain text until a person saves the fields');
+    // env holds a person's value, so its (assistant's) default does not apply.
+    expect(screen.queryByTestId('assistant-env')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('assistant-region')).not.toBeInTheDocument();
+  });
+
   it('follows the draft: a value typed over an inherited one overrides it', async () => {
     const user = userEvent.setup();
     mockApi(

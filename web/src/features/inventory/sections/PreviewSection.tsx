@@ -5,6 +5,7 @@ import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useInventoryPreview } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { AssistantMark } from '../AssistantMark.tsx';
 
 /** The renderer's stand-in for every secret in a preview
  * (internal/inventory/render.MaskedSecret). */
@@ -21,6 +22,9 @@ export function PreviewSection({ org, group }: { org: string; group: InventoryGr
   if (guard) return guard;
   if (!preview.data) return <QueryLoading />;
   const warnings = preview.data.warnings ?? [];
+  // The values a job receives as plain text ({"__ansible_unsafe": …} in the
+  // document) because an assistant wrote them: a host's as host: key.
+  const written = (preview.data.assistant_written ?? []).map((w) => `${w.host ?? w.group}: ${w.key}`);
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">
@@ -39,6 +43,7 @@ export function PreviewSection({ org, group }: { org: string; group: InventoryGr
           ))}
         </ul>
       )}
+      {written.length > 0 && <AssistantMark testId="assistant-written" text={t.inventory.assistant.keys(written.join(', '))} />}
       <JsonViewer value={preview.data.inventory} label={t.inventory.preview.json} isMasked={(v) => v === MASKED} initiallyCollapsed={['_meta.hostvars']} />
     </div>
   );
