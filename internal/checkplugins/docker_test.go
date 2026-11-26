@@ -3,6 +3,8 @@ package checkplugins_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // TestValidateDockerParams, ported from internal/checks: the docker
@@ -42,5 +44,58 @@ func TestValidateDockerParams(t *testing.T) {
 		{"refuses nul in socket", "docker", map[string]any{"socket": "/a\x00b"}, false},
 		{"refuses long socket", "docker", map[string]any{"socket": "/" + strings.Repeat("s", 255)}, false},
 		{"refuses unknown parameter", "docker", map[string]any{"units": []any{"x"}}, false},
+
+		{"accepts resources on", "docker", map[string]any{"resources": true}, true},
+		{"accepts resources off", "docker", map[string]any{"resources": false}, true},
+		{"refuses resources as a string", "docker", map[string]any{"resources": "true"}, false},
+		{"refuses resources as a number", "docker", map[string]any{"resources": 1.0}, false},
 	})
+}
+
+// dockerResourceMetrics are the metrics the resources option adds
+// (backlog 3.12a).
+var dockerResourceMetrics = []string{
+	"docker.cpu_percent", "docker.memory_bytes", "docker.memory_percent",
+	"docker.net_rx_bytes_per_s", "docker.net_tx_bytes_per_s",
+	"docker.block_read_bytes_per_s", "docker.block_write_bytes_per_s",
+	"docker.containers_unsampled",
+}
+
+// TestDockerAsksForResourceMetrics (backlog 3.12a): the usage metrics are
+// asked only while resources is true, the agent's own reading of the
+// parameter; switching it off reads their last values as no longer asked.
+// The state metrics are always asked.
+func TestDockerAsksForResourceMetrics(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   bool
+	}{
+		{"resources on", map[string]any{"resources": true}, true},
+		{"resources off", map[string]any{"resources": false}, false},
+		{"resources absent", map[string]any{"selection": "all"}, false},
+		{"no params", nil, false},
+		{"resources not a bool", map[string]any{"resources": "true"}, false},
+	} {
+		for _, m := range dockerResourceMetrics {
+			if got := checkplugins.AsksForMetric("docker", tc.params, nil, m); got != tc.want {
+				t.Errorf("%s: AsksForMetric(%s) = %v, want %v", tc.name, m, got, tc.want)
+			}
+		}
+		for _, m := range []string{"docker.state", "docker.health", "docker.restart_count", "docker.exit_code", "docker.containers_total", "docker.containers_running", "docker.containers_unreported"} {
+			if !checkplugins.AsksForMetric("docker", tc.params, nil, m) {
+				t.Errorf("%s: %s not asked", tc.name, m)
+			}
+		}
+	}
+	d, _ := checkplugins.Get("docker")
+	declared := map[string]checkplugins.MetricKind{}
+	for _, m := range d.Metrics {
+		declared[m.Name] = m.Kind
+	}
+	for _, m := range dockerResourceMetrics {
+		if declared[m] != checkplugins.Numeric {
+			t.Errorf("%s declared as %q, want numeric", m, declared[m])
+		}
+	}
 }

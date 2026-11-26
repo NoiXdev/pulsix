@@ -32,7 +32,8 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"service: units (required; list; not empty; each not blank). " +
 		"network: interfaces (list; each not blank). " +
 		"docker: selection (all or labeled; default all), label (key or key=value; default pulsix.monitor=true), " +
-		"socket (at most 255 bytes; an absolute path or npipe:////./pipe/name; default /var/run/docker.sock). " +
+		"socket (at most 255 bytes; an absolute path or npipe:////./pipe/name; default /var/run/docker.sock), " +
+		"resources (true or false; default false). " +
 		"temperature: sensors (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"smart: devices (list; at most 64 entries; each at most 255 bytes; each a /dev/... path). " +
 		"raid: arrays (list; at most 64 entries; each at most 255 bytes; each without control characters). " +

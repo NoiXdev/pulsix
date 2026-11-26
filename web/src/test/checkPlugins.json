@@ -162,6 +162,11 @@
           "default": "/var/run/docker.sock",
           "max_bytes": 255,
           "format": "dockerSocket"
+        },
+        {
+          "name": "resources",
+          "type": "bool",
+          "default": false
         }
       ],
       "metrics": [
@@ -191,6 +196,38 @@
         },
         {
           "name": "docker.containers_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.cpu_percent",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.memory_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.memory_percent",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.net_rx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.net_tx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.block_read_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.block_write_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.containers_unsampled",
           "kind": "numeric"
         }
       ]

@@ -270,6 +270,10 @@ export const enChecks = {
         label: 'Docker socket',
         hint: 'An absolute path or a Windows pipe. Empty means the platform default: /var/run/docker.sock, on Windows npipe:////./pipe/docker_engine.',
       },
+      resources: {
+        label: 'Measure resource usage',
+        hint: 'CPU, memory, network and disk throughput of each container, read for at most 100 running containers (the first by name). A stopped container reads 0.',
+      },
     },
     temperature: {
       sensors: {

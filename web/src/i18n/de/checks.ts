@@ -237,6 +237,10 @@ export const deChecks: Messages['checks'] = {
         label: 'Docker-Socket',
         hint: 'Ein absoluter Pfad oder eine Windows-Pipe. Leer bedeutet den Standard der Plattform: /var/run/docker.sock, unter Windows npipe:////./pipe/docker_engine.',
       },
+      resources: {
+        label: 'Ressourcenverbrauch messen',
+        hint: 'CPU, Arbeitsspeicher, Netzwerk- und Datenträgerdurchsatz jedes Containers, gelesen für höchstens 100 laufende Container (die ersten nach Name). Ein gestoppter Container zeigt 0.',
+      },
     },
     temperature: {
       sensors: {
