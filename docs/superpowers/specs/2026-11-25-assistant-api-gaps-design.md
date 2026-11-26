@@ -19,6 +19,7 @@ Anti-goals: an assistant that can create anything that runs unattended without a
 - **D2 Agent enrollment** happens **only inside an approved run**: a job-template option. No standalone enrollment tool.
 - **D3 Commit pin**: the approval picture shows the commit of the repository's last successful sync, exactly that commit runs, and it is recorded on the job. Approval is refused while a sync of that repository is running. `sync_first` syncs and then requests the fresh head.
 - **D4 Dry runs** (`check_mode`) need approval like any run; the picture says "dry run" prominently.
+- **D6 Inventory values written by an assistant** (2026-11-26, owner decision "both"): values an assistant writes into the inventory (group variables, membership variables, schema defaults) are marked and passed to Ansible as plain text, never evaluated; a person saving the value clears the mark. In addition, such a change pauses every schedule and disables every trigger whose run would receive the changed values, with a review request as in C2. Hosts joining or leaving a group stay excluded. Backlog 2.136.
 - **D5 Changes after approval**: when an assistant changes something run-relevant on a job template or repository that an active schedule or trigger uses, those schedules and triggers pause themselves and a review request is created; a person's approval resumes them. A change made by a person keeps them running as today.
 
 ## Parts
