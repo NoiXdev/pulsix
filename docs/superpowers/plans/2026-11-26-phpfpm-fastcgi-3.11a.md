@@ -25,7 +25,7 @@
 - R4 Socket path: absolute, at most 107 bytes (Linux `sun_path`), no `:` (the separator), no control characters. TCP: an IP literal (IPv6 in brackets) or a DNS name, and a port 1–65535, required (no implicit 9000). — Explicit beats a hidden default; the bound turns a runtime failure into a form error. — If wrong: an operator types the port.
 - R5 New format `phpfpmPool` = `statusURL` or a valid FastCGI entry, with Go/TS vectors in testdata/formats.json, an API phrase and en/de texts; `statusURL` stays as it is for nginx, apache and caddy.
 - R6 FastCGI request: role RESPONDER, request id 1, no keep-conn; params exactly `GATEWAY_INTERFACE=CGI/1.1`, `REQUEST_METHOD=GET`, `SCRIPT_FILENAME`, `SCRIPT_NAME`, `DOCUMENT_URI` = the path, `REQUEST_URI` = path + `?json`, `QUERY_STRING=json`, `SERVER_PROTOCOL=HTTP/1.1`; empty STDIN. Bounds: CGI header block 16 KiB, body phpfpm's 1 MiB, STDERR 64 KiB (read and dropped), all raw bytes 2 × body bound + 128 KiB; dial and exchange under `dbcheck.QueryTimeout`, all pools under the round's `CollectTimeout`; the caller's context closes the connection.
-- R7 Reasons: dial and I/O errors through `dbcheck.Classify` (early close = "connection failed"); the CGI `Status:` (absent = 200) maps to the same texts as HTTP (shared `webcheck.StatusReason`); a malformed record or header block is `unexpected response format`; END_REQUEST with a protocol status other than REQUEST_COMPLETE is "request rejected"; an oversize stream is "response too large".
+- R7 Reasons: dial and I/O errors through `dbcheck.Classify` (early close = "connection failed"); the CGI `Status:` (absent = 200) maps to the same texts as HTTP (shared `webcheck.StatusReason`); a malformed record or header block is `unexpected response format`; END_REQUEST with a protocol status other than REQUEST_COMPLETE is "request rejected"; an oversize stream is "response too large"; a socket that does not exist or may not be opened is "socket not found" / "permission denied" (added during Task 3: the common misconfigurations deserve their own text).
 - R8 The basic-auth secret applies to HTTP entries only (FastCGI has nowhere to carry it); a refused secret still fails every pool, as today. `verify_tls` does not apply to FastCGI entries.
 - R9 The agent re-parses every FastCGI entry with the shared parser; one that does not parse (only possible past the manager's validation) reads down with "invalid address" and nothing is dialled.
 - R10 Real-FPM coverage via the plugin's existing container test (Linux Docker only): TCP to the FPM container directly; the socket form through the in-process fake server (a container's socket is not reachable from the host on Docker Desktop).
@@ -68,7 +68,7 @@ Tests `TestGet*`: framing and padding, multi-record STDOUT, STDERR dropped, Stat
 
 Tests: `TestFastCGIPoolOverTCP`, `TestFastCGIPoolOverSocket`, `TestMixedHTTPAndFastCGIPools`, `TestFastCGIFailuresReportThePoolDown`, `TestFastCGIIgnoresTheSecret`, `TestFastCGIUnparsableEntry`, `TestFastCGIAgainstARealServer`, `TestFastCGIUnknownPathIsNotRun`. Commit `feat(agent): phpfpm reads pools over FastCGI directly`.
 
-### Task 4: SPA
+### Task 4: SPA (folded into Task 1: the shared vectors make the TS twin part of the same green commit)
 
 **Files:** `web/src/features/checks/paramFormats.ts` (`phpfpmPool`), `web/src/i18n/{en,de}/checks.ts` (format text, urls label/hint), `CheckDialog.webserver.test.tsx`. Commit `feat(web): phpfpm pools accept FastCGI addresses`.
 

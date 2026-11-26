@@ -254,6 +254,19 @@ the item its metrics are reported on (the agent adds the query key `json` when
 it is missing); item `""` carries `phpfpm.pools_down`, which is also where a
 missing secret is reported. Nothing is seeded and there is no schema change.
 
+Since backlog 3.11a a `phpfpm` `urls` entry may also be the pool's own FastCGI
+address with its status path (`fcgi://127.0.0.1:9000/status`,
+`unix:/run/php/php8.3-fpm.sock:/status`), read with no web server in between.
+No schema change and nothing seeded; existing entries behave as before. Version
+skew: an older manager refuses such an entry when a check is saved. An older
+agent hands it to its HTTP client, which refuses the scheme without connecting,
+so that pool reads down ("connection failed", `phpfpm.pools_down` counts it)
+until the agent is updated; it never reads anything else in its place. An older
+agent also refuses a local `agent.yaml` `phpfpm` check with such an entry. Update
+the agents before using the new entries. The agent needs access to the pool's
+socket (usually membership of the pool's `listen.group`) or its TCP address
+(`listen.allowed_clients`).
+
 The `script` plugin (backlog 3.6g) follows the same rule for the check: an older
 agent skips a `script` check, warns on every configuration push and shows no
 readings until it is updated, and the manager does not gate on it. **The
