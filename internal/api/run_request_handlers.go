@@ -240,13 +240,17 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		return waitForChange(ctx, deps, in.Wait, in.Unless, func() (*runRequestDetailOutput, string, error) {
-			out, err := runRequestDetail(ctx, deps, scope, id)
-			if err != nil {
-				return nil, "", err
+		// Each poll reads the status only; the picture is resolved once,
+		// after the wait.
+		if in.Wait > 0 {
+			if _, err := waitForChange(ctx, deps, in.Wait, in.Unless, func() (struct{}, string, error) {
+				st, err := deps.RunRequests.Status(ctx, scope.OrgID, id)
+				return struct{}{}, string(st), err
+			}); err != nil {
+				return nil, mapRunRequestErr(ctx, err)
 			}
-			return out, out.Body.Request.Status, nil
-		})
+		}
+		return runRequestDetail(ctx, deps, scope, id)
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/run-requests/{id}/approve", func(ctx context.Context, in *struct {

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -156,5 +157,20 @@ func TestGetRunRequestWaitsForStatusChange(t *testing.T) {
 	decodeInto(t, resp, &out)
 	if out.Request.Status != "rejected" || rec.calls != 2 {
 		t.Fatalf("status %s after %d pauses, want rejected after 2", out.Request.Status, rec.calls)
+	}
+}
+
+func TestGetRunRequestWaitResolvesThePictureOnce(t *testing.T) {
+	var pictures atomic.Int64
+	rec := &sleepRecorder{}
+	f := newRunRequestFixture(t, "wait-rr-pic", apitest.WithWaitSleep(rec.sleep), apitest.WithPictureCounter(&pictures))
+	created := f.request(t, map[string]any{"reason": "count the pictures"})
+	pictures.Store(0)
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+created.Request.ID+"?wait=25", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rec.calls != 50 || pictures.Load() != 1 {
+		t.Fatalf("%d pauses, %d picture resolutions; want 50 and 1", rec.calls, pictures.Load())
 	}
 }

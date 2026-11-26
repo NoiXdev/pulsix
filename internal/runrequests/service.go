@@ -386,6 +386,16 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Request, Pictur
 	return r, p, Fingerprint(r.ID, p), nil
 }
 
+// Status is the effective status of one request, a single-row read that
+// resolves no picture: what a long poll compares between reads.
+func (s *Service) Status(ctx context.Context, orgID, id uuid.UUID) (Status, error) {
+	r, err := s.store.Get(ctx, orgID, id)
+	if err != nil {
+		return "", err
+	}
+	return s.effective(r), nil
+}
+
 // List returns orgID's requests, newest first; status, when given, keeps
 // only those whose effective status matches. The store filters before its
 // cap, so decided requests never hide a pending one.

@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -369,7 +370,28 @@ func WithPersonalTokenClock(now func() time.Time) Option {
 }
 
 // newRunRequests wires the run request service exactly as app.Build does.
-func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.Service {
+// countingPictures counts the picture resolutions of a run request service.
+type countingPictures struct {
+	runrequests.Pictures
+	n *atomic.Int64
+}
+
+func (c countingPictures) Picture(ctx context.Context, orgID uuid.UUID, r runrequests.Request) (runrequests.Picture, error) {
+	c.n.Add(1)
+	return c.Pictures.Picture(ctx, orgID, r)
+}
+
+// WithPictureCounter rebuilds the run request service so every picture
+// resolution adds one to n.
+func WithPictureCounter(n *atomic.Int64) Option {
+	return func(s *Server) {
+		s.Deps.RunRequests = newRunRequests(s.DB, s.Deps, time.Now, n)
+		s.Queue.SetClaimGuard(s.Deps.RunRequests)
+		s.Queue.SetSyncWaiters(s.Deps.RunRequests)
+	}
+}
+
+func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time, counter ...*atomic.Int64) *runrequests.Service {
 	res := runrequests.NewResolver(runrequests.Sources{
 		Templates: deps.Templates, Playbooks: deps.Playbooks, Repos: deps.Repos, Jobs: deps.Jobs,
 		Hosts: deps.Hosts, SSH: deps.SSH, Credentials: deps.Credentials,
@@ -380,7 +402,11 @@ func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time) *runrequests.
 		InventorySecrets: deps.Inventory, PlaybookVars: deps.Playbooks, Agents: deps.Agents, Schedules: deps.Schedules, Triggers: deps.Triggers,
 		ChangeReviews: runrequests.NewSQLStore(d),
 	})
-	return runrequests.NewService(runrequests.NewSQLStore(d), res, res, res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
+	var pictures runrequests.Pictures = res
+	if len(counter) > 0 {
+		pictures = countingPictures{res, counter[0]}
+	}
+	return runrequests.NewService(runrequests.NewSQLStore(d), pictures, res, res, res, res, now, func() uuid.UUID { return uuid.Must(uuid.NewV7()) })
 }
 
 // WithRetentionMaxDays sets the instance retention maximum the monitoring
