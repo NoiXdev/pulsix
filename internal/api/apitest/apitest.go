@@ -346,9 +346,28 @@ func WithMFAOptional() Option {
 }
 
 // WithWaitSleep replaces the pause of a long-polled GET (wait=) so a test
-// drives the wait without real time: sleep runs instead of each pause.
+// drives the wait without real time: sleep runs instead of each pause, and
+// the wait's clock is a fake one each completed pause moves forward by its
+// duration (reads take no time on it).
 func WithWaitSleep(sleep func(ctx context.Context, d time.Duration) error) Option {
-	return func(s *Server) { s.Deps.WaitSleep = sleep }
+	return func(s *Server) {
+		var mu sync.Mutex
+		now := time.Unix(1_000_000, 0)
+		s.Deps.WaitNow = func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		}
+		s.Deps.WaitSleep = func(ctx context.Context, d time.Duration) error {
+			if err := sleep(ctx, d); err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			now = now.Add(d)
+			return nil
+		}
+	}
 }
 
 // WithRunRequestClock rebuilds the run request service on the test's
@@ -369,7 +388,6 @@ func WithPersonalTokenClock(now func() time.Time) Option {
 	}
 }
 
-// newRunRequests wires the run request service exactly as app.Build does.
 // countingPictures counts the picture resolutions of a run request service.
 type countingPictures struct {
 	runrequests.Pictures
@@ -391,6 +409,7 @@ func WithPictureCounter(n *atomic.Int64) Option {
 	}
 }
 
+// newRunRequests wires the run request service exactly as app.Build does.
 func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time, counter ...*atomic.Int64) *runrequests.Service {
 	res := runrequests.NewResolver(runrequests.Sources{
 		Templates: deps.Templates, Playbooks: deps.Playbooks, Repos: deps.Repos, Jobs: deps.Jobs,

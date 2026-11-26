@@ -29,12 +29,17 @@ func sleepFor(ctx context.Context, d time.Duration) error {
 }
 
 // waitForChange reads once and, while wait > 0 and the status still equals
-// the known one, reads again after each poll interval. The budget is the
-// number of intervals that fit in wait, so a fake sleep drives it exactly.
-// read returns what the handler answers and the status to compare. A read
-// error ends the wait with that error; a finished context answers with the
-// last read.
+// the known one, reads again after each poll interval until wait seconds of
+// wall time have passed since the call began: a slow read uses up the
+// budget too, and the last pause is cut to what is left. read returns what
+// the handler answers and the status to compare. A read error ends the wait
+// with that error; a finished context answers with the last read.
 func waitForChange[T any](ctx context.Context, deps Deps, wait int, unless string, read func() (T, string, error)) (T, error) {
+	now := deps.WaitNow
+	if now == nil {
+		now = time.Now
+	}
+	deadline := now().Add(time.Duration(min(wait, maxWaitSeconds)) * time.Second)
 	out, status, err := read()
 	if err != nil || wait <= 0 {
 		return out, err
@@ -47,9 +52,12 @@ func waitForChange[T any](ctx context.Context, deps Deps, wait int, unless strin
 	if sleep == nil {
 		sleep = sleepFor
 	}
-	budget := min(wait, maxWaitSeconds)
-	for polls := int(time.Duration(budget) * time.Second / waitPollInterval); status == known && polls > 0; polls-- {
-		if sleep(ctx, waitPollInterval) != nil {
+	for status == known {
+		left := deadline.Sub(now())
+		if left <= 0 {
+			break
+		}
+		if sleep(ctx, min(left, waitPollInterval)) != nil {
 			return out, nil
 		}
 		if out, status, err = read(); err != nil {

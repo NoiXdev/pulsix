@@ -272,6 +272,9 @@ type Deps struct {
 	// WaitSleep replaces the pause between two reads of a long-polled job or
 	// run request (wait=); nil sleeps for real. Tests drive the wait with it.
 	WaitSleep func(ctx context.Context, d time.Duration) error
+	// WaitNow is the clock a long poll's deadline is measured on; nil is
+	// time.Now. Tests pair it with WaitSleep so a pause moves it.
+	WaitNow func() time.Time
 }
 
 // managerVersion is the build version the public routes report: Deps.Version,

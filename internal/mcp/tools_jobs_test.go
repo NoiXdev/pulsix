@@ -416,7 +416,7 @@ func TestGetJobWaitsThroughTheTool(t *testing.T) {
 		t.Fatalf("unless=running: status %s, pauses %d", job.Job.Status, w.calls)
 	}
 
-	// Beyond the cap is refused by the API's bound.
+	// Beyond the cap is refused (the schema's bound, and the API's).
 	if _, isErr := call(t, cs, "get_job", map[string]any{"job_id": id.String(), "wait_seconds": 26}); !isErr {
 		t.Fatal("wait_seconds 26 was accepted")
 	}
@@ -446,5 +446,43 @@ func TestGetRunRequestWaitsThroughTheTool(t *testing.T) {
 	callOK(t, cs, "get_run_request", map[string]any{"request_id": req.RequestID, "wait_seconds": 10, "unless": "pending"}, &got)
 	if got.Request.Status != "rejected" || w.calls != 3 {
 		t.Fatalf("status %s after %d pauses, want rejected after 3", got.Request.Status, w.calls)
+	}
+}
+
+// TestWaitSecondsIsBoundedInTheSchema: get_job and get_run_request declare
+// wait_seconds' range, so an assistant sees the cap before it calls.
+func TestWaitSecondsIsBoundedInTheSchema(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tl := range res.Tools {
+		if tl.Name != "get_job" && tl.Name != "get_run_request" {
+			continue
+		}
+		seen++
+		raw, err := json.Marshal(tl.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s struct {
+			Properties map[string]struct {
+				Minimum *float64 `json:"minimum"`
+				Maximum *float64 `json:"maximum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatal(err)
+		}
+		p := s.Properties["wait_seconds"]
+		if p.Minimum == nil || *p.Minimum != 0 || p.Maximum == nil || *p.Maximum != 25 {
+			t.Errorf("%s wait_seconds = %s, want minimum 0 and maximum 25", tl.Name, raw)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("saw %d of the two tools", seen)
 	}
 }
