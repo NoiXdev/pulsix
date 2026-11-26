@@ -1196,7 +1196,8 @@ an unknown outcome; stop every manager instance first, as above.
   `host`, `none` or `container:…`), `docker.block_read_bytes_per_s` and
   `docker.block_write_bytes_per_s`. Rates appear from the second round on, and again
   one round after a container is recreated or its counters reset. A container that is
-  not running reads 0 instead of turning stale. Each option-on round adds up to seven
+  not running reads 0 instead of turning stale, on the values it reported while
+  running (a container the agent has not seen running since it started reports none). Each option-on round adds up to seven
   tuples per container towards the per-host cap of 4 096; switching the option off
   reads the usage values as no longer asked and closes their alerts as `stale`. On an
   engine older than API 1.41 (Docker 20.10) each stats request waits a second or two,
