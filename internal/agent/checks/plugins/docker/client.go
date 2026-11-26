@@ -24,9 +24,11 @@ import (
 // inspect) have kept their shape across every version since. Podman's
 // Docker-compatible API serves the unversioned paths too.
 const (
-	// opList and opInspect name the client's two requests in its errors.
+	// opList, opInspect and opStats name the client's requests in its
+	// errors.
 	opList    = "list containers"
 	opInspect = "inspect container"
+	opStats   = "container stats"
 
 	// maxListBody and maxInspectBody bound what is read from the socket, so
 	// something that is not Docker (or a runaway engine) cannot exhaust memory.
@@ -49,8 +51,8 @@ func (e *engineError) Unwrap() error { return e.err }
 
 func opError(op string, err error) error { return &engineError{op: op, err: err} }
 
-// errContainerGone is Inspect's answer to a 404: the container vanished
-// between the list and the inspect.
+// errContainerGone is Inspect's and Stats' answer to a 404: the container
+// vanished between the list and the request.
 var errContainerGone = errors.New("container gone")
 
 // containerSummary is one row of the container list.
@@ -59,6 +61,9 @@ type containerSummary struct {
 	Name   string // first entry of Names, leading "/" cut
 	State  string // the list's State, lower-case
 	Labels map[string]string
+	// NetworkMode is the list's HostConfig.NetworkMode ("bridge", "host",
+	// "container:<id>", …); "" when the engine leaves it out.
+	NetworkMode string
 }
 
 // containerDetail is the part of an inspect the check reports.
@@ -75,6 +80,9 @@ type dockerEngine interface {
 	List(ctx context.Context, labelFilter string) ([]containerSummary, error)
 	// Inspect returns the detail of one container, or errContainerGone.
 	Inspect(ctx context.Context, id string) (containerDetail, error)
+	// Stats returns one resource reading of a container, or
+	// errContainerGone (stats.go).
+	Stats(ctx context.Context, id string) (containerStats, error)
 }
 
 type dockerClient struct {
@@ -100,7 +108,7 @@ func newDockerEngine(socket string) (dockerEngine, error) {
 	}
 	return &dockerClient{socket: socket, http: &http.Client{
 		Transport: tr,
-		// Only the two GET endpoints are ever requested: a 3xx from whatever
+		// Only the three GET endpoints are ever requested: a 3xx from whatever
 		// listens at the socket becomes a plain status error.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
@@ -120,10 +128,11 @@ func (c *dockerClient) List(ctx context.Context, labelFilter string) ([]containe
 		return nil, err
 	}
 	var raw []struct {
-		ID     string
-		Names  []string
-		State  string
-		Labels map[string]string
+		ID         string
+		Names      []string
+		State      string
+		Labels     map[string]string
+		HostConfig struct{ NetworkMode string }
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, opError(opList, errors.New("malformed response"))
@@ -135,6 +144,8 @@ func (c *dockerClient) List(ctx context.Context, labelFilter string) ([]containe
 			Name:   containerName(r.ID, r.Names),
 			State:  strings.ToLower(r.State),
 			Labels: r.Labels,
+
+			NetworkMode: r.HostConfig.NetworkMode,
 		})
 	}
 	return out, nil
@@ -196,7 +207,7 @@ func (c *dockerClient) get(ctx context.Context, path string, limit int64, op str
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch {
-	case resp.StatusCode == http.StatusNotFound && op == opInspect:
+	case resp.StatusCode == http.StatusNotFound && (op == opInspect || op == opStats):
 		return nil, errContainerGone
 	case resp.StatusCode == http.StatusBadRequest:
 		// The engine refused the request as such, typically an API it does

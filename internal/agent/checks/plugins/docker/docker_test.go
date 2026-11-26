@@ -71,6 +71,10 @@ func (f *fakeDockerEngine) Inspect(ctx context.Context, id string) (containerDet
 	return f.details[id], nil
 }
 
+func (f *fakeDockerEngine) Stats(context.Context, string) (containerStats, error) {
+	return containerStats{}, errors.New("no stats")
+}
+
 func newTestDocker(f *fakeDockerEngine, gotSocket *string) dockerPlugin {
 	return dockerPlugin{engine: func(socket string) (dockerEngine, error) {
 		if gotSocket != nil {
