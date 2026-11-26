@@ -1029,6 +1029,47 @@ inventory writes — `setInventoryGroupVars`, `setInventoryGroupSchema`,
 run live) and records an assistant's inventory writes unmarked; stop every manager
 instance first, as above. Workers and agents are not affected.
 
+The names of a repository's vault-encrypted variables (backlog 2.134) add migration
+00132: `repo_var_sources.vault_names` (jsonb, nullable, no default), a catalog change;
+a backup carries it. A repository sync by an updated worker reports, beside the
+variable sources, the names (never the values) of the variables the repository sets to
+a value encrypted with Ansible Vault (a scalar tagged `!vault` or `!vault-encrypted`, or
+any scalar whose text starts with `$ANSIBLE_VAULT;` whatever its tag, anywhere inside the
+value) with the file that sets each: the top-level keys of the
+files under `group_vars` and `host_vars`, of a role's `defaults` and `vars` (in the
+repository, the installed roles and the installed collections' roles), of any file
+under a directory named `vars` and of a play's static `vars_files`, and the keys of a
+play's `vars`, a role entry's `vars` and parameters and an import's `vars`. Linked
+files and directories are followed as Ansible follows them (a link inside `group_vars`,
+a `group_vars` that is itself a link), read under the linking path, with loops ended;
+a link that leaves the clone or leads nowhere is listed as unread. A file encrypted as
+a whole (`ansible-vault encrypt`) hides its names: it is listed as such, as is a
+variable file that could not be read. The report travels inside the sync
+result's `var_sources` stats as the additive key `vault`; the protocol (`worker.proto`)
+is unchanged. The manager stores it with the repository's variable sources, shows it
+under `sources.vault` of `GET …/repos/{id}/playbooks` (and so the assistant's
+`list_repo_files`), and refuses a run request's extra var named like one (422, naming
+the file, never the value). **Version skew:** an older worker's sync report has no
+`vault`, so the record's `vault_names` stays NULL and the names are unknown, never
+"none" (the API then leaves `sources.vault` out); a record from before the upgrade is
+the same until its repository is synced again. While the names are unknown, or the
+last read was not complete (a file encrypted as a whole or unreadable, a link it could
+not follow, a `vars_files` entry that is templated, a first-found list, absolute or
+outside the subpath, a value nested past 64 levels or merging past 64 sources, a limit
+or the time limit hit), a run request's extra var is refused only when the playbook declares
+a variable of that name whose value could not be read; any other name passes, as
+before the upgrade. Refusing every extra var on such repositories would stop
+assistants' run requests on every repository until each zone's workers are updated;
+the check cannot be stricter without breaking them, and person-started runs are
+unaffected either way. **Full protection needs an updated worker and a fresh sync**:
+after the upgrade, update every zone's workers and sync each repository that
+assistants request runs for; until then, and for names in files encrypted as a whole,
+declare such names secret in the template's extra vars schema, which refuses them
+regardless. An older manager alongside ignores the key; a sync it records leaves
+`vault_names` as an earlier read left it, so stop every manager instance first, as
+above. Editor playbooks are not covered (they have no
+repository variables; a `!vault` value in an editor playbook's play vars is not named).
+
 An assistant's inventory change also pauses what runs unattended (decisions D6 and D7, no
 migration). Writes made with an assistant token that pause:
 - a group's values (`PUT …/inventory/groups/{id}/vars`: a key set, changed or removed);
@@ -1961,9 +2002,10 @@ an unknown outcome; stop every manager instance first, as above.
   assistant may set on the template. A key is also refused when the run's variable
   sources hold a secret of that name: a secret field of the template, of an inventory
   group (or its ancestors) of a target host, or a variable the playbook declares
-  secret. Values Ansible Vault encrypts in the repository's `group_vars`, `host_vars`
-  or role files are not named anywhere Pulsix records, so a template schema that
-  declares such a name as plain text is not caught: declare it secret there.
+  secret, or (since backlog 2.134) a variable the playbook's repository sets to a
+  value Ansible Vault encrypts, once an updated worker has synced the repository (see
+  the 2.134 note under version skew: until then such a name is caught only when the
+  template's schema declares it secret, so declare it secret there).
   Variable names Ansible or Pulsix act on are refused too (below, plus Ansible's
   playbook keywords such as `tags`, `name`, `port`, `environment`).
 - **Webhook mappings onto names Ansible acts on are refused (spec 2026-11-25 A):** a

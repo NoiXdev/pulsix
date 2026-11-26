@@ -38,6 +38,37 @@ type repoSourcesDTO struct {
 	Incomplete  bool               `json:"incomplete" doc:"A limit left playbooks unread"`
 	LeftOut     []string           `json:"left_out" doc:"Names the limits left unread; they keep their previous read, if any"`
 	Notes       []varSourceNoteDTO `json:"notes"`
+	Vault       *repoVaultDTO      `json:"vault,omitempty" doc:"The variables the read found set to values encrypted with Ansible Vault, by name and file, never a value; absent when the read did not report them (a worker older than this feature), so they are unknown"`
+}
+
+// repoVaultDTO is varsource.Vault: names, never values.
+type repoVaultDTO struct {
+	Names          []repoVaultNameDTO `json:"names" doc:"Variables set to a vault-encrypted value, by name then file"`
+	EncryptedFiles []string           `json:"encrypted_files" doc:"Variable files encrypted as a whole: the names they set are not known"`
+	Unread         []string           `json:"unread" doc:"Variable files that could not be read: the names they set are not known"`
+	Cut            bool               `json:"cut" doc:"A limit or the time limit left files unread: names may be missing"`
+}
+
+type repoVaultNameDTO struct {
+	Name string `json:"name"`
+	File string `json:"file" doc:"The file that sets it, relative to the repository subpath"`
+}
+
+func toRepoVaultDTO(v *varsource.Vault) *repoVaultDTO {
+	if v == nil {
+		return nil
+	}
+	out := &repoVaultDTO{Names: make([]repoVaultNameDTO, len(v.Names)), EncryptedFiles: v.EncryptedFiles, Unread: v.Unread, Cut: v.Cut}
+	for i, n := range v.Names {
+		out.Names[i] = repoVaultNameDTO{Name: n.Name, File: n.File}
+	}
+	if out.EncryptedFiles == nil {
+		out.EncryptedFiles = []string{}
+	}
+	if out.Unread == nil {
+		out.Unread = []string{}
+	}
+	return out
 }
 
 type discoveredPlaybookDTO struct {
@@ -87,7 +118,7 @@ func toRepoPlaybooksOutput(d playbooks.Discovery) *repoPlaybooksOutput {
 		}
 		out.Body.Sources = &repoSourcesDTO{
 			Commit: r.Commit, SyncedAt: r.SyncedAt, WorkerReads: r.WorkerReads, Incomplete: r.Incomplete,
-			LeftOut: leftOut, Notes: toVarSourceNoteDTOs(r.Notes),
+			LeftOut: leftOut, Notes: toVarSourceNoteDTOs(r.Notes), Vault: toRepoVaultDTO(r.Vault),
 		}
 	}
 	out.Body.Playbooks = make([]discoveredPlaybookDTO, len(d.Playbooks))

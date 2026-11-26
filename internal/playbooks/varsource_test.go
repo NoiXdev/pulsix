@@ -255,8 +255,9 @@ func TestVarSourceRepoPlaybook(t *testing.T) {
 		t.Fatalf("VarSource without a record = %+v", src)
 	}
 
+	vault := &varsource.Vault{Names: []varsource.VaultName{{Name: "db_password", File: "group_vars/all.yml"}}, EncryptedFiles: []string{}, Unread: []string{}}
 	rs.sources[repoID] = fakeSources{
-		rec: repos.SourcesRecord{Commit: "abc123", SyncedAt: synced, WorkerReads: true, Incomplete: true},
+		rec: repos.SourcesRecord{Commit: "abc123", SyncedAt: synced, WorkerReads: true, Incomplete: true, Vault: vault},
 		playbooks: []varsource.Playbook{{Path: "deploy.yml", Fields: []schema.Field{
 			{Name: "app_version", Type: schema.TypeString, Origin: schema.OriginSource},
 		}}},
@@ -267,6 +268,10 @@ func TestVarSourceRepoPlaybook(t *testing.T) {
 	}
 	if !src.Found || src.Rev != "abc123" || src.SyncedAt == nil || !src.SyncedAt.Equal(synced) || !src.WorkerReads || !src.Incomplete {
 		t.Fatalf("VarSource = %+v", src)
+	}
+	// The repository's vault names come with it (backlog 2.134).
+	if src.Vault != vault {
+		t.Fatalf("vault = %+v, want the record's", src.Vault)
 	}
 	if got := fieldNames(src.Playbook); len(got) != 1 || got[0] != "app_version" {
 		t.Fatalf("fields = %v", got)

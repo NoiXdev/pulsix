@@ -72,6 +72,12 @@ type playFile struct {
 	impSeen  map[string]bool
 	lists    *collectionLists    // the walk's collections lists
 	allowed  map[*yaml.Node]bool // nodes whose line comment was read as a marker
+	// vault names the variables the file sets to a vault-encrypted value
+	// (vault_play.go), varsFileRefs its plays' static vars_files.
+	vault        []string
+	vaultSearch  *vaultSearch
+	varsFileRefs []string
+	varsFilesCut bool // a vars_files entry the read cannot follow
 }
 
 // readPlayFile reads the plays of one playbook file (doc is its parsed
@@ -86,6 +92,7 @@ func readPlayFile(y *yamlFile, doc *yaml.Node, dir string, lists *collectionList
 			continue
 		}
 		f.vars(a["vars"])
+		f.varsFiles(a["vars_files"])
 		f.varsPrompt(a["vars_prompt"])
 		colls := f.collections(a["collections"], 0, false)
 		f.tasks(a["pre_tasks"], 0, colls)
@@ -141,6 +148,7 @@ func (f *playFile) vars(n *yaml.Node) {
 	}
 	f.seen[n] = true
 	for _, p := range ps {
+		f.playVault(p.key, p.value)
 		field, notes, isMarker, ok := markedVar(f.y, p.key, p.value)
 		f.y.note(notes...)
 		if !isMarker {
@@ -175,6 +183,7 @@ func (f *playFile) varsPrompt(n *yaml.Node) {
 // setKeys records the keys of a vars: mapping as set in the playbook.
 func (f *playFile) setKeys(n *yaml.Node) {
 	for _, p := range f.y.visitPairs(n) {
+		f.playVault(p.key, p.value)
 		f.set.add(p.key.Value)
 	}
 }
@@ -194,6 +203,7 @@ func (f *playFile) roleEntries(n *yaml.Node, colls int) {
 				case k == "vars":
 					f.setKeys(p.value)
 				case !roleKeywords[k]:
+					f.playVault(p.key, p.value)
 					f.set.add(k)
 				}
 			}

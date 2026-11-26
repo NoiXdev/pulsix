@@ -377,3 +377,40 @@ func TestAppendSeqQueryBoundsMaxSeqToJobChunks(t *testing.T) {
 		t.Fatalf("max(seq) subquery lost its created_at bound (backlog 2.50):\n%s", jobs.AppendJobEventSQL)
 	}
 }
+
+// An event a lagging worker stamped before the job's created_at must still
+// be seen by the next append's max(seq) read (backlog 2.135): the bound is
+// created_at minus EventClockSlack, the same as the log read's.
+func TestAppendKeepsSeqUniqueForEventStampedBeforeJobCreation(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-events-lag")
+	zone := seedZone(t, d, org)
+	queue := newTestQueue(d)
+
+	claim := claimOne(t, d, org, zone, queue)
+	jobID := uuid.MustParse(claim.Job.GetId())
+
+	lagging := time.Now().Add(-30 * time.Minute)
+	for i, at := range []time.Time{lagging, time.Now(), lagging} {
+		if err := queue.AppendEvent(ctx, jobID, jobs.Event{State: "ok", Payload: []byte(`{}`), At: at}); err != nil {
+			t.Fatalf("AppendEvent %d: %v", i, err)
+		}
+	}
+	rows, err := d.Pool().Query(ctx, `SELECT seq FROM job_events WHERE job_id = $1 ORDER BY seq`, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []int64
+	for rows.Next() {
+		var s int64
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, s)
+	}
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("seqs = %v, want [1 2 3]", got)
+	}
+}

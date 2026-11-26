@@ -53,6 +53,12 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 	if err != nil {
 		return fmt.Errorf("encode variable source notes: %w", err)
 	}
+	var vault []byte // NULL: the names are unknown
+	if rec.Vault != nil {
+		if vault, err = json.Marshal(rec.Vault); err != nil {
+			return fmt.Errorf("encode vault names: %w", err)
+		}
+	}
 	results := make([][]byte, len(playbooks))
 	for i, pb := range playbooks {
 		if results[i], err = json.Marshal(pb); err != nil {
@@ -71,6 +77,7 @@ func (s *SQLStore) ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUI
 		CommitSha: rec.Commit, SyncedAt: rec.SyncedAt, Incomplete: rec.Incomplete,
 		LeftOut: leftOut, Notes: notes, OrgID: orgID, RepoID: repoID, SyncedRef: nullString(rec.SyncedRef),
 		SyncClaimedAt: pgtype.Timestamptz{Time: rec.SyncClaimedAt, Valid: !rec.SyncClaimedAt.IsZero()},
+		VaultNames:    vault,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert repo variable sources: %w", err)
@@ -114,7 +121,7 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 		}
 		return SourcesRecord{}, fmt.Errorf("get repo variable sources: %w", err)
 	}
-	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
+	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef, row.VaultNames)
 	if err == nil && row.SyncClaimedAt.Valid {
 		rec.SyncClaimedAt = row.SyncClaimedAt.Time
 	}
@@ -133,7 +140,7 @@ func (s *SQLStore) GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.
 		}
 		return SourcesRecord{}, nil, fmt.Errorf("get playbook variable source: %w", err)
 	}
-	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef)
+	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes, row.SyncedRef, row.VaultNames)
 	if err != nil {
 		return SourcesRecord{}, nil, err
 	}
@@ -147,8 +154,9 @@ func (s *SQLStore) GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.
 	return rec, &pb, nil
 }
 
-// decodeSourcesRecord is a stored record's columns as a SourcesRecord.
-func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incomplete bool, leftOut, notes []byte, syncedRef *string) (SourcesRecord, error) {
+// decodeSourcesRecord is a stored record's columns as a SourcesRecord. A
+// NULL vault leaves Vault nil: the names are unknown.
+func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incomplete bool, leftOut, notes []byte, syncedRef *string, vault []byte) (SourcesRecord, error) {
 	rec := SourcesRecord{Commit: commit, SyncedAt: syncedAt, WorkerReads: workerReads, Incomplete: incomplete}
 	if syncedRef != nil {
 		rec.SyncedRef = *syncedRef
@@ -158,6 +166,11 @@ func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incompl
 	}
 	if err := json.Unmarshal(notes, &rec.Notes); err != nil {
 		return SourcesRecord{}, fmt.Errorf("decode variable source notes: %w", err)
+	}
+	if vault != nil {
+		if err := json.Unmarshal(vault, &rec.Vault); err != nil {
+			return SourcesRecord{}, fmt.Errorf("decode vault names: %w", err)
+		}
 	}
 	return rec, nil
 }

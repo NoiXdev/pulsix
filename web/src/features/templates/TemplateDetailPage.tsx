@@ -73,7 +73,8 @@ function TemplateDetail({ org, template, role, onReload }: TemplateDetailProps) 
     setShownTab(tab);
     if (tab !== 'settings') setEditing(false);
   }
-  useUnsavedGuard(editing && settingsDirty);
+  const guarded = editing && settingsDirty;
+  const releaseGuard = useUnsavedGuard(guarded);
 
   const schedules = useSchedules(org, template.id);
   const triggers = useTriggers(org, { kind: 'template_run', id: template.id, name: template.name });
@@ -111,9 +112,9 @@ function TemplateDetail({ org, template, role, onReload }: TemplateDetailProps) 
   return (
     <div className="flex flex-col gap-5">
       {/* The Settings tab has its own Edit: the header's is left out there. */}
-      <TemplateHeader org={org} template={template} role={role} onEdit={tab === 'settings' ? undefined : edit} />
+      <TemplateHeader org={org} template={template} role={role} onEdit={tab === 'settings' ? undefined : edit} onDeleted={releaseGuard} />
       {paused && <TemplateReviewNotice org={org} templateId={template.id} paused={paused} />}
-      <TemplateTabs label={tabs.label} tabs={items} active={tab} onSelect={select} />
+      <TemplateTabs label={tabs.label} tabs={items} active={tab} onSelect={select} manual={guarded} />
       <div role="tabpanel" id={TEMPLATE_PANEL_ID} aria-labelledby={templateTabId(tab)} className="flex min-w-0 flex-col gap-8">
         {panels[tab]()}
       </div>

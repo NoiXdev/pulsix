@@ -432,6 +432,7 @@ func (q *SQLQueue) AppendEvent(ctx context.Context, jobID uuid.UUID, ev Event) e
 // real value: a pinned binding carries it from the claim row, the
 // unbound adoption rides the binding's, and the row fallback reads it.
 func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.UUID, attempt int, createdAt time.Time, ev Event) error {
+	ev = clampEventTime(ev, createdAt)
 	tx, err := q.db.Pool().Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin event append: %w", err)
@@ -442,7 +443,7 @@ func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.
 	}
 	var seq int64
 	if err := tx.QueryRow(ctx, AppendJobEventSQL,
-		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt, createdAt,
+		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt, createdAt.Add(-EventClockSlack),
 	).Scan(&seq); err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
@@ -454,18 +455,50 @@ func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.
 	return nil
 }
 
+// clampEventTime pins an event's stored time to no earlier than the job's
+// created_at minus EventClockSlack (backlog 2.138). The append's max(seq)
+// read and the log read are both bounded there, so an event stored before
+// it would be invisible to both: its seq reusable, the event hidden. The
+// worker's own stamp survives as `worker_at` in an object payload (the
+// structured events; a bare stdout line is a JSON string and is left as it
+// is). An event inside the window passes through untouched.
+func clampEventTime(ev Event, createdAt time.Time) Event {
+	floor := createdAt.Add(-EventClockSlack)
+	if !ev.At.Before(floor) {
+		return ev
+	}
+	workerAt := ev.At
+	ev.At = floor
+	obj := map[string]json.RawMessage{}
+	if raw := normalizePayload(ev.Payload); json.Unmarshal(raw, &obj) == nil && obj != nil {
+		stamp, err := json.Marshal(workerAt.UTC())
+		if err != nil {
+			return ev
+		}
+		obj["worker_at"] = stamp
+		if merged, err := json.Marshal(obj); err == nil {
+			ev.Payload = merged
+		}
+	}
+	return ev
+}
+
 // eventSeqLockKeyPrefix namespaces the per-job event sequence lock within
 // hashtext's key space.
 const eventSeqLockKeyPrefix = "job-event-seq:"
 
 // AppendJobEventSQL is the append statement: the manager assigns the next
 // seq for the job under the advisory lock. The max(seq) subquery filters
-// `at >= $9` — the job's created_at, carried by every append path (the
-// pinned binding from the claim row, the adoption branch, or the row
-// fallback) — so TimescaleDB prunes the scan to the chunks the job's own
-// events live in instead of running max() across every chunk (backlog
-// 2.50). The bound is safe as an exclusion: an event's `at` is never
-// before the job existed. Exported only for the SQL-text regression guard.
+// `at >= $9` — the job's created_at less EventClockSlack (the same bound
+// the log read uses), carried by every append path (the pinned binding
+// from the claim row, the adoption branch, or the row fallback) — so
+// TimescaleDB prunes the scan to the chunks the job's own events live in
+// instead of running max() across every chunk (backlog 2.50). The slack
+// matters: a worker whose clock lags stamps events before created_at, and
+// a strict bound would miss them and reuse their seq (backlog 2.135); the
+// append also clamps an event's `at` to no earlier than the bound
+// (clampEventTime, backlog 2.138), so the bound is a safe exclusion.
+// Exported only for the SQL-text regression guard.
 const AppendJobEventSQL = `INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
 		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1 AND at >= $9), 0) + 1, $2, $3, $4, $5, $6, $7, $8
 		 RETURNING seq`

@@ -55,6 +55,7 @@ type yamlFile struct {
 	dropped   int        // notes past the cap
 	dups      *dupsNoted // a file parsed more than once (yamldups.go); nil for the others
 	log       *noteLog   // when set, the notes raised are also logged (roles_spec.go)
+	mergeCut  bool       // a mapping merged more than maxMergeSources sources; the rest were not read
 }
 
 func newYAMLFile(file string) *yamlFile {
@@ -155,6 +156,7 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 		}
 		for _, src := range mergeSources(n.Content[2*i+1]) {
 			if sources == maxMergeSources {
+				y.mergeCut = true
 				break
 			}
 			sources++

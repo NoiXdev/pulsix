@@ -164,7 +164,7 @@ func readTools() []toolDef {
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, in repoInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos/%s", in.RepoID)
 			}),
-		define("list_repo_files", "List repository playbooks", "The playbook files found in a repository at its last sync.",
+		define("list_repo_files", "List repository playbooks", "The playbook files found in a repository at its last sync, and under sources.vault the variables the repository sets to values encrypted with Ansible Vault (names and files only, never a value; absent when the sync's worker did not report them). A run request's extra vars may not replace one.",
 			tenancy.AreaReposRead, readTool, func(ctx context.Context, c *caller, in repoInput) (any, error) {
 				return passGet(ctx, c, nil, "/repos/%s/playbooks", in.RepoID)
 			}),
