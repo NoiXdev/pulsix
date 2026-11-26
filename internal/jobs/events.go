@@ -442,7 +442,7 @@ func (q *SQLQueue) appendEvent(ctx context.Context, jobID uuid.UUID, orgID uuid.
 	}
 	var seq int64
 	if err := tx.QueryRow(ctx, AppendJobEventSQL,
-		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt, createdAt,
+		jobID, orgID, ev.At, ev.Host, ev.Task, ev.State, normalizePayload(ev.Payload), attempt, createdAt.Add(-EventClockSlack),
 	).Scan(&seq); err != nil {
 		return fmt.Errorf("append job event: %w", err)
 	}
@@ -460,12 +460,14 @@ const eventSeqLockKeyPrefix = "job-event-seq:"
 
 // AppendJobEventSQL is the append statement: the manager assigns the next
 // seq for the job under the advisory lock. The max(seq) subquery filters
-// `at >= $9` — the job's created_at, carried by every append path (the
+// `at >= $9` — the job's created_at less EventClockSlack (the same bound
+// the log read uses), carried by every append path (the
 // pinned binding from the claim row, the adoption branch, or the row
 // fallback) — so TimescaleDB prunes the scan to the chunks the job's own
 // events live in instead of running max() across every chunk (backlog
-// 2.50). The bound is safe as an exclusion: an event's `at` is never
-// before the job existed. Exported only for the SQL-text regression guard.
+// 2.50). The slack matters: a worker whose clock lags stamps
+// events before created_at, and a strict bound would miss them and reuse
+// their seq (backlog 2.135). Exported only for the SQL-text regression guard.
 const AppendJobEventSQL = `INSERT INTO job_events (job_id, seq, org_id, at, host, task, state, payload, attempt)
 		 SELECT $1, COALESCE((SELECT max(seq) FROM job_events WHERE job_id = $1 AND at >= $9), 0) + 1, $2, $3, $4, $5, $6, $7, $8
 		 RETURNING seq`
