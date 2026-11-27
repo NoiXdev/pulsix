@@ -72,8 +72,8 @@ func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, in time.Duration,
 	return q.record(c, outcome{kind: "retry", in: in, errText: errText, pending: pending})
 }
 
-func (q *fakeQueue) Fail(_ context.Context, c notify.Claimed, errText string) error {
-	return q.record(c, outcome{kind: "fail", errText: errText})
+func (q *fakeQueue) Fail(_ context.Context, c notify.Claimed, errText string, pending []string) error {
+	return q.record(c, outcome{kind: "fail", errText: errText, pending: pending})
 }
 
 // scriptedSender answers per delivery id.

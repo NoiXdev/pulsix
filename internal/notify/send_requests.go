@@ -33,7 +33,7 @@ func WithSendBudget(d time.Duration) SenderOption {
 }
 
 // PartialSendError is a delivery of several requests that left some owed
-// (backlog 4.8): Pending names them by Request.Key, so the retry sends
+// (backlog 4.8): Pending names them by requestKey (preset and key), so the retry sends
 // only those and never one that already succeeded — the request-level
 // counterpart of mail.PartialError's recipients.
 type PartialSendError struct {
@@ -70,11 +70,20 @@ func (s *ChannelSender) reserve() time.Duration {
 	return 10 * time.Second
 }
 
-func requestKey(r Request, i int) string {
-	if r.Key != "" {
-		return r.Key
+// requestKey is how a delivery's pending list names a request: the
+// preset's own key (its position when it has none), prefixed with the
+// preset's name ("webhook" for a raw channel), so the keys one preset
+// stored never match a request of another after the channel is switched
+// (re-review N1).
+func requestKey(preset string, r Request, i int) string {
+	if preset == "" {
+		preset = "webhook"
 	}
-	return strconv.Itoa(i)
+	k := r.Key
+	if k == "" {
+		k = strconv.Itoa(i)
+	}
+	return preset + ":" + k
 }
 
 type requestFailure struct {
@@ -94,10 +103,7 @@ func (s *ChannelSender) sendAll(ctx context.Context, w openedWebhook, reqs []Req
 	if len(reqs) == 0 {
 		return nil // nothing to say for this event (PagerDuty: an unacknowledged alert)
 	}
-	owed := map[string]bool{}
-	for _, k := range c.Delivery.PendingRecipients {
-		owed[k] = true
-	}
+	owed := owedKeys(c.Delivery.PendingRecipients, w.preset, reqs)
 	if len(reqs) == 1 && len(owed) == 0 {
 		return s.sendRequest(ctx, w, reqs[0], c.Delivery.ID, ev)
 	}
@@ -110,7 +116,7 @@ func (s *ChannelSender) sendAll(ctx context.Context, w openedWebhook, reqs []Req
 		transient bool
 	)
 	for i, r := range reqs {
-		key := requestKey(r, i)
+		key := requestKey(w.preset, r, i)
 		if len(owed) > 0 && !owed[key] {
 			continue
 		}
@@ -131,6 +137,31 @@ func (s *ChannelSender) sendAll(ctx context.Context, w openedWebhook, reqs []Req
 		return Permanent(perr)
 	}
 	return perr
+}
+
+// owedKeys is the delivery's pending list as far as it names requests
+// rendered now. When it names none of them — the channel switched preset
+// since, or the list predates the keys — nothing this render produces
+// was ever sent, so every request is owed (nil): the alternative is a
+// delivery completed with nothing sent (re-review N1).
+func owedKeys(pending []string, preset string, reqs []Request) map[string]bool {
+	if len(pending) == 0 {
+		return nil
+	}
+	rendered := make(map[string]bool, len(reqs))
+	for i, r := range reqs {
+		rendered[requestKey(preset, r, i)] = true
+	}
+	owed := map[string]bool{}
+	for _, k := range pending {
+		if rendered[k] {
+			owed[k] = true
+		}
+	}
+	if len(owed) == 0 {
+		return nil
+	}
+	return owed
 }
 
 // maxNamedFailures bounds how many failed requests a delivery's error

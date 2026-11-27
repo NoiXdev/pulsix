@@ -115,7 +115,11 @@ SET next_attempt_at = now() + @retry_in::interval, locked_until = NULL, last_err
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
 
 -- name: FailNotificationDelivery :execrows
-UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = @last_error
+-- pending_recipients records what the final attempt still owed, as the
+-- retry does, so a resend (2.75) repeats only that (backlog 4.8). NULL
+-- leaves it as it was.
+UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = @last_error,
+    pending_recipients = COALESCE(sqlc.narg(pending_recipients)::text[], pending_recipients)
 WHERE org_id = @org_id AND id = @id AND attempts = @attempts AND status = 'pending';
 
 -- name: FailStuckNotificationDeliveries :execrows

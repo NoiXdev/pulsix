@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/notify/presets/ntfy"
 	"github.com/noixdev/pulsix/internal/notify/presets/pagerduty"
 	"github.com/noixdev/pulsix/internal/outbound"
 )
@@ -148,5 +149,58 @@ func TestPagerDutyOutageNeverReopensAClosedAlert(t *testing.T) {
 	}
 	if len(fake.accepted) != 2 || fake.accepted[0] != "resolve" || fake.accepted[1] != "resolve" {
 		t.Fatalf("accepted %v", fake.accepted)
+	}
+}
+
+// TestPagerDutyRetryAfterASwitchSendsTheNewRequest (re-review N1): a
+// multi-alert PagerDuty delivery fails during an outage; the operator
+// switches the channel to ntfy, or back to a raw webhook, to keep alerts
+// flowing; the retry sends the new format's request instead of finding
+// nothing it owes and completing silently.
+func TestPagerDutyRetryAfterASwitchSendsTheNewRequest(t *testing.T) {
+	for _, next := range []string{"ntfy", ""} {
+		down := &pagerFake{down: true}
+		pd := httptest.NewServer(down)
+		other := &pagerFake{}
+		otherSrv := httptest.NewServer(other)
+		ps := notify.Presets{"pagerduty": pagerduty.New(pd.URL), "ntfy": ntfy.New()}
+		store := &memChannels{m: map[uuid.UUID]notify.Channel{}}
+		svc := notify.NewService(notify.Deps{Channels: store, Box: prefixBox{}, Mail: noMail{}, Presets: ps})
+		org := uuid.Must(uuid.NewV7())
+		ch, err := svc.CreateChannel(context.Background(), org, uuid.Nil, notify.Input{
+			Kind: notify.KindWebhook, Name: "pager", Enabled: true,
+			Webhook: &notify.WebhookInput{Preset: "pagerduty", Secrets: map[string]string{"routing_key": key}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := outbound.NewClient(outbound.NewPolicy([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, nil), 2*time.Second, nil)
+		sender := notify.NewChannelSender(prefixBox{}, noMail{}, client, nil, ps)
+		ev := notify.Event{Kind: notify.EventAlertBatch, Org: notify.OrgRef{ID: org, Name: "Acme"}, Alerts: &notify.AlertBatch{Count: 3}}
+		for i := 0; i < 3; i++ {
+			ev.Alerts.Items = append(ev.Alerts.Items, notify.AlertItem{AlertID: uuid.Must(uuid.NewV7()), HostName: "web", CheckKey: "cpu", Metric: "used", Severity: "crit", Event: "opened"})
+		}
+		claim := notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}
+		err = sender.Send(context.Background(), claim, ev)
+		var partial *notify.PartialSendError
+		if !errors.As(err, &partial) || len(partial.Pending) != 3 {
+			t.Fatalf("during the outage = %v", err)
+		}
+		u := otherSrv.URL + "/alerts"
+		switched, err := svc.UpdateChannel(context.Background(), org, ch.ID, ch.Revision, notify.Input{
+			Kind: notify.KindWebhook, Name: "pager", Enabled: true, Webhook: &notify.WebhookInput{Preset: next, URL: &u},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		claim.Channel, claim.Delivery.PendingRecipients = switched, partial.Pending
+		if err := sender.Send(context.Background(), claim, ev); err != nil {
+			t.Fatalf("%q: retry = %v", next, err)
+		}
+		if len(other.accepted) != 1 {
+			t.Fatalf("%q: the new format received %d requests", next, len(other.accepted))
+		}
+		pd.Close()
+		otherSrv.Close()
 	}
 }

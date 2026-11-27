@@ -47,7 +47,7 @@ func (q *panickingQueue) Complete(context.Context, notify.Claimed, time.Time) er
 func (q *panickingQueue) Retry(context.Context, notify.Claimed, time.Duration, string, []string) error {
 	return nil
 }
-func (q *panickingQueue) Fail(context.Context, notify.Claimed, string) error { return nil }
+func (q *panickingQueue) Fail(context.Context, notify.Claimed, string, []string) error { return nil }
 
 type okSender struct{}
 

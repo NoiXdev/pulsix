@@ -297,20 +297,26 @@ func (q *Queries) DigestChannelsForSend(ctx context.Context, orgID uuid.UUID) ([
 }
 
 const failNotificationDelivery = `-- name: FailNotificationDelivery :execrows
-UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = $1
-WHERE org_id = $2 AND id = $3 AND attempts = $4 AND status = 'pending'
+UPDATE notification_deliveries SET status = 'failed', locked_until = NULL, last_error = $1,
+    pending_recipients = COALESCE($2::text[], pending_recipients)
+WHERE org_id = $3 AND id = $4 AND attempts = $5 AND status = 'pending'
 `
 
 type FailNotificationDeliveryParams struct {
-	LastError string    `json:"last_error"`
-	OrgID     uuid.UUID `json:"org_id"`
-	ID        uuid.UUID `json:"id"`
-	Attempts  int32     `json:"attempts"`
+	LastError         string    `json:"last_error"`
+	PendingRecipients []string  `json:"pending_recipients"`
+	OrgID             uuid.UUID `json:"org_id"`
+	ID                uuid.UUID `json:"id"`
+	Attempts          int32     `json:"attempts"`
 }
 
+// pending_recipients records what the final attempt still owed, as the
+// retry does, so a resend (2.75) repeats only that (backlog 4.8). NULL
+// leaves it as it was.
 func (q *Queries) FailNotificationDelivery(ctx context.Context, arg FailNotificationDeliveryParams) (int64, error) {
 	result, err := q.db.Exec(ctx, failNotificationDelivery,
 		arg.LastError,
+		arg.PendingRecipients,
 		arg.OrgID,
 		arg.ID,
 		arg.Attempts,

@@ -58,7 +58,10 @@ type DeliveryQueue interface {
 	// attempt to pending when it is non-empty (backlog 2.74); nil leaves
 	// the row's current narrowing alone.
 	Retry(ctx context.Context, c Claimed, in time.Duration, errText string, pending []string) error
-	Fail(ctx context.Context, c Claimed, errText string) error
+	// Fail ends the delivery; pending, when non-empty, records what the
+	// last attempt still owed (as Retry does), so a later Resend repeats
+	// only that; nil leaves the row's list alone.
+	Fail(ctx context.Context, c Claimed, errText string, pending []string) error
 	// FailStuck ends the rows the claim's attempts backstop has shut out.
 	// Without it they stay 'pending' for ever — never claimed again,
 	// never failed, and the trim only removes finished rows, so they
@@ -227,7 +230,7 @@ func (d *Dispatcher) deliver(ctx context.Context, c Claimed) {
 	case sendErr == nil:
 		err = d.queue.Complete(wctx, c, d.now())
 	case IsPermanent(sendErr) || c.Delivery.Attempts >= MaxAttempts:
-		err = d.queue.Fail(wctx, c, errorText(sendErr))
+		err = d.queue.Fail(wctx, c, errorText(sendErr), stillOwed(sendErr))
 	default:
 		err = d.queue.Retry(wctx, c, retryDelay(c.Delivery.Attempts), errorText(sendErr), stillOwed(sendErr))
 	}

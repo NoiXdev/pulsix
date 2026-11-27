@@ -136,7 +136,7 @@ func TestPresetSendContinuesPastAFailure(t *testing.T) {
 	claim := notify.Claimed{Channel: c, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}
 	err := sender.Send(ctx, claim, notify.Event{Kind: notify.EventTest})
 	var partial *notify.PartialSendError
-	if !errors.As(err, &partial) || notify.IsPermanent(err) || !slices.Equal(partial.Pending, []string{"k1", "k3"}) ||
+	if !errors.As(err, &partial) || notify.IsPermanent(err) || !slices.Equal(partial.Pending, []string{"count:k1", "count:k3"}) ||
 		!strings.Contains(err.Error(), "request 2: the endpoint answered 400") || !strings.Contains(err.Error(), "request 4: the endpoint answered 503") ||
 		strings.Contains(err.Error(), srv.URL) {
 		t.Fatalf("first = %v", err)
@@ -149,7 +149,7 @@ func TestPresetSendContinuesPastAFailure(t *testing.T) {
 	rec.mu.Unlock()
 	claim.Delivery.PendingRecipients = partial.Pending
 	err = sender.Send(ctx, claim, notify.Event{Kind: notify.EventTest})
-	if !notify.IsPermanent(err) || !errors.As(err, &partial) || !slices.Equal(partial.Pending, []string{"k1"}) || !strings.HasPrefix(err.Error(), "1 of 5 requests still owed") {
+	if !notify.IsPermanent(err) || !errors.As(err, &partial) || !slices.Equal(partial.Pending, []string{"count:k1"}) || !strings.HasPrefix(err.Error(), "1 of 5 requests still owed") {
 		t.Fatalf("retry = %v", err)
 	}
 	if got := rec.received(); !slices.Equal(got[5:], []string{"k1", "k3"}) {
@@ -269,5 +269,49 @@ func TestDispatcherKeepsGoingPastASlowService(t *testing.T) {
 	}
 	if sent := len(slow.received()); slowOut.kind != "retry" || len(slowOut.pending) != 50-sent || sent == 0 || sent == 50 {
 		t.Fatalf("slow = %+v after %d sent", slowOut, sent)
+	}
+}
+
+// TestPresetSendOwedKeysOfAnotherPreset (re-review N1): owed keys stored
+// by one preset name no request of another (or of an older version),
+// so the delivery sends everything instead of nothing.
+func TestPresetSendOwedKeysOfAnotherPreset(t *testing.T) {
+	rec := &keyedReceiver{}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+	ps := notify.Presets{"count": countPreset{n: 3}}
+	w := newWorld(t)
+	c := countChannel(t, w, ps, srv.URL)
+	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, ps)
+	for _, owed := range [][]string{{"pagerduty:alert:3"}, {"k1"}, {"0"}} {
+		before := len(rec.received())
+		claim := notify.Claimed{Channel: c, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7()), PendingRecipients: owed}}
+		if err := sender.Send(ctx, claim, notify.Event{Kind: notify.EventTest}); err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.received()[before:]; !slices.Equal(got, []string{"k0", "k1", "k2"}) {
+			t.Fatalf("owed %v: sent %v", owed, got)
+		}
+	}
+}
+
+// TestDispatcherFinalFailureKeepsWhatIsOwed (re-review nit): the last
+// attempt's owed keys go with the final failure, for a later Resend.
+func TestDispatcherFinalFailureKeepsWhatIsOwed(t *testing.T) {
+	rec := &keyedReceiver{status: map[string]int{"k1": http.StatusServiceUnavailable}}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+	ps := notify.Presets{"count": countPreset{n: 3}}
+	w := newWorld(t)
+	c := countChannel(t, w, ps, srv.URL)
+	q := &fakeQueue{pending: []notify.Claimed{{Channel: c, Delivery: notify.Delivery{
+		ID: uuid.Must(uuid.NewV7()), OrgID: w.org, Attempts: notify.MaxAttempts, Payload: []byte(`{"kind":"test"}`),
+	}}}}
+	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, ps)
+	if _, err := notify.NewDispatcher(q, sender, time.Second, nil, nil, quiet()).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if o := q.outcomes[q.pendingIDs(0)]; o.kind != "fail" || !slices.Equal(o.pending, []string{"count:k1"}) {
+		t.Fatalf("outcome = %+v", o)
 	}
 }
