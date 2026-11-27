@@ -136,7 +136,9 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		// ManagerMessage (not a oneof): a heartbeat's response always
 		// acknowledges and may additionally carry a CheckConfig, a
 		// ProbeConfig or both; nothing here ever needs to choose.
-		if err := tracked.send(&agentpb.ManagerMessage{Ack: true, CheckConfig: rep.checkConfig, ProbeConfig: rep.probeConfig}); err != nil {
+		if err := tracked.send(&agentpb.ManagerMessage{
+			Ack: true, CheckConfig: rep.checkConfig, ProbeConfig: rep.probeConfig, AgentNames: rep.names,
+		}); err != nil {
 			return err
 		}
 	}
@@ -148,6 +150,10 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 type reply struct {
 	checkConfig *agentpb.CheckConfig
 	probeConfig *agentpb.ProbeConfig
+	// names is the agent's organization and host names, on every
+	// heartbeat's ack (backlog 3.132); nil for other messages and for an
+	// unknown serial.
+	names *agentpb.AgentNames
 }
 
 // pacedResults reports whether msg is a results message charged against
@@ -243,15 +249,24 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 // the heartbeat (backlog 3.79), and a capable
 // agent's probe_config_version is compared the same way against its probe
 // assignments (probeConfigFor, backlog 3.13a), whose ProbeConfig rides the
-// same acknowledgement on a mismatch.
+// same acknowledgement on a mismatch. Every heartbeat's acknowledgement
+// names the agent's organization and host, read by the heartbeat's own
+// registry write, for the agent's local status page (backlog 3.132).
 func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (reply, error) {
-	if err := s.deps.Agents.Heartbeat(ctx, agent.Serial, heartbeatReportOf(hb)); err != nil {
+	names, err := s.deps.Agents.RecordHeartbeat(ctx, agent.Serial, heartbeatReportOf(hb))
+	if err != nil {
 		return reply{}, err
+	}
+	var rep reply
+	if names != (agents.Names{}) {
+		// The agent's status page shows them (backlog 3.132); the same
+		// statement that recorded the heartbeat read them.
+		rep.names = &agentpb.AgentNames{OrgName: names.Org, HostName: names.Host}
 	}
 	s.noteVersion(ctx, agent, hb.GetVersion())
 	wantsProbes := s.deps.Probes != nil && hb.GetProbesSupported()
 	if s.deps.Checks == nil && !wantsProbes {
-		return reply{}, nil
+		return rep, nil
 	}
 	// At most one resolve per heartbeatResolveInterval and agent (backlog
 	// 7.25): inside it the heartbeat is acknowledged and nothing more. A
@@ -262,9 +277,8 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 	// assignment read shares the interval: it is one indexed query, but a
 	// heartbeat loop must not buy one per message either.
 	if !s.streams.allowResolve(agent.Serial, s.deps.Clock()) {
-		return reply{}, nil
+		return rep, nil
 	}
-	var rep reply
 	if wantsProbes {
 		rep.probeConfig = s.probeConfigFor(ctx, agent, hb.GetProbeConfigVersion())
 	}
@@ -315,8 +329,25 @@ func heartbeatReportOf(hb *agentpb.Heartbeat) agents.HeartbeatReport {
 	return agents.HeartbeatReport{
 		Version: hb.GetVersion(), SecretNames: hb.GetSecretNames(), SecretsState: hb.GetSecretsState(),
 		LocalChecks: local, LocalCheckProblems: hb.GetLocalCheckProblems(),
-		ProbesSupported: hb.GetProbesSupported(),
+		ProbesSupported: hb.GetProbesSupported(), StatusPage: statusPageModeOf(hb.GetStatusPage()),
 	}
+}
+
+// statusPageModeOf maps the heartbeat's status page mode (backlog 3.132)
+// to the registry's; unspecified (an older agent) and unknown values are
+// the empty mode, stored as unknown.
+func statusPageModeOf(m agentpb.StatusPageMode) agents.StatusPageMode {
+	switch m {
+	case agentpb.StatusPageMode_STATUS_PAGE_MODE_OFF:
+		return agents.StatusPageOff
+	case agentpb.StatusPageMode_STATUS_PAGE_MODE_LOOPBACK:
+		return agents.StatusPageLoopback
+	case agentpb.StatusPageMode_STATUS_PAGE_MODE_NETWORK:
+		return agents.StatusPageNetwork
+	case agentpb.StatusPageMode_STATUS_PAGE_MODE_FAILED:
+		return agents.StatusPageFailed
+	}
+	return ""
 }
 
 // recordConfigCheck stores the comparison processHeartbeat just made —

@@ -1454,7 +1454,56 @@ new agent whose `agent.yaml` is refused for any reason now stops probing for oth
 until the file is fixed (it used to keep probing); write the file atomically (to a temporary
 file, then rename) so that a half-written file does not turn probing off for a minute.
 
+The agent status page (backlog 3.132) adds migration 00138 and two additive proto fields and
+no new dependency (the agent now links `golang.org/x/net/netutil`, already a dependency). 00138 adds the nullable
+column `host_agents.status_page` (`off`, `loopback`, `network` or `failed`, a CHECK; catalog
+only, nothing backfilled): every existing row reads as unknown until that agent's first
+heartbeat after the upgrade, and a re-enrollment resets it like the other reports. A backup
+carries the column. `Heartbeat.status_page` (9, the enum `StatusPageMode`) says whether the
+agent's local page is on and where, never its address, port or token;
+`ManagerMessage.agent_names` (4) carries the names of the agent's organization and host on
+every heartbeat's acknowledgement, read by the heartbeat's own statement (which now answers a
+row instead of none; no extra query). The agent DTO gains `status_page` (nullable, additive).
+**Skew:** an older agent sends no mode (stored unknown, the card shows no row) and ignores the
+names; a new agent under an older manager gets no names, and its page shows the organization
+and host IDs instead. An older manager ignores the mode. **The `status_page:` key in
+`agent.yaml` is unknown to an older agent, which refuses the whole file** (its `secrets:`,
+`commands:` and `checks:` are lost and, from 3.82 on, probing stops) until the agent is
+updated: update the agent first, then add `status_page:`. A new agent never refuses the file
+for a mistake in that section; only the page stays off. The page is off unless the host's
+own `agent.yaml` turns it on; nothing the manager sends can. On a network address the agent
+keeps a self-signed certificate (`status-page.crt`, `status-page.key`, owner-only) in its
+data directory unless `tls_cert` and `tls_key` are set; it replaces it 30 days before its end,
+and deleting both makes it issue new ones. A page without a token answers only requests
+addressed to `localhost`, a 127.x address or `[::1]` (421 otherwise), so a browser cannot be
+tricked into reading it under another name. A section without `listen` keeps the page off
+whatever else it holds; while `agent.yaml` is refused the card reads "failed" if the last good
+file turned the page on.
+
 ## Behaviour changes to check after an upgrade
+
+- **The agent replaces secret values before it sends anything (backlog 3.132, owner
+  decision, no migration):** every value of a secret field in the agent's own `agent.yaml`
+  that is 4 characters or longer is replaced by `[secret]` in check results (item, label and
+  error text), probe results and host facts before they are buffered or sent, whether or not
+  the status page is on; the manager therefore stores `[secret]` where it used to store such
+  a value. The connection fields that are not secret are left as they are (owner decision
+  of 2026-11-27): `host`, `port`, `user`, `username`, `database`, `socket`,
+  `tls_server_name`, `tls_ca`, `tls_cert`, `tls_key`, and the plugins' `tls`, `pipe`,
+  `sslmode`, `sslrootcert`, `sslcert`, `sslkey` and `basic_auth_user`
+  (`secrets.IsSecretField` holds the list). Every other field, `password`,
+  `basic_auth_password` and any unknown one included, counts as secret. A value that also
+  appears as ordinary text (a password that is a common word) is replaced wherever it
+  appears, which can rename an item: the item then starts a new series under its new name.
+  A result whose item or label grows past 512 bytes through the replacement is dropped (the
+  agent logs it, at most once a minute) rather than sent; an error text or a fact value is
+  cut back to its bound, and a text cut at its bound also loses a trailing start of a
+  secret value. Check keys and metric names are never changed. **The local checks'
+  parameters the heartbeat reports are sent as written** (a secret typed literally into a
+  check's params reaches the manager); the agent's status page shows them redacted, so this
+  one field can differ between the page and what the manager receives. A value shorter
+  than 4 characters is not replaced anywhere. While `agent.yaml` is refused, the values of
+  the last file that was read stay replaced; once the file is removed, nothing is.
 
 - **`PULSIX_PROBE_DENY_CIDRS` sees through IPv4-in-IPv6 forms (backlog 3.82, no
   migration):** a probe target whose IPv6 address embeds an IPv4 address in a denied

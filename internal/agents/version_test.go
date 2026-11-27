@@ -67,7 +67,7 @@ func TestHeartbeatQueryWritesReportsOnlyOnChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?s)-- name: RecordAgentHeartbeat :exec(.*?)-- name:`).FindStringSubmatch(string(raw))
+	m := regexp.MustCompile(`(?s)-- name: RecordAgentHeartbeat :one(.*?)-- name:`).FindStringSubmatch(string(raw))
 	if m == nil {
 		t.Fatal("RecordAgentHeartbeat not found")
 	}

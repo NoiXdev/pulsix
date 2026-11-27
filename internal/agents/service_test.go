@@ -339,7 +339,7 @@ func (f *fakeStore) Touch(_ context.Context, serial, version string) error {
 	return nil
 }
 
-func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, _ bool) error {
+func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, _ bool, statusPage *string) (agents.Names, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.touched = append(f.touched, serial+":"+version)
@@ -350,9 +350,11 @@ func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets
 			f.agentsR[i].Version = version
 			f.agentsR[i].Secrets = secrets
 			f.agentsR[i].LocalChecks = local
+			f.agentsR[i].StatusPage = statusPage
+			return agents.Names{Org: "org-" + f.agentsR[i].OrgID.String(), Host: f.agentsR[i].HostName}, nil
 		}
 	}
-	return nil
+	return agents.Names{}, nil
 }
 
 func (f *fakeStore) LocalChecksByHosts(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error) {

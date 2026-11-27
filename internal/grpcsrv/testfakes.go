@@ -393,8 +393,8 @@ func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial s
 }
 
 func (f *fakeAgentStore) Touch(context.Context, string, string) error { return nil }
-func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.SecretsReport, agents.LocalChecksReport, bool) error {
-	return nil
+func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.SecretsReport, agents.LocalChecksReport, bool, *string) (agents.Names, error) {
+	return agents.Names{}, nil
 }
 
 func (f *fakeAgentStore) LocalChecksByHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error) {

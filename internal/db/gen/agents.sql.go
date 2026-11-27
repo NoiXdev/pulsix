@@ -186,7 +186,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, h.status_page, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -228,6 +228,7 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.LocalCheckProblems,
 		&i.HostAgent.ProbesSupported,
 		&i.HostAgent.HeartbeatIntervalS,
+		&i.HostAgent.StatusPage,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -305,7 +306,7 @@ func (q *Queries) ListAgentLocalChecks(ctx context.Context, arg ListAgentLocalCh
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, h.heartbeat_interval_s, h.status_page, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -350,6 +351,7 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.LocalCheckProblems,
 			&i.HostAgent.ProbesSupported,
 			&i.HostAgent.HeartbeatIntervalS,
+			&i.HostAgent.StatusPage,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -680,31 +682,40 @@ func (q *Queries) RecordAgentConfigCheck(ctx context.Context, arg RecordAgentCon
 	return err
 }
 
-const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
+const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :one
+WITH updated AS (
 UPDATE host_agents SET last_seen = now(), version = $1,
   probes_supported = $2,
-  secret_names = $3::text[], secrets_state = $4,
-  local_checks = CASE WHEN local_checks IS DISTINCT FROM $5::jsonb
-    THEN $5::jsonb ELSE local_checks END,
-  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM $6::text[]
-    THEN $6::text[] ELSE local_check_problems END,
+  status_page = $3,
+  secret_names = $4::text[], secrets_state = $5,
+  local_checks = CASE WHEN local_checks IS DISTINCT FROM $6::jsonb
+    THEN $6::jsonb ELSE local_checks END,
+  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM $7::text[]
+    THEN $7::text[] ELSE local_check_problems END,
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
-          AND last_seen < now() - make_interval(secs => $7::double precision))
+          AND last_seen < now() - make_interval(secs => $8::double precision))
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => LEAST($8::double precision,
-          GREATEST($9::double precision,
-            $10::double precision * COALESCE(heartbeat_interval_s, 0))))
+      OR last_seen < now() - make_interval(secs => LEAST($9::double precision,
+          GREATEST($10::double precision,
+            $11::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
-WHERE cert_serial = $11
+WHERE cert_serial = $12
+RETURNING org_id, host_id
+)
+SELECT o.name AS org_name, h.name AS host_name
+FROM updated u
+JOIN organizations o ON o.id = u.org_id
+JOIN hosts h ON h.org_id = u.org_id AND h.id = u.host_id
 `
 
 type RecordAgentHeartbeatParams struct {
 	Version                   string   `json:"version"`
 	ProbesSupported           bool     `json:"probes_supported"`
+	StatusPage                *string  `json:"status_page"`
 	SecretNames               []string `json:"secret_names"`
 	SecretsState              *string  `json:"secrets_state"`
 	LocalChecks               []byte   `json:"local_checks"`
@@ -716,6 +727,11 @@ type RecordAgentHeartbeatParams struct {
 	Serial                    string   `json:"serial"`
 }
 
+type RecordAgentHeartbeatRow struct {
+	OrgName  string `json:"org_name"`
+	HostName string `json:"host_name"`
+}
+
 // A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
 // last_seen, the build version, the agent's secrets report, its local
 // checks report (00095) and its probes_supported flag (00098, backlog
@@ -725,11 +741,16 @@ type RecordAgentHeartbeatParams struct {
 // unknown rather than keeping what a newer build said; an agent that
 // sends no flag (older than vantages) is not probe capable.
 // connected_since and online_since follow TouchAgentBySerial's rules,
-// word for word.
-func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, recordAgentHeartbeat,
+// word for word. The status page mode (00138, backlog 3.132) is NULL from
+// an agent older than the page. The statement answers with the names of
+// the agent's organization and host, which the manager sends back on the
+// heartbeat's ack for the agent's status page; no row for an unknown
+// serial, which the caller treats as no names.
+func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeartbeatParams) (RecordAgentHeartbeatRow, error) {
+	row := q.db.QueryRow(ctx, recordAgentHeartbeat,
 		arg.Version,
 		arg.ProbesSupported,
+		arg.StatusPage,
 		arg.SecretNames,
 		arg.SecretsState,
 		arg.LocalChecks,
@@ -740,7 +761,9 @@ func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeart
 		arg.HeartbeatsPerOnlineWindow,
 		arg.Serial,
 	)
-	return err
+	var i RecordAgentHeartbeatRow
+	err := row.Scan(&i.OrgName, &i.HostName)
+	return i, err
 }
 
 const revokeAgentCertificates = `-- name: RevokeAgentCertificates :exec
@@ -893,8 +916,9 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     secrets_state = CASE WHEN $7::boolean THEN host_agents.secrets_state END,
     local_checks = CASE WHEN $7::boolean THEN host_agents.local_checks END,
     local_check_problems = CASE WHEN $7::boolean THEN host_agents.local_check_problems END,
+    status_page = CASE WHEN $7::boolean THEN host_agents.status_page END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported, heartbeat_interval_s
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported, heartbeat_interval_s, status_page
 `
 
 type UpsertHostAgentParams struct {
@@ -913,8 +937,8 @@ type UpsertHostAgentParams struct {
 // carries the previous serials — the service marks the old one revoked in
 // the same transaction. Like last_seen, the configuration check (00089)
 // starts over: the new registration has not been compared yet. The
-// agent's reports — secrets (00086) and local checks (00095), which the
-// heartbeat writes together — start over on a re-enrollment, which may be
+// agent's reports — secrets (00086), local checks (00095) and the status
+// page mode (00138), which the heartbeat writes together — start over on a re-enrollment, which may be
 // another agent, and are kept when keep_reports is set: a certificate
 // renewal is the same agent on a new serial, so what it last said about
 // its agent.yaml still holds, and resetting would leave its local checks
@@ -957,6 +981,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.LocalCheckProblems,
 		&i.ProbesSupported,
 		&i.HeartbeatIntervalS,
+		&i.StatusPage,
 	)
 	return i, err
 }

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,6 +252,25 @@ func (r *Runner) Apply(specs []probeconfig.Spec) bool {
 	r.mu.Unlock()
 	r.poke()
 	return true
+}
+
+// Assigned is the set the runner runs, in canonical order (target host
+// id, then check key); none while probing is off. The agent's status page
+// lists it (backlog 3.132).
+func (r *Runner) Assigned() []probeconfig.Spec {
+	r.mu.Lock()
+	out := make([]probeconfig.Spec, 0, len(r.slots))
+	for _, s := range r.slots {
+		out = append(out, s.spec)
+	}
+	r.mu.Unlock()
+	slices.SortFunc(out, func(a, b probeconfig.Spec) int {
+		if c := strings.Compare(a.TargetHostID.String(), b.TargetHostID.String()); c != 0 {
+			return c
+		}
+		return strings.Compare(a.CheckKey, b.CheckKey)
+	})
+	return out
 }
 
 // newSlot builds sp's slot, its first run firstOffset after now. Its

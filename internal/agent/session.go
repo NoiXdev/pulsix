@@ -168,6 +168,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 	// the RPC itself runs on, so it must exist BEFORE the stream opens.
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	l.status.setIdentity(id)
 	stream, err := conn.AgentStream(streamCtx)
 	if err != nil {
 		return fmt.Errorf("open agent stream: %w", err)
@@ -325,22 +326,28 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 func (l *Loop) sendHeartbeat(sender *streamSender) error {
 	set, state := l.lookAndApplyLocal()
 	shadowed := l.scheduler.Shadowed()
-	return sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{
-		Heartbeat: &agentpb.Heartbeat{
-			Version:            l.cfg.Version,
-			ConfigVersion:      l.scheduler.Version(),
-			SecretNames:        set.Names(),
-			SecretsState:       reportedSecretsState(state),
-			LocalChecks:        runningLocalChecks(set.LocalChecks(), shadowed),
-			LocalCheckProblems: localCheckProblems(set.LocalCheckProblems(), shadowed),
-			// Every platform the agent builds for runs the synthetic
-			// probes; one that cannot run somewhere (unprivileged ICMP)
-			// reports its own errors, as on the manager. Only the host's
-			// own agent.yaml turns them off (backlog 3.82).
-			ProbesSupported:    l.probes.Enabled(),
-			ProbeConfigVersion: l.probes.Version(),
-		},
-	}})
+	hb := &agentpb.Heartbeat{
+		Version:            l.cfg.Version,
+		ConfigVersion:      l.scheduler.Version(),
+		SecretNames:        set.Names(),
+		SecretsState:       reportedSecretsState(state),
+		LocalChecks:        runningLocalChecks(set.LocalChecks(), shadowed),
+		LocalCheckProblems: localCheckProblems(set.LocalCheckProblems(), shadowed),
+		// Every platform the agent builds for runs the synthetic
+		// probes; one that cannot run somewhere (unprivileged ICMP)
+		// reports its own errors, as on the manager. Only the host's
+		// own agent.yaml turns them off (backlog 3.82).
+		ProbesSupported:    l.probes.Enabled(),
+		ProbeConfigVersion: l.probes.Version(),
+		// Whether the local status page is on and where; never its
+		// address, port or token (backlog 3.132).
+		StatusPage: statusPageMode(l.statusPage.Mode()),
+	}
+	if err := sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: hb}}); err != nil {
+		return err
+	}
+	l.status.sentHeartbeat(l.now(), hb)
+	return nil
 }
 
 // activateSender drains the disconnect buffer and the probe ring and
@@ -385,6 +392,7 @@ func (l *Loop) activateSender(sender *streamSender) error {
 		l.beforeInstall()
 	}
 	l.sender = sender
+	l.status.connected(tptr(l.now()))
 	return nil
 }
 
@@ -400,20 +408,23 @@ func (l *Loop) deactivateSender(sender *streamSender) {
 	defer l.routeMu.Unlock()
 	if l.sender == sender {
 		l.sender = nil
+		l.status.connected(nil)
 	}
 }
 
-// handleResults is the scheduler's sink: it routes one completed check's
+// handleResults is the scheduler's sink: it replaces secret values
+// (redact.go) and routes one completed check's
 // results to the current session's sender, or, when no stream is up (or
 // the send just failed and no newer stream is live), to the disconnect
 // buffer (routeResults). This is the one function called from the
 // scheduler's own per-check goroutines, never from the session's main
 // select loop.
 func (l *Loop) handleResults(results []checks.Result) {
-	results = l.validUTF8Results(results)
+	results = l.validUTF8Results(l.redactResults(results))
 	if len(results) == 0 {
 		return
 	}
+	l.status.checkResults(results)
 	routeResults(l, "check results", results, (*streamSender).sendResultsChunked, func(rest []checks.Result) {
 		if dropped := l.buffer.Add(rest); dropped > 0 {
 			l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",
@@ -473,6 +484,7 @@ func (l *Loop) consumeManagerMessages(stream Stream) error {
 		if err != nil {
 			return err
 		}
+		l.status.contact(l.now(), m.GetAgentNames())
 		if pc := m.GetProbeConfig(); pc != nil {
 			l.applyProbeConfig(pc)
 		}
@@ -559,11 +571,13 @@ func (l *Loop) pushFacts(ctx context.Context, sender *streamSender) error {
 		}
 		l.log.WarnContext(ctx, "collecting host facts failed; pushing what was collected", "err", err)
 	}
+	facts = redactFacts(l.redactor(), facts)
 	if err := sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{
 		Facts: &agentpb.Facts{Values: facts, HeartbeatIntervalSeconds: reportedHeartbeatInterval(l.cfg.HeartbeatInterval)},
 	}}); err != nil {
 		return fmt.Errorf("send facts: %w", err)
 	}
+	l.status.sentFacts(l.now(), facts)
 	return nil
 }
 

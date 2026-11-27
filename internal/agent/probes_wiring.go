@@ -159,10 +159,11 @@ func (l *Loop) applyProbeConfig(pc *agentpb.ProbeConfig) {
 // live), by the same routeResults. It runs on the runner's probe
 // goroutines.
 func (l *Loop) handleProbeResults(results []probes.Result) {
-	results = l.validUTF8ProbeResults(results)
+	results = l.validUTF8ProbeResults(l.redactProbeResults(results))
 	if len(results) == 0 {
 		return
 	}
+	l.status.probeResults(results)
 	routeResults(l, "probe results", results, (*streamSender).sendProbeResultsChunked, func(rest []probes.Result) {
 		if covers, due := l.probeEvictWarn.note(l.now(), l.probeBuffer.Put(rest)); due {
 			l.logProbeEvictions("probe result buffer overflowed while disconnected; oldest samples dropped",

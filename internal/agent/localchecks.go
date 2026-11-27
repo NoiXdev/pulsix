@@ -63,7 +63,8 @@ func (l *Loop) startLocalLook(ctx context.Context) <-chan struct{} {
 }
 
 // lookAndApplyLocal looks at the file, installs its local checks in the
-// scheduler and its probe policy in the probe runner (applyProbePolicy)
+// scheduler, its probe policy in the probe runner (applyProbePolicy) and
+// its status page settings in the page's controller (applyStatusPage),
 // and returns what it read. It logs the keys a check from the
 // manager shadows when they changed since the last time — once per
 // change, not once per look.
@@ -88,6 +89,8 @@ func (l *Loop) lookAndApplyLocal() (secrets.Set, secrets.State) {
 	changed := !slices.Equal(shadowed, l.shadowed)
 	l.shadowed = shadowed
 	l.applyProbePolicy(set, state)
+	l.applyStatusPage(set, state)
+	l.status.looked(set, state)
 	l.localMu.Unlock()
 	if changed && len(shadowed) > 0 {
 		l.log.Warn("local checks shadowed by checks from the manager with the same key; the manager's checks run instead",

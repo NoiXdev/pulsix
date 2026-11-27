@@ -68,6 +68,9 @@ type agentDTO struct {
 	// ProbesSupported is the agent's last heartbeat flag (backlog 3.13a,
 	// 3.82): whether it is a candidate vantage point at all.
 	ProbesSupported bool `json:"probes_supported" doc:"Whether the agent probes other hosts' synthetic checks as a vantage point: false for an agent too old to, for one whose local configuration turns it off, and while that configuration is refused"`
+	// StatusPage is the agent's last heartbeat report on its local status
+	// page (backlog 3.132); null when it never reported one.
+	StatusPage *string `json:"status_page" nullable:"true" enum:"off,loopback,network,failed" doc:"Whether the agent's local status page is on: off; loopback (on, reachable from the host itself only); network (on, reachable over the network with a token, over HTTPS); failed (its local configuration asks for it, but the settings are refused or the page could not start — the agent's log says why). Null when unknown (an agent too old to report it, or no heartbeat yet). The address, port and token are never reported"`
 }
 
 type agentTokenDTO struct {
@@ -144,7 +147,7 @@ func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 		HostID: v.HostID.String(), HostName: v.HostName, AgentName: v.AgentName, Version: v.Version,
 		VersionStatus: string(versioncompat.Of(managerVersion, v.Version)),
 		LastSeen:      v.LastSeen, CertExpiresAt: v.CertNotAfter, CreatedAt: v.CreatedAt, Status: "offline",
-		ProbesSupported: v.ProbesSupported,
+		ProbesSupported: v.ProbesSupported, StatusPage: v.StatusPage,
 	}
 	if v.Online {
 		dto.Status = "online"

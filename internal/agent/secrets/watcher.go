@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +47,11 @@ type Watcher struct {
 	lastAt time.Time
 	set    Set
 	state  State
+
+	// redactor is the redactor of the last file that was read, published
+	// without w.mu so a log line written while w.mu is held (update
+	// logs) can be redacted without deadlocking (Redactor).
+	redactor atomic.Pointer[Redactor]
 }
 
 // Option configures a Watcher.
@@ -92,6 +98,12 @@ func (w *Watcher) Current() (Set, State) {
 	return w.set, w.state
 }
 
+// Redactor replaces the secret values of the last file that was read:
+// kept while the file is refused (a mistake must not stop the values it
+// held from being replaced), dropped when the file is absent. It never
+// reads the file and takes no lock, so a log handler may call it.
+func (w *Watcher) Redactor() *Redactor { return w.redactor.Load() }
+
 // look reads the file once; w.mu is held.
 func (w *Watcher) look() {
 	set, err := Load(w.path, w.check)
@@ -109,9 +121,16 @@ func (w *Watcher) look() {
 // names, the local check keys or problems, or the state changed. The
 // problems of refused local checks are logged as a warning of their own.
 func (w *Watcher) update(set Set, state State) {
+	switch state {
+	case StateOK, StateAbsent:
+		w.redactor.Store(set.Redactor())
+	}
 	problems := set.LocalCheckProblems()
 	problemsChanged := !slices.Equal(problems, w.set.localCheckProblems)
-	changed := !w.looked || state != w.state || problemsChanged ||
+	_, pageProblem := set.StatusPage()
+	_, oldPageProblem := w.set.StatusPage()
+	pageProblemChanged := pageProblem != oldPageProblem
+	changed := !w.looked || state != w.state || problemsChanged || pageProblemChanged ||
 		!slices.Equal(set.Names(), w.set.Names()) ||
 		!slices.Equal(set.CommandNames(), w.set.CommandNames()) ||
 		!slices.Equal(set.localCheckKeys(), w.set.localCheckKeys())
@@ -124,6 +143,10 @@ func (w *Watcher) update(set Set, state State) {
 		w.log.Info("loaded the secrets file", "path", w.path, "names", set)
 		if problemsChanged && len(problems) > 0 {
 			w.log.Warn("refused local checks in the secrets file; the others run", "path", w.path, "problems", problems)
+		}
+		if pageProblemChanged && pageProblem != "" {
+			w.log.Warn("refused the status_page settings in the secrets file; the status page is off, everything else applies",
+				"path", w.path, "problem", pageProblem)
 		}
 	case StateAbsent:
 		w.log.Info("no secrets file", "path", w.path)

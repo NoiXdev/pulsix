@@ -91,6 +91,39 @@ type Agent struct {
 	// manager. False for an agent older than probe vantages (3.13a) and
 	// for one whose agent.yaml turns probing off (3.82). Reads fill it.
 	ProbesSupported bool
+	// StatusPage is the heartbeat's status page mode (backlog 3.132): nil
+	// when the agent never reported one (older than the page, or no
+	// heartbeat since it enrolled). Reads fill it.
+	StatusPage *string
+}
+
+// StatusPageMode is whether an agent's local status page is on, and where,
+// as its heartbeat reports it (backlog 3.132).
+type StatusPageMode string
+
+// The modes; anything else, and the empty mode, is stored as unknown.
+const (
+	StatusPageOff      StatusPageMode = "off"
+	StatusPageLoopback StatusPageMode = "loopback"
+	StatusPageNetwork  StatusPageMode = "network"
+	StatusPageFailed   StatusPageMode = "failed"
+)
+
+// stored is the mode as the column holds it: nil for unknown.
+func (m StatusPageMode) stored() *string {
+	switch m {
+	case StatusPageOff, StatusPageLoopback, StatusPageNetwork, StatusPageFailed:
+		s := string(m)
+		return &s
+	}
+	return nil
+}
+
+// Names are the display names of an agent's organization and host, which
+// the manager sends back on a heartbeat's ack for the agent's status page.
+type Names struct {
+	Org  string
+	Host string
 }
 
 // Registration is one enrollment's or renewal's identity as the registry
@@ -250,10 +283,13 @@ type Store interface {
 	// carry none).
 	Touch(ctx context.Context, serial, version string) error
 	// Heartbeat is Touch for a heartbeat message: last_seen, version, the
-	// secrets report, the local checks report and the probes_supported
-	// flag (migration 00098) in one statement, org-unscoped. A report that
-	// is not Known stores "unknown" (NULL), replacing any earlier one.
-	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool) error
+	// secrets report, the local checks report, the probes_supported flag
+	// (migration 00098) and the status page mode (00138; nil is unknown)
+	// in one statement, org-unscoped. A report that is not Known stores
+	// "unknown" (NULL), replacing any earlier one. It answers with the
+	// names of the agent's organization and host; an unknown serial writes
+	// nothing and answers no names, without an error.
+	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool, statusPage *string) (Names, error)
 	// LocalChecksByHosts reads the local checks reports of the listed
 	// hosts' agents, org-scoped; a host without an agent has no entry.
 	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]LocalChecksReport, error)
@@ -599,6 +635,9 @@ type HeartbeatReport struct {
 	LocalChecks        []LocalCheckInput
 	LocalCheckProblems []string
 	ProbesSupported    bool
+	// StatusPage is the agent's status page mode; an unknown or empty one
+	// is stored as unknown.
+	StatusPage StatusPageMode
 }
 
 // Heartbeat records a heartbeat message: last_seen becomes now, version
@@ -612,11 +651,20 @@ type HeartbeatReport struct {
 // problems. An agent that sends no secrets state (older than agent.yaml)
 // is stored as unknown in both reports.
 func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatReport) error {
+	_, err := s.RecordHeartbeat(ctx, serial, r)
+	return err
+}
+
+// RecordHeartbeat is Heartbeat that also answers with the names of the
+// agent's organization and host, read by the same statement (backlog
+// 3.132); an unknown serial answers no names.
+func (s *Service) RecordHeartbeat(ctx context.Context, serial string, r HeartbeatReport) (Names, error) {
 	local, dropped := localChecksReportOf(r.SecretsState, r.LocalChecks, r.LocalCheckProblems)
 	if s.drops.changed(serial, dropped) {
 		logDroppedLocalChecks(ctx, s.log, serial, dropped)
 	}
-	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local, r.ProbesSupported)
+	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local,
+		r.ProbesSupported, r.StatusPage.stored())
 }
 
 // List returns orgID's agents ordered by agent name.

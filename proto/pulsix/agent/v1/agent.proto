@@ -73,6 +73,26 @@ message Heartbeat {
   bool probes_supported = 7;
   // The ProbeConfig.version the agent currently runs; "" when it has none.
   string probe_config_version = 8;
+  // Whether the agent's local status page is on, and where (backlog
+  // 3.132). UNSPECIFIED from an agent older than the page.
+  StatusPageMode status_page = 9;
+}
+
+// StatusPageMode is the state of the agent's local status page. Only the
+// host's own agent.yaml turns it on; the address, port and token never
+// leave the host.
+enum StatusPageMode {
+  // An agent older than the status page.
+  STATUS_PAGE_MODE_UNSPECIFIED = 0;
+  // agent.yaml does not turn it on.
+  STATUS_PAGE_MODE_OFF = 1;
+  // On, on a loopback address.
+  STATUS_PAGE_MODE_LOOPBACK = 2;
+  // On, on a network address (HTTPS with a token).
+  STATUS_PAGE_MODE_NETWORK = 3;
+  // agent.yaml asks for it, but its settings are refused or the page could
+  // not start; the agent's log says why.
+  STATUS_PAGE_MODE_FAILED = 4;
 }
 
 // LocalCheck is a check defined in the agent's own configuration file.
@@ -116,6 +136,16 @@ message ManagerMessage {
   // when the agent reports probes_supported and a probe_config_version
   // other than the manager's.
   optional ProbeConfig probe_config = 3;
+  // The names Pulsix gives this agent's organization and host, sent on
+  // every heartbeat's ack (backlog 3.132) so the agent's local status
+  // page can show them. Absent from an older manager.
+  optional AgentNames agent_names = 4;
+}
+
+// AgentNames are the display names of the agent's organization and host.
+message AgentNames {
+  string org_name = 1;
+  string host_name = 2;
 }
 
 message CheckConfig {

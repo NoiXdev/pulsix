@@ -3984,6 +3984,11 @@ export interface components {
              * @enum {string}
              */
             status: "online" | "offline";
+            /**
+             * @description Whether the agent's local status page is on: off; loopback (on, reachable from the host itself only); network (on, reachable over the network with a token, over HTTPS); failed (its local configuration asks for it, but the settings are refused or the page could not start — the agent's log says why). Null when unknown (an agent too old to report it, or no heartbeat yet). The address, port and token are never reported
+             * @enum {string|null}
+             */
+            status_page: "off" | "loopback" | "network" | "failed" | null;
             version?: string;
             /**
              * @description The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's

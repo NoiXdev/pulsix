@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -30,8 +31,10 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins"
+	"github.com/noixdev/pulsix/internal/agent/logring"
 	"github.com/noixdev/pulsix/internal/agent/probes"
 	"github.com/noixdev/pulsix/internal/agent/secrets"
+	"github.com/noixdev/pulsix/internal/agent/statuspage"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -182,8 +185,22 @@ type Loop struct {
 
 	// utf8Warn rate-limits handleResults' warning about dropped results.
 	utf8Warn invalidUTF8Warner
+	// redactWarn rate-limits the warning about results redaction pushed
+	// past their bounds (redact.go).
+	redactWarn invalidUTF8Warner
 	// probeEvictWarn rate-limits the probe ring's overflow warning.
 	probeEvictWarn probeEvictWarner
+
+	// logRing holds the last log lines for the status page (backlog
+	// 3.132); nil when the binary keeps none (tests).
+	logRing *logring.Ring
+	// status records what the loop sent and heard, and statusPage serves
+	// it when agent.yaml turns the page on (status.go).
+	status     *statusRecorder
+	statusPage *statuspage.Controller
+	// statusPageListen is a test seam: how the page opens its listener
+	// (nil: the default).
+	statusPageListen func(ctx context.Context, network, addr string) (net.Listener, error)
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -207,6 +224,11 @@ func WithTicker(fn tickerFactory) LoopOption { return func(l *Loop) { l.ticker =
 // WithRand replaces the reconnect backoff's jitter source (tests pin it;
 // production uses math/rand/v2).
 func WithRand(fn func() float64) LoopOption { return func(l *Loop) { l.rand = fn } }
+
+// WithLogRing hands the loop the ring its logger tees into: the loop makes
+// it replace secret values before a line is stored, and the status page
+// shows its lines (backlog 3.132).
+func WithLogRing(r *logring.Ring) LoopOption { return func(l *Loop) { l.logRing = r } }
 
 // withProtector replaces the data directory's protector (tests: the
 // Windows protector would refuse a temp dir the test user owns).
@@ -238,12 +260,20 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 		o(l)
 	}
 	l.secrets = l.newSecretsWatcher()
+	if l.logRing != nil {
+		// The watcher publishes its redactor without a lock, so this is
+		// safe from inside a log write made while the watcher holds its
+		// own mutex.
+		l.logRing.SetRedact(func(s string) string { return l.secrets.Redactor().Redact(s) })
+	}
 	l.scheduler = checks.NewScheduler(l.registry, l.now, l.checksTicker,
 		checks.WithSecrets(secretsSource{l.secrets}), checks.WithCommands(commandsSource{l.secrets}),
 		checks.WithLogger(l.log))
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	l.probes = l.newProbeRunner()
 	l.probeBuffer = newProbeBuffer(l.now)
+	l.status = newStatusRecorder()
+	l.statusPage = l.newStatusPage()
 	return l
 }
 
@@ -272,10 +302,20 @@ func (l *Loop) Run(ctx context.Context) error {
 		"data_dir", l.cfg.DataDir, "agent_name", l.cfg.AgentName, "version", l.cfg.Version,
 		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
 		"config_interval", l.cfg.ConfigInterval)
+	l.status.started(l.now())
+	if id.Valid(l.now()) {
+		l.status.setIdentity(id)
+	}
 	// The first look at the secrets file, so its outcome is logged at
 	// start rather than with the first heartbeat or check that needs it,
-	// and its local checks are in the scheduler before it starts.
+	// and its local checks are in the scheduler before it starts. It also
+	// starts the status page when the file asks for it; the page stops
+	// when Run returns.
 	l.lookAndApplyLocal()
+	defer l.statusPage.Close()
+	// The page starts off this path; waiting for it once here (about a
+	// second at most) lets the first heartbeat report what is served.
+	l.statusPage.AwaitStart()
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either
@@ -359,6 +399,7 @@ func (l *Loop) Run(ctx context.Context) error {
 					continue
 				}
 				id = next
+				l.status.setIdentity(id)
 			}
 			if err := l.streamSession(ctx, id); err != nil {
 				if ctx.Err() != nil {
@@ -386,6 +427,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		switch {
 		case err == nil:
 			id = next
+			l.status.setIdentity(id)
 			backoffShift = 0
 			l.log.InfoContext(ctx, "agent identity ready", "host_id", id.HostID())
 		case errors.Is(err, ErrBadEnrollAnswer):

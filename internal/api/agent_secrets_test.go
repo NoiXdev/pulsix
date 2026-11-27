@@ -147,3 +147,44 @@ func TestAgentDTOReportsProbesSupported(t *testing.T) {
 	heartbeat(false)
 	expect("false")
 }
+
+// TestAgentDTOReportsStatusPage: the host's agent card and the Agents page
+// say whether the agent's local status page is on and where (backlog
+// 3.132) — null for an agent that never reported it.
+func TestAgentDTOReportsStatusPage(t *testing.T) {
+	f := newAgentFixture(t, "agent-status-page")
+	f.enroll(t, "agent-a", "v0.3a", "serial-status-1", true)
+
+	expect := func(want string) {
+		t.Helper()
+		var body struct {
+			Agent map[string]json.RawMessage `json:"agent"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/hosts/"+f.host.ID.String()+"/agent", nil), &body)
+		if got := string(body.Agent["status_page"]); got != want {
+			t.Fatalf("card status_page = %s, want %s", got, want)
+		}
+		var list struct {
+			Agents []map[string]json.RawMessage `json:"agents"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/agents", nil), &list)
+		if len(list.Agents) != 1 || string(list.Agents[0]["status_page"]) != want {
+			t.Fatalf("list row = %v; want status_page %s", list.Agents, want)
+		}
+	}
+	heartbeat := func(mode agents.StatusPageMode) {
+		t.Helper()
+		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-status-1", agents.HeartbeatReport{
+			Version: "v0.3a", SecretsState: "ok", StatusPage: mode,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expect("null")
+	heartbeat(agents.StatusPageLoopback)
+	expect(`"loopback"`)
+	heartbeat(agents.StatusPageFailed)
+	expect(`"failed"`)
+	heartbeat("")
+	expect("null")
+}

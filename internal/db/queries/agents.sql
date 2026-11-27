@@ -71,8 +71,8 @@ ORDER BY h.agent_name;
 -- carries the previous serials — the service marks the old one revoked in
 -- the same transaction. Like last_seen, the configuration check (00089)
 -- starts over: the new registration has not been compared yet. The
--- agent's reports — secrets (00086) and local checks (00095), which the
--- heartbeat writes together — start over on a re-enrollment, which may be
+-- agent's reports — secrets (00086), local checks (00095) and the status
+-- page mode (00138), which the heartbeat writes together — start over on a re-enrollment, which may be
 -- another agent, and are kept when keep_reports is set: a certificate
 -- renewal is the same agent on a new serial, so what it last said about
 -- its agent.yaml still holds, and resetting would leave its local checks
@@ -98,6 +98,7 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     secrets_state = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.secrets_state END,
     local_checks = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.local_checks END,
     local_check_problems = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.local_check_problems END,
+    status_page = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.status_page END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
 
@@ -145,7 +146,7 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
--- name: RecordAgentHeartbeat :exec
+-- name: RecordAgentHeartbeat :one
 -- A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
 -- last_seen, the build version, the agent's secrets report, its local
 -- checks report (00095) and its probes_supported flag (00098, backlog
@@ -155,9 +156,15 @@ WHERE cert_serial = sqlc.arg(serial);
 -- unknown rather than keeping what a newer build said; an agent that
 -- sends no flag (older than vantages) is not probe capable.
 -- connected_since and online_since follow TouchAgentBySerial's rules,
--- word for word.
+-- word for word. The status page mode (00138, backlog 3.132) is NULL from
+-- an agent older than the page. The statement answers with the names of
+-- the agent's organization and host, which the manager sends back on the
+-- heartbeat's ack for the agent's status page; no row for an unknown
+-- serial, which the caller treats as no names.
+WITH updated AS (
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   probes_supported = sqlc.arg(probes_supported),
+  status_page = sqlc.narg(status_page),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
   local_checks = CASE WHEN local_checks IS DISTINCT FROM sqlc.narg(local_checks)::jsonb
     THEN sqlc.narg(local_checks)::jsonb ELSE local_checks END,
@@ -174,7 +181,13 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
           GREATEST(sqlc.arg(online_window_floor_seconds)::double precision,
             sqlc.arg(heartbeats_per_online_window)::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
-WHERE cert_serial = sqlc.arg(serial);
+WHERE cert_serial = sqlc.arg(serial)
+RETURNING org_id, host_id
+)
+SELECT o.name AS org_name, h.name AS host_name
+FROM updated u
+JOIN organizations o ON o.id = u.org_id
+JOIN hosts h ON h.org_id = u.org_id AND h.id = u.host_id;
 
 -- name: ListAgentLocalChecks :many
 -- The local checks reports (00095) of the listed hosts' agents, for the

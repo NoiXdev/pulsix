@@ -300,6 +300,13 @@ export const enHosts = {
     probes: 'Probes other hosts',
     probesOn: 'Yes',
     probesOff: 'No — turned off or refused in agent.yaml, or the agent is too old',
+    statusPage: 'Status page',
+    statusPageModes: {
+      off: 'Off',
+      loopback: 'On, local only',
+      network: 'On, network',
+      failed: "Off — its settings in agent.yaml are refused or it could not start; the agent's log says why",
+    },
   },
   inventory: {
     needsManaged: 'Inventory groups need the Managed capability.',

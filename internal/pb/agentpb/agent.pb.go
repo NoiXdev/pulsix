@@ -22,6 +22,70 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// StatusPageMode is the state of the agent's local status page. Only the
+// host's own agent.yaml turns it on; the address, port and token never
+// leave the host.
+type StatusPageMode int32
+
+const (
+	// An agent older than the status page.
+	StatusPageMode_STATUS_PAGE_MODE_UNSPECIFIED StatusPageMode = 0
+	// agent.yaml does not turn it on.
+	StatusPageMode_STATUS_PAGE_MODE_OFF StatusPageMode = 1
+	// On, on a loopback address.
+	StatusPageMode_STATUS_PAGE_MODE_LOOPBACK StatusPageMode = 2
+	// On, on a network address (HTTPS with a token).
+	StatusPageMode_STATUS_PAGE_MODE_NETWORK StatusPageMode = 3
+	// agent.yaml asks for it, but its settings are refused or the page could
+	// not start; the agent's log says why.
+	StatusPageMode_STATUS_PAGE_MODE_FAILED StatusPageMode = 4
+)
+
+// Enum value maps for StatusPageMode.
+var (
+	StatusPageMode_name = map[int32]string{
+		0: "STATUS_PAGE_MODE_UNSPECIFIED",
+		1: "STATUS_PAGE_MODE_OFF",
+		2: "STATUS_PAGE_MODE_LOOPBACK",
+		3: "STATUS_PAGE_MODE_NETWORK",
+		4: "STATUS_PAGE_MODE_FAILED",
+	}
+	StatusPageMode_value = map[string]int32{
+		"STATUS_PAGE_MODE_UNSPECIFIED": 0,
+		"STATUS_PAGE_MODE_OFF":         1,
+		"STATUS_PAGE_MODE_LOOPBACK":    2,
+		"STATUS_PAGE_MODE_NETWORK":     3,
+		"STATUS_PAGE_MODE_FAILED":      4,
+	}
+)
+
+func (x StatusPageMode) Enum() *StatusPageMode {
+	p := new(StatusPageMode)
+	*p = x
+	return p
+}
+
+func (x StatusPageMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (StatusPageMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_pulsix_agent_v1_agent_proto_enumTypes[0].Descriptor()
+}
+
+func (StatusPageMode) Type() protoreflect.EnumType {
+	return &file_pulsix_agent_v1_agent_proto_enumTypes[0]
+}
+
+func (x StatusPageMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use StatusPageMode.Descriptor instead.
+func (StatusPageMode) EnumDescriptor() ([]byte, []int) {
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{0}
+}
+
 type EnrollRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`                 // the one-time enrollment token
@@ -334,8 +398,11 @@ type Heartbeat struct {
 	ProbesSupported bool `protobuf:"varint,7,opt,name=probes_supported,json=probesSupported,proto3" json:"probes_supported,omitempty"`
 	// The ProbeConfig.version the agent currently runs; "" when it has none.
 	ProbeConfigVersion string `protobuf:"bytes,8,opt,name=probe_config_version,json=probeConfigVersion,proto3" json:"probe_config_version,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Whether the agent's local status page is on, and where (backlog
+	// 3.132). UNSPECIFIED from an agent older than the page.
+	StatusPage    StatusPageMode `protobuf:"varint,9,opt,name=status_page,json=statusPage,proto3,enum=pulsix.agent.v1.StatusPageMode" json:"status_page,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -422,6 +489,13 @@ func (x *Heartbeat) GetProbeConfigVersion() string {
 		return x.ProbeConfigVersion
 	}
 	return ""
+}
+
+func (x *Heartbeat) GetStatusPage() StatusPageMode {
+	if x != nil {
+		return x.StatusPage
+	}
+	return StatusPageMode_STATUS_PAGE_MODE_UNSPECIFIED
 }
 
 // LocalCheck is a check defined in the agent's own configuration file.
@@ -731,7 +805,11 @@ type ManagerMessage struct {
 	// The probes this agent runs for other hosts, sent on a heartbeat's ack
 	// when the agent reports probes_supported and a probe_config_version
 	// other than the manager's.
-	ProbeConfig   *ProbeConfig `protobuf:"bytes,3,opt,name=probe_config,json=probeConfig,proto3,oneof" json:"probe_config,omitempty"`
+	ProbeConfig *ProbeConfig `protobuf:"bytes,3,opt,name=probe_config,json=probeConfig,proto3,oneof" json:"probe_config,omitempty"`
+	// The names Pulsix gives this agent's organization and host, sent on
+	// every heartbeat's ack (backlog 3.132) so the agent's local status
+	// page can show them. Absent from an older manager.
+	AgentNames    *AgentNames `protobuf:"bytes,4,opt,name=agent_names,json=agentNames,proto3,oneof" json:"agent_names,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -787,6 +865,66 @@ func (x *ManagerMessage) GetProbeConfig() *ProbeConfig {
 	return nil
 }
 
+func (x *ManagerMessage) GetAgentNames() *AgentNames {
+	if x != nil {
+		return x.AgentNames
+	}
+	return nil
+}
+
+// AgentNames are the display names of the agent's organization and host.
+type AgentNames struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgName       string                 `protobuf:"bytes,1,opt,name=org_name,json=orgName,proto3" json:"org_name,omitempty"`
+	HostName      string                 `protobuf:"bytes,2,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentNames) Reset() {
+	*x = AgentNames{}
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentNames) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentNames) ProtoMessage() {}
+
+func (x *AgentNames) ProtoReflect() protoreflect.Message {
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentNames.ProtoReflect.Descriptor instead.
+func (*AgentNames) Descriptor() ([]byte, []int) {
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *AgentNames) GetOrgName() string {
+	if x != nil {
+		return x.OrgName
+	}
+	return ""
+}
+
+func (x *AgentNames) GetHostName() string {
+	if x != nil {
+		return x.HostName
+	}
+	return ""
+}
+
 type CheckConfig struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -797,7 +935,7 @@ type CheckConfig struct {
 
 func (x *CheckConfig) Reset() {
 	*x = CheckConfig{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -809,7 +947,7 @@ func (x *CheckConfig) String() string {
 func (*CheckConfig) ProtoMessage() {}
 
 func (x *CheckConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -822,7 +960,7 @@ func (x *CheckConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckConfig.ProtoReflect.Descriptor instead.
 func (*CheckConfig) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CheckConfig) GetVersion() string {
@@ -851,7 +989,7 @@ type CheckSpec struct {
 
 func (x *CheckSpec) Reset() {
 	*x = CheckSpec{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -863,7 +1001,7 @@ func (x *CheckSpec) String() string {
 func (*CheckSpec) ProtoMessage() {}
 
 func (x *CheckSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -876,7 +1014,7 @@ func (x *CheckSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckSpec.ProtoReflect.Descriptor instead.
 func (*CheckSpec) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CheckSpec) GetKey() string {
@@ -921,7 +1059,7 @@ type ProbeConfig struct {
 
 func (x *ProbeConfig) Reset() {
 	*x = ProbeConfig{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -933,7 +1071,7 @@ func (x *ProbeConfig) String() string {
 func (*ProbeConfig) ProtoMessage() {}
 
 func (x *ProbeConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -946,7 +1084,7 @@ func (x *ProbeConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeConfig.ProtoReflect.Descriptor instead.
 func (*ProbeConfig) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ProbeConfig) GetVersion() string {
@@ -978,7 +1116,7 @@ type ProbeSpec struct {
 
 func (x *ProbeSpec) Reset() {
 	*x = ProbeSpec{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -990,7 +1128,7 @@ func (x *ProbeSpec) String() string {
 func (*ProbeSpec) ProtoMessage() {}
 
 func (x *ProbeSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1003,7 +1141,7 @@ func (x *ProbeSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeSpec.ProtoReflect.Descriptor instead.
 func (*ProbeSpec) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ProbeSpec) GetTargetHostId() string {
@@ -1057,7 +1195,7 @@ type ProbeResults struct {
 
 func (x *ProbeResults) Reset() {
 	*x = ProbeResults{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1069,7 +1207,7 @@ func (x *ProbeResults) String() string {
 func (*ProbeResults) ProtoMessage() {}
 
 func (x *ProbeResults) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1082,7 +1220,7 @@ func (x *ProbeResults) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResults.ProtoReflect.Descriptor instead.
 func (*ProbeResults) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ProbeResults) GetResults() []*ProbeResult {
@@ -1113,7 +1251,7 @@ type ProbeResult struct {
 
 func (x *ProbeResult) Reset() {
 	*x = ProbeResult{}
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1125,7 +1263,7 @@ func (x *ProbeResult) String() string {
 func (*ProbeResult) ProtoMessage() {}
 
 func (x *ProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_pulsix_agent_v1_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1138,7 +1276,7 @@ func (x *ProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProbeResult.ProtoReflect.Descriptor instead.
 func (*ProbeResult) Descriptor() ([]byte, []int) {
-	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_pulsix_agent_v1_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ProbeResult) GetTargetHostId() string {
@@ -1253,7 +1391,7 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\x05facts\x18\x02 \x01(\v2\x16.pulsix.agent.v1.FactsH\x00R\x05facts\x12D\n" +
 	"\rcheck_results\x18\x03 \x01(\v2\x1d.pulsix.agent.v1.CheckResultsH\x00R\fcheckResults\x12D\n" +
 	"\rprobe_results\x18\x04 \x01(\v2\x1d.pulsix.agent.v1.ProbeResultsH\x00R\fprobeResultsB\x06\n" +
-	"\x04body\"\xe3\x02\n" +
+	"\x04body\"\xa5\x03\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12%\n" +
 	"\x0econfig_version\x18\x02 \x01(\tR\rconfigVersion\x12!\n" +
@@ -1262,7 +1400,9 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\flocal_checks\x18\x05 \x03(\v2\x1b.pulsix.agent.v1.LocalCheckR\vlocalChecks\x120\n" +
 	"\x14local_check_problems\x18\x06 \x03(\tR\x12localCheckProblems\x12)\n" +
 	"\x10probes_supported\x18\a \x01(\bR\x0fprobesSupported\x120\n" +
-	"\x14probe_config_version\x18\b \x01(\tR\x12probeConfigVersion\"\x82\x01\n" +
+	"\x14probe_config_version\x18\b \x01(\tR\x12probeConfigVersion\x12@\n" +
+	"\vstatus_page\x18\t \x01(\x0e2\x1f.pulsix.agent.v1.StatusPageModeR\n" +
+	"statusPage\"\x82\x01\n" +
 	"\n" +
 	"LocalCheck\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n" +
@@ -1286,13 +1426,20 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\x05value\x18\x05 \x01(\x01H\x00R\x05value\x12\x16\n" +
 	"\x05label\x18\x06 \x01(\tH\x00R\x05label\x12\x16\n" +
 	"\x05error\x18\a \x01(\tH\x00R\x05errorB\r\n" +
-	"\vobservation\"\xd0\x01\n" +
+	"\vobservation\"\xa3\x02\n" +
 	"\x0eManagerMessage\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12D\n" +
 	"\fcheck_config\x18\x02 \x01(\v2\x1c.pulsix.agent.v1.CheckConfigH\x00R\vcheckConfig\x88\x01\x01\x12D\n" +
-	"\fprobe_config\x18\x03 \x01(\v2\x1c.pulsix.agent.v1.ProbeConfigH\x01R\vprobeConfig\x88\x01\x01B\x0f\n" +
+	"\fprobe_config\x18\x03 \x01(\v2\x1c.pulsix.agent.v1.ProbeConfigH\x01R\vprobeConfig\x88\x01\x01\x12A\n" +
+	"\vagent_names\x18\x04 \x01(\v2\x1b.pulsix.agent.v1.AgentNamesH\x02R\n" +
+	"agentNames\x88\x01\x01B\x0f\n" +
 	"\r_check_configB\x0f\n" +
-	"\r_probe_config\"[\n" +
+	"\r_probe_configB\x0e\n" +
+	"\f_agent_names\"D\n" +
+	"\n" +
+	"AgentNames\x12\x19\n" +
+	"\borg_name\x18\x01 \x01(\tR\aorgName\x12\x1b\n" +
+	"\thost_name\x18\x02 \x01(\tR\bhostName\"[\n" +
 	"\vCheckConfig\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x122\n" +
 	"\x06checks\x18\x02 \x03(\v2\x1a.pulsix.agent.v1.CheckSpecR\x06checks\"\x81\x01\n" +
@@ -1324,7 +1471,13 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\x05value\x18\x06 \x01(\x01H\x00R\x05value\x12\x16\n" +
 	"\x05label\x18\a \x01(\tH\x00R\x05label\x12\x16\n" +
 	"\x05error\x18\b \x01(\tH\x00R\x05errorB\r\n" +
-	"\vobservation2\xf5\x01\n" +
+	"\vobservation*\xa6\x01\n" +
+	"\x0eStatusPageMode\x12 \n" +
+	"\x1cSTATUS_PAGE_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14STATUS_PAGE_MODE_OFF\x10\x01\x12\x1d\n" +
+	"\x19STATUS_PAGE_MODE_LOOPBACK\x10\x02\x12\x1c\n" +
+	"\x18STATUS_PAGE_MODE_NETWORK\x10\x03\x12\x1b\n" +
+	"\x17STATUS_PAGE_MODE_FAILED\x10\x042\xf5\x01\n" +
 	"\fAgentService\x12I\n" +
 	"\x06Enroll\x12\x1e.pulsix.agent.v1.EnrollRequest\x1a\x1f.pulsix.agent.v1.EnrollResponse\x12G\n" +
 	"\x05Renew\x12\x1d.pulsix.agent.v1.RenewRequest\x1a\x1f.pulsix.agent.v1.EnrollResponse\x12Q\n" +
@@ -1342,53 +1495,58 @@ func file_pulsix_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_pulsix_agent_v1_agent_proto_rawDescData
 }
 
-var file_pulsix_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_pulsix_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_pulsix_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_pulsix_agent_v1_agent_proto_goTypes = []any{
-	(*EnrollRequest)(nil),         // 0: pulsix.agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),        // 1: pulsix.agent.v1.EnrollResponse
-	(*RenewRequest)(nil),          // 2: pulsix.agent.v1.RenewRequest
-	(*AgentMessage)(nil),          // 3: pulsix.agent.v1.AgentMessage
-	(*Heartbeat)(nil),             // 4: pulsix.agent.v1.Heartbeat
-	(*LocalCheck)(nil),            // 5: pulsix.agent.v1.LocalCheck
-	(*Facts)(nil),                 // 6: pulsix.agent.v1.Facts
-	(*CheckResults)(nil),          // 7: pulsix.agent.v1.CheckResults
-	(*CheckResult)(nil),           // 8: pulsix.agent.v1.CheckResult
-	(*ManagerMessage)(nil),        // 9: pulsix.agent.v1.ManagerMessage
-	(*CheckConfig)(nil),           // 10: pulsix.agent.v1.CheckConfig
-	(*CheckSpec)(nil),             // 11: pulsix.agent.v1.CheckSpec
-	(*ProbeConfig)(nil),           // 12: pulsix.agent.v1.ProbeConfig
-	(*ProbeSpec)(nil),             // 13: pulsix.agent.v1.ProbeSpec
-	(*ProbeResults)(nil),          // 14: pulsix.agent.v1.ProbeResults
-	(*ProbeResult)(nil),           // 15: pulsix.agent.v1.ProbeResult
-	nil,                           // 16: pulsix.agent.v1.Facts.ValuesEntry
-	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(StatusPageMode)(0),           // 0: pulsix.agent.v1.StatusPageMode
+	(*EnrollRequest)(nil),         // 1: pulsix.agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),        // 2: pulsix.agent.v1.EnrollResponse
+	(*RenewRequest)(nil),          // 3: pulsix.agent.v1.RenewRequest
+	(*AgentMessage)(nil),          // 4: pulsix.agent.v1.AgentMessage
+	(*Heartbeat)(nil),             // 5: pulsix.agent.v1.Heartbeat
+	(*LocalCheck)(nil),            // 6: pulsix.agent.v1.LocalCheck
+	(*Facts)(nil),                 // 7: pulsix.agent.v1.Facts
+	(*CheckResults)(nil),          // 8: pulsix.agent.v1.CheckResults
+	(*CheckResult)(nil),           // 9: pulsix.agent.v1.CheckResult
+	(*ManagerMessage)(nil),        // 10: pulsix.agent.v1.ManagerMessage
+	(*AgentNames)(nil),            // 11: pulsix.agent.v1.AgentNames
+	(*CheckConfig)(nil),           // 12: pulsix.agent.v1.CheckConfig
+	(*CheckSpec)(nil),             // 13: pulsix.agent.v1.CheckSpec
+	(*ProbeConfig)(nil),           // 14: pulsix.agent.v1.ProbeConfig
+	(*ProbeSpec)(nil),             // 15: pulsix.agent.v1.ProbeSpec
+	(*ProbeResults)(nil),          // 16: pulsix.agent.v1.ProbeResults
+	(*ProbeResult)(nil),           // 17: pulsix.agent.v1.ProbeResult
+	nil,                           // 18: pulsix.agent.v1.Facts.ValuesEntry
+	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
 }
 var file_pulsix_agent_v1_agent_proto_depIdxs = []int32{
-	4,  // 0: pulsix.agent.v1.AgentMessage.heartbeat:type_name -> pulsix.agent.v1.Heartbeat
-	6,  // 1: pulsix.agent.v1.AgentMessage.facts:type_name -> pulsix.agent.v1.Facts
-	7,  // 2: pulsix.agent.v1.AgentMessage.check_results:type_name -> pulsix.agent.v1.CheckResults
-	14, // 3: pulsix.agent.v1.AgentMessage.probe_results:type_name -> pulsix.agent.v1.ProbeResults
-	5,  // 4: pulsix.agent.v1.Heartbeat.local_checks:type_name -> pulsix.agent.v1.LocalCheck
-	16, // 5: pulsix.agent.v1.Facts.values:type_name -> pulsix.agent.v1.Facts.ValuesEntry
-	8,  // 6: pulsix.agent.v1.CheckResults.results:type_name -> pulsix.agent.v1.CheckResult
-	17, // 7: pulsix.agent.v1.CheckResult.at:type_name -> google.protobuf.Timestamp
-	10, // 8: pulsix.agent.v1.ManagerMessage.check_config:type_name -> pulsix.agent.v1.CheckConfig
-	12, // 9: pulsix.agent.v1.ManagerMessage.probe_config:type_name -> pulsix.agent.v1.ProbeConfig
-	11, // 10: pulsix.agent.v1.CheckConfig.checks:type_name -> pulsix.agent.v1.CheckSpec
-	13, // 11: pulsix.agent.v1.ProbeConfig.probes:type_name -> pulsix.agent.v1.ProbeSpec
-	15, // 12: pulsix.agent.v1.ProbeResults.results:type_name -> pulsix.agent.v1.ProbeResult
-	17, // 13: pulsix.agent.v1.ProbeResult.at:type_name -> google.protobuf.Timestamp
-	0,  // 14: pulsix.agent.v1.AgentService.Enroll:input_type -> pulsix.agent.v1.EnrollRequest
-	2,  // 15: pulsix.agent.v1.AgentService.Renew:input_type -> pulsix.agent.v1.RenewRequest
-	3,  // 16: pulsix.agent.v1.AgentService.AgentStream:input_type -> pulsix.agent.v1.AgentMessage
-	1,  // 17: pulsix.agent.v1.AgentService.Enroll:output_type -> pulsix.agent.v1.EnrollResponse
-	1,  // 18: pulsix.agent.v1.AgentService.Renew:output_type -> pulsix.agent.v1.EnrollResponse
-	9,  // 19: pulsix.agent.v1.AgentService.AgentStream:output_type -> pulsix.agent.v1.ManagerMessage
-	17, // [17:20] is the sub-list for method output_type
-	14, // [14:17] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	5,  // 0: pulsix.agent.v1.AgentMessage.heartbeat:type_name -> pulsix.agent.v1.Heartbeat
+	7,  // 1: pulsix.agent.v1.AgentMessage.facts:type_name -> pulsix.agent.v1.Facts
+	8,  // 2: pulsix.agent.v1.AgentMessage.check_results:type_name -> pulsix.agent.v1.CheckResults
+	16, // 3: pulsix.agent.v1.AgentMessage.probe_results:type_name -> pulsix.agent.v1.ProbeResults
+	6,  // 4: pulsix.agent.v1.Heartbeat.local_checks:type_name -> pulsix.agent.v1.LocalCheck
+	0,  // 5: pulsix.agent.v1.Heartbeat.status_page:type_name -> pulsix.agent.v1.StatusPageMode
+	18, // 6: pulsix.agent.v1.Facts.values:type_name -> pulsix.agent.v1.Facts.ValuesEntry
+	9,  // 7: pulsix.agent.v1.CheckResults.results:type_name -> pulsix.agent.v1.CheckResult
+	19, // 8: pulsix.agent.v1.CheckResult.at:type_name -> google.protobuf.Timestamp
+	12, // 9: pulsix.agent.v1.ManagerMessage.check_config:type_name -> pulsix.agent.v1.CheckConfig
+	14, // 10: pulsix.agent.v1.ManagerMessage.probe_config:type_name -> pulsix.agent.v1.ProbeConfig
+	11, // 11: pulsix.agent.v1.ManagerMessage.agent_names:type_name -> pulsix.agent.v1.AgentNames
+	13, // 12: pulsix.agent.v1.CheckConfig.checks:type_name -> pulsix.agent.v1.CheckSpec
+	15, // 13: pulsix.agent.v1.ProbeConfig.probes:type_name -> pulsix.agent.v1.ProbeSpec
+	17, // 14: pulsix.agent.v1.ProbeResults.results:type_name -> pulsix.agent.v1.ProbeResult
+	19, // 15: pulsix.agent.v1.ProbeResult.at:type_name -> google.protobuf.Timestamp
+	1,  // 16: pulsix.agent.v1.AgentService.Enroll:input_type -> pulsix.agent.v1.EnrollRequest
+	3,  // 17: pulsix.agent.v1.AgentService.Renew:input_type -> pulsix.agent.v1.RenewRequest
+	4,  // 18: pulsix.agent.v1.AgentService.AgentStream:input_type -> pulsix.agent.v1.AgentMessage
+	2,  // 19: pulsix.agent.v1.AgentService.Enroll:output_type -> pulsix.agent.v1.EnrollResponse
+	2,  // 20: pulsix.agent.v1.AgentService.Renew:output_type -> pulsix.agent.v1.EnrollResponse
+	10, // 21: pulsix.agent.v1.AgentService.AgentStream:output_type -> pulsix.agent.v1.ManagerMessage
+	19, // [19:22] is the sub-list for method output_type
+	16, // [16:19] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_pulsix_agent_v1_agent_proto_init() }
@@ -1408,7 +1566,7 @@ func file_pulsix_agent_v1_agent_proto_init() {
 		(*CheckResult_Error)(nil),
 	}
 	file_pulsix_agent_v1_agent_proto_msgTypes[9].OneofWrappers = []any{}
-	file_pulsix_agent_v1_agent_proto_msgTypes[15].OneofWrappers = []any{
+	file_pulsix_agent_v1_agent_proto_msgTypes[16].OneofWrappers = []any{
 		(*ProbeResult_Value)(nil),
 		(*ProbeResult_Label)(nil),
 		(*ProbeResult_Error)(nil),
@@ -1418,13 +1576,14 @@ func file_pulsix_agent_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pulsix_agent_v1_agent_proto_rawDesc), len(file_pulsix_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   17,
+			NumEnums:      1,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_pulsix_agent_v1_agent_proto_goTypes,
 		DependencyIndexes: file_pulsix_agent_v1_agent_proto_depIdxs,
+		EnumInfos:         file_pulsix_agent_v1_agent_proto_enumTypes,
 		MessageInfos:      file_pulsix_agent_v1_agent_proto_msgTypes,
 	}.Build()
 	File_pulsix_agent_v1_agent_proto = out.File
