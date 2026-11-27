@@ -7,11 +7,17 @@
 //  1. A route covering the host at crit for both "opened" and "closed"
 //     sends a firing message the moment the follower ticks after a crit
 //     rule opens the alert.
-//  2. When the condition clears (the rule's threshold moves out of reach,
-//     the same lever rules_test.go's header comment explains), the alert
-//     closes, and the next follower tick sends a second, separate message
+//  2. The alert first eases to warn (a host warn rule stays crossed while
+//     the crit threshold moves out of reach, the same lever rules_test.go's
+//     header comment explains), then the condition clears and the alert
+//     closes. The next follower tick sends a second, separate message
 //     whose item for that alert reads event "closed": the resolve
-//     notification, received by the webhook the test started itself.
+//     notification, received by the webhook the test started itself. The
+//     alert closes at warn, a severity the crit-only route does not
+//     select; it still hears the closing because it delivered the opening
+//     (backlog 2.144: an alert easing before it clears used to lose its
+//     resolve message, and the seeded cpu warn rule did exactly that to
+//     this test whenever the machine's real CPU sat above 90 %).
 //
 // The follower is ticked directly, exactly as TestAlertRoutesEndToEnd and
 // TestEscalationEndToEnd do and for the same reason (internal/app runs its
@@ -25,7 +31,9 @@
 // Only the items naming this test's own alert are judged: the seed rules
 // (internal/rules/seed.go) judge this machine's genuine readings and could
 // open an alert of their own on the host, which the route would forward
-// too.
+// too. The host-scoped warn rule shadows the seeded org-wide cpu warn rule
+// (internal/rules/resolve.go), so the machine's real CPU cannot hold the
+// tuple at warn once the test's own thresholds are out of reach.
 package e2e
 
 import (
@@ -271,9 +279,27 @@ func TestAlertResolveNotificationEndToEnd(t *testing.T) {
 		t.Fatalf("items about the alert after it opened = %v, want exactly one opened and no closed", counts)
 	}
 
-	// --- 2. The condition clears, the alert closes -------------------------
+	// --- 2. The alert eases to warn, then clears and closes ----------------
+	// A host-scoped warn rule, crossed by any reading, joins the crit one;
+	// the tuple stays crit, the worse of the two. When crit's threshold
+	// moves out of reach the tuple falls to warn at once (a downward move
+	// never ripens) and the alert's severity follows without an event.
+	warnID := createFormRule(t, w, hostID, "e2e-resolve-warn", "warn", belowAnyPercentage, 0)
 	putFormThreshold(t, w, critID, hostID, "e2e-resolve-crit", "crit", aboveAnyPercentage, 0)
-	waitForTupleState(t, w, hostID, "ok", "the crit threshold moved out of reach", 60*time.Second)
+	waitForTupleState(t, w, hostID, "warn", "the crit threshold moved out of reach, warn's still crossed", 60*time.Second)
+	var eased escalationAlertListOut
+	w.api.do(http.MethodGet, prefix+"/alerts?host="+hostID+"&state=open", nil, &eased)
+	easedTo := ""
+	for _, a := range eased.Alerts {
+		if a.ID == alertIDStr {
+			easedTo = a.Severity
+		}
+	}
+	if easedTo != "warn" {
+		t.Fatalf("open alerts on the host = %+v, want alert %s eased to warn", eased.Alerts, alertIDStr)
+	}
+	putFormThreshold(t, w, warnID, hostID, "e2e-resolve-warn", "warn", aboveAnyPercentage, 0)
+	waitForTupleState(t, w, hostID, "ok", "the warn threshold moved out of reach too", 60*time.Second)
 	awaitAlertClosed(t, w, hostID, alertIDStr, 30*time.Second)
 
 	// --- 3. The resolve message ----------------------------------------------
@@ -296,9 +322,9 @@ func TestAlertResolveNotificationEndToEnd(t *testing.T) {
 	if item == nil {
 		t.Fatalf("resolve message items = %+v, want a closed item for alert %s", resolved.ev.Alerts.Items, alertID)
 	}
-	if item.HostID.String() != hostID || item.CheckKey != "cpu" || item.Severity != "crit" ||
+	if item.HostID.String() != hostID || item.CheckKey != "cpu" || item.Severity != "warn" ||
 		resolved.ev.Alerts.Count != len(resolved.ev.Alerts.Items) {
-		t.Fatalf("resolve item = %+v (batch count %d of %d items), want host %s, check cpu, severity crit",
+		t.Fatalf("resolve item = %+v (batch count %d of %d items), want host %s, check cpu, severity warn (the alert's own when it closed)",
 			*item, resolved.ev.Alerts.Count, len(resolved.ev.Alerts.Items), hostID)
 	}
 	if _, counts := alertItemsFor(t, rec, alertID); counts["opened"] != 1 || counts["closed"] != 1 {
