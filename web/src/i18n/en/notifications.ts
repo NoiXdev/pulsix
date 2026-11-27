@@ -120,7 +120,7 @@ export const enNotifications = {
     chatIdPlaceholder: '-1001234567890 or @channel',
     telegramToken: 'The bot token is part of the URL; it is stored encrypted and never shown again.',
     formatUrlAgain: 'Changing the format needs the URL again.',
-    ntfyToken: 'For a protected topic, add a header Authorization with the value "Bearer" followed by the access token.',
+    ntfyToken: 'For a protected topic, add a header Authorization with the value "Bearer" followed by the access token. It is sent only to the server in the URL.',
     builtUrl: 'Pulsix sends to the service\'s own address, so there is no URL to enter.',
     secretsStored: 'Secrets are stored encrypted and never shown again.',
     secretNames: { token: 'Application token', user: 'User or group key', auth_token: 'Auth token', routing_key: 'Integration key' },

@@ -122,3 +122,27 @@ describe('ChannelDialog presets of backlog 4.8', () => {
     expect(within(dialog).getByLabelText('Empfänger (eine Nummer)')).toBeRequired();
   });
 });
+
+describe('ChannelDialog Twilio account change (review M2)', () => {
+  const sms: NotifyChannel = {
+    id: 'c1', kind: 'webhook', name: 'sms', enabled: true, revision: 3, created_at: '', updated_at: '',
+    webhook: {
+      method: 'POST', url: 'https://api.twilio.com/…', headers: [], signed: false, preset: 'twilio',
+      account_sid: 'AC1', from: '+15005550006', to: '+4915112345678', secrets: ['auth_token'],
+    },
+  };
+
+  it('keeps the auth token for the same account and requires it for another', async () => {
+    const user = userEvent.setup();
+    renderDialog(sms);
+    const dialog = screen.getByRole('dialog');
+    const token = within(dialog).getByLabelText('Auth token');
+    expect(token).not.toBeRequired();
+    expect(token).toHaveAttribute('placeholder', 'leave empty to keep');
+    const sid = within(dialog).getByLabelText('Account SID');
+    await user.clear(sid);
+    await user.type(sid, 'AC2');
+    expect(within(dialog).getByLabelText('Auth token')).toBeRequired();
+    expect(within(dialog).getByLabelText('Auth token')).not.toHaveAttribute('placeholder');
+  });
+});

@@ -79,8 +79,10 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
   // Pushover, Twilio and PagerDuty have no URL to enter (backlog 4.8).
   const builtUrl = BUILT_URL.has(preset);
   const urlRequired = !builtUrl && (!editing || presetChanged);
-  // A preset's stored secrets are kept while it stays the same.
-  const storedSecrets = editing && !presetChanged ? (channel.webhook?.secrets ?? []) : [];
+  // A preset's stored secrets are kept while it stays the same, and for
+  // Twilio while the account stays the same: its token belongs to it.
+  const accountChanged = preset === 'twilio' && settings.accountSid.trim() !== (channel?.webhook?.account_sid ?? '');
+  const storedSecrets = editing && !presetChanged && !accountChanged ? (channel.webhook?.secrets ?? []) : [];
   const typedSecrets = Object.fromEntries((SECRET_NAMES[preset] ?? []).filter((n) => (secrets[n] ?? '') !== '').map((n) => [n, secrets[n] as string]));
   // A preset sends its own Content-Type (review M2): such a row stays in
   // the form, so switching back to a generic webhook keeps it, but is not
