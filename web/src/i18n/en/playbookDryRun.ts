@@ -74,7 +74,7 @@ export const enPlaybookDryRun = {
     open: 'Open run',
     hosts: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
     hostsSoFar: (n: number, waiting: number) => `${n === 1 ? '1 host' : `${n} hosts`} so far, ${waiting === 1 ? '1 zone has' : `${waiting} zones have`} not reported yet`,
-    zones: (n: number) => `${n} zones`,
+    zones: (n: number) => (n === 1 ? '1 zone' : `${n} zones`),
     waiting: "Waiting for a worker that supports dry runs. Older workers never take one: if it stays queued, update the zone's workers.",
     live: 'Running: the result follows live.',
     countsLabel: 'Counts over all hosts',

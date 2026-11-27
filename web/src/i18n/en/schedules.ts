@@ -7,7 +7,7 @@
  */
 export const enSchedules = {
   title: 'Schedules',
-  summary: (total: number, active: number) => `${total} schedules · ${active} active`,
+  summary: (total: number, active: number) => `${total === 1 ? '1 schedule' : `${total} schedules`} · ${active} active`,
   pauseAll: 'Pause all',
   newSchedule: 'New schedule',
   noMatch: 'No schedules match the filters.',
@@ -38,7 +38,7 @@ export const enSchedules = {
   openReview: 'Open the review',
   empty: 'No schedules yet.',
   pauseAllConfirm: 'Pause every schedule of this organization?',
-  pausedCount: (n: number) => `${n} schedule(s) paused`,
+  pausedCount: (n: number) => (n === 1 ? '1 schedule paused' : `${n} schedules paused`),
   pauseFailed: 'Pausing failed',
   relative: {
     minutes: (n: number) => `in ${n} min`,

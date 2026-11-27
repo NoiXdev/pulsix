@@ -57,3 +57,42 @@ describe('the save-failure messages of the settings pages', () => {
     for (const path of PATHS) expect(`${path}: ${String(all.get(path))}`).toMatch(/: [A-ZÄÖÜ]/);
   });
 });
+
+describe('count messages for a count of one', () => {
+  // Backlog 1.42: these read "1 members", "1 samples", "1 host(s)" before.
+  it.each([
+    [en.checks.list.summary(1), '1 definition ·'],
+    [en.checks.groups.summary(1), '1 group ·'],
+    [en.checks.rules.summary(1), '1 rule ·'],
+    [en.checks.items.summary(1), '1 decision ·'],
+    [en.credentials.list.summary(1), '1 credential ·'],
+    [en.credentials.detail.rotationStarted('deploy', 1), 'Rotation of deploy started (1 job)'],
+    [en.playbooks.list.summary(1), '1 playbook ·'],
+    [en.templates.list.summary(1), '1 template ·'],
+    [en.repos.list.summary(1), '1 git repository ·'],
+    [en.inventory.groups.summary(1), '1 inventory group ·'],
+    [en.inventory.children.members(1), '1 member'],
+    [en.inventory.schemaTab.savedIncomplete(1), 'Schema saved · 1 member needs new values'],
+    [en.inventory.schemaTab.summary(1, 0), '1 field ·'],
+    [en.schedules.summary(1, 1), '1 schedule ·'],
+    [en.schedules.pausedCount(1), '1 schedule paused'],
+    [en.runs.adhoc.started(1), 'Command started on 1 host'],
+    [en.runs.adhoc.selected(1), '1 host selected'],
+    [en.hosts.alertRoutes.escalating(1), '1 route below escalates independently'],
+    [en.hosts.checksTab.value.daysLeft('1'), '1 day left'],
+    [en.playbooks.page.dryRun.latest.zones(1), '1 zone'],
+    [en.ui.chart.label('cpu', 'over the last hour', 1), 'cpu over the last hour, 1 sample'],
+    [en.appearance.columns.state(1, 1), '1 of 1 column'],
+    [en.shell.nav.runRequestsBadge(1), '1 pending run request'],
+    [de.hosts.checksTab.value.daysLeft('1'), 'noch 1 Tag'],
+    [de.playbooks.page.dryRun.latest.zones(1), '1 Zone'],
+    [de.ui.chart.label('cpu', 'in der letzten Stunde', 1), 'cpu, in der letzten Stunde, 1 Messwert'],
+    [de.appearance.columns.state(1, 1), '1 von 1 Spalte'],
+    [de.shell.nav.runRequestsBadge(1), '1 offene Laufanfrage'],
+  ])('%s', (out, expected) => {
+    // A prefix of the message, not followed by a letter: "1 member" must
+    // not pass on "1 members".
+    expect(out.startsWith(expected)).toBe(true);
+    expect(out.slice(expected.length)).not.toMatch(/^\p{L}/u);
+  });
+});

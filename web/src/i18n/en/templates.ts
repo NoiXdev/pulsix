@@ -3,7 +3,7 @@
 export const enTemplates = {
   list: {
     title: 'Job templates',
-    summary: (n: number) => `${n} templates · a playbook, its scope and its extra vars; run it from the row menu`,
+    summary: (n: number) => `${n === 1 ? '1 template' : `${n} templates`} · a playbook, its scope and its extra vars; run it from the row menu`,
     add: 'Add template',
     label: 'Job templates',
     count: (n: number) => (n === 1 ? '1 template' : `${n} templates`),

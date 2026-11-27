@@ -103,7 +103,7 @@ export const enUi = {
       '30d': 'over the last 30 days',
       '90d': 'over the last 90 days',
     },
-    label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples} samples`,
+    label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples === 1 ? '1 sample' : `${samples} samples`}`,
     empty: 'No samples in this range.',
   },
   codeEditor: {

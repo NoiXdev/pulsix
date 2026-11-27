@@ -405,7 +405,7 @@ export const deHosts: Messages['hosts'] = {
     status: { notJudged: 'nicht bewertet' },
     value: {
       http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
-      daysLeft: (n: string) => `noch ${n} Tage`,
+      daysLeft: (n: string) => (n === '1' ? 'noch 1 Tag' : `noch ${n} Tage`),
       percent: (n: string) => `${n} %`,
       percentOn: (n: string, item: string) => `${n} % auf ${item}`,
       ms: (n: string) => `${n} ms`,

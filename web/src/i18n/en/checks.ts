@@ -93,7 +93,7 @@ export const enChecks = {
   },
   list: {
     noAccess: 'Checks are visible to members of this organization.',
-    summary: (n: number) => `${n} definitions · a narrower scope overrides a wider one under the same key`,
+    summary: (n: number) => `${n === 1 ? '1 definition' : `${n} definitions`} · a narrower scope overrides a wider one under the same key`,
     newCheck: 'New check',
     label: 'Check definitions',
     count: (n: number) => (n === 1 ? '1 check' : `${n} checks`),
@@ -543,7 +543,7 @@ export const enChecks = {
   groups: {
     noAccess: 'Monitoring groups are visible to members of this organization.',
     deleteConfirm: (name: string) => `Delete monitoring group ${name}? The check definitions bound to it are deleted with it.`,
-    summary: (n: number) => `${n} groups · a higher priority wins when two groups bind the same check key to one host`,
+    summary: (n: number) => `${n === 1 ? '1 group' : `${n} groups`} · a higher priority wins when two groups bind the same check key to one host`,
     newGroup: 'New group',
     label: 'Monitoring groups',
     count: (n: number) => (n === 1 ? '1 monitoring group' : `${n} monitoring groups`),
@@ -570,7 +570,7 @@ export const enChecks = {
     noAccess: 'Rules are visible to members of this organization.',
     deleteConfirm: (name: string) => `Delete rule ${name}? Hosts stop being judged against it.`,
     deleteSeeded: ' It ships with every organization and will not come back on its own.',
-    summary: (n: number) => `${n} rules · a narrower scope overrides a wider one on the same metric`,
+    summary: (n: number) => `${n === 1 ? '1 rule' : `${n} rules`} · a narrower scope overrides a wider one on the same metric`,
     newRule: 'New rule',
     noMetricsTitle: 'No metrics to write a rule on yet',
     noMetricsBody: 'A rule judges a measured value, so New rule stays unavailable until an agent reports its first metric.',
@@ -631,8 +631,8 @@ export const enChecks = {
   items: {
     noAccess: 'Item decisions are visible to members of this organization.',
     deleteConfirm: (decision: string, pattern: string) =>
-      `Delete this ${decision} decision for pattern "${pattern}"? The item(s) it names go back to being judged normally.`,
-    summary: (n: number) => `${n} decisions · a host decision overrules an organization one on the same check`,
+      `Delete this ${decision} decision for pattern "${pattern}"? Every item it names goes back to being judged normally.`,
+    summary: (n: number) => `${n === 1 ? '1 decision' : `${n} decisions`} · a host decision overrules an organization one on the same check`,
     newDecision: 'New decision',
     noMetricsTitle: 'No checks to decide on yet',
     noMetricsBody: 'A decision names an item of a check, so New decision stays unavailable until an agent reports its first metric.',

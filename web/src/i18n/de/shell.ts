@@ -22,7 +22,7 @@ export const deShell: Messages['shell'] = {
     templates: 'Vorlagen',
     schedules: 'Zeitpläne',
     runs: 'Läufe',
-    runRequestsBadge: (n: number) => `${n} offene Laufanfragen`,
+    runRequestsBadge: (n: number) => (n === 1 ? '1 offene Laufanfrage' : `${n} offene Laufanfragen`),
     settings: 'Einstellungen',
   },
   search: {
