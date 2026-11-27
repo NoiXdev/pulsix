@@ -177,7 +177,7 @@ describe('TriggersDialog: a collected run', () => {
       'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
     });
     renderDialog();
-    expect(await screen.findByText('Wait for a quiet moment: off – every call starts a run')).toBeInTheDocument();
+    expect(await screen.findByText('Wait for a quiet moment: off — every call starts a run')).toBeInTheDocument();
   });
 });
 
@@ -195,7 +195,7 @@ describe('Deliveries: collected deliveries', () => {
       },
     });
     renderDialog();
-    const waiting = await screen.findByText(/^Collected – runs at .* unless more arrive$/);
+    const waiting = await screen.findByText(/^Collected — runs at .* unless more arrive$/);
     expect(waiting.closest('li')).toHaveTextContent('collected');
     const collapsed = (await screen.findByText('Collapsed into run')).closest('li') as HTMLElement;
     expect(within(collapsed).getByRole('link', { name: 'g1' })).toBeInTheDocument();
@@ -218,7 +218,7 @@ describe('final review: test calls, on_active and polling', () => {
     renderDialog();
     await user.click(await screen.findByRole('button', { name: 'Test call' }));
     expect(await acceptConfirm(user)).toMatch(/joins the waiting collected run and replaces its values/);
-    expect(await screen.findByText(/^Test call: collected – runs at .* unless more arrive$/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Test call: collected — runs at .* unless more arrive$/)).toBeInTheDocument();
   });
 
   it('says on_active does not apply while waiting for a quiet moment', async () => {

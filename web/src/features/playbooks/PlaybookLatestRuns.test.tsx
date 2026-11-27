@@ -18,7 +18,7 @@ describe('PlaybookLatestRuns', () => {
       [{ path: '/', component: () => <PlaybookLatestRuns org="acme" playbookId="p1" templates={[]} onShowAll={() => {}} /> }],
       '/o/acme/',
     );
-    expect(await screen.findByText('Not run – approval withdrawn')).toBeInTheDocument();
+    expect(await screen.findByText('Not run — approval withdrawn')).toBeInTheDocument();
     expect(screen.getByText('error')).toBeInTheDocument();
   });
 });

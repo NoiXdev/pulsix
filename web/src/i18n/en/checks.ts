@@ -88,7 +88,7 @@ export const enChecks = {
     searchLabel: 'Search monitored hosts',
     searchPlaceholder: 'Search monitored hosts…',
     choose: 'Choose a monitored host…',
-    moreMatch: 'More hosts match than are listed – narrow the search.',
+    moreMatch: 'More hosts match than are listed — narrow the search.',
     loadFailed: 'Could not load monitored hosts.',
   },
   list: {
@@ -147,9 +147,9 @@ export const enChecks = {
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
     seededNote:
-      'This definition ships with every organization; its key and plugin are fixed. Copy it to change either – its interval, parameters, binding and enabled state are editable here.',
+      'This definition ships with every organization; its key and plugin are fixed. Copy it to change either — its interval, parameters, binding and enabled state are editable here.',
     sharedNote:
-      "This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of them – its binding and enabled state are this organization's own and stay editable here.",
+      "This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of them — its binding and enabled state are this organization's own and stay editable here.",
     copyNote:
       'A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what overrides that check for those hosts.',
     bindsTo: 'Binds to',
@@ -266,7 +266,7 @@ export const enChecks = {
     service: {
       units: {
         label: 'Units (one per line)',
-        hint: 'systemd units on Linux, service names on Windows, launchd labels on macOS – one per line',
+        hint: 'systemd units on Linux, service names on Windows, launchd labels on macOS — one per line',
         placeholder: 'sshd',
       },
     },
@@ -608,11 +608,11 @@ export const enChecks = {
     toForm: 'Switch to form editor',
     confirmSwitch:
       'Switching to the expression editor is a one-way door from here. The way back to the form editor only stays open while the ' +
-      'expression keeps exactly the shape the form produces – one comparison against this metric, no arithmetic, no time window, no "or". ' +
+      'expression keeps exactly the shape the form produces — one comparison against this metric, no arithmetic, no time window, no "or". ' +
       'Once it leaves that shape, this rule can only be edited as an expression from now on. Continue?',
     confirmDropClear: (op: string, value: string) =>
       `This rule clears at "${op} ${value}". The expression editor has no syntax for a clear condition, so saving as an ` +
-      'expression will remove it – the rule will then change state on every crossing of its threshold instead of holding ' +
+      'expression will remove it — the rule will then change state on every crossing of its threshold instead of holding ' +
       'until the clear condition is met. Remove the clear condition and continue?',
     expression: 'Expression',
     item: 'Item',
@@ -666,26 +666,26 @@ export const enChecks = {
     checkPlaceholder: 'disk, disk-data, …',
     checkInvalid: 'A check key uses lowercase letters, digits and hyphens only (up to 63 characters), e.g. disk-data.',
     matchKind: 'Match kind',
-    exact: 'Exact – one literal item name',
-    glob: "Glob – a '*' pattern",
+    exact: 'Exact — one literal item name',
+    glob: "Glob — a '*' pattern",
     pattern: 'Pattern',
     tooLong: (bytes: number, max: number) =>
       `This pattern is ${bytes} bytes long; the limit is ${max}. Item names outside the ASCII range cost more than one byte each, so a pattern can pass the field's own character count and still be too long.`,
     verdict: 'Verdict',
-    verdictIgnore: 'Ignore – stop judging this item',
-    verdictWatch: 'Watch – judge it even though a wider decision ignores it',
-    verdictWatchStored: 'Watch (stored outside this editor – has no effect at organization scope)',
+    verdictIgnore: 'Ignore — stop judging this item',
+    verdictWatch: 'Watch — judge it even though a wider decision ignores it',
+    verdictWatchStored: 'Watch (stored outside this editor — has no effect at organization scope)',
     watchNotOffered:
       'Watch is not offered at organization scope: watching is already what happens by default, so an organization-wide watch would change nothing. It is available once this decision is scoped to a single host, which is the overrule it exists for.',
     watchMismatch:
       'This decision is stored as an organization-wide watch, which has no effect and the server now refuses to save. Choose ignore, or scope it to a host to keep watch as the overrule it is meant to be.',
     notePlaceholder: 'Why does this item not need judging? The next operator reads this before switching it back on.',
     confirmBroad: (total: number) =>
-      `This pattern currently matches ${total} items – more than the preview lists in full. Saving changes every one of them. Continue?`,
+      `This pattern currently matches ${total} items — more than the preview lists in full. Saving changes every one of them. Continue?`,
     typePattern: 'Type a pattern to see which items it would match.',
     resolveFailed: 'Could not resolve this pattern',
-    noMatch: 'Matches no currently known item – it still applies the moment one appears',
+    noMatch: 'Matches no currently known item — it still applies the moment one appears',
     matches: (n: number) => `Matches ${n} item${n === 1 ? '' : 's'}`,
-    showingFirst: (n: number) => `Showing the first ${n} below – narrow the pattern to see the rest.`,
+    showingFirst: (n: number) => `Showing the first ${n} below — narrow the pattern to see the rest.`,
   },
 };

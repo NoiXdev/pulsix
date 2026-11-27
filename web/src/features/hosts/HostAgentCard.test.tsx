@@ -250,7 +250,7 @@ describe('HostAgentCard', () => {
     it('says it is unknown when the agent has not reported', async () => {
       withSecrets({ secrets_state: null, secret_names: null });
       renderCard();
-      expect(await screen.findByText(/Unknown – the agent has not reported it yet/)).toBeInTheDocument();
+      expect(await screen.findByText(/Unknown — the agent has not reported it yet/)).toBeInTheDocument();
     });
   });
 

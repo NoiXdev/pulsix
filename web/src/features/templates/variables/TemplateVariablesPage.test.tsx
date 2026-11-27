@@ -59,7 +59,7 @@ describe('TemplateVariablesPage — the source', () => {
   it('asks for a sync when the repository has no record yet', async () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: source({ worker_reads: false, found: false, available: false, synced_at: undefined, commit: '' }) }) }));
     renderPage();
-    expect(await screen.findByText('No variable sources were read for this playbook yet – sync its repository.')).toBeInTheDocument();
+    expect(await screen.findByText('No variable sources were read for this playbook yet — sync its repository.')).toBeInTheDocument();
     expect(screen.queryByText('The worker that synced this repository does not read variable sources.')).not.toBeInTheDocument();
   });
 
@@ -73,7 +73,7 @@ describe('TemplateVariablesPage — the source', () => {
   it('shows the review badges', async () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ review: { gone: 1, needs_review: 1, missing_required: 1, left_out: 0, not_sent: [] } }) }));
     renderPage();
-    expect(await screen.findByText('1 field gone from the source – review')).toBeInTheDocument();
+    expect(await screen.findByText('1 field gone from the source — review')).toBeInTheDocument();
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
     expect(screen.getByText('1 required field has no value')).toBeInTheDocument();
   });

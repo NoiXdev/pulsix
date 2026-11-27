@@ -1148,7 +1148,7 @@ describe('HostChecksCard', () => {
 
       await user.click(summary);
 
-      expect(screen.getByText('Origin not known – the last read of this value named no decision behind it.')).toBeInTheDocument();
+      expect(screen.getByText('Origin not known — the last read of this value named no decision behind it.')).toBeInTheDocument();
       // Never a guess: no scope, pattern or note is invented in its place.
       expect(screen.queryByText(/organization pattern/)).not.toBeInTheDocument();
       expect(screen.queryByText('Set on this host')).not.toBeInTheDocument();
@@ -1283,7 +1283,7 @@ describe('HostChecksCard', () => {
       await user.click(screen.getByText('Why ignored'));
 
       expect(
-        screen.getByText('By the organization pattern `/mnt/scratch-*` – Backup volume runs hot on purpose.'),
+        screen.getByText('By the organization pattern `/mnt/scratch-*` — Backup volume runs hot on purpose.'),
       ).toBeInTheDocument();
     });
 
@@ -1374,7 +1374,7 @@ describe('HostChecksCard', () => {
       await user.click(screen.getByText('Why watched'));
 
       expect(
-        screen.getByText('Set on this host – Needs eyes on it despite the fleet-wide pattern.'),
+        screen.getByText('Set on this host — Needs eyes on it despite the fleet-wide pattern.'),
       ).toBeInTheDocument();
     });
 

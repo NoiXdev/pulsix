@@ -117,7 +117,7 @@ describe('RunsPage', () => {
       },
     });
     renderPage();
-    const label = (await screen.findAllByText('Not run – approval withdrawn')).find((el) => el.tagName !== 'OPTION');
+    const label = (await screen.findAllByText('Not run — approval withdrawn')).find((el) => el.tagName !== 'OPTION');
     expect(label).toBeDefined();
     expect(label?.style.color).not.toBe('var(--px-crit)');
   });

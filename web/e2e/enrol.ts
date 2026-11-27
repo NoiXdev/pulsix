@@ -30,7 +30,7 @@ export async function enrolTotp(
 
   await page.getByPlaceholder('482913').fill(await nextTotpCode(secret, stepStatePath));
   await page.getByRole('button', { name: 'Confirm' }).click();
-  await expect(page.getByText('Recovery codes – shown once.')).toBeVisible();
+  await expect(page.getByText('Recovery codes — shown once.')).toBeVisible();
   await page.getByRole('button', { name: 'I have saved these' }).click();
   if (skipLockPinOffer) {
     await expect(page).toHaveURL(/\/account\/lock-pin$/);

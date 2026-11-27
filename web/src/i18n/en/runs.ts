@@ -27,7 +27,7 @@ export const enRuns = {
     cancelling: 'cancelling',
     error: 'error',
   },
-  withdrawnAtClaim: 'Not run – approval withdrawn',
+  withdrawnAtClaim: 'Not run — approval withdrawn',
   cancelState: {
     finished: 'no task in flight',
     interrupted: 'interrupted',
@@ -197,7 +197,7 @@ export const enRuns = {
     unconfirmedAfter:
       ', including those with no task in flight. A command already started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final account: check the hosts before you re-run, or two runs may change the same host at once.',
     stopped:
-      'The run was stopped. On a host marked interrupted, a command had already started there and may still be running on that host – stopping the run does not stop a command already running on a host. Check those hosts before you re-run.',
+      'The run was stopped. On a host marked interrupted, a command had already started there and may still be running on that host — stopping the run does not stop a command already running on a host. Check those hosts before you re-run.',
     cancelledHosts: 'Cancelled run hosts',
     polling: '(polling)',
     pollingTitle: 'live stream dropped frames; polling the history',

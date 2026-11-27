@@ -53,8 +53,8 @@ export const enMaintenance = {
     name: 'Name',
     why: 'Why',
     reasons: {
-      maintenance: 'Maintenance – work is happening; scheduled runs can skip these hosts',
-      silence: 'Silence – do not raise alerts; scheduled runs are unaffected',
+      maintenance: 'Maintenance — work is happening; scheduled runs can skip these hosts',
+      silence: 'Silence — do not raise alerts; scheduled runs are unaffected',
     },
     appliesTo: 'Applies to',
     targetKinds: {

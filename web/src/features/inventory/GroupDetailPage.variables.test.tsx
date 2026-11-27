@@ -67,8 +67,8 @@ describe('GroupDetailPage variables', () => {
     );
     renderAt('/o/acme/groups/g1');
     await screen.findByLabelText('Environment');
-    expect(await screen.findByTestId('assistant-ntp')).toHaveTextContent('Written by an assistant – used as plain text until a person changes or accepts it');
-    expect(screen.getByTestId('assistant-level')).toHaveTextContent('Default set by an assistant – used as plain text until a person changes or accepts it');
+    expect(await screen.findByTestId('assistant-ntp')).toHaveTextContent('Written by an assistant — used as plain text until a person changes or accepts it');
+    expect(screen.getByTestId('assistant-level')).toHaveTextContent('Default set by an assistant — used as plain text until a person changes or accepts it');
     // env holds a person's value, so its (assistant's) default does not apply.
     expect(screen.queryByTestId('assistant-env')).not.toBeInTheDocument();
     expect(screen.queryByTestId('assistant-region')).not.toBeInTheDocument();

@@ -144,7 +144,7 @@ describe('CheckDialog — synthetic plugins', () => {
     const user = userEvent.setup();
     await openNew(user, 'service');
     expect(
-      screen.getByText('systemd units on Linux, service names on Windows, launchd labels on macOS – one per line'),
+      screen.getByText('systemd units on Linux, service names on Windows, launchd labels on macOS — one per line'),
     ).toBeInTheDocument();
   });
 });

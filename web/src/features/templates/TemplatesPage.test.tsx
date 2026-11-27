@@ -525,7 +525,7 @@ describe('TemplatesPage', () => {
       'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
     });
     renderPage();
-    expect(await screen.findByText('2 fields gone from the source – review')).toBeInTheDocument();
+    expect(await screen.findByText('2 fields gone from the source — review')).toBeInTheDocument();
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
     expect(screen.queryByText(/required/)).not.toBeInTheDocument();
     expect(screen.queryByText(/not sent to runs/)).not.toBeInTheDocument();

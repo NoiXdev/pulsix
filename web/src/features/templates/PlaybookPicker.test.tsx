@@ -85,7 +85,7 @@ describe('PlaybookPicker', () => {
     renderRoutes([{ path: '/x', component: () => <Harness /> }], '/o/acme/x');
     await screen.findByLabelText('Playbook source');
     await pickOption(screen, 'Playbook source', { value: 'r1' });
-    expect(await screen.findByText('Not synced yet – sync the repository to list its playbooks')).toBeInTheDocument();
+    expect(await screen.findByText('Not synced yet — sync the repository to list its playbooks')).toBeInTheDocument();
   });
 
   it("starts at the source of a template's current playbook", async () => {

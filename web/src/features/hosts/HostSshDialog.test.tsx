@@ -223,7 +223,7 @@ describe('HostSshDialog', () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { ...SSH, bastion_mode: 'none' } } }));
     renderDialog();
     const d = await dialog();
-    expect(await d.findByText('Zone default: bastion-a – an inventory group may override it')).toBeInTheDocument();
+    expect(await d.findByText('Zone default: bastion-a — an inventory group may override it')).toBeInTheDocument();
     expect(d.getByRole('radio', { name: 'Direct' })).toBeChecked();
   });
 
@@ -309,7 +309,7 @@ describe('HostSshDialog', () => {
 
     await user.click(await d.findByRole('button', { name: 'Test connection' }));
 
-    expect(await d.findByText('The test ended (failed) without a result – the run says why.')).toBeInTheDocument();
+    expect(await d.findByText('The test ended (failed) without a result — the run says why.')).toBeInTheDocument();
     expect(d.queryByText('connected (via bastion-a)')).not.toBeInTheDocument();
   });
 

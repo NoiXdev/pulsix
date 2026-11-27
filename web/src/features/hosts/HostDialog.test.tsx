@@ -194,7 +194,7 @@ describe('HostDialog', () => {
     await user.type(name, 'mine.fra');
     await user.click(screen.getByRole('button', { name: 'Save host' }));
 
-    expect(await screen.findByText('This host was changed meanwhile – reload it and apply your change again')).toBeInTheDocument();
+    expect(await screen.findByText('This host was changed meanwhile — reload it and apply your change again')).toBeInTheDocument();
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Name')).toHaveValue('mine.fra');
 

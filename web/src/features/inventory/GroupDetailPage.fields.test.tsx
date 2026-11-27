@@ -84,7 +84,7 @@ describe('GroupDetailPage fields dialog', () => {
     expect(within(rows[0]).getByText('assistant default')).toBeInTheDocument();
     expect(within(rows[1]).queryByText('assistant default')).not.toBeInTheDocument();
     const mark = within(dialog).getByTestId('assistant-default-env');
-    expect(mark).toHaveTextContent('Default set by an assistant – used as plain text until a person changes or accepts it');
+    expect(mark).toHaveTextContent('Default set by an assistant — used as plain text until a person changes or accepts it');
     await user.click(within(mark).getByRole('button', { name: 'Accept env as live' }));
     await screen.findByText('env is live now');
     expect(accepted?.headers.get('If-Match')).toBe('"3"');

@@ -170,7 +170,7 @@ describe('ItemDecisionDialog', () => {
     // landed (see the dedicated staleness test below) — wait for it
     // before clicking, the same way every other test here that clicks
     // Save does.
-    await screen.findByText('Matches no currently known item – it still applies the moment one appears');
+    await screen.findByText('Matches no currently known item — it still applies the moment one appears');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('a decision for this exact pattern already exists at this scope');

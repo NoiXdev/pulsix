@@ -178,7 +178,7 @@ describe('TemplateTriggersTab', () => {
     const w1 = await card('push-w1');
     expect(fact(w1, 'Wait for a quiet moment')).toHaveTextContent('1 min after the last call, at the latest 1 h after the first');
     expect(fact(w1, 'While a run is active')).toHaveTextContent('waits for it, then starts once');
-    expect(fact(await card('push-w2'), 'Wait for a quiet moment')).toHaveTextContent('off – every call starts a run');
+    expect(fact(await card('push-w2'), 'Wait for a quiet moment')).toHaveTextContent('off — every call starts a run');
     const box = within(await w1.findByRole('region', { name: 'A collected run is waiting' }));
     expect(box.getByText('2 deliveries collected')).toBeInTheDocument();
     expect(box.getByRole('button', { name: 'Discard' })).toBeInTheDocument();

@@ -187,7 +187,7 @@ describe('JumpHostsPage', () => {
       },
     });
     renderPage();
-    expect(await screen.findByText('key changed – connections through it are blocked')).toBeInTheDocument();
+    expect(await screen.findByText('key changed — connections through it are blocked')).toBeInTheDocument();
     // No unpin here — the operator first pins what the test saw.
     await openRowMenu(userEvent.setup(), 'bastion-a');
     expect(screen.getByRole('menuitem', { name: 'Pin host key' })).toBeInTheDocument();

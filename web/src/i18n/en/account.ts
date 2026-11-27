@@ -74,7 +74,7 @@ export const enAccount = {
     regenerateConfirmLabel: 'Regenerate',
     dialogTitle: 'Recovery codes',
     regenerateFailed: 'Could not regenerate the recovery codes.',
-    shownOnce: 'Recovery codes – shown once. Each works one time.',
+    shownOnce: 'Recovery codes — shown once. Each works one time.',
     saved: 'I have saved these',
   },
   password: {

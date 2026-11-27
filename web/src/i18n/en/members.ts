@@ -50,11 +50,11 @@ export const enMembers = {
   shareLink: {
     title: 'Share the invitation link',
     before: 'Outgoing mail is not configured on this instance, so no e-mail was sent. Give this link to',
-    after: 'yourself – it works once and expires in 7 days.',
+    after: 'yourself — it works once and expires in 7 days.',
     linkLabel: 'Invitation link',
     copy: 'Copy link',
     copied: 'Invitation link copied',
-    copyFailed: 'Could not copy – select the link and copy it by hand',
+    copyFailed: 'Could not copy — select the link and copy it by hand',
     done: 'Done',
   },
   open: 'Open',

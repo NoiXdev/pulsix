@@ -248,7 +248,7 @@ describe('HostHeader', () => {
     const field = await screen.findByPlaceholderText('role=db');
     await user.type(field, 'role=db');
     await user.click(screen.getByRole('button', { name: 'Add tag' }));
-    expect(await screen.findByText('This host was changed meanwhile – reload it and apply your change again')).toBeInTheDocument();
+    expect(await screen.findByText('This host was changed meanwhile — reload it and apply your change again')).toBeInTheDocument();
     expect(field).toHaveValue('role=db');
     const hostsBefore = hostGets;
     const tagsBefore = tagGets;
