@@ -93,7 +93,7 @@ export const enChecks = {
   },
   list: {
     noAccess: 'Checks are visible to members of this organization.',
-    summary: (n: number) => `${n} definitions · a narrower scope overrides a wider one under the same key`,
+    summary: (n: number) => `${n === 1 ? '1 definition' : `${n} definitions`} · a narrower scope overrides a wider one under the same key`,
     newCheck: 'New check',
     label: 'Check definitions',
     count: (n: number) => (n === 1 ? '1 check' : `${n} checks`),
@@ -365,6 +365,10 @@ export const enChecks = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'Verify the TLS certificate' },
+      api_url: {
+        label: 'nginx Plus API URL (optional)',
+        hint: 'The base of the nginx Plus API with its version, read by the agent on each host. With a value the check also reports each server zone and each upstream (peers up and unavailable, requests, errors), at most 64 of each; the login of the secret is sent there too. Empty means only the status page is read.',
+      },
     },
     apache: {
       url: { label: 'Status page URL', hint: 'The mod_status page of Apache httpd, read by the agent on each host; the agent adds ?auto when the URL has no such query key. Without a value the check reads http://127.0.0.1/server-status?auto.' },
@@ -383,6 +387,10 @@ export const enChecks = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'Verify the TLS certificate' },
+      upstreams_url: {
+        label: 'Upstream list URL (optional)',
+        hint: 'The reverse_proxy/upstreams page of the Caddy admin endpoint, read by the agent on each host. With a value the check also reports each reverse-proxy upstream (healthy or not, requests in flight, failures), at most 64; the health comes from the metrics page. The login of the secret is sent there too. Empty means only the metrics page is read.',
+      },
     },
     phpfpm: {
       urls: {
@@ -401,6 +409,11 @@ export const enChecks = {
         label: 'Commands (one per line)',
         hint: 'Names of commands defined under commands: in agent.yaml on each host; only the name is sent, the host decides what runs. A host that does not define a name reports it as unknown.',
         placeholder: 'backup_age\ndisk_root',
+      },
+      args: {
+        label: 'Values for placeholders (one per line, command:placeholder=value)',
+        hint: 'Only for commands whose definition in a host’s agent.yaml declares placeholders under args; that host checks each value against its own rule and refuses the command when one does not pass. A value is passed as one argument, as written, never to a shell. A command without placeholders refuses any value. Leave a placeholder out to use the host’s default.',
+        placeholder: 'tcp_port:port=8080',
       },
       format: {
         label: 'Output format',
@@ -544,6 +557,8 @@ export const enChecks = {
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and method overrides are refused: a target may trust them for the client’s address, the path or the method',
       mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',
+      scriptArg:
+        'every entry must be command:placeholder=value: a command listed above, a placeholder name of lower-case letters, digits and _ (starting with a letter, at most 32), and a value of 1 to 512 bytes without line breaks, control or invisible formatting characters',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },
@@ -551,7 +566,7 @@ export const enChecks = {
   groups: {
     noAccess: 'Monitoring groups are visible to members of this organization.',
     deleteConfirm: (name: string) => `Delete monitoring group ${name}? The check definitions bound to it are deleted with it.`,
-    summary: (n: number) => `${n} groups · a higher priority wins when two groups bind the same check key to one host`,
+    summary: (n: number) => `${n === 1 ? '1 group' : `${n} groups`} · a higher priority wins when two groups bind the same check key to one host`,
     newGroup: 'New group',
     label: 'Monitoring groups',
     count: (n: number) => (n === 1 ? '1 monitoring group' : `${n} monitoring groups`),
@@ -578,7 +593,7 @@ export const enChecks = {
     noAccess: 'Rules are visible to members of this organization.',
     deleteConfirm: (name: string) => `Delete rule ${name}? Hosts stop being judged against it.`,
     deleteSeeded: ' It ships with every organization and will not come back on its own.',
-    summary: (n: number) => `${n} rules · a narrower scope overrides a wider one on the same metric`,
+    summary: (n: number) => `${n === 1 ? '1 rule' : `${n} rules`} · a narrower scope overrides a wider one on the same metric`,
     newRule: 'New rule',
     noMetricsTitle: 'No metrics to write a rule on yet',
     noMetricsBody: 'A rule judges a measured value, so New rule stays unavailable until an agent reports its first metric.',
@@ -639,8 +654,8 @@ export const enChecks = {
   items: {
     noAccess: 'Item decisions are visible to members of this organization.',
     deleteConfirm: (decision: string, pattern: string) =>
-      `Delete this ${decision} decision for pattern "${pattern}"? The item(s) it names go back to being judged normally.`,
-    summary: (n: number) => `${n} decisions · a host decision overrules an organization one on the same check`,
+      `Delete this ${decision} decision for pattern "${pattern}"? Every item it names goes back to being judged normally.`,
+    summary: (n: number) => `${n === 1 ? '1 decision' : `${n} decisions`} · a host decision overrules an organization one on the same check`,
     newDecision: 'New decision',
     noMetricsTitle: 'No checks to decide on yet',
     noMetricsBody: 'A decision names an item of a check, so New decision stays unavailable until an agent reports its first metric.',

@@ -725,7 +725,7 @@ describe('host rows', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     expect(await within(dialog).findByRole('checkbox', { name: 'web-04.fra' })).toBeChecked();
-    expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
+    expect(within(dialog).getByText('1 host selected')).toBeInTheDocument();
   });
 
   it('Run template opens the template dialog for this host', async () => {

@@ -690,6 +690,13 @@
           "name": "verify_tls",
           "type": "bool",
           "default": true
+        },
+        {
+          "name": "api_url",
+          "type": "string",
+          "example": "http://127.0.0.1/api/9",
+          "max_bytes": 500,
+          "format": "statusURL"
         }
       ],
       "metrics": [
@@ -723,6 +730,66 @@
         },
         {
           "name": "nginx.connections_dropped_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.api_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.api_items_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_processing",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_responses_4xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_responses_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_received_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_sent_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers_unavailable",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_active",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_responses_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_fails_per_s",
           "kind": "numeric"
         }
       ]
@@ -776,6 +843,14 @@
         {
           "name": "apache.bytes_per_s",
           "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_max",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_busy_max_pct",
+          "kind": "numeric"
         }
       ]
     },
@@ -802,6 +877,13 @@
           "name": "verify_tls",
           "type": "bool",
           "default": true
+        },
+        {
+          "name": "upstreams_url",
+          "type": "string",
+          "example": "http://127.0.0.1:2019/reverse_proxy/upstreams",
+          "max_bytes": 500,
+          "format": "statusURL"
         }
       ],
       "metrics": [
@@ -819,6 +901,30 @@
         },
         {
           "name": "caddy.errors_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.admin_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstreams_unhealthy",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstreams_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_healthy",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_requests",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_fails",
           "kind": "numeric"
         }
       ]
@@ -905,6 +1011,14 @@
           "max_entries": 32,
           "non_empty": true,
           "format": "commandName"
+        },
+        {
+          "name": "args",
+          "type": "list",
+          "example": "tcp_port:port=8080",
+          "max_entries": 64,
+          "max_bytes": 640,
+          "format": "scriptArg"
         },
         {
           "name": "format",

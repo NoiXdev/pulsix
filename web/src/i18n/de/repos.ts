@@ -56,7 +56,7 @@ export const deRepos: Messages['repos'] = {
       subpath: 'ansible/ (optional)',
     },
     credential: 'Zugangsdaten',
-    credentialNone: '— keine —',
+    credentialNone: '– keine –',
     newCredential: 'Neue Zugangsdaten…',
     credentialHint: 'Deploy-Key oder Token, mit dem sich der Checkout authentifiziert.',
     vaultHelp: 'Vault-Passwörter mit Bezeichnung, die ein Lauf erhält.',

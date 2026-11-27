@@ -133,6 +133,9 @@ var listParamsNotItems = map[string]bool{
 	"snmp.assertions": true,
 	// http's request headers (backlog 3.84): sent, not reported on.
 	"http.headers": true,
+	// script's values for placeholders (backlog 3.6j): passed, not
+	// reported on.
+	"script.args": true,
 	// zfs's optional pools name items too, but pools is the ItemParam; the
 	// ItemAsked hook reads both lists (backlog 3.74).
 	"zfs.optional_pools": true,
@@ -227,6 +230,10 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 	case "script":
 		if p.Name != "commands" {
 			params["commands"] = []any{"x"}
+		}
+		// args name a listed command (backlog 3.6j).
+		if p.Name == "args" {
+			params["commands"] = []any{"x", "tcp_port"}
 		}
 	case "mysql":
 		if p.Name != "secret" {

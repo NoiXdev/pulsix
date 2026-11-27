@@ -3,9 +3,11 @@
 // handler on a site) and reports reachability, the requests in flight and
 // the request and 5xx rates. Where the page is comes from the url
 // parameter; an optional agent.yaml secret holds HTTP basic-authentication
-// credentials. It is a checks.StatefulPlugin (the rates need the previous
-// counters, so every check key collects with its own instance) and a
-// checks.SecretPlugin. The request is made by the shared webcheck helper,
+// credentials. With the optional upstreams_url parameter it also reads the
+// admin API's upstream list and reports each reverse-proxy upstream as an
+// item (backlog 3.11b, upstreams.go). It is a checks.StatefulPlugin (the
+// rates need the previous counters, so every check key collects with its
+// own instance) and a checks.SecretPlugin. The request is made by the shared webcheck helper,
 // whose failure texts are fixed strings: no URL, header, body, user or
 // password reaches an observation.
 package caddy
@@ -41,6 +43,8 @@ type plugin struct {
 	// instance per check key, collected from one goroutine only.
 	url               string
 	requests, errs5xx dbcheck.Counter
+	// upstreams are the upstream items of the last good list.
+	upstreams map[string]bool
 }
 
 // New returns the caddy plugin. It is a checks.StatefulPlugin prototype: the
@@ -65,8 +69,13 @@ func (p *plugin) Collect(ctx context.Context, params map[string]any) ([]checks.O
 // caller context that ends returns nothing but its error (the Plugin
 // contract); the plugin's own deadline is a server that did not answer in
 // time.
+// Without upstreams_url the round is the one metrics page, as before
+// backlog 3.11b; with it, see collectWithUpstreams.
 func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, fields map[string]string) ([]checks.Observation, error) {
 	url := statusURL(params)
+	if ups := webcheck.URLParam(params, "upstreams_url", ""); ups != "" {
+		return p.collectWithUpstreams(ctx, url, ups, params, fields)
+	}
 	return webcheck.Collect(ctx, webPage, url, params, fields, parseMetrics,
 		func(m metrics) []checks.Observation { return p.observe(url, m) })
 }

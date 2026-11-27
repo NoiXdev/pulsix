@@ -109,3 +109,77 @@ func TestAgainstARealServer(t *testing.T) {
 		t.Fatalf("errors_5xx_per_s = %+v, want 0", o)
 	}
 }
+
+// proxyCaddyfile serves the admin endpoint on every interface (so the
+// mapped port reaches it) and one reverse proxy with an active health
+// check over a live upstream (the admin endpoint itself) and a dead one.
+// The HTTP metrics stay off: the health gauge is there regardless.
+const proxyCaddyfile = `{
+	admin 0.0.0.0:2019
+}
+:80 {
+	reverse_proxy 127.0.0.1:2019 127.0.0.1:9 {
+		health_uri /config/
+		health_interval 1s
+	}
+}
+`
+
+// TestUpstreamsAgainstARealServer reads the admin API's upstream list and
+// the health gauge of Caddy 2.8 (backlog 3.11b, R10): both upstreams are
+// items, the dead one reads unhealthy once the gauge (updated every 10 s)
+// has caught up.
+func TestUpstreamsAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
+	ctx := context.Background()
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "caddy:2.8-alpine",
+			ExposedPorts: []string{"2019/tcp"},
+			Files: []testcontainers.ContainerFile{{
+				Reader:            strings.NewReader(proxyCaddyfile),
+				ContainerFilePath: "/etc/caddy/Caddyfile",
+				FileMode:          0o644,
+			}},
+			WaitingFor: wait.ForHTTP("/reverse_proxy/upstreams").WithPort("2019/tcp").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		t.Fatalf("start caddy:2.8-alpine: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(c) })
+	host, err := c.Host(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := c.MappedPort(ctx, "2019/tcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + host + ":" + port.Port()
+	params := map[string]any{"url": base + "/metrics", "upstreams_url": base + "/reverse_proxy/upstreams"}
+
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		p, _ := newTestPlugin()
+		obs, err := p.Collect(t.Context(), params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustValue(t, obs, "caddy.up", 1)
+		mustValue(t, obs, "caddy.admin_up", 1)
+		mustValue(t, obs, "caddy.upstreams_unreported", 0)
+		mustItemValue(t, obs, "upstream:127.0.0.1:2019", "caddy.upstream_fails", 0)
+		live, _ := webchecktest.FindItem(obs, "upstream:127.0.0.1:2019", metricHealthy)
+		dead, _ := webchecktest.FindItem(obs, "upstream:127.0.0.1:9", metricHealthy)
+		if live.Value != nil && *live.Value == 1 && dead.Value != nil && *dead.Value == 0 {
+			mustValue(t, obs, "caddy.upstreams_unhealthy", 1)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("health never settled: live %+v, dead %+v", live, dead)
+		}
+		time.Sleep(time.Second)
+	}
+}

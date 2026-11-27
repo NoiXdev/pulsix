@@ -30,8 +30,8 @@ export const deChecks: Messages['checks'] = {
   },
   interval: {
     seconds: (n: number) => `${n} s`,
-    minutes: (n: number) => `${n} Min.`,
-    hours: (n: number) => `${n} Std.`,
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
   },
   enabled: 'aktiviert',
   disabled: 'deaktiviert',
@@ -47,7 +47,7 @@ export const deChecks: Messages['checks'] = {
   host: 'Host',
   matching: 'Abgleich läuft…',
   origin: {
-    seed: 'Standard',
+    seed: 'mitgeliefert',
     custom: 'eigen',
     shared: 'geteilt',
   },
@@ -330,6 +330,10 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
+      api_url: {
+        label: 'URL der nginx-Plus-API (optional)',
+        hint: 'Die Basis der nginx-Plus-API mit ihrer Version, die der Agent auf jedem Host liest. Mit einem Wert meldet der Check zusätzlich jede Server-Zone und jeden Upstream (erreichbare und ausgefallene Peers, Anfragen, Fehler), höchstens 64 von jeder Sorte; der Login des Secrets wird auch dorthin gesendet. Leer heißt: nur die Status-Seite wird gelesen.',
+      },
     },
     apache: {
       url: { label: 'URL der Status-Seite', hint: 'Die mod_status-Seite des Apache httpd, die der Agent auf jedem Host liest; fehlt der Query-Schlüssel auto, hängt der Agent ?auto an. Ohne Wert liest der Check http://127.0.0.1/server-status?auto.' },
@@ -348,6 +352,10 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
+      upstreams_url: {
+        label: 'URL der Upstream-Liste (optional)',
+        hint: 'Die Seite reverse_proxy/upstreams des Caddy-Admin-Endpunkts, die der Agent auf jedem Host liest. Mit einem Wert meldet der Check zusätzlich jeden Reverse-Proxy-Upstream (gesund oder nicht, laufende Anfragen, Fehlschläge), höchstens 64; der Gesundheitszustand kommt von der Metrikseite. Der Login des Secrets wird auch dorthin gesendet. Leer heißt: nur die Metrikseite wird gelesen.',
+      },
     },
     phpfpm: {
       urls: {
@@ -366,6 +374,11 @@ export const deChecks: Messages['checks'] = {
         label: 'Befehle (einer pro Zeile)',
         hint: 'Namen von Befehlen, die in der agent.yaml jedes Hosts unter commands: definiert sind; gesendet wird nur der Name, was läuft, bestimmt der Host. Ein Host, der einen Namen nicht definiert, meldet ihn als unbekannt.',
         placeholder: 'backup_age\ndisk_root',
+      },
+      args: {
+        label: 'Werte für Platzhalter (einer pro Zeile, befehl:platzhalter=wert)',
+        hint: 'Nur für Befehle, deren Definition in der agent.yaml eines Hosts unter args Platzhalter festlegt; der Host prüft jeden Wert gegen seine eigene Regel und führt den Befehl nicht aus, wenn einer sie nicht erfüllt. Ein Wert wird als ein einzelnes Argument so übergeben, wie er dasteht, nie an eine Shell. Ein Befehl ohne Platzhalter lehnt jeden Wert ab. Fehlt ein Platzhalter, gilt der Standardwert des Hosts.',
+        placeholder: 'tcp_port:port=8080',
       },
       format: {
         label: 'Ausgabeformat',
@@ -406,7 +419,7 @@ export const deChecks: Messages['checks'] = {
       },
       body: {
         label: 'Anfrage-Body',
-        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn der Betreiber des Pulsix-Servers sie eingeschaltet hat.',
+        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn sie für diesen Pulsix-Server freigeschaltet sind.',
         placeholder: '{"ping": true}',
       },
       content_type: { label: 'Inhaltstyp des Bodys', hint: 'Nur mit einem Body. Leer bedeutet application/json.', placeholder: 'application/json' },
@@ -516,6 +529,8 @@ export const deChecks: Messages['checks'] = {
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
+      scriptArg:
+        'jeder Eintrag muss befehl:platzhalter=wert sein: ein oben genannter Befehl, ein Platzhaltername aus Kleinbuchstaben, Ziffern und _ (mit einem Buchstaben beginnend, höchstens 32) und ein Wert von 1 bis 512 Bytes ohne Zeilenumbrüche, Steuer- oder unsichtbare Formatzeichen',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },
@@ -523,7 +538,7 @@ export const deChecks: Messages['checks'] = {
   groups: {
     noAccess: 'Überwachungsgruppen sind für Mitglieder dieser Organisation sichtbar.',
     deleteConfirm: (name: string) =>
-      `Überwachungsgruppe ${name} löschen? Die daran gebundenen Check-Definitionen werden mit gelöscht.`,
+      `Überwachungsgruppe ${name} löschen? Die daran gebundenen Check-Definitionen werden ebenfalls gelöscht.`,
     summary: (n: number) =>
       `${n === 1 ? '1 Gruppe' : `${n} Gruppen`} · die höhere Priorität gewinnt, wenn zwei Gruppen denselben Check-Schlüssel an einen Host binden`,
     newGroup: 'Neue Gruppe',
@@ -573,7 +588,7 @@ export const deChecks: Messages['checks'] = {
     },
     empty: 'Noch keine Regeln.',
     origin: {
-      seed: 'Standard',
+      seed: 'mitgeliefert',
       user: 'eigen',
     },
   },
@@ -614,7 +629,7 @@ export const deChecks: Messages['checks'] = {
   items: {
     noAccess: 'Element-Entscheidungen sind für Mitglieder dieser Organisation sichtbar.',
     deleteConfirm: (decision: string, pattern: string) =>
-      `Diese Entscheidung (${decision}) für das Muster „${pattern}“ löschen? Die Elemente, die sie nennt, werden wieder normal bewertet.`,
+      `Die Entscheidung „${decision}“ für das Muster „${pattern}“ löschen? Die Elemente, auf die das Muster zutrifft, werden wieder normal bewertet.`,
     summary: (n: number) =>
       `${n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`} · eine Host-Entscheidung hat Vorrang vor einer Organisationsentscheidung für denselben Check`,
     newDecision: 'Neue Entscheidung',

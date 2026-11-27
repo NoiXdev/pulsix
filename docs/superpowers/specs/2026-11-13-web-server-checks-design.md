@@ -135,6 +135,11 @@ observations "not reported by the server (ExtendedStatus Off)". The
 percentage is against started workers, not `MaxRequestWorkers`, which the
 page does not state (the proposal said "against the maximum"; the
 scoreboard's slot count is `ServerLimit × ThreadLimit` and overstates it).
+(Corrected by backlog 3.11b: measured on Apache 2.4.38 and 2.4.71, the `?auto`
+scoreboard has exactly the effective `MaxRequestWorkers` slots in normal
+running — after a graceful restart it can be longer until the old processes
+are recycled; `apache.workers_max` and `apache.workers_busy_max_pct` now
+report it.)
 
 **caddy** (Caddy 2.6+, Prometheus text format)
 

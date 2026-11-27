@@ -2,7 +2,9 @@
 // stub_status page (any nginx with the module) and reports reachability, the
 // connection states and the request, accept and drop rates. Where the page
 // is comes from the url parameter; an optional agent.yaml secret holds HTTP
-// basic-authentication credentials. It is a checks.StatefulPlugin (the rates
+// basic-authentication credentials. With the optional api_url parameter it
+// also reads the nginx Plus API and reports each server zone and upstream
+// as an item (backlog 3.11b, api.go). It is a checks.StatefulPlugin (the rates
 // need the previous counters, so every check key collects with its own
 // instance) and a checks.SecretPlugin. The request is made by the shared
 // webcheck helper, whose failure texts are fixed strings: no URL, header,
@@ -41,6 +43,10 @@ type plugin struct {
 	lastAccepts, lastRequests  uint64
 	lastDropped                uint64
 	requests, accepts, dropped dbcheck.Counter
+	// zones and upstreams are the API items of the last good API round
+	// and their baselines, by item.
+	zones     map[string]*zoneState
+	upstreams map[string]*upstreamState
 }
 
 // New returns the nginx plugin. It is a checks.StatefulPlugin prototype: the
@@ -65,10 +71,58 @@ func (p *plugin) Collect(ctx context.Context, params map[string]any) ([]checks.O
 // caller context that ends returns nothing but its error (the Plugin
 // contract); the plugin's own deadline is a server that did not answer in
 // time.
+// Without api_url the round is the one stub_status page, as before backlog
+// 3.11b; with it, see collectWithAPI.
 func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, fields map[string]string) ([]checks.Observation, error) {
 	url := statusURL(params)
+	if base := webcheck.URLParam(params, "api_url", ""); base != "" {
+		return p.collectWithAPI(ctx, url, base, params, fields)
+	}
 	return webcheck.Collect(ctx, webPage, url, params, fields, parseStatus,
 		func(s status) []checks.Observation { return p.observe(url, s) })
+}
+
+// collectWithAPI fetches stub_status and the two API pages concurrently in
+// one webcheck.Round, under its caller-context contract (a context that
+// ends returns only its error and moves no baseline). The two sources fail
+// apart: stub_status down is nginx.up 0 as ever, the API down is
+// nginx.api_up 0 (both pages are needed for it to count as read).
+func (p *plugin) collectWithAPI(ctx context.Context, url, base string, params map[string]any, fields map[string]string) ([]checks.Observation, error) {
+	zonesURL, upstreamsURL := apiURLs(base)
+	out, err := webcheck.Round(ctx, []string{url, zonesURL, upstreamsURL}, 0, params, fields,
+		func(body []byte) ([]byte, error) { return body, nil })
+	if err != nil {
+		return nil, err
+	}
+	var obs []checks.Observation
+	if s, reason := parsed(out[0], parseStatus); reason != "" {
+		obs = dbcheck.Down(webPage.Name, webPage.Up, webPage.Others, reason)
+	} else {
+		obs = p.observe(url, s)
+	}
+	zones, reason := parsed(out[1], parseZones)
+	var ups map[string]upstream
+	if reason == "" {
+		ups, reason = parsed(out[2], parseUpstreams)
+	}
+	if reason != "" {
+		return append(obs, p.apiDown(reason)...), nil
+	}
+	return append(obs, p.observeAPI(zones, ups)...), nil
+}
+
+// parsed parses a fetched page: the value, or the fetch's or the parser's
+// fixed reason.
+func parsed[S any](o webcheck.Outcome[[]byte], parse func([]byte) (S, error)) (S, string) {
+	var zero S
+	if o.Reason != "" {
+		return zero, o.Reason
+	}
+	v, err := parse(o.Page)
+	if err != nil {
+		return zero, err.Error()
+	}
+	return v, ""
 }
 
 // statusURL is the page to fetch: the url parameter, else the local default.

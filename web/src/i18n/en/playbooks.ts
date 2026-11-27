@@ -5,7 +5,7 @@ import { enPlaybookConflict, enPlaybookRepoText } from './playbookRepoText.ts';
 export const enPlaybooks = {
   list: {
     title: 'Playbooks',
-    summary: (n: number) => `${n} playbooks · a job template runs one of these against its scope`,
+    summary: (n: number) => `${n === 1 ? '1 playbook' : `${n} playbooks`} · a job template runs one of these against its scope`,
     add: 'New playbook',
     label: 'Playbooks',
     count: (n: number) => (n === 1 ? '1 playbook' : `${n} playbooks`),

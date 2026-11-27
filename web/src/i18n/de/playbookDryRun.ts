@@ -73,7 +73,7 @@ export const dePlaybookDryRun: Messages['playbooks']['page']['dryRun'] = {
     open: 'Zum Lauf',
     hosts: (n: number) => (n === 1 ? '1 Host' : `${n} Hosts`),
     hostsSoFar: (n: number, waiting: number) => `${n === 1 ? '1 Host' : `${n} Hosts`} bisher, ${waiting === 1 ? '1 Zone hat' : `${waiting} Zonen haben`} noch nicht gemeldet`,
-    zones: (n: number) => `${n} Zonen`,
+    zones: (n: number) => (n === 1 ? '1 Zone' : `${n} Zonen`),
     waiting: 'Wartet auf einen Worker, der Probeläufe kann. Ältere Worker nehmen keinen an: bleibt er in der Warteschlange, aktualisiere die Worker der Zone.',
     live: 'Läuft: das Ergebnis folgt live.',
     countsLabel: 'Zählung über alle Hosts',

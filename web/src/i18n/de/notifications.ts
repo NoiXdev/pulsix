@@ -66,7 +66,7 @@ export const deNotifications: Messages['notifications'] = {
     add: 'Kanal hinzufügen',
     mailOffTitle: 'E-Mail ist auf dieser Installation nicht eingerichtet',
     mailNote:
-      'E-Mail-Kanäle benötigen die Einstellungen für ausgehende E-Mails der Instanz, die ein Instanzadministrator unter Einstellungen → E-Mail-Versand festlegt.',
+      'E-Mail-Kanäle benötigen die Einstellungen für ausgehende E-Mails der Instanz; die Instanz-Administration legt sie unter Einstellungen → E-Mail-Versand fest.',
     label: 'Benachrichtigungskanäle',
     count: (n: number) => (n === 1 ? '1 Kanal' : `${n} Kanäle`),
     noMatch: 'Keine Kanäle passen zu den Filtern.',

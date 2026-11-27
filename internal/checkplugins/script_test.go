@@ -39,7 +39,52 @@ func TestValidateScriptParams(t *testing.T) {
 		{"refuses a fractional timeout", "script", map[string]any{"commands": []any{"x"}, "timeout_seconds": 1.5}, false},
 		{"refuses a string timeout", "script", map[string]any{"commands": []any{"x"}, "timeout_seconds": "10"}, false},
 		{"refuses an argv", "script", map[string]any{"commands": []any{"x"}, "argv": []any{"/bin/sh"}}, false},
+
+		// Values for placeholders (backlog 3.6j): the shape only; the host's
+		// rules judge them.
+		{"accepts args", "script", map[string]any{"commands": []any{"tcp", "disk"}, "args": []any{"tcp:port=8080", "tcp:host=db 1", "disk:mount=/var/a=b"}}, true},
+		{"accepts shell text as data", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a=;rm -rf / && $(id)"}}, true},
+		{"accepts a leading dash (the host decides)", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:offset=-5"}}, true},
+		{"accepts an empty args list", "script", map[string]any{"commands": []any{"x"}, "args": []any{}}, true},
+		{"accepts 16 values for one command", "script", map[string]any{"commands": []any{"x"}, "args": argEntries("x", 16)}, true},
+		{"accepts a 512-byte value", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a=" + strings.Repeat("v", 512)}}, true},
+		{"refuses 17 values for one command", "script", map[string]any{"commands": []any{"x"}, "args": argEntries("x", 17)}, false},
+		{"refuses a 513-byte value", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a=" + strings.Repeat("v", 513)}}, false},
+		{"refuses an empty value", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a="}}, false},
+		{"refuses a newline", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a=1\n2"}}, false},
+		{"refuses a NUL", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:a=1\x002"}}, false},
+		{"refuses no placeholder", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x=1"}}, false},
+		{"refuses an upper-case placeholder", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:Port=1"}}, false},
+		{"refuses a command not listed", "script", map[string]any{"commands": []any{"x"}, "args": []any{"y:port=1"}}, false},
+		{"refuses a placeholder twice", "script", map[string]any{"commands": []any{"x"}, "args": []any{"x:port=1", "x:port=2"}}, false},
+		{"refuses a string for args", "script", map[string]any{"commands": []any{"x"}, "args": "x:port=1"}, false},
 	})
+}
+
+func argEntries(command string, n int) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = command + ":p" + strings.Repeat("x", i) + "=1"
+	}
+	return out
+}
+
+// TestScriptArgsErrorsNeverQuoteValues: a refused args entry is described,
+// never repeated.
+func TestScriptArgsErrorsNeverQuoteValues(t *testing.T) {
+	const value = "Va1ue-Secret"
+	for _, args := range [][]any{
+		{"x:a=" + value + "\n"},
+		{"x:a=" + strings.Repeat(value, 60)},
+		{"y:a=" + value},
+		{"x:a=" + value, "x:a=" + value},
+		{"x" + value},
+	} {
+		err := checkplugins.Validate("script", map[string]any{"commands": []any{"x"}, "args": args})
+		if err == nil || strings.Contains(err.Error(), value) {
+			t.Errorf("Validate(%q) = %v", args, err)
+		}
+	}
 }
 
 // TestScriptDescriptor pins the parts of the descriptor a parameter case
@@ -61,6 +106,9 @@ func TestScriptDescriptor(t *testing.T) {
 	}
 	if d.Params[0].Format != checkplugins.FormatCommandName {
 		t.Fatalf("commands format = %q, want %q", d.Params[0].Format, checkplugins.FormatCommandName)
+	}
+	if a := d.Params[1]; a.Name != "args" || a.Type != checkplugins.TypeList || a.Required || a.MaxEntries != 64 || a.MaxBytes != 640 || a.Format != checkplugins.FormatScriptArg {
+		t.Fatalf("args param = %+v", a)
 	}
 	want := map[string]checkplugins.MetricKind{
 		"script.status":           checkplugins.Discrete,

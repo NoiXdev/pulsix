@@ -29,10 +29,12 @@ const (
 
 // hostMetrics are the metrics besides up; all get the failure on a failed
 // round. The two rates are absent in the first round and after a reset, and
-// an error without ExtendedStatus.
+// an error without ExtendedStatus. workers_max and workers_busy_max_pct
+// (backlog 3.11b) come from the Scoreboard line.
 var hostMetrics = []string{
 	"apache.workers_busy", "apache.workers_idle", "apache.workers_busy_pct",
 	"apache.requests_per_s", "apache.bytes_per_s",
+	"apache.workers_max", "apache.workers_busy_max_pct",
 }
 
 // webPage is what webcheck.Collect needs to know of this plugin.
@@ -102,6 +104,7 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 	} else {
 		obs = append(obs, checks.ValueObservation("", "apache.workers_busy_pct", float64(s.busy)/float64(total)*100))
 	}
+	obs = append(obs, limitObservations(s)...)
 	if !s.extended {
 		for _, m := range []string{"apache.requests_per_s", "apache.bytes_per_s"} {
 			obs = append(obs, checks.ErrObservation("", m, errors.New("apache: "+reasonExtended)))
@@ -117,6 +120,28 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 		obs = append(obs, checks.ValueObservation("", "apache.bytes_per_s", rate*1024))
 	}
 	return obs
+}
+
+// limitObservations are the busy workers against the server's limit: in
+// normal running the Scoreboard has one slot per worker the server may run,
+// its effective MaxRequestWorkers (backlog 3.11b, R1). mod_status also
+// prints every slot beyond those that is not dead, so during and after a
+// graceful restart (one that lowers the limit in particular) the length can
+// stay at the old, higher figure until the processes then started are
+// recycled; a full restart ends it. The percentage then reads too low,
+// never above 100: every busy slot is printed.
+func limitObservations(s status) []checks.Observation {
+	if s.slotsReason != "" {
+		err := errors.New("apache: " + s.slotsReason)
+		return []checks.Observation{
+			checks.ErrObservation("", "apache.workers_max", err),
+			checks.ErrObservation("", "apache.workers_busy_max_pct", err),
+		}
+	}
+	return []checks.Observation{
+		checks.ValueObservation("", "apache.workers_max", float64(s.slots)),
+		checks.ValueObservation("", "apache.workers_busy_max_pct", float64(s.busy)/float64(s.slots)*100),
+	}
 }
 
 var (

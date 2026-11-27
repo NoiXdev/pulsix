@@ -46,17 +46,19 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"redis: secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
 		"nginx: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/nginx_status), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
-		"verify_tls (true or false; default true). " +
+		"verify_tls (true or false; default true), api_url (at most 500 bytes; an http or https URL without user info or fragment). " +
 		"apache: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/server-status?auto), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"caddy: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1:2019/metrics), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
-		"verify_tls (true or false; default true). " +
+		"verify_tls (true or false; default true), upstreams_url (at most 500 bytes; an http or https URL without user info or fragment). " +
 		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ / - without a dot), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"script: commands (required; list; not empty; at most 32 entries; each the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
+		"args (list; at most 64 entries; each at most 640 bytes; each command:placeholder=value, a value for a placeholder the command's definition in the host's agent.yaml declares: " +
+		"the command one listed in commands, the placeholder a lower-case letter followed by up to 31 lower-case letters, digits or _, the value 1 to 512 bytes without control, format or separator characters; the host's own rule judges the value), " +
 		"format (nagios or json; default nagios), timeout_seconds (1 to 60; default 10). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5), " + vantage +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " +

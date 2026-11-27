@@ -3,7 +3,7 @@
 export const enRepos = {
   list: {
     title: 'Repositories',
-    summary: (n: number) => `${n} git repositories · playbooks reference a path inside one of these checkouts`,
+    summary: (n: number) => `${n === 1 ? '1 git repository' : `${n} git repositories`} · playbooks reference a path inside one of these checkouts`,
     add: 'Add repository',
     label: 'Repositories',
     count: (n: number) => (n === 1 ? '1 repository' : `${n} repositories`),

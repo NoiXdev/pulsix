@@ -5,6 +5,11 @@ package checkplugins
 // the query key auto when it is missing. An optional secret holds HTTP
 // basic-authentication credentials in the host's agent.yaml. The plugin
 // reports the server as a whole, so it has no item parameter.
+// apache.workers_max is the page's Scoreboard length — in normal running
+// the server's effective MaxRequestWorkers, after a graceful restart
+// possibly the old, higher figure until the old processes are recycled —
+// and apache.workers_busy_max_pct the busy workers against it (backlog
+// 3.11b); apache.workers_busy_pct stays against the started workers.
 func apachePlugin() Descriptor {
 	return Descriptor{
 		Name: "apache",
@@ -21,6 +26,8 @@ func apachePlugin() Descriptor {
 			{Name: "apache.workers_busy_pct", Kind: Numeric},
 			{Name: "apache.requests_per_s", Kind: Numeric},
 			{Name: "apache.bytes_per_s", Kind: Numeric},
+			{Name: "apache.workers_max", Kind: Numeric},
+			{Name: "apache.workers_busy_max_pct", Kind: Numeric},
 		},
 	}
 }

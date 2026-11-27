@@ -18,5 +18,8 @@ export const enCommon = {
   delete: 'Delete',
   edit: 'Edit',
   loading: 'Loading…',
+  /** The dash that joins two pieces of copy in a component ("Field 1 name — required"):
+   * spaced em dash in English, spaced en dash in German (backlog 1.42). */
+  dash: ' — ',
   never: 'never',
 };

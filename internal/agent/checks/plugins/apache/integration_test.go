@@ -11,8 +11,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// statusConf is a minimal httpd.conf: the event MPM, mod_status at
-// /server-status with ExtendedStatus On, open to everyone.
+// statusConf is a minimal httpd.conf: the event MPM limited to 150
+// workers (six processes of 25 threads), mod_status at /server-status with
+// ExtendedStatus On, open to everyone.
 const statusConf = `ServerRoot "/usr/local/apache2"
 Listen 80
 LoadModule mpm_event_module modules/mod_mpm_event.so
@@ -24,6 +25,8 @@ Group daemon
 ServerName localhost
 ErrorLog /proc/self/fd/2
 ExtendedStatus On
+ThreadsPerChild 25
+MaxRequestWorkers 150
 <Location "/server-status">
     SetHandler server-status
     Require all granted
@@ -82,6 +85,13 @@ func TestAgainstARealServer(t *testing.T) {
 	}
 	if o, ok := find(obs, "apache.workers_busy_pct"); !ok || o.Value == nil || *o.Value <= 0 || *o.Value > 100 {
 		t.Fatalf("workers_busy_pct = %+v, want in (0, 100]", o)
+	}
+	// In steady state the scoreboard has exactly MaxRequestWorkers slots
+	// (backlog 3.11b, R1), not ServerLimit x ThreadLimit (16 x 64); after a
+	// graceful restart it can be longer, which this test does not cover.
+	mustValue(t, obs, "apache.workers_max", 150)
+	if o, ok := find(obs, "apache.workers_busy_max_pct"); !ok || o.Value == nil || *o.Value <= 0 || *o.Value > 100 {
+		t.Fatalf("workers_busy_max_pct = %+v, want in (0, 100]", o)
 	}
 	mustAbsent(t, obs, "apache.requests_per_s")
 

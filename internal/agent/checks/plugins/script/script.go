@@ -13,6 +13,12 @@
 // (at most 64). Output is read in the Nagios format (exit code and
 // perfdata, nagios.go) or the JSON format (jsonformat.go).
 //
+// A command defined with placeholders (agent.yaml's run and args, backlog
+// 3.6j) takes the check's args values: the host's rules judge each one
+// (scriptargs.Template.Bind) before anything is checked or run, a refusal
+// is reported with the placeholder's name and never the value, and a
+// value becomes one whole argument.
+//
 // Before every run the program, and every argument that is an absolute
 // path, passes the checker, which judges every directory on the path's
 // way, links included (checkfiles.go, check.go); the runner then runs the
@@ -59,6 +65,7 @@ const (
 	textTooMany           = "the check lists more than 32 commands"
 	textBadFormat         = `the check's parameter "format" is invalid`
 	textBadTimeout        = `the check's parameter "timeout_seconds" is invalid`
+	textBadArgs           = `the check's parameter "args" is invalid`
 )
 
 const (
@@ -128,7 +135,7 @@ func (p *scriptPlugin) CollectWithCommands(ctx context.Context, params map[strin
 	if err != nil {
 		return nil, err
 	}
-	opts, problem := parseOptions(params)
+	opts, problem := parseOptions(params, names)
 	if problem != "" {
 		for _, name := range names {
 			obs = append(obs, noRun(name, problem)...)
@@ -207,15 +214,21 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 			obs = noRun(name, textInternal)
 		}
 	}()
-	argv, ok, problem := commands.Command(name)
-	if !ok || len(argv) == 0 {
+	cmd, ok, problem := commands.Command(name)
+	if !ok || cmd.Program() == "" {
 		return noRun(name, notDefined(name, problem))
+	}
+	// The host's rules judge the check's values; a refusal names the
+	// placeholder and a fixed reason, never the value.
+	argv, names, err := cmd.BindNamed(opts.args[name])
+	if err != nil {
+		return noRun(name, err.Error())
 	}
 	// The timeout covers the file checks too: a stat can hang on a dead
 	// network mount.
 	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
-	refusal, err := p.checkFilesWithin(rctx, argv, opts.timeout)
+	refusal, err := p.checkFilesWithin(rctx, argv, names, opts.timeout)
 	if err != nil {
 		return nil // the agent is stopping: CollectWithCommands reports nothing
 	}

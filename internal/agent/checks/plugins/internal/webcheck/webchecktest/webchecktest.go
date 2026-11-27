@@ -96,8 +96,9 @@ func (c *Clock) Now() time.Time { return c.T }
 // Advance moves the clock forward.
 func (c *Clock) Advance(d time.Duration) { c.T = c.T.Add(d) }
 
-// Find returns the observation for metric; it panics when one has an item
-// (the web server plugins report no items).
+// Find returns the observation for metric on item ""; it panics when one
+// has an item (a server metric never does; FindItem reads the per-pool and
+// API items).
 func Find(obs []checks.Observation, metric string) (checks.Observation, bool) {
 	for _, o := range obs {
 		if o.Metric == metric {
@@ -173,4 +174,54 @@ func NoSecretIn(t *testing.T, srv *Server, obs []checks.Observation, err error) 
 			t.Fatalf("%q leaked into %q", s, text)
 		}
 	}
+}
+
+// FindItem returns the observation for metric on item (backlog 3.11b: the
+// nginx and caddy API items).
+func FindItem(obs []checks.Observation, item, metric string) (checks.Observation, bool) {
+	for _, o := range obs {
+		if o.Item == item && o.Metric == metric {
+			return o, true
+		}
+	}
+	return checks.Observation{}, false
+}
+
+// MustItemValue asserts metric on item is a plain value.
+func MustItemValue(t *testing.T, obs []checks.Observation, item, metric string, want float64) {
+	t.Helper()
+	o, ok := FindItem(obs, item, metric)
+	if !ok {
+		t.Fatalf("no observation %q on %q in %+v", metric, item, obs)
+	}
+	if o.Value == nil || *o.Value != want || o.Err != "" {
+		t.Fatalf("%q on %q = %+v, want value %v", metric, item, o, want)
+	}
+}
+
+// MustItemErr asserts metric on item is an error observation
+// "<prefix>: <reason>" with no value and no label.
+func MustItemErr(t *testing.T, obs []checks.Observation, prefix, item, metric, reason string) {
+	t.Helper()
+	o, ok := FindItem(obs, item, metric)
+	if !ok || o.Value != nil || o.Label != nil || o.Err != prefix+": "+reason {
+		t.Fatalf("%q on %q = %+v, want error %q", metric, item, o, prefix+": "+reason)
+	}
+}
+
+// MustItemAbsent asserts metric on item is not reported.
+func MustItemAbsent(t *testing.T, obs []checks.Observation, item, metric string) {
+	t.Helper()
+	if o, ok := FindItem(obs, item, metric); ok {
+		t.Fatalf("%q on %q reported: %+v", metric, item, o)
+	}
+}
+
+// Items is the set of items with any observation, "" included.
+func Items(obs []checks.Observation) map[string]bool {
+	out := map[string]bool{}
+	for _, o := range obs {
+		out[o.Item] = true
+	}
+	return out
 }
