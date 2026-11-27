@@ -217,8 +217,8 @@ func (f *integAgentStore) Touch(_ context.Context, serial, version string) error
 
 // Heartbeat records like Touch: this harness asserts that heartbeats
 // arrive, not what they report about the agent.yaml file.
-func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport, _ agents.LocalChecksReport, _ bool) error {
-	return f.Touch(ctx, serial, version)
+func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport, _ agents.LocalChecksReport, _ bool, _ *string) (agents.Names, error) {
+	return agents.Names{}, f.Touch(ctx, serial, version)
 }
 
 // HostsWithAgent reports no host: enrollment runs are not exercised here.

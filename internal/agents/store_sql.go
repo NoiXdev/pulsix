@@ -267,10 +267,14 @@ func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 // checks report, the connection start (Touch's rule, reconnectGap) and the
 // online period's start (Touch's rule, OnlineWindow) in one statement. An
 // unknown report writes NULL to its columns; a known one writes its names,
-// checks and problems as (possibly empty, never NULL) arrays.
-func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool) error {
+// checks and problems as (possibly empty, never NULL) arrays. The status
+// page mode (backlog 3.132) is written as given, nil as NULL. The same
+// statement reads the organization's and host's names; an unknown serial
+// writes nothing and answers none, without an error.
+func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool, statusPage *string) (Names, error) {
 	p := gen.RecordAgentHeartbeatParams{
-		Serial: serial, Version: version, ProbesSupported: probesSupported, ReconnectGapSeconds: reconnectGap.Seconds(),
+		Serial: serial, Version: version, ProbesSupported: probesSupported, StatusPage: statusPage,
+		ReconnectGapSeconds:      reconnectGap.Seconds(),
 		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
 		BufferWindowSeconds: DisconnectBufferWindow.Seconds(),
 	}
@@ -284,13 +288,17 @@ func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secret
 	}
 	checks, problems, err := localChecksColumns(local)
 	if err != nil {
-		return fmt.Errorf("record agent heartbeat: %w", err)
+		return Names{}, fmt.Errorf("record agent heartbeat: %w", err)
 	}
 	p.LocalChecks, p.LocalCheckProblems = checks, problems
-	if err := s.q.RecordAgentHeartbeat(ctx, p); err != nil {
-		return fmt.Errorf("record agent heartbeat: %w", err)
+	row, err := s.q.RecordAgentHeartbeat(ctx, p)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Names{}, nil // an unknown serial: nothing written, as before
 	}
-	return nil
+	if err != nil {
+		return Names{}, fmt.Errorf("record agent heartbeat: %w", err)
+	}
+	return Names{Org: row.OrgName, Host: row.HostName}, nil
 }
 
 // configCheckRewrite is how old a stored configuration check may grow
@@ -335,6 +343,7 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 		HostID: h.HostID, OrgID: h.OrgID, AgentName: h.AgentName, CertSerial: h.CertSerial,
 		LastSeen: db.TimePtr(h.LastSeen), Version: h.Version, CreatedAt: h.CreatedAt, HostName: hostName,
 		HeartbeatInterval: intervalOf(h.HeartbeatIntervalS), ProbesSupported: h.ProbesSupported,
+		StatusPage: h.StatusPage,
 	}
 	if certNotAfter.Valid {
 		t := certNotAfter.Time

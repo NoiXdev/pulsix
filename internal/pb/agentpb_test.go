@@ -447,3 +447,57 @@ func TestProbeMessagesRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusPageFieldNumbers pins the wire numbers of the status page
+// fields (backlog 3.132), and that an older peer's message — one without
+// them — still decodes with them unset.
+func TestStatusPageFieldNumbers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		msg   proto.Message
+		field string
+		num   int32
+	}{
+		{&agentpb.Heartbeat{}, "status_page", 9},
+		{&agentpb.ManagerMessage{}, "agent_names", 4},
+		{&agentpb.AgentNames{}, "org_name", 1},
+		{&agentpb.AgentNames{}, "host_name", 2},
+	}
+	for _, tc := range cases {
+		desc := tc.msg.ProtoReflect().Descriptor()
+		f := desc.Fields().ByName(protoreflect.Name(tc.field))
+		if f == nil {
+			t.Errorf("%s.%s missing", desc.Name(), tc.field)
+			continue
+		}
+		if int32(f.Number()) != tc.num {
+			t.Errorf("%s.%s = %d, want %d", desc.Name(), tc.field, f.Number(), tc.num)
+		}
+	}
+	modes := map[agentpb.StatusPageMode]int32{
+		agentpb.StatusPageMode_STATUS_PAGE_MODE_UNSPECIFIED: 0, agentpb.StatusPageMode_STATUS_PAGE_MODE_OFF: 1,
+		agentpb.StatusPageMode_STATUS_PAGE_MODE_LOOPBACK: 2, agentpb.StatusPageMode_STATUS_PAGE_MODE_NETWORK: 3,
+		agentpb.StatusPageMode_STATUS_PAGE_MODE_FAILED: 4,
+	}
+	for m, n := range modes {
+		if int32(m) != n {
+			t.Errorf("%v = %d, want %d", m, m, n)
+		}
+	}
+
+	b, err := proto.Marshal(&agentpb.ManagerMessage{Ack: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got agentpb.ManagerMessage
+	if err := proto.Unmarshal(b, &got); err != nil || got.GetAgentNames() != nil {
+		t.Fatalf("an older manager's ack: %v, names %v", err, got.GetAgentNames())
+	}
+	msg := &agentpb.ManagerMessage{Ack: true, AgentNames: &agentpb.AgentNames{OrgName: "Acme", HostName: "web-1"}}
+	if b, err = proto.Marshal(msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := proto.Unmarshal(b, &got); err != nil || !proto.Equal(msg, &got) {
+		t.Fatalf("round trip: %v %v", err, &got)
+	}
+}

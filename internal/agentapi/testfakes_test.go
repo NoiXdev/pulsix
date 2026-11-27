@@ -344,9 +344,9 @@ func (f *fakeAgentStore) Touch(_ context.Context, serial, version string) error 
 
 // Heartbeat is Touch plus the secrets and local checks reports, which it
 // records and stores on the agent row the way the SQL store does.
-func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, probesSupported bool) error {
+func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, probesSupported bool, statusPage *string) (agents.Names, error) {
 	if err := f.Touch(ctx, serial, version); err != nil {
-		return err
+		return agents.Names{}, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -357,9 +357,11 @@ func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, 
 		if f.agentsR[i].CertSerial == serial {
 			f.agentsR[i].Secrets = secrets
 			f.agentsR[i].LocalChecks = local
+			f.agentsR[i].StatusPage = statusPage
+			return agents.Names{Org: "Org " + f.agentsR[i].OrgID.String(), Host: "Host " + f.agentsR[i].HostID.String()}, nil
 		}
 	}
-	return nil
+	return agents.Names{}, nil
 }
 
 // LocalChecksByHosts reads the stored local checks reports of the listed
