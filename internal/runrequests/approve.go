@@ -120,8 +120,12 @@ func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fing
 		return Approved{}, err
 	}
 	approved := jobs.ApprovedRun{PinnedCommit: pin, EnrollHostIDs: enrol}
+	// What the approval binds of the follow-ups it starts (backlog 2.143);
+	// stored even when it starts none, so the picture keeps binding them
+	// (bindsFollowUps) and stays the one approved.
+	bound := followUpBindings(r.ID, p, started)
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, approved, nil)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, approved, bound)
 	if err != nil {
 		return Approved{}, fmt.Errorf("decide run request: %w", err)
 	}
@@ -129,7 +133,7 @@ func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fing
 		return Approved{}, ErrDecided
 	}
 	group := r.ID
-	r.PinnedCommit, r.EnrollHostIDs = pin, enrol
+	r.PinnedCommit, r.EnrollHostIDs, r.FollowUpBindings = pin, enrol, bound
 	if r.Kind == KindRetryFailed {
 		err = s.enqueuer.RetryFailed(ctx, orgID, r, by, idempotencyKey(r.ID), group, list, approved)
 	} else {
@@ -178,10 +182,14 @@ var errNoApprovedPicture = errors.New("the run's approval recorded no run pictur
 // or an agent enrolled after the approval does not fail the run. Anything else, a failed
 // lookup included, refuses the claim, and the queue fails the job with the
 // reason.
+//
+// A run group no request owns is a follow-up's when the chain it belongs
+// to started from an approved request's run: checkFollowUpClaim (backlog
+// 2.143). Any other passes.
 func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, run jobs.ApprovedRun) error {
 	r, err := s.store.ByRunGroup(ctx, orgID, runGroupID)
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return s.checkFollowUpClaim(ctx, orgID, runGroupID, run)
 	}
 	if err != nil {
 		return fmt.Errorf("look up the run's request: %w", err)
@@ -205,24 +213,24 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	if Fingerprint(r.ID, p) != r.ApprovedFingerprint {
 		return ErrChangedAfterApproval
 	}
-	return checkApprovedHosts(p, run.HostIDs)
+	return checkApprovedHosts(p.Targets, run.HostIDs)
 }
 
 // ErrHostsChangedAfterApproval fails the claim of a run job that renders a
 // host the approved run picture does not hold (backlog 2.141).
 var ErrHostsChangedAfterApproval = errors.New("the run's hosts changed after it was approved; ask for the run again")
 
-// checkApprovedHosts refuses a job host that is not among p's targets. p
-// is the live picture, and its fingerprint equals the approved one, so
-// its targets are the approved ones. A job froze its host list when it
-// was enqueued, after the approval read the picture: a host that joined
-// the template's hosts in between and left again before the claim is in
-// the job, but in neither picture, and must not be rendered — let alone
-// played on — without having been approved. Fewer hosts than approved is
-// fine (one left, or the enqueue excluded it).
-func checkApprovedHosts(p Picture, hostIDs []uuid.UUID) error {
-	approved := make(map[string]bool, len(p.Targets))
-	for _, h := range p.Targets {
+// checkApprovedHosts refuses a job host that is not among targets, the
+// live picture's (or a follow-up's live binding's), whose fingerprint
+// equals the approved one, so they are the approved ones. A job froze its
+// host list when it was enqueued, after the approval read the picture: a
+// host that joined the template's hosts in between and left again before
+// the claim is in the job, but in neither picture, and must not be
+// rendered — let alone played on — without having been approved. Fewer
+// hosts than approved is fine (one left, or the enqueue excluded it).
+func checkApprovedHosts(targets []PictureHost, hostIDs []uuid.UUID) error {
+	approved := make(map[string]bool, len(targets))
+	for _, h := range targets {
 		approved[h.ID] = true
 	}
 	for _, id := range hostIDs {
@@ -231,6 +239,55 @@ func checkApprovedHosts(p Picture, hostIDs []uuid.UUID) error {
 		}
 	}
 	return nil
+}
+
+// errFollowUpApprovalGone fails the claim of a follow-up whose chain
+// started from a request that is no longer approved. It is an ordinary
+// refusal, never errRequestNotApproved: the withdrawn-claim replay belongs
+// to the request's own run group.
+var errFollowUpApprovalGone = errors.New("the approval that started this follow-up no longer stands; ask for the run again")
+
+// checkFollowUpClaim is CheckRunClaim for a follow-up run (backlog 2.143,
+// the owner's decision of 2026-11-27): when the chain group belongs to
+// started from an approved request's run, the claim compares the
+// follow-up's hosts and vars with what the approval bound, as the claim of
+// the run itself compares its picture (2.141). A group that is no
+// follow-up of a request's run, or of one approved before follow-ups were
+// bound, passes as before. A follow-up the approval did not bind (added
+// to a template's follow-ups afterwards), or whose live binding (its
+// template's targets among the hosts stored for it, and their vars)
+// differs from the approved one, fails with ErrChangedAfterApproval; a job
+// host outside the bound hosts with ErrHostsChangedAfterApproval.
+func (s *Service) checkFollowUpClaim(ctx context.Context, orgID, group uuid.UUID, run jobs.ApprovedRun) error {
+	o, err := s.store.FollowUpOrigin(ctx, orgID, group)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up the follow-up's request: %w", err)
+	}
+	r, err := s.store.Get(ctx, orgID, o.RequestID)
+	if err != nil {
+		return fmt.Errorf("look up the follow-up's request: %w", err)
+	}
+	if r.Status != StatusApproved {
+		return errFollowUpApprovalGone
+	}
+	if r.FollowUpBindings == nil {
+		return nil
+	}
+	b, ok := r.FollowUpBindings.Nodes[followUpKey(o.Path, o.TemplateID)]
+	if !ok {
+		return fmt.Errorf("%w (follow-up template %s was not part of the approved run)", ErrChangedAfterApproval, o.TemplateID)
+	}
+	n, err := s.pictures.BindFollowUp(ctx, orgID, r.ID, o.TemplateID, b.Within)
+	if err != nil {
+		return fmt.Errorf("resolve the approved follow-up: %w", err)
+	}
+	if FollowUpFingerprint(r.ID, n) != b.Fingerprint {
+		return fmt.Errorf("%w (the follow-up's hosts or vars)", ErrChangedAfterApproval)
+	}
+	return checkApprovedHosts(n.Targets, run.HostIDs)
 }
 
 // ConfirmWithdrawn is the claim guard's second look before a job refused

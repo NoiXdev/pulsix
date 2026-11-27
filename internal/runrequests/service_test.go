@@ -217,10 +217,24 @@ func (m *memStore) EndWait(_ context.Context, orgID, id uuid.UUID, to runrequest
 	return true, nil
 }
 
-type fakePictures struct{ p runrequests.Picture }
+type fakePictures struct {
+	p runrequests.Picture
+	// live is each follow-up template's binding now (BindFollowUp), and
+	// within what the last BindFollowUp of each was given.
+	live   map[uuid.UUID]runrequests.PictureFollowUp
+	within map[uuid.UUID][]uuid.UUID
+}
 
 func (f *fakePictures) Picture(context.Context, uuid.UUID, runrequests.Request) (runrequests.Picture, error) {
 	return f.p, nil
+}
+
+func (f *fakePictures) BindFollowUp(_ context.Context, _, _, templateID uuid.UUID, within []uuid.UUID) (runrequests.PictureFollowUp, error) {
+	if f.within == nil {
+		f.within = map[uuid.UUID][]uuid.UUID{}
+	}
+	f.within[templateID] = within
+	return f.live[templateID], nil
 }
 
 type fakeEnqueuer struct {

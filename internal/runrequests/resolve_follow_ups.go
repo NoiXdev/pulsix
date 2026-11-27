@@ -26,7 +26,13 @@ func nonNil(ids []uuid.UUID) []uuid.UUID {
 //
 // pinRepo is the repository the requested run is pinned to (nil: no pin);
 // the tree then says what each follow-up runs.
-func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup, pinRepo *uuid.UUID) (*PictureFollowUps, error) {
+//
+// With the setting on, every follow-up that would start is bound to its
+// hosts and vars (backlog 2.143, BindFollowUp), a direct one within the
+// run's hosts (within), unless req was approved before follow-ups were
+// bound (bindsFollowUps): its picture, and so its fingerprint, stay as
+// they were approved.
+func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, req Request, tmpl templates.Template, retry *retryLookup, pinRepo *uuid.UUID, within []uuid.UUID) (*PictureFollowUps, error) {
 	roots, err := r.followUpRoots(ctx, orgID, tmpl, retry)
 	if err != nil || len(roots) == 0 {
 		return nil, err
@@ -35,7 +41,22 @@ func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, tmpl template
 	if err != nil {
 		return nil, fmt.Errorf("read follow-up setting: %w", err)
 	}
-	return buildFollowUps(ctx, start, roots, r.followUpLookup(orgID), pinRepo)
+	read := map[uuid.UUID]templates.Template{}
+	var bind followUpBinder
+	if start && bindsFollowUps(req) {
+		bind = func(ctx context.Context, id uuid.UUID, within []uuid.UUID) (PictureFollowUp, error) {
+			// The walk binds a node only after its lookup found it.
+			return r.bindFollowUp(ctx, orgID, req.ID, read[id], within)
+		}
+	}
+	return buildFollowUps(ctx, start, roots, r.followUpLookup(orgID, read), pinRepo, bind, within)
+}
+
+// bindsFollowUps says whether req's picture binds its follow-ups: always,
+// but for a request approved before follow-ups were bound (it stored no
+// bindings).
+func bindsFollowUps(req Request) bool {
+	return req.Status != StatusApproved || req.FollowUpBindings != nil
 }
 
 func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, tmpl templates.Template, retry *retryLookup) ([]FollowUpRoot, error) {
@@ -63,8 +84,9 @@ func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, tmpl temp
 
 // followUpLookup reads each template at most once per picture: a template
 // that several branches name (a diamond) is read the first time only, a
-// deleted one included.
-func (r *Resolver) followUpLookup(orgID uuid.UUID) FollowUpLookup {
+// deleted one included. Each template it finds lands in read too, for the
+// follow-up's binding.
+func (r *Resolver) followUpLookup(orgID uuid.UUID, read map[uuid.UUID]templates.Template) FollowUpLookup {
 	type entry struct {
 		t     FollowUpTemplate
 		found bool
@@ -82,6 +104,7 @@ func (r *Resolver) followUpLookup(orgID uuid.UUID) FollowUpLookup {
 		if err != nil {
 			return FollowUpTemplate{}, false, fmt.Errorf("read follow-up template: %w", err)
 		}
+		read[id] = t
 		refs := make([]FollowUpRef, len(t.FollowUps))
 		for i, f := range t.FollowUps {
 			refs[i] = FollowUpRef{TemplateID: f.TemplateID, Name: f.Name}

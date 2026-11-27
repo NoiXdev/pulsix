@@ -252,7 +252,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 	if p.Commit != nil && repo != nil {
 		pinRepo = &repo.ID
 	}
-	if p.FollowUps, err = r.followUps(ctx, orgID, tmpl, retry, pinRepo); err != nil {
+	if p.FollowUps, err = r.followUps(ctx, orgID, req, tmpl, retry, pinRepo, hostIDsOf(p.Targets)); err != nil {
 		return Picture{}, err
 	}
 	return p, nil

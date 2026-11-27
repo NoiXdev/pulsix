@@ -176,9 +176,25 @@ type PictureFollowUp struct {
 	// (its playbook comes from the same repository, below pinned runs
 	// only); FollowUpCurrent, the state of Repo when it starts;
 	// FollowUpEditor, its editor playbook as saved when it starts.
-	Commit    string            `json:"commit,omitempty" enum:"pinned,current,editor"`
-	Repo      string            `json:"repo,omitempty"`
-	FollowUps []PictureFollowUp `json:"follow_ups,omitempty"`
+	Commit string `json:"commit,omitempty" enum:"pinned,current,editor"`
+	Repo   string `json:"repo,omitempty"`
+	// Targets, ExtraVars and VarsDigest are what an approval binds of the
+	// follow-up (backlog 2.143), set on one the approval would start (the
+	// setting on, no Stop): the hosts it can run on (its template's targets
+	// under its limit, among the hosts its parent is bound to: the run's
+	// targets for a direct follow-up), its extra vars with secrets masked,
+	// and the keyed digest of the values it receives (Resolver.varsDigest
+	// over those hosts and its template). A bound follow-up always has a
+	// VarsDigest; Targets is absent when it reaches no host. None is set on
+	// the picture of a request approved before follow-ups were bound, so
+	// its fingerprint is unchanged.
+	Targets    []PictureHost     `json:"targets,omitempty" doc:"Set when the approval binds this follow-up: the hosts it can run on, its template's targets among the hosts the run before it is bound to; absent when it reaches none"`
+	ExtraVars  map[string]any    `json:"extra_vars,omitempty" doc:"Set when the approval binds this follow-up: its template's extra vars, secrets masked"`
+	VarsDigest string            `json:"vars_digest,omitempty" doc:"Set when the approval binds this follow-up: a keyed digest of every value it receives on those hosts; a change to any of them fails its run"`
+	FollowUps  []PictureFollowUp `json:"follow_ups,omitempty"`
+	// chainPath is the chain path of the follow-up's run (its row's path),
+	// set on a bound one: with TemplateID it keys its binding (followUpKey).
+	chainPath []uuid.UUID
 }
 
 // What a follow-up of a pinned run runs (PictureFollowUp.Commit).

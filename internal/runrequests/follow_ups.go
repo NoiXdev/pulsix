@@ -61,14 +61,20 @@ type FollowUpRoot struct {
 // path, then deleted. Stop-marked nodes are leaves. Every emitted node
 // counts toward MaxPictureFollowUps; past it the walk ends with Truncated.
 func BuildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, lookup FollowUpLookup) (*PictureFollowUps, error) {
-	return buildFollowUps(ctx, start, roots, lookup, nil)
+	return buildFollowUps(ctx, start, roots, lookup, nil, nil, nil)
 }
+
+// followUpBinder binds a follow-up (backlog 2.143): the node with its
+// Targets, ExtraVars and VarsDigest set, its hosts taken among within.
+type followUpBinder func(ctx context.Context, templateID uuid.UUID, within []uuid.UUID) (PictureFollowUp, error)
 
 // buildFollowUps is BuildFollowUps for a run pinned to a commit of
 // repository pinRepo (nil: not pinned). Each node then says what it runs
 // (PictureFollowUp.Commit): a follow-up of the same repository under
-// pinned runs only runs the same commit (jobs.Service.chainPin).
-func buildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, lookup FollowUpLookup, pinRepo *uuid.UUID) (*PictureFollowUps, error) {
+// pinned runs only runs the same commit (jobs.Service.chainPin). With
+// bind (and start) every node that would start is bound, a root within
+// the run's hosts (within), a deeper one within its parent's bound hosts.
+func buildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, lookup FollowUpLookup, pinRepo *uuid.UUID, bind followUpBinder, within []uuid.UUID) (*PictureFollowUps, error) {
 	if len(roots) == 0 {
 		return nil, nil
 	}
@@ -79,9 +85,9 @@ func buildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, looku
 		}
 		return out, nil
 	}
-	w := walker{lookup: lookup, pinRepo: pinRepo}
+	w := walker{lookup: lookup, pinRepo: pinRepo, bind: bind}
 	for _, r := range roots {
-		n, ok, err := w.node(ctx, r.TemplateID, r.Name, r.Depth, r.Path, true)
+		n, ok, err := w.node(ctx, r.TemplateID, r.Name, r.Depth, r.Path, true, within)
 		if err != nil {
 			return nil, err
 		}
@@ -97,14 +103,15 @@ func buildFollowUps(ctx context.Context, start bool, roots []FollowUpRoot, looku
 type walker struct {
 	lookup    FollowUpLookup
 	pinRepo   *uuid.UUID
+	bind      followUpBinder
 	emitted   int
 	truncated bool
 }
 
 // node emits id at the row depth and path of its parent run; ok is false
 // when the cap stopped the walk before it. parentPinned says that the run
-// starting it is pinned.
-func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int, path []uuid.UUID, parentPinned bool) (PictureFollowUp, bool, error) {
+// starting it is pinned; within is the hosts its parent is bound to.
+func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int, path []uuid.UUID, parentPinned bool, within []uuid.UUID) (PictureFollowUp, bool, error) {
 	if w.emitted >= MaxPictureFollowUps {
 		w.truncated = true
 		return PictureFollowUp{}, false, nil
@@ -139,9 +146,17 @@ func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int,
 			n.Commit = FollowUpEditor
 		}
 	}
+	if w.bind != nil {
+		b, err := w.bind(ctx, id, within)
+		if err != nil {
+			return PictureFollowUp{}, false, fmt.Errorf("bind follow-up template %s: %w", id, err)
+		}
+		n.Targets, n.ExtraVars, n.VarsDigest, n.chainPath = b.Targets, b.ExtraVars, b.VarsDigest, slices.Clone(path)
+		within = hostIDsOf(b.Targets)
+	}
 	childPath := append(slices.Clone(path), id)
 	for _, c := range t.FollowUps {
-		child, ok, err := w.node(ctx, c.TemplateID, c.Name, depth+1, childPath, pinned)
+		child, ok, err := w.node(ctx, c.TemplateID, c.Name, depth+1, childPath, pinned, within)
 		if err != nil {
 			return PictureFollowUp{}, false, err
 		}

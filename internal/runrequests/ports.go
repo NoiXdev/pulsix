@@ -11,6 +11,11 @@ import (
 // Pictures resolves what a request would run now.
 type Pictures interface {
 	Picture(ctx context.Context, orgID uuid.UUID, r Request) (Picture, error)
+	// BindFollowUp is the binding of request requestID's follow-up
+	// templateID now, its hosts among within (backlog 2.143): the claim of
+	// a follow-up's job compares its FollowUpFingerprint with the one the
+	// approval stored.
+	BindFollowUp(ctx context.Context, orgID, requestID, templateID uuid.UUID, within []uuid.UUID) (PictureFollowUp, error)
 }
 
 // Enqueuer starts what an approval allows, through the existing run paths.
