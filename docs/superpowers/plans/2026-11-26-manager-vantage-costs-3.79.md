@@ -24,7 +24,7 @@
 - Lock loss and regain write again even when unchanged; a failed write is retried next refresh (`TestLostLockForgetsVantageState`, `TestAssignmentWriteFailureRetriedNextRefresh`).
 - Same host checks response for 20 vantage checks, with two store reads instead of forty (`TestHostChecksVantagesBatched` in internal/api); the existing `TestHostChecksReportVantages` stays green unchanged.
 - Batched reads keep org and host scope: rows of another org or host never appear (`TestHostVantageReadsScoped` in internal/probes).
-- The heartbeat writes the flag in its own statement and flips it both ways (`TestHeartbeatStoresProbesSupported` in internal/agents); agentapi passes it through (`TestHeartbeatCarriesProbesSupported`).
+- The heartbeat writes the flag in its own statement and flips it both ways (`TestProbesSupportedAndOnlineCapableAgents` in internal/agents, which also shows a touch keeps it); agentapi passes it through (`TestHeartbeatCarriesProbesSupported`).
 
 ## Task 1: Batch the host page's vantage reads
 **Files:** `internal/db/queries/probes.sql` (+ sqlc), `internal/probes/{view.go,store_sql.go}` (+ `view_internal_test.go`, `store_sql_test.go`), `internal/api/apitest/apitest.go`, `internal/api/host_check_vantages_batch_test.go` (new).
