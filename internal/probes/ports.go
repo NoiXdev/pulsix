@@ -39,11 +39,15 @@ type Recorder interface {
 }
 
 // Locker is the advisory lock that makes one manager the prober (the
-// schedule.Locker shape; production passes schedule.NewAdvisoryLocker
-// with AdvisoryKeyProbes).
+// schedule.Locker shape plus Generation; production passes
+// schedule.NewAdvisoryLocker with AdvisoryKeyProbes). Generation changes
+// whenever TryLock took the lock on a new session: the runner holds the
+// lock across ticks, and a lock lost and taken again between two of them
+// is a lost lock (Runner.lost).
 type Locker interface {
 	TryLock(ctx context.Context) (bool, error)
 	Unlock(ctx context.Context)
+	Generation() uint64
 }
 
 // ProbeFunc runs one probe of address and returns its observations. secret

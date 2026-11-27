@@ -158,6 +158,96 @@ func TestAssignmentsWrittenOnlyWhenChanged(t *testing.T) {
 	}
 }
 
+// TestAssignmentsWrittenOnAddressOrIntervalChange: a change of the
+// target's address or of the check's interval alone is a changed set.
+func TestAssignmentsWrittenOnAddressOrIntervalChange(t *testing.T) {
+	for name, change := range map[string]func(h *harness, f fleet){
+		"address": func(h *harness, f fleet) {
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Name: "target", Address: "192.0.2.77", Monitored: true},
+				vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+		},
+		"interval": func(h *harness, f fleet) {
+			h.world.setChecks(h.host, vantageCheck("web", "tcp", 2*time.Minute, []uuid.UUID{f.group}, nil))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			f := h.addFleet("a1")
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Name: "target", Address: "192.0.2.1", Monitored: true},
+				vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+			h.tickAt(0)
+			h.tickAt(30 * time.Second)
+			change(h, f)
+			h.tickAt(60 * time.Second)
+			h.tickAt(90 * time.Second)
+			rs := h.vstore.Replaces()
+			if len(rs) != 2 || len(rs[1].set) != 1 {
+				t.Fatalf("writes = %+v, want one more after the %s change", rs, name)
+			}
+			if a := rs[1].set[0]; (name == "address") != (a.Address == "192.0.2.77") || (name == "interval") != (a.Interval == 2*time.Minute) {
+				t.Fatalf("written %+v, want only the %s changed", a, name)
+			}
+		})
+	}
+}
+
+// TestAssignmentRecordForgetsDeletedOrgs: an organization that is no
+// longer listed loses its record at the end of the refresh, so the map
+// does not grow with every organization that ever existed; listed again,
+// it is written at once.
+func TestAssignmentRecordForgetsDeletedOrgs(t *testing.T) {
+	orgs := &fakeOrgList{}
+	h := newHarness(t, func(_ *harness, d *Deps) { d.Orgs = orgs })
+	orgs.set(h.org)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, synthetic("web", "tcp", time.Minute))
+	h.tickAt(0)
+	if _, ok := h.r.written[h.org]; !ok {
+		t.Fatal("no record after the first write")
+	}
+	orgs.set()
+	h.tickAt(30 * time.Second)
+	if len(h.r.written) != 0 {
+		t.Fatalf("records = %v, want the unlisted organization's gone", h.r.written)
+	}
+	orgs.set(h.org)
+	h.tickAt(60 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 2 {
+		t.Fatalf("writes = %d, want the organization written again once listed", len(rs))
+	}
+}
+
+// TestReacquiredLockForgetsState: a TryLock that answers true on a new
+// session (the old one died, another manager may have held the lock in
+// between) is a lost and regained lock: the assignment records, the
+// schedule and the slots' assertion times start afresh, and every
+// organization is written again although nothing changed here.
+func TestReacquiredLockForgetsState(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+	h.tickAt(0)
+	s := slot{host: h.host, key: "web"}
+	h.tickAt(5 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 1 {
+		t.Fatalf("writes = %d before the reacquire, want 1", len(rs))
+	}
+	h.locker.reacquire()
+	h.tickAt(10 * time.Second)
+	rs := h.vstore.Replaces()
+	if len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), agentSet(rs[0].set)) {
+		t.Fatalf("writes = %+v, want the same set written again on the new session", rs)
+	}
+	if got := h.r.targets[s].assertSince; !got.Equal(t0.Add(10 * time.Second)) {
+		t.Fatalf("assertSince = %v, want the refresh on the new session", got)
+	}
+	// The same session on later ticks forgets nothing.
+	h.tickAt(15 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 2 {
+		t.Fatalf("writes = %d, want none more on the same session", len(rs))
+	}
+}
+
 // TestAssignmentsRewrittenAfterThePeriod is backlog 3.79 (1), R2: an
 // unchanged set, empty or not, is written again once its last write is
 // assignmentRewrite old, so a change made outside the runner heals.

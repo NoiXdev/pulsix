@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -40,12 +41,30 @@ type fakeLocker struct {
 	mu      sync.Mutex
 	allow   bool
 	unlocks int
+	// gen is the lock's session generation (Generation): reacquire bumps
+	// it while allow stays true, as a session that died and was replaced
+	// between two ticks does.
+	gen uint64
 }
 
 func (l *fakeLocker) TryLock(context.Context) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.allow, nil
+}
+
+func (l *fakeLocker) Generation() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.gen
+}
+
+// reacquire stands for a TryLock that found its session gone and took
+// the lock again on a new one.
+func (l *fakeLocker) reacquire() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.gen++
 }
 
 func (l *fakeLocker) Unlock(context.Context) {
@@ -63,6 +82,24 @@ func (l *fakeLocker) Unlocks() int {
 type fakeOrgs struct{ ids []uuid.UUID }
 
 func (f fakeOrgs) ListOrgIDs(context.Context) ([]uuid.UUID, error) { return f.ids, nil }
+
+// fakeOrgList is fakeOrgs a test can change between ticks.
+type fakeOrgList struct {
+	mu  sync.Mutex
+	ids []uuid.UUID
+}
+
+func (f *fakeOrgList) set(ids ...uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ids = ids
+}
+
+func (f *fakeOrgList) ListOrgIDs(context.Context) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.ids), nil
+}
 
 // fakeWorld is the resolver and the host store at once: per org, the
 // hosts and their synthetic checks.

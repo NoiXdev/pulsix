@@ -143,8 +143,11 @@ type Runner struct {
 	tickEvery, refreshEvery time.Duration
 	maxConcurrent           int
 
-	// Owned by the Run goroutine.
+	// Owned by the Run goroutine. lockGen is the locker's Generation when
+	// held was last set: a different one on a later tick is a lock lost
+	// and taken again in between.
 	held      bool
+	lockGen   uint64
 	targets   map[slot]target
 	refreshed time.Time
 	next      map[slot]time.Time
@@ -285,6 +288,14 @@ func (r *Runner) tickOnce(ctx context.Context) {
 		r.lost()
 		return // another manager probes, or the lock cannot be confirmed
 	}
+	// A lock taken again on a new session since the last tick was lost in
+	// between, and another manager may have held it: forget as for a lock
+	// that was refused (backlog 3.79 review).
+	gen := r.locker.Generation()
+	if r.held && gen != r.lockGen {
+		r.lost()
+	}
+	r.lockGen = gen
 	r.held = true
 	now := r.clock()
 	if r.refreshed.IsZero() || !now.Before(r.refreshed.Add(r.refreshEvery-r.slack())) {

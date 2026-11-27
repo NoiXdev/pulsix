@@ -73,6 +73,7 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 		}
 		short += plan.short
 	}
+	r.forgetWritten(orgs)
 	if short > 0 {
 		r.log.WarnContext(ctx, "probe runner: slots got fewer agents than asked; agents are at their assignment limit",
 			"slots", short, "limit", MaxAssignmentsPerAgent)
@@ -92,6 +93,21 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	r.refreshed = now
 	r.pruneVantages(ctx)
 	return nil
+}
+
+// forgetWritten drops the assignment records of organizations no longer
+// listed (deleted ones), so the records do not grow with every
+// organization that ever existed while the lock is held.
+func (r *Runner) forgetWritten(orgs []uuid.UUID) {
+	listed := make(map[uuid.UUID]bool, len(orgs))
+	for _, org := range orgs {
+		listed[org] = true
+	}
+	for org := range r.written {
+		if !listed[org] {
+			delete(r.written, org)
+		}
+	}
 }
 
 // changed reports whether a slot's target differs in anything a probe
