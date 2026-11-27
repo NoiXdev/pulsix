@@ -373,6 +373,10 @@ export const enChecks = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'Verify the TLS certificate' },
+      upstreams_url: {
+        label: 'Upstream list URL (optional)',
+        hint: 'The reverse_proxy/upstreams page of the Caddy admin endpoint, read by the agent on each host. With a value the check also reports each reverse-proxy upstream (healthy or not, requests in flight, failures), at most 64; the health comes from the metrics page. The login of the secret is sent there too. Empty means only the metrics page is read.',
+      },
     },
     phpfpm: {
       urls: {

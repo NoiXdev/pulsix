@@ -877,6 +877,13 @@
           "name": "verify_tls",
           "type": "bool",
           "default": true
+        },
+        {
+          "name": "upstreams_url",
+          "type": "string",
+          "example": "http://127.0.0.1:2019/reverse_proxy/upstreams",
+          "max_bytes": 500,
+          "format": "statusURL"
         }
       ],
       "metrics": [
@@ -894,6 +901,30 @@
         },
         {
           "name": "caddy.errors_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.admin_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstreams_unhealthy",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstreams_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_healthy",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_requests",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.upstream_fails",
           "kind": "numeric"
         }
       ]

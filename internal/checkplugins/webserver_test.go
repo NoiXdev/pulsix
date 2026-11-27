@@ -13,6 +13,7 @@ import (
 func TestWebServerAPIParams(t *testing.T) {
 	for _, tc := range []struct{ plugin, param, example string }{
 		{"nginx", "api_url", "http://127.0.0.1/api/9"},
+		{"caddy", "upstreams_url", "http://127.0.0.1:2019/reverse_proxy/upstreams"},
 	} {
 		d, _ := checkplugins.Get(tc.plugin)
 		i := slices.IndexFunc(d.Params, func(p checkplugins.ParamSpec) bool { return p.Name == tc.param })
@@ -35,6 +36,8 @@ func TestValidateWebServerAPIParams(t *testing.T) {
 		{"nginx api_url not http refused", "nginx", map[string]any{"api_url": "ftp://127.0.0.1/api/9"}, false},
 		{"nginx api_url of 501 bytes refused", "nginx", map[string]any{"api_url": "http://h/" + strings.Repeat("x", 492)}, false},
 		{"nginx api_url not a string refused", "nginx", map[string]any{"api_url": 9.0}, false},
+		{"caddy upstreams_url accepted", "caddy", map[string]any{"upstreams_url": "http://127.0.0.1:2019/reverse_proxy/upstreams"}, true},
+		{"caddy upstreams_url with a fragment refused", "caddy", map[string]any{"upstreams_url": "http://127.0.0.1:2019/x#y"}, false},
 		{"apache has no api parameter", "apache", map[string]any{"api_url": "http://127.0.0.1/api/9"}, false},
 	})
 }
@@ -54,6 +57,10 @@ func TestWebServerAPIMetricsAsked(t *testing.T) {
 				"nginx.upstream_peers_unavailable", "nginx.upstream_active", "nginx.upstream_requests_per_s",
 				"nginx.upstream_responses_5xx_per_s", "nginx.upstream_fails_per_s"},
 			[]string{"nginx.up", "nginx.connections_active", "nginx.requests_per_s"}},
+		{"caddy", "upstreams_url",
+			[]string{"caddy.admin_up", "caddy.upstreams_unhealthy", "caddy.upstreams_unreported",
+				"caddy.upstream_healthy", "caddy.upstream_requests", "caddy.upstream_fails"},
+			[]string{"caddy.up", "caddy.requests_in_flight", "caddy.requests_per_s", "caddy.errors_5xx_per_s"}},
 	} {
 		d, _ := checkplugins.Get(tc.plugin)
 		declared := map[string]checkplugins.MetricKind{}

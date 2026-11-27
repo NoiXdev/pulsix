@@ -234,31 +234,7 @@ func validName(s string) bool {
 // parseLabels reads "{name="value",...}" from the start of s and returns
 // the three labels the plugin uses and what follows the closing brace.
 func parseLabels(s string) (server, handler, code, rest string, err error) {
-	s = s[1:]
-	for {
-		s = strings.TrimLeft(s, " \t")
-		if s == "" {
-			return "", "", "", "", webcheck.ErrFormat
-		}
-		if s[0] == '}' {
-			return server, handler, code, s[1:], nil
-		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
-			return "", "", "", "", webcheck.ErrFormat
-		}
-		label := strings.TrimSpace(s[:eq])
-		if !validLabelName(label) {
-			return "", "", "", "", webcheck.ErrFormat
-		}
-		s = strings.TrimLeft(s[eq+1:], " \t")
-		if s == "" || s[0] != '"' {
-			return "", "", "", "", webcheck.ErrFormat
-		}
-		var val string
-		if val, s, err = parseQuoted(s[1:]); err != nil {
-			return "", "", "", "", err
-		}
+	rest, err = parseLabelSet(s, func(label, val string) {
 		switch label {
 		case "server":
 			server = val
@@ -267,13 +243,49 @@ func parseLabels(s string) (server, handler, code, rest string, err error) {
 		case "code":
 			code = val
 		}
+	})
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return server, handler, code, rest, nil
+}
+
+// parseLabelSet reads "{name="value",...}" from the start of s, hands each
+// label to set and returns what follows the closing brace.
+func parseLabelSet(s string, set func(label, val string)) (rest string, err error) {
+	s = s[1:]
+	for {
+		s = strings.TrimLeft(s, " \t")
+		if s == "" {
+			return "", webcheck.ErrFormat
+		}
+		if s[0] == '}' {
+			return s[1:], nil
+		}
+		eq := strings.IndexByte(s, '=')
+		if eq <= 0 {
+			return "", webcheck.ErrFormat
+		}
+		label := strings.TrimSpace(s[:eq])
+		if !validLabelName(label) {
+			return "", webcheck.ErrFormat
+		}
+		s = strings.TrimLeft(s[eq+1:], " \t")
+		if s == "" || s[0] != '"' {
+			return "", webcheck.ErrFormat
+		}
+		var val string
+		if val, s, err = parseQuoted(s[1:]); err != nil {
+			return "", err
+		}
+		set(label, val)
 		s = strings.TrimLeft(s, " \t")
 		switch {
 		case s != "" && s[0] == ',':
 			s = s[1:]
 		case s != "" && s[0] == '}':
 		default:
-			return "", "", "", "", webcheck.ErrFormat
+			return "", webcheck.ErrFormat
 		}
 	}
 }

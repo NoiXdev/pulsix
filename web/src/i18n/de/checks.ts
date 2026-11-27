@@ -338,6 +338,10 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
+      upstreams_url: {
+        label: 'URL der Upstream-Liste (optional)',
+        hint: 'Die Seite reverse_proxy/upstreams des Caddy-Admin-Endpunkts, die der Agent auf jedem Host liest. Mit einem Wert meldet der Check zusätzlich jeden Reverse-Proxy-Upstream (gesund oder nicht, laufende Anfragen, Fehlschläge), höchstens 64; der Gesundheitszustand kommt von der Metrikseite. Der Login des Secrets wird auch dorthin gesendet. Leer heißt: nur die Metrikseite wird gelesen.',
+      },
     },
     phpfpm: {
       urls: {
