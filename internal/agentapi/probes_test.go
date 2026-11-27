@@ -451,28 +451,65 @@ func TestProbeResultsContractRefusedOnTheWire(t *testing.T) {
 	}
 }
 
-// TestProbeResultsShareTheIngestBudget: probe results draw on the same
-// per-agent budget as check results, so an agent that spent it on check
-// results is paced before its probe results are stored.
-func TestProbeResultsShareTheIngestBudget(t *testing.T) {
-	h, agentHost, stream := probeAgent(t)
-	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
-	for range ingestBurst / checks.MaxObservationsPerBatch {
-		sendResultsBatch(t, stream, checks.MaxObservationsPerBatch, h.clock())
-	}
-	if slept := h.sleptTotal(); slept != 0 {
-		t.Fatalf("the burst itself waited %s", slept)
-	}
-	rs := make([]*agentpb.ProbeResult, checks.MaxObservationsPerBatch)
-	for i := range rs {
-		rs[i] = probeValue(targetA, "web", "", "http.up", h.clock(), 1)
-	}
-	sendAndAck(t, stream, probeResultsMsg(rs...))
-	if h.sleptTotal() == 0 {
-		t.Fatal("probe results over the spent budget were not paced")
-	}
-	if calls := h.probes.vantageCalls(); len(calls) != 1 || len(calls[0].obs) != checks.MaxObservationsPerBatch {
-		t.Fatal("paced probe results were not stored in full")
+// TestProbeResultsHaveTheirOwnIngestBudget: probe results and check
+// results draw on separate budgets (backlog 3.78). Whichever kind spends its
+// burst first, the other's burst still goes through without waiting, and
+// one more batch of either kind is then paced against its own spent budget
+// (and still stored in full). The budgets are separate; the stream is not,
+// so a paced batch still holds up what follows it on the stream (3.136).
+func TestProbeResultsHaveTheirOwnIngestBudget(t *testing.T) {
+	bursts := ingestBurst / checks.MaxObservationsPerBatch
+	for _, first := range []ingestKind{ingestChecks, ingestProbes} {
+		t.Run("spend "+first.String()+" first", func(t *testing.T) {
+			h, agentHost, stream := probeAgent(t)
+			h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
+			h.checks.knownHosts = map[uuid.UUID]bool{agentHost: true}
+			send := func(kind ingestKind) {
+				if kind == ingestChecks {
+					sendResultsBatch(t, stream, checks.MaxObservationsPerBatch, h.clock())
+					return
+				}
+				rs := make([]*agentpb.ProbeResult, checks.MaxObservationsPerBatch)
+				for i := range rs {
+					rs[i] = probeValue(targetA, "web", "", "http.up", h.clock(), 1)
+				}
+				sendAndAck(t, stream, probeResultsMsg(rs...))
+			}
+			second := ingestProbes
+			if first == ingestProbes {
+				second = ingestChecks
+			}
+			for range bursts {
+				send(first)
+			}
+			for range bursts {
+				send(second)
+			}
+			if slept := h.sleptTotal(); slept != 0 {
+				t.Fatalf("a burst of each kind waited %s; the kinds share a budget", slept)
+			}
+			// Then each kind on its own spent budget is paced. A wait on
+			// one kind advances the clock and so refills the other's
+			// bucket by about a batch, and a burst is not a whole number
+			// of batches, so a few more may pass before one waits.
+			extra := map[ingestKind]int{}
+			for _, kind := range []ingestKind{first, second} {
+				before := h.sleptTotal()
+				for h.sleptTotal() == before {
+					if extra[kind] == 4 {
+						t.Fatalf("%s over their own spent budget were not paced", kind)
+					}
+					send(kind)
+					extra[kind]++
+				}
+			}
+			if calls := h.probes.vantageCalls(); len(calls) != bursts+extra[ingestProbes] {
+				t.Fatalf("stored %d probe batches, want every one (%d)", len(calls), bursts+extra[ingestProbes])
+			}
+			if got, want := len(h.checks.observations()), (bursts+extra[ingestChecks])*checks.MaxObservationsPerBatch; got != want {
+				t.Fatalf("stored %d check observations, want every one (%d)", got, want)
+			}
+		})
 	}
 }
 
@@ -565,5 +602,31 @@ func TestProbeResultsWithoutAProbesPortAreAcknowledged(t *testing.T) {
 	sendAndAck(t, stream, probeResultsMsg(probeValue(targetA, "web", "", "http.up", h.clock(), 1)))
 	if msg := sendAndAck(t, stream, probeHeartbeat(true, "")); msg.GetProbeConfig() != nil {
 		t.Fatalf("no probes port, yet a ProbeConfig: %+v", msg.GetProbeConfig())
+	}
+}
+
+// TestThrottledProbeResultsAreLoggedAsProbeResults: the pacing line names
+// the message type it paced, and each type keeps its own once-a-minute
+// line and counts, so a probe line does not swallow the check line.
+func TestThrottledProbeResultsAreLoggedAsProbeResults(t *testing.T) {
+	h, agentHost, stream := probeAgent(t)
+	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
+	h.checks.knownHosts = map[uuid.UUID]bool{agentHost: true}
+	rs := make([]*agentpb.ProbeResult, checks.MaxObservationsPerBatch)
+	for i := range rs {
+		rs[i] = probeValue(targetA, "web", "", "http.up", h.clock(), 1)
+	}
+	for range ingestBurst/checks.MaxObservationsPerBatch + 1 {
+		sendAndAck(t, stream, probeResultsMsg(rs...))
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "agent probe results throttled by the ingest budget") || strings.Contains(logs, "check results throttled") {
+		t.Fatalf("the pacing line does not name probe results:\n%s", logs)
+	}
+	for range ingestBurst/checks.MaxObservationsPerBatch + 1 {
+		sendResultsBatch(t, stream, checks.MaxObservationsPerBatch, h.clock())
+	}
+	if !strings.Contains(h.logs.String(), "agent check results throttled by the ingest budget") {
+		t.Fatalf("check pacing within the probe line's minute was not logged:\n%s", h.logs.String())
 	}
 }

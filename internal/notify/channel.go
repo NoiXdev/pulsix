@@ -75,8 +75,12 @@ type webhookConfig struct {
 	Headers       []storedHeader `json:"headers,omitempty"`
 	BodyTemplate  string         `json:"body_template,omitempty"`
 	SigningSealed []byte         `json:"signing_sealed,omitempty"`
-	// ChatID is a preset channel's PresetSettings.ChatID (Telegram).
-	ChatID string `json:"chat_id,omitempty"`
+	// PresetSettings are a preset channel's settings, in clear (chat_id,
+	// account_sid, from, to, region).
+	PresetSettings
+	// Secrets are a Credentialed preset's secrets (backlog 4.8), each
+	// value sealed like a header value.
+	Secrets []storedHeader `json:"secrets,omitempty"`
 }
 
 type storedHeader struct {
@@ -97,8 +101,11 @@ type WebhookView struct {
 	HeaderNames  []string
 	BodyTemplate string
 	Signed       bool
-	// Preset is the channel's preset ("" raw), ChatID its Telegram chat.
-	Preset, ChatID string
+	// Preset is the channel's preset ("" raw), PresetSettings its
+	// settings, SecretNames the names of its sealed secrets.
+	Preset string
+	PresetSettings
+	SecretNames []string
 }
 
 // View decodes the channel's settings into their secret-free form: exactly
@@ -118,10 +125,13 @@ func (c Channel) View() (*EmailConfig, *WebhookView, error) {
 		}
 		v := &WebhookView{
 			Method: w.Method, URLDisplay: w.URLDisplay, BodyTemplate: w.BodyTemplate, Signed: len(w.SigningSealed) > 0,
-			Preset: c.Preset, ChatID: w.ChatID,
+			Preset: c.Preset, PresetSettings: w.PresetSettings,
 		}
 		for _, h := range w.Headers {
 			v.HeaderNames = append(v.HeaderNames, h.Name)
+		}
+		for _, sec := range w.Secrets {
+			v.SecretNames = append(v.SecretNames, sec.Name)
 		}
 		return nil, v, nil
 	}
@@ -148,9 +158,21 @@ type WebhookInput struct {
 	SigningSecret *string
 	// Preset names the chat service the body is rendered for ("" raw);
 	// with one, BodyTemplate must be empty (the preset owns the body) and
-	// changing it needs URL again. ChatID is Telegram's chat.
-	Preset string
-	ChatID string
+	// changing it needs URL again (unless the preset builds its own).
+	// ChatID is Telegram's chat; AccountSID, From and To Twilio's; Region
+	// PagerDuty's. Secrets are a Credentialed preset's secrets by name: one
+	// left out keeps its stored value while the preset stays the same.
+	Preset     string
+	ChatID     string
+	AccountSID string
+	From, To   string
+	Region     string
+	Secrets    map[string]string
+}
+
+// settings are the input's preset settings.
+func (in WebhookInput) settings() PresetSettings {
+	return PresetSettings{ChatID: in.ChatID, AccountSID: in.AccountSID, From: in.From, To: in.To, Region: in.Region}
 }
 
 // Input is what an operator submits for create and update; exactly one

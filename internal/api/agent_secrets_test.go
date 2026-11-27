@@ -106,3 +106,44 @@ func TestAgentDTOReportsLocalCheckProblems(t *testing.T) {
 	heartbeat("", []string{"stray"})
 	expect("null")
 }
+
+// TestAgentDTOReportsProbesSupported: the host's agent card and the Agents
+// page say whether the agent probes other hosts for the manager — false
+// for an agent too old to, and for one whose agent.yaml turns it off
+// (backlog 3.82).
+func TestAgentDTOReportsProbesSupported(t *testing.T) {
+	f := newAgentFixture(t, "agent-probes-supported")
+	f.enroll(t, "agent-a", "v0.3a", "serial-probes-1", true)
+
+	expect := func(want string) {
+		t.Helper()
+		var body struct {
+			Agent map[string]json.RawMessage `json:"agent"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/hosts/"+f.host.ID.String()+"/agent", nil), &body)
+		if got := string(body.Agent["probes_supported"]); got != want {
+			t.Fatalf("card probes_supported = %s, want %s", got, want)
+		}
+		var list struct {
+			Agents []map[string]json.RawMessage `json:"agents"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/agents", nil), &list)
+		if len(list.Agents) != 1 || string(list.Agents[0]["probes_supported"]) != want {
+			t.Fatalf("list row = %v; want probes_supported %s", list.Agents, want)
+		}
+	}
+	heartbeat := func(supported bool) {
+		t.Helper()
+		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-probes-1", agents.HeartbeatReport{
+			Version: "v0.3a", SecretsState: "ok", ProbesSupported: supported,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expect("false")
+	heartbeat(true)
+	expect("true")
+	// An opted-out agent's heartbeat (agent.yaml probes.enabled: false).
+	heartbeat(false)
+	expect("false")
+}

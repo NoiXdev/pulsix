@@ -69,9 +69,11 @@ func (st *DeliverySQLStore) Retry(ctx context.Context, c Claimed, in time.Durati
 	return st.trim(ctx, c)
 }
 
-func (st *DeliverySQLStore) Fail(ctx context.Context, c Claimed, errText string) error {
+// Fail implements DeliveryQueue.
+func (st *DeliverySQLStore) Fail(ctx context.Context, c Claimed, errText string, pending []string) error {
 	if _, err := st.q.FailNotificationDelivery(ctx, gen.FailNotificationDeliveryParams{
-		LastError: errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
+		PendingRecipients: pending,
+		LastError:         errText, OrgID: c.Delivery.OrgID, ID: c.Delivery.ID, Attempts: int32(c.Delivery.Attempts), //nolint:gosec // attempts ≤ MaxAttempts
 	}); err != nil {
 		return fmt.Errorf("fail notification delivery: %w", err)
 	}

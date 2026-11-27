@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "Nightly OS patching: failed\nTemplate: patch-all\nFollow-up of: backup-all\nHosts: 12 (ok 10, changed 9, failed 1), no result 1 - 2 excluded for maintenance\nStarted: 2026-11-27T08:25:48Z\nDuration: 4m12s\nhttps://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

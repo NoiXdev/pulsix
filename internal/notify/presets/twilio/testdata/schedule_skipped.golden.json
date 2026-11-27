@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "Nightly OS patching: skipped\nTemplate: patch-all\nReason: every targeted host is in a maintenance window\nOutcome: skipped_maintenance\nDue: 2026-11-27T08:30:00Z\nhttps://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

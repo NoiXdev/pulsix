@@ -1,0 +1,15 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "form": {
+      "message": "Template: patch-all\nReason: every targeted host is in a maintenance window\nOutcome: skipped_maintenance\nDue: 2026-11-27T08:30:00Z",
+      "priority": "0",
+      "timestamp": "1795768200",
+      "title": "Nightly OS patching: skipped",
+      "token": "aToken0123456789aToken01234567",
+      "url": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002",
+      "url_title": "Open in Pulsix",
+      "user": "uUser0123456789uUser0123456789"
+    }
+  }
+]

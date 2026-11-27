@@ -101,12 +101,12 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		if err != nil {
 			return err // transport-level failure: pass the status through
 		}
-		// Check and probe results are paced against the agent's one
-		// ingest budget before they are stored (backlog 7.111, 3.13a),
-		// outside the processing lock so a revocation never waits on the
-		// pacing.
-		if n, ok := s.pacedResults(msg); ok {
-			if err := s.pace(ctx, agent, pacer, n); err != nil {
+		// Check and probe results are paced against the agent's ingest
+		// budget of their kind before they are stored (backlog 7.111,
+		// 3.13a, 3.78), outside the processing lock so a revocation never
+		// waits on the pacing.
+		if kind, n, ok := s.pacedResults(msg); ok {
+			if err := s.pace(ctx, agent, pacer, kind, n); err != nil {
 				if errors.Is(err, errCheckResultsRejected) {
 					return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
 				}
@@ -151,16 +151,17 @@ type reply struct {
 }
 
 // pacedResults reports whether msg is a results message charged against
-// the ingest budget, and how many observations it carries: check results
-// when a checks port is wired, probe results when a probes port is.
-func (s *Service) pacedResults(msg *agentpb.AgentMessage) (int, bool) {
+// an ingest budget, which kind's, and how many observations it carries:
+// check results when a checks port is wired, probe results when a probes
+// port is.
+func (s *Service) pacedResults(msg *agentpb.AgentMessage) (ingestKind, int, bool) {
 	if r := msg.GetCheckResults(); r != nil && s.deps.Checks != nil {
-		return len(r.GetResults()), true
+		return ingestChecks, len(r.GetResults()), true
 	}
 	if r := msg.GetProbeResults(); r != nil && s.deps.Probes != nil {
-		return len(r.GetResults()), true
+		return ingestProbes, len(r.GetResults()), true
 	}
-	return 0, false
+	return ingestChecks, 0, false
 }
 
 // process applies one agent message: a heartbeat touches the registry and

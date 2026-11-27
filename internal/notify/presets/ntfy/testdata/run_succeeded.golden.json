@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/",
+    "json": {
+      "topic": "pulsix-alerts",
+      "title": "Nightly OS patching: succeeded with changes",
+      "message": "Template: patch-all\nHosts: 3 (ok 3, changed 1, failed 0)\nDuration: 1m1s",
+      "priority": 2,
+      "tags": [
+        "white_check_mark"
+      ],
+      "click": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005"
+    }
+  }
+]

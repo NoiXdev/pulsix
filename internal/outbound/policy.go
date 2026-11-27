@@ -209,6 +209,13 @@ func (p Policy) Check(a netip.Addr) error {
 	return nil
 }
 
+// EmbeddedIPv4 returns the IPv4 address a carries in one of the
+// IPv4-in-IPv6 forms Check sees through (the operator's NAT64 prefixes
+// first, then the fixed forms), and false when it carries none. A deny
+// list judged on top of the policy (the probe guard's, backlog 3.82) uses
+// it so a translator cannot carry a probe past it either.
+func (p Policy) EmbeddedIPv4(a netip.Addr) (netip.Addr, bool) { return p.embedded(a.Unmap()) }
+
 // embedded is embeddedIPv4 plus the operator's own NAT64 prefixes. The
 // configured ones are tried FIRST: an NSP may sit anywhere in global
 // space, including inside a range one of the fixed forms would also

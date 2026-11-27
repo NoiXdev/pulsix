@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,5 +132,141 @@ func TestRingCarriesAnyStampedType(t *testing.T) {
 	}
 	if len(ring.Drain()) != 0 {
 		t.Fatal("a drain does not empty the ring")
+	}
+}
+
+// TestCappedRingEvictsOldestWholeInstantsOverTheCap: over its cost cap the
+// ring drops from the front, oldest first, and then whatever else shares
+// the last dropped entry's timestamp, so a round is never left half
+// buffered. Put says how many went for the cap and how many for age.
+func TestCappedRingEvictsOldestWholeInstantsOverTheCap(t *testing.T) {
+	type stamped struct {
+		name string
+		at   time.Time
+	}
+	base := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	now := base
+	ring := NewCappedRing(15*time.Minute, 4, func(stamped) int { return 1 },
+		func() time.Time { return now }, func(s stamped) time.Time { return s.at })
+
+	t0, t1, t2 := base, base.Add(time.Second), base.Add(2*time.Second)
+	if e := ring.Put([]stamped{{"a0", t0}, {"b0", t0}, {"a1", t1}}); e != (Evicted{}) {
+		t.Fatalf("under the cap evicted %+v", e)
+	}
+	// Five entries against a cap of four: a0 goes for the cap, b0 with it
+	// (same instant), the rest stay.
+	if e := ring.Put([]stamped{{"b1", t1}, {"a2", t2}}); e != (Evicted{OverCap: 2}) {
+		t.Fatalf("evicted %+v, want 2 over the cap", e)
+	}
+	out := ring.Drain()
+	if len(out) != 3 || out[0].name != "a1" || out[1].name != "b1" || out[2].name != "a2" {
+		t.Fatalf("kept %+v, want a1 b1 a2", out)
+	}
+
+	// Age eviction runs first and is counted apart.
+	ring.Put([]stamped{{"old", base}})
+	now = base.Add(16 * time.Minute)
+	batch := []stamped{{"n1", now}, {"n2", now}, {"n3", now.Add(time.Second)}, {"n4", now.Add(time.Second)}, {"n5", now.Add(2 * time.Second)}}
+	if e := ring.Put(batch); e != (Evicted{Aged: 1, OverCap: 2}) {
+		t.Fatalf("evicted %+v, want 1 aged and 2 over the cap", e)
+	}
+	if got := ring.Drain(); len(got) != 3 || got[0].name != "n3" {
+		t.Fatalf("kept %+v, want n3 n4 n5", got)
+	}
+	// A drain resets what the ring holds: four fit again.
+	if e := ring.Put(batch[:4]); e != (Evicted{}) {
+		t.Fatalf("after a drain evicted %+v", e)
+	}
+}
+
+// TestCappedRingCountsCostNotEntries: the cap is the sum of cost over the
+// entries held, and Add reports both causes together.
+func TestCappedRingCountsCostNotEntries(t *testing.T) {
+	base := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	ring := NewCappedRing(15*time.Minute, 100, func(s string) int { return len(s) },
+		func() time.Time { return base }, func(string) time.Time { return base })
+	if dropped := ring.Add([]string{strings.Repeat("x", 60)}); dropped != 0 {
+		t.Fatalf("dropped %d under the cap", dropped)
+	}
+	// 60 + 50 > 100: everything at the first instant goes, which here is
+	// every entry (one shared timestamp) — whole instants, even the new one.
+	if dropped := ring.Add([]string{strings.Repeat("y", 50)}); dropped != 2 {
+		t.Fatalf("dropped %d, want 2 (one instant)", dropped)
+	}
+}
+
+// TestUncappedRingNeverEvictsForSize: NewRing has no cap; only age evicts.
+func TestUncappedRingNeverEvictsForSize(t *testing.T) {
+	base := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	ring := NewRing(15*time.Minute, func() time.Time { return base }, func(int) time.Time { return base })
+	batch := make([]int, 100_000)
+	if e := ring.Put(batch); e != (Evicted{}) {
+		t.Fatalf("an uncapped ring evicted %+v", e)
+	}
+}
+
+// cappedRoundsRing is a ring at its cap of n results, each Put of one
+// five-result round with its own timestamp, as a probe slot's rounds
+// arrive in production (one dispatch tick, one At per round).
+func cappedRoundsRing(n int) (*Ring[Result], func()) {
+	base := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	now := base
+	ring := NewCappedRing(time.Hour, n, func(Result) int { return 1 },
+		func() time.Time { return now }, func(r Result) time.Time { return r.At })
+	rounds := make([][]Result, 64)
+	put := 0
+	next := func() {
+		now = now.Add(time.Millisecond)
+		round := rounds[put%len(rounds)]
+		for i := range round {
+			round[i].At = now
+		}
+		put++
+		ring.Put(round)
+	}
+	for i := range rounds {
+		rounds[i] = make([]Result, 5)
+	}
+	for range n / 5 * 3 {
+		next()
+	}
+	return ring, next
+}
+
+// TestCappedRingAtItsCapDoesNotReallocate: once a capped ring is at its
+// cap, a Put that evicts as much as it adds reuses the ring's array —
+// eviction moves a head and compacts in place now and then, instead of
+// copying everything into a fresh exact-size array on every Put.
+func TestCappedRingAtItsCapDoesNotReallocate(t *testing.T) {
+	ring, next := cappedRoundsRing(30_000)
+	if allocs := testing.AllocsPerRun(2000, next); allocs > 0.01 {
+		t.Fatalf("a Put at the cap allocates %.2f times on average, want none", allocs)
+	}
+	if got := len(ring.Drain()); got != 30_000 {
+		t.Fatalf("ring holds %d at its cap, want 30000", got)
+	}
+}
+
+func BenchmarkCappedRingPutAtTheCap(b *testing.B) {
+	_, next := cappedRoundsRing(30_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		next()
+	}
+}
+
+// TestCappedRingRefusesANonPositiveCap: a cap of zero or less is a wiring
+// mistake, never "uncapped" (that is NewRing).
+func TestCappedRingRefusesANonPositiveCap(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("NewCappedRing with cap %d did not panic", limit)
+				}
+			}()
+			NewCappedRing(time.Minute, limit, func(int) int { return 1 }, time.Now, func(int) time.Time { return time.Time{} })
+		}()
 	}
 }

@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "Test notification from Acme\nThis is a test message from a Pulsix notification channel. It worked.\nhttps://pulsix.example/o/acme/settings/notifications",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

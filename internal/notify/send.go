@@ -57,23 +57,32 @@ type ChannelSender struct {
 	http    *http.Client
 	now     func() time.Time
 	presets Presets
+	// states reads alerts' current state for a preset that follows it
+	// (AlertStateAware); nil reads none.
+	states AlertStates
+	// budget bounds one delivery's requests, safely under the lease.
+	budget time.Duration
 }
 
 // NewChannelSender wires the sender. client must be an outbound client
 // (internal/outbound): it is the one that refuses internal destinations.
 // presets renders the body of a preset channel (presets.Registry); a
 // channel whose preset is missing from it fails permanently.
-func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time, presets Presets) *ChannelSender {
+func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time, presets Presets, opts ...SenderOption) *ChannelSender {
 	if now == nil {
 		now = time.Now
 	}
-	return &ChannelSender{box: box, mail: m, http: client, now: now, presets: presets}
+	s := &ChannelSender{box: box, mail: m, http: client, now: now, presets: presets, budget: defaultSendBudget}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Send delivers ev through ch. deliveryID travels as X-Pulsix-Delivery so
 // a receiver can drop the duplicate an at-least-once retry may produce.
 func (s *ChannelSender) Send(ctx context.Context, c Claimed, ev Event) error {
-	ch, deliveryID := c.Channel, c.Delivery.ID
+	ch := c.Channel
 	switch ch.Kind {
 	case KindEmail:
 		var cfg EmailConfig
@@ -93,7 +102,7 @@ func (s *ChannelSender) Send(ctx context.Context, c Claimed, ev Event) error {
 		if err != nil {
 			return Permanent(err)
 		}
-		return s.sendWebhook(ctx, w, deliveryID, ev)
+		return s.sendWebhook(ctx, w, c, ev)
 	}
 	return Permanent(fmt.Errorf("unknown channel kind %q", ch.Kind))
 }
@@ -124,6 +133,7 @@ type openedWebhook struct {
 	method, url, bodyTemplate string
 	preset                    string
 	settings                  PresetSettings
+	secrets                   map[string]string
 	headers                   [][2]string
 	signingSecret             []byte
 }
@@ -138,7 +148,17 @@ func (s *ChannelSender) openWebhook(ch Channel) (openedWebhook, error) {
 	if err != nil {
 		return openedWebhook{}, fmt.Errorf("open webhook url: %w", err)
 	}
-	out := openedWebhook{method: w.Method, url: string(u), bodyTemplate: w.BodyTemplate, preset: ch.Preset, settings: PresetSettings{ChatID: w.ChatID}}
+	out := openedWebhook{method: w.Method, url: string(u), bodyTemplate: w.BodyTemplate, preset: ch.Preset, settings: w.PresetSettings}
+	for _, sec := range w.Secrets {
+		v, err := s.box.OpenAAD(sec.ValueSealed, aad)
+		if err != nil {
+			return openedWebhook{}, fmt.Errorf("open secret %s: %w", sec.Name, err)
+		}
+		if out.secrets == nil {
+			out.secrets = map[string]string{}
+		}
+		out.secrets[sec.Name] = string(v)
+	}
 	for _, h := range w.Headers {
 		v, err := s.box.OpenAAD(h.ValueSealed, aad)
 		if err != nil {
@@ -154,23 +174,52 @@ func (s *ChannelSender) openWebhook(ch Channel) (openedWebhook, error) {
 	return out, nil
 }
 
-// sendWebhook posts the rendered body. Operator headers are set first, so
-// the X-Pulsix-* headers (validation already refuses them as operator
-// headers) always carry Pulsix's own values. With a signing secret the
-// signature covers "<timestamp>.<body>", the scheme incoming Pulsix
-// webhooks use too, so a replayed body with a fresh timestamp fails.
-func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, deliveryID uuid.UUID, ev Event) error {
-	body, err := s.webhookBody(w, ev)
+// sendWebhook renders and posts a webhook channel's requests: one for a
+// raw channel, as many as its preset renders otherwise (backlog 4.8). A
+// preset that follows alerts' state (AlertStateAware) reads it now, at
+// send time, so a retried message never revives an alert closed since.
+func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, c Claimed, ev Event) error {
+	closed, err := s.closedAlerts(ctx, w, c.Channel.OrgID, ev)
+	if err != nil {
+		return fmt.Errorf("read the alerts' current state: %w", err)
+	}
+	reqs, err := s.webhookRequests(w, ev, closed)
 	if err != nil {
 		return Permanent(err)
 	}
-	req, err := http.NewRequestWithContext(ctx, w.method, w.url, bytes.NewReader(body))
+	return s.sendAll(ctx, w, reqs, c, ev)
+}
+
+// sendRequest posts one request. Operator headers are set first, so the
+// X-Pulsix-* headers (validation already refuses them as operator
+// headers) always carry Pulsix's own values, and a preset's own headers
+// come after the operator's. With a signing secret the signature covers
+// "<timestamp>.<body>", the scheme incoming Pulsix webhooks use too, so a
+// replayed body with a fresh timestamp fails.
+func (s *ChannelSender) sendRequest(ctx context.Context, w openedWebhook, r Request, deliveryID uuid.UUID, ev Event) error {
+	target := w.url
+	if r.Path != "" {
+		u, err := url.Parse(w.url)
+		if err != nil {
+			return Permanent(errors.New("build request: the stored URL does not parse"))
+		}
+		u.Path, u.RawPath, u.RawQuery = r.Path, "", ""
+		target = u.String()
+	}
+	req, err := http.NewRequestWithContext(ctx, w.method, target, bytes.NewReader(r.Body))
 	if err != nil {
 		return Permanent(fmt.Errorf("build request: %v", redactURL(err)))
 	}
-	req.Header.Set("Content-Type", "application/json")
+	contentType := r.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("User-Agent", "Pulsix-Notify/1")
 	for _, h := range w.headers {
+		req.Header.Set(h[0], h[1])
+	}
+	for _, h := range r.Header {
 		req.Header.Set(h[0], h[1])
 	}
 	ts := strconv.FormatInt(s.now().Unix(), 10)
@@ -180,7 +229,7 @@ func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, delive
 	if len(w.signingSecret) > 0 {
 		mac := hmac.New(sha256.New, w.signingSecret)
 		mac.Write([]byte(ts + "."))
-		mac.Write(body)
+		mac.Write(r.Body)
 		req.Header.Set("X-Pulsix-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 	resp, err := s.http.Do(req)
@@ -203,25 +252,35 @@ func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, delive
 	}
 }
 
-// webhookBody is the body a webhook channel sends: its preset's rendering
-// (backlog 4.7), else the body template or the event's JSON. Everything
-// after the body — headers, signing, the request — is the same for both.
-func (s *ChannelSender) webhookBody(w openedWebhook, ev Event) ([]byte, error) {
+// webhookRequests are the requests a webhook channel sends: its preset's
+// rendering (backlog 4.7, 4.8), else one request carrying the body
+// template or the event's JSON. Every body stays under maxBodyBytes.
+func (s *ChannelSender) webhookRequests(w openedWebhook, ev Event, closed map[uuid.UUID]bool) ([]Request, error) {
 	if w.preset == "" {
-		return renderWebhookBody(w.bodyTemplate, ev)
+		body, err := renderWebhookBody(w.bodyTemplate, ev)
+		if err != nil {
+			return nil, err
+		}
+		return []Request{{Body: body}}, nil
 	}
 	p, ok := s.presets[w.preset]
 	if !ok {
 		return nil, fmt.Errorf("unknown preset %q", w.preset)
 	}
-	body, err := p.Render(ev, w.settings)
+	u, err := url.Parse(w.url)
+	if err != nil {
+		return nil, errors.New("the stored URL does not parse")
+	}
+	reqs, err := p.Render(ev, Target{Settings: w.settings, URL: u, Secrets: w.secrets, Closed: closed})
 	if err != nil {
 		return nil, fmt.Errorf("render %s message: %w", w.preset, err)
 	}
-	if len(body) > maxBodyBytes {
-		return nil, errBodyTooLarge
+	for _, r := range reqs {
+		if len(r.Body) > maxBodyBytes {
+			return nil, errBodyTooLarge
+		}
 	}
-	return body, nil
+	return reqs, nil
 }
 
 // redactURL drops the request URL from a transport error: url.Error's

@@ -297,6 +297,9 @@ export const enHosts = {
     secretsAbsent: 'No agent.yaml',
     localCheckProblems: 'Problems with local checks',
     secretsUnknown: 'Unknown — the agent has not reported it yet (it is older than this version, or has not sent a heartbeat since it connected)',
+    probes: 'Probes other hosts',
+    probesOn: 'Yes',
+    probesOff: 'No — turned off or refused in agent.yaml, or the agent is too old',
   },
   inventory: {
     needsManaged: 'Inventory groups need the Managed capability.',

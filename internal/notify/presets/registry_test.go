@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/notify/presets"
 )
 
@@ -44,5 +45,24 @@ func TestRegistryMatchesTheSchema(t *testing.T) {
 	slices.Sort(registered)
 	if !slices.Equal(schema, registered) {
 		t.Fatalf("schema allows %v, registry has %v", schema, registered)
+	}
+}
+
+// TestRegistryAtPointsFixedHostsAtBase: every preset that builds its URL
+// builds it under the given base, and under the real service otherwise.
+func TestRegistryAtPointsFixedHostsAtBase(t *testing.T) {
+	const base = "http://127.0.0.1:9"
+	s := notify.PresetSettings{AccountSID: "AC0123456789abcdef0123456789abcdef", Region: "us"}
+	for name, p := range presets.RegistryAt(base) {
+		ep, ok := p.(notify.Endpointed)
+		if !ok {
+			continue
+		}
+		if got := ep.Endpoint(s); !strings.HasPrefix(got, base+"/") {
+			t.Errorf("%s: %s", name, got)
+		}
+		if got := presets.Registry()[name].(notify.Endpointed).Endpoint(s); !strings.HasPrefix(got, "https://") || strings.Contains(got, "127.0.0.1") {
+			t.Errorf("%s: production %s", name, got)
+		}
 	}
 }

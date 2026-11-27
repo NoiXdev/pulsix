@@ -199,18 +199,18 @@ func checkPresetURL(p Preset, raw string) error {
 	return nil
 }
 
-// checkPresetSettings validates the preset's settings and returns the
-// chat id to store; a raw channel takes none.
-func checkPresetSettings(p Preset, in WebhookInput) (string, error) {
+// checkPresetSettings validates the preset's settings and returns them
+// to store; a raw channel takes none.
+func checkPresetSettings(p Preset, in WebhookInput) (PresetSettings, error) {
 	if p == nil {
-		if in.ChatID != "" {
-			return "", fmt.Errorf("%w: a chat id belongs to a preset channel", ErrInvalidInput)
+		if name := in.settings().firstSet(); name != "" {
+			return PresetSettings{}, fmt.Errorf("%w: %s belongs to a preset channel", ErrInvalidInput, name)
 		}
-		return "", nil
+		return PresetSettings{}, nil
 	}
-	s, err := p.CheckSettings(PresetSettings{ChatID: in.ChatID})
+	s, err := p.CheckSettings(in.settings())
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return PresetSettings{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	return s.ChatID, nil
+	return s, nil
 }

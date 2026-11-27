@@ -3973,6 +3973,8 @@ export interface components {
             last_seen?: string;
             /** @description The problems with the checks defined in the agent's agent.yaml, one line each: the agent's own reported problems first, then one line per local check the server ignores (key and reason, never its params); empty when there is none or the agent predates checks in agent.yaml, null when unknown (an agent older than agent.yaml, or no heartbeat yet) */
             local_check_problems: string[] | null;
+            /** @description Whether the agent probes other hosts' synthetic checks as a vantage point: false for an agent too old to, for one whose local configuration turns it off, and while that configuration is refused */
+            probes_supported: boolean;
             /** @description The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet) */
             secret_names: string[] | null;
             /** @description The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown */
@@ -6939,10 +6941,14 @@ export interface components {
             delivery: components["schemas"]["NotifyDeliveryDTO"];
         };
         NotifyWebhookBody: {
+            /** @description Twilio preset only: the account SID (AC followed by 32 hexadecimal digits) */
+            account_sid?: string;
             /** @description Empty sends the event as JSON */
             body_template?: string;
             /** @description Telegram preset only: a chat id such as -1001234567890, or a public @username */
             chat_id?: string;
+            /** @description Twilio preset only: the sender, a number in international format (+15005550006) or an alphanumeric sender ID */
+            from?: string;
             headers?: components["schemas"]["NotifyHeaderBody"][] | null;
             /**
              * @description Default POST
@@ -6950,31 +6956,55 @@ export interface components {
              */
             method?: "POST" | "PUT";
             /**
-             * @description A chat service whose message Pulsix renders (the body template must then be empty, the method POST); changing it needs the url again
+             * @description A service whose message Pulsix renders (the body template must then be empty, the method POST); changing it needs the url again, except for pushover, twilio and pagerduty, whose url Pulsix sets (leave it out)
              * @enum {string}
              */
-            preset?: "" | "slack" | "mattermost" | "telegram";
+            preset?: "" | "slack" | "mattermost" | "telegram" | "ntfy" | "pushover" | "twilio" | "pagerduty";
+            /**
+             * @description PagerDuty preset only: the account's service region, default us
+             * @enum {string}
+             */
+            region?: "" | "us" | "eu";
+            /** @description The preset's secrets by name: pushover token and user, twilio auth_token, pagerduty routing_key. Omit one on update to keep the stored value */
+            secrets?: {
+                [key: string]: string;
+            };
             signed?: boolean;
             /** @description Omit on update to keep the stored secret */
             signing_secret?: string;
+            /** @description Twilio preset only: one recipient number in international format */
+            to?: string;
             /** @description Required on create; omit on update to keep the stored URL */
             url?: string;
         };
         NotifyWebhookDTO: {
+            /** @description Twilio preset only: the account SID */
+            account_sid?: string;
             body_template?: string;
             /** @description Telegram preset only: the chat the bot posts to */
             chat_id?: string;
+            /** @description Twilio preset only: the sender number or alphanumeric sender ID */
+            from?: string;
             /** @description Header names; values are never returned */
             headers: string[] | null;
             /** @enum {string} */
             method: "POST" | "PUT";
             /**
-             * @description The chat service the message is rendered for; empty is a raw webhook
+             * @description The service the message is rendered for; empty is a raw webhook
              * @enum {string}
              */
-            preset: "" | "slack" | "mattermost" | "telegram";
+            preset: "" | "slack" | "mattermost" | "telegram" | "ntfy" | "pushover" | "twilio" | "pagerduty";
+            /**
+             * @description PagerDuty preset only: the account's service region
+             * @enum {string}
+             */
+            region?: "" | "us" | "eu";
+            /** @description The names of the preset's stored secrets; values are never returned */
+            secrets?: string[] | null;
             /** @description Requests carry X-Pulsix-Signature-256 */
             signed: boolean;
+            /** @description Twilio preset only: the recipient's number */
+            to?: string;
             /** @description Scheme and host only: a path can carry a token and is never returned */
             url: string;
         };

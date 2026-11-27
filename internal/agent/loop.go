@@ -159,8 +159,9 @@ type Loop struct {
 	// apart; nil uses ticker (localchecks.go).
 	lookTicker tickerFactory
 	// localMu serialises looking at the file and applying its local checks
-	// (lookAndApplyLocal) and guards shadowed: the local keys a check from
-	// the manager shadowed at the last look, so a change is logged once.
+	// and probe policy (lookAndApplyLocal, probes_policy.go) and guards
+	// shadowed: the local keys a check from the manager shadowed at the
+	// last look, so a change is logged once.
 	localMu  sync.Mutex
 	shadowed []string
 
@@ -181,6 +182,8 @@ type Loop struct {
 
 	// utf8Warn rate-limits handleResults' warning about dropped results.
 	utf8Warn invalidUTF8Warner
+	// probeEvictWarn rate-limits the probe ring's overflow warning.
+	probeEvictWarn probeEvictWarner
 }
 
 // LoopOption overrides injected dependencies for tests.

@@ -1267,6 +1267,23 @@ alongside** refuses the new parameters on write, but if it holds the probe lock 
 stored check with headers or a body as a plain GET of its URL, and one with a new method as
 "invalid method" (unknown); set these up only once every manager instance runs this version.
 
+Webhook channel presets for ntfy, Pushover, Twilio SMS and PagerDuty (backlog 4.8) add migration
+00137 and no proto change and no dependency: it drops and re-adds
+`notification_channels_preset_check` with `ntfy`, `pushover`, `twilio` and `pagerduty` added
+(widen-only; every stored row passes, the re-added CHECK scans the small channel table once).
+Nothing else in the schema changes: the new settings (`account_sid`, `from`, `to`, `region`) are
+stored unsealed in the channel's config next to `chat_id`, and the new preset secrets (`secrets`:
+Pushover's token and user key, Twilio's auth token, PagerDuty's routing key) are sealed in the
+same config with the channel's key, like header values; a backup carries them sealed. Existing
+channels send exactly as before. API additions, all additive: `webhook.account_sid`, `from`, `to`,
+`region` and `secrets` (names on read, name → value on create and update). **Skew:** an older
+manager still running during a rolling upgrade does not know the four presets: it sends their
+deliveries (and Send test) as the raw event JSON to the stored URL, which the service refuses,
+so they fail permanently, and an update through it is refused or can lose their settings and
+secrets. Stop every
+manager instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
+
 ## Behaviour changes to check after an upgrade
 
 - **A worker revocation now cuts its open run streams on every manager
@@ -1398,8 +1415,35 @@ they fail permanently, and an update through it neither sees nor checks the pres
 manager instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
+An agent-side probe opt-out and deny list (backlog 3.82) add no migration, no proto change
+and no dependency: `host_agents.probes_supported` and `Heartbeat.probes_supported` exist since
+3.13a. `agent.yaml` gains a `probes:` section (`enabled: false` makes the agent report that it
+does not probe, so it is never assigned; `deny_cidrs:` lists ranges its probes refuse). The
+agent DTO gains `probes_supported` (additive). **The `probes:` key is stricter for an older
+agent, and does not protect it:** an agent older than this release does not know the key and
+refuses the whole file, so a host whose `agent.yaml` gains `probes:` loses its `secrets:`,
+`commands:` and `checks:` until that agent is updated — and an agent of 3.13a or later keeps
+reporting `probes_supported` and keeps probing other hosts as before, without the opt-out and
+without the deny list (only this release turns probing off for a refused file). Update the
+agent first, then add `probes:`; the host's Agent card shows "Probes other hosts: No" once
+the opt-out is in effect. A new agent under an older manager opts out the same way (the
+manager reads the 3.13a flag), and its local refusals arrive as an error text on the
+vantage. An older manager serves its own pages, which have no "Probes other hosts" row and
+whose agent read carries no `probes_supported`; only while managers of both versions serve
+one address can the new card, answered by an older instance, read "No" for every agent. A
+new agent whose `agent.yaml` is refused for any reason now stops probing for other hosts
+until the file is fixed (it used to keep probing); write the file atomically (to a temporary
+file, then rename) so that a half-written file does not turn probing off for a minute.
+
 ## Behaviour changes to check after an upgrade
 
+- **`PULSIX_PROBE_DENY_CIDRS` sees through IPv4-in-IPv6 forms (backlog 3.82, no
+  migration):** a probe target whose IPv6 address embeds an IPv4 address in a denied
+  range — NAT64 (`64:ff9b::/96` and the prefixes in `PULSIX_NOTIFY_NAT64_PREFIXES`),
+  6to4, SIIT, Teredo, ISATAP — is now refused like the IPv4 address itself, as the
+  built-in refusals always were. A check that reached a denied IPv4 network through a
+  NAT64 gateway reads "target address not allowed" from now on. The same applies to an
+  agent's own `probes.deny_cidrs`.
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**
   a new option `resources` (off by default; existing checks are unchanged) makes the
   agent read each running or paused container's CPU, memory, network and block I/O

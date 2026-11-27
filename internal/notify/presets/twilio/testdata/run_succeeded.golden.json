@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "Nightly OS patching: succeeded with changes\nTemplate: patch-all\nHosts: 3 (ok 3, changed 1, failed 0)\nDuration: 1m1s\nhttps://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

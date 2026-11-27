@@ -1,0 +1,33 @@
+[
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:run:00000000-0000-7000-8000-000000000005",
+      "payload": {
+        "summary": "Nightly OS patching: failed",
+        "source": "Acme",
+        "severity": "error",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "group": "Acme",
+        "custom_details": {
+          "lines": [
+            "Template: patch-all",
+            "Follow-up of: backup-all",
+            "Hosts: 12 (ok 10, changed 9, failed 1), no result 1 — 2 excluded for maintenance",
+            "Started: 2026-11-27T08:25:48Z",
+            "Duration: 4m12s"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  }
+]

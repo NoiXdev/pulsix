@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -59,15 +60,20 @@ func errAt(n *yaml.Node, reason string) error {
 //	    interval_seconds: <seconds>
 //	    params:
 //	      <name>: <value or list of values>
+//	probes:
+//	  enabled: <true | false>
+//	  deny_cidrs: [<CIDR>, …]
 //
-// strictly: the only top-level keys are secrets, commands and checks, each
+// strictly: the only top-level keys are secrets, commands, checks and
+// probes, each
 // optional and an empty one meaning none; names and field names match
 // namePattern; duplicate keys, anchors (and so aliases), nulls, nested
 // values and a second document are refused. A scalar value is taken as
 // written, so an unquoted number or boolean (port: 5432, tls: true) is the
 // text "5432" or "true". parseCommands has the rules of a command,
 // parseLocalChecks those of a local check — whose params, unlike a secret's
-// fields, are typed the way YAML's core schema types them.
+// fields, are typed the way YAML's core schema types them — and
+// parseProbes those of the probe policy (backlog 3.82).
 //
 // Explicit YAML tags are refused, wherever they stand, with the fixed
 // reason badTagReason — except !!str on a single value (a key or a field
@@ -109,14 +115,14 @@ func parse(data []byte) (Set, error) {
 		return Set{}, nil
 	}
 	if root.Kind != yaml.MappingNode {
-		return Set{}, errAt(root, "the file must be a mapping with a secrets, commands or checks key")
+		return Set{}, errAt(root, "the file must be a mapping with a secrets, commands, checks or probes key")
 	}
 	sections := map[string]*yaml.Node{}
 	seen := map[string]int{}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		key := root.Content[i]
-		if key.Kind != yaml.ScalarNode || (key.Value != "secrets" && key.Value != "commands" && key.Value != "checks") {
-			return Set{}, errAt(key, "unknown top-level key; only secrets, commands and checks are allowed")
+		if key.Kind != yaml.ScalarNode || !slices.Contains(topLevelKeys, key.Value) {
+			return Set{}, errAt(key, "unknown top-level key; only secrets, commands, checks and probes are allowed")
 		}
 		if line, dup := seen[key.Value]; dup {
 			return Set{}, errAt(key, key.Value+" is already set at line "+strconv.Itoa(line))
@@ -136,8 +142,15 @@ func parse(data []byte) (Set, error) {
 	if err != nil {
 		return Set{}, err
 	}
-	return Set{secrets: secrets, commands: commands, localChecks: checks, localCheckProblems: problems}, nil
+	probes, err := parseProbes(sections["probes"])
+	if err != nil {
+		return Set{}, err
+	}
+	return Set{secrets: secrets, commands: commands, localChecks: checks, localCheckProblems: problems, probes: probes}, nil
 }
+
+// topLevelKeys are the file's sections.
+var topLevelKeys = []string{"secrets", "commands", "checks", "probes"}
 
 // parseSecrets decodes the mapping under secrets; a missing or empty one
 // holds none.

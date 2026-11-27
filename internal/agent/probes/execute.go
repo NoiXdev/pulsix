@@ -9,7 +9,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/probe"
-	"github.com/noixdev/pulsix/internal/probe/all"
+	"github.com/noixdev/pulsix/internal/probe/vantage"
 )
 
 // deadline is the safety net on one probe of interval: min(interval,
@@ -23,7 +23,7 @@ func deadline(interval time.Duration) time.Duration {
 // hostile target must not take the agent down. A panicked round is logged
 // with its stack and delivers nothing, as on the manager; the slot runs
 // again on schedule.
-func (r *Runner) safeExecute(ctx context.Context, s *slot) (obs []probe.Observation) {
+func (r *Runner) safeExecute(ctx context.Context, s *slot, g *probe.Guard) (obs []probe.Observation) {
 	defer func() {
 		if p := recover(); p != nil {
 			r.log.Error("a probe panicked; this round is dropped",
@@ -32,13 +32,13 @@ func (r *Runner) safeExecute(ctx context.Context, s *slot) (obs []probe.Observat
 			obs = nil
 		}
 	}()
-	return r.execute(ctx, s)
+	return r.execute(ctx, s, g)
 }
 
-// execute runs one probe of s. Params that did not decode, or a plugin
+// execute runs one probe of s through g. Params that did not decode, or a plugin
 // this agent has no probe for, are that slot's metrics as errors, without
 // dialling anything.
-func (r *Runner) execute(ctx context.Context, s *slot) []probe.Observation {
+func (r *Runner) execute(ctx context.Context, s *slot, g *probe.Guard) []probe.Observation {
 	plugin := s.spec.Plugin
 	if s.paramsErr != nil {
 		return failAll(plugin, nil, "unreadable probe params: "+s.paramsErr.Error())
@@ -49,16 +49,16 @@ func (r *Runner) execute(ctx context.Context, s *slot) []probe.Observation {
 	}
 	pctx, cancel := context.WithTimeout(ctx, deadline(s.interval))
 	defer cancel()
-	return f(pctx, r.guard, s.params, s.spec.Address, nil)
+	return f(pctx, g, s.params, s.spec.Address, nil)
 }
 
 // failAll is msg on every metric a probe of plugin with params would have
-// produced: the plugin's own FailAll where it has one (all.FailAll),
+// produced: the plugin's own FailAll where it has one (vantage.FailAll),
 // otherwise each of its descriptor's metrics, item "" — and for a plugin
 // no descriptor knows either, its "<plugin>.up", as probe.Registry.Run
 // reports one.
 func failAll(plugin string, params map[string]any, msg string) []probe.Observation {
-	if obs, ok := all.FailAll(plugin, params, msg); ok {
+	if obs, ok := vantage.FailAll(plugin, params, msg); ok {
 		return obs
 	}
 	if d, ok := checkplugins.Get(plugin); ok && len(d.Metrics) > 0 {

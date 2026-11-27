@@ -43,7 +43,7 @@ func (preset) CheckSettings(s notify.PresetSettings) (notify.PresetSettings, err
 	if s.ChatID != "" {
 		return s, errors.New("a Slack channel takes no chat id; the URL names the channel")
 	}
-	return s, nil
+	return s, s.Only("Slack")
 }
 
 type textObj struct {
@@ -85,7 +85,12 @@ type payload struct {
 	Attachments []attachment `json:"attachments"`
 }
 
-func (preset) Render(ev notify.Event, _ notify.PresetSettings) ([]byte, error) {
+// Render is the one JSON request of the message.
+func (preset) Render(ev notify.Event, _ notify.Target) ([]notify.Request, error) {
+	return notify.JSONRequest(render(ev))
+}
+
+func render(ev notify.Event) ([]byte, error) {
 	m := notify.Compose(ev)
 	title := notify.Clip(m.Title, titleLimit)
 	var blocks []any

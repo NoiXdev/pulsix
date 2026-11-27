@@ -1,6 +1,7 @@
 // Package secrets reads the agent's local configuration file (agent.yaml):
-// the named secrets, the host-defined commands and the local checks an
-// operator keeps there. It checks the file's protection, parses the whole
+// the named secrets, the host-defined commands, the local checks and the
+// probe policy (whether the agent probes other hosts, and the ranges it
+// must never reach) an operator keeps there. It checks the file's protection, parses the whole
 // file strictly and reads it again once a minute. Field values and command
 // arguments never leave this package except through Set.Fields and
 // Set.Command, local check params only through Set.LocalChecks; every
@@ -20,14 +21,19 @@ import (
 
 // Set is an immutable collection of secrets (names mapping to their
 // fields), commands (names mapping to their program and arguments) and
-// local checks, with the problems of the local checks it refused. The zero
-// Set holds none. It is safe for concurrent use.
+// local checks, with the problems of the local checks it refused, and the
+// probe policy (backlog 3.82). The zero Set holds none and the default
+// policy. It is safe for concurrent use.
 type Set struct {
 	secrets            map[string]map[string]string
 	commands           map[string]scriptargs.Template
 	localChecks        []LocalCheck // key order
 	localCheckProblems []string     // line order
+	probes             ProbePolicy
 }
+
+// Probes returns a copy of the probe policy.
+func (s Set) Probes() ProbePolicy { return s.probes.clone() }
 
 // Len is the number of secrets; commands are not counted.
 func (s Set) Len() int { return len(s.secrets) }
