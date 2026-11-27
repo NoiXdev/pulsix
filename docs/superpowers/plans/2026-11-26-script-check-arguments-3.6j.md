@@ -40,6 +40,11 @@
 - **R20 Streams in the program (review 7).** On Windows a program path with a `:` after the drive (`check.bat::$DATA`, device forms) is refused at `agent.yaml` load.
 - **R21 Docs (review 3, 5c).** The user docs warn that a placeholder handed to a shell or interpreter that runs its arguments (`sh -c`, `bash -c`, PowerShell `-Command`, `cmd /c`, `ssh`, eval-style tools) turns the value into code — only with tight patterns or `values`, and PowerShell with `-File`; and that a pattern admitting arbitrary absolute paths makes the file check look at them, which can mount automounted network paths. No load-time refusal of such commands (the administrator's choice). A Windows real-process test (review 8) is left to a Windows run.
 
+### Fix round 2 (re-review, controller rulings)
+- **R22 Stricter `..` (N1; amends R18).** Segments are split at `/`, `\` and `:` on every OS, and a segment of dots and spaces only with at least two dots counts as `..` (`.. `, `...`, `C:..\x`, `..:stream`). — Windows trims trailing dots and spaces from a name.
+- **R23 Option check past blanks (N2; amends R6, R17).** The leading `-` / `/` check looks at the value with leading spaces and tabs trimmed. — A program's own parsing may skip them.
+- The Windows real-process test (review 8) is backlog 3.135.
+
 ## Review Focus
 - A value that is not allowed never runs: `TestBind` (scriptargs) table — option injection, shape, each rule, missing value, unknown placeholder, no-argument command, batch metacharacters.
 - Errors never quote a value: `TestBindErrorsNeverQuoteValues`, `TestScriptArgsRefusalNeverQuotesValue` (plugin).
