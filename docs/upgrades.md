@@ -297,6 +297,18 @@ the agent first, then add `commands:`. Migration 00094 adds two default rules,
 organization (skipped where a rule of that name exists); they judge nothing
 until a `script` check reports.
 
+Values for script check placeholders (backlog 3.6j) need the new agent on the
+host. **A command written in the new mapping form (`run:` and `args:`) is
+stricter for an older agent:** it expects every command to be a list and refuses
+the whole `agent.yaml`, so that host loses its `secrets:`, `commands:` and
+`checks:` until the agent is updated. Update the agent first, then rewrite a
+command in the mapping form. A command still written as a list behaves as before
+on every agent; if a check sends `args` for it, a new agent refuses the command
+("this command takes no arguments on this host") while an older one ignores the
+values and runs the command as written. An older manager refuses `args` when a
+check is saved and passes stored ones through unchanged. Nothing is migrated and
+the agent protocol is unchanged.
+
 Local checks in `agent.yaml` (backlog 3.5a) skew both ways. **The `checks:` key is
 stricter for an older agent.** An agent older than this release does not know the
 key and refuses the whole file, so a host whose `agent.yaml` gains `checks:` also
