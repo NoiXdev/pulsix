@@ -555,6 +555,23 @@ func WithRestrictiveNotifyPolicy() Option {
 	}
 }
 
+// WithNotifyPresets rebuilds Deps.Notify with the given presets in place
+// of presets.Registry() (backlog 4.8), on New's loopback-admitting policy:
+// presets.RegistryAt(fake.URL) points the presets on a fixed host
+// (Pushover, Twilio, PagerDuty) at a test's own receiver.
+func WithNotifyPresets(p notify.Presets) Option {
+	return func(s *Server) {
+		box := crypto.NewBox(testMasterKey)
+		store := notify.NewSQLStore(s.DB)
+		loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+		s.Deps.Notify = notify.NewService(notify.Deps{
+			Channels: store, Deliveries: store, Rules: store, Digests: store, Box: box, Mail: s.Mail, Presets: p,
+			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, p),
+			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
+		})
+	}
+}
+
 // New builds Deps from the test database and starts an httptest server.
 //
 // The WebAuthn relying party id and origin are derived from the test
