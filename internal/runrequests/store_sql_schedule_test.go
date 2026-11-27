@@ -48,7 +48,7 @@ func TestSQLStoreScheduleRequest(t *testing.T) {
 		s.Spec.Guards.Overlap != schedules.OverlapQueue || s.Spec.ExtraVars["build"] != json.Number("9007199254740993") {
 		t.Fatalf("schedule = %+v", s.Spec)
 	}
-	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp", jobs.ApprovedRun{})
+	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp", jobs.ApprovedRun{}, nil)
 	if err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}

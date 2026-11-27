@@ -70,11 +70,11 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
 	enrol := []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}
-	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1", jobs.ApprovedRun{PinnedCommit: pinA, EnrollHostIDs: enrol})
+	ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-1", jobs.ApprovedRun{PinnedCommit: pinA, EnrollHostIDs: enrol}, nil)
 	if err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
-	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}); ok {
+	if ok, _ := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}, nil); ok {
 		t.Fatal("a decided request was decided again")
 	}
 	// An approval takes the request's own id as its run group and keeps
@@ -95,7 +95,7 @@ func TestSQLStoreRoundTripDecideRevertAndRunGroup(t *testing.T) {
 		t.Fatalf("after revert = %+v", got)
 	}
 	// An approved empty list is stored as such, not as no list.
-	if ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-2", jobs.ApprovedRun{EnrollHostIDs: []uuid.UUID{}}); err != nil || !ok {
+	if ok, err := store.Decide(f.ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp-2", jobs.ApprovedRun{EnrollHostIDs: []uuid.UUID{}}, nil); err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
 	if got, _ = store.Get(f.ctx, f.org, r.ID); got.EnrollHostIDs == nil || len(got.EnrollHostIDs) != 0 {
@@ -187,7 +187,7 @@ func TestSQLStoreCountsPending(t *testing.T) {
 	f.insert(t, store, nil, now.Add(-time.Minute))
 	f.insert(t, store, &tok, now.Add(-runrequests.TTL)) // expires exactly now
 	decided := f.insert(t, store, &tok, now.Add(-time.Minute))
-	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}); err != nil || !ok {
+	if ok, err := store.Decide(f.ctx, f.org, decided.ID, runrequests.StatusRejected, f.user, now, "", jobs.ApprovedRun{}, nil); err != nil || !ok {
 		t.Fatalf("Decide = %v %v", ok, err)
 	}
 	other.insert(t, store, &tok, now.Add(-time.Minute))

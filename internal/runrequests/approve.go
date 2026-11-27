@@ -121,7 +121,7 @@ func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fing
 	}
 	approved := jobs.ApprovedRun{PinnedCommit: pin, EnrollHostIDs: enrol}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, approved)
+	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint, approved, nil)
 	if err != nil {
 		return Approved{}, fmt.Errorf("decide run request: %w", err)
 	}

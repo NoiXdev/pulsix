@@ -94,7 +94,7 @@ func (s *Service) approveSchedule(ctx context.Context, orgID uuid.UUID, r Reques
 	}
 	at := s.now()
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
-		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
+		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{}, nil)
 		if err != nil {
 			return fmt.Errorf("decide schedule request: %w", err)
 		}

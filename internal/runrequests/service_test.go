@@ -22,6 +22,8 @@ type memStore struct {
 	syncs map[uuid.UUID]memSync
 	// dueCalls are the staleBefore bounds the sweep asked with.
 	dueCalls []time.Time
+	// origins is where each follow-up run group sits (FollowUpOrigin).
+	origins map[uuid.UUID]runrequests.FollowUpOrigin
 }
 
 type memSync struct {
@@ -104,7 +106,7 @@ func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[
 	return out, nil
 }
 
-func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error) {
+func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun, followUps *runrequests.FollowUpBindings) (bool, error) {
 	r, ok := m.rows[id]
 	rejectWaiting := r.Status == runrequests.StatusWaitingForSync && to == runrequests.StatusRejected
 	if !ok || r.OrgID != orgID || (r.Status != runrequests.StatusPending && !rejectWaiting) {
@@ -114,7 +116,7 @@ func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests
 		r.ExpiresAt = at
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = to, &by, &at, fingerprint, approved.PinnedCommit
-	r.EnrollHostIDs = approved.EnrollHostIDs
+	r.EnrollHostIDs, r.FollowUpBindings = approved.EnrollHostIDs, followUps
 	if to == runrequests.StatusApproved && (r.Kind == runrequests.KindRun || r.Kind == runrequests.KindRetryFailed) {
 		group := r.ID
 		r.RunGroupID = &group
@@ -149,9 +151,17 @@ func (m *memStore) InTx(ctx context.Context, _ uuid.UUID, fn func(context.Contex
 func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error {
 	r := m.rows[id]
 	r.Status, r.DecidedBy, r.DecidedAt, r.ApprovedFingerprint, r.PinnedCommit = runrequests.StatusPending, nil, nil, "", ""
-	r.EnrollHostIDs = nil
+	r.EnrollHostIDs, r.FollowUpBindings = nil, nil
 	m.rows[id] = r
 	return nil
+}
+
+func (m *memStore) FollowUpOrigin(_ context.Context, orgID, group uuid.UUID) (runrequests.FollowUpOrigin, error) {
+	o, ok := m.origins[group]
+	if r, found := m.rows[o.RequestID]; !ok || !found || r.OrgID != orgID {
+		return runrequests.FollowUpOrigin{}, runrequests.ErrNotFound
+	}
+	return o, nil
 }
 
 func (m *memStore) ByRunGroup(_ context.Context, orgID, group uuid.UUID) (runrequests.Request, error) {

@@ -1016,6 +1016,7 @@ type RunRequest struct {
 	EnrollHostIds       []uuid.UUID        `json:"enroll_host_ids"`
 	Payload             []byte             `json:"payload"`
 	TargetID            pgtype.UUID        `json:"target_id"`
+	ApprovedFollowUps   []byte             `json:"approved_follow_ups"`
 }
 
 type Schedule struct {

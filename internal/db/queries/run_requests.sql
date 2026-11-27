@@ -74,11 +74,12 @@ WHERE t.id = ANY(sqlc.arg(ids)::uuid[]);
 -- run group, before anything is enqueued, so a claim of one of its jobs
 -- always finds it (migration 00103), and the commit the run is pinned to
 -- (migration 00123; NULL for none) and the hosts it enrols agents on
--- (migration 00127; NULL for no list). Only a run or a retry takes a run
--- group: the approval of another kind starts no run (migration 00129).
+-- (migration 00127; NULL for no list), and what it binds of the follow-ups
+-- it starts (migration 00138; NULL for none). Only a run or a retry takes a
+-- run group: the approval of another kind starts no run (migration 00129).
 UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
   approved_fingerprint = sqlc.narg(approved_fingerprint), pinned_commit = sqlc.narg(pinned_commit),
-  enroll_host_ids = sqlc.narg(enroll_host_ids)::uuid[],
+  enroll_host_ids = sqlc.narg(enroll_host_ids)::uuid[], approved_follow_ups = sqlc.narg(approved_follow_ups)::jsonb,
   run_group_id = CASE WHEN sqlc.arg(status)::text = 'approved' AND kind IN ('run', 'retry_failed') THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, sqlc.arg(decided_at))
 WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id)
@@ -89,8 +90,30 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(id)
 -- jobs the enqueue did create keep pointing at this request, and its
 -- claim guard refuses them while the request is not approved.
 UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL,
-  enroll_host_ids = NULL
+  enroll_host_ids = NULL, approved_follow_ups = NULL
 WHERE org_id = $1 AND id = $2;
+
+-- name: GetFollowUpRunOrigin :one
+-- The follow-up row that started run group group_id (its chain path and
+-- template) and the run request whose run group is the root of its chain
+-- (backlog 2.143): the walk goes up run_follow_ups from child group to
+-- parent group, at most 32 steps (a chain is at most 10 runs deep), and
+-- stops at the nearest group a run request owns. No row: the group is no
+-- follow-up, or its chain was not started by a run request.
+WITH RECURSIVE node AS (
+  SELECT f.path, f.template_id FROM run_follow_ups f
+  WHERE f.org_id = sqlc.arg(org_id)::uuid AND f.child_group_id = sqlc.arg(group_id)::uuid
+  ORDER BY f.id LIMIT 1
+), up (group_id, hops) AS (
+  SELECT f.parent_group_id, 1 FROM run_follow_ups f
+  WHERE f.org_id = sqlc.arg(org_id)::uuid AND f.child_group_id = sqlc.arg(group_id)::uuid
+  UNION
+  SELECT f.parent_group_id, up.hops + 1 FROM run_follow_ups f JOIN up ON f.child_group_id = up.group_id
+  WHERE f.org_id = sqlc.arg(org_id)::uuid AND up.hops < 32
+)
+SELECT node.path::uuid[] AS path, node.template_id::uuid AS template_id, r.id::uuid AS request_id
+FROM node, up JOIN run_requests r ON r.org_id = sqlc.arg(org_id)::uuid AND r.run_group_id = up.group_id
+ORDER BY up.hops LIMIT 1;
 
 -- name: GetRunRequestByRunGroup :one
 SELECT * FROM run_requests WHERE org_id = $1 AND run_group_id = $2;

@@ -91,7 +91,7 @@ func (s *Service) approveTrigger(ctx context.Context, orgID uuid.UUID, r Request
 	at := s.now()
 	var secret string
 	err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
-		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
+		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{}, nil)
 		if err != nil {
 			return fmt.Errorf("decide trigger request: %w", err)
 		}

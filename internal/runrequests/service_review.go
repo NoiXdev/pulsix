@@ -57,7 +57,7 @@ func (s *Service) approveReview(ctx context.Context, orgID uuid.UUID, r Request,
 		if err := s.auto.ApplyReview(ctx, orgID, r, *p.Review, by); err != nil {
 			return err
 		}
-		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{})
+		ok, err := s.store.Decide(ctx, orgID, r.ID, StatusApproved, by, at, fingerprint, jobs.ApprovedRun{}, nil)
 		if err != nil {
 			return fmt.Errorf("decide review: %w", err)
 		}

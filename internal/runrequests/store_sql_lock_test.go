@@ -61,7 +61,7 @@ func TestConfirmWithdrawnReadsTheRequestUnderItsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	approve := func(ctx context.Context) error {
-		ok, err := store.Decide(ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp", jobs.ApprovedRun{})
+		ok, err := store.Decide(ctx, f.org, r.ID, runrequests.StatusApproved, f.user, now, "fp", jobs.ApprovedRun{}, nil)
 		if err == nil && !ok {
 			t.Error("the approval found the request decided")
 		}

@@ -122,6 +122,10 @@ type Request struct {
 	// list for an approved one that enrols no host (a dry run, every
 	// target with an agent).
 	EnrollHostIDs []uuid.UUID
+	// FollowUpBindings is what the approval binds of the follow-ups it
+	// starts (backlog 2.143); nil before an approval and for an approval
+	// made before it existed.
+	FollowUpBindings *FollowUpBindings
 	// ExpiresAt is when a pending request expires; zero while the request
 	// waits for its sync, whose success starts the expiry.
 	ExpiresAt time.Time
@@ -204,7 +208,8 @@ type Store interface {
 	// neither. An approval records fingerprint and the commit it pins (""
 	// for none) and sets the run group to the request's own id, in the same
 	// write.
-	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error)
+	// followUps is what it binds of the follow-ups it starts (nil for none).
+	Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun, followUps *FollowUpBindings) (bool, error)
 	// InTx runs fn in one transaction: every store call made with the
 	// context fn receives (this store's and any other store built on the
 	// same database) commits with the others or not at all.
@@ -214,6 +219,10 @@ type Store interface {
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
+	// FollowUpOrigin finds the follow-up row that started group and the
+	// request whose run group is the root of its chain; ErrNotFound when
+	// group is no follow-up of an approved request's run.
+	FollowUpOrigin(ctx context.Context, orgID, group uuid.UUID) (FollowUpOrigin, error)
 	// LockStatusByRunGroup is the status of the request whose approval
 	// created group, read under a share lock on its row that the
 	// transaction ctx carries holds to its end: Decide on that request
@@ -441,7 +450,7 @@ func (s *Service) Reject(ctx context.Context, orgID, id, by uuid.UUID) (Request,
 		return Request{}, ErrDecided
 	}
 	at := s.now()
-	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "", jobs.ApprovedRun{})
+	ok, err := s.store.Decide(ctx, orgID, id, StatusRejected, by, at, "", jobs.ApprovedRun{}, nil)
 	if err != nil {
 		return Request{}, fmt.Errorf("decide run request: %w", err)
 	}

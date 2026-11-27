@@ -152,7 +152,14 @@ func (s *SQLStore) Tokens(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID)
 }
 
 // Decide implements Store.
-func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun) (bool, error) {
+func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun, followUps *FollowUpBindings) (bool, error) {
+	var bound []byte
+	if followUps != nil {
+		var err error
+		if bound, err = json.Marshal(followUps); err != nil {
+			return false, fmt.Errorf("encode follow-up bindings: %w", err)
+		}
+	}
 	var fp, pin *string
 	if fingerprint != "" {
 		fp = &fingerprint
@@ -163,7 +170,7 @@ func (s *SQLStore) Decide(ctx context.Context, orgID, id uuid.UUID, to Status, b
 	n, err := s.q.DecideRunRequest(ctx, gen.DecideRunRequestParams{
 		OrgID: orgID, ID: id, Status: string(to),
 		DecidedBy: pgtype.UUID{Bytes: by, Valid: true}, DecidedAt: pgtype.Timestamptz{Time: at, Valid: true},
-		ApprovedFingerprint: fp, PinnedCommit: pin, EnrollHostIds: approved.EnrollHostIDs,
+		ApprovedFingerprint: fp, PinnedCommit: pin, EnrollHostIds: approved.EnrollHostIDs, ApprovedFollowUps: bound,
 	})
 	if err != nil {
 		return false, err
@@ -191,6 +198,18 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 		return Request{}, fmt.Errorf("get run request by run group: %w", err)
 	}
 	return fromRow(row)
+}
+
+// FollowUpOrigin implements Store.
+func (s *SQLStore) FollowUpOrigin(ctx context.Context, orgID, group uuid.UUID) (FollowUpOrigin, error) {
+	row, err := s.q.GetFollowUpRunOrigin(ctx, gen.GetFollowUpRunOriginParams{OrgID: orgID, GroupID: group})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return FollowUpOrigin{}, ErrNotFound
+	}
+	if err != nil {
+		return FollowUpOrigin{}, fmt.Errorf("find a follow-up's run request: %w", err)
+	}
+	return FollowUpOrigin{RequestID: row.RequestID, Path: row.Path, TemplateID: row.TemplateID}, nil
 }
 
 // LockStatusByRunGroup implements Store.
@@ -291,6 +310,13 @@ func fromRow(r gen.RunRequest) (Request, error) {
 		out.PinnedCommit = *r.PinnedCommit
 	}
 	out.EnrollHostIDs = r.EnrollHostIds
+	if len(r.ApprovedFollowUps) > 0 {
+		var b FollowUpBindings
+		if err := json.Unmarshal(r.ApprovedFollowUps, &b); err != nil {
+			return Request{}, fmt.Errorf("decode run request %s follow-up bindings: %w", r.ID, err)
+		}
+		out.FollowUpBindings = &b
+	}
 	if len(r.Overrides) > 0 {
 		var ov Overrides
 		dec := json.NewDecoder(bytes.NewReader(r.Overrides))

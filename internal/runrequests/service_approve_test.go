@@ -157,7 +157,7 @@ func TestCheckRunClaim(t *testing.T) {
 	// Approved without a recorded fingerprint: the approval stands, so its
 	// refused job is an errored run, not a withdrawn one.
 	legacy := w.create(t)
-	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, "", jobs.ApprovedRun{}); err != nil || !ok {
+	if ok, err := w.store.Decide(ctx, w.org, legacy.ID, runrequests.StatusApproved, uuid.Must(uuid.NewV7()), w.now, "", jobs.ApprovedRun{}, nil); err != nil || !ok {
 		t.Fatalf("decide = %v, %v", ok, err)
 	}
 	if err := w.svc.CheckRunClaim(ctx, w.org, legacy.ID, jobs.ApprovedRun{}); err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {

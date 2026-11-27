@@ -77,10 +77,10 @@ func (q *Queries) CountPendingRunRequests(ctx context.Context, arg CountPendingR
 const decideRunRequest = `-- name: DecideRunRequest :execrows
 UPDATE run_requests SET status = $1, decided_by = $2, decided_at = $3,
   approved_fingerprint = $4, pinned_commit = $5,
-  enroll_host_ids = $6::uuid[],
+  enroll_host_ids = $6::uuid[], approved_follow_ups = $7::jsonb,
   run_group_id = CASE WHEN $1::text = 'approved' AND kind IN ('run', 'retry_failed') THEN id ELSE run_group_id END,
   expires_at = COALESCE(expires_at, $3)
-WHERE org_id = $7::uuid AND id = $8
+WHERE org_id = $8::uuid AND id = $9
   AND (status = 'pending' OR (status = 'waiting_for_sync' AND $1::text = 'rejected'))
 `
 
@@ -91,6 +91,7 @@ type DecideRunRequestParams struct {
 	ApprovedFingerprint *string            `json:"approved_fingerprint"`
 	PinnedCommit        *string            `json:"pinned_commit"`
 	EnrollHostIds       []uuid.UUID        `json:"enroll_host_ids"`
+	ApprovedFollowUps   []byte             `json:"approved_follow_ups"`
 	OrgID               uuid.UUID          `json:"org_id"`
 	ID                  uuid.UUID          `json:"id"`
 }
@@ -102,8 +103,9 @@ type DecideRunRequestParams struct {
 // run group, before anything is enqueued, so a claim of one of its jobs
 // always finds it (migration 00103), and the commit the run is pinned to
 // (migration 00123; NULL for none) and the hosts it enrols agents on
-// (migration 00127; NULL for no list). Only a run or a retry takes a run
-// group: the approval of another kind starts no run (migration 00129).
+// (migration 00127; NULL for no list), and what it binds of the follow-ups
+// it starts (migration 00138; NULL for none). Only a run or a retry takes a
+// run group: the approval of another kind starts no run (migration 00129).
 func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestParams) (int64, error) {
 	result, err := q.db.Exec(ctx, decideRunRequest,
 		arg.Status,
@@ -112,6 +114,7 @@ func (q *Queries) DecideRunRequest(ctx context.Context, arg DecideRunRequestPara
 		arg.ApprovedFingerprint,
 		arg.PinnedCommit,
 		arg.EnrollHostIds,
+		arg.ApprovedFollowUps,
 		arg.OrgID,
 		arg.ID,
 	)
@@ -151,8 +154,49 @@ func (q *Queries) EndRunRequestWait(ctx context.Context, arg EndRunRequestWaitPa
 	return result.RowsAffected(), nil
 }
 
+const getFollowUpRunOrigin = `-- name: GetFollowUpRunOrigin :one
+WITH RECURSIVE node AS (
+  SELECT f.path, f.template_id FROM run_follow_ups f
+  WHERE f.org_id = $1::uuid AND f.child_group_id = $2::uuid
+  ORDER BY f.id LIMIT 1
+), up (group_id, hops) AS (
+  SELECT f.parent_group_id, 1 FROM run_follow_ups f
+  WHERE f.org_id = $1::uuid AND f.child_group_id = $2::uuid
+  UNION
+  SELECT f.parent_group_id, up.hops + 1 FROM run_follow_ups f JOIN up ON f.child_group_id = up.group_id
+  WHERE f.org_id = $1::uuid AND up.hops < 32
+)
+SELECT node.path::uuid[] AS path, node.template_id::uuid AS template_id, r.id::uuid AS request_id
+FROM node, up JOIN run_requests r ON r.org_id = $1::uuid AND r.run_group_id = up.group_id
+ORDER BY up.hops LIMIT 1
+`
+
+type GetFollowUpRunOriginParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	GroupID uuid.UUID `json:"group_id"`
+}
+
+type GetFollowUpRunOriginRow struct {
+	Path       []uuid.UUID `json:"path"`
+	TemplateID uuid.UUID   `json:"template_id"`
+	RequestID  uuid.UUID   `json:"request_id"`
+}
+
+// The follow-up row that started run group group_id (its chain path and
+// template) and the run request whose run group is the root of its chain
+// (backlog 2.143): the walk goes up run_follow_ups from child group to
+// parent group, at most 32 steps (a chain is at most 10 runs deep), and
+// stops at the nearest group a run request owns. No row: the group is no
+// follow-up, or its chain was not started by a run request.
+func (q *Queries) GetFollowUpRunOrigin(ctx context.Context, arg GetFollowUpRunOriginParams) (GetFollowUpRunOriginRow, error) {
+	row := q.db.QueryRow(ctx, getFollowUpRunOrigin, arg.OrgID, arg.GroupID)
+	var i GetFollowUpRunOriginRow
+	err := row.Scan(&i.Path, &i.TemplateID, &i.RequestID)
+	return i, err
+}
+
 const getLatestReviewRequest = `-- name: GetLatestReviewRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id, approved_follow_ups FROM run_requests
 WHERE org_id = $1 AND kind = $2 AND target_id = $3::uuid
 ORDER BY created_at DESC, id DESC LIMIT 1
 `
@@ -195,12 +239,13 @@ func (q *Queries) GetLatestReviewRequest(ctx context.Context, arg GetLatestRevie
 		&i.EnrollHostIds,
 		&i.Payload,
 		&i.TargetID,
+		&i.ApprovedFollowUps,
 	)
 	return i, err
 }
 
 const getOpenReviewRequest = `-- name: GetOpenReviewRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id, approved_follow_ups FROM run_requests
 WHERE org_id = $1 AND kind = $2 AND target_id = $3::uuid
   AND status = 'pending' AND expires_at > $4::timestamptz
 ORDER BY created_at DESC, id DESC LIMIT 1
@@ -250,12 +295,13 @@ func (q *Queries) GetOpenReviewRequest(ctx context.Context, arg GetOpenReviewReq
 		&i.EnrollHostIds,
 		&i.Payload,
 		&i.TargetID,
+		&i.ApprovedFollowUps,
 	)
 	return i, err
 }
 
 const getRunRequest = `-- name: GetRunRequest :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id, approved_follow_ups FROM run_requests WHERE org_id = $1 AND id = $2
 `
 
 type GetRunRequestParams struct {
@@ -292,12 +338,13 @@ func (q *Queries) GetRunRequest(ctx context.Context, arg GetRunRequestParams) (R
 		&i.EnrollHostIds,
 		&i.Payload,
 		&i.TargetID,
+		&i.ApprovedFollowUps,
 	)
 	return i, err
 }
 
 const getRunRequestByRunGroup = `-- name: GetRunRequestByRunGroup :one
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests WHERE org_id = $1 AND run_group_id = $2
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id, approved_follow_ups FROM run_requests WHERE org_id = $1 AND run_group_id = $2
 `
 
 type GetRunRequestByRunGroupParams struct {
@@ -334,6 +381,7 @@ func (q *Queries) GetRunRequestByRunGroup(ctx context.Context, arg GetRunRequest
 		&i.EnrollHostIds,
 		&i.Payload,
 		&i.TargetID,
+		&i.ApprovedFollowUps,
 	)
 	return i, err
 }
@@ -639,7 +687,7 @@ func (q *Queries) ListRunRequestTokens(ctx context.Context, arg ListRunRequestTo
 }
 
 const listRunRequests = `-- name: ListRunRequests :many
-SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id FROM run_requests
+SELECT id, org_id, kind, template_id, template_revision, host_id, job_id, reason, requested_by_user, requested_by_token, status, decided_by, decided_at, run_group_id, expires_at, created_at, approved_fingerprint, overrides, pinned_commit, sync_job_id, expires_in_minutes, sync_error, enroll_host_ids, payload, target_id, approved_follow_ups FROM run_requests
 WHERE org_id = $1
   AND ($2::text IS NULL OR $2::text = CASE
     WHEN status = 'pending' AND expires_at <= $3::timestamptz THEN 'expired' ELSE status END)
@@ -692,6 +740,7 @@ func (q *Queries) ListRunRequests(ctx context.Context, arg ListRunRequestsParams
 			&i.EnrollHostIds,
 			&i.Payload,
 			&i.TargetID,
+			&i.ApprovedFollowUps,
 		); err != nil {
 			return nil, err
 		}
@@ -803,7 +852,7 @@ func (q *Queries) RefreshReviewRequest(ctx context.Context, arg RefreshReviewReq
 
 const revertRunRequest = `-- name: RevertRunRequest :exec
 UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, approved_fingerprint = NULL, pinned_commit = NULL,
-  enroll_host_ids = NULL
+  enroll_host_ids = NULL, approved_follow_ups = NULL
 WHERE org_id = $1 AND id = $2
 `
 
