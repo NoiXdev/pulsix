@@ -236,3 +236,12 @@ func TestUnevaluatedRestartsAfterRegainingTheLock(t *testing.T) {
 		t.Fatalf("assertSince = %v after a later refresh, want it kept", got)
 	}
 }
+
+// TestPushHorizonCoversTheLongestOnlineWindow (review round 3, N3): the
+// horizon covers an agent with the longest heartbeat staying online
+// (and assigned) without a heartbeat, plus its first run and the slack.
+func TestPushHorizonCoversTheLongestOnlineWindow(t *testing.T) {
+	if pushHorizon != 32*time.Minute {
+		t.Fatalf("pushHorizon = %v, want 3 × 10 min + 1 min + 1 min", pushHorizon)
+	}
+}

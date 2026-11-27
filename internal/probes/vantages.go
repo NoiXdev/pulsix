@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -290,12 +291,18 @@ func (r *Runner) combine(ctx context.Context, s slot, t target) {
 }
 
 // pushHorizon is the longest an agent can take, after the refresh that
-// wrote a changed assignment, to run the new params: its next heartbeat
-// (the manager hands out a changed probe config only on one), its slot's
-// first-run offset, and pushSlack for the probe itself and the result's
-// delivery. A round stamped before the change plus pushHorizon may have
-// been probed with the old params and is never blamed.
-const pushHorizon = probeconfig.MaxHeartbeatInterval + probeconfig.FirstRunWindow + pushSlack
+// wrote a changed assignment, to run the new params while it stays
+// assigned: the manager hands out a changed probe config only on a
+// heartbeat, and an agent that misses heartbeats stays online, and so
+// assigned, for agents.HeartbeatsPerOnlineWindow of its interval — with
+// the longest interval an agent accepts, the rounds it buffered and
+// replays after an outage of that length are still old-param rounds.
+// Then its slot's first-run offset, and pushSlack for the probe itself
+// and the result's delivery. A round stamped before the change plus
+// pushHorizon may have been probed with the old params and is never
+// blamed.
+const pushHorizon = agents.HeartbeatsPerOnlineWindow*probeconfig.MaxHeartbeatInterval +
+	probeconfig.FirstRunWindow + pushSlack
 
 // pushSlack: a probe's own run (a synthetic check's timeout is at most
 // 60 s) and the result's way to the manager.
@@ -323,11 +330,10 @@ type missingRun struct {
 // and the same vantage left entries out of at least two distinct such
 // rounds; otherwise it is left unjudged for this combine — no row at
 // all. A complete round, or one probed before the horizon, ends the run.
-// The cost: an older agent's entries get the error only some 12 minutes
+// The cost: an older agent's entries get the error only some 32 minutes
 // after a change, a manager start or a lock takeover. The rounds' times
-// are the prober's clock: an agent's clock ahead of the manager's, or an
-// agent that was disconnected past the horizon and replays old-param
-// rounds, can still turn one old round into the first of a run.
+// are the prober's clock: an agent's clock ahead of the manager's can
+// still turn one old round into the first of a run.
 func (r *Runner) unevaluated(s slot, t target, rep string, at time.Time, obs []probe.Observation) []probe.Observation {
 	flags := judge.Unevaluated(t.check.Plugin, t.check.Params, obs)
 	r.mu.Lock()
