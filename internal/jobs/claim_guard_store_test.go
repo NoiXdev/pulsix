@@ -2,10 +2,12 @@ package jobs_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -125,5 +127,52 @@ func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	if len(guard.runs) != 1 || guard.runs[0].PinnedCommit != j.PinnedCommit || !slices.Equal(guard.runs[0].EnrollHostIDs, j.EnrollHostIDs) ||
 		len(j.HostIDs) == 0 || !slices.Equal(guard.runs[0].HostIDs, j.HostIDs) {
 		t.Fatalf("guard saw %+v, want [{%s %v %v}]", guard.runs, j.PinnedCommit, j.EnrollHostIDs, j.HostIDs)
+	}
+}
+
+// TestQueueClaimGuardSeesTheChainParent (backlog 2.143, review B1): the
+// guard is handed a chained job's parent run group (its trigger_ref) and
+// its template, which find the follow-up row by its unique key even
+// before the starter's batch names the row's child group. A job of
+// another trigger hands no parent.
+func TestQueueClaimGuardSeesTheChainParent(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "jobs-claim-guard-chain")
+	scoped := db.WithOrgScope(ctx, org)
+	zone := seedZone(t, d, org)
+	worker := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, 'w', 'serial-chain')`,
+		worker, org, zone); err != nil {
+		t.Fatal(err)
+	}
+	parent, sched := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	chained := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
+	chained.Trigger, chained.TriggerRef, chained.ActorID = jobs.TriggerChain, &parent, nil
+	scheduled := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
+	scheduled.Trigger, scheduled.TriggerRef, scheduled.ActorID = jobs.TriggerSchedule, &sched, nil
+	scheduled.CreatedAt = chained.CreatedAt.Add(time.Second)
+	store := jobs.NewSQLStore(d)
+	for _, j := range []jobs.Job{chained, scheduled} {
+		if err := store.CreateJob(scoped, j, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue := newTestQueue(d)
+	guard := &refuseGuard{reason: errors.New("refused")}
+	queue.SetClaimGuard(guard)
+	for range 2 {
+		if c, err := queue.ClaimFor(ctx, worker, org, []uuid.UUID{zone}, "v1", jobs.ClaimCaps{SupportsPinnedCommit: true}); err != nil || c != nil {
+			t.Fatalf("ClaimFor = %v, %v; want the guard's refusal", c, err)
+		}
+	}
+	if len(guard.runs) != 2 {
+		t.Fatalf("guard calls = %d, want 2", len(guard.runs))
+	}
+	got := guard.runs[0]
+	if got.TriggerRef == nil || *got.TriggerRef != parent || got.TemplateID == nil || *got.TemplateID != *chained.TemplateID {
+		t.Fatalf("guard saw %+v for the chained job, want parent %s and template %s", got, parent, *chained.TemplateID)
+	}
+	if got := guard.runs[1]; got.TriggerRef != nil || got.TemplateID == nil || *got.TemplateID != *scheduled.TemplateID {
+		t.Fatalf("guard saw %+v for the scheduled job, want no parent and its template", got)
 	}
 }

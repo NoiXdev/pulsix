@@ -94,22 +94,29 @@ UPDATE run_requests SET status = 'pending', decided_by = NULL, decided_at = NULL
 WHERE org_id = $1 AND id = $2;
 
 -- name: GetFollowUpRunOrigin :one
--- The follow-up row that started run group group_id (its chain path and
+-- The follow-up row a chained run was started for (its chain path and
 -- template) and the run request whose run group is the root of its chain
--- (backlog 2.143): the walk goes up run_follow_ups from child group to
--- parent group, at most 32 steps (a chain is at most 10 runs deep), and
--- stops at the nearest group a run request owns. No row: the group is no
+-- (backlog 2.143). The row is found by the table's unique key, the run's
+-- trigger_ref (its parent group) and its template; never by
+-- child_group_id, which the starter writes only when its batch commits,
+-- after the run's jobs exist (review B1, as GetFollowUpOfChainedRun). The
+-- walk goes up from the parent group through each group's chain job's
+-- trigger_ref, at most 32 steps (a chain is at most 10 runs deep), and
+-- stops at the nearest group a run request owns. No row: no such
 -- follow-up, or its chain was not started by a run request.
 WITH RECURSIVE node AS (
   SELECT f.path, f.template_id FROM run_follow_ups f
-  WHERE f.org_id = sqlc.arg(org_id)::uuid AND f.child_group_id = sqlc.arg(group_id)::uuid
-  ORDER BY f.id LIMIT 1
+  WHERE f.org_id = sqlc.arg(org_id)::uuid AND f.parent_group_id = sqlc.arg(parent_group_id)::uuid
+    AND f.template_id = sqlc.arg(template_id)::uuid
 ), up (group_id, hops) AS (
-  SELECT f.parent_group_id, 1 FROM run_follow_ups f
-  WHERE f.org_id = sqlc.arg(org_id)::uuid AND f.child_group_id = sqlc.arg(group_id)::uuid
+  SELECT sqlc.arg(parent_group_id)::uuid, 0
   UNION
-  SELECT f.parent_group_id, up.hops + 1 FROM run_follow_ups f JOIN up ON f.child_group_id = up.group_id
-  WHERE f.org_id = sqlc.arg(org_id)::uuid AND up.hops < 32
+  SELECT j.trigger_ref, up.hops + 1 FROM up
+  CROSS JOIN LATERAL (
+    SELECT c.trigger_ref FROM jobs c
+    WHERE c.org_id = sqlc.arg(org_id)::uuid AND c.run_group_id = up.group_id AND c.trigger = 'chain' AND c.trigger_ref IS NOT NULL
+    ORDER BY c.created_at, c.id LIMIT 1) j
+  WHERE up.hops < 32
 )
 SELECT node.path::uuid[] AS path, node.template_id::uuid AS template_id, r.id::uuid AS request_id
 FROM node, up JOIN run_requests r ON r.org_id = sqlc.arg(org_id)::uuid AND r.run_group_id = up.group_id

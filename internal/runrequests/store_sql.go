@@ -201,8 +201,8 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 }
 
 // FollowUpOrigin implements Store.
-func (s *SQLStore) FollowUpOrigin(ctx context.Context, orgID, group uuid.UUID) (FollowUpOrigin, error) {
-	row, err := s.q.GetFollowUpRunOrigin(ctx, gen.GetFollowUpRunOriginParams{OrgID: orgID, GroupID: group})
+func (s *SQLStore) FollowUpOrigin(ctx context.Context, orgID, parentGroup, templateID uuid.UUID) (FollowUpOrigin, error) {
+	row, err := s.q.GetFollowUpRunOrigin(ctx, gen.GetFollowUpRunOriginParams{OrgID: orgID, ParentGroupID: parentGroup, TemplateID: templateID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FollowUpOrigin{}, ErrNotFound
 	}

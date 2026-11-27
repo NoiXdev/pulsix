@@ -108,7 +108,10 @@ var errApprovalUnsettled = errors.New("the run's approval changed while it was c
 // failure committed, and that approval's replay refills the zone.
 func (q *SQLQueue) guardClaim(ctx context.Context, job Job) (bool, error) {
 	scoped := db.WithOrgScope(ctx, job.OrgID)
-	run := ApprovedRun{PinnedCommit: job.PinnedCommit, EnrollHostIDs: job.EnrollHostIDs, HostIDs: job.HostIDs}
+	run := ApprovedRun{PinnedCommit: job.PinnedCommit, EnrollHostIDs: job.EnrollHostIDs, HostIDs: job.HostIDs, TemplateID: job.TemplateID}
+	if job.Trigger == TriggerChain {
+		run.TriggerRef = job.TriggerRef
+	}
 	for range claimGuardRounds {
 		err := q.claimGuard.CheckRunClaim(scoped, job.OrgID, job.RunGroupID, run)
 		if err == nil {

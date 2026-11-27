@@ -22,9 +22,14 @@ type memStore struct {
 	syncs map[uuid.UUID]memSync
 	// dueCalls are the staleBefore bounds the sweep asked with.
 	dueCalls []time.Time
-	// origins is where each follow-up run group sits (FollowUpOrigin).
-	origins map[uuid.UUID]runrequests.FollowUpOrigin
+	// origins is where each follow-up row sits (FollowUpOrigin), by its
+	// parent group and template.
+	origins map[followUpRowKey]runrequests.FollowUpOrigin
 }
+
+// followUpRowKey is a follow-up row's unique key: its parent run group
+// and its template.
+type followUpRowKey struct{ parent, template uuid.UUID }
 
 type memSync struct {
 	status jobs.Status
@@ -156,8 +161,8 @@ func (m *memStore) RevertToPending(_ context.Context, orgID, id uuid.UUID) error
 	return nil
 }
 
-func (m *memStore) FollowUpOrigin(_ context.Context, orgID, group uuid.UUID) (runrequests.FollowUpOrigin, error) {
-	o, ok := m.origins[group]
+func (m *memStore) FollowUpOrigin(_ context.Context, orgID, parentGroup, templateID uuid.UUID) (runrequests.FollowUpOrigin, error) {
+	o, ok := m.origins[followUpRowKey{parentGroup, templateID}]
 	if r, found := m.rows[o.RequestID]; !ok || !found || r.OrgID != orgID {
 		return runrequests.FollowUpOrigin{}, runrequests.ErrNotFound
 	}

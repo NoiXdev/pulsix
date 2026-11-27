@@ -162,6 +162,14 @@ type ApprovedRun struct {
 	// approved run picture does not hold (backlog 2.141). An approval
 	// stores none; it is ignored everywhere else.
 	HostIDs []uuid.UUID
+	// TriggerRef and TemplateID are set at the claim only (backlog 2.143):
+	// a chained job's parent run group (its trigger_ref; nil for any other
+	// trigger) and the job's template. With them the guard finds the
+	// follow-up row by its unique key (parent group, template), which
+	// holds even before the follow-up starter's batch has written the
+	// row's child group.
+	TriggerRef *uuid.UUID
+	TemplateID *uuid.UUID
 }
 
 // checkEnrollList refuses an enroll list on a run no approval started.

@@ -52,3 +52,6 @@
 
 ## Task 6: Docs
 - Backlog 2.142 and 2.143 → done; `docs/upgrades.md` (migration 00138, fingerprint change, skew). Commit `docs: backlog 2.142 and 2.143 done`.
+
+## Fix round 1 (review of 2026-11-27)
+- **R11 (B1) A follow-up is found from its job, not from its run group.** The claim hands the guard the chained job's parent run group (`trigger_ref`, set only for trigger `chain`) and its template (`jobs.ApprovedRun.TriggerRef`, `.TemplateID`); `GetFollowUpRunOrigin` finds the row by the table's unique key `(parent_group_id, template_id)` and walks the upper hops through each parent group's chain job's `trigger_ref` (indexed by `jobs_run_group_idx`), never through `child_group_id`, which the starter writes only when its batch commits, after the job may already be claimed. — Cost if wrong: none; a lookup that finds nothing still passes only runs no request's chain started. Pinned by `TestFollowUpClaimIsCheckedBeforeItsRowNamesItsChild` and `TestSQLStoreFindsAFollowUpsRequest` (rows without a child group, two levels), `TestQueueClaimGuardSeesTheChainParent`.

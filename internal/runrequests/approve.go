@@ -189,7 +189,7 @@ var errNoApprovedPicture = errors.New("the run's approval recorded no run pictur
 func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, run jobs.ApprovedRun) error {
 	r, err := s.store.ByRunGroup(ctx, orgID, runGroupID)
 	if errors.Is(err, ErrNotFound) {
-		return s.checkFollowUpClaim(ctx, orgID, runGroupID, run)
+		return s.checkFollowUpClaim(ctx, orgID, run)
 	}
 	if err != nil {
 		return fmt.Errorf("look up the run's request: %w", err)
@@ -258,8 +258,16 @@ var errFollowUpApprovalGone = errors.New("the approval that started this follow-
 // template's targets among the hosts stored for it, and their vars)
 // differs from the approved one, fails with ErrChangedAfterApproval; a job
 // host outside the bound hosts with ErrHostsChangedAfterApproval.
-func (s *Service) checkFollowUpClaim(ctx context.Context, orgID, group uuid.UUID, run jobs.ApprovedRun) error {
-	o, err := s.store.FollowUpOrigin(ctx, orgID, group)
+//
+// The follow-up is found from the job itself, its parent run group (the
+// chained job's trigger_ref) and its template, never through its own run
+// group: the starter names the row's child group only when its batch
+// commits, after the job may already be claimed (review B1).
+func (s *Service) checkFollowUpClaim(ctx context.Context, orgID uuid.UUID, run jobs.ApprovedRun) error {
+	if run.TriggerRef == nil || run.TemplateID == nil {
+		return nil
+	}
+	o, err := s.store.FollowUpOrigin(ctx, orgID, *run.TriggerRef, *run.TemplateID)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}

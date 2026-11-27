@@ -219,10 +219,11 @@ type Store interface {
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
-	// FollowUpOrigin finds the follow-up row that started group and the
-	// request whose run group is the root of its chain; ErrNotFound when
-	// group is no follow-up of an approved request's run.
-	FollowUpOrigin(ctx context.Context, orgID, group uuid.UUID) (FollowUpOrigin, error)
+	// FollowUpOrigin finds the follow-up row of templateID that run group
+	// parentGroup's run started (by the row's unique key, whether or not
+	// it names its child group yet) and the request whose run group is
+	// the root of its chain; ErrNotFound when there is none.
+	FollowUpOrigin(ctx context.Context, orgID, parentGroup, templateID uuid.UUID) (FollowUpOrigin, error)
 	// LockStatusByRunGroup is the status of the request whose approval
 	// created group, read under a share lock on its row that the
 	// transaction ctx carries holds to its end: Decide on that request

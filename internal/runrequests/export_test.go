@@ -18,3 +18,6 @@ func WithChainPath(n PictureFollowUp, path ...uuid.UUID) PictureFollowUp {
 	n.chainPath = path
 	return n
 }
+
+// FollowUpKey is followUpKey: the key of a follow-up's binding.
+func FollowUpKey(path []uuid.UUID, templateID uuid.UUID) string { return followUpKey(path, templateID) }

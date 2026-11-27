@@ -16,11 +16,31 @@ import (
 // starts Y (bound to h2) and Y's follow-up Z (bound to h2), and skips the
 // deselectable W; groups name the follow-up runs the chain started.
 type followUpClaimFx struct {
-	w                 *wiring
-	r                 runrequests.Request
-	x, y, z, wt       uuid.UUID
-	h1, h2            uuid.UUID
+	w           *wiring
+	r           runrequests.Request
+	x, y, z, wt uuid.UUID
+	h1, h2      uuid.UUID
+	// gY, gZ, gW and gLate name the follow-ups by their row's template;
+	// pY is Y's run group, the parent of Z and of late.
 	gY, gZ, gW, gLate uuid.UUID
+	pY, late          uuid.UUID
+}
+
+// run is the claim of a chained job of the follow-up g (one of gY, gZ,
+// gW, gLate, or another id for a run no request's chain started) on hosts.
+func (f followUpClaimFx) run(g uuid.UUID, hosts []uuid.UUID) jobs.ApprovedRun {
+	parent, tmpl := id(), id()
+	switch g {
+	case f.gY:
+		parent, tmpl = f.r.ID, f.y
+	case f.gZ:
+		parent, tmpl = f.pY, f.z
+	case f.gW:
+		parent, tmpl = f.r.ID, f.wt
+	case f.gLate:
+		parent, tmpl = f.pY, f.late
+	}
+	return jobs.ApprovedRun{TriggerRef: &parent, TemplateID: &tmpl, HostIDs: hosts}
 }
 
 func newFollowUpClaimFx(t *testing.T, onlyY bool) followUpClaimFx {
@@ -44,11 +64,12 @@ func newFollowUpClaimFx(t *testing.T, onlyY bool) followUpClaimFx {
 	if _, err := f.w.svc.Approve(ctx, f.w.org, f.r.ID, id(), fp, selection, true); err != nil {
 		t.Fatal(err)
 	}
-	f.w.store.origins = map[uuid.UUID]runrequests.FollowUpOrigin{
-		f.gY:    {RequestID: f.r.ID, Path: []uuid.UUID{f.x}, TemplateID: f.y},
-		f.gZ:    {RequestID: f.r.ID, Path: []uuid.UUID{f.x, f.y}, TemplateID: f.z},
-		f.gW:    {RequestID: f.r.ID, Path: []uuid.UUID{f.x}, TemplateID: f.wt},
-		f.gLate: {RequestID: f.r.ID, Path: []uuid.UUID{f.x, f.y}, TemplateID: id()},
+	f.pY, f.late = id(), id()
+	f.w.store.origins = map[followUpRowKey]runrequests.FollowUpOrigin{
+		{f.r.ID, f.y}:  {RequestID: f.r.ID, Path: []uuid.UUID{f.x}, TemplateID: f.y},
+		{f.pY, f.z}:    {RequestID: f.r.ID, Path: []uuid.UUID{f.x, f.y}, TemplateID: f.z},
+		{f.r.ID, f.wt}: {RequestID: f.r.ID, Path: []uuid.UUID{f.x}, TemplateID: f.wt},
+		{f.pY, f.late}: {RequestID: f.r.ID, Path: []uuid.UUID{f.x, f.y}, TemplateID: f.late},
 	}
 	return f
 }
@@ -92,7 +113,7 @@ func TestCheckRunClaimOfAFollowUp(t *testing.T) {
 			if tc.change != nil {
 				tc.change(f)
 			}
-			err := f.w.svc.CheckRunClaim(ctx, f.w.org, tc.group(f), jobs.ApprovedRun{HostIDs: tc.hosts(f)})
+			err := f.w.svc.CheckRunClaim(ctx, f.w.org, id(), f.run(tc.group(f), tc.hosts(f)))
 			if tc.want == nil {
 				if err != nil {
 					t.Fatalf("claim = %v, want it let through", err)
@@ -113,10 +134,10 @@ func TestCheckRunClaimOfAFollowUpChecksAgainstTheParentsHosts(t *testing.T) {
 	f := newFollowUpClaimFx(t, false)
 	ctx := context.Background()
 	for group, want := range map[uuid.UUID][]uuid.UUID{f.gY: {f.h1, f.h2}, f.gZ: {f.h2}} {
-		if err := f.w.svc.CheckRunClaim(ctx, f.w.org, group, jobs.ApprovedRun{HostIDs: []uuid.UUID{f.h2}}); err != nil {
+		if err := f.w.svc.CheckRunClaim(ctx, f.w.org, id(), f.run(group, []uuid.UUID{f.h2})); err != nil {
 			t.Fatal(err)
 		}
-		tmpl := f.w.store.origins[group].TemplateID
+		tmpl := *f.run(group, nil).TemplateID
 		if got := f.w.pics.within[tmpl]; !slices.Equal(got, want) {
 			t.Fatalf("within of %s = %v, want %v", tmpl, got, want)
 		}
@@ -127,11 +148,11 @@ func TestCheckRunClaimOfAFollowUpChecksAgainstTheParentsHosts(t *testing.T) {
 // deselected is not bound; a run of it is refused.
 func TestCheckRunClaimOfADeselectedFollowUp(t *testing.T) {
 	f := newFollowUpClaimFx(t, true)
-	err := f.w.svc.CheckRunClaim(context.Background(), f.w.org, f.gW, jobs.ApprovedRun{})
+	err := f.w.svc.CheckRunClaim(context.Background(), f.w.org, id(), f.run(f.gW, nil))
 	if !errors.Is(err, runrequests.ErrChangedAfterApproval) {
 		t.Fatalf("claim of the deselected follow-up = %v, want refused", err)
 	}
-	if err := f.w.svc.CheckRunClaim(context.Background(), f.w.org, f.gY, jobs.ApprovedRun{HostIDs: []uuid.UUID{f.h2}}); err != nil {
+	if err := f.w.svc.CheckRunClaim(context.Background(), f.w.org, id(), f.run(f.gY, []uuid.UUID{f.h2})); err != nil {
 		t.Fatalf("claim of the selected follow-up = %v", err)
 	}
 }
@@ -146,13 +167,13 @@ func TestCheckRunClaimOfAFollowUpOfALegacyOrWithdrawnApproval(t *testing.T) {
 	r := f.w.store.rows[f.r.ID]
 	r.FollowUpBindings = nil
 	f.w.store.rows[f.r.ID] = r
-	if err := f.w.svc.CheckRunClaim(ctx, f.w.org, f.gLate, jobs.ApprovedRun{HostIDs: []uuid.UUID{f.h1}}); err != nil {
+	if err := f.w.svc.CheckRunClaim(ctx, f.w.org, id(), f.run(f.gLate, []uuid.UUID{f.h1})); err != nil {
 		t.Fatalf("legacy approval's follow-up = %v, want it let through", err)
 	}
 	if err := f.w.store.RevertToPending(ctx, f.w.org, f.r.ID); err != nil {
 		t.Fatal(err)
 	}
-	err := f.w.svc.CheckRunClaim(ctx, f.w.org, f.gY, jobs.ApprovedRun{HostIDs: []uuid.UUID{f.h2}})
+	err := f.w.svc.CheckRunClaim(ctx, f.w.org, id(), f.run(f.gY, []uuid.UUID{f.h2}))
 	if err == nil || errors.Is(err, jobs.ErrApprovalWithdrawn) {
 		t.Fatalf("follow-up of a request no longer approved = %v, want an ordinary refusal", err)
 	}
