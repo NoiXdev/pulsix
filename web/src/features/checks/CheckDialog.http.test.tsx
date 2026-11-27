@@ -104,4 +104,15 @@ describe('CheckDialog — http JSON values and credentials', () => {
     expect(await within(row).findByRole('alert')).toHaveTextContent('the regular expression does not compile');
     expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
+
+  it('starts the assertion editor afresh when the plugin changes (backlog 3.87)', async () => {
+    const user = userEvent.setup();
+    await openNew(user);
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    expect(screen.getByLabelText('Subject of assertion 1')).toHaveValue('status (status code)');
+    await pickOption(screen, 'Plugin', { value: 'tcp' });
+    expect(screen.queryAllByTestId('assertion-row')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    expect(screen.getByLabelText('Subject of assertion 1')).toHaveValue('connect_ms (connect time, ms)');
+  });
 });

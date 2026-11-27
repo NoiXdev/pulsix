@@ -87,6 +87,7 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 			delete(r.pollers, s)
 		}
 	}
+	r.adoptAssertions(next, now)
 	r.targets = next
 	r.refreshed = now
 	r.pruneVantages(ctx)
@@ -168,4 +169,26 @@ func (r *Runner) newTarget(org uuid.UUID, address string, c checks.Resolved) tar
 		t.vantage.Groups = nil
 	}
 	return t
+}
+
+// adoptAssertions sets each slot's assertSince: kept while the check's
+// assertions are what the slot had, now for a new slot or changed
+// assertions. A slot gone forgets its run of unevaluated rounds.
+func (r *Runner) adoptAssertions(next map[slot]target, now time.Time) {
+	for s, t := range next {
+		if old, ok := r.targets[s]; ok && !old.assertSince.IsZero() &&
+			reflect.DeepEqual(old.check.Params["assertions"], t.check.Params["assertions"]) {
+			t.assertSince = old.assertSince
+		} else {
+			t.assertSince = now
+		}
+		next[s] = t
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for s := range r.missing {
+		if _, ok := next[s]; !ok {
+			delete(r.missing, s)
+		}
+	}
 }

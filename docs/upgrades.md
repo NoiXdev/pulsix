@@ -1210,10 +1210,18 @@ recent result) now puts its error only on the metrics it reports, so a `tcp` che
 without `expect` no longer gets an error on `tcp.banner_match`; and a `tcp` check reads
 past `expect` only while an assertion looks at the response, to the first line break.
 **Skew:** an agent older than this release, used as a vantage of a check with assertions,
-ignores the parameter; the manager marks every entry its up round left out as the error
+ignores the parameter; the manager marks every entry its up rounds left out as the error
 "the vantage point that answered did not evaluate this assertion; update its agent"
-(the item reads unknown with that reason) instead of letting it go stale. Update the
-agents of a check's vantage groups before adding assertions. A manager older than this
+(the item reads unknown with that reason) instead of letting it go stale. It does so only
+once the same vantage left entries out of two distinct rounds, both probed after the
+check's assertions last changed (as the manager holding the probe lock saw the change, or
+took the lock); a round probed before an edit, or a round still partly stored, leaves the
+entry without a reading for that combine. So after adding an assertion, an older agent's
+check reads unknown from about its second round on. This applies to `http` checks too: an
+`http` check probed from agent vantages whose agent ignores an entry now reads that entry
+as this error instead of leaving it without a reading (in practice only agents from
+before 3.13b, which were never released). Update the agents of a check's vantage groups
+before adding assertions. A manager older than this
 release refuses `assertions` on these plugins (unknown parameter); one still running
 during a rolling upgrade while it holds the probe lock probes such a check without its
 assertions, so the items go stale until a new manager probes it: stop every manager

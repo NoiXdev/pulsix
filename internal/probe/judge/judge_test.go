@@ -225,6 +225,10 @@ func TestUnevaluated(t *testing.T) {
 	if got := judge.Unevaluated("icmp", params, []probe.Observation{probe.Value("icmp.up", 1)}); len(got) != 0 {
 		t.Errorf("Unevaluated(icmp) = %+v", got)
 	}
+	httpUp := []probe.Observation{probe.Value("http.up", 1)}
+	if got := judge.Unevaluated("http", list("ok=status == 200"), httpUp); len(got) != 2 || got[0].Metric != "http.assertion" {
+		t.Errorf("Unevaluated(http) = %+v, want http's entry flagged too", got)
+	}
 	if got := judge.Unevaluated("tcp", map[string]any{}, up); len(got) != 0 {
 		t.Errorf("Unevaluated(no assertions) = %+v", got)
 	}

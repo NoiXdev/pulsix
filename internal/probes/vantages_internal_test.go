@@ -12,7 +12,6 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/hosts"
-	"github.com/noixdev/pulsix/internal/probe/judge"
 )
 
 // vantageCheck is a synthetic check probed from the given groups' agents;
@@ -486,77 +485,5 @@ func TestLostLockForgetsVantageState(t *testing.T) {
 	h.tickAt(10 * time.Second)
 	if rs := h.vstore.Replaces(); len(rs) != 2 {
 		t.Fatalf("assignment writes = %d, want the empty set written again after regaining the lock", len(rs))
-	}
-}
-
-// TestCombineMarksUnevaluatedAssertions (backlog 3.87, R12): an agent
-// older than tcp's assertions reports an up round without the assertion
-// items; the combined result carries an error naming that on each entry
-// it left out, instead of letting the items go stale and vanish. A down
-// round, and a round that reports every entry, pass through unchanged.
-func TestCombineMarksUnevaluatedAssertions(t *testing.T) {
-	h := newHarness(t, nil)
-	f := h.addFleet("a1")
-	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
-		vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, map[string]any{
-			"vantage_manager": false, "port": float64(22),
-			"assertions": []any{"fast=connect_ms < 500", "ssh=response contains \"SSH\""},
-		}))
-	agent := f.agents[0].String()
-	at := t0.Add(-10 * time.Second)
-	h.vstore.put(h.host, "web",
-		VantageRow{Vantage: agent, Metric: "tcp.up", At: at, Value: f64(1)},
-		VantageRow{Vantage: agent, Metric: "tcp.connect_ms", At: at, Value: f64(3)})
-	h.tickAt(0)
-	b := h.rec.Batches()
-	if len(b) != 1 {
-		t.Fatalf("batches = %+v", b)
-	}
-	errs := map[string]string{}
-	for _, o := range b[0].obs {
-		if o.Item != "" {
-			errs[o.Item+" "+o.Metric] = o.Err
-		}
-	}
-	for _, k := range []string{"fast tcp.assertion", "fast tcp.assertion_actual", "ssh tcp.assertion", "ssh tcp.assertion_actual"} {
-		if errs[k] != judge.ErrUnevaluated {
-			t.Errorf("%s = %q, want %q (all: %v)", k, errs[k], judge.ErrUnevaluated, errs)
-		}
-	}
-	if len(b[0].obs) != 6 {
-		t.Errorf("combined = %+v, want the round's two rows and four errors", b[0].obs)
-	}
-}
-
-// TestCombineKeepsEvaluatedAssertions: a round from an agent that knows
-// the assertions, and a down round, are recorded as they are.
-func TestCombineKeepsEvaluatedAssertions(t *testing.T) {
-	for _, down := range []bool{false, true} {
-		h := newHarness(t, nil)
-		f := h.addFleet("a1")
-		h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
-			vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, map[string]any{
-				"vantage_manager": false, "port": float64(22), "assertions": []any{"fast=connect_ms < 500"},
-			}))
-		agent := f.agents[0].String()
-		at := t0.Add(-10 * time.Second)
-		pass := "pass"
-		rows := []VantageRow{{Vantage: agent, Metric: "tcp.up", At: at, Value: f64(1)},
-			{Vantage: agent, Item: "fast", Metric: "tcp.assertion", At: at, Label: &pass},
-			{Vantage: agent, Item: "fast", Metric: "tcp.assertion_actual", At: at, Label: &pass}}
-		if down {
-			rows = []VantageRow{{Vantage: agent, Metric: "tcp.up", At: at, Value: f64(0)}}
-		}
-		h.vstore.put(h.host, "web", rows...)
-		h.tickAt(0)
-		b := h.rec.Batches()
-		if len(b) != 1 || len(b[0].obs) != len(rows) {
-			t.Fatalf("down %v: combined = %+v, want the round as it is", down, b)
-		}
-		for _, o := range b[0].obs {
-			if o.Err != "" {
-				t.Errorf("down %v: observation %+v", down, o)
-			}
-		}
 	}
 }

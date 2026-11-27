@@ -186,7 +186,9 @@ func FailAll(plugin string, entries []Entry, msg string) []probe.Observation {
 // older than the plugin's assertions (backlog 3.87). Without this the
 // items would go stale and then vanish, as if the operator had removed
 // them. A down round, a round without an up reading and a plugin without
-// assertions get nothing.
+// assertions get nothing. The probe runner calls it only for rounds that
+// can be blamed (internal/probes, unevaluated): probed after the check's
+// assertions last changed, and the second of two such rounds.
 func Unevaluated(plugin string, params map[string]any, obs []probe.Observation) []probe.Observation {
 	d, ok := assert.DialectOf(plugin)
 	if !ok || !upRound(plugin, obs) {

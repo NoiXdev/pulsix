@@ -122,7 +122,9 @@ export function ParamFields({
         if (isAssertions(plugin.name, spec.name) && isAssertionPlugin(plugin.name)) {
           return (
             <AssertionEditor
-              key={spec.name}
+              // Keyed by plugin: rows and mode never carry over to another
+              // plugin's subjects (backlog 3.87).
+              key={`${plugin.name}.${spec.name}`}
               plugin={plugin.name}
               id={id}
               label={label(spec)}

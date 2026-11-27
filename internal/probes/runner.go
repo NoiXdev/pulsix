@@ -109,6 +109,11 @@ type target struct {
 	secret  string
 	vantage checkplugins.Vantage
 	agents  []agentRef
+	// assertSince is when this runner first saw the check's assertions
+	// as they are (the refresh that adopted them, or took the lock): a
+	// round probed before it may lack entries without blame (backlog
+	// 3.87, unevaluated).
+	assertSince time.Time
 }
 
 // Runner probes every monitored host's synthetic checks while it holds the
@@ -157,7 +162,11 @@ type Runner struct {
 
 	mu       sync.Mutex
 	inFlight map[slot]uuid.UUID // running slot → its organization
-	wg       sync.WaitGroup
+	// missing is, per slot, the run of distinct representative rounds
+	// that left assertion entries out (unevaluated). Combines of one slot
+	// never overlap, but they run on probe goroutines.
+	missing map[slot]missingRun
+	wg      sync.WaitGroup
 	// wake carries "a probe finished" to the Run loop, which then starts
 	// due probes into the freed slot at once. Buffered (1) and sent to
 	// without blocking: a burst of completions is one wake-up.
@@ -174,7 +183,7 @@ func NewRunner(d Deps) *Runner {
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
 		targets: map[slot]target{}, next: map[slot]time.Time{}, pollers: map[slot]Poller{},
 		assignedEmpty: map[uuid.UUID]bool{}, expected: map[slot]expectedSet{},
-		inFlight: map[slot]uuid.UUID{}, skipped: newThrottle(skippedLogEvery),
+		inFlight: map[slot]uuid.UUID{}, missing: map[slot]missingRun{}, skipped: newThrottle(skippedLogEvery),
 		wake: make(chan struct{}, 1),
 	}
 	if r.clock == nil {
@@ -300,6 +309,9 @@ func (r *Runner) lost() {
 	clear(r.pollers)
 	clear(r.assignedEmpty)
 	clear(r.expected)
+	r.mu.Lock()
+	clear(r.missing)
+	r.mu.Unlock()
 	r.refreshed = time.Time{}
 }
 
