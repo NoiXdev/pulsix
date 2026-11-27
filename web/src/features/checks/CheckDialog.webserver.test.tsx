@@ -198,3 +198,42 @@ describe('CheckDialog — phpfpm status URLs list', () => {
     expect(put?.params).toEqual(params);
   });
 });
+
+/** The optional API URLs of nginx and caddy (backlog 3.11b). */
+const API_URLS = [
+  { plugin: 'nginx', label: 'nginx Plus API URL (optional)', example: 'http://127.0.0.1/api/9', param: 'api_url' },
+  {
+    plugin: 'caddy',
+    label: 'Upstream list URL (optional)',
+    example: 'http://127.0.0.1:2019/reverse_proxy/upstreams',
+    param: 'upstreams_url',
+  },
+] as const;
+
+describe.each(API_URLS)('CheckDialog — $plugin $param', ({ plugin, label, example, param }) => {
+  it('shows the example and sends nothing untouched', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user, plugin);
+    const field = screen.getByLabelText(label);
+    expect(field).toHaveAttribute('placeholder', example);
+    await save(user, posted);
+    expect(posted[0].params).toEqual({});
+  });
+
+  it('sends an entered URL', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user, plugin);
+    await user.type(screen.getByLabelText(label), example);
+    await save(user, posted);
+    expect(posted[0].params).toEqual({ [param]: example });
+  });
+
+  it('refuses a URL with a user name and sends nothing', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user, plugin);
+    await user.type(screen.getByLabelText(label), 'http://u:p@127.0.0.1/x');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/must be an http:\/\/ or https:\/\/ URL without a user name, password or #fragment/)).toBeInTheDocument();
+    expect(posted).toHaveLength(0);
+  });
+});
