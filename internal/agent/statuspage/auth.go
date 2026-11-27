@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,7 +84,7 @@ func (a *auth) authorized(r *http.Request) bool {
 		if strings.EqualFold(scheme, "Bearer") && a.tokenOK(strings.TrimSpace(tok)) {
 			return true
 		}
-		a.fails.fail(remoteIP(r))
+		a.fails.fail(failureKey(remoteIP(r)))
 		return false
 	}
 	if c, err := r.Cookie(cookieName); err == nil && a.sessionOK(c.Value) {
@@ -109,7 +110,25 @@ func remoteIP(r *http.Request) string {
 	return host
 }
 
-// failureLimiter counts failed tokens per remote address: after
+// failureKey is the limiter's key for a peer address: an IPv4 address as
+// it is, an IPv6 address by its /64, which one host commonly holds whole
+// (review 3.132, finding 6).
+func failureKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	if a = a.Unmap(); a.Is4() {
+		return a.String()
+	}
+	p, err := a.WithZone("").Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return p.String()
+}
+
+// failureLimiter counts failed tokens per remote address (failureKey): after
 // maxFailures within failureWindow, the address is refused until the
 // window that began with its first failure is over.
 type failureLimiter struct {
@@ -128,7 +147,12 @@ func newFailureLimiter(now func() time.Time) *failureLimiter {
 }
 
 // overflowKey counts the failures of every address that found the table
-// full, together: rotating addresses must not buy unlimited tries.
+// full, together: rotating addresses must not buy unlimited tries. While
+// the table is full of live entries (4096 addresses or IPv6 /64s, each
+// with a failure in the last minute), five failures from any of the
+// others block every address not in the table for the rest of that
+// minute, legitimate visitors included; the agent's monitoring is not
+// affected, only the page (documented, R17 of the 3.132 plan).
 const overflowKey = "*"
 
 // blocked reports whether ip is refused right now.

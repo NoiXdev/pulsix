@@ -154,69 +154,21 @@ type Buffer struct {
 	Oldest       *time.Time `json:"oldest"`
 }
 
-// redacted returns s with fn applied to every string it holds: the page's
-// last pass, so no secret value reaches the page even where the agent
-// sends one (a local check's params).
-func (s Snapshot) redacted(fn func(string) string) Snapshot {
-	if fn == nil {
+// redactedParams returns s with fn applied to the local checks' params:
+// the one field the page redacts itself. Everything else the page shows
+// was redacted before it was sent, or is shown as sent; the heartbeat
+// sends the params as written, so a secret typed literally into a local
+// check's params reaches the manager but not the page (controller ruling,
+// fix round 1 of backlog 3.132).
+func (s Snapshot) redactedParams(fn func(string) string) Snapshot {
+	if fn == nil || len(s.Heartbeat.LocalChecks) == 0 {
 		return s
 	}
-	strs := func(in []string) []string {
-		if in == nil {
-			return nil
-		}
-		out := make([]string, len(in))
-		for i, v := range in {
-			out[i] = fn(v)
-		}
-		return out
-	}
-	vals := func(in []Value) []Value {
-		out := make([]Value, len(in))
-		for i, v := range in {
-			v.Item, v.Metric, v.Error = fn(v.Item), fn(v.Metric), fn(v.Error)
-			if v.Label != nil {
-				l := fn(*v.Label)
-				v.Label = &l
-			}
-			out[i] = v
-		}
-		return out
-	}
-	s.Agent.Version = fn(s.Agent.Version)
-	s.Connection.Manager = fn(s.Connection.Manager)
-	id := &s.Identity
-	id.AgentName, id.Hostname, id.OrgName, id.HostName = fn(id.AgentName), fn(id.Hostname), fn(id.OrgName), fn(id.HostName)
-	checks := make([]Check, len(s.Checks))
-	for i, c := range s.Checks {
-		c.Key, c.Plugin, c.Results = fn(c.Key), fn(c.Plugin), vals(c.Results)
-		checks[i] = c
-	}
-	s.Checks = checks
-	if s.Facts.Values != nil {
-		facts := make(map[string]string, len(s.Facts.Values))
-		for k, v := range s.Facts.Values {
-			facts[fn(k)] = fn(v)
-		}
-		s.Facts.Values = facts
-	}
-	hb := &s.Heartbeat
-	hb.SecretNames, hb.SecretsState, hb.LocalCheckProblems = strs(hb.SecretNames), fn(hb.SecretsState), strs(hb.LocalCheckProblems)
-	local := make([]LocalCheck, len(hb.LocalChecks))
-	for i, c := range hb.LocalChecks {
-		c.Key, c.Plugin, c.ParamsJSON = fn(c.Key), fn(c.Plugin), fn(c.ParamsJSON)
+	local := make([]LocalCheck, len(s.Heartbeat.LocalChecks))
+	for i, c := range s.Heartbeat.LocalChecks {
+		c.ParamsJSON = fn(c.ParamsJSON)
 		local[i] = c
 	}
-	hb.LocalChecks = local
-	probes := make([]Probe, len(s.Probes.Assigned))
-	for i, p := range s.Probes.Assigned {
-		p.CheckKey, p.Plugin, p.Address, p.Results = fn(p.CheckKey), fn(p.Plugin), fn(p.Address), vals(p.Results)
-		probes[i] = p
-	}
-	s.Probes.Assigned = probes
-	ab := &s.Abilities
-	ab.ConfigFile, ab.ConfigState = fn(ab.ConfigFile), fn(ab.ConfigState)
-	ab.ScriptCommands, ab.SecretNames, ab.LocalChecks = strs(ab.ScriptCommands), strs(ab.SecretNames), strs(ab.LocalChecks)
-	s.Log = strs(s.Log)
+	s.Heartbeat.LocalChecks = local
 	return s
 }

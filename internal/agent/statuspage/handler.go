@@ -7,7 +7,11 @@ import (
 	"encoding/json"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -38,6 +42,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("X-Frame-Options", "DENY")
 	hd.Set("Cache-Control", "no-store")
 
+	// A page without a token answers loopback names only: a site whose
+	// name a visitor's browser resolves to 127.0.0.1 (DNS rebinding)
+	// would otherwise read it as its own origin. With a token, the token
+	// is the guard.
+	if h.auth.open() && !loopbackHost(r.Host) {
+		http.Error(w, http.StatusText(http.StatusMisdirectedRequest), http.StatusMisdirectedRequest)
+		return
+	}
+
 	switch r.URL.Path {
 	case "/", "/status.json":
 		if !allow(w, r, http.MethodGet, http.MethodHead) {
@@ -45,11 +58,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.serveStatus(w, r, nonce)
 	case "/login":
-		if h.auth.open() {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+		if !allow(w, r, http.MethodGet, http.MethodHead, http.MethodPost) {
 			return
 		}
-		if !allow(w, r, http.MethodGet, http.MethodHead, http.MethodPost) {
+		if h.auth.open() {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		h.serveLogin(w, r, nonce)
@@ -79,7 +92,7 @@ func allow(w http.ResponseWriter, r *http.Request, methods ...string) bool {
 
 func (h *handler) serveStatus(w http.ResponseWriter, r *http.Request, nonce string) {
 	isJSON := r.URL.Path == "/status.json"
-	if h.auth.fails.blocked(remoteIP(r)) {
+	if h.auth.fails.blocked(failureKey(remoteIP(r))) {
 		http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
 		return
 	}
@@ -92,7 +105,7 @@ func (h *handler) serveStatus(w http.ResponseWriter, r *http.Request, nonce stri
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	snap := h.src.Snapshot().redacted(h.redact)
+	snap := h.src.Snapshot().redactedParams(h.redact)
 	if isJSON {
 		h.writeJSON(w, snap)
 		return
@@ -102,7 +115,13 @@ func (h *handler) serveStatus(w http.ResponseWriter, r *http.Request, nonce stri
 
 func (h *handler) serveLogin(w http.ResponseWriter, r *http.Request, nonce string) {
 	data := pageData{T: textsFor(r), Nonce: nonce}
-	ip := remoteIP(r)
+	if r.Method == http.MethodPost && crossSite(r) {
+		// Another site made the visitor's browser post this; counted as a
+		// failure, it could lock the visitor out.
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	ip := failureKey(remoteIP(r))
 	if h.auth.fails.blocked(ip) {
 		data.TooMany = true
 		h.render(w, loginTmpl, http.StatusTooManyRequests, data)
@@ -150,6 +169,34 @@ func (h *handler) writeJSON(w http.ResponseWriter, snap Snapshot) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(append(b, '\n'))
+}
+
+// loopbackHost reports whether a Host header names this machine's
+// loopback: localhost, a 127/8 address or ::1, with or without a port.
+func loopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	a, err := netip.ParseAddr(host)
+	return err == nil && a.Zone() == "" && a.Unmap().IsLoopback()
+}
+
+// crossSite reports a request another site's page made: the browser says
+// so (Sec-Fetch-Site: cross-site), or its Origin is not this page's.
+func crossSite(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	return err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host)
 }
 
 // newNonce is a fresh CSP nonce for one response.

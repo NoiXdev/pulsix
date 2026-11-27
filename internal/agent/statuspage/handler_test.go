@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +81,7 @@ func newTestHandler(snap Snapshot, token string, clock *fakeClock) *handler {
 
 func do(h http.Handler, method, target string, body io.Reader, hdr map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, target, body)
+	r.Host = "127.0.0.1:8742" // a loopback page answers loopback Hosts only
 	for k, v := range hdr {
 		r.Header.Set(k, v)
 	}
@@ -125,8 +127,10 @@ func TestMethodsOtherThanGetAre405(t *testing.T) {
 			}
 		}
 		if m != http.MethodPost {
-			if w := do(locked, m, "/login", nil, nil); w.Code != http.StatusMethodNotAllowed {
-				t.Errorf("%s /login = %d", m, w.Code)
+			for _, h := range []http.Handler{locked, open} {
+				if w := do(h, m, "/login", nil, nil); w.Code != http.StatusMethodNotAllowed {
+					t.Errorf("%s /login = %d", m, w.Code)
+				}
 			}
 		}
 	}
@@ -189,24 +193,120 @@ func TestJSONMatchesSnapshot(t *testing.T) {
 	}
 }
 
-func TestHandlerRedactsEverythingRendered(t *testing.T) {
+// TestHandlerRedactsOnlyTheLocalCheckParams: the page shows what was
+// sent — results, facts and log lines arrive redacted already — and
+// redacts once more only the local checks' params, which the heartbeat
+// sends as written (controller ruling, fix round 1). Keys and metric
+// names are shown as they are.
+func TestHandlerRedactsOnlyTheLocalCheckParams(t *testing.T) {
 	const secret = "hunter22-secret"
 	snap := fullSnapshot()
 	snap.Heartbeat.LocalChecks[0].ParamsJSON = `{"password":"` + secret + `"}`
-	snap.Checks[1].Results[0].Error = "dial " + secret
-	snap.Log = []string{"line " + secret}
-	snap.Facts.Values["motd"] = secret
-	snap.Identity.HostName = secret
+	snap.Checks[0].Key = "key-" + secret
+	snap.Checks[0].Results[0].Metric = "metric-" + secret
 	h := newHandler(&fakeSource{snap: snap}, "", func(s string) string { return strings.ReplaceAll(s, secret, "[secret]") },
 		time.Now, slog.New(slog.DiscardHandler))
 	for _, path := range []string{"/", "/status.json"} {
 		body := do(h, http.MethodGet, path, nil, nil).Body.String()
-		if strings.Contains(body, secret) {
-			t.Fatalf("%s shows the secret", path)
+		shownAsSent := strings.Count(body, "key-"+secret) + strings.Count(body, "metric-"+secret)
+		if strings.Count(body, secret) != shownAsSent || !strings.Contains(body, "[secret]") {
+			t.Fatalf("%s: params not redacted", path)
 		}
-		if !strings.Contains(body, "[secret]") {
-			t.Fatalf("%s shows no placeholder", path)
+		if !strings.Contains(body, "key-"+secret) || !strings.Contains(body, "metric-"+secret) {
+			t.Fatalf("%s redacted a key or a metric name", path)
 		}
+	}
+}
+
+// TestOpenPageRefusesForeignHosts: a page without a token answers only to
+// a loopback Host, so a site that rebinds its name to 127.0.0.1 cannot read
+// it from the visitor's browser (review 3.132, finding 2).
+func TestOpenPageRefusesForeignHosts(t *testing.T) {
+	open := newTestHandler(fullSnapshot(), "", &fakeClock{now: t0})
+	for _, host := range []string{"localhost", "localhost:8742", "LOCALHOST:8742", "127.0.0.1", "127.0.0.1:8742", "127.8.9.1:1", "[::1]", "[::1]:8742"} {
+		r := httptest.NewRequest(http.MethodGet, "/status.json", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		open.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Errorf("Host %q = %d", host, w.Code)
+		}
+	}
+	for _, host := range []string{"evil.example", "evil.example:8742", "localhost.evil.example", "10.0.0.1:8742", "[::2]:8742", ""} {
+		for _, path := range []string{"/", "/status.json", "/login"} {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.Host = host
+			w := httptest.NewRecorder()
+			open.ServeHTTP(w, r)
+			if w.Code != http.StatusMisdirectedRequest || strings.Contains(w.Body.String(), "v1.2.3") {
+				t.Errorf("Host %q %s = %d", host, path, w.Code)
+			}
+		}
+	}
+	// A page with a token answers any Host: the token is the guard.
+	locked := newTestHandler(fullSnapshot(), testToken, &fakeClock{now: t0})
+	r := httptest.NewRequest(http.MethodGet, "/status.json", nil)
+	r.Host = "status.example:8742"
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	locked.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("token page, foreign Host = %d", w.Code)
+	}
+}
+
+// TestCrossSiteLoginIsRefused: a login POST another site makes the
+// visitor's browser send is refused before it counts as a failure, so it
+// cannot lock the visitor out (review 3.132, finding 5).
+func TestCrossSiteLoginIsRefused(t *testing.T) {
+	h := newTestHandler(fullSnapshot(), testToken, &fakeClock{now: t0})
+	post := func(hdr map[string]string) int {
+		r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("token=wrong"))
+		r.Host = "status.example:8742"
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for _, hdr := range []map[string]string{
+		{"Sec-Fetch-Site": "cross-site"},
+		{"Origin": "https://evil.example"},
+		{"Origin": "null"},
+		{"Origin": "https://status.example:9999"},
+	} {
+		for range maxFailures + 1 {
+			if code := post(hdr); code != http.StatusForbidden {
+				t.Fatalf("%v = %d", hdr, code)
+			}
+		}
+	}
+	// Nothing was counted: a same-origin wrong token is a plain failure.
+	if code := post(map[string]string{"Origin": "https://status.example:8742", "Sec-Fetch-Site": "same-origin"}); code != http.StatusUnauthorized {
+		t.Fatalf("same-origin = %d", code)
+	}
+	if code := post(nil); code != http.StatusUnauthorized {
+		t.Fatalf("no headers = %d", code)
+	}
+}
+
+// TestFailuresCountPerIPv6Slash64: the addresses of one /64 share their
+// failures, so rotating through it buys no tries (review 3.132, finding 6).
+func TestFailuresCountPerIPv6Slash64(t *testing.T) {
+	l := newFailureLimiter(func() time.Time { return t0 })
+	for i := range maxFailures {
+		l.fail(failureKey("2001:db8:1:2::" + strconv.Itoa(i+1)))
+	}
+	if !l.blocked(failureKey("2001:db8:1:2:ffff::9")) {
+		t.Fatal("another address of the /64 is not blocked")
+	}
+	if l.blocked(failureKey("2001:db8:1:3::1")) || l.blocked(failureKey("192.0.2.1")) {
+		t.Fatal("another /64 or an IPv4 address is blocked")
+	}
+	if failureKey("192.0.2.1") != "192.0.2.1" || failureKey("::ffff:192.0.2.1") != "192.0.2.1" {
+		t.Fatal("IPv4 keys changed")
 	}
 }
 
@@ -237,6 +337,7 @@ func TestAuthRequiredWithToken(t *testing.T) {
 
 func login(h http.Handler, token string, viaTLS bool) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
+	r.Host = "127.0.0.1:8742"
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if viaTLS {
 		r.TLS = &tls.ConnectionState{}
