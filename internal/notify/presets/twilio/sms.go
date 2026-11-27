@@ -16,22 +16,22 @@ const (
 // gsmBasic is the GSM 03.38 default alphabet (one septet each), gsmExt
 // its extension table (an escape plus one septet: two).
 const (
-	gsmBasic = "@£$¥èéùìòÇ\nØø\rÅå" +
-		"Δ_ΦΓΛΩΠΨΣΘΞÆæßÉ" +
-		" !\"#¤%&'()*+,-./0123456789:;<=>?" +
-		"¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§" +
-		"¿abcdefghijklmnopqrstuvwxyzäöñüà"
-	gsmExt = "^{}\\[~]|€\f"
+	gsmBasic = "@\u00a3$\u00a5\u00e8\u00e9\u00f9\u00ec\u00f2\u00c7\n\u00d8\u00f8\r\u00c5\u00e5" +
+		"\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039e\u00c6\u00e6\u00df\u00c9" +
+		" !\"#\u00a4%&'()*+,-./0123456789:;<=>?" +
+		"\u00a1ABCDEFGHIJKLMNOPQRSTUVWXYZ\u00c4\u00d6\u00d1\u00dc\u00a7" +
+		"\u00bfabcdefghijklmnopqrstuvwxyz\u00e4\u00f6\u00f1\u00fc\u00e0"
+	gsmExt = "^{}\\[~]|\u20ac\f"
 )
 
 // fold turns the look-alikes Compose puts in for markup (notify.ChatText)
 // and common typography back into GSM-7 characters: an SMS has no markup
 // to defuse, and one character outside the alphabet halves the room.
 var fold = strings.NewReplacer(
-	"＠", "@", "‹", "<", "›", ">", "［", "[", "］", "]",
-	"—", "-", "–", "-", "·", "-", "…", "...",
-	"‘", "'", "’", "'", "`", "'", "“", "\"", "”", "\"",
-	"�", "?",
+	"\uff20", "@", "\u2039", "<", "\u203a", ">", "\uff3b", "[", "\uff3d", "]",
+	"\u2014", "-", "\u2013", "-", "\u00b7", "-", "\u2026", "...",
+	"\u2018", "'", "\u2019", "'", "`", "'", "\u201c", "\"", "\u201d", "\"",
+	"\ufffd", "?",
 )
 
 // septets is s's length in the GSM-7 alphabet, -1 when s leaves it.

@@ -1,0 +1,25 @@
+[
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000010",
+      "payload": {
+        "summary": "‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h…: crit · opened · shop|x/‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged m›1: ‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged",
+        "source": "‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h…",
+        "severity": "critical",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "component": "shop|x",
+        "group": "Acme ‹!here› & ＠all",
+        "class": "m›1",
+        "custom_details": {
+          "lines": [
+            "crit · opened · shop|x/‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged m›1: ‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/alerts"
+    }
+  }
+]

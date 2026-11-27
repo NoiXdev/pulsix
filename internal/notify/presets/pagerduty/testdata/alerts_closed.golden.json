@@ -1,0 +1,23 @@
+[
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "resolve",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000010"
+    }
+  },
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "resolve",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000011"
+    }
+  },
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "resolve",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000012"
+    }
+  }
+]

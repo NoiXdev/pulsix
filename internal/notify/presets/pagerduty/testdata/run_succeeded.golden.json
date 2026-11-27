@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/v2/change/enqueue",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "payload": {
+        "summary": "Nightly OS patching: succeeded with changes",
+        "source": "Acme",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "custom_details": {
+          "lines": [
+            "Template: patch-all",
+            "Hosts: 3 (ok 3, changed 1, failed 0)",
+            "Duration: 1m1s"
+          ]
+        }
+      },
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  }
+]
