@@ -9,6 +9,7 @@ import (
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/notify/presets/mattermost"
 	"github.com/noixdev/pulsix/internal/notify/presets/slack"
+	"github.com/noixdev/pulsix/internal/notify/presets/telegram"
 )
 
 // Registry is every preset by its stored name.
@@ -16,5 +17,6 @@ func Registry() notify.Presets {
 	return notify.Presets{
 		"slack":      slack.New(),
 		"mattermost": mattermost.New(),
+		"telegram":   telegram.New(),
 	}
 }

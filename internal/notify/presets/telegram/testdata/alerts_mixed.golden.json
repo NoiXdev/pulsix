@@ -1,0 +1,8 @@
+{
+  "chat_id": "-1001234567890",
+  "text": "🔴 <b>5 alerts for Acme</b>\n\n<a href=\"https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000020\">shop-1</a>: crit · opened · shop/home http.assertion: status == 200 — saw 503\n<a href=\"https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000021\">web-2</a>: warn · worsened · cpu used_percent\n<a href=\"https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000022\">db-1</a>: crit · closed · disk//var used_percent\n<a href=\"https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000023\">edge-3</a>: warn · opened · not seen since 2026-11-27T08:10:00Z\n… and 1 more\n\n<a href=\"https://pulsix.example/o/acme/alerts\">Open in Pulsix</a>",
+  "parse_mode": "HTML",
+  "link_preview_options": {
+    "is_disabled": true
+  }
+}

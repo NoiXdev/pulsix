@@ -1,0 +1,8 @@
+{
+  "chat_id": "-1001234567890",
+  "text": "🔴 <b>1 alert for Acme ‹!here› &amp; ＠all</b>\n\n<b>‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=&quot;x&quot;›&amp;amp; ［link］(https://evil.example) ~chan #h…:</b> crit · opened · shop|x/‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=&quot;x&quot;›&amp;amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged m›1: ‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=&quot;x&quot;›&amp;amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged\n\n<a href=\"https://pulsix.example/o/acme/alerts\">Open in Pulsix</a>",
+  "parse_mode": "HTML",
+  "link_preview_options": {
+    "is_disabled": true
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "chat_id": "-1001234567890",
+  "text": "🔴 <b>Nightly OS patching: failed</b>\n\n<b>Template:</b> patch-all\n<b>Follow-up of:</b> backup-all\n<b>Hosts:</b> 12 (ok 10, changed 9, failed 1), no result 1 — 2 excluded for maintenance\n<b>Started:</b> 2026-11-27T08:25:48Z\n<b>Duration:</b> 4m12s\n\n<a href=\"https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005\">Open in Pulsix</a>",
+  "parse_mode": "HTML",
+  "link_preview_options": {
+    "is_disabled": true
+  }
+}

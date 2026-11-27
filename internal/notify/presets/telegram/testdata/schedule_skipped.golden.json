@@ -1,0 +1,8 @@
+{
+  "chat_id": "-1001234567890",
+  "text": "🟡 <b>Nightly OS patching: skipped</b>\n\n<b>Template:</b> patch-all\n<b>Reason:</b> every targeted host is in a maintenance window\n<b>Outcome:</b> skipped_maintenance\n<b>Due:</b> 2026-11-27T08:30:00Z\n\n<a href=\"https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002\">Open in Pulsix</a>",
+  "parse_mode": "HTML",
+  "link_preview_options": {
+    "is_disabled": true
+  }
+}

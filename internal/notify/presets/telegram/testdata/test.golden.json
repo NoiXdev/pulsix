@@ -1,0 +1,8 @@
+{
+  "chat_id": "-1001234567890",
+  "text": "<b>Test notification from Acme</b>\n\nThis is a test message from a Pulsix notification channel. It worked.\n\n<a href=\"https://pulsix.example/o/acme/settings/notifications\">Open in Pulsix</a>",
+  "parse_mode": "HTML",
+  "link_preview_options": {
+    "is_disabled": true
+  }
+}
