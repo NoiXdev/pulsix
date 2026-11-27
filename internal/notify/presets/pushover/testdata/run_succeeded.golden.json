@@ -1,0 +1,15 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "form": {
+      "message": "Template: patch-all\nHosts: 3 (ok 3, changed 1, failed 0)\nDuration: 1m1s",
+      "priority": "-1",
+      "timestamp": "1795768200",
+      "title": "Nightly OS patching: succeeded with changes",
+      "token": "aToken0123456789aToken01234567",
+      "url": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "url_title": "Open in Pulsix",
+      "user": "uUser0123456789uUser0123456789"
+    }
+  }
+]

@@ -4,6 +4,7 @@ import { testChannelKey, useDeleteChannel, useTestChannel } from '../../api/hook
 import type { NotifyChannel } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { RowAction } from '../../ui/data-list/index.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { useConfirmedDelete } from '../lists/useConfirmedDelete.ts';
 import { ChannelDialog } from './ChannelDialog.tsx';
@@ -12,7 +13,8 @@ import { DeliveryLog } from './DeliveryLog.tsx';
 /**
  * useChannelListActions is the channel list's row menu: Deliveries for
  * everyone who can read channels; Send test, Edit and Delete… need
- * `channels.write`. While a channel's test is in flight, its Send test reads
+ * `channels.write`; Send test on a Twilio SMS channel asks first, since
+ * the message is billed. While a channel's test is in flight, its Send test reads
  * "Sending test" and is disabled — a second message to the receiver would be
  * a duplicate — and only that channel's entry is. `dialogs` holds the
  * channel dialog (an entry or `openNew`) and the delivery log.
@@ -25,6 +27,7 @@ export function useChannelListActions(
   const m = t.notifications;
   const c8 = m.channels;
   const toast = useToast();
+  const ask = useConfirm();
   const test = useTestChannel(org);
   // The channels with a test in flight, each on its own: one hook serves
   // every row, so its own isPending would hold back Send test on all of
@@ -45,6 +48,8 @@ export function useChannelListActions(
   });
 
   async function onTest(c: NotifyChannel) {
+    // An SMS costs money (backlog 4.8): ask before sending one.
+    if (c.webhook?.preset === 'twilio' && !(await ask({ message: c8.testSmsConfirm(c.name, c.webhook.to ?? ''), confirmLabel: c8.testSmsConfirmLabel }))) return;
     try {
       const res = await test.mutateAsync(c.id);
       if (res.delivery.status === 'sent') toast.show(c8.testSent(c.name));

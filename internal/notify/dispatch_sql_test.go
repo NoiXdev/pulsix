@@ -390,3 +390,28 @@ func TestARetryAfterAPartialSendGoesOnlyToTheRecipientsStillOwed(t *testing.T) {
 		t.Fatalf("status after the successful retry = %q, want sent", status)
 	}
 }
+
+// TestFinalFailureKeepsWhatIsStillOwed (backlog 4.8 re-review): a final
+// failure stores what the last attempt still owed, as a retry does, so a
+// later Resend repeats only that; nil leaves the row's list as it was.
+func TestFinalFailureKeepsWhatIsStillOwed(t *testing.T) {
+	d := testdb.Open(t)
+	ch := seedChannel(t, d, seedOrg(t, d, "dispatch-fail-owed"))
+	now := time.Date(2026, 9, 22, 8, 0, 0, 0, time.UTC)
+	id := queueDelivery(t, d, ch, "test:fail-owed", now)
+	st := notify.NewDeliverySQLStore(d)
+	claimed, err := st.Claim(ctx, 2*time.Minute, 8)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	if err := st.Fail(ctx, claimed[0], "2 of 3 requests still owed", []string{"pagerduty:alert:1", "pagerduty:alert:2"}); err != nil {
+		t.Fatal(err)
+	}
+	var owed []string
+	if err := d.Pool().QueryRow(ctx, `SELECT pending_recipients FROM notification_deliveries WHERE id = $1`, id).Scan(&owed); err != nil {
+		t.Fatal(err)
+	}
+	if len(owed) != 2 || owed[1] != "pagerduty:alert:2" {
+		t.Fatalf("owed = %v", owed)
+	}
+}

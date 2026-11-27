@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/",
+    "json": {
+      "topic": "pulsix-alerts",
+      "title": "Nightly OS patching: skipped",
+      "message": "Template: patch-all\nReason: every targeted host is in a maintenance window\nOutcome: skipped_maintenance\nDue: 2026-11-27T08:30:00Z",
+      "priority": 4,
+      "tags": [
+        "warning"
+      ],
+      "click": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002"
+    }
+  }
+]

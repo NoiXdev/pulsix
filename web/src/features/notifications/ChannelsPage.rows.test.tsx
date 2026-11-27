@@ -98,6 +98,34 @@ describe('ChannelsPage rows', () => {
     await waitFor(() => expect(deleted).toBe(1));
   });
 
+  it('asks before Send test on a Twilio SMS channel, which is billed (backlog 4.8)', async () => {
+    const user = userEvent.setup();
+    let tested = 0;
+    const sms = {
+      ...hook, name: 'ops sms',
+      webhook: { ...hook.webhook, url: 'https://api.twilio.com/…', preset: 'twilio', account_sid: 'AC1', from: '+15005550006', to: '+4915112345678', secrets: ['auth_token'] },
+    };
+    serve('admin', {
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [sms], mail_available: true },
+      'POST /api/v1/orgs/acme/notification-channels/c1/test': () => {
+        tested++;
+        return { delivery: { id: 'd', event_kind: 'test', status: 'sent', attempts: 1, created_at: '' } };
+      },
+    });
+    renderPage();
+    const send = async () => {
+      await user.click(await screen.findByRole('button', { name: 'Actions for ops sms' }));
+      await user.click(screen.getByRole('menuitem', { name: 'Send test' }));
+    };
+    await send();
+    expect(await declineConfirm(user)).toBe('Send a test SMS through ops sms to +4915112345678? Your Twilio account is billed for it.');
+    await settled();
+    expect(tested).toBe(0);
+    await send();
+    await acceptConfirm(user);
+    await waitFor(() => expect(tested).toBe(1));
+  });
+
   it('shows a test in flight and sends one request for a repeated pick', async () => {
     const user = userEvent.setup();
     let posts = 0;

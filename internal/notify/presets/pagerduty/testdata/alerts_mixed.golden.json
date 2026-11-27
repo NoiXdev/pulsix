@@ -1,0 +1,98 @@
+[
+  {
+    "key": "alert:0",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000010",
+      "payload": {
+        "summary": "shop-1: crit · opened · shop/home http.assertion: status == 200 — saw 503",
+        "source": "shop-1",
+        "severity": "critical",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "component": "shop",
+        "group": "Acme",
+        "class": "http.assertion",
+        "custom_details": {
+          "lines": [
+            "crit · opened · shop/home http.assertion: status == 200 — saw 503"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/alerts",
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000020",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  },
+  {
+    "key": "alert:1",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000011",
+      "payload": {
+        "summary": "web-2: warn · worsened · cpu used_percent",
+        "source": "web-2",
+        "severity": "warning",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "component": "cpu",
+        "group": "Acme",
+        "class": "used_percent",
+        "custom_details": {
+          "lines": [
+            "warn · worsened · cpu used_percent"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/alerts",
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000021",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  },
+  {
+    "key": "alert:2",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "resolve",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000012"
+    }
+  },
+  {
+    "key": "alert:3",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:alert:00000000-0000-7000-8000-000000000013",
+      "payload": {
+        "summary": "edge-3: warn · opened · not seen since 2026-11-27T08:10:00Z",
+        "source": "edge-3",
+        "severity": "warning",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "group": "Acme",
+        "custom_details": {
+          "lines": [
+            "warn · opened · not seen since 2026-11-27T08:10:00Z"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/alerts",
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000023",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  }
+]

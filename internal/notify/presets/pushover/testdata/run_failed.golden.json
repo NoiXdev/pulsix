@@ -1,0 +1,15 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "form": {
+      "message": "Template: patch-all\nFollow-up of: backup-all\nHosts: 12 (ok 10, changed 9, failed 1), no result 1 — 2 excluded for maintenance\nStarted: 2026-11-27T08:25:48Z\nDuration: 4m12s",
+      "priority": "1",
+      "timestamp": "1795768200",
+      "title": "Nightly OS patching: failed",
+      "token": "aToken0123456789aToken01234567",
+      "url": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "url_title": "Open in Pulsix",
+      "user": "uUser0123456789uUser0123456789"
+    }
+  }
+]

@@ -527,6 +527,12 @@ WHERE a.org_id = sqlc.arg(org_id)
 -- Service.ListPage has to look up to answer the muted filter.
 SELECT DISTINCT host_id FROM alerts WHERE org_id = @org_id AND closed_at IS NULL;
 
+-- name: OpenAlertIDs :many
+-- Which of the given alerts are open now: a notification preset that
+-- follows alert state (PagerDuty, backlog 4.8 review I1) reads it at send
+-- time, so a late message never re-opens an alert closed since.
+SELECT id FROM alerts WHERE org_id = @org_id AND id = ANY(@ids::uuid[]) AND closed_at IS NULL;
+
 -- name: ListAlertEvents :many
 -- Get's own timeline, the event half (timeline.go's mergeTimeline merges
 -- this with ListStateChangesForTuple below). Ordered by (at, id): id only

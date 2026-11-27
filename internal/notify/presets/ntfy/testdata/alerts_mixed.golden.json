@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/",
+    "json": {
+      "topic": "pulsix-alerts",
+      "title": "5 alerts for Acme",
+      "message": "shop-1: crit · opened · shop/home http.assertion: status == 200 — saw 503\nweb-2: warn · worsened · cpu used_percent\ndb-1: crit · closed · disk//var used_percent\nedge-3: warn · opened · not seen since 2026-11-27T08:10:00Z\n… and 1 more",
+      "priority": 5,
+      "tags": [
+        "rotating_light"
+      ],
+      "click": "https://pulsix.example/o/acme/alerts"
+    }
+  }
+]
