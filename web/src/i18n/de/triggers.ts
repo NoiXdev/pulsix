@@ -46,7 +46,7 @@ export const deTriggers: Messages['triggers'] = {
   testConfirmSettling: (name: string) =>
     `Testaufruf ${name}? Er landet im wartenden gesammelten Lauf und ersetzt dessen Werte durch die des Testaufrufs; dieser Lauf startet wirklich, sobald die Aufrufe zur Ruhe kommen. Die Prüfung der erlaubten Quellen entfällt.`,
   testResult: (outcome: string) => `Testaufruf: ${outcome}`,
-  testCollected: (at: string) => `Testaufruf: gesammelt — läuft um ${at}, wenn nichts mehr kommt`,
+  testCollected: (at: string) => `Testaufruf: gesammelt – läuft um ${at}, wenn nichts mehr kommt`,
   testFailed: 'Testaufruf fehlgeschlagen',
   deleteConfirm: (name: string) => `Trigger ${name} löschen?`,
   deleteFailed: 'Der Trigger konnte nicht gelöscht werden',
@@ -63,14 +63,14 @@ export const deTriggers: Messages['triggers'] = {
     collected: 'gesammelt',
   },
   delivery: {
-    waiting: (at: string) => `Gesammelt — läuft um ${at}, wenn nichts mehr kommt`,
+    waiting: (at: string) => `Gesammelt – läuft um ${at}, wenn nichts mehr kommt`,
     collapsed: 'Zusammengefasst in Lauf',
     superseded: 'Ersetzt durch Lauf',
   },
   settle: {
     label: 'Auf Ruhe warten',
     onActive: 'wartet darauf, startet danach einmal',
-    off: 'aus — jeder Aufruf startet einen Lauf',
+    off: 'aus – jeder Aufruf startet einen Lauf',
     summary: (wait: string, latest: string) => `${wait} nach dem letzten Aufruf, spätestens ${latest} nach dem ersten`,
     pendingTitle: 'Ein gesammelter Lauf wartet',
     deliveries: (n: number) => (n === 1 ? '1 Zustellung gesammelt' : `${n} Zustellungen gesammelt`),

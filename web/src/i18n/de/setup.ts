@@ -31,7 +31,7 @@ export const deSetup: Messages['setup'] = {
   mfa: {
     title: 'Zweiten Faktor jetzt einrichten',
     intro:
-      'Als Nächstes wird das Konto des Instanzadministrators angelegt. Direkt danach muss eine Authenticator-App oder ein Passkey hinzugefügt werden — jedes Konto braucht einen zweiten Faktor, bevor es etwas anderes tun kann.',
+      'Als Nächstes wird das Konto des Instanzadministrators angelegt. Direkt danach muss eine Authenticator-App oder ein Passkey hinzugefügt werden – jedes Konto braucht einen zweiten Faktor, bevor es etwas anderes tun kann.',
     creating: 'Wird angelegt…',
     create: 'Administrator anlegen und fortfahren',
   },

@@ -35,7 +35,7 @@ export const deAlerts: Messages['alerts'] = {
     unknown: 'unbekannt',
   },
   detail: {
-    saw: (expression: string, actual: string) => `${expression} — gesehen: ${actual}`,
+    saw: (expression: string, actual: string) => `${expression} – gesehen: ${actual}`,
     sawOnly: (actual: string) => `gesehen: ${actual}`,
   },
   closeReason: {

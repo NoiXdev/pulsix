@@ -89,7 +89,7 @@ export const deUsers: Messages['users'] = {
       expires: (when: string) => `Läuft ab: ${when}.`,
       copy: 'Passwort kopieren',
       copied: 'Kopiert',
-      copyFailed: 'Kopieren nicht möglich — das Passwort markieren und von Hand kopieren.',
+      copyFailed: 'Kopieren nicht möglich – das Passwort markieren und von Hand kopieren.',
       finish: 'Fertig',
     },
     resetFactor: {

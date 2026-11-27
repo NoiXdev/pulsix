@@ -66,7 +66,7 @@ export const deAccount: Messages['account'] = {
     regenerateConfirmLabel: 'Neu erzeugen',
     dialogTitle: 'Wiederherstellungscodes',
     regenerateFailed: 'Die Wiederherstellungscodes konnten nicht neu erzeugt werden.',
-    shownOnce: 'Wiederherstellungscodes — werden nur einmal angezeigt. Jeder gilt nur einmal.',
+    shownOnce: 'Wiederherstellungscodes – werden nur einmal angezeigt. Jeder gilt nur einmal.',
     saved: 'Ich habe sie gespeichert',
   },
   password: {

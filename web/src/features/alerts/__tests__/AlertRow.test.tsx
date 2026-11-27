@@ -392,7 +392,7 @@ describe('why an alert fired (backlog 3.13b)', () => {
     );
     expect(screen.getAllByTestId('alert-detail').map((d) => d.textContent)).toEqual([
       'Verbindung abgelehnt',
-      'header("X-Id") exists — gesehen: nicht vorhanden',
+      'header("X-Id") exists – gesehen: nicht vorhanden',
     ]);
   });
 
@@ -409,7 +409,7 @@ describe('why an alert fired (backlog 3.13b)', () => {
   });
 
   it('detailText finds the expression even where the value seen holds the separator', () => {
-    expect(detailText('body contains "a — saw b" — saw absent', de)).toBe('body contains "a — saw b" — gesehen: nicht vorhanden');
+    expect(detailText('body contains "a — saw b" — saw absent', de)).toBe('body contains "a — saw b" – gesehen: nicht vorhanden');
     expect(detailText('', en)).toBeNull();
     expect(detailText(undefined, en)).toBeNull();
   });
