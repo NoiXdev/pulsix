@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -160,15 +159,11 @@ type Loop struct {
 	// apart; nil uses ticker (localchecks.go).
 	lookTicker tickerFactory
 	// localMu serialises looking at the file and applying its local checks
-	// and probe policy (lookAndApplyLocal) and guards shadowed: the local
-	// keys a check from the manager shadowed at the last look, so a change
-	// is logged once; and probeDeny and probeGuard: the file's deny list as
-	// last applied and the guard built from it (nil: the runner's default),
-	// rebuilt only when the list changes (probes_policy.go).
-	localMu    sync.Mutex
-	shadowed   []string
-	probeDeny  []netip.Prefix
-	probeGuard *probe.Guard
+	// and probe policy (lookAndApplyLocal, probes_policy.go) and guards
+	// shadowed: the local keys a check from the manager shadowed at the
+	// last look, so a change is logged once.
+	localMu  sync.Mutex
+	shadowed []string
 
 	// routeMu guards sender: which stream session, if any, currently
 	// receives check and probe results. A sink's buffer write happens

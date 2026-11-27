@@ -8,10 +8,8 @@ package agent
 
 import (
 	"net/netip"
-	"slices"
 
 	"github.com/noixdev/pulsix/internal/agent/secrets"
-	"github.com/noixdev/pulsix/internal/probe"
 )
 
 // probePolicyOf is the probe policy the file in state gives: its own once
@@ -31,19 +29,12 @@ func probePolicyOf(set secrets.Set, state secrets.State) (enabled bool, deny []n
 	}
 }
 
-// applyProbePolicy hands the file's probe policy to the runner and logs a
-// change once. The guard is the agent's default plus the file's deny
-// list, built again only when the list changed. localMu is held.
+// applyProbePolicy hands the file's probe policy to the runner, which adds
+// the deny list to its default guard, and logs a change once. localMu is
+// held.
 func (l *Loop) applyProbePolicy(set secrets.Set, state secrets.State) {
 	enabled, deny := probePolicyOf(set, state)
-	if !slices.Equal(deny, l.probeDeny) {
-		l.probeDeny = deny
-		l.probeGuard = nil
-		if len(deny) > 0 {
-			l.probeGuard = probe.NewGuard(nil, nil).WithLocalDeny(deny)
-		}
-	}
-	if !l.probes.SetPolicy(enabled, l.probeGuard) {
+	if !l.probes.SetPolicy(enabled, deny) {
 		return
 	}
 	switch {

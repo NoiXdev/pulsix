@@ -20,6 +20,7 @@ import (
 	"context"
 	"hash/fnv"
 	"log/slog"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
@@ -76,8 +77,8 @@ type Result struct {
 type Deps struct {
 	// Registry is the probes by plugin name; nil is DefaultRegistry().
 	Registry probe.Registry
-	// Guard decides which addresses a probe may dial until SetPolicy
-	// installs another; nil is probe.NewGuard(nil, nil), the manager's
+	// Guard decides which addresses a probe may dial, and SetPolicy's deny
+	// list is added to it; nil is probe.NewGuard(nil, nil), the manager's
 	// default: loopback, link-local, unspecified, multicast and cloud
 	// metadata addresses refused.
 	Guard *probe.Guard
@@ -131,9 +132,11 @@ type Runner struct {
 	slots    map[slotKey]*slot
 	version  string
 	inFlight int
-	// disabled and guard are the host's probe policy (SetPolicy); a round
-	// dials through the guard current when it was dispatched.
+	// disabled and deny are the host's probe policy (SetPolicy); guard is
+	// defaultGuard plus deny, and a round dials through the guard current
+	// when it was dispatched.
 	disabled bool
+	deny     []netip.Prefix
 	guard    *probe.Guard
 	// wake carries "the set changed" or "a probe finished" to Run, which
 	// then looks for due slots at once. Buffered (1) and sent to without
@@ -185,20 +188,25 @@ func (r *Runner) Enabled() bool {
 }
 
 // SetPolicy installs the host's probe policy (agent.yaml, backlog 3.82):
-// whether the runner probes at all, and the guard every round dispatched
-// from now on dials through (nil: the runner's default). Turning probing
-// off drops every slot — a round still in flight finishes and its results
-// are discarded — and forgets the applied version, so that once it is on
-// again the manager, which compares versions, sends its set again. It
-// reports whether anything changed (a guard counts as changed when it is a
-// different one).
-func (r *Runner) SetPolicy(enabled bool, guard *probe.Guard) bool {
-	if guard == nil {
-		guard = r.defaultGuard
-	}
+// whether the runner probes at all, and the address ranges every round
+// dispatched from now on must not reach — added to the runner's default
+// guard (Deps.Guard), so whatever that refuses stays refused. Turning
+// probing off drops every slot — a round still in flight finishes and its
+// results are discarded — and forgets the applied version, so that once it
+// is on again the manager, which compares versions, sends its set again.
+// It reports whether anything changed; the guard is rebuilt only when the
+// list did.
+func (r *Runner) SetPolicy(enabled bool, deny []netip.Prefix) bool {
 	r.mu.Lock()
-	changed := r.disabled == enabled || r.guard != guard
-	r.guard = guard
+	changed := r.disabled == enabled
+	if !slices.Equal(deny, r.deny) {
+		changed = true
+		r.deny = slices.Clone(deny)
+		r.guard = r.defaultGuard
+		if len(deny) > 0 {
+			r.guard = r.defaultGuard.WithLocalDeny(deny)
+		}
+	}
 	if !enabled && !r.disabled {
 		r.slots = map[slotKey]*slot{}
 		r.version = ""

@@ -1,6 +1,7 @@
 package probes
 
 import (
+	"errors"
 	"net/netip"
 	"strconv"
 	"testing"
@@ -88,22 +89,53 @@ func TestRunnerDisabledDiscardsTheInFlightRound(t *testing.T) {
 	}
 }
 
-// TestRunnerUsesThePolicysGuard: the guard SetPolicy installs is the one
-// the next round dials through; nil keeps the default.
-func TestRunnerUsesThePolicysGuard(t *testing.T) {
+// TestRunnerDerivesTheGuardFromItsDefault: a deny list adds to the
+// runner's default guard — whatever that refuses stays refused (L5) — and
+// the guard is rebuilt only when the list changes.
+func TestRunnerDerivesTheGuardFromItsDefault(t *testing.T) {
 	t.Parallel()
+	deny := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	guardOf := func(r *Runner, clock *fakeClock, b *blockingProbe) *probe.Guard {
+		t.Helper()
+		runOnce(t, r, clock, spec(targetA, "web", "tcp", 60))
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.calls[len(b.calls)-1].guard
+	}
+
+	// The production default: loopback, link-local and metadata stay refused.
 	b := newBlockingProbe(false, up("tcp"))
 	r, clock, _ := newTestRunner(probe.Registry{"tcp": b.fn("tcp")})
-	g := probe.NewGuard(nil, nil).WithLocalDeny([]netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
-	if !r.SetPolicy(true, g) {
-		t.Fatal("a new guard is not reported as a change")
+	if !r.SetPolicy(true, deny) {
+		t.Fatal("a new deny list is not reported as a change")
 	}
-	runOnce(t, r, clock, spec(targetA, "web", "tcp", 60))
-	if got := b.calls[0].guard; got != g {
-		t.Fatal("the probe did not get the policy's guard")
+	g := guardOf(r, clock, b)
+	if err := g.Check(netip.MustParseAddr("192.0.2.7")); !errors.Is(err, probe.ErrLocalPolicy) {
+		t.Fatalf("Check(192.0.2.7) = %v, want ErrLocalPolicy", err)
 	}
-	if r.SetPolicy(true, g) {
-		t.Fatal("the same guard again is reported as a change")
+	for _, addr := range []string{"127.0.0.1", "::1", "169.254.169.254", "64:ff9b::7f00:1"} {
+		if g.Allowed(netip.MustParseAddr(addr)) {
+			t.Errorf("with a deny list the guard allows %s", addr)
+		}
+	}
+	if r.SetPolicy(true, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}) {
+		t.Fatal("the same deny list again is reported as a change")
+	}
+
+	// A replaced default (Deps.Guard) is what the list is added to.
+	b2 := newBlockingProbe(false, up("tcp"))
+	r2 := NewRunner(Deps{Registry: probe.Registry{"tcp": b2.fn("tcp")}, Now: clock.Now, Ticker: (&fakeTickers{}).factory,
+		Guard: probe.NewGuardForTest(true, nil)})
+	r2.SetPolicy(true, deny)
+	g2 := guardOf(r2, clock, b2)
+	if !g2.Allowed(netip.MustParseAddr("127.0.0.1")) || g2.Allowed(netip.MustParseAddr("192.0.2.7")) {
+		t.Fatal("the deny list was not added to the runner's own default guard")
+	}
+
+	// No list again: the default itself.
+	r2.SetPolicy(true, nil)
+	if g3 := guardOf(r2, clock, b2); !g3.Allowed(netip.MustParseAddr("192.0.2.7")) {
+		t.Fatal("clearing the deny list left it applied")
 	}
 }
 
@@ -114,8 +146,8 @@ func TestRunnerAppliesTheLocalDeny(t *testing.T) {
 	t.Parallel()
 	port, accepted := loopbackListener(t)
 	clock := newFakeClock()
-	r := NewRunner(Deps{Now: clock.Now, Ticker: (&fakeTickers{}).factory})
-	r.SetPolicy(true, probe.NewGuardForTest(true, nil).WithLocalDeny([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}))
+	r := NewRunner(Deps{Now: clock.Now, Ticker: (&fakeTickers{}).factory, Guard: probe.NewGuardForTest(true, nil)})
+	r.SetPolicy(true, []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
 	sp := spec(targetA, "web", "tcp", 30)
 	sp.ParamsJSON = `{"port":` + strconv.Itoa(port) + `,"timeout_s":2}`
 	sp.Address = "127.0.0.1"

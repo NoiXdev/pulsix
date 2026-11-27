@@ -35,7 +35,7 @@ func withProbeTicker(fn tickerFactory) LoopOption {
 // newProbeRunner builds the runner on the loop's clock, logger and ticker
 // factory (or the one a test set apart). The registry is
 // probes.DefaultRegistry unless a test replaced it, and the dial guard
-// probe.NewGuard(nil, nil) until agent.yaml adds a deny list
+// probe.NewGuard(nil, nil), to which agent.yaml's deny list is added
 // (applyProbePolicy).
 func (l *Loop) newProbeRunner() *probes.Runner {
 	tf := l.ticker
