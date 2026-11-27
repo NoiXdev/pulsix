@@ -286,6 +286,29 @@ the agents before using the new entries. The agent needs access to the pool's
 socket (usually membership of the pool's `listen.group`) or its TCP address
 (`listen.allowed_clients`).
 
+Backlog 3.11b adds data to three web server checks; no schema change, nothing
+seeded, no protocol change. The existing metrics keep their meaning.
+`apache` reports two more metrics on every check, `apache.workers_max` (the
+status page's scoreboard length, the server's effective `MaxRequestWorkers`)
+and `apache.workers_busy_max_pct` (busy workers against it);
+`apache.workers_busy_pct` stays against the started workers. `nginx` takes an
+optional `api_url` (the nginx Plus API base with its version) and then reports
+each server zone (`zone:<name>`) and upstream (`upstream:<name>`), at most 64
+of each, with `nginx.api_up` and `nginx.api_items_unreported` on item `""`.
+`caddy` takes an optional `upstreams_url` (the admin API's
+`reverse_proxy/upstreams`) and then reports each reverse-proxy upstream
+(`upstream:<address>`), at most 64, with `caddy.admin_up`,
+`caddy.upstreams_unhealthy` and `caddy.upstreams_unreported` on item `""`. The
+basic-authentication secret is sent to these pages too. Version skew: an older
+agent ignores `api_url` and `upstreams_url` in a check the manager pushes and
+keeps reporting the server's metrics; the item metrics simply never appear,
+and nothing is read in their place (the `docker` `resources` precedent). It
+never reports the two new apache metrics, so a rule on them reads no data until
+the agent is updated. An older agent refuses a local `agent.yaml` check that
+sets `api_url` or `upstreams_url` (an unknown parameter to it), and an older
+manager refuses the parameters when a check is saved and drops such a local
+check from a newer agent.
+
 The `script` plugin (backlog 3.6g) follows the same rule for the check: an older
 agent skips a `script` check, warns on every configuration push and shows no
 readings until it is updated, and the manager does not gate on it. **The
