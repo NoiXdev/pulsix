@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "Nightly OS patching: succeeded with changes",
+      "color": "#34D399",
+      "title": "Nightly OS patching: succeeded with changes",
+      "title_link": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "text": "**Template:** patch\\-all\n**Hosts:** 3 \\(ok 3, changed 1, failed 0\\)\n**Duration:** 1m1s",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}

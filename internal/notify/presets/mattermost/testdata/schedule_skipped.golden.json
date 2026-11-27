@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "Nightly OS patching: skipped",
+      "color": "#FBBF24",
+      "title": "Nightly OS patching: skipped",
+      "title_link": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002",
+      "text": "**Template:** patch\\-all\n**Reason:** every targeted host is in a maintenance window\n**Outcome:** skipped\\_maintenance\n**Due:** 2026\\-11\\-27T08:30:00Z",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}

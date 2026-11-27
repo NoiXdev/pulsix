@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "Test notification from Acme",
+      "color": "#00E5FF",
+      "title": "Test notification from Acme",
+      "title_link": "https://pulsix.example/o/acme/settings/notifications",
+      "text": "This is a test message from a Pulsix notification channel\\. It worked\\.",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "1 alert for Acme ‹!here› & ＠all",
+      "color": "#F87171",
+      "title": "1 alert for Acme ‹!here› & ＠all",
+      "title_link": "https://pulsix.example/o/acme/alerts",
+      "text": "**‹\\!channel› ＠everyone \\*bold\\* \\_it\\_ \\`code\\` ‹/b›‹a href=\"x\"›&amp;amp; ［link］\\(https://evil\\.example\\) \\~chan \\#h…:** crit · opened · shop\\|x/‹\\!channel› ＠everyone \\*bold\\* \\_it\\_ \\`code\\` ‹/b›‹a href=\"x\"›&amp;amp; ［link］\\(https://evil\\.example\\) \\~chan \\#h �gnp\\.exe�forged m›1: ‹\\!channel› ＠everyone \\*bold\\* \\_it\\_ \\`code\\` ‹/b›‹a href=\"x\"›&amp;amp; ［link］\\(https://evil\\.example\\) \\~chan \\#h �gnp\\.exe�forged",
+      "footer": "Pulsix · Acme ‹!here› & ＠all"
+    }
+  ]
+}

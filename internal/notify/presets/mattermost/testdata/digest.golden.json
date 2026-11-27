@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "Weekly schedule digest for Acme",
+      "color": "#00E5FF",
+      "title": "Weekly schedule digest for Acme",
+      "title_link": "https://pulsix.example/o/acme/schedules",
+      "text": "**Period:** 20 Nov to 27 Nov 2026 \\(Europe/Berlin\\)\n**Nightly OS patching:** 7 runs, 1 failure, 0 skipped or missed\n**Weekly backup:** 1 run, 0 failures, 1 skipped or missed\n\\+3 schedules without activity\n**[Nightly OS patching](https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005):** slowest run, Sat 21 Nov 11:30 CET: 4m12s",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}

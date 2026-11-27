@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "3 alerts for Acme",
+      "color": "#34D399",
+      "title": "3 alerts for Acme",
+      "title_link": "https://pulsix.example/o/acme/alerts",
+      "text": "**[shop\\-1](https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000020):** crit · closed · shop/home http\\.assertion\n**[web\\-2](https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000021):** warn · closed · cpu used\\_percent\n**[db\\-1](https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000022):** crit · closed · disk//var used\\_percent",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}

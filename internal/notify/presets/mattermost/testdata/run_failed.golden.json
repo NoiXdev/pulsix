@@ -1,0 +1,12 @@
+{
+  "attachments": [
+    {
+      "fallback": "Nightly OS patching: failed",
+      "color": "#F87171",
+      "title": "Nightly OS patching: failed",
+      "title_link": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005",
+      "text": "**Template:** patch\\-all\n**Follow\\-up of:** backup\\-all\n**Hosts:** 12 \\(ok 10, changed 9, failed 1\\), no result 1 — 2 excluded for maintenance\n**Started:** 2026\\-11\\-27T08:25:48Z\n**Duration:** 4m12s",
+      "footer": "Pulsix · Acme"
+    }
+  ]
+}
