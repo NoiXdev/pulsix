@@ -16,6 +16,8 @@ type notifyWebhookDTO struct {
 	Headers      []string `json:"headers" doc:"Header names; values are never returned"`
 	BodyTemplate string   `json:"body_template,omitempty"`
 	Signed       bool     `json:"signed" doc:"Requests carry X-Pulsix-Signature-256"`
+	Preset       string   `json:"preset" enum:",slack,mattermost,telegram" doc:"The chat service the message is rendered for; empty is a raw webhook"`
+	ChatID       string   `json:"chat_id,omitempty" doc:"Telegram preset only: the chat the bot posts to"`
 }
 
 type notifyChannelDTO struct {
@@ -42,6 +44,8 @@ type notifyWebhookBody struct {
 	BodyTemplate  string             `json:"body_template,omitempty" maxLength:"16384" doc:"Empty sends the event as JSON"`
 	Signed        bool               `json:"signed,omitempty"`
 	SigningSecret *string            `json:"signing_secret,omitempty" minLength:"16" maxLength:"256" doc:"Omit on update to keep the stored secret"`
+	Preset        string             `json:"preset,omitempty" enum:",slack,mattermost,telegram" doc:"A chat service whose message Pulsix renders (the body template must then be empty, the method POST); changing it needs the url again"`
+	ChatID        string             `json:"chat_id,omitempty" maxLength:"64" doc:"Telegram preset only: a chat id such as -1001234567890, or a public @username"`
 }
 
 // NotifyChannelBody is the create/update body (exported so huma names
@@ -71,7 +75,10 @@ func (b NotifyChannelBody) input() notify.Input {
 		in.Email = &notify.EmailConfig{Recipients: b.Email.Recipients}
 	}
 	if w := b.Webhook; w != nil {
-		in.Webhook = &notify.WebhookInput{Method: w.Method, URL: w.URL, BodyTemplate: w.BodyTemplate, Signed: w.Signed, SigningSecret: w.SigningSecret}
+		in.Webhook = &notify.WebhookInput{
+			Method: w.Method, URL: w.URL, BodyTemplate: w.BodyTemplate, Signed: w.Signed, SigningSecret: w.SigningSecret,
+			Preset: w.Preset, ChatID: w.ChatID,
+		}
 		for _, h := range w.Headers {
 			in.Webhook.Headers = append(in.Webhook.Headers, notify.HeaderInput{Name: h.Name, Value: h.Value})
 		}
@@ -92,7 +99,10 @@ func toNotifyChannelDTO(c notify.Channel) (notifyChannelDTO, error) {
 		dto.Email = &notifyEmailDTO{Recipients: email.Recipients}
 	}
 	if hook != nil {
-		dto.Webhook = &notifyWebhookDTO{Method: hook.Method, URL: hook.URLDisplay, Headers: hook.HeaderNames, BodyTemplate: hook.BodyTemplate, Signed: hook.Signed}
+		dto.Webhook = &notifyWebhookDTO{
+			Method: hook.Method, URL: hook.URLDisplay, Headers: hook.HeaderNames, BodyTemplate: hook.BodyTemplate, Signed: hook.Signed,
+			Preset: hook.Preset, ChatID: hook.ChatID,
+		}
 		if dto.Webhook.Headers == nil {
 			dto.Webhook.Headers = []string{}
 		}

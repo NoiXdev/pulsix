@@ -6941,12 +6941,19 @@ export interface components {
         NotifyWebhookBody: {
             /** @description Empty sends the event as JSON */
             body_template?: string;
+            /** @description Telegram preset only: a chat id such as -1001234567890, or a public @username */
+            chat_id?: string;
             headers?: components["schemas"]["NotifyHeaderBody"][] | null;
             /**
              * @description Default POST
              * @enum {string}
              */
             method?: "POST" | "PUT";
+            /**
+             * @description A chat service whose message Pulsix renders (the body template must then be empty, the method POST); changing it needs the url again
+             * @enum {string}
+             */
+            preset?: "" | "slack" | "mattermost" | "telegram";
             signed?: boolean;
             /** @description Omit on update to keep the stored secret */
             signing_secret?: string;
@@ -6955,10 +6962,17 @@ export interface components {
         };
         NotifyWebhookDTO: {
             body_template?: string;
+            /** @description Telegram preset only: the chat the bot posts to */
+            chat_id?: string;
             /** @description Header names; values are never returned */
             headers: string[] | null;
             /** @enum {string} */
             method: "POST" | "PUT";
+            /**
+             * @description The chat service the message is rendered for; empty is a raw webhook
+             * @enum {string}
+             */
+            preset: "" | "slack" | "mattermost" | "telegram";
             /** @description Requests carry X-Pulsix-Signature-256 */
             signed: boolean;
             /** @description Scheme and host only: a path can carry a token and is never returned */
