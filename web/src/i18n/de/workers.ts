@@ -4,8 +4,8 @@ export const deWorkers: Messages['workers'] = {
   time: {
     never: 'nie',
     justNow: 'gerade eben',
-    minutesAgo: (n: number) => `vor ${n} Min.`,
-    hoursAgo: (n: number) => `vor ${n} Std.`,
+    minutesAgo: (n: number) => `vor ${n} min`,
+    hoursAgo: (n: number) => `vor ${n} h`,
     daysAgo: (n: number) => (n === 1 ? 'vor 1 Tag' : `vor ${n} Tagen`),
     expired: 'abgelaufen',
     today: 'heute',

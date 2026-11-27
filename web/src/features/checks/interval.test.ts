@@ -21,8 +21,8 @@ describe('intervalLabel', () => {
   });
 
   it('writes the German units', () => {
-    expect(intervalLabel(3600, de)).toBe('1 Std.');
-    expect(intervalLabel(300, de)).toBe('5 Min.');
+    expect(intervalLabel(3600, de)).toBe('1 h');
+    expect(intervalLabel(300, de)).toBe('5 min');
     expect(intervalLabel(90, de)).toBe('90 s');
   });
 });

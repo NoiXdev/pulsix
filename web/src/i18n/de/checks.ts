@@ -30,8 +30,8 @@ export const deChecks: Messages['checks'] = {
   },
   interval: {
     seconds: (n: number) => `${n} s`,
-    minutes: (n: number) => `${n} Min.`,
-    hours: (n: number) => `${n} Std.`,
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
   },
   enabled: 'aktiviert',
   disabled: 'deaktiviert',

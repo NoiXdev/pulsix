@@ -39,7 +39,7 @@ export const deHosts: Messages['hosts'] = {
   },
   clock: {
     seconds: (n: number) => `${n} s`,
-    minutes: (n: number) => `${n} Min.`,
+    minutes: (n: number) => `${n} min`,
     behind: 'nach',
     ahead: 'vor',
   },
@@ -114,9 +114,9 @@ export const deHosts: Messages['hosts'] = {
   },
   row: {
     seconds: (n: number) => `${n} s`,
-    minutes: (n: number) => `${n} Min.`,
-    hours: (n: number) => `${n} Std.`,
-    days: (n: number) => `${n} T.`,
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
+    days: (n: number) => `${n} d`,
     agentTitle: (status: string) => `Agent ${status}`,
     unknown: 'unbekannt',
     open: 'Öffnen',
@@ -492,11 +492,11 @@ export const deHosts: Messages['hosts'] = {
   },
   graph: {
     ranges: {
-      '1h': '1 Std.',
-      '24h': '24 Std.',
-      '7d': '7 T.',
-      '30d': '30 T.',
-      '90d': '90 T.',
+      '1h': '1 h',
+      '24h': '24 h',
+      '7d': '7 d',
+      '30d': '30 d',
+      '90d': '90 d',
     },
     readFailed: 'Diese Messreihe konnte nicht gelesen werden.',
     chartFailed: 'Das Diagramm konnte nicht geladen werden. Zum erneuten Versuch die Seite neu laden.',

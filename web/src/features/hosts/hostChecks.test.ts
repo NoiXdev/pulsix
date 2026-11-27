@@ -236,7 +236,7 @@ describe('clockSkewLabel', () => {
   });
 
   it.each([
-    ['a slow clock', 243.7, '4 Min. nach', 'Die Uhr dieses Hosts geht gegenüber der des Managers etwa 4 Min. nach.'],
+    ['a slow clock', 243.7, '4 min nach', 'Die Uhr dieses Hosts geht gegenüber der des Managers etwa 4 min nach.'],
     ['a fast clock', -45, '45 s vor', 'Die Uhr dieses Hosts geht gegenüber der des Managers etwa 45 s vor.'],
   ])('reads as German for %s', (_name, offset, label, sentence) => {
     expect(checks.clockSkewLabel(offset, de)).toBe(label);
