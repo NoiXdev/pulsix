@@ -86,8 +86,9 @@ func TestAgainstARealServer(t *testing.T) {
 	if o, ok := find(obs, "apache.workers_busy_pct"); !ok || o.Value == nil || *o.Value <= 0 || *o.Value > 100 {
 		t.Fatalf("workers_busy_pct = %+v, want in (0, 100]", o)
 	}
-	// The scoreboard has exactly MaxRequestWorkers slots (backlog 3.11b,
-	// R1), not ServerLimit x ThreadLimit (16 x 64).
+	// In steady state the scoreboard has exactly MaxRequestWorkers slots
+	// (backlog 3.11b, R1), not ServerLimit x ThreadLimit (16 x 64); after a
+	// graceful restart it can be longer, which this test does not cover.
 	mustValue(t, obs, "apache.workers_max", 150)
 	if o, ok := find(obs, "apache.workers_busy_max_pct"); !ok || o.Value == nil || *o.Value <= 0 || *o.Value > 100 {
 		t.Fatalf("workers_busy_max_pct = %+v, want in (0, 100]", o)

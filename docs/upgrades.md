@@ -289,8 +289,12 @@ socket (usually membership of the pool's `listen.group`) or its TCP address
 Backlog 3.11b adds data to three web server checks; no schema change, nothing
 seeded, no protocol change. The existing metrics keep their meaning.
 `apache` reports two more metrics on every check, `apache.workers_max` (the
-status page's scoreboard length, the server's effective `MaxRequestWorkers`)
-and `apache.workers_busy_max_pct` (busy workers against it);
+status page's scoreboard length: in normal running the server's effective
+`MaxRequestWorkers`; during and after a graceful restart, notably one that
+lowers the limit, it can stay at the old, higher value until the processes
+started then are recycled, and a full restart fixes it) and
+`apache.workers_busy_max_pct` (busy workers against it, which then reads too
+low, never above 100);
 `apache.workers_busy_pct` stays against the started workers. `nginx` takes an
 optional `api_url` (the nginx Plus API base with its version) and then reports
 each server zone (`zone:<name>`) and upstream (`upstream:<name>`), at most 64
@@ -298,7 +302,10 @@ of each, with `nginx.api_up` and `nginx.api_items_unreported` on item `""`.
 `caddy` takes an optional `upstreams_url` (the admin API's
 `reverse_proxy/upstreams`) and then reports each reverse-proxy upstream
 (`upstream:<address>`), at most 64, with `caddy.admin_up`,
-`caddy.upstreams_unhealthy` and `caddy.upstreams_unreported` on item `""`. The
+`caddy.upstreams_unhealthy` and `caddy.upstreams_unreported` on item `""`;
+dynamic upstreams become new items as their addresses change (counting toward
+the host's tuple limit until they expire) and read "not reported by the
+server" for health. The
 basic-authentication secret is sent to these pages too. Version skew: an older
 agent ignores `api_url` and `upstreams_url` in a check the manager pushes and
 keeps reporting the server's metrics; the item metrics simply never appear,

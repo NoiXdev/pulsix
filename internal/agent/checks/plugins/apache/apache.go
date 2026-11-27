@@ -122,11 +122,14 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 	return obs
 }
 
-// limitObservations are the busy workers against the server's limit: the
-// Scoreboard has one slot per worker the server may run, exactly its
-// effective MaxRequestWorkers (backlog 3.11b, R1). The percentage is not
-// clamped: during a graceful restart more workers can be busy than the
-// limit has slots.
+// limitObservations are the busy workers against the server's limit: in
+// normal running the Scoreboard has one slot per worker the server may run,
+// its effective MaxRequestWorkers (backlog 3.11b, R1). mod_status also
+// prints every slot beyond those that is not dead, so during and after a
+// graceful restart (one that lowers the limit in particular) the length can
+// stay at the old, higher figure until the processes then started are
+// recycled; a full restart ends it. The percentage then reads too low,
+// never above 100: every busy slot is printed.
 func limitObservations(s status) []checks.Observation {
 	if s.slotsReason != "" {
 		err := errors.New("apache: " + s.slotsReason)

@@ -1,6 +1,9 @@
 package apache
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseStatus(t *testing.T) {
 	got, err := parseStatus([]byte(eventPage(1234, 56, 3, 72)))
@@ -32,8 +35,9 @@ func TestParseStatusOneCounterOnly(t *testing.T) {
 	}
 }
 
-// The Scoreboard line has one character per worker slot, and mod_status
-// prints exactly the server's worker limit of them (backlog 3.11b, R1). A
+// The Scoreboard line has one character per worker slot; in normal running
+// mod_status prints exactly the server's worker limit of them (backlog
+// 3.11b, R1), after a graceful restart possibly more. A
 // line that is missing or not a scoreboard costs only the two metrics built
 // on it, never the page.
 func TestParseScoreboard(t *testing.T) {
@@ -45,6 +49,10 @@ func TestParseScoreboard(t *testing.T) {
 		reason string
 	}{
 		{"every state", head + "Scoreboard: _SRWKDCLGI.\n", 11, ""},
+		// A graceful restart from MaxRequestWorkers 150 to 50 under load
+		// leaves the old slots dead before the new ones (backlog 3.11b
+		// review): the line is longer than the limit, read as it is.
+		{"longer than the limit", head + "Scoreboard: " + strings.Repeat(".", 50) + "W" + strings.Repeat("_", 49) + "\n", 100, ""},
 		{"no trailing newline", head + "Scoreboard: W____", 5, ""},
 		{"CRLF", head + "Scoreboard: W____\r\n", 5, ""},
 		{"first line wins", head + "Scoreboard: W_\nScoreboard: W____\n", 2, ""},

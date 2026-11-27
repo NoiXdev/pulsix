@@ -344,8 +344,9 @@ func TestLargeScoreboardAndCRLF(t *testing.T) {
 	mustValue(t, obs, "apache.workers_busy_pct", 20)
 }
 
-// A Scoreboard is ServerLimit x ThreadLimit characters; a big configuration
-// exceeds 256 KiB and must still read, as long as the page is within bounds.
+// A Scoreboard can be up to ServerLimit x ThreadLimit characters; a big
+// configuration exceeds 256 KiB and must still read, as long as the page is
+// within bounds.
 func TestHugeScoreboardWithinThePageBound(t *testing.T) {
 	body := eventPage(10, 20, 3, 72) + "Scoreboard: " + strings.Repeat("_", 600<<10) + "\n"
 	srv := newStatusServer(t, body)
@@ -558,9 +559,12 @@ func TestPrototypeAndInstances(t *testing.T) {
 	}
 }
 
-// The limit-based percentage is busy over the scoreboard's slots, unclamped
-// (a graceful restart can leave more busy workers than slots), and the
+// The limit-based percentage is busy over the scoreboard's slots, and the
 // existing percentage keeps its meaning next to it (backlog 3.11b, R2).
+// After a graceful restart that lowered MaxRequestWorkers from 150 to 50
+// the board keeps 50 dead slots before the 50 live ones (measured in
+// review): the length, 100, is reported as it is and the percentage reads
+// low.
 func TestWorkersAgainstTheLimit(t *testing.T) {
 	page := func(busy, idle int, board string) string {
 		return fmt.Sprintf("BusyWorkers: %d\nIdleWorkers: %d\n%s", busy, idle, board)
@@ -574,7 +578,7 @@ func TestWorkersAgainstTheLimit(t *testing.T) {
 	}{
 		{"quarter", page(100, 100, "Scoreboard: "+strings.Repeat("_", 400)+"\n"), 400, 25, "", 50},
 		{"full", page(150, 0, "Scoreboard: "+strings.Repeat("W", 150)+"\n"), 150, 100, "", 100},
-		{"over the slots", page(6, 0, "Scoreboard: WWWW\n"), 4, 150, "", 100},
+		{"after a graceful restart lowered the limit", page(10, 40, "Scoreboard: "+strings.Repeat(".", 50)+strings.Repeat("W", 10)+strings.Repeat("_", 40)+"\n"), 100, 10, "", 20},
 		{"no scoreboard", page(1, 4, ""), 0, 0, reasonNoScoreboard, 20},
 		{"bad scoreboard", page(1, 4, "Scoreboard: <html>\n"), 0, 0, errFormatTx, 20},
 	}

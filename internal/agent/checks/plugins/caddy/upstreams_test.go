@@ -317,3 +317,41 @@ func TestCaddyUpstreamsCallerContextEnding(t *testing.T) {
 		t.Fatal("a cancelled round moved the upstream state")
 	}
 }
+
+// The join is exact on the address as each source writes it, after its own
+// escapes are undone: Prometheus label escapes on the metrics page, JSON
+// escapes in the admin list (backlog 3.11b review L3). IPv6 brackets, a
+// placeholder dial, a backslash, a quote and a non-ASCII host all match.
+func TestCaddyUpstreamAddressForms(t *testing.T) {
+	srv := newAdminServer(t)
+	srv.set(func(s *adminServer) {
+		s.metrics = `caddy_reverse_proxy_upstreams_healthy{upstream="[::1]:8080"} 1
+caddy_reverse_proxy_upstreams_healthy{upstream="[fe80::1%eth0]:80"} 0
+caddy_reverse_proxy_upstreams_healthy{upstream="{http.request.host}:8080"} 1
+caddy_reverse_proxy_upstreams_healthy{upstream="odd\\host\"q:1"} 0
+caddy_reverse_proxy_upstreams_healthy{upstream="bücher.example:443"} 1
+caddy_reverse_proxy_upstreams_healthy{upstream="::1:8080"} 0
+`
+		s.ups = `[
+  {"address": "[::1]:8080", "num_requests": 1},
+  {"address": "[fe80::1%eth0]:80"},
+  {"address": "{http.request.host}:8080"},
+  {"address": "odd\\host\"q:1"},
+  {"address": "bücher.example:443"}
+]`
+	})
+	p, _ := newTestPlugin()
+	obs := collect(t, p, srv.params())
+	mustItemValue(t, obs, "upstream:[::1]:8080", "caddy.upstream_healthy", 1)
+	mustItemValue(t, obs, "upstream:[::1]:8080", "caddy.upstream_requests", 1)
+	mustItemValue(t, obs, "upstream:[fe80::1%eth0]:80", "caddy.upstream_healthy", 0)
+	mustItemValue(t, obs, "upstream:{http.request.host}:8080", "caddy.upstream_healthy", 1)
+	mustItemValue(t, obs, `upstream:odd\host"q:1`, "caddy.upstream_healthy", 0)
+	mustItemValue(t, obs, "upstream:bücher.example:443", "caddy.upstream_healthy", 1)
+	// The unbracketed series names no listed upstream and is not joined.
+	mustItemAbsent(t, obs, "upstream:::1:8080", "caddy.upstream_healthy")
+	mustValue(t, obs, "caddy.upstreams_unhealthy", 2)
+	if items := webchecktest.Items(obs); len(items) != 6 {
+		t.Fatalf("items %v, want \"\" and five upstreams", items)
+	}
+}
