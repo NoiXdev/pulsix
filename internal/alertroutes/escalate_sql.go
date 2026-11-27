@@ -107,7 +107,7 @@ func (s *Store) ClaimStep(ctx context.Context, tx pgx.Tx, orgID, alertID, routeI
 // ToldRoutes returns every route that already queued a message about
 // alertID — the routes holding its escalation base (ClaimStep at position
 // 0, which decide claims for each route an event goes out through). The
-// follower asks it for a closed event only (resolution.route).
+// follower asks it for the kinds in toldEvents only (resolution.route).
 func (s *Store) ToldRoutes(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID) ([]uuid.UUID, error) {
 	ids, err := gen.New(tx).ToldRoutesForAlert(ctx, gen.ToldRoutesForAlertParams{OrgID: orgID, AlertID: alertID})
 	if err != nil {

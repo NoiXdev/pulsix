@@ -187,10 +187,11 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		return routing{}, err
 	}
 	subject := Subject{HostID: ev.HostID, Severity: ev.Severity, Event: ev.Kind}
-	if ev.Kind == alerts.EventClosed {
+	if tellsTheTold(ev.Kind) {
 		// The routes that delivered about this alert are owed its resolve
-		// whatever its severity is now (match.go's owesResolve). Read on
-		// the tick's transaction, like every other read of a tick.
+		// and its acknowledgements whatever its severity is now (match.go's
+		// owesTheTold). Read on the tick's transaction, like every other
+		// read of a tick.
 		if subject.Told, err = r.f.store.ToldRoutes(ctx, r.tx, r.orgID, ev.AlertID); err != nil {
 			return routing{}, err
 		}
@@ -205,13 +206,15 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 			continue
 		}
 		breaks := []rules.State{ev.Severity}
-		if owesResolve(rt, subject) {
-			// A resolve crosses a shut window wherever the page could
-			// have: judged at the live severity alone, a crit page that
-			// broke through at 03:00 and eased to warn before it closed
-			// would be held, and a held event of a closed alert is never
-			// offered again — it would expire unsent (backlog 2.144). The
-			// alert's peak is the highest severity it can have paged at.
+		if owesTheTold(rt, subject) {
+			// A resolve or an acknowledgement crosses a shut window
+			// wherever the page could have: judged at the live severity
+			// alone, a crit page that broke through at 03:00 and eased to
+			// warn before it closed would be held, and a held event of a
+			// closed alert is never offered again — it would expire unsent
+			// (backlog 2.144); an acknowledgement held until morning tells
+			// the others too late to matter (2.145). The alert's peak is
+			// the highest severity it can have paged at.
 			a, err := r.alert(ctx, ev.AlertID)
 			if err != nil {
 				return routing{}, err
@@ -296,12 +299,12 @@ func (r *resolution) channelsOf(ctx context.Context, rt Route) []uuid.UUID {
 //
 // No window means always. A severity the route lists as a breakthrough
 // crosses a shut window and is therefore always open. severities is the
-// event's live severity, plus the alert's peak for a resolve the route is
-// owed (route, above); any one of them in the breakthrough set crosses —
-// and crosses ONLY this gate: a maintenance window silences a crit too,
-// which is what a
-// maintenance window is for, so suppression is checked before this is ever
-// asked (follow.go's decide).
+// event's live severity, plus the alert's peak for a resolve or an
+// acknowledgement the route is owed (route, above); any one of them in the
+// breakthrough set crosses — and crosses ONLY this gate: a maintenance
+// window silences a crit too, which is what a maintenance window is for,
+// so suppression is checked before this is ever asked (follow.go's
+// decide).
 //
 // A window whose cron or timezone can no longer be parsed counts as OPEN,
 // and says so at warn level. Both failure directions are wrong and only one
