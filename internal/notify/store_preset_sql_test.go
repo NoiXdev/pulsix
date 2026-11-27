@@ -62,4 +62,11 @@ func TestSQLStorePresetChecks(t *testing.T) {
 			t.Fatalf("%s/%s stored", c.Kind, c.Preset)
 		}
 	}
+	// Backlog 4.8's four are stored.
+	for _, preset := range []string{"ntfy", "pushover", "twilio", "pagerduty"} {
+		c := notify.Channel{ID: uuid.Must(uuid.NewV7()), OrgID: org, Kind: notify.KindWebhook, Preset: preset, Name: preset, Config: json.RawMessage(`{}`)}
+		if _, err := st.CreateChannel(scoped, c); err != nil {
+			t.Fatalf("%s refused: %v", preset, err)
+		}
+	}
 }
