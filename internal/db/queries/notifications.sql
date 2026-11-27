@@ -1,6 +1,6 @@
 -- name: CreateNotificationChannel :one
-INSERT INTO notification_channels (id, org_id, kind, name, config, body_json, enabled, created_by)
-VALUES (@id, @org_id, @kind, @name, @config, @body_json, @enabled, sqlc.narg(created_by))
+INSERT INTO notification_channels (id, org_id, kind, preset, name, config, body_json, enabled, created_by)
+VALUES (@id, @org_id, @kind, @preset, @name, @config, @body_json, @enabled, sqlc.narg(created_by))
 RETURNING *;
 
 -- name: GetNotificationChannel :one
@@ -11,7 +11,7 @@ SELECT * FROM notification_channels WHERE org_id = @org_id ORDER BY name;
 
 -- name: UpdateNotificationChannel :one
 -- No row back means a stale revision or an unknown channel.
-UPDATE notification_channels SET name = @name, config = @config, body_json = @body_json, enabled = @enabled,
+UPDATE notification_channels SET name = @name, preset = @preset, config = @config, body_json = @body_json, enabled = @enabled,
   revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id AND revision = @revision
 RETURNING *;
@@ -91,7 +91,7 @@ WHERE c.org_id = d.org_id AND c.id = d.channel_id
   )
 RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.attempts, d.created_at,
   d.pending_recipients,
-  c.kind AS channel_kind, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled;
+  c.kind AS channel_kind, c.preset AS channel_preset, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled;
 
 -- name: CompleteNotificationDelivery :execrows
 -- attempts fences a late completion: a manager whose lease ran out and

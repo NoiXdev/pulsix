@@ -25,7 +25,7 @@ func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{d: d, q: gen.New(d)} }
 
 func (st *SQLStore) CreateChannel(ctx context.Context, c Channel) (Channel, error) {
 	row, err := st.q.CreateNotificationChannel(ctx, gen.CreateNotificationChannelParams{
-		ID: c.ID, OrgID: c.OrgID, Kind: string(c.Kind), Name: c.Name, Config: c.Config, BodyJson: c.BodyJSON, Enabled: c.Enabled,
+		ID: c.ID, OrgID: c.OrgID, Kind: string(c.Kind), Preset: c.Preset, Name: c.Name, Config: c.Config, BodyJson: c.BodyJSON, Enabled: c.Enabled,
 		CreatedBy: db.NullUUID(c.CreatedBy),
 	})
 	if db.IsUniqueViolation(err) {
@@ -62,7 +62,7 @@ func (st *SQLStore) ListChannels(ctx context.Context, orgID uuid.UUID) ([]Channe
 
 func (st *SQLStore) UpdateChannel(ctx context.Context, c Channel, revision int64) (Channel, error) {
 	row, err := st.q.UpdateNotificationChannel(ctx, gen.UpdateNotificationChannelParams{
-		Name: c.Name, Config: c.Config, BodyJson: c.BodyJSON, Enabled: c.Enabled, OrgID: c.OrgID, ID: c.ID, Revision: revision,
+		Name: c.Name, Preset: c.Preset, Config: c.Config, BodyJson: c.BodyJSON, Enabled: c.Enabled, OrgID: c.OrgID, ID: c.ID, Revision: revision,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gerr := st.GetChannel(ctx, c.OrgID, c.ID); gerr != nil {
@@ -287,7 +287,7 @@ func (st *SQLStore) PutDigest(ctx context.Context, orgID uuid.UUID, s DigestSett
 
 func toChannel(r gen.NotificationChannel) Channel {
 	return Channel{
-		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), Name: r.Name, Enabled: r.Enabled, Config: r.Config, BodyJSON: r.BodyJson,
+		ID: r.ID, OrgID: r.OrgID, Kind: Kind(r.Kind), Preset: r.Preset, Name: r.Name, Enabled: r.Enabled, Config: r.Config, BodyJSON: r.BodyJson,
 		CreatedBy: db.UUIDPtr(r.CreatedBy), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Revision: r.Revision,
 	}
 }

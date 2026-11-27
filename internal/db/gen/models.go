@@ -717,6 +717,7 @@ type NotificationChannel struct {
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	Revision  int64       `json:"revision"`
+	Preset    string      `json:"preset"`
 }
 
 type NotificationDelivery struct {

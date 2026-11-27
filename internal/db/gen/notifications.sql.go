@@ -52,7 +52,7 @@ WHERE c.org_id = d.org_id AND c.id = d.channel_id
   )
 RETURNING d.id, d.org_id, d.channel_id, d.event_key, d.event_kind, d.payload, d.attempts, d.created_at,
   d.pending_recipients,
-  c.kind AS channel_kind, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled
+  c.kind AS channel_kind, c.preset AS channel_preset, c.name AS channel_name, c.config AS channel_config, c.enabled AS channel_enabled
 `
 
 type ClaimNotificationDeliveriesParams struct {
@@ -71,6 +71,7 @@ type ClaimNotificationDeliveriesRow struct {
 	CreatedAt         time.Time `json:"created_at"`
 	PendingRecipients []string  `json:"pending_recipients"`
 	ChannelKind       string    `json:"channel_kind"`
+	ChannelPreset     string    `json:"channel_preset"`
 	ChannelName       string    `json:"channel_name"`
 	ChannelConfig     []byte    `json:"channel_config"`
 	ChannelEnabled    bool      `json:"channel_enabled"`
@@ -118,6 +119,7 @@ func (q *Queries) ClaimNotificationDeliveries(ctx context.Context, arg ClaimNoti
 			&i.CreatedAt,
 			&i.PendingRecipients,
 			&i.ChannelKind,
+			&i.ChannelPreset,
 			&i.ChannelName,
 			&i.ChannelConfig,
 			&i.ChannelEnabled,
@@ -160,15 +162,16 @@ func (q *Queries) CompleteNotificationDelivery(ctx context.Context, arg Complete
 }
 
 const createNotificationChannel = `-- name: CreateNotificationChannel :one
-INSERT INTO notification_channels (id, org_id, kind, name, config, body_json, enabled, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision
+INSERT INTO notification_channels (id, org_id, kind, preset, name, config, body_json, enabled, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision, preset
 `
 
 type CreateNotificationChannelParams struct {
 	ID        uuid.UUID   `json:"id"`
 	OrgID     uuid.UUID   `json:"org_id"`
 	Kind      string      `json:"kind"`
+	Preset    string      `json:"preset"`
 	Name      string      `json:"name"`
 	Config    []byte      `json:"config"`
 	BodyJson  bool        `json:"body_json"`
@@ -181,6 +184,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 		arg.ID,
 		arg.OrgID,
 		arg.Kind,
+		arg.Preset,
 		arg.Name,
 		arg.Config,
 		arg.BodyJson,
@@ -200,6 +204,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Preset,
 	)
 	return i, err
 }
@@ -341,7 +346,7 @@ func (q *Queries) FailStuckNotificationDeliveries(ctx context.Context, lastError
 }
 
 const getNotificationChannel = `-- name: GetNotificationChannel :one
-SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 AND id = $2
+SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision, preset FROM notification_channels WHERE org_id = $1 AND id = $2
 `
 
 type GetNotificationChannelParams struct {
@@ -364,6 +369,7 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Preset,
 	)
 	return i, err
 }
@@ -505,7 +511,7 @@ func (q *Queries) InsertScheduleNotification(ctx context.Context, arg InsertSche
 }
 
 const listNotificationChannels = `-- name: ListNotificationChannels :many
-SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision FROM notification_channels WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision, preset FROM notification_channels WHERE org_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID) ([]NotificationChannel, error) {
@@ -529,6 +535,7 @@ func (q *Queries) ListNotificationChannels(ctx context.Context, orgID uuid.UUID)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.Preset,
 		); err != nil {
 			return nil, err
 		}
@@ -995,14 +1002,15 @@ func (q *Queries) TrimNotificationDeliveries(ctx context.Context, arg TrimNotifi
 }
 
 const updateNotificationChannel = `-- name: UpdateNotificationChannel :one
-UPDATE notification_channels SET name = $1, config = $2, body_json = $3, enabled = $4,
+UPDATE notification_channels SET name = $1, preset = $2, config = $3, body_json = $4, enabled = $5,
   revision = revision + 1, updated_at = now()
-WHERE org_id = $5 AND id = $6 AND revision = $7
-RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision
+WHERE org_id = $6 AND id = $7 AND revision = $8
+RETURNING id, org_id, kind, name, config, body_json, enabled, created_by, created_at, updated_at, revision, preset
 `
 
 type UpdateNotificationChannelParams struct {
 	Name     string    `json:"name"`
+	Preset   string    `json:"preset"`
 	Config   []byte    `json:"config"`
 	BodyJson bool      `json:"body_json"`
 	Enabled  bool      `json:"enabled"`
@@ -1015,6 +1023,7 @@ type UpdateNotificationChannelParams struct {
 func (q *Queries) UpdateNotificationChannel(ctx context.Context, arg UpdateNotificationChannelParams) (NotificationChannel, error) {
 	row := q.db.QueryRow(ctx, updateNotificationChannel,
 		arg.Name,
+		arg.Preset,
 		arg.Config,
 		arg.BodyJson,
 		arg.Enabled,
@@ -1035,6 +1044,7 @@ func (q *Queries) UpdateNotificationChannel(ctx context.Context, arg UpdateNotif
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Preset,
 	)
 	return i, err
 }

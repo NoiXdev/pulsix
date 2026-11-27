@@ -42,8 +42,13 @@ const (
 // only resubmits the body template can still classify a kept Content-Type
 // header without unsealing it); unused for an e-mail channel.
 type Channel struct {
-	ID, OrgID            uuid.UUID
-	Kind                 Kind
+	ID, OrgID uuid.UUID
+	Kind      Kind
+	// Preset names the chat service a webhook channel renders its body
+	// for (backlog 4.7): "" is the raw webhook (the body template or the
+	// event's JSON), anything else a key of the wired Presets. Always ""
+	// for an e-mail channel (the schema's own CHECK).
+	Preset               string
 	Name                 string
 	Enabled              bool
 	Config               json.RawMessage

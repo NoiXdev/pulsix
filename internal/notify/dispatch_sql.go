@@ -41,7 +41,7 @@ func (st *DeliverySQLStore) Claim(ctx context.Context, lease time.Duration, limi
 				Payload: r.Payload, Status: DeliveryPending, Attempts: int(r.Attempts), CreatedAt: r.CreatedAt,
 				PendingRecipients: r.PendingRecipients,
 			},
-			Channel: Channel{ID: r.ChannelID, OrgID: r.OrgID, Kind: Kind(r.ChannelKind), Name: r.ChannelName, Enabled: r.ChannelEnabled, Config: r.ChannelConfig},
+			Channel: Channel{ID: r.ChannelID, OrgID: r.OrgID, Kind: Kind(r.ChannelKind), Preset: r.ChannelPreset, Name: r.ChannelName, Enabled: r.ChannelEnabled, Config: r.ChannelConfig},
 		}
 	}
 	return out, nil
