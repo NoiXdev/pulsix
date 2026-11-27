@@ -492,7 +492,7 @@ type ToldRoutesForAlertParams struct {
 	AlertID uuid.UUID `json:"alert_id"`
 }
 
-// Every route that already delivered something about one alert: its
+// Every route that already queued a message about one alert: its
 // escalation base (position 0), which the follower claims for each route
 // the moment an event goes out through it (follow.go's claimBases). The
 // follower reads it for a closed event only, so the resolve reaches the

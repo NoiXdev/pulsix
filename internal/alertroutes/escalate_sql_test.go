@@ -547,3 +547,37 @@ func TestDeletingARouteStopsItsChain(t *testing.T) {
 		t.Fatalf("alert_route_steps still has %d row(s) for a deleted route: %+v", len(got), got)
 	}
 }
+
+// TestToldRoutesIsScopedToOrganizationAndBase pins ToldRoutesForAlert's two
+// predicates: another organization asking about the alert gets nothing,
+// and only a base row (position 0) makes a route "told" — a later step's
+// row alone does not.
+func TestToldRoutesIsScopedToOrganizationAndBase(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
+	host := seedHost(t, d, orgA)
+	alert := seedOpenAlert(t, d, orgA, host)
+	stepOnly := seedOpenAlert(t, d, orgA, seedHost(t, d, orgA))
+	route := seedRouteWithSteps(t, d, orgA, []alertroutes.Step{{Position: 1, Delay: time.Minute}})
+	at := time.Now().UTC().Truncate(time.Second)
+	mustClaim(t, d, orgA, alert, route, 0, at)
+	mustClaim(t, d, orgA, stepOnly, route, 1, at)
+	s := alertroutes.NewSQLStore(d)
+	tx := beginTx(t, d)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	got, err := s.ToldRoutes(ctx, tx, orgA, alert)
+	if err != nil {
+		t.Fatalf("ToldRoutes: %v", err)
+	}
+	if len(got) != 1 || got[0] != route {
+		t.Errorf("ToldRoutes(own org) = %v, want [%s]", got, route)
+	}
+	if got, err := s.ToldRoutes(ctx, tx, orgB, alert); err != nil || len(got) != 0 {
+		t.Errorf("ToldRoutes(other org) = %v, %v; want nothing", got, err)
+	}
+	if got, err := s.ToldRoutes(ctx, tx, orgA, stepOnly); err != nil || len(got) != 0 {
+		t.Errorf("ToldRoutes(step row only) = %v, %v; want nothing", got, err)
+	}
+}

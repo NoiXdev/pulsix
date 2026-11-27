@@ -19,7 +19,7 @@ type Subject struct {
 	HostID   uuid.UUID
 	Severity rules.State
 	Event    alerts.EventKind
-	// Told lists the routes that already delivered something about this
+	// Told lists the routes that already queued a message about this
 	// subject's alert (their escalation base, alert_escalations position
 	// 0). Only a closed event reads it; see MatchRoutes.
 	Told []uuid.UUID
@@ -67,15 +67,17 @@ func MatchRoutes(s Subject, hostGroups []uuid.UUID, routes []Route) []Route {
 }
 
 // owesResolve reports whether r must hear s's closed event whatever the
-// alert's severity is now: r already delivered something about the alert
+// alert's severity is now: r already queued a message about the alert
 // (s.Told). An alert routinely eases before it clears — crit, then warn,
 // then ok — and matched on the live severity alone, a crit-only route
 // that paged on "opened" would find the closed event outside its set and
 // the person it paged would never hear the alert resolved (backlog
 // 2.144). The resolve belongs to the audience of the page. Only the
 // severity selection is waived: the route must still be enabled, cover
-// the host and ask for "closed". Every other event kind still matches on
-// the severity the alert has now (the spec's "Resolution" section).
+// the host and ask for "closed"; the mute and delivery-window gates still
+// apply (resolution.route judges breakthrough at the alert's peak too).
+// Every other event kind still matches on the severity the alert has now
+// (the spec's "Resolution" section).
 func owesResolve(r Route, s Subject) bool {
 	return s.Event == alerts.EventClosed && slices.Contains(s.Told, r.ID)
 }

@@ -190,8 +190,7 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 	if ev.Kind == alerts.EventClosed {
 		// The routes that delivered about this alert are owed its resolve
 		// whatever its severity is now (match.go's owesResolve). Read on
-		// the tick's transaction, so a base this same tick claimed for an
-		// earlier event of the alert counts too.
+		// the tick's transaction, like every other read of a tick.
 		if subject.Told, err = r.f.store.ToldRoutes(ctx, r.tx, r.orgID, ev.AlertID); err != nil {
 			return routing{}, err
 		}
@@ -205,7 +204,21 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		if len(chans) == 0 {
 			continue
 		}
-		if !r.windowOpen(ctx, rt, ev.Severity) {
+		breaks := []rules.State{ev.Severity}
+		if owesResolve(rt, subject) {
+			// A resolve crosses a shut window wherever the page could
+			// have: judged at the live severity alone, a crit page that
+			// broke through at 03:00 and eased to warn before it closed
+			// would be held, and a held event of a closed alert is never
+			// offered again — it would expire unsent (backlog 2.144). The
+			// alert's peak is the highest severity it can have paged at.
+			a, err := r.alert(ctx, ev.AlertID)
+			if err != nil {
+				return routing{}, err
+			}
+			breaks = append(breaks, a.Peak)
+		}
+		if !r.windowOpen(ctx, rt, breaks...) {
 			// Debug, because this is ordinary operation and on a tick where
 			// nothing is shut there is nothing to say. It is said at all
 			// because of the asymmetric case: when ANOTHER route delivers,
@@ -282,8 +295,11 @@ func (r *resolution) channelsOf(ctx context.Context, rt Route) []uuid.UUID {
 // at this instant?
 //
 // No window means always. A severity the route lists as a breakthrough
-// crosses a shut window and is therefore always open — and crosses ONLY
-// this gate: a maintenance window silences a crit too, which is what a
+// crosses a shut window and is therefore always open. severities is the
+// event's live severity, plus the alert's peak for a resolve the route is
+// owed (route, above); any one of them in the breakthrough set crosses —
+// and crosses ONLY this gate: a maintenance window silences a crit too,
+// which is what a
 // maintenance window is for, so suppression is checked before this is ever
 // asked (follow.go's decide).
 //
@@ -307,12 +323,14 @@ func (r *resolution) channelsOf(ctx context.Context, rt Route) []uuid.UUID {
 // The breakthrough check sits outside the cache because it is the one part
 // that varies with the event: the cached verdict is the window's, and a
 // breakthrough severity overrides it.
-func (r *resolution) windowOpen(ctx context.Context, rt Route, severity rules.State) bool {
+func (r *resolution) windowOpen(ctx context.Context, rt Route, severities ...rules.State) bool {
 	if rt.Window == nil {
 		return true
 	}
-	if slices.Contains(rt.Breakthrough, severity) {
-		return true
+	for _, sev := range severities {
+		if slices.Contains(rt.Breakthrough, sev) {
+			return true
+		}
 	}
 	open, ok := r.gates[rt.ID]
 	if !ok {
