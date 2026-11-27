@@ -118,11 +118,13 @@ skipped schedule warn, one that could not start crit; the digest and the test me
 Colours are the brand tokens (crit `#F87171`, warn `#FBBF24`, unknown `#6B7280`, ok `#34D399`,
 info `#00E5FF`).
 
-- **Slack** (decision 3): top-level `text` is the title (the notification fallback, mrkdwn-escaped:
-  `&`, `<`, `>`); one attachment with the level colour holding blocks: a `header` (plain text,
-  ≤ 150 characters), `section` blocks of mrkdwn lines (≤ 3000 characters each, at most 10), a
-  `context` block naming the organization, and an `actions` block with one button
-  ("Open in Pulsix", URL `Event.URL`) when the event has a link.
+- **Slack** (decision 3): top-level `text` is the title (≤ 150 characters, mrkdwn-escaped:
+  `&`, `<`, `>`). Slack shows it as the message body, because the blocks sit in an attachment, so
+  no header block repeats it (review M1). One attachment with the level colour holds blocks:
+  `section` blocks of mrkdwn lines (≤ 3000 characters each, at most 10), a `context` block naming
+  the organization, and an `actions` block with one button ("Open in Pulsix", URL `Event.URL`)
+  when the event has a link. mrkdwn's `*`, `_`, `~` (at a word's edge) and `` ` `` in chosen
+  text become look-alikes, since Slack has no escape for them (review M3).
 - **Mattermost**: Slack's legacy attachment format, which Mattermost renders: `fallback`, `color`,
   `title`, `title_link` (`Event.URL`), `text` (Markdown, ASCII punctuation backslash-escaped,
   ≤ 12000 characters) and `footer`. No button: Mattermost buttons need an integration callback;
@@ -133,7 +135,8 @@ info `#00E5FF`).
   link previews off. Total ≤ 4096 UTF-16 units.
 
 Bounds: each line is clipped first (label 100, text 300 characters); lines are kept in order
-while they fit the service's budget, and the rest — together with what the event itself left out
+while they fit the service's budget and a byte budget (40 KiB as JSON, so wide characters and long
+links stay under the sender's 64 KiB cap — review I1), and the rest — together with what the event itself left out
 (a capped alert batch) — is announced as "… and N more".
 
 ### Delivery [derived]
