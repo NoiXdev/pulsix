@@ -1,0 +1,75 @@
+package twilio
+
+import (
+	"strings"
+	"unicode/utf16"
+)
+
+// An SMS body is bounded to two segments, so one message never costs
+// more than two: 2 × 153 septets in the GSM-7 alphabet, else 2 × 67
+// UTF-16 units (a concatenated segment loses room to its header).
+const (
+	gsmLimit  = 306
+	ucs2Limit = 134
+)
+
+// gsmBasic is the GSM 03.38 default alphabet (one septet each), gsmExt
+// its extension table (an escape plus one septet: two).
+const (
+	gsmBasic = "@£$¥èéùìòÇ\nØø\rÅå" +
+		"Δ_ΦΓΛΩΠΨΣΘΞÆæßÉ" +
+		" !\"#¤%&'()*+,-./0123456789:;<=>?" +
+		"¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§" +
+		"¿abcdefghijklmnopqrstuvwxyzäöñüà"
+	gsmExt = "^{}\\[~]|€\f"
+)
+
+// fold turns the look-alikes Compose puts in for markup (notify.ChatText)
+// and common typography back into GSM-7 characters: an SMS has no markup
+// to defuse, and one character outside the alphabet halves the room.
+var fold = strings.NewReplacer(
+	"＠", "@", "‹", "<", "›", ">", "［", "[", "］", "]",
+	"—", "-", "–", "-", "·", "-", "…", "...",
+	"‘", "'", "’", "'", "`", "'", "“", "\"", "”", "\"",
+	"�", "?",
+)
+
+// septets is s's length in the GSM-7 alphabet, -1 when s leaves it.
+func septets(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case strings.ContainsRune(gsmBasic, r):
+			n++
+		case strings.ContainsRune(gsmExt, r):
+			n += 2
+		default:
+			return -1
+		}
+	}
+	return n
+}
+
+// units is s's length in UTF-16 code units.
+func units(s string) int { return len(utf16.Encode([]rune(s))) }
+
+// measure is the encoding the whole of text needs: its size function
+// and the two-segment limit.
+func measure(text string) (size func(string) int, limit int) {
+	if septets(text) >= 0 {
+		return septets, gsmLimit
+	}
+	return units, ucs2Limit
+}
+
+// clipTo cuts s, runes from the end, until it fits n with "..." added.
+func clipTo(s string, n int, size func(string) int) string {
+	if size(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	for len(r) > 0 && size(string(r)+"...") > n {
+		r = r[:len(r)-1]
+	}
+	return string(r) + "..."
+}
