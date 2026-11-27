@@ -316,6 +316,10 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
+      api_url: {
+        label: 'URL der nginx-Plus-API (optional)',
+        hint: 'Die Basis der nginx-Plus-API mit ihrer Version, die der Agent auf jedem Host liest. Mit einem Wert meldet der Check zusätzlich jede Server-Zone und jeden Upstream (erreichbare und ausgefallene Peers, Anfragen, Fehler), höchstens 64 von jeder Sorte; der Login des Secrets wird auch dorthin gesendet. Leer heißt: nur die Status-Seite wird gelesen.',
+      },
     },
     apache: {
       url: { label: 'URL der Status-Seite', hint: 'Die mod_status-Seite des Apache httpd, die der Agent auf jedem Host liest; fehlt der Query-Schlüssel auto, hängt der Agent ?auto an. Ohne Wert liest der Check http://127.0.0.1/server-status?auto.' },

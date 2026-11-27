@@ -690,6 +690,13 @@
           "name": "verify_tls",
           "type": "bool",
           "default": true
+        },
+        {
+          "name": "api_url",
+          "type": "string",
+          "example": "http://127.0.0.1/api/9",
+          "max_bytes": 500,
+          "format": "statusURL"
         }
       ],
       "metrics": [
@@ -723,6 +730,66 @@
         },
         {
           "name": "nginx.connections_dropped_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.api_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.api_items_unreported",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_processing",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_responses_4xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_responses_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_received_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.zone_sent_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers_up",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_peers_unavailable",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_active",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_responses_5xx_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.upstream_fails_per_s",
           "kind": "numeric"
         }
       ]

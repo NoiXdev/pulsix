@@ -351,6 +351,10 @@ export const enChecks = {
         placeholder: 'status-login',
       },
       verify_tls: { label: 'Verify the TLS certificate' },
+      api_url: {
+        label: 'nginx Plus API URL (optional)',
+        hint: 'The base of the nginx Plus API with its version, read by the agent on each host. With a value the check also reports each server zone and each upstream (peers up and unavailable, requests, errors), at most 64 of each; the login of the secret is sent there too. Empty means only the status page is read.',
+      },
     },
     apache: {
       url: { label: 'Status page URL', hint: 'The mod_status page of Apache httpd, read by the agent on each host; the agent adds ?auto when the URL has no such query key. Without a value the check reads http://127.0.0.1/server-status?auto.' },
