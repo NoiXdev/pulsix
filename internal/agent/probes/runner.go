@@ -5,7 +5,9 @@
 // each slot on its own interval with the first run spread over the
 // interval by a hash of the slot, runs at most MaxConcurrent probes at
 // once with internal/probe's probes and the manager's default dial guard,
-// and hands each round's results to a sink (Run).
+// and hands each round's results to a sink (Run). The host's own
+// agent.yaml can turn it off or narrow its guard (SetPolicy, backlog
+// 3.82).
 //
 // It is not the check scheduler (internal/agent/checks): those are the
 // agent's own plugins measuring its own host, keyed by check key alone;
@@ -74,10 +76,10 @@ type Result struct {
 type Deps struct {
 	// Registry is the probes by plugin name; nil is DefaultRegistry().
 	Registry probe.Registry
-	// Guard decides which addresses a probe may dial; nil is
-	// probe.NewGuard(nil, nil), the manager's default: loopback,
-	// link-local, unspecified, multicast and cloud metadata addresses
-	// refused.
+	// Guard decides which addresses a probe may dial until SetPolicy
+	// installs another; nil is probe.NewGuard(nil, nil), the manager's
+	// default: loopback, link-local, unspecified, multicast and cloud
+	// metadata addresses refused.
 	Guard *probe.Guard
 	// Now is the wall clock (schedules and At); nil is time.Now.
 	Now func() time.Time
@@ -119,16 +121,20 @@ type slot struct {
 // Runner holds the current assignment set and runs it. NewRunner wires it,
 // Apply replaces the set, Run drives it until its context ends.
 type Runner struct {
-	reg    probe.Registry
-	guard  *probe.Guard
-	now    func() time.Time
-	ticker func(time.Duration) Ticker
-	log    *slog.Logger
+	reg          probe.Registry
+	defaultGuard *probe.Guard
+	now          func() time.Time
+	ticker       func(time.Duration) Ticker
+	log          *slog.Logger
 
 	mu       sync.Mutex
 	slots    map[slotKey]*slot
 	version  string
 	inFlight int
+	// disabled and guard are the host's probe policy (SetPolicy); a round
+	// dials through the guard current when it was dispatched.
+	disabled bool
+	guard    *probe.Guard
 	// wake carries "the set changed" or "a probe finished" to Run, which
 	// then looks for due slots at once. Buffered (1) and sent to without
 	// blocking: a burst is one wake-up.
@@ -139,15 +145,16 @@ type Runner struct {
 // NewRunner wires a runner with d's dependencies.
 func NewRunner(d Deps) *Runner {
 	r := &Runner{
-		reg: d.Registry, guard: d.Guard, now: d.Now, ticker: d.Ticker, log: d.Log,
+		reg: d.Registry, defaultGuard: d.Guard, now: d.Now, ticker: d.Ticker, log: d.Log,
 		slots: map[slotKey]*slot{}, wake: make(chan struct{}, 1),
 	}
 	if r.reg == nil {
 		r.reg = DefaultRegistry()
 	}
-	if r.guard == nil {
-		r.guard = probe.NewGuard(nil, nil)
+	if r.defaultGuard == nil {
+		r.defaultGuard = probe.NewGuard(nil, nil)
 	}
+	r.guard = r.defaultGuard
 	if r.now == nil {
 		r.now = time.Now
 	}
@@ -169,6 +176,41 @@ func (r *Runner) Version() string {
 	return r.version
 }
 
+// Enabled reports whether the runner probes for the manager — what the
+// heartbeat reports as probes_supported. A new runner is enabled.
+func (r *Runner) Enabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.disabled
+}
+
+// SetPolicy installs the host's probe policy (agent.yaml, backlog 3.82):
+// whether the runner probes at all, and the guard every round dispatched
+// from now on dials through (nil: the runner's default). Turning probing
+// off drops every slot — a round still in flight finishes and its results
+// are discarded — and forgets the applied version, so that once it is on
+// again the manager, which compares versions, sends its set again. It
+// reports whether anything changed (a guard counts as changed when it is a
+// different one).
+func (r *Runner) SetPolicy(enabled bool, guard *probe.Guard) bool {
+	if guard == nil {
+		guard = r.defaultGuard
+	}
+	r.mu.Lock()
+	changed := r.disabled == enabled || r.guard != guard
+	r.guard = guard
+	if !enabled && !r.disabled {
+		r.slots = map[slotKey]*slot{}
+		r.version = ""
+	}
+	r.disabled = !enabled
+	r.mu.Unlock()
+	if changed {
+		r.poke()
+	}
+	return changed
+}
+
 // Apply replaces the assignment set with specs. A slot named again
 // unchanged (same target, key, plugin, params, interval and address) keeps
 // its schedule; a removed or changed slot stops — a round of it still in
@@ -176,9 +218,15 @@ func (r *Runner) Version() string {
 // one starts with its first run spread over its interval. A second spec
 // for a slot already named is ignored (the manager never sends one); the
 // version is still that of specs as sent, so the manager does not re-send.
-func (r *Runner) Apply(specs []probeconfig.Spec) {
+// While probing is off (SetPolicy) the set is refused: nothing changes and
+// Apply returns false.
+func (r *Runner) Apply(specs []probeconfig.Spec) bool {
 	now := r.now()
 	r.mu.Lock()
+	if r.disabled {
+		r.mu.Unlock()
+		return false
+	}
 	next := make(map[slotKey]*slot, len(specs))
 	for _, sp := range specs {
 		k := slotKey{target: sp.TargetHostID, check: sp.CheckKey}
@@ -195,6 +243,7 @@ func (r *Runner) Apply(specs []probeconfig.Spec) {
 	r.version = probeconfig.Version(specs)
 	r.mu.Unlock()
 	r.poke()
+	return true
 }
 
 // newSlot builds sp's slot, its first run firstOffset after now. Its
@@ -321,16 +370,16 @@ func (r *Runner) dispatch(ctx context.Context, sink func([]Result)) {
 			d.s.next = now.Add(d.s.interval)
 		}
 		r.wg.Add(1)
-		go r.round(ctx, d.k, d.s, now, sink)
+		go r.round(ctx, d.k, d.s, r.guard, now, sink)
 	}
 }
 
 // round runs one probe of s, stamped at, and hands its results to sink
 // unless s is no longer the assigned slot k (removed or replaced while it
 // ran) or ctx ended (shutdown: the probe did not measure the target).
-func (r *Runner) round(ctx context.Context, k slotKey, s *slot, at time.Time, sink func([]Result)) {
+func (r *Runner) round(ctx context.Context, k slotKey, s *slot, g *probe.Guard, at time.Time, sink func([]Result)) {
 	defer r.wg.Done()
-	obs := r.safeExecute(ctx, s)
+	obs := r.safeExecute(ctx, s, g)
 	r.mu.Lock()
 	s.running = false
 	r.inFlight--

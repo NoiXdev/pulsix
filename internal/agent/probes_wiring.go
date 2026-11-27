@@ -34,8 +34,9 @@ func withProbeTicker(fn tickerFactory) LoopOption {
 
 // newProbeRunner builds the runner on the loop's clock, logger and ticker
 // factory (or the one a test set apart). The registry is
-// probes.DefaultRegistry and the dial guard probe.NewGuard(nil, nil)
-// unless a test replaced the registry.
+// probes.DefaultRegistry unless a test replaced it, and the dial guard
+// probe.NewGuard(nil, nil) until agent.yaml adds a deny list
+// (applyProbePolicy).
 func (l *Loop) newProbeRunner() *probes.Runner {
 	tf := l.ticker
 	if l.probeTicker != nil {
@@ -58,7 +59,8 @@ func newProbeBuffer(now func() time.Time) *checks.Ring[probes.Result] {
 // applyProbeConfig installs a pushed ProbeConfig. One that cannot be read
 // (a target id that is not a canonical UUID) leaves the running set and
 // its version alone, so the heartbeat keeps reporting the old version and
-// the manager sends its set again.
+// the manager sends its set again. One that arrives while agent.yaml
+// turns probing off (a heartbeat sent before the file changed) is refused.
 func (l *Loop) applyProbeConfig(pc *agentpb.ProbeConfig) {
 	specs, err := probeconfig.FromProto(pc)
 	if err != nil {
@@ -67,7 +69,10 @@ func (l *Loop) applyProbeConfig(pc *agentpb.ProbeConfig) {
 			"version", pc.GetVersion(), "err", err)
 		return
 	}
-	l.probes.Apply(specs)
+	if !l.probes.Apply(specs) {
+		l.log.Warn("probe configuration refused: probing for other hosts is off on this host",
+			"version", pc.GetVersion(), "probes", len(specs))
+	}
 }
 
 // handleProbeResults is the probe runner's sink, handleResults' twin: one
