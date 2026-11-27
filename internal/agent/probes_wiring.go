@@ -159,7 +159,7 @@ func (l *Loop) applyProbeConfig(pc *agentpb.ProbeConfig) {
 // live), by the same routeResults. It runs on the runner's probe
 // goroutines.
 func (l *Loop) handleProbeResults(results []probes.Result) {
-	results = l.validUTF8ProbeResults(results)
+	results = l.validUTF8ProbeResults(redactProbeResults(l.redactor(), results))
 	if len(results) == 0 {
 		return
 	}

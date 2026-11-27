@@ -403,14 +403,15 @@ func (l *Loop) deactivateSender(sender *streamSender) {
 	}
 }
 
-// handleResults is the scheduler's sink: it routes one completed check's
+// handleResults is the scheduler's sink: it replaces secret values
+// (redact.go) and routes one completed check's
 // results to the current session's sender, or, when no stream is up (or
 // the send just failed and no newer stream is live), to the disconnect
 // buffer (routeResults). This is the one function called from the
 // scheduler's own per-check goroutines, never from the session's main
 // select loop.
 func (l *Loop) handleResults(results []checks.Result) {
-	results = l.validUTF8Results(results)
+	results = l.validUTF8Results(redactResults(l.redactor(), results))
 	if len(results) == 0 {
 		return
 	}
@@ -559,6 +560,7 @@ func (l *Loop) pushFacts(ctx context.Context, sender *streamSender) error {
 		}
 		l.log.WarnContext(ctx, "collecting host facts failed; pushing what was collected", "err", err)
 	}
+	facts = redactFacts(l.redactor(), facts)
 	if err := sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Facts{
 		Facts: &agentpb.Facts{Values: facts, HeartbeatIntervalSeconds: reportedHeartbeatInterval(l.cfg.HeartbeatInterval)},
 	}}); err != nil {
