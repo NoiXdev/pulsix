@@ -30,7 +30,9 @@ const (
 	// summaryLimit is PagerDuty's limit on a summary, in characters.
 	summaryLimit = 1024
 	// maxEvents bounds the events one alert batch sends: the batch's own
-	// cap (alertroutes.MaxBatchItems).
+	// cap (alertroutes.MaxBatchItems), which drops closed items last, so
+	// an alert the batch resolves still gets its resolve event (backlog
+	// 4.43).
 	maxEvents = 50
 )
 

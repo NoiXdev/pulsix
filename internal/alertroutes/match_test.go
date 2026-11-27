@@ -112,15 +112,16 @@ func TestMatchRoutes(t *testing.T) {
 	}
 }
 
-// TestMatchRoutesClosedReachesTheRoutesThatTold pins backlog 2.144: a
-// closed event reaches every route that already delivered something about
-// its alert (Subject.Told), whatever severity the alert eased to before it
-// closed. A crit-only route pages on "opened" at crit; the alert falls to
-// warn (a falling severity writes no event) and then clears. Matched on
-// the live severity alone, the closed event found no route and the person
-// who was paged never heard it had resolved. Every other selection still
-// holds: the route must be enabled, cover the host and ask for "closed".
-func TestMatchRoutesClosedReachesTheRoutesThatTold(t *testing.T) {
+// TestMatchRoutesToldEventsReachTheRoutesThatTold pins backlog 2.144 and
+// 2.145: a closed, acknowledged or ack_voided event reaches every route
+// that already queued a message about its alert (Subject.Told), whatever
+// severity the alert eased to since. A crit-only route pages on "opened"
+// at crit; the alert falls to warn (a falling severity writes no event)
+// and is then acknowledged or clears. Matched on the live severity alone,
+// the event found no route and the person who was paged never heard of
+// it. Every other selection still holds: the route must be enabled, cover
+// the host and ask for the event kind.
+func TestMatchRoutesToldEventsReachTheRoutesThatTold(t *testing.T) {
 	host, other := uuid.New(), uuid.New()
 	crit := []rules.State{rules.StateCrit}
 	openedClosed := []alerts.EventKind{alerts.EventOpened, alerts.EventClosed}
@@ -148,10 +149,25 @@ func TestMatchRoutesClosedReachesTheRoutesThatTold(t *testing.T) {
 			route: route(false, alertroutes.ScopeOrg, nil, openedClosed), told: true, want: 0},
 		{name: "a route that told but no longer covers the host", event: alerts.EventClosed,
 			route: route(true, alertroutes.ScopeHost, &other, openedClosed), told: true, want: 0},
-		// Only the resolve is owed to the audience of the page: any other
-		// event still matches on the severity the alert has now.
-		{name: "an acknowledgement at a lower severity still needs the severity", event: alerts.EventAcknowledged,
-			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventAcknowledged}), told: true, want: 0},
+		// Backlog 2.145: an acknowledgement and its voiding are owed to the
+		// audience of the page too — telling the others who were paged is
+		// what an acknowledgement is for.
+		{name: "an acknowledgement at a lower severity reaches a route that told", event: alerts.EventAcknowledged,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventAcknowledged}), told: true, want: 1},
+		{name: "an acknowledgement at a lower severity misses a route that never told", event: alerts.EventAcknowledged,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventAcknowledged}), want: 0},
+		{name: "a voided acknowledgement reaches a route that told", event: alerts.EventAckVoided,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventAckVoided}), told: true, want: 1},
+		{name: "a route that told but does not ask for acknowledgements", event: alerts.EventAcknowledged,
+			route: route(true, alertroutes.ScopeOrg, nil, openedClosed), told: true, want: 0},
+		// Every other event still matches on the severity the alert has now
+		// (the owner kept snoozes there, 2026-11-27).
+		{name: "a snooze at a lower severity still needs the severity", event: alerts.EventSnoozed,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventSnoozed}), told: true, want: 0},
+		{name: "an unsnooze at a lower severity still needs the severity", event: alerts.EventUnsnoozed,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventUnsnoozed}), told: true, want: 0},
+		{name: "a severity raise outside the set still needs the severity", event: alerts.EventSeverityRaised,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventSeverityRaised}), told: true, want: 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

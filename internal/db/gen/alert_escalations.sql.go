@@ -334,6 +334,51 @@ func (q *Queries) DeleteRouteSteps(ctx context.Context, arg DeleteRouteStepsPara
 	return err
 }
 
+const escalationLedgerForAlert = `-- name: EscalationLedgerForAlert :many
+SELECT route_id, position FROM alert_escalations
+WHERE org_id = $1 AND alert_id = $2
+ORDER BY route_id, position
+`
+
+type EscalationLedgerForAlertParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	AlertID uuid.UUID `json:"alert_id"`
+}
+
+type EscalationLedgerForAlertRow struct {
+	RouteID  uuid.UUID `json:"route_id"`
+	Position int32     `json:"position"`
+}
+
+// Every row of one alert's escalation ledger: per route, its base
+// (position 0, which the follower claims the moment an event goes out
+// through the route, follow.go's claimBases) and every step that fired
+// since. The follower reads it for the event kinds owed to the audience of
+// the page (match.go's toldEvents): a route holding a base is told, so the
+// resolve and the acknowledgements reach it even when the alert's severity
+// has since left the route's set (backlog 2.144, 2.145), and its fired
+// steps' channels hear them too (2.146). Store.Told folds the rows. The
+// index alert_escalations_alert_idx leads with (org_id, alert_id).
+func (q *Queries) EscalationLedgerForAlert(ctx context.Context, arg EscalationLedgerForAlertParams) ([]EscalationLedgerForAlertRow, error) {
+	rows, err := q.db.Query(ctx, escalationLedgerForAlert, arg.OrgID, arg.AlertID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EscalationLedgerForAlertRow
+	for rows.Next() {
+		var i EscalationLedgerForAlertRow
+		if err := rows.Scan(&i.RouteID, &i.Position); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertEscalatedEvent = `-- name: InsertEscalatedEvent :exec
 INSERT INTO alert_events (org_id, alert_id, at, kind, payload)
 VALUES ($1, $2, $3, 'escalated', $4)
@@ -474,44 +519,6 @@ func (q *Queries) ListEscalationStepsForRoutes(ctx context.Context, arg ListEsca
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const toldRoutesForAlert = `-- name: ToldRoutesForAlert :many
-SELECT route_id FROM alert_escalations
-WHERE org_id = $1 AND alert_id = $2 AND position = 0
-ORDER BY route_id
-`
-
-type ToldRoutesForAlertParams struct {
-	OrgID   uuid.UUID `json:"org_id"`
-	AlertID uuid.UUID `json:"alert_id"`
-}
-
-// Every route that already queued a message about one alert: its
-// escalation base (position 0), which the follower claims for each route
-// the moment an event goes out through it (follow.go's claimBases). The
-// follower reads it for a closed event only, so the resolve reaches the
-// audience of the page even when the alert's severity has since left the
-// route's set (backlog 2.144, match.go's MatchRoutes). The index
-// alert_escalations_alert_idx leads with (org_id, alert_id).
-func (q *Queries) ToldRoutesForAlert(ctx context.Context, arg ToldRoutesForAlertParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, toldRoutesForAlert, arg.OrgID, arg.AlertID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []uuid.UUID
-	for rows.Next() {
-		var route_id uuid.UUID
-		if err := rows.Scan(&route_id); err != nil {
-			return nil, err
-		}
-		items = append(items, route_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

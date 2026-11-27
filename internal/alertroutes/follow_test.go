@@ -73,6 +73,40 @@ func TestTickCapsTheItemListButNotTheCount(t *testing.T) {
 	}
 }
 
+// TestTickCapKeepsClosedItems is backlog 4.43 through a tick: three alerts
+// the route told about resolve in the same tick as MaxBatchItems new ones
+// open. The capped message lists the three resolves — dropped by a plain
+// cut, an incident a channel opened for them would never be resolved —
+// and Count still says how many the batch decided.
+func TestTickCapKeepsClosedItems(t *testing.T) {
+	env := newFollowEnv(t)
+	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},
+		[]alerts.EventKind{alerts.EventOpened, alerts.EventClosed}, []uuid.UUID{env.channel})
+	resolved := []uuid.UUID{env.openCritAlert(), env.openCritAlert(), env.openCritAlert()}
+	env.tickOnce()
+
+	env.clock.advance(time.Second)
+	for range alertroutes.MaxBatchItems {
+		env.openCritAlert()
+	}
+	env.clock.advance(time.Second)
+	for _, a := range resolved {
+		env.closeAlert(a)
+	}
+	env.tickOnce()
+
+	last := env.enq.events[len(env.enq.events)-1].Alerts
+	if last.Count != alertroutes.MaxBatchItems+len(resolved) || len(last.Items) != alertroutes.MaxBatchItems {
+		t.Fatalf("capped message = %d of %d items, want %d of %d",
+			len(last.Items), last.Count, alertroutes.MaxBatchItems, alertroutes.MaxBatchItems+len(resolved))
+	}
+	for _, a := range resolved {
+		if got := env.itemsOf(a, alerts.EventClosed); got != 1 {
+			t.Errorf("closed items about resolved alert %s = %d, want 1", a, got)
+		}
+	}
+}
+
 func TestTickIsIdempotent(t *testing.T) {
 	env := newFollowEnv(t)
 	env.route(alertroutes.ScopeOrg, nil, []rules.State{rules.StateCrit},

@@ -17,6 +17,7 @@ package alertroutes_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -548,36 +549,49 @@ func TestDeletingARouteStopsItsChain(t *testing.T) {
 	}
 }
 
-// TestToldRoutesIsScopedToOrganizationAndBase pins ToldRoutesForAlert's two
-// predicates: another organization asking about the alert gets nothing,
-// and only a base row (position 0) makes a route "told" — a later step's
-// row alone does not.
-func TestToldRoutesIsScopedToOrganizationAndBase(t *testing.T) {
+// TestToldIsScopedToOrganizationAndBase pins EscalationLedgerForAlert and
+// Store.Told: another organization asking about the alert gets nothing,
+// only a base row (position 0) makes a route "told" — a later step's row
+// alone does not — and a told route carries the positions of its steps
+// that fired (backlog 2.146), none for a route whose ladder never climbed.
+func TestToldIsScopedToOrganizationAndBase(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	orgA, orgB := seedOrg(t, d), seedOrg(t, d)
 	host := seedHost(t, d, orgA)
 	alert := seedOpenAlert(t, d, orgA, host)
 	stepOnly := seedOpenAlert(t, d, orgA, seedHost(t, d, orgA))
-	route := seedRouteWithSteps(t, d, orgA, []alertroutes.Step{{Position: 1, Delay: time.Minute}})
+	steps := []alertroutes.Step{{Position: 1, Delay: time.Minute}, {Position: 2, Delay: time.Minute}}
+	climbed := seedRouteWithSteps(t, d, orgA, steps)
+	flat := seedRouteWithSteps(t, d, orgA, steps)
 	at := time.Now().UTC().Truncate(time.Second)
-	mustClaim(t, d, orgA, alert, route, 0, at)
-	mustClaim(t, d, orgA, stepOnly, route, 1, at)
+	mustClaim(t, d, orgA, alert, climbed, 0, at)
+	mustClaim(t, d, orgA, alert, climbed, 1, at)
+	mustClaim(t, d, orgA, alert, climbed, 2, at)
+	mustClaim(t, d, orgA, alert, flat, 0, at)
+	mustClaim(t, d, orgA, stepOnly, climbed, 1, at)
 	s := alertroutes.NewSQLStore(d)
 	tx := beginTx(t, d)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	got, err := s.ToldRoutes(ctx, tx, orgA, alert)
+	got, err := s.Told(ctx, tx, orgA, alert)
 	if err != nil {
-		t.Fatalf("ToldRoutes: %v", err)
+		t.Fatalf("Told: %v", err)
 	}
-	if len(got) != 1 || got[0] != route {
-		t.Errorf("ToldRoutes(own org) = %v, want [%s]", got, route)
+	want := alertroutes.Told{climbed: {1, 2}, flat: nil}
+	if len(got) != len(want) || !slices.Equal(got[climbed], want[climbed]) || len(got[flat]) != 0 {
+		t.Errorf("Told(own org) = %v, want %v", got, want)
 	}
-	if got, err := s.ToldRoutes(ctx, tx, orgB, alert); err != nil || len(got) != 0 {
-		t.Errorf("ToldRoutes(other org) = %v, %v; want nothing", got, err)
+	if _, ok := got[flat]; !ok {
+		t.Errorf("Told(own org) = %v, want the flat route told too", got)
 	}
-	if got, err := s.ToldRoutes(ctx, tx, orgA, stepOnly); err != nil || len(got) != 0 {
-		t.Errorf("ToldRoutes(step row only) = %v, %v; want nothing", got, err)
+	if routes := got.Routes(); len(routes) != 2 || !slices.Contains(routes, climbed) || !slices.Contains(routes, flat) {
+		t.Errorf("Told.Routes() = %v, want both routes", routes)
+	}
+	if got, err := s.Told(ctx, tx, orgB, alert); err != nil || len(got) != 0 {
+		t.Errorf("Told(other org) = %v, %v; want nothing", got, err)
+	}
+	if got, err := s.Told(ctx, tx, orgA, stepOnly); err != nil || len(got) != 0 {
+		t.Errorf("Told(step row only) = %v, %v; want nothing", got, err)
 	}
 }
