@@ -51,12 +51,13 @@ func TestStreamRegistry(t *testing.T) {
 // while Service.Revoke's CloseWorker is still to come. Whichever call comes
 // second must not return early with 0: both report the stream and both
 // return only once the append in flight has finished, so the requeue that
-// follows Revoke's call never races a stray event.
+// follows Revoke's call never races a stray event. The handler releases
+// its stream as soon as revoked closes, long before the append ends; the
+// stream must stay registered until it is shut all the same.
 func TestConcurrentCloseWorkerWaitsForTheAppendInFlight(t *testing.T) {
 	r := NewStreamRegistry()
 	w := uuid.Must(uuid.NewV7())
 	ts, release := r.track(w)
-	defer release()
 	appending, finish := make(chan struct{}), make(chan struct{})
 	appended := make(chan error, 1)
 	go func() {
@@ -68,6 +69,7 @@ func TestConcurrentCloseWorkerWaitsForTheAppendInFlight(t *testing.T) {
 	first, second := make(chan result, 1), make(chan result, 1)
 	go func() { first <- result{r.CloseWorker(w)} }()  // the watcher
 	<-ts.revoked                                       // the first close is under way
+	release()                                          // as the handler does once revoked closes (events.go)
 	go func() { second <- result{r.CloseWorker(w)} }() // Service.Revoke's own
 	select {
 	case res := <-second:
@@ -95,6 +97,43 @@ func TestConcurrentCloseWorkerWaitsForTheAppendInFlight(t *testing.T) {
 	}
 	if got := r.Workers(); len(got) != 0 {
 		t.Fatalf("Workers after the cut = %v", got)
+	}
+}
+
+// TestReleasedClosingStreamIsRemovedByItsCloser: a stream the handler
+// released while CloseWorker was still shutting it stays registered only
+// until that CloseWorker returns, then it is gone; a stream of the same
+// worker tracked meanwhile is neither shut nor removed.
+func TestReleasedClosingStreamIsRemovedByItsCloser(t *testing.T) {
+	r := NewStreamRegistry()
+	w := uuid.Must(uuid.NewV7())
+	ts, release := r.track(w)
+	appending, finish := make(chan struct{}), make(chan struct{})
+	go func() { _ = ts.store(func() error { close(appending); <-finish; return nil }) }()
+	<-appending
+	closed := make(chan int, 1)
+	go func() { closed <- r.CloseWorker(w) }()
+	<-ts.revoked
+	release()
+	if got := r.Workers(); len(got) != 1 {
+		t.Fatalf("Workers while the append runs = %v, want the closing stream kept", got)
+	}
+	later, releaseLater := r.track(w)
+	close(finish)
+	if n := <-closed; n != 1 {
+		t.Fatalf("CloseWorker = %d, want 1", n)
+	}
+	select {
+	case <-later.revoked:
+		t.Fatal("a stream tracked after the snapshot was shut")
+	default:
+	}
+	if got := r.Workers(); len(got) != 1 || got[0] != w {
+		t.Fatalf("Workers = %v, want only the later stream's worker", got)
+	}
+	releaseLater()
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers after every release = %v, want none (a leak)", got)
 	}
 }
 

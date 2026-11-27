@@ -24,6 +24,10 @@ type StreamRegistry struct {
 type trackedStream struct {
 	revoked chan struct{} // closed by shut: the handler ends the stream
 	signal  sync.Once     // closes revoked once, however many shuts run
+	// closing (guarded by StreamRegistry.mu) marks a stream a CloseWorker
+	// is shutting: release leaves it registered, and that CloseWorker
+	// removes it once shut has returned.
+	closing bool
 
 	mu  sync.Mutex
 	cut bool
@@ -71,11 +75,19 @@ func (r *StreamRegistry) track(workerID uuid.UUID) (*trackedStream, func()) {
 	return ts, func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		if streams, ok := r.byWorker[workerID]; ok {
-			delete(streams, id)
-			if len(streams) == 0 {
-				delete(r.byWorker, workerID)
-			}
+		if ts.closing {
+			return // CloseWorker removes it once the append in flight is done
+		}
+		r.remove(workerID, id)
+	}
+}
+
+// remove unregisters one stream; r.mu must be held.
+func (r *StreamRegistry) remove(workerID uuid.UUID, id uint64) {
+	if streams, ok := r.byWorker[workerID]; ok {
+		delete(streams, id)
+		if len(streams) == 0 {
+			delete(r.byWorker, workerID)
 		}
 	}
 }
@@ -86,13 +98,19 @@ func (r *StreamRegistry) track(workerID uuid.UUID) (*trackedStream, func()) {
 // relies on that to requeue the worker's jobs after this call without a
 // stray event landing in the requeued job's log.
 //
-// The streams stay registered until they are shut, so a CloseWorker that
-// runs while another is still shutting them (the serving manager's own
-// revocation watcher racing Service.Revoke, backlog 2.54) finds them too,
-// counts them and waits for the same append in flight.
+// The streams stay registered until they are shut, even once their
+// handler has ended and released them (it does so as soon as revoked
+// closes, while an append may still run): a CloseWorker that runs while
+// another is still shutting them (the serving manager's own revocation
+// watcher racing Service.Revoke, backlog 2.54) finds them too, counts them
+// and waits for the same append in flight. Every call removes the streams
+// it shut, so a released stream marked closing never stays behind.
 func (r *StreamRegistry) CloseWorker(workerID uuid.UUID) int {
 	r.mu.Lock()
 	streams := maps.Clone(r.byWorker[workerID])
+	for _, ts := range streams {
+		ts.closing = true
+	}
 	r.mu.Unlock()
 	// Shut outside r.mu: waiting on one stream's append must not stall
 	// every other worker's track and release.
@@ -101,13 +119,8 @@ func (r *StreamRegistry) CloseWorker(workerID uuid.UUID) int {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if open, ok := r.byWorker[workerID]; ok {
-		for id := range streams {
-			delete(open, id)
-		}
-		if len(open) == 0 {
-			delete(r.byWorker, workerID)
-		}
+	for id := range streams {
+		r.remove(workerID, id)
 	}
 	return len(streams)
 }
