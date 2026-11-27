@@ -35,4 +35,13 @@ func TestHTTPLocalDeny(t *testing.T) {
 		obs := run(context.Background(), g, httpParams(fmt.Sprintf("http://localhost:%d/", port), nil), "")
 		probetest.WantErrors(t, obs, localRefusal, failAllNamedMetrics...)
 	})
+	t.Run("one of several addresses", func(t *testing.T) {
+		probetest.LocalhostBothFamilies(t)
+		port := probetest.ClosedPort(t)
+		for _, denied := range []string{"::1/128", "127.0.0.0/8"} {
+			g := probetest.LoopbackGuard().WithLocalDeny([]netip.Prefix{netip.MustParsePrefix(denied)})
+			obs := run(context.Background(), g, httpParams(fmt.Sprintf("http://localhost:%d/", port), nil), "")
+			probetest.WantErrors(t, obs, localRefusal, failAllNamedMetrics...)
+		}
+	})
 }

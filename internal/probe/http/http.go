@@ -222,7 +222,7 @@ func httpURL(raw, address string) (*url.URL, error) {
 // the guard, uses no proxy and keeps no connection for a later probe. A dial
 // the guard refuses is noted in refused.
 func newHTTPTransport(g *probe.Guard, verify bool, roots *x509.CertPool, refused *probe.Refusal) *http.Transport {
-	dialer := g.Dialer(0)
+	dialer := g.DialerNoting(0, refused)
 	return &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {

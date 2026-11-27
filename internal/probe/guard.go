@@ -36,17 +36,24 @@ func RefusalText(err error) string {
 	return ErrNotAllowed.Error()
 }
 
-// Refusal records whether any of a probe's dials was refused by the guard,
-// for the probes whose library does not keep the dial error in what it
-// returns (net/http, Go's resolver). A local refusal among them makes the
-// text the local one. The zero value is ready and safe for concurrent use.
+// Refusal records the guard's refusals among a probe's dials: those a
+// dial failed with, which some libraries do not keep in what they return
+// (net/http, Go's resolver), and — through DialerNoting — every address of
+// a name the agent's own deny list refused, which net.Dialer drops when it
+// reports only one address's error. A local refusal among them makes the
+// text the local one (backlog 3.82: any local refusal wins). The zero
+// value is ready and safe for concurrent use.
 type Refusal struct {
-	refused, local atomic.Bool
+	refused, local, failed atomic.Bool
 }
 
-// Note records err when it is a guard refusal; any other error, and nil,
-// is ignored.
+// Note records the outcome of one dial: err when it is a guard refusal,
+// and that a dial failed at all; nil is ignored.
 func (r *Refusal) Note(err error) {
+	if err == nil {
+		return
+	}
+	r.failed.Store(true)
 	if !errors.Is(err, ErrNotAllowed) {
 		return
 	}
@@ -56,8 +63,12 @@ func (r *Refusal) Note(err error) {
 	r.refused.Store(true)
 }
 
-// Refused reports whether a refusal was noted.
-func (r *Refusal) Refused() bool { return r.refused.Load() }
+// Refused reports whether a dial failed with a guard refusal, or failed
+// while the agent's own deny list refused one of its addresses — the
+// address the dial could not reach may be any of them.
+func (r *Refusal) Refused() bool {
+	return r.refused.Load() || (r.failed.Load() && r.local.Load())
+}
 
 // Text is the observation text of the noted refusals (RefusalText).
 func (r *Refusal) Text() string {
@@ -226,6 +237,19 @@ func (g *Guard) control(_, address string, _ syscall.RawConn) error {
 		return ErrNotAllowed
 	}
 	return g.Check(ap.Addr())
+}
+
+// DialerNoting is Dialer that also notes in r every address the agent's
+// own deny list refuses, whichever address's error the dial returns. The
+// caller still Notes the dial's own outcome.
+func (g *Guard) DialerNoting(timeout time.Duration, r *Refusal) *net.Dialer {
+	return &net.Dialer{Timeout: timeout, Control: func(network, address string, c syscall.RawConn) error {
+		err := g.control(network, address, c)
+		if errors.Is(err, ErrLocalPolicy) {
+			r.local.Store(true)
+		}
+		return err
+	}}
 }
 
 // ResolveAllowed returns the address to dial for host: host itself when it

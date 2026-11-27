@@ -22,3 +22,17 @@ func TestTLSLocalDeny(t *testing.T) {
 	probetest.WantErrors(t, obs, "target address not allowed by the agent's local policy",
 		"tls.up", "tls.failure", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days", "tls.cert_issuer")
 }
+
+// TestTLSLocalDenyAmongSeveralAddresses: see the tcp twin (R6).
+func TestTLSLocalDenyAmongSeveralAddresses(t *testing.T) {
+	probetest.LocalhostBothFamilies(t)
+	port := probetest.ClosedPort(t)
+	for _, denied := range []string{"::1/128", "127.0.0.0/8"} {
+		t.Run(denied, func(t *testing.T) {
+			g := probetest.LoopbackGuard().WithLocalDeny([]netip.Prefix{netip.MustParsePrefix(denied)})
+			obs := run(context.Background(), g, map[string]any{"port": float64(port), "timeout_s": float64(2)}, "localhost")
+			probetest.WantErrors(t, obs, "target address not allowed by the agent's local policy",
+				"tls.up", "tls.failure", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days", "tls.cert_issuer")
+		})
+	}
+}

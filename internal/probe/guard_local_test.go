@@ -81,7 +81,13 @@ func TestGuardLocalDeny(t *testing.T) {
 // policy does (backlog 3.82, R9).
 func TestGuardDenySeesThroughEmbeddedIPv4(t *testing.T) {
 	g := probe.NewGuard(prefixes("10.0.0.0/8"), nil)
-	for _, ip := range []string{"64:ff9b::a00:1", "2002:a00:1::1", "::ffff:0:a00:1"} {
+	for _, ip := range []string{
+		"64:ff9b::a00:1",                       // NAT64 well-known
+		"2002:a00:1::1",                        // 6to4
+		"::ffff:0:a00:1",                       // SIIT
+		"2001:0:4136:e378:8000:63bf:f5ff:fffe", // Teredo, client 10.0.0.1 complemented
+		"2001:db8::5efe:a00:1",                 // ISATAP interface id
+	} {
 		if err := g.Check(netip.MustParseAddr(ip)); err != probe.ErrNotAllowed { //nolint:errorlint // the sentinel itself
 			t.Errorf("Check(%s) = %v, want ErrNotAllowed", ip, err)
 		}
@@ -92,8 +98,10 @@ func TestGuardDenySeesThroughEmbeddedIPv4(t *testing.T) {
 	if op.Allowed(netip.MustParseAddr("2001:db8:122:a00:0:100::")) {
 		t.Error("an operator NAT64 address embedding a denied address is allowed")
 	}
-	if !g.Allowed(netip.MustParseAddr("64:ff9b::c000:201")) {
-		t.Error("a NAT64 address embedding an allowed address is refused")
+	for _, ip := range []string{"64:ff9b::c000:201", "2a00:1450:4001:80b::200e", "2001:db8::1"} {
+		if !g.Allowed(netip.MustParseAddr(ip)) {
+			t.Errorf("%s (no denied IPv4 address in it) is refused", ip)
+		}
 	}
 }
 
