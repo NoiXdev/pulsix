@@ -1315,7 +1315,10 @@ descriptor gains the optional `assertions` parameter (format `snmpAssertion`: su
 `value("name")` of an `oids` entry, `response_ms`, `uptime`) and the metrics
 `snmp.assertion` and `snmp.assertion_actual` on one item per entry; an assertion may not
 share its name with an `oids` entry, and `value("x")` must name one. Existing snmp checks
-poll as before; one that cannot be attempted also puts its error on its assertions' items.
+poll as before with one difference: an `oids` entry the device answers with an Opaque
+float now reads its float's shortest spelling (a device's 0.15 was stored as
+0.15000000596046448, it is now 0.15). A check that cannot be attempted with readable
+params (an unusable secret, a refused target) also puts its error on its assertions' items.
 **Skew:** snmp is probed from the manager only (it names a secret), so no agent is
 involved. A manager older than this release refuses the parameter; one still running
 during a rolling upgrade while it holds the probe lock polls such a check without its
