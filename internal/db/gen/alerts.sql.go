@@ -1331,6 +1331,38 @@ func (q *Queries) OpenAlertHostIDs(ctx context.Context, orgID uuid.UUID) ([]uuid
 	return items, nil
 }
 
+const openAlertIDs = `-- name: OpenAlertIDs :many
+SELECT id FROM alerts WHERE org_id = $1 AND id = ANY($2::uuid[]) AND closed_at IS NULL
+`
+
+type OpenAlertIDsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+// Which of the given alerts are open now: a notification preset that
+// follows alert state (PagerDuty, backlog 4.8 review I1) reads it at send
+// time, so a late message never re-opens an alert closed since.
+func (q *Queries) OpenAlertIDs(ctx context.Context, arg OpenAlertIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, openAlertIDs, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const raiseAlertSeverity = `-- name: RaiseAlertSeverity :one
 WITH prev AS (
   SELECT a.id, a.severity AS prev_severity FROM alerts a

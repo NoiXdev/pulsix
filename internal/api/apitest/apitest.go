@@ -549,7 +549,7 @@ func WithRestrictiveNotifyPolicy() Option {
 		store := notify.NewSQLStore(s.DB)
 		s.Deps.Notify = notify.NewService(notify.Deps{
 			Channels: store, Deliveries: store, Digests: store, Box: box, Mail: s.Mail, Presets: presets.Registry(),
-			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil, nil), 5*time.Second, nil), time.Now, presets.Registry()),
+			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil, nil), 5*time.Second, nil), time.Now, presets.Registry(), notify.WithAlertStates(app.NewNotifyAlertStates(alerts.NewSQLStore(s.DB)))),
 			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
 		})
 	}
@@ -566,7 +566,8 @@ func WithNotifyPresets(p notify.Presets) Option {
 		loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 		s.Deps.Notify = notify.NewService(notify.Deps{
 			Channels: store, Deliveries: store, Rules: store, Digests: store, Box: box, Mail: s.Mail, Presets: p,
-			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, p),
+			Sender: notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, p,
+				notify.WithAlertStates(app.NewNotifyAlertStates(alerts.NewSQLStore(s.DB)))),
 			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
 		})
 	}
@@ -770,7 +771,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
 		Presets: presets.Registry(),
 		Sender: notify.NewChannelSender(crypto.NewBox(testMasterKey), s.Mail,
-			outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, presets.Registry()),
+			outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, presets.Registry(), notify.WithAlertStates(app.NewNotifyAlertStates(alerts.NewSQLStore(s.DB)))),
 		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
 	})
 	// The maintenance service (v0.2d): group windows resolve through the

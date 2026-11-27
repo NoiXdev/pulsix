@@ -38,6 +38,16 @@ func (s *SQLStore) GetAlert(ctx context.Context, orgID, id uuid.UUID) (AlertWith
 	return toAlertFromGetRow(r), nil
 }
 
+// OpenAlertIDs reports which of ids name an open alert of orgID now
+// (backlog 4.8 review I1: a notification read at send time).
+func (s *SQLStore) OpenAlertIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, error) {
+	open, err := gen.New(s.d).OpenAlertIDs(ctx, gen.OpenAlertIDsParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("open alert ids: %w", err)
+	}
+	return open, nil
+}
+
 // textOrNil turns "" into a nil *string, the narg idiom every optional
 // text Filter field below forwards to ListAlerts: an empty State or Scope
 // means "match any", never the literal empty string.
