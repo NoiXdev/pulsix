@@ -291,6 +291,9 @@ export const deHosts: Messages['hosts'] = {
     secretsAbsent: 'Keine agent.yaml',
     localCheckProblems: 'Probleme mit lokalen Checks',
     secretsUnknown: 'Unbekannt – der Agent hat es noch nicht gemeldet (er ist älter als diese Version oder hat seit dem Verbinden noch keinen Heartbeat gesendet)',
+    probes: 'Prüft andere Hosts',
+    probesOn: 'Ja',
+    probesOff: 'Nein – in der agent.yaml abgeschaltet, oder der Agent ist zu alt',
   },
   inventory: {
     needsManaged: 'Inventargruppen setzen die Fähigkeit „Verwaltet“ voraus.',

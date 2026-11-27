@@ -65,6 +65,14 @@ func TestProbesSupportedAndOnlineCapableAgents(t *testing.T) {
 	if got := list(); !slices.Equal(got, []uuid.UUID{plain.ID}) {
 		t.Fatalf("after flip = %v, want only %v", got, plain.ID)
 	}
+	// The flag reaches the agent read the card and the Agents page use
+	// (backlog 3.82).
+	for h, want := range map[uuid.UUID]bool{fresh.ID: false, plain.ID: true} {
+		a, err := svc.GetByHost(scoped, org, h)
+		if err != nil || a.ProbesSupported != want {
+			t.Fatalf("GetByHost(%s).ProbesSupported = %v (%v), want %v", h, a.ProbesSupported, err, want)
+		}
+	}
 
 	// Another organization sees none of them.
 	other := uuid.Must(uuid.NewV7())

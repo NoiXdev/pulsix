@@ -203,6 +203,32 @@ describe('HostAgentCard', () => {
     expect(screen.queryByRole('button', { name: 'Enrol agent' })).not.toBeInTheDocument();
   });
 
+  describe('probes for other hosts', () => {
+    const withProbes = (supported: boolean) =>
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/agent': {
+          agent: {
+            host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online',
+            last_seen: new Date().toISOString(), version: 'v0.3a', created_at: '', probes_supported: supported,
+          },
+        },
+      });
+
+    it('says when the agent probes other hosts', async () => {
+      withProbes(true);
+      renderCard();
+      expect(await screen.findByText('Probes other hosts')).toBeInTheDocument();
+      expect(screen.getByText('Yes')).toBeInTheDocument();
+    });
+
+    it('says why an agent may not probe other hosts', async () => {
+      withProbes(false);
+      renderCard();
+      expect(await screen.findByText('Probes other hosts')).toBeInTheDocument();
+      expect(screen.getByText('No — turned off in agent.yaml, or the agent is too old')).toBeInTheDocument();
+    });
+  });
+
   describe('secrets report', () => {
     const withSecrets = (over: Record<string, unknown>) =>
       mockApi({

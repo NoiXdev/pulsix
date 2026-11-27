@@ -65,6 +65,9 @@ type agentDTO struct {
 	ConfigVersion   *string    `json:"config_version,omitempty" doc:"The check configuration version the agent reported at the last comparison; empty when it had applied none yet. Omitted until the manager has compared"`
 	ConfigExpected  *string    `json:"config_expected,omitempty" doc:"The check configuration version the manager resolved for the host at the last comparison. Omitted until the manager has compared"`
 	ConfigCheckedAt *time.Time `json:"config_checked_at,omitempty" doc:"When the stored comparison was written: at once when either version changes, otherwise again once it is 10 minutes old. Omitted until the manager has compared"`
+	// ProbesSupported is the agent's last heartbeat flag (backlog 3.13a,
+	// 3.82): whether it is a candidate vantage point at all.
+	ProbesSupported bool `json:"probes_supported" doc:"Whether the agent probes other hosts' synthetic checks as a vantage point: false for an agent too old to, and for one whose local configuration turns it off"`
 }
 
 type agentTokenDTO struct {
@@ -141,6 +144,7 @@ func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 		HostID: v.HostID.String(), HostName: v.HostName, AgentName: v.AgentName, Version: v.Version,
 		VersionStatus: string(versioncompat.Of(managerVersion, v.Version)),
 		LastSeen:      v.LastSeen, CertExpiresAt: v.CertNotAfter, CreatedAt: v.CreatedAt, Status: "offline",
+		ProbesSupported: v.ProbesSupported,
 	}
 	if v.Online {
 		dto.Status = "online"

@@ -334,7 +334,7 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 	a := Agent{
 		HostID: h.HostID, OrgID: h.OrgID, AgentName: h.AgentName, CertSerial: h.CertSerial,
 		LastSeen: db.TimePtr(h.LastSeen), Version: h.Version, CreatedAt: h.CreatedAt, HostName: hostName,
-		HeartbeatInterval: intervalOf(h.HeartbeatIntervalS),
+		HeartbeatInterval: intervalOf(h.HeartbeatIntervalS), ProbesSupported: h.ProbesSupported,
 	}
 	if certNotAfter.Valid {
 		t := certNotAfter.Time

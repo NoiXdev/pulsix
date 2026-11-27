@@ -86,6 +86,11 @@ type Agent struct {
 	// (OnlineWindow). Reads fill it, Register ignores it (and keeps the
 	// stored one: the agent reports it again on its next stream).
 	HeartbeatInterval *time.Duration
+	// ProbesSupported is the heartbeat's probes_supported flag
+	// (SetProbesSupported): whether the agent probes other hosts for the
+	// manager. False for an agent older than probe vantages (3.13a) and
+	// for one whose agent.yaml turns probing off (3.82). Reads fill it.
+	ProbesSupported bool
 }
 
 // Registration is one enrollment's or renewal's identity as the registry
