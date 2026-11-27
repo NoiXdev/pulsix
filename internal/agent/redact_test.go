@@ -144,3 +144,94 @@ func TestLoopRedactsQuotedValuesInTheLogRing(t *testing.T) {
 		t.Fatalf("ring = %q", got)
 	}
 }
+
+// TestLoopDropsResultsRedactionPushesOutOfBounds: a 4-byte value becomes
+// the 8-byte placeholder, which can push an item or a label past the
+// manager's 512 bytes; such a result is dropped (and logged), never sent,
+// so the manager does not end the stream (review 3.132, finding 3). An
+// error is cut back to its bound instead.
+func TestLoopDropsResultsRedactionPushesOutOfBounds(t *testing.T) {
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, "secrets:\n  db:\n    password: abcd\n")
+	l := lt.newLoop()
+	l.lookAndApplyLocal()
+	stream := newFakeStream()
+	l.sender = newStreamSender(stream)
+	longItem := "/" + strings.Repeat("m", 505) + "abcd" // 510 bytes, 514 once redacted
+	longLabel := strings.Repeat("l", 508) + "abcd"
+	longErr := strings.Repeat("e", 2040) + "abcd" // 2044 bytes, 2048+ once redacted
+	l.handleResults([]checks.Result{
+		{CheckKey: "disk", Item: longItem, Metric: "disk.used_pct", Value: floatPtr(1), At: lt.now()},
+		{CheckKey: "svc", Item: "x", Metric: "svc.state", Label: &longLabel, At: lt.now()},
+		{CheckKey: "disk", Item: "/", Metric: "disk.used_pct", Err: longErr, At: lt.now()},
+		{CheckKey: "disk", Item: "/ok", Metric: "disk.used_pct", Value: floatPtr(2), At: lt.now()},
+	})
+	got := checkResultMessages(stream)[0].GetResults()
+	if len(got) != 2 || got[0].GetItem() != "/" || got[1].GetItem() != "/ok" {
+		t.Fatalf("sent = %v", got)
+	}
+	if e := got[0].GetError(); len(e) > 2048 || strings.Contains(e, "abcd") {
+		t.Fatalf("error = %d bytes", len(e))
+	}
+	if !strings.Contains(lt.logText(), "too long once secret values were replaced") {
+		t.Fatalf("no warning: %s", lt.logText())
+	}
+
+	pl := strings.Repeat("p", 508) + "abcd"
+	l.handleProbeResults([]probes.Result{
+		{TargetHostID: uuid.New(), CheckKey: "web", Metric: "http.text", Label: &pl, At: lt.now()},
+		{TargetHostID: uuid.New(), CheckKey: "web", Metric: "http.up", Value: floatPtr(1), At: lt.now()},
+	})
+	var probeMsgs int
+	for _, m := range stream.sentMessages() {
+		if pr := m.GetProbeResults(); pr != nil {
+			probeMsgs++
+			if len(pr.GetResults()) != 1 || pr.GetResults()[0].GetMetric() != "http.up" {
+				t.Fatalf("probe results = %v", pr.GetResults())
+			}
+		}
+	}
+	if probeMsgs != 1 {
+		t.Fatalf("probe messages = %d", probeMsgs)
+	}
+}
+
+// TestLoopCutsRedactedFactsBackToTheirBound: a fact value stays within 512
+// bytes once redacted, and a value cut at the bound does not keep the
+// start of a secret.
+func TestLoopCutsRedactedFactsBackToTheirBound(t *testing.T) {
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, "secrets:\n  db:\n    password: abcd\n    token: zyxwvuts\n")
+	lt.facts.(*fakeCollector).facts = map[string]string{
+		"grown": strings.Repeat("g", 500) + "abcd" + "abcd",
+		"cut":   strings.Repeat("c", 507) + "zyxwv", // 512: the collector cut "zyxwvuts" here
+	}
+	l := lt.newLoop()
+	l.lookAndApplyLocal()
+	stream := newFakeStream()
+	if err := l.pushFacts(context.Background(), newStreamSender(stream)); err != nil {
+		t.Fatal(err)
+	}
+	got := stream.sentMessages()[0].GetFacts().GetValues()
+	if len(got["grown"]) > 512 || strings.Contains(got["grown"], "abcd") {
+		t.Fatalf("grown = %d bytes", len(got["grown"]))
+	}
+	if got["cut"] != strings.Repeat("c", 507) {
+		t.Fatalf("cut = %q", got["cut"][500:])
+	}
+}
+
+// TestLoopStripsTheCutStartOfASecretFromAnError: an error text cut at its
+// bound inside a secret value loses the value's start too (review 3.132,
+// finding 8).
+func TestLoopStripsTheCutStartOfASecretFromAnError(t *testing.T) {
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, "secrets:\n  db:\n    password: zyxwvuts\n")
+	l := lt.newLoop()
+	l.lookAndApplyLocal()
+	cut := strings.Repeat("e", 2043) + "zyxwv" // 2048: cut inside the value
+	l.handleResults([]checks.Result{{CheckKey: "db", Metric: "db.up", Err: cut, At: lt.now()}})
+	if got := l.buffer.Drain()[0].Err; got != strings.Repeat("e", 2043) {
+		t.Fatalf("err tail = %q", got[2030:])
+	}
+}

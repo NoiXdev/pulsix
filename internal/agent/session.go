@@ -420,7 +420,7 @@ func (l *Loop) deactivateSender(sender *streamSender) {
 // scheduler's own per-check goroutines, never from the session's main
 // select loop.
 func (l *Loop) handleResults(results []checks.Result) {
-	results = l.validUTF8Results(redactResults(l.redactor(), results))
+	results = l.validUTF8Results(l.redactResults(results))
 	if len(results) == 0 {
 		return
 	}

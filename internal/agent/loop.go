@@ -184,6 +184,9 @@ type Loop struct {
 
 	// utf8Warn rate-limits handleResults' warning about dropped results.
 	utf8Warn invalidUTF8Warner
+	// redactWarn rate-limits the warning about results redaction pushed
+	// past their bounds (redact.go).
+	redactWarn invalidUTF8Warner
 	// probeEvictWarn rate-limits the probe ring's overflow warning.
 	probeEvictWarn probeEvictWarner
 
