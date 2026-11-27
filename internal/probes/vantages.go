@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -172,20 +174,71 @@ func (r *Runner) planVantages(org uuid.UUID, plan *orgPlan, members map[uuid.UUI
 	})
 }
 
-// writeAssignments makes want the organization's assignment set. An
-// organization whose last written set was empty and still is, is not
-// written again (the first refresh after taking the lock always writes,
-// clearing what an earlier holder left).
-func (r *Runner) writeAssignments(ctx context.Context, org uuid.UUID, want []Assignment) error {
-	if !r.vantagesOn() || (len(want) == 0 && r.assignedEmpty[org]) {
+// assignmentRewrite is how old an organization's last assignment write
+// may grow before an unchanged set is written again (backlog 3.79): a
+// change made outside this runner (a restore, a holder whose refresh
+// overlapped a handover) heals within it.
+const assignmentRewrite = 10 * time.Minute
+
+// writtenSet is the assignment set last written for an organization: its
+// digest (setDigest) and when it was written.
+type writtenSet struct {
+	digest [sha256.Size]byte
+	at     time.Time
+}
+
+// writeAssignments makes want the organization's assignment set. A set
+// equal to the one this runner last wrote for the organization, less than
+// assignmentRewrite ago, is not written again (backlog 3.79): the store
+// would diff it to nothing, but still in a transaction per organization
+// per refresh. The record is dropped on a failed write and forgotten with
+// the lock (lost), so the first refresh after taking the lock writes every
+// organization, clearing what an earlier holder left.
+func (r *Runner) writeAssignments(ctx context.Context, org uuid.UUID, want []Assignment, now time.Time) error {
+	if !r.vantagesOn() {
+		return nil
+	}
+	digest, ok := setDigest(want)
+	if last, seen := r.written[org]; ok && seen && last.digest == digest && now.Sub(last.at) < assignmentRewrite {
 		return nil
 	}
 	if err := r.vantages.ReplaceOrgAssignments(ctx, org, want); err != nil {
-		delete(r.assignedEmpty, org)
+		delete(r.written, org)
 		return fmt.Errorf("write probe assignments: %w", err)
 	}
-	r.assignedEmpty[org] = len(want) == 0
+	if ok {
+		r.written[org] = writtenSet{digest: digest, at: now}
+	} else {
+		delete(r.written, org)
+	}
 	return nil
+}
+
+// setDigest is a SHA-256 over want in its order, each assignment with
+// every field the store keeps and its params in the store's canonical
+// JSON (encodeParams). false when a param cannot be encoded: such a set
+// is always written, and the store reports the error.
+func setDigest(want []Assignment) ([sha256.Size]byte, bool) {
+	type row struct {
+		Org, Agent, Target uuid.UUID
+		Key, Plugin        string
+		Params             json.RawMessage
+		Interval           time.Duration
+		Address            string
+	}
+	rows := make([]row, len(want))
+	for i, a := range want {
+		params, err := encodeParams(a.Params)
+		if err != nil {
+			return [sha256.Size]byte{}, false
+		}
+		rows[i] = row{a.OrgID, a.AgentHostID, a.TargetHostID, a.CheckKey, a.Plugin, params, a.Interval, a.Address}
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return [sha256.Size]byte{}, false
+	}
+	return sha256.Sum256(b), true
 }
 
 // pruneVantages deletes the per-vantage rows of vantages no longer

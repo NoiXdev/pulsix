@@ -41,8 +41,8 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 // answers) is ahead of what the runner expects: an agent that has just
 // been assigned is not yet an expected vantage, and one just unassigned
 // still is while its results are no longer accepted. This heals itself:
-// the next successful refresh writes the assignments again and adopts
-// them as its targets.
+// the next successful refresh adopts the assignments as its targets (and
+// writes them only if they changed since, writeAssignments).
 func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	orgs, err := r.orgs.ListOrgIDs(ctx)
 	if err != nil {
@@ -54,7 +54,7 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 		octx := orgScope(ctx, org)
 		plan, err := r.orgTargets(octx, org)
 		if err == nil && ctx.Err() == nil {
-			err = r.writeAssignments(octx, org, plan.assignments)
+			err = r.writeAssignments(octx, org, plan.assignments, now)
 		}
 		if ctx.Err() != nil {
 			return fmt.Errorf("resolve organization %s: %w", org, ctx.Err())

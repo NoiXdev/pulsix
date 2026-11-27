@@ -149,13 +149,13 @@ type Runner struct {
 	refreshed time.Time
 	next      map[slot]time.Time
 	pollers   map[slot]Poller
-	// assignedEmpty lists the organizations whose last written assignment
-	// set was empty, so an organization without vantage checks is not
-	// written again every refresh. expected is each vantage slot's
-	// expected vantages (sorted) as last reconciled with the per-vantage
-	// rows. Both are forgotten with the lock: a new holder writes once.
-	assignedEmpty map[uuid.UUID]bool
-	expected      map[slot]expectedSet
+	// written is, per organization, the assignment set last written and
+	// when (writeAssignments), so an unchanged set is not written again
+	// every refresh. expected is each vantage slot's expected vantages
+	// (sorted) as last reconciled with the per-vantage rows. Both are
+	// forgotten with the lock: a new holder writes once.
+	written  map[uuid.UUID]writtenSet
+	expected map[slot]expectedSet
 	// regained marks the first refresh after the lock was lost: it takes
 	// every slot's assertSince afresh, as a new holder does.
 	regained bool
@@ -185,7 +185,7 @@ func NewRunner(d Deps) *Runner {
 		describe:  checkplugins.Get,
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
 		targets: map[slot]target{}, next: map[slot]time.Time{}, pollers: map[slot]Poller{},
-		assignedEmpty: map[uuid.UUID]bool{}, expected: map[slot]expectedSet{},
+		written: map[uuid.UUID]writtenSet{}, expected: map[slot]expectedSet{},
 		inFlight: map[slot]uuid.UUID{}, missing: map[slot]missingRun{}, skipped: newThrottle(skippedLogEvery),
 		wake: make(chan struct{}, 1),
 	}
@@ -310,7 +310,7 @@ func (r *Runner) lost() {
 	r.held = false
 	clear(r.next)
 	clear(r.pollers)
-	clear(r.assignedEmpty)
+	clear(r.written)
 	clear(r.expected)
 	r.regained = true
 	r.mu.Lock()
