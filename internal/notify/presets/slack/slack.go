@@ -120,13 +120,13 @@ func line(l notify.Line) string {
 	text := escape(l.Text)
 	if l.Label == "" {
 		if l.URL != "" {
-			return "<" + escape(l.URL) + "|" + text + ">"
+			return "<" + escapeEntities(l.URL) + "|" + text + ">"
 		}
 		return text
 	}
 	label := escape(l.Label)
 	if l.URL != "" {
-		label = "<" + escape(l.URL) + "|" + label + ">"
+		label = "<" + escapeEntities(l.URL) + "|" + label + ">"
 	}
 	return "*" + label + ":* " + text
 }
@@ -167,7 +167,14 @@ func jsonLine(l string) int { return notify.JSONSize(l) + 1 }
 // that start an entity, a mention ("<!channel>") or a link ("<url|text>"),
 // after defuseFormatting.
 func escape(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(defuseFormatting(s))
+	return escapeEntities(defuseFormatting(s))
+}
+
+// escapeEntities is Slack's entity escaping alone, for a link target:
+// swapping a '~' or '_' in a URL for a look-alike would change where the
+// link goes (re-review N1).
+func escapeEntities(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
 // lookalikes stand in for mrkdwn's formatting characters, which Slack

@@ -208,3 +208,24 @@ func TestSlackDefusesFormatting(t *testing.T) {
 		t.Fatalf("own bold markup lost: %q", first)
 	}
 }
+
+// TestSlackLinkTargetsKeepFormattingCharacters (re-review N1): a link
+// target gets Slack's entity escaping only, never the look-alikes meant
+// for text, or the link would point elsewhere.
+func TestSlackLinkTargetsKeepFormattingCharacters(t *testing.T) {
+	link := "https://pulsix.example/~ops/_pulsix/o/acme/alerts?host=1&a=b"
+	ev := notifytest.AlertsMixed()
+	ev.Alerts.Items[0].URL = link
+	_, p := render(t, ev)
+	first := p.Attachments[0].Blocks[0].Text.Text
+	if want := "*<https://pulsix.example/~ops/_pulsix/o/acme/alerts?host=1&amp;a=b|shop-1>:*"; !strings.HasPrefix(first, want) {
+		t.Fatalf("line %q, want prefix %q", first, want)
+	}
+	ev = notifytest.Test()
+	ev.URL = link
+	_, p = render(t, ev)
+	blocks := p.Attachments[0].Blocks
+	if got := blocks[len(blocks)-1].Elements[0].URL; got != link {
+		t.Fatalf("button url %q", got)
+	}
+}
