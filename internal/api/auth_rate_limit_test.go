@@ -257,7 +257,11 @@ func TestAuthRateLimitHoldsUnderConcurrency(t *testing.T) {
 	s := limitedServer(t)
 	s.SeedUser("burst@example.test", "correct horse battery")
 	const burst = 20
-	statuses := make(chan int, burst)
+	type outcome struct {
+		status int
+		err    error
+	}
+	statuses := make(chan outcome, burst)
 	var wg sync.WaitGroup
 	for i := 0; i < burst; i++ {
 		wg.Add(1)
@@ -265,21 +269,23 @@ func TestAuthRateLimitHoldsUnderConcurrency(t *testing.T) {
 			defer wg.Done()
 			resp, err := postFrom(s.HTTP.URL+"/api/v1/auth/login", addressA, map[string]string{"email": "burst@example.test", "password": "wrong"})
 			if err != nil {
-				statuses <- 0
+				statuses <- outcome{err: err}
 				return
 			}
 			_ = resp.Body.Close()
-			statuses <- resp.StatusCode
+			statuses <- outcome{status: resp.StatusCode}
 		}()
 	}
 	wg.Wait()
 	close(statuses)
 	reached := 0
-	for st := range statuses {
-		if st == 0 {
-			t.Fatal("a request failed to complete")
+	for o := range statuses {
+		if o.err != nil {
+			// Name the transport error: it failed once under a loaded
+			// make test (2026-11-27) and passed on every rerun.
+			t.Fatalf("a request failed to complete: %v", o.err)
 		}
-		if st != http.StatusTooManyRequests {
+		if o.status != http.StatusTooManyRequests {
 			reached++
 		}
 	}
