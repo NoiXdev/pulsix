@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/hosts"
 )
@@ -262,17 +261,19 @@ func TestVantageManagerDisabledOnlyCombines(t *testing.T) {
 	if r := h.vstore.Records(); len(r) != 0 {
 		t.Fatalf("vantage records = %+v, want none", r)
 	}
-	// n = 0: every tcp metric fails with the no-vantage message.
+	// n = 0: every tcp metric the check reports fails with the no-vantage
+	// message (tcp's own FailAll since backlog 3.87: without expect, no
+	// banner_match).
 	b := h.rec.Batches()
 	if len(b) != 1 {
 		t.Fatalf("batches = %d, want the combined result", len(b))
 	}
-	d, _ := checkplugins.Get("tcp")
-	if len(b[0].obs) != len(d.Metrics) {
+	want := []string{"tcp.up", "tcp.failure", "tcp.connect_ms"}
+	if len(b[0].obs) != len(want) {
 		t.Fatalf("combined = %+v, want one error per tcp metric", b[0].obs)
 	}
 	for i, o := range b[0].obs {
-		if o.Metric != d.Metrics[i].Name || o.Item != "" || o.Err != "no vantage point has a recent result" ||
+		if o.Metric != want[i] || o.Item != "" || o.Err != "no vantage point has a recent result" ||
 			o.Value != nil || !o.At.Equal(t0) {
 			t.Fatalf("combined observation = %+v", o)
 		}

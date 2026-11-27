@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertionOps, isNumericSubject, parseAssertion } from './assertionFormat.ts';
+import { assertionOps, dialectSubjects, isAssertionPlugin, isNumericSubject, parseAssertion } from './assertionFormat.ts';
 
 describe('the assertion grammar twin', () => {
   it('parses an entry into its parts', () => {
@@ -44,5 +44,27 @@ describe('the assertion grammar twin', () => {
     for (const entry of ['a=body matches "("', 'a=html("div[") exists', 'a=json("$[") exists', 'a=json("$[0,0]") exists', 'a=html("p:has(a)") exists', 'a=html("a ~ b") exists', 'a=html("x/**/p") exists', 'a=body matches ".{1000}"']) {
       expect(parseAssertion(entry)).not.toBeNull();
     }
+  });
+});
+
+describe('the dialects of tcp, dns and tls (backlog 3.87)', () => {
+  it('parses each plugin\'s own subjects and refuses the others\'', () => {
+    expect(parseAssertion('b=response matches "^SSH" @warn', 'tcp')).toMatchObject({ subject: 'response', op: 'matches', severity: 'warn' });
+    expect(parseAssertion('ip=answer("192.0.2.1") exists', 'dns')).toMatchObject({ subject: 'answer', arg: '192.0.2.1', op: 'exists', operand: '' });
+    expect(parseAssertion('p=version >= 1.2', 'tls')).toMatchObject({ subject: 'version', op: '>=', operand: '1.2' });
+    expect(parseAssertion('ok=status == 200', 'tcp')).toBeNull();
+    expect(parseAssertion('c=connect_ms < 5')).toBeNull();
+    expect(parseAssertion('a=answer("x") == "x"', 'dns')).toBeNull();
+    expect(parseAssertion('a=answer("  ") exists', 'dns')).toBeNull();
+  });
+
+  it('knows which plugins have assertions and their subjects', () => {
+    expect(isAssertionPlugin('tls')).toBe(true);
+    expect(isAssertionPlugin('icmp')).toBe(false);
+    expect(dialectSubjects('dns')).toEqual(['resolve_ms', 'answer_count', 'answers', 'answer']);
+    expect(dialectSubjects('http')).toContain('html count');
+    expect(assertionOps('answer')).toEqual(['exists', '!exists']);
+    expect(assertionOps('cipher')).not.toContain('exists');
+    expect(isNumericSubject('version')).toBe(true);
   });
 });

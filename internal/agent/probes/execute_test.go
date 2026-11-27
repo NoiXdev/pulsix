@@ -75,7 +75,11 @@ func TestUnknownPluginYieldsItsMetricsAsErrors(t *testing.T) {
 	}{
 		// A synthetic plugin this agent's registry lacks: its descriptor's
 		// metrics, item "".
-		{"descriptor fallback", "tls", `{"port":443}`, descriptorMetrics(t, "tls")},
+		{"descriptor fallback", "icmp", `{"count":3}`, descriptorMetrics(t, "icmp")},
+		// tcp, dns and tls have their own since backlog 3.87 (assertion
+		// items): without assertions, their certain whole-host metrics.
+		{"tls's own fail-all", "tls", `{"port":443}`,
+			[]string{"tls.up", "tls.failure", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days", "tls.cert_issuer"}},
 		// A plugin with its own FailAll: what its params would produce.
 		{"plugin's own fail-all", "http", `{"url":"http://{address}/","body_contains":"ok"}`,
 			[]string{
@@ -114,8 +118,10 @@ func TestUnreadableParamsYieldErrorsWithoutProbing(t *testing.T) {
 	sp.ParamsJSON = `{"port":`
 	got := runOnce(t, r, clock, sp)
 	allErrors(t, got, "probe params")
-	if !slices.Equal(metricsOf(got), descriptorMetrics(t, "tcp")) {
-		t.Fatalf("metrics = %v, want tcp's descriptor metrics", metricsOf(got))
+	// tcp's own FailAll (backlog 3.87) without params: its certain
+	// whole-host metrics.
+	if want := []string{"tcp.up", "tcp.failure", "tcp.connect_ms"}; !slices.Equal(metricsOf(got), want) {
+		t.Fatalf("metrics = %v, want %v", metricsOf(got), want)
 	}
 	if n := b.callCount(); n != 0 {
 		t.Fatalf("probed %d times with unreadable params", n)

@@ -149,6 +149,11 @@ type RunRequest struct {
 type ApprovedRun struct {
 	PinnedCommit  string
 	EnrollHostIDs []uuid.UUID
+	// HostIDs is set at the claim only: the hosts the claimed job renders,
+	// frozen at its enqueue. The guard refuses a job with a host the
+	// approved run picture does not hold (backlog 2.141). An approval
+	// stores none; it is ignored everywhere else.
+	HostIDs []uuid.UUID
 }
 
 // checkEnrollList refuses an enroll list on a run no approval started.

@@ -163,6 +163,11 @@ func (m *memStore) ByRunGroup(_ context.Context, orgID, group uuid.UUID) (runreq
 	return runrequests.Request{}, runrequests.ErrNotFound
 }
 
+func (m *memStore) LockStatusByRunGroup(ctx context.Context, orgID, group uuid.UUID) (runrequests.Status, error) {
+	r, err := m.ByRunGroup(ctx, orgID, group)
+	return r.Status, err
+}
+
 func (m *memStore) waitingRows(keep func(runrequests.Waiting) bool) []runrequests.Waiting {
 	var out []runrequests.Waiting
 	for _, r := range m.rows {

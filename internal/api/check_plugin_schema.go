@@ -123,6 +123,9 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatScriptArg:    "command:placeholder=value, a value for a placeholder the command's definition in the host's agent.yaml declares: the command one listed in commands, the placeholder a lower-case letter followed by up to 31 lower-case letters, digits or _, the value 1 to 512 bytes without control, format or separator characters; the host's own rule judges the value",
 	checkplugins.FormatJSONValue:    "name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status",
 	checkplugins.FormatAssertion:    "name=assertion [@warn], the name 1 to 64 letters, digits, _ . -, the assertion a subject (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header(\"Name\"), json(\"$.path\"), html(\"selector\"), html(\"selector\") count), an operator and an operand such as status == 200",
+	checkplugins.FormatTCPAssertion: "name=assertion [@warn] as for http, the subject one of connect_ms, response_ms, response (the first line the target sent) such as connect_ms < 500",
+	checkplugins.FormatDNSAssertion: "name=assertion [@warn] as for http, the subject one of resolve_ms, answer_count, answers (sorted, joined with \", \"), answer(\"value\") (exists or !exists only) such as answer(\"192.0.2.1\") exists",
+	checkplugins.FormatTLSAssertion: "name=assertion [@warn] as for http, the subject one of handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version (1.0 to 1.3), cipher such as version >= 1.2",
 }
 
 // serverSecretPhrase is FormatSecretName's phrase for a plugin the

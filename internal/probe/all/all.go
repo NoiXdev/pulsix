@@ -30,13 +30,16 @@ func Registry(jsonGate *http.JSONGate) probe.Registry {
 }
 
 // failAlls are the plugins whose metrics depend on their params (list
-// items, a secret the runner may not have): each reports, for a probe that
-// could not be attempted, exactly the metrics and items its params would
-// have produced.
+// items such as assertions, a secret the runner may not have): each
+// reports, for a probe that could not be attempted, exactly the metrics
+// and items its params would have produced.
 func failAlls() map[string]func(params map[string]any, msg string) []probe.Observation {
 	return map[string]func(map[string]any, string) []probe.Observation{
 		"http": http.FailAll,
 		"snmp": snmp.FailAll,
+		"tcp":  tcp.FailAll,
+		"dns":  dns.FailAll,
+		"tls":  tls.FailAll,
 	}
 }
 

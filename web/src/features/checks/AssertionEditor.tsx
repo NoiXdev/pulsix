@@ -6,9 +6,9 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
-import { assertionOps, isNumericSubject, type AssertionSubject } from './assertionFormat.ts';
+import { assertionOps, isNumericSubject, type AssertionPlugin, type AssertionSubject } from './assertionFormat.ts';
 import {
-  ASSERTION_SUBJECTS, composeRow, composeRows, emptyRow, entriesOf, entryNamedBy, isBlank, parseRows, rowFromEntry, takesArg,
+  assertionSubjects, composeRow, composeRows, emptyRow, entriesOf, entryNamedBy, isBlank, parseRows, rowFromEntry, takesArg,
   takesOperand, withOp, withSubject, type AssertionRow,
 } from './assertionRows.ts';
 
@@ -16,14 +16,14 @@ const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background 
 
 type Mode = 'rows' | 'text';
 
-function rowsOf(text: string): AssertionRow[] | null {
-  const parsed = parseRows(text);
+function rowsOf(text: string, plugin: AssertionPlugin): AssertionRow[] | null {
+  const parsed = parseRows(text, plugin);
   return 'rows' in parsed ? parsed.rows : null;
 }
 
 /**
- * AssertionEditor edits the http check's `assertions` (backlog 3.13b):
- * one row per entry — name, subject with its argument, an operator the
+ * AssertionEditor edits a check's `assertions` (backlog 3.13b for http,
+ * 3.87 for tcp, dns and tls, each with its own subjects): one row per entry — name, subject with its argument, an operator the
  * subject takes, the value (none for exists and !exists, two bounds for
  * in) and the severity — composing the canonical text the form sends
  * (assertionRows.ts). "Edit as text" shows that text in a textarea, one
@@ -39,6 +39,7 @@ function rowsOf(text: string): AssertionRow[] | null {
  * whole quoted entry, or its name) is shown under that entry's row.
  */
 export function AssertionEditor({
+  plugin = 'http',
   id,
   label,
   hint,
@@ -49,6 +50,8 @@ export function AssertionEditor({
   disabled,
   onChange,
 }: {
+  /** The check's plugin, whose subjects the rows offer. */
+  plugin?: AssertionPlugin;
   id: string;
   label: string;
   hint?: string;
@@ -64,15 +67,15 @@ export function AssertionEditor({
 }) {
   const t = useT();
   const msg = t.checks.assertionEditor;
-  const [mode, setMode] = useState<Mode>(() => (rowsOf(value) ? 'rows' : 'text'));
-  const [rows, setRows] = useState<AssertionRow[]>(() => rowsOf(value) ?? []);
+  const [mode, setMode] = useState<Mode>(() => (rowsOf(value, plugin) ? 'rows' : 'text'));
+  const [rows, setRows] = useState<AssertionRow[]>(() => rowsOf(value, plugin) ?? []);
   // The text this editor last handed up: a different value arriving is
   // someone else's (the stored definition again), and the rows follow it.
   const [emitted, setEmitted] = useState(value);
   const [toggleError, setToggleError] = useState<string | null>(null);
   if (value !== emitted) {
     setEmitted(value);
-    const next = rowsOf(value);
+    const next = rowsOf(value, plugin);
     if (next) setRows(next);
     else setMode('text');
   }
@@ -90,7 +93,7 @@ export function AssertionEditor({
   const set = (i: number, row: AssertionRow) => update(rows.map((r, j) => (j === i ? row : r)));
 
   function toRows() {
-    const parsed = parseRows(value);
+    const parsed = parseRows(value, plugin);
     if ('bad' in parsed) {
       setToggleError(msg.cannotParse(parsed.bad));
       return;
@@ -102,7 +105,8 @@ export function AssertionEditor({
   }
 
   const hintId = hint ? `${id}-hint` : undefined;
-  const hasHtml = mode === 'rows' ? rows.some((r) => r.subject === 'html' || r.subject === 'html count') : /\bhtml\(/.test(value);
+  const hasHtml =
+    plugin === 'http' && (mode === 'rows' ? rows.some((r) => r.subject === 'html' || r.subject === 'html count') : /\bhtml\(/.test(value));
 
   // The API's error, on the entry it names (by index among the sent,
   // non-blank rows).
@@ -159,11 +163,12 @@ export function AssertionEditor({
               key={i}
               n={i + 1}
               row={row}
+              plugin={plugin}
               disabled={disabled}
               problem={
                 i === namedRow && serverError
                   ? serverError
-                  : error && !isBlank(row) && !rowFromEntry(composeRow(row))
+                  : error && !isBlank(row) && !rowFromEntry(composeRow(row), plugin)
                     ? msg.rowInvalid
                     : undefined
               }
@@ -172,7 +177,7 @@ export function AssertionEditor({
             />
           ))}
           <div>
-            <Button type="button" variant="ghost" disabled={disabled} onClick={() => setRows([...rows, emptyRow()])}>
+            <Button type="button" variant="ghost" disabled={disabled} onClick={() => setRows([...rows, emptyRow(plugin)])}>
               <Plus size={14} /> {msg.add}
             </Button>
           </div>
@@ -192,6 +197,7 @@ export function AssertionEditor({
 function AssertionRowFields({
   n,
   row,
+  plugin,
   disabled,
   problem,
   onChange,
@@ -199,6 +205,7 @@ function AssertionRowFields({
 }: {
   n: number;
   row: AssertionRow;
+  plugin: AssertionPlugin;
   disabled?: boolean;
   problem?: string;
   onChange: (row: AssertionRow) => void;
@@ -208,7 +215,14 @@ function AssertionRowFields({
   const msg = t.checks.assertionEditor;
   const numeric = isNumericSubject(row.subject);
   const valuePlaceholder = numeric ? msg.numberPlaceholder : msg.textPlaceholder;
-  const argPlaceholder = row.subject === 'header' ? msg.argPlaceholders.header : row.subject === 'json' ? msg.argPlaceholders.json : msg.argPlaceholders.html;
+  const argPlaceholder =
+    row.subject === 'header'
+      ? msg.argPlaceholders.header
+      : row.subject === 'json'
+        ? msg.argPlaceholders.json
+        : row.subject === 'answer'
+          ? msg.argPlaceholders.answer
+          : msg.argPlaceholders.html;
   const invalid = problem ? true : undefined;
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid="assertion-row">
@@ -227,7 +241,7 @@ function AssertionRowFields({
           <Select
             aria-label={msg.subject(n)}
             disabled={disabled}
-            options={ASSERTION_SUBJECTS.map((s) => ({ value: s, label: msg.subjects[s] }))}
+            options={assertionSubjects(plugin).map((s) => ({ value: s, label: msg.subjects[s] }))}
             value={row.subject}
             onChange={(v) => onChange(withSubject(row, v as AssertionSubject))}
           />

@@ -127,6 +127,9 @@ func TestFailAllReportsTheDescriptorsMetrics(t *testing.T) {
 	for plugin, params := range map[string]map[string]any{
 		"http": {"url": "http://x/", "body_contains": "ok", "json_values": []any{"a=$.a"}},
 		"snmp": {"secret": "sw", "oids": []any{"name=1.3.6.1.2.1.1.5.0"}},
+		"tcp":  {"port": float64(22), "expect": "SSH", "assertions": []any{"a=connect_ms < 5"}},
+		"dns":  {"expect": "x", "assertions": []any{"a=answer_count > 0"}},
+		"tls":  {"assertions": []any{"a=cert_days > 5"}},
 	} {
 		d, _ := checkplugins.Get(plugin)
 		metrics := map[string]bool{}
@@ -137,20 +140,20 @@ func TestFailAllReportsTheDescriptorsMetrics(t *testing.T) {
 		if !ok || len(obs) == 0 {
 			t.Fatalf("%s: FailAll = %+v, %v", plugin, obs, ok)
 		}
-		items := 0
+		items := map[string]bool{}
 		for _, o := range obs {
 			if !metrics[o.Metric] || o.Err != "boom" || o.Value != nil || o.Label != nil {
 				t.Fatalf("%s: observation %+v, want an error on a descriptor metric", plugin, o)
 			}
 			if o.Item != "" {
-				items++
+				items[o.Item] = true
 			}
 		}
-		if items != 1 {
-			t.Fatalf("%s: %d item observations, want the one list entry", plugin, items)
+		if len(items) != 1 {
+			t.Fatalf("%s: items %v, want the one list entry", plugin, items)
 		}
 	}
-	if obs, ok := all.FailAll("tcp", map[string]any{}, "boom"); ok || obs != nil {
-		t.Fatalf("tcp: FailAll = %+v, %v; want none of its own", obs, ok)
+	if obs, ok := all.FailAll("icmp", map[string]any{}, "boom"); ok || obs != nil {
+		t.Fatalf("icmp: FailAll = %+v, %v; want none of its own", obs, ok)
 	}
 }

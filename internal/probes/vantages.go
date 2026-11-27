@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/judge"
+	"github.com/noixdev/pulsix/internal/probeconfig"
 )
 
 // Agent vantage points (backlog 3.13a, spec
@@ -253,7 +257,9 @@ func (r *Runner) probeVantages(ctx context.Context, s slot, t target, p Poller) 
 // combine records the check's result from its expected vantages' latest
 // rounds (combineVantages): the representative's round re-stamped with
 // the combining time, or, with no vantage up or down, every metric failed
-// with errNoVantage (unknown, like a check that cannot be probed). When
+// with errNoVantage (unknown, like a check that cannot be probed); the
+// assertion entries an up representative round left out may be
+// judge.ErrUnevaluated (unevaluated). When
 // the rows cannot be read, nothing is recorded; the next due time
 // retries.
 func (r *Runner) combine(ctx context.Context, s slot, t target) {
@@ -276,9 +282,77 @@ func (r *Runner) combine(ctx context.Context, s slot, t target) {
 		for i, row := range v.rows {
 			obs[i] = probe.Observation{Item: row.Item, Metric: row.Metric, Value: row.Value, Label: row.Label, Err: row.Err}
 		}
+		obs = append(obs, r.unevaluated(s, t, v.rep, v.rows[0].At, obs)...)
 	}
 	if ctx.Err() != nil || len(obs) == 0 {
 		return
 	}
 	r.record(ctx, s, t, observations(s, obs, now))
+}
+
+// pushHorizon is the longest an agent can take, after the refresh that
+// wrote a changed assignment, to run the new params while it stays
+// assigned: the manager hands out a changed probe config only on a
+// heartbeat, and an agent that misses heartbeats stays online, and so
+// assigned, for agents.HeartbeatsPerOnlineWindow of its interval — with
+// the longest interval an agent accepts, the rounds it buffered and
+// replays after an outage of that length are still old-param rounds.
+// Then its slot's first-run offset, and pushSlack for the probe itself
+// and the result's delivery. A round stamped before the change plus
+// pushHorizon may have been probed with the old params and is never
+// blamed.
+const pushHorizon = agents.HeartbeatsPerOnlineWindow*probeconfig.MaxHeartbeatInterval +
+	probeconfig.FirstRunWindow + pushSlack
+
+// pushSlack: a probe's own run (a synthetic check's timeout is at most
+// 60 s) and the result's way to the manager.
+const pushSlack = time.Minute
+
+// missingRun is a slot's run of distinct representative rounds of one
+// vantage, all probed after the check's assertions last changed, that
+// left assertion entries out: the first's and the latest's time.
+type missingRun struct {
+	vantage     string
+	first, last time.Time
+}
+
+// unevaluated is judge.Unevaluated's errors for an up representative
+// round of vantage rep probed at at, or nothing (backlog 3.87, R12 as
+// amended in review). An agent older than the plugin's assertions
+// ignores them, so its rounds lack every entry; the entries read as an
+// error saying so rather than going stale. But a current agent's round
+// lacks an entry too when it was probed before an edit added it (its new
+// params not yet applied), and a round stored in two result messages
+// lacks its second half until it arrives. Rounds carry nothing that
+// names the params they ran with, so an entry is flagged only when at is
+// after the check's assertions last changed (t.assertSince) plus
+// pushHorizon, the longest a current agent takes to run the new params,
+// and the same vantage left entries out of at least two distinct such
+// rounds; otherwise it is left unjudged for this combine — no row at
+// all. A complete round, or one probed before the horizon, ends the run.
+// The cost: an older agent's entries get the error only some 32 minutes
+// after a change, a manager start or a lock takeover. The rounds' times
+// are the prober's clock: an agent's clock ahead of the manager's can
+// still turn one old round into the first of a run.
+func (r *Runner) unevaluated(s slot, t target, rep string, at time.Time, obs []probe.Observation) []probe.Observation {
+	flags := judge.Unevaluated(t.check.Plugin, t.check.Params, obs)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(flags) == 0 || !at.After(t.assertSince.Add(pushHorizon)) {
+		delete(r.missing, s)
+		return nil
+	}
+	m, ok := r.missing[s]
+	if !ok || m.vantage != rep {
+		r.missing[s] = missingRun{vantage: rep, first: at, last: at}
+		return nil
+	}
+	if at.After(m.last) {
+		m.last = at
+		r.missing[s] = m
+	}
+	if m.last.After(m.first) {
+		return flags
+	}
+	return nil
 }

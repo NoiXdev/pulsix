@@ -1,7 +1,10 @@
-import { assertionOps, isNumericSubject, parseAssertion, type AssertionSubject } from './assertionFormat.ts';
+import {
+  assertionOps, dialectSubjects, isNumericSubject, parseAssertion, subjectTakesArg, type AssertionPlugin, type AssertionSubject,
+} from './assertionFormat.ts';
 
 /**
- * The row model of the http check's assertion editor (backlog 3.13b): one
+ * The row model of the assertion editor (backlog 3.13b for http, 3.87 for
+ * tcp, dns and tls): one
  * row per `assertions` entry, broken into the parts the form edits, and
  * the way back to the canonical text the server stores. Parsing is the
  * grammar twin's (assertionFormat.ts); this file only moves between its
@@ -30,25 +33,15 @@ export interface AssertionRow {
   severity: 'warn' | 'crit';
 }
 
-/** Every subject in the order the editor offers them. */
-export const ASSERTION_SUBJECTS: readonly AssertionSubject[] = [
-  'status',
-  'response_ms',
-  'ttfb_ms',
-  'size',
-  'redirects',
-  'cert_days',
-  'cert_issuer',
-  'body',
-  'header',
-  'json',
-  'html',
-  'html count',
-];
+/** assertionSubjects: a plugin's subjects in the order the editor offers
+ * them (http by default). */
+export function assertionSubjects(plugin: AssertionPlugin = 'http'): AssertionSubject[] {
+  return dialectSubjects(plugin);
+}
 
 /** takesArg: the subjects written with a quoted argument. */
 export function takesArg(subject: AssertionSubject): boolean {
-  return subject === 'header' || subject === 'json' || subject === 'html' || subject === 'html count';
+  return subjectTakesArg(subject);
 }
 
 /** takesOperand: every operator but exists and !exists. */
@@ -56,9 +49,13 @@ export function takesOperand(op: string): boolean {
   return op !== 'exists' && op !== '!exists';
 }
 
-/** emptyRow is the row "Add assertion" appends. */
-export function emptyRow(): AssertionRow {
-  return { name: '', subject: 'status', arg: '', op: '==', operand: '', hi: '', severity: 'crit' };
+/** emptyRow is the row "Add assertion" appends: the plugin's first
+ * subject with its first operator but for http's status, which starts
+ * at ==. */
+export function emptyRow(plugin: AssertionPlugin = 'http'): AssertionRow {
+  const subject = dialectSubjects(plugin)[0];
+  const op = subject === 'status' ? '==' : assertionOps(subject)[0];
+  return { name: '', subject, arg: '', op, operand: '', hi: '', severity: 'crit' };
 }
 
 /** isBlank: a row the operator added and never filled in; it is not
@@ -88,10 +85,10 @@ export function withOp(row: AssertionRow, op: string): AssertionRow {
   return { ...row, op, operand: takesOperand(op) ? row.operand : '', hi: op === 'in' ? row.hi : '' };
 }
 
-/** rowFromEntry reads one entry into a row, or returns null when the
- * grammar refuses it. */
-export function rowFromEntry(entry: string): AssertionRow | null {
-  const shape = parseAssertion(entry);
+/** rowFromEntry reads one entry of a plugin's check (http by default)
+ * into a row, or returns null when the grammar refuses it. */
+export function rowFromEntry(entry: string, plugin: AssertionPlugin = 'http'): AssertionRow | null {
+  const shape = parseAssertion(entry, plugin);
   if (!shape) return null;
   let operand = shape.operand;
   let hi = '';
@@ -154,11 +151,11 @@ export function entriesOf(text: string): string[] {
 
 /** parseRows reads a list's text into rows; `bad` is the 1-based number
  * of the first entry the grammar refuses, when there is one. */
-export function parseRows(text: string): { rows: AssertionRow[] } | { bad: number } {
+export function parseRows(text: string, plugin: AssertionPlugin = 'http'): { rows: AssertionRow[] } | { bad: number } {
   const rows: AssertionRow[] = [];
   const entries = entriesOf(text);
   for (let i = 0; i < entries.length; i++) {
-    const row = rowFromEntry(entries[i]);
+    const row = rowFromEntry(entries[i], plugin);
     if (!row) return { bad: i + 1 };
     rows.push(row);
   }

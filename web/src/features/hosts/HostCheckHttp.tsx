@@ -25,14 +25,13 @@ export interface HostCheckHttpProps {
   onOpenRules: (key: TupleKey | null) => void;
 }
 
-/** The metric whose rules and decision an assertion row stands for. */
-const ASSERTION_METRIC = 'http.assertion';
 
 /**
- * HostCheckHttp is an http check's own section on the host page (backlog
- * 3.13b), below its values: the latest attempt's timing breakdown as one
- * stacked bar (the phases it reported, with their times) and its
- * assertions as a table. Either is left out when there is nothing to show.
+ * HostCheckHttp is a synthetic check's own section on the host page
+ * (backlog 3.13b), below its values: an http check's latest timing
+ * breakdown as one stacked bar (the phases it reported, with their
+ * times) and the assertions of any check that has them (http, and tcp,
+ * dns and tls since backlog 3.87) as a table. Either is left out when there is nothing to show.
  * Backlog 3.89: the assertion items are not listed as generic value rows,
  * so their actions live in the table — Ignore/Watch and Forget (item-wide)
  * for a writer, the Rules toggle, and the ignored marker.
@@ -40,16 +39,18 @@ const ASSERTION_METRIC = 'http.assertion';
 export function HostCheckHttp({ org, hostId, canWrite, frozen = false, check, effective, groups, openRules, onOpenRules }: HostCheckHttpProps) {
   const t = useT();
   const format = useFormat();
-  const parts = timingParts(check, t);
+  // The metric whose rules and decision an assertion row stands for.
+  const assertionMetric = `${check.plugin}.assertion`;
+  const parts = check.plugin === 'http' ? timingParts(check, t) : [];
   const base = assertionRows(check, t, format, new Date());
   if (parts.length === 0 && base.length === 0) return null;
 
   const rows = base.map((row) => {
     const name = row.name;
-    const result = assertionValue(check, ASSERTION_METRIC, name);
+    const result = assertionValue(check, assertionMetric, name);
     const first = (check.values ?? []).find((v) => v.item === name);
-    const rules = effective.filter((e) => e.check_key === check.key && (e.item ?? '') === name && e.metric === ASSERTION_METRIC);
-    const isRulesOpen = openRules !== null && openRules.check === check.key && openRules.item === name && openRules.metric === ASSERTION_METRIC;
+    const rules = effective.filter((e) => e.check_key === check.key && (e.item ?? '') === name && e.metric === assertionMetric);
+    const isRulesOpen = openRules !== null && openRules.check === check.key && openRules.item === name && openRules.metric === assertionMetric;
     const decidedBy = result?.decided_by;
     const ignored = result?.ignored ?? false;
     const forgettable = !frozen && first !== undefined && offersForget(check, first, canWrite);
@@ -63,9 +64,9 @@ export function HostCheckHttp({ org, hostId, canWrite, frozen = false, check, ef
           key="rules"
           type="button"
           variant="ghost"
-          aria-label={t.hosts.value.rulesFor(check.key, `${name} ${ASSERTION_METRIC}`)}
+          aria-label={t.hosts.value.rulesFor(check.key, `${name} ${assertionMetric}`)}
           aria-expanded={isRulesOpen}
-          onClick={() => onOpenRules(isRulesOpen ? null : { check: check.key, item: name, metric: ASSERTION_METRIC })}
+          onClick={() => onOpenRules(isRulesOpen ? null : { check: check.key, item: name, metric: assertionMetric })}
         >
           <SlidersHorizontal size={14} /> {t.hosts.value.rules}
         </Button>

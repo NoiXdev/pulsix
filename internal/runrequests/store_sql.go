@@ -193,6 +193,18 @@ func (s *SQLStore) ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Requ
 	return fromRow(row)
 }
 
+// LockStatusByRunGroup implements Store.
+func (s *SQLStore) LockStatusByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Status, error) {
+	st, err := s.q.LockRunRequestStatusByRunGroup(ctx, gen.LockRunRequestStatusByRunGroupParams{OrgID: orgID, RunGroupID: pgtype.UUID{Bytes: group, Valid: true}})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock run request by run group: %w", err)
+	}
+	return Status(st), nil
+}
+
 // ListWaitingFor implements Store.
 func (s *SQLStore) ListWaitingFor(ctx context.Context, syncJob uuid.UUID) ([]Waiting, error) {
 	rows, err := s.q.ListWaitingRunRequestsForSync(ctx, syncJob)

@@ -11,6 +11,7 @@ import {
 } from './paramForm.ts';
 import { VantageFields } from './VantageFields.tsx';
 import { AssertionEditor } from './AssertionEditor.tsx';
+import { isAssertionPlugin } from './assertionFormat.ts';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
@@ -124,10 +125,13 @@ export function ParamFields({
         const id = `${idPrefix}-${spec.name}`;
         const value = values[spec.name];
         const hint = text(spec)?.hint;
-        if (isAssertions(plugin.name, spec.name)) {
+        if (isAssertions(plugin.name, spec.name) && isAssertionPlugin(plugin.name)) {
           return (
             <AssertionEditor
-              key={spec.name}
+              // Keyed by plugin: rows and mode never carry over to another
+              // plugin's subjects (backlog 3.87).
+              key={`${plugin.name}.${spec.name}`}
+              plugin={plugin.name}
               id={id}
               label={label(spec)}
               hint={hint}

@@ -1,7 +1,8 @@
 /**
- * The TypeScript twin of the http check's assertion grammar
- * (internal/probe/assert, backlog 3.13b): one entry of `assertions`,
- * `name=expression` with an optional ` @warn` or ` @crit`.
+ * The TypeScript twin of the synthetic checks' assertion grammar
+ * (internal/probe/assert, backlog 3.13b for http, 3.87 for tcp, dns and
+ * tls): one entry of `assertions`, `name=expression` with an optional
+ * ` @warn` or ` @crit`, in the subjects of the check's plugin.
  *
  *   assertion = subject SP op [SP operand]
  *
@@ -23,6 +24,7 @@ const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MAX_ENTRY = 512;
 const MAX_REGEX = 256;
 const MAX_SELECTOR = 256;
+const MAX_ANSWER = 256;
 
 const byteLen = (s: string) => new TextEncoder().encode(s).length;
 
@@ -38,21 +40,48 @@ export type AssertionSubject =
   | 'header'
   | 'json'
   | 'html'
-  | 'html count';
+  | 'html count'
+  | 'connect_ms'
+  | 'response'
+  | 'resolve_ms'
+  | 'answer_count'
+  | 'answers'
+  | 'answer'
+  | 'handshake_ms'
+  | 'cert_valid'
+  | 'cert_subject'
+  | 'cert_sans'
+  | 'version'
+  | 'cipher';
 
-const SUBJECTS: readonly AssertionSubject[] = [
-  'status',
-  'response_ms',
-  'ttfb_ms',
-  'size',
-  'redirects',
-  'cert_days',
-  'cert_issuer',
-  'body',
-  'header',
-  'json',
-  'html',
-];
+/** The plugins with assertions (backlog 3.13b, 3.87). */
+export type AssertionPlugin = 'http' | 'tcp' | 'dns' | 'tls';
+
+/** DIALECTS: each plugin's subjects as an expression spells them, in the
+ * server's order (internal/probe/assert dialect.go); `html count` is
+ * spelled with `html`. */
+const DIALECTS: Readonly<Record<AssertionPlugin, readonly AssertionSubject[]>> = {
+  http: ['status', 'response_ms', 'ttfb_ms', 'size', 'redirects', 'cert_days', 'cert_issuer', 'body', 'header', 'json', 'html'],
+  tcp: ['connect_ms', 'response_ms', 'response'],
+  dns: ['resolve_ms', 'answer_count', 'answers', 'answer'],
+  tls: ['handshake_ms', 'cert_valid', 'cert_days', 'cert_issuer', 'cert_subject', 'cert_sans', 'version', 'cipher'],
+};
+
+/** isAssertionPlugin: a plugin whose checks take assertions. */
+export function isAssertionPlugin(plugin: string): plugin is AssertionPlugin {
+  return Object.hasOwn(DIALECTS, plugin);
+}
+
+/** dialectSubjects: the subjects a plugin's assertions take, `html count`
+ * listed after `html`, in the order an editor offers them. */
+export function dialectSubjects(plugin: AssertionPlugin): AssertionSubject[] {
+  return DIALECTS[plugin].flatMap((s) => (s === 'html' ? (['html', 'html count'] as const) : [s]));
+}
+
+/** takesArg: the subjects written with a quoted argument. */
+export function subjectTakesArg(s: AssertionSubject): boolean {
+  return s === 'header' || s === 'json' || s === 'html' || s === 'html count' || s === 'answer';
+}
 
 const NUMERIC_OPS = ['<', '<=', '>', '>=', '==', '!=', 'in'];
 const TEXT_OPS = ['==', '!=', 'contains', '!contains', 'matches', '!matches'];
@@ -60,14 +89,29 @@ const PRESENCE_OPS = ['exists', '!exists'];
 
 /** isNumericSubject: the subjects that compare a number. */
 export function isNumericSubject(s: AssertionSubject): boolean {
-  return ['status', 'response_ms', 'ttfb_ms', 'size', 'redirects', 'cert_days', 'html count'].includes(s);
+  return [
+    'status',
+    'response_ms',
+    'ttfb_ms',
+    'size',
+    'redirects',
+    'cert_days',
+    'html count',
+    'connect_ms',
+    'resolve_ms',
+    'answer_count',
+    'handshake_ms',
+    'cert_valid',
+    'version',
+  ].includes(s);
 }
 
 /** assertionOps: the operators a subject takes, in the server's order. */
 export function assertionOps(s: AssertionSubject): string[] {
   if (isNumericSubject(s)) return NUMERIC_OPS;
-  if (s === 'cert_issuer' || s === 'body') return TEXT_OPS;
-  return [...TEXT_OPS, ...PRESENCE_OPS];
+  if (s === 'answer') return PRESENCE_OPS;
+  if (s === 'header' || s === 'json' || s === 'html') return [...TEXT_OPS, ...PRESENCE_OPS];
+  return TEXT_OPS;
 }
 
 /** One parsed entry; operand is as written ('' for exists and !exists). */
@@ -163,14 +207,17 @@ function argValid(subject: AssertionSubject, arg: string): boolean {
       return HEADER_NAME.test(arg);
     case 'json':
       return arg.startsWith('$') && jsonPathDescendants(arg) <= 1;
+    case 'answer':
+      return arg.trim() !== '' && byteLen(arg) <= MAX_ANSWER;
     default:
       return arg.trim() !== '' && byteLen(arg) <= MAX_SELECTOR;
   }
 }
 
-/** parseAssertion parses one entry the way the server does, or returns
- * null when the server's grammar refuses it. */
-export function parseAssertion(entry: string): AssertionShape | null {
+/** parseAssertion parses one entry of a plugin's check (http by
+ * default) the way the server does, or returns null when the server's
+ * grammar refuses it. */
+export function parseAssertion(entry: string, plugin: AssertionPlugin = 'http'): AssertionShape | null {
   if (byteLen(entry) > MAX_ENTRY || CONTROL.test(entry)) return null;
   const eq = entry.indexOf('=');
   if (eq < 0 || !NAME.test(entry.slice(0, eq))) return null;
@@ -178,10 +225,10 @@ export function parseAssertion(entry: string): AssertionShape | null {
 
   p.spaces();
   const word = p.word(isLetter);
-  if (!(SUBJECTS as readonly string[]).includes(word)) return null;
+  if (!(DIALECTS[plugin] as readonly string[]).includes(word)) return null;
   let subject = word as AssertionSubject;
   let arg = '';
-  const takesArg = subject === 'header' || subject === 'json' || subject === 'html';
+  const takesArg = subjectTakesArg(subject);
   if (takesArg !== (p.peek() === '(')) return null;
   if (takesArg) {
     p.i++;
@@ -245,7 +292,13 @@ export function parseAssertion(entry: string): AssertionShape | null {
   return { name: entry.slice(0, eq), subject, arg, op, operand, severity };
 }
 
-/** assertion: the format of an `assertions` entry. */
+/** assertion: the format of an http check's `assertions` entry. */
 export function assertion(s: string): boolean {
   return parseAssertion(s) !== null;
 }
+
+/** tcpAssertion, dnsAssertion, tlsAssertion: the formats of the other
+ * plugins' entries (backlog 3.87), the same grammar with their subjects. */
+export const tcpAssertion = (s: string): boolean => parseAssertion(s, 'tcp') !== null;
+export const dnsAssertion = (s: string): boolean => parseAssertion(s, 'dns') !== null;
+export const tlsAssertion = (s: string): boolean => parseAssertion(s, 'tls') !== null;

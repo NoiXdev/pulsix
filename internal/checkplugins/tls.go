@@ -3,8 +3,11 @@ package checkplugins
 // tlsPlugin: a TLS handshake and the certificate's expiry, from the Pulsix
 // server (backlog 3.13). server_name defaults to the host's address and may
 // contain {address}.
+//
+// Backlog 3.87 added assertions (withAssertions) on the handshake and the
+// leaf certificate.
 func tlsPlugin() Descriptor {
-	return Descriptor{
+	return withAssertions(Descriptor{
 		Name: "tls",
 		Runs: Server,
 		Params: []ParamSpec{
@@ -23,5 +26,8 @@ func tlsPlugin() Descriptor {
 			// The leaf's issuer: common name, else organization, else DN.
 			{Name: "tls.cert_issuer", Kind: Discrete},
 		},
-	}
+	}, FormatTLSAssertion, tlsAssertionExample)
 }
+
+// tlsAssertionExample is a valid tls assertion.
+const tlsAssertionExample = "modern=version >= 1.2"

@@ -1281,6 +1281,43 @@ it with another meaning (the item reads unknown whenever the check's result come
 that vantage); the check's other assertions run as before. Update the agents of a
 check's vantage groups before using the new forms.
 
+Assertions on `tcp`, `dns` and `tls` checks (backlog 3.87) add migration 00134 and no
+proto change and no dependency. The migration seeds six organization rules (`TCP
+assertion failed` and `TCP assertion failed (critical)`, the same for DNS and TLS, on
+`<plugin>.assertion in ("warn")` and `in ("crit")`), backfilled for every existing
+organization that holds no rule of that name; nothing is dropped or rewritten, and they
+match nothing until a check has assertions. The three descriptors gain the optional
+`assertions` parameter (formats `tcpAssertion`, `dnsAssertion`, `tlsAssertion`) and the
+metrics `<plugin>.assertion` and `<plugin>.assertion_actual` on one item per entry.
+Existing checks probe as before with two small differences: a `tcp`, `dns` or `tls` check
+that cannot be attempted (a refused target, an unusable parameter, no vantage with a
+recent result) now puts its error only on the metrics it reports, so a `tcp` check
+without `expect` no longer gets an error on `tcp.banner_match`; and a `tcp` check reads
+past `expect` only while an assertion looks at the response, to the first line break.
+**Skew:** an agent older than this release, used as a vantage of a check with assertions,
+ignores the parameter; the manager marks every entry its up rounds left out as the error
+"the vantage point that answered did not evaluate this assertion; update its agent"
+(the item reads unknown with that reason) instead of letting it go stale. It does so only
+once the same vantage left entries out of two distinct rounds, both stamped more than about
+32 minutes after the check's assertions last changed (as the manager holding the probe lock
+saw the change, or after it started or took the lock): the longest an agent stays online,
+and so assigned, without a heartbeat that could bring it the changed assignment (three of
+its heartbeat intervals, at most 10 minutes each), its first-run window (1 minute) and a
+minute's slack, so a current agent is never blamed for rounds it ran, or buffered during an
+outage and replays, before it received the new parameters. A round inside that window, or a round still partly
+stored, leaves the entry without a reading for that combine. So after adding an assertion
+(or after a manager start or lock takeover) an older agent's entries read unknown with the
+reason only after about half an hour; until then they have no reading. This applies to `http` checks too: an
+`http` check probed from agent vantages whose agent ignores an entry now reads that entry
+as this error instead of leaving it without a reading (in practice only agents from
+before 3.13b, which were never released). Update the agents of a check's vantage groups
+before adding assertions. A manager older than this
+release refuses `assertions` on these plugins (unknown parameter); one still running
+during a rolling upgrade while it holds the probe lock probes such a check without its
+assertions, so the items go stale until a new manager probes it: stop every manager
+instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
+
 ## Behaviour changes to check after an upgrade
 
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**
@@ -2181,6 +2218,16 @@ check's vantage groups before using the new forms.
   `last_synced_commit_current` and `last_synced_commit_stale` on the repository read, and
   `sources` (variable to group name, or `host`) on `GET …/hosts/{id}/inventory/preview`,
   which now also carries the values of the host's groups and their parent groups.
+- **An approved run's job is refused when it would reach a host the approval did not
+  include (backlog 2.141, no migration):** a job keeps the hosts it was enqueued for,
+  and the claim of a run request's job now also checks them against the approved run
+  picture's targets. A host that joined the template's hosts between the approval's
+  look at the picture and the enqueue fails that job at its claim with `refused at
+  claim: the run's hosts changed after it was approved; ask for the run again (host
+  <id> was not part of the approved run)`; the run reports failed, like any other
+  change after approval. Fewer hosts than approved still run. Runs without a run
+  request are unaffected. A job enqueued before the upgrade is checked the same way
+  when it is claimed after it.
 - **More database metrics (backlog 3.10b, no migration):** the updated agent reports
   new metrics; nothing existing changes. `postgres`: `pg.replicas` on item "" every
   round (an error "no privilege to see replication" for a login without `pg_monitor`,

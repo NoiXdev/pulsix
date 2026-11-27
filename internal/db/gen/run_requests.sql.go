@@ -752,6 +752,26 @@ func (q *Queries) ListWaitingRunRequestsForSync(ctx context.Context, syncJobID u
 	return items, nil
 }
 
+const lockRunRequestStatusByRunGroup = `-- name: LockRunRequestStatusByRunGroup :one
+SELECT status FROM run_requests WHERE org_id = $1 AND run_group_id = $2 FOR SHARE
+`
+
+type LockRunRequestStatusByRunGroupParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	RunGroupID pgtype.UUID `json:"run_group_id"`
+}
+
+// The status of the request whose approval created a run group, read under
+// a FOR SHARE lock held to the end of the caller's transaction: an approval
+// (DecideRunRequest) of the same request waits for that transaction, and a
+// read that waited on an approval returns the approved row (backlog 2.127).
+func (q *Queries) LockRunRequestStatusByRunGroup(ctx context.Context, arg LockRunRequestStatusByRunGroupParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockRunRequestStatusByRunGroup, arg.OrgID, arg.RunGroupID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const refreshReviewRequest = `-- name: RefreshReviewRequest :execrows
 UPDATE run_requests SET payload = $1, expires_at = $2, template_revision = $3
 WHERE org_id = $4 AND id = $5 AND status = 'pending'
