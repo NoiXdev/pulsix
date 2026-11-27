@@ -132,13 +132,18 @@ func TestAgentDTOReportsProbesSupported(t *testing.T) {
 			t.Fatalf("list row = %v; want probes_supported %s", list.Agents, want)
 		}
 	}
+	heartbeat := func(supported bool) {
+		t.Helper()
+		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-probes-1", agents.HeartbeatReport{
+			Version: "v0.3a", SecretsState: "ok", ProbesSupported: supported,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	expect("false")
-	if err := f.s.Deps.Agents.SetProbesSupported(context.Background(), f.host.ID, true); err != nil {
-		t.Fatal(err)
-	}
+	heartbeat(true)
 	expect("true")
-	if err := f.s.Deps.Agents.SetProbesSupported(context.Background(), f.host.ID, false); err != nil {
-		t.Fatal(err)
-	}
+	// An opted-out agent's heartbeat (agent.yaml probes.enabled: false).
+	heartbeat(false)
 	expect("false")
 }
