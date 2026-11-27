@@ -190,9 +190,10 @@ describe('RunRequestDetailPage', () => {
     });
     renderDetail();
     await user.click(await screen.findByRole('button', { name: 'Approve' }));
-    const alert = await screen.findByRole('alert', { name: 'Not approved: hosts joined a zone this request already started in' });
-    expect(alert).toHaveTextContent('eu: web-03, web-04');
-    expect(alert).toHaveTextContent('ask for a new run for these hosts');
+    const alert = await screen.findByRole('alert', { name: "Not approved: the earlier attempt's run does not cover these hosts" });
+    expect(alert).toHaveTextContent('web-03, web-04 in zone eu');
+    expect(alert).toHaveTextContent('File a new request for these hosts, or approve again once the earlier run in that zone has been withdrawn.');
+    expect(alert).not.toHaveTextContent(/joined/);
   });
 
   it('rejects after confirming', async () => {

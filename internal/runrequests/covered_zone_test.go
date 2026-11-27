@@ -58,8 +58,18 @@ func TestRunNamesTheZonesAReapprovalWouldLeaveOut(t *testing.T) {
 		!fx.jobs.checked.RefuseCoveredZoneGrowth || fx.jobs.checked.IdempotencyKey != "run-request:x" {
 		t.Fatalf("check = %v (asked %+v), want the refusal named", checked, fx.jobs.checked)
 	}
-	if msg := err.Error(); !strings.Contains(msg, `zone "eu": web-3, `+lost.String()) || !strings.Contains(msg, "request a new run") {
-		t.Fatalf("message = %q", msg)
+	msg := err.Error()
+	for _, want := range []string{
+		`web-3 is not covered by the earlier attempt's run in zone "eu"`,
+		lost.String() + ` is not covered by the earlier attempt's run in zone "eu"`,
+		"file a new request, or approve again once the earlier run in that zone has been withdrawn",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message = %q, want it to say %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "joined") {
+		t.Fatalf("message = %q: a host may also have been left out of the earlier run, not only have joined", msg)
 	}
 }
 

@@ -13,12 +13,13 @@ import (
 )
 
 // ErrCoveredZoneGrew is the sentinel of CoveredZoneGrowthError.
-var ErrCoveredZoneGrew = errors.New("hosts joined a zone the run's first attempt already covers")
+var ErrCoveredZoneGrew = errors.New("hosts are not covered by the earlier attempt's run in their zone")
 
 // CoveredZoneGrowthError refuses a run request's replay (backlog 2.142):
 // a job of the first attempt covers each of Zones, so the replay creates
 // no job there, but the zone now holds hosts that job does not (HostIDs
-// are those hosts only). They would never run, so nothing is enqueued.
+// are those hosts only: they joined the zone, or the first attempt left
+// them out). They would never run, so nothing is enqueued.
 type CoveredZoneGrowthError struct {
 	Zones []ZoneTargets
 }

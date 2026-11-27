@@ -2373,12 +2373,16 @@ file, then rename) so that a half-written file does not turn probing off for a m
   when it is claimed after it.
 - **A re-approval that would leave out a host is refused (backlog 2.142, no
   migration):** when a run request's first approval enqueued some zones and then failed,
-  approving it again replays the jobs that exist. A host that joined one of those zones in
-  between would never run, so such a re-approval is now refused with 409
-  (`code: hosts_joined_covered_zone`, and `zones` with each zone's id, name and the hosts
-  that joined it); nothing is enqueued and the request stays pending. Ask for a new run for
-  those hosts, or reject the request. A re-approval that adds no host to such a zone works
-  as before; schedules, webhooks and follow-ups are unaffected.
+  approving it again replays the jobs that exist. A host of such a zone that the earlier
+  attempt's job does not cover (it joined the zone since, or the earlier attempt left it
+  out) would never run, so such a re-approval is now refused, before anything is
+  recorded, with 409 (`code: hosts_joined_covered_zone`, and `zones` with each zone's id,
+  name and the hosts not covered); the detail says "… is not covered by the earlier
+  attempt's run in zone …". Nothing is enqueued and the request stays pending. File a new
+  request for those hosts, or approve again once the earlier run in that zone has been
+  withdrawn (its job is refused at its claim while the request is pending, and its zone is
+  then enqueued afresh), or reject the request. A re-approval that leaves out no host
+  works as before; schedules, webhooks and follow-ups are unaffected.
 - **The follow-ups an approval starts are bound to their hosts and vars (backlog 2.143,
   migration 00138):** with Settings → General letting approvals start follow-ups, the
   approval page shows for each follow-up the hosts it can run on (its template's targets

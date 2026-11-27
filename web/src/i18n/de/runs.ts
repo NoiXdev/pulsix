@@ -377,9 +377,9 @@ export const deRuns: Messages['runs'] = {
       changed: 'Diese Anfrage hat sich geändert, seit du sie geöffnet hast. Bitte prüfe sie erneut.',
       reviewNew: 'Neue Fassung ansehen',
       coveredZones: {
-        title: 'Nicht freigegeben: Hosts kamen in eine Zone, in der diese Anfrage schon gestartet ist',
-        body: 'Die erste Freigabe dieser Anfrage hat ihren Lauf in diesen Zonen gestartet, bevor sie fehlschlug. Eine neue Freigabe würde die Hosts, die seitdem hinzugekommen sind, nicht ausführen, deshalb wurde nichts gestartet. Lehne diese Anfrage ab und stelle für diese Hosts eine neue Laufanfrage.',
-        zone: (zone: string, hosts: string) => `${zone}: ${hosts}`,
+        title: 'Nicht freigegeben: Der Lauf des früheren Versuchs deckt diese Hosts nicht ab',
+        body: 'Die erste Freigabe dieser Anfrage hat ihren Lauf in diesen Zonen gestartet, bevor sie fehlschlug, und dieser Lauf deckt die Hosts unten nicht ab. Eine neue Freigabe würde sie nicht ausführen, deshalb wurde nichts gestartet. Stelle für diese Hosts eine neue Anfrage, oder gib erneut frei, sobald der frühere Lauf in dieser Zone zurückgezogen wurde.',
+        zone: (zone: string, hosts: string) => `${hosts} in Zone ${zone}`,
       },
       decided: {
         approved: 'Freigegeben. Der Lauf wurde gestartet.',

@@ -12,14 +12,17 @@ import (
 )
 
 // ErrCoveredZonesGrew is the sentinel of CoveredZonesError.
-var ErrCoveredZonesGrew = errors.New("approving again would not run the hosts that joined a zone this request's first approval already enqueued")
+var ErrCoveredZonesGrew = errors.New("approving again would not run hosts that the earlier attempt's run does not cover")
 
 // CoveredZonesError refuses a re-approval (backlog 2.142, the owner's
 // decision of 2026-11-27): the first approval's enqueue failed partway,
 // its jobs in Zones cover those zones, and each zone now holds Hosts that
-// none of them does. Approving again would replay those jobs and never
-// run the hosts, so nothing is enqueued; whoever needs them asks for a new
-// run.
+// none of them does (a host that joined the zone, or one the earlier
+// attempt left out and that is now in). Approving again would replay
+// those jobs and never run the hosts, so nothing is enqueued; whoever
+// needs them files a new request, or approves again once the earlier run
+// in that zone has been withdrawn at its claim (its zone is then
+// enqueued afresh).
 type CoveredZonesError struct {
 	Zones []CoveredZone
 }
@@ -39,15 +42,14 @@ type NamedHost struct {
 }
 
 func (e *CoveredZonesError) Error() string {
-	parts := make([]string, len(e.Zones))
-	for i, z := range e.Zones {
-		names := make([]string, len(z.Hosts))
-		for j, h := range z.Hosts {
-			names[j] = h.Name
+	var parts []string
+	for _, z := range e.Zones {
+		for _, h := range z.Hosts {
+			parts = append(parts, fmt.Sprintf("%s is not covered by the earlier attempt's run in zone %q", h.Name, z.Name))
 		}
-		parts[i] = fmt.Sprintf("zone %q: %s", z.Name, strings.Join(names, ", "))
 	}
-	return fmt.Sprintf("%s (%s); nothing was enqueued, request a new run for these hosts", ErrCoveredZonesGrew, strings.Join(parts, "; "))
+	return fmt.Sprintf("approving again would not run these hosts: %s. Nothing was enqueued; file a new request, or approve again once the earlier run in that zone has been withdrawn",
+		strings.Join(parts, "; "))
 }
 
 func (e *CoveredZonesError) Unwrap() error { return ErrCoveredZonesGrew }

@@ -396,9 +396,9 @@ export const enRuns = {
       changed: 'This request changed since you opened it. Review it again.',
       reviewNew: 'Review the new version',
       coveredZones: {
-        title: 'Not approved: hosts joined a zone this request already started in',
-        body: 'The first approval of this request started its run in these zones before it failed. Approving again would not run the hosts that joined them since, so nothing was started. Reject this request and ask for a new run for these hosts.',
-        zone: (zone: string, hosts: string) => `${zone}: ${hosts}`,
+        title: "Not approved: the earlier attempt's run does not cover these hosts",
+        body: "The first approval of this request started its run in these zones before it failed, and that run does not cover the hosts below. Approving again would not run them, so nothing was started. File a new request for these hosts, or approve again once the earlier run in that zone has been withdrawn.",
+        zone: (zone: string, hosts: string) => `${hosts} in zone ${zone}`,
       },
       decided: {
         approved: 'Approved. The run was started.',

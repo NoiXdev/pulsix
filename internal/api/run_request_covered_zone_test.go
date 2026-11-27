@@ -79,7 +79,7 @@ func TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone(t *testing.T) {
 		len(problem.Zones[0].Hosts) != 1 || problem.Zones[0].Hosts[0].ID != joined.ID.String() || problem.Zones[0].Hosts[0].Name != "web-1b" {
 		t.Fatalf("problem = %s", body)
 	}
-	if !strings.Contains(problem.Detail, "web-1b") || !strings.Contains(problem.Detail, problem.Zones[0].Name) {
+	if !strings.Contains(problem.Detail, `web-1b is not covered by the earlier attempt's run in zone "`+problem.Zones[0].Name+`"`) {
 		t.Fatalf("detail = %q, want the zone and the host named", problem.Detail)
 	}
 	if all := f.groupJobs(t, id); len(all) != 1 {
