@@ -1,0 +1,54 @@
+# Run request approval binding: covered zones and follow-ups (backlog 2.142, 2.143) — implementation plan
+
+**Goal:** close backlog rows 2.142 and 2.143 (`grep -nE "^\| 2\.14[23] " docs/BACKLOG.md`) as the owner decided on 2026-11-27:
+- 2.142 "refuse and ask for a new request": a re-approval whose replay would leave out a host that joined a zone the first attempt's jobs already cover is refused with a specific error naming the zones and hosts; nothing is enqueued.
+- 2.143 "yes, bind them": an approval also binds the hosts and vars of the follow-up runs it starts; the picture shows them, and a follow-up's claim is checked like the main run's (2.141).
+
+**Architecture:** 2.142 lives in `internal/jobs` (the replay knows the covering jobs and the live zone lists) behind an opt-in field the run request enqueuer sets, named in `internal/runrequests` and mapped to a 409 problem with a code in `internal/api`; the SPA shows it on the approval page. 2.143 extends the picture's follow-up nodes with a binding (targets, masked extra vars, vars digest), stores one fingerprint per approved follow-up node with the decision (migration 00138, `run_requests.approved_follow_ups jsonb`), and extends `runrequests.Service.CheckRunClaim` to follow-up run groups through `run_follow_ups` up to the request.
+
+**Spec:** the two backlog rows and the owner's decisions of 2026-11-27; context in 2.122 (spec `docs/superpowers/specs/2026-11-16-approved-run-follow-ups-design.md`), 2.126, 2.127 and 2.141 (plan `docs/superpowers/plans/2026-11-26-withdrawn-claim-race-2.127.md`, addendum).
+
+## Global Constraints
+- Layers per `CLAUDE.md`. Tests: `go test -race -timeout 900s ./internal/{jobs,runrequests,backup,db}/...`, `./internal/api/...` with `-timeout 1800s -run`; never `go test ./...`, never `make test`, never `internal/e2e`. `golangci-lint run` and `gofmt -s -l` clean on touched packages.
+- sqlc via `PATH=$PATH:~/go/bin make sqlc`; the OpenAPI client via `npm run api:gen`; no hand edits of generated code. Migration additive; a backup fixture value for the new column.
+- TDD; Conventional Commits with the `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` footer.
+
+## Rulings
+- **R1 (2.142) The check runs in the replay, against the zone lists the enqueue resolves now.** `enqueueRunScope`, given covering jobs (`alreadyDone`) and the opt-in, compares each covered zone's live host list with the union of its covering jobs' hosts before creating any job; any extra host refuses the whole call with `*jobs.CoveredZoneGrowthError` (zones and the hosts that joined). — Why: the replay is the only place that knows both; checking before the first insert makes "nothing is enqueued" exact. — Cost if wrong: none beyond a refused approval.
+- **R2 (2.142) Opt-in, run requests only.** `jobs.RunRequest.RefuseCoveredZoneGrowth` (set by `runrequests.Resolver.Run`); a retry checks when it is keyed (only an approved retry request keys a retry). Schedules, webhooks and the chain starter replay as before. — Why: their replays recover lost write-backs of a run that already happened; refusing there would drop an occurrence. — Cost if wrong: the same gap stays for those (out of scope).
+- **R3 (2.142) The refused request goes back to pending,** as on every failed enqueue (`RevertToPending`); no new status, no migration. The person rejects it, or approves it later (it succeeds once the covering job is withdrawn at its claim and the zone is refilled, or the host left). — Cost if wrong: a pending request the person must reject by hand.
+- **R4 (2.142) Error contract:** HTTP 409 problem with `code: "hosts_joined_covered_zone"` and `zones: [{id, name, hosts: [{id, name}]}]`; `detail` names zones and hosts in words. Names come from the hosts service (a new optional `runrequests.Sources.Zones`); a missing name falls back to the id. — Cost if wrong: the GUI shows the detail text only.
+- **R5 (2.143) "Vars" mirrors the main run: the keyed vars digest** (`Resolver.varsDigest`: the targets' rendered inventory with group, membership and host vars and connection, secrets revealed, facts left out, plus the template's extra vars, secrets opened) **plus the masked extra vars shown**; "hosts" mirrors the main run's `Targets` (`PictureHost`: id, name, address, user, port, jump host, credential). Template revision, playbook and credentials of a follow-up stay unbound after the main run's claim (2.122's documented limit for everything but hosts and vars). — Cost if wrong: a follow-up playbook edit after the main claim still runs unreviewed, as documented today.
+- **R6 (2.143) A follow-up's bound hosts are its template's limited scope intersected with its parent's bound hosts** (the main run's picture targets for a direct follow-up). — Why: a follow-up only ever runs on hosts its parent played on, and the parent's jobs never exceed its bound hosts (2.141 for the main run, this check for follow-ups), so the intersection is exactly what can run; binding the follow-up's whole scope would show hosts it never reaches and refuse it for var changes on them. — Cost if wrong: none for safety (the job-host subset check refuses anything outside); a follow-up shows fewer hosts than its template targets.
+- **R7 (2.143) Storage: one fingerprint per approved follow-up node, plus the parent hosts it was intersected with**, in `run_requests.approved_follow_ups` (jsonb, NULL = legacy or not approved), written by `DecideRunRequest` with the decision and cleared by `RevertRunRequest`. Node key = the chain path of the row (`run_follow_ups.path`) plus the template id, which the picture walk and the starter build alike. Only the selected direct follow-ups and their subtrees are stored (deselected ones never start). — Why: the follow-up's claim must not depend on the main template's later state (the main run has finished by then), so it cannot recompute the whole request picture. — Cost if wrong: a jsonb column to migrate away from later.
+- **R8 (2.143) Upgrade and legacy:** a request approved before this version (`approved_follow_ups` NULL) keeps its picture unbound, so its fingerprint and its follow-ups' claims behave as before. Pending requests whose picture starts follow-ups change fingerprint once (the page asks to review again). — Cost if wrong: an approved run queued across the upgrade fails its claim.
+- **R9 (2.143) The follow-up claim:** the guard walks `run_follow_ups` from the job's run group to the request whose run group is the chain's root. No row or no request: passes as today. Request not approved: refused (ordinary failure, never `ErrApprovalWithdrawn`, whose replay semantics belong to the request's own group). No binding stored for the node (a follow-up added to a template after the approval): refused with `ErrChangedAfterApproval`. Live node binding (scope ∩ stored parent hosts, its targets and digest) differs from the stored fingerprint: `ErrChangedAfterApproval`. A job host outside the node's targets: `ErrHostsChangedAfterApproval`. Each fails the job `refused at claim: …` like 2.141. — Cost if wrong: a chain stops with a visible failure.
+- **R10 (2.143) The main picture's fingerprint covers every bound node, selected or not** (the page shows the whole tree), so a host or var change in any follow-up's hosts between the approval and the main run's claim fails the main run, as a follow-up revision change already does. — Cost if wrong: a main run fails for a deselected follow-up's change; the person requests again.
+
+## Review Focus
+- Re-approval with a host that joined a covered zone → 409 with code, zones and hosts, no new job, request pending (`TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone`, internal/api); the replay check itself (`TestEnqueueRunWithRefusesGrowthOfACoveredZone`, internal/jobs) and that a schedule replay is untouched (`TestEnqueueRunWithScheduleReplayIgnoresGrowth`).
+- Follow-up claim after a var change on its host → refused; untouched → claimed (`TestApprovedFollowUpClaimIsBoundToTheApproval`, internal/api).
+- Legacy approvals unchanged (`TestPictureOfALegacyApprovalBindsNoFollowUps`, internal/runrequests); the walk intersects with the parent's hosts (`TestPictureBindsFollowUpsToTheirParentsHosts`); the guard's branches (`TestCheckRunClaimOfAFollowUp`).
+- Store round trip, revert, origin walk (`TestDecideStoresFollowUpBindings`, `TestFollowUpOriginWalksToTheRequest`), backup fixture.
+
+## Task 1: 2.142 in the replay (`internal/jobs`)
+**Files:** `internal/jobs/{run_request.go,service.go,covered_zone.go (new)}`, `internal/jobs/run_request_test.go`.
+- `RunRequest.RefuseCoveredZoneGrowth bool`; `type CoveredZoneGrowthError struct{ Zones []ZoneTargets }` unwrapping `ErrCoveredZoneGrew`; `refuseCoveredZoneGrowth(targets, alreadyDone) error`. Commit `fix(jobs): refuse a run request replay that would leave out a host of a covered zone`.
+
+## Task 2: 2.142 named, mapped, shown
+**Files:** `internal/runrequests/{resolve.go,sources.go,covered_zone.go (new)}` (+ test), `internal/app/app.go`, `internal/api/run_request_handlers.go`, `internal/api/run_request_covered_zone_test.go` (new), `web/src/features/runs/RunRequestDetailPage.tsx` (+ i18n, Vitest).
+- `runrequests.CoveredZonesError{Zones []CoveredZone}` (`ErrCoveredZonesGrew`); `Sources.Zones ZoneSource`. Commits `feat(runrequests): name the zones and hosts a refused re-approval leaves out`, `feat(web): show why a re-approval was refused`.
+
+## Task 3: 2.143 storage
+**Files:** `internal/db/migrations/00138_run_request_follow_up_bindings.sql`, `internal/db/queries/run_requests.sql` (+ sqlc), `internal/runrequests/{service.go,store_sql.go,approve.go,service_trigger.go,service_schedule.go}` and their fakes, `internal/backup/fixture_test.go`.
+- `Request.FollowUpBindings *FollowUpBindings`; `Store.Decide(…, bindings *FollowUpBindings)`; `Store.FollowUpOrigin(ctx, org, group) (FollowUpOrigin, error)`. Commit `feat(runrequests): store the follow-up bindings of an approval`.
+
+## Task 4: 2.143 picture, approval and claim
+**Files:** `internal/runrequests/{picture.go,follow_ups.go,resolve_follow_ups.go,follow_up_binding.go (new),approve.go,ports.go}` (+ tests), `internal/api/run_request_follow_up_claim_test.go` (new).
+- `PictureFollowUp.{Targets,ExtraVars,VarsDigest}`; `Pictures.BindFollowUp(ctx, org, requestID, templateID, within) (PictureFollowUp, error)`; `FollowUpFingerprint(requestID, node)`. Commit `feat(runrequests): bind the follow-ups an approval starts to their hosts and vars`.
+
+## Task 5: SPA picture of the follow-ups
+**Files:** `web/src/api/schema.d.ts` (generated), `web/src/features/runs/RunRequestFollowUps.tsx` (+ i18n, Vitest). Commit `feat(web): show the hosts and vars an approval binds for each follow-up`.
+
+## Task 6: Docs
+- Backlog 2.142 and 2.143 → done; `docs/upgrades.md` (migration 00138, fingerprint change, skew). Commit `docs: backlog 2.142 and 2.143 done`.
