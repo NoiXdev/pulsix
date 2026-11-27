@@ -1563,6 +1563,14 @@
           "default": false
         },
         {
+          "name": "assertions",
+          "type": "list",
+          "example": "busy=value(\"ups_load\") \u003c 80",
+          "max_entries": 32,
+          "max_bytes": 512,
+          "format": "snmpAssertion"
+        },
+        {
           "name": "vantage_manager",
           "type": "bool",
           "default": true
@@ -1633,6 +1641,14 @@
         {
           "name": "snmp.if.errors",
           "kind": "numeric"
+        },
+        {
+          "name": "snmp.assertion",
+          "kind": "discrete"
+        },
+        {
+          "name": "snmp.assertion_actual",
+          "kind": "discrete"
         }
       ]
     }

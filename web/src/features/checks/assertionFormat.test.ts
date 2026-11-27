@@ -10,6 +10,7 @@ describe('the assertion grammar twin', () => {
       op: 'in',
       operand: '200..299',
       severity: 'warn',
+      numeric: true,
     });
     expect(parseAssertion('rows=html("tr.item") count >= 2')).toEqual({
       name: 'rows',
@@ -18,6 +19,7 @@ describe('the assertion grammar twin', () => {
       op: '>=',
       operand: '2',
       severity: 'crit',
+      numeric: true,
     });
     expect(parseAssertion('ct=header("Content-Type") contains "json" @crit')).toEqual({
       name: 'ct',
@@ -26,6 +28,7 @@ describe('the assertion grammar twin', () => {
       op: 'contains',
       operand: '"json"',
       severity: 'crit',
+      numeric: false,
     });
     expect(parseAssertion('e=json("$.error") !exists')).toMatchObject({ subject: 'json', op: '!exists', operand: '' });
   });
@@ -66,5 +69,41 @@ describe('the dialects of tcp, dns and tls (backlog 3.87)', () => {
     expect(assertionOps('answer')).toEqual(['exists', '!exists']);
     expect(assertionOps('cipher')).not.toContain('exists');
     expect(isNumericSubject('version')).toBe(true);
+  });
+});
+
+describe('the snmp dialect (backlog 3.134)', () => {
+  it('reads value("name") as a number or a text comparison by its operator and operand', () => {
+    expect(parseAssertion('busy=value("ups_load") < 80', 'snmp')).toMatchObject({ subject: 'value', arg: 'ups_load', op: '<', operand: '80', numeric: true });
+    expect(parseAssertion('s=value("state") == 2', 'snmp')).toMatchObject({ op: '==', operand: '2', numeric: true });
+    expect(parseAssertion('s=value("state") == "online" @warn', 'snmp')).toMatchObject({ operand: '"online"', numeric: false, severity: 'warn' });
+    expect(parseAssertion('d=value("descr") !matches "^Cisco"', 'snmp')).toMatchObject({ op: '!matches', numeric: false });
+    expect(parseAssertion('u=uptime > 600', 'snmp')).toMatchObject({ subject: 'uptime', numeric: true });
+    expect(parseAssertion('r=response_ms in 0..100', 'snmp')).toMatchObject({ subject: 'response_ms', numeric: true });
+  });
+
+  it('refuses what the server refuses', () => {
+    for (const entry of [
+      's=value("state") == up',
+      's=value("state") < "2"',
+      's=value("state") contains 2',
+      's=value("state") exists',
+      's=value("a b") < 2',
+      's=value("") < 2',
+      's=value < 2',
+      'u=uptime == "5"',
+      'ok=status == 200',
+    ]) {
+      expect(parseAssertion(entry, 'snmp'), entry).toBeNull();
+    }
+    expect(parseAssertion('busy=value("ups_load") < 80')).toBeNull();
+  });
+
+  it('knows the snmp subjects and value\'s operators', () => {
+    expect(isAssertionPlugin('snmp')).toBe(true);
+    expect(dialectSubjects('snmp')).toEqual(['value', 'response_ms', 'uptime']);
+    expect(assertionOps('value')).toEqual(['<', '<=', '>', '>=', '==', '!=', 'in', 'contains', '!contains', 'matches', '!matches']);
+    expect(isNumericSubject('value')).toBe(false);
+    expect(isNumericSubject('uptime')).toBe(true);
   });
 });

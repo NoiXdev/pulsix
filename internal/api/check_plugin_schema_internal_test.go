@@ -83,7 +83,9 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"snmp: secret (required; not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
 		"version (v2c or v3; default v2c), port (1 to 65535; default 161), timeout_seconds (1 to 30; default 5), " +
 		"oids (list; at most 32 entries; each name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0), " +
-		"interfaces (true or false; default false), " + strings.TrimSuffix(vantage, " ")
+		"interfaces (true or false; default false), " +
+		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn] as for http, the subject one of value(\"name\") (the oids entry name, compared as a number or as text by its operator and operand), response_ms, uptime (seconds) such as value(\"load\") < 80), " +
+		strings.TrimSuffix(vantage, " ")
 	if got := checkParamsFieldDoc(); got != want {
 		t.Fatalf("checkParamsFieldDoc() =\n%s\nwant\n%s", got, want)
 	}
