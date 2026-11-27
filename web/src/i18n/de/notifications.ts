@@ -114,7 +114,7 @@ export const deNotifications: Messages['notifications'] = {
     chatIdPlaceholder: '-1001234567890 oder @kanal',
     telegramToken: 'Das Bot-Token ist Teil der URL; es wird verschlüsselt gespeichert und nie wieder angezeigt.',
     formatUrlAgain: 'Beim Wechsel des Formats muss die URL erneut eingegeben werden.',
-    ntfyToken: 'Für ein geschütztes Topic einen Header Authorization mit dem Wert „Bearer“ und dem Zugriffstoken hinzufügen. Er wird nur an den Server der URL gesendet.',
+    ntfyToken: 'Für ein geschütztes Topic einen Header Authorization mit dem Wert „Bearer“ und dem Zugriffstoken hinzufügen. Er geht mit jeder Nachricht an die URL des Kanals, auch nach einer Änderung der URL, bis der Header entfernt wird.',
     builtUrl: 'Pulsix sendet an die Adresse des Dienstes; eine URL wird nicht eingegeben.',
     secretsStored: 'Secrets werden verschlüsselt gespeichert und nie wieder angezeigt.',
     secretNames: { token: 'Anwendungs-Token', user: 'Benutzer- oder Gruppenschlüssel', auth_token: 'Auth-Token', routing_key: 'Integrationsschlüssel' },
