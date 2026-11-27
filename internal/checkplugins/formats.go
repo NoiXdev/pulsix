@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jpath"
 	"github.com/noixdev/pulsix/internal/probe/assert"
 	"github.com/noixdev/pulsix/internal/probe/httpreq"
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -96,6 +97,11 @@ const (
 	// FormatMediaType: http's content_type (backlog 3.84), type/subtype
 	// with optional ;name=value parameters (internal/probe/httpreq).
 	FormatMediaType Format = "mediaType"
+	// FormatScriptArg: one entry of script's args (backlog 3.6j),
+	// "command:placeholder=value" as internal/scriptargs reads it: a
+	// command name, a placeholder name, and a value of 1 to 512 bytes
+	// without control characters. The host's own rule judges the value.
+	FormatScriptArg Format = "scriptArg"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -106,7 +112,7 @@ func Formats() []Format {
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatPHPFPMPool, FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
-		FormatHTTPHeader, FormatMediaType,
+		FormatHTTPHeader, FormatMediaType, FormatScriptArg,
 	}
 }
 
@@ -168,6 +174,8 @@ func (f Format) problem(s string) string {
 		return httpreq.HeaderProblem(s)
 	case FormatMediaType:
 		return httpreq.MediaTypeProblem(s)
+	case FormatScriptArg:
+		return scriptargs.EntryProblem(s)
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}

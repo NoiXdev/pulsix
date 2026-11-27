@@ -353,6 +353,11 @@ export const deChecks: Messages['checks'] = {
         hint: 'Namen von Befehlen, die in der agent.yaml jedes Hosts unter commands: definiert sind; gesendet wird nur der Name, was läuft, bestimmt der Host. Ein Host, der einen Namen nicht definiert, meldet ihn als unbekannt.',
         placeholder: 'backup_age\ndisk_root',
       },
+      args: {
+        label: 'Werte für Platzhalter (einer pro Zeile, befehl:platzhalter=wert)',
+        hint: 'Nur für Befehle, deren Definition in der agent.yaml eines Hosts unter args Platzhalter festlegt; der Host prüft jeden Wert gegen seine eigene Regel und führt den Befehl nicht aus, wenn einer sie nicht erfüllt. Ein Wert wird als ein einzelnes Argument so übergeben, wie er dasteht, nie an eine Shell. Ein Befehl ohne Platzhalter lehnt jeden Wert ab. Fehlt ein Platzhalter, gilt der Standardwert des Hosts.',
+        placeholder: 'tcp_port:port=8080',
+      },
       format: {
         label: 'Ausgabeformat',
         options: { nagios: 'Nagios-Plugin (Exit-Code und Perfdata)', json: 'JSON (status, message, metrics)' },
@@ -478,6 +483,8 @@ export const deChecks: Messages['checks'] = {
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
+      scriptArg:
+        'jeder Eintrag muss befehl:platzhalter=wert sein: ein oben genannter Befehl, ein Platzhaltername aus Kleinbuchstaben, Ziffern und _ (mit einem Buchstaben beginnend, höchstens 32) und ein Wert von 1 bis 512 Bytes ohne Zeilenumbrüche oder andere Steuerzeichen',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },

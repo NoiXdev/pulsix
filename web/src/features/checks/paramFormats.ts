@@ -488,6 +488,32 @@ function mediaType(s: string): boolean {
   return MEDIA_TYPE.test(s);
 }
 
+// ---------------------------------------------------------------------------
+// The script check's values for placeholders (backlog 3.6j),
+// internal/scriptargs's EntryProblem.
+// ---------------------------------------------------------------------------
+
+/** scriptArg: one entry of script's args, "command:placeholder=value",
+ * split at the first ':' and the first '=' after it: a command name, a
+ * placeholder name (a lower-case letter, then up to 31 lower-case letters,
+ * digits or '_') and a value of 1 to 512 bytes without control
+ * characters. The host's own rule judges the value. */
+function scriptArg(s: string): boolean {
+  const colon = s.indexOf(':');
+  if (colon < 0) return false;
+  const rest = s.slice(colon + 1);
+  const eq = rest.indexOf('=');
+  if (eq < 0) return false;
+  const value = rest.slice(eq + 1);
+  return (
+    commandName(s.slice(0, colon)) &&
+    /^[a-z][a-z0-9_]{0,31}$/.test(rest.slice(0, eq)) &&
+    value !== '' &&
+    byteLen(value) <= 512 &&
+    !hasControl(value)
+  );
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -508,6 +534,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   uuid,
   httpHeader: (s) => httpHeaderProblem(s) === null,
   mediaType,
+  scriptArg,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

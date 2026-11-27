@@ -907,6 +907,14 @@
           "format": "commandName"
         },
         {
+          "name": "args",
+          "type": "list",
+          "example": "tcp_port:port=8080",
+          "max_entries": 64,
+          "max_bytes": 640,
+          "format": "scriptArg"
+        },
+        {
           "name": "format",
           "type": "enum",
           "default": "nagios",
