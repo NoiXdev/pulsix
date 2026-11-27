@@ -1,12 +1,15 @@
 package jobs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/inventory/render"
 )
 
 // ErrCoveredZoneGrew is the sentinel of CoveredZoneGrowthError.
@@ -69,4 +72,80 @@ func refuseCoveredZoneGrowth(targets []ZoneTargets, alreadyDone []Job) error {
 		return &CoveredZoneGrowthError{Zones: grown}
 	}
 	return nil
+}
+
+// CheckRunReplay answers, writing nothing, whether EnqueueRunWith(req)
+// would be refused with a CoveredZoneGrowthError now (backlog 2.142,
+// review I1): a run request's approval asks before it records its
+// decision, so a refused re-approval never stands approved, not even for
+// a moment in which a worker could claim the earlier attempt's job. Only
+// a request that opts in and whose key already started jobs can be
+// refused; a scope that does not resolve now answers nil and is left to
+// the enqueue, as the replay itself leaves it. The replay keeps its own
+// check: things can change in between.
+func (s *Service) CheckRunReplay(ctx context.Context, orgID, templateID uuid.UUID, req RunRequest) error {
+	if !req.RefuseCoveredZoneGrowth {
+		return nil
+	}
+	return s.checkReplay(ctx, orgID, req.IdempotencyKey, func() ([]ZoneTargets, error) {
+		tmpl, err := s.templates.TemplateLookup(ctx, orgID, templateID)
+		if err != nil {
+			return nil, err
+		}
+		scope, err := parseScope(tmpl.Scope)
+		if err != nil {
+			return nil, err
+		}
+		gate := effectiveLimit(tmpl.Limit, req.Overrides)
+		if req.OnlyHost != nil {
+			if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
+				return nil, err
+			}
+		}
+		targets, _, err := s.resolveRunTargets(ctx, orgID, scope, gate, req)
+		return targets, err
+	})
+}
+
+// CheckRetryReplay is CheckRunReplay for the keyed retry of the finished
+// run id an approved retry request makes (RetryFailedInto).
+func (s *Service) CheckRetryReplay(ctx context.Context, orgID, id uuid.UUID, idempotencyKey string) error {
+	return s.checkReplay(ctx, orgID, idempotencyKey, func() ([]ZoneTargets, error) {
+		j, retry, err := s.retryTarget(ctx, orgID, id)
+		if err != nil {
+			return nil, err
+		}
+		tmpl, err := s.templates.TemplateLookup(ctx, orgID, *j.TemplateID)
+		if err != nil {
+			return nil, err
+		}
+		targets, _, err := s.resolveRunTargets(ctx, orgID, render.Scope{HostIDs: retry}, tmpl.Limit, RunRequest{Trigger: TriggerManual})
+		return targets, err
+	})
+}
+
+// checkReplay is the shared read-only check: the jobs an earlier call
+// with key created that cover their zone, against the targets resolve
+// gives now.
+func (s *Service) checkReplay(ctx context.Context, orgID uuid.UUID, key string, resolve func() ([]ZoneTargets, error)) error {
+	if key == "" {
+		return nil
+	}
+	group, err := s.store.StartedRunGroup(ctx, orgID, key)
+	if err != nil {
+		return fmt.Errorf("look up the run's earlier attempt: %w", err)
+	}
+	if group == nil {
+		return nil
+	}
+	covering, err := s.coveringJobs(ctx, orgID, *group)
+	if err != nil || len(covering) == 0 {
+		return err
+	}
+	targets, err := resolve()
+	if err != nil {
+		// The enqueue reports it, or replays what exists.
+		return nil
+	}
+	return refuseCoveredZoneGrowth(targets, covering)
 }

@@ -463,3 +463,11 @@ func TestValidateRetry(t *testing.T) {
 		t.Fatalf("template gone = %v", err)
 	}
 }
+
+func (r *targetRunner) CheckRunReplay(context.Context, uuid.UUID, uuid.UUID, jobs.RunRequest) error {
+	return nil
+}
+
+func (r *targetRunner) CheckRetryReplay(context.Context, uuid.UUID, uuid.UUID, string) error {
+	return nil
+}

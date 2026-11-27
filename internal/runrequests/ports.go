@@ -28,6 +28,12 @@ type Enqueuer interface {
 	Run(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID) error
 	// RetryFailed retries the failed hosts of r's job with r's overrides.
 	RetryFailed(ctx context.Context, orgID uuid.UUID, r Request, actor uuid.UUID, idempotencyKey string, group uuid.UUID, followUps []uuid.UUID, approved jobs.ApprovedRun) error
+	// CheckReplay answers, writing nothing, whether the enqueue of r with
+	// idempotencyKey would now be refused because a zone an earlier
+	// attempt's job covers holds a host that job does not
+	// (*CoveredZonesError, backlog 2.142); nil otherwise, also when it
+	// cannot tell (the enqueue reports that).
+	CheckReplay(ctx context.Context, orgID uuid.UUID, r Request, idempotencyKey string) error
 }
 
 // Validator checks a request the way the run and retry routes would check

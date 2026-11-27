@@ -120,6 +120,15 @@ func (s *Service) ApproveWith(ctx context.Context, orgID, id, by uuid.UUID, fing
 		return Approved{}, err
 	}
 	approved := jobs.ApprovedRun{PinnedCommit: pin, EnrollHostIDs: enrol}
+	// A re-approval whose replay would leave out a host of a zone the
+	// first attempt covers is refused before the decision is written
+	// (backlog 2.142, review I1): recorded and then reverted, the request
+	// would stand approved for a moment in which a worker could claim the
+	// first attempt's job and run it without that host. The replay checks
+	// again.
+	if err := s.enqueuer.CheckReplay(ctx, orgID, r, idempotencyKey(r.ID)); err != nil {
+		return Approved{}, err
+	}
 	// What the approval binds of the follow-ups it starts (backlog 2.143);
 	// stored even when it starts none, so the picture keeps binding them
 	// (bindsFollowUps) and stays the one approved.

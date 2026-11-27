@@ -3,6 +3,7 @@ package runrequests_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,7 +52,40 @@ func TestRunNamesTheZonesAReapprovalWouldLeaveOut(t *testing.T) {
 		grew.Zones[1].Name != want[1].Name || grew.Zones[1].Hosts[0] != want[1].Hosts[0] {
 		t.Fatalf("zones = %+v, want %+v", grew.Zones, want)
 	}
+	fx.jobs.checkErr = fx.jobs.runErr
+	checked := fx.res.CheckReplay(context.Background(), fx.org, runrequests.Request{Kind: runrequests.KindRun, TemplateID: x}, "run-request:x")
+	if !errors.As(checked, &grew) || len(grew.Zones) != 2 || grew.Zones[0].Name != "eu" || fx.jobs.checked == nil ||
+		!fx.jobs.checked.RefuseCoveredZoneGrowth || fx.jobs.checked.IdempotencyKey != "run-request:x" {
+		t.Fatalf("check = %v (asked %+v), want the refusal named", checked, fx.jobs.checked)
+	}
 	if msg := err.Error(); !strings.Contains(msg, `zone "eu": web-3, `+lost.String()) || !strings.Contains(msg, "request a new run") {
 		t.Fatalf("message = %q", msg)
+	}
+}
+
+// TestARefusedReapprovalLeavesTheRequestAsItWas is review I1: the
+// approval asks whether the replay would refuse before it records its
+// decision, so a refused re-approval never stands approved: no decision
+// is written (status, fingerprint and follow-up bindings stay as they
+// were) and nothing is enqueued.
+func TestARefusedReapprovalLeavesTheRequestAsItWas(t *testing.T) {
+	ctx := context.Background()
+	w := newWiring()
+	r := w.create(t)
+	before := w.store.rows[r.ID]
+	w.enq.checkErr = &runrequests.CoveredZonesError{Zones: []runrequests.CoveredZone{{ID: id(), Name: "eu", Hosts: []runrequests.NamedHost{{ID: id(), Name: "web-3"}}}}}
+	_, _, fp, _ := w.svc.Get(ctx, w.org, r.ID)
+	_, err := w.svc.Approve(ctx, w.org, r.ID, id(), fp, nil, true)
+	if !errors.Is(err, runrequests.ErrCoveredZonesGrew) {
+		t.Fatalf("approve = %v, want the covered zone refusal", err)
+	}
+	if w.store.decides != 0 || len(w.enq.runs) != 0 {
+		t.Fatalf("decisions %d, enqueues %d; want none", w.store.decides, len(w.enq.runs))
+	}
+	if after := w.store.rows[r.ID]; !reflect.DeepEqual(after, before) {
+		t.Fatalf("request after the refusal = %+v, want %+v", after, before)
+	}
+	if len(w.enq.checkKeys) != 1 || w.enq.checkKeys[0] != "run-request:"+r.ID.String() {
+		t.Fatalf("checked keys = %v, want the approval's", w.enq.checkKeys)
 	}
 }

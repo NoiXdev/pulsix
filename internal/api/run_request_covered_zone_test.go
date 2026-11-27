@@ -1,12 +1,16 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/sshconf"
@@ -48,7 +52,10 @@ func TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone(t *testing.T) {
 		in.Scope = templates.Scope{HostIDs: []uuid.UUID{f.hostA, f.hostB, joined.ID}}
 	})
 
-	resp = f.approve(t, f.adminC, id, f.detail(t, id).Fingerprint)
+	fingerprint := f.detail(t, id).Fingerprint
+	conn := superConn(t)
+	logged := logStatusChanges(t, conn, id)
+	resp = f.approve(t, f.adminC, id, fingerprint)
 	body := mustReadBody(t, resp)
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("re-approve = %d %s, want 409", resp.StatusCode, body)
@@ -80,5 +87,51 @@ func TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone(t *testing.T) {
 	}
 	if st := f.detail(t, id).Request.Status; st != "pending" {
 		t.Fatalf("status after the refused re-approval = %s, want pending", st)
+	}
+	// Review I1: the refusal comes before the decision, so the request
+	// never stood approved, not even between a decision and its revert.
+	if changes := logged(); len(changes) != 0 {
+		t.Fatalf("status writes during the refused re-approval = %v, want none", changes)
+	}
+	var fp, bound *string
+	var decided *time.Time
+	if err := conn.QueryRow(context.Background(), `SELECT approved_fingerprint, approved_follow_ups::text, decided_at FROM run_requests WHERE id = $1`, id).
+		Scan(&fp, &bound, &decided); err != nil {
+		t.Fatal(err)
+	}
+	if fp != nil || bound != nil || decided != nil {
+		t.Fatalf("request after the refusal: fingerprint %v, follow-ups %v, decided %v; want none", fp, bound, decided)
+	}
+}
+
+// logStatusChanges records every status a write gives the run request id
+// from now on; the returned function reads them.
+func logStatusChanges(t *testing.T, conn *pgx.Conn, id string) func() []string {
+	t.Helper()
+	exec := func(sql string) {
+		if _, err := conn.Exec(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), `DROP TRIGGER IF EXISTS pulsix_test_log_status ON run_requests`)
+		_, _ = conn.Exec(context.Background(), `DROP FUNCTION IF EXISTS pulsix_test_log_status()`)
+		_, _ = conn.Exec(context.Background(), `DROP TABLE IF EXISTS pulsix_test_status_log`)
+	})
+	exec(`CREATE TABLE IF NOT EXISTS pulsix_test_status_log (status text NOT NULL)`)
+	exec(fmt.Sprintf(`CREATE OR REPLACE FUNCTION pulsix_test_log_status() RETURNS trigger
+	      LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN
+	        IF NEW.id = '%s' THEN INSERT INTO pulsix_test_status_log VALUES (NEW.status); END IF; RETURN NEW; END $$`, id))
+	exec(`CREATE TRIGGER pulsix_test_log_status AFTER UPDATE ON run_requests FOR EACH ROW EXECUTE FUNCTION pulsix_test_log_status()`)
+	return func() []string {
+		rows, err := conn.Query(context.Background(), `SELECT status FROM pulsix_test_status_log`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
 	}
 }

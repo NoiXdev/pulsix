@@ -37,6 +37,11 @@ type (
 		RetryTargets(ctx context.Context, orgID, id uuid.UUID) (uuid.UUID, uuid.UUID, []uuid.UUID, error)
 		EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
 		RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUID, idempotencyKey string, group uuid.UUID, followUps *[]uuid.UUID, approved jobs.ApprovedRun, overrides *jobs.RunOverrides) ([]jobs.Job, error)
+		// CheckRunReplay and CheckRetryReplay ask, writing nothing,
+		// whether the keyed replay would refuse a covered zone that grew
+		// (backlog 2.142).
+		CheckRunReplay(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) error
+		CheckRetryReplay(ctx context.Context, orgID, id uuid.UUID, idempotencyKey string) error
 	}
 	// CommitSource is the commit of a repository's last successful sync
 	// and why a run cannot be pinned to it (repos.Service).

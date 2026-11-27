@@ -311,9 +311,19 @@ func (s *Service) reserveRunGroup(ctx context.Context, orgID uuid.UUID, key stri
 	// running, finished, failed after it started, or refused for another
 	// reason (an errored run the group's outcome counts) — so nothing runs
 	// twice and nothing the outcome counts is replaced.
-	existing, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &claimed}, "", replayListLimit)
+	covering, err := s.coveringJobs(ctx, orgID, claimed)
 	if err != nil {
-		return uuid.Nil, nil, fmt.Errorf("list reserved run group: %w", err)
+		return uuid.Nil, nil, err
+	}
+	return claimed, covering, nil
+}
+
+// coveringJobs lists the jobs of run group group that cover their zone on
+// a replay: all but those refused at their first claim as withdrawn.
+func (s *Service) coveringJobs(ctx context.Context, orgID, group uuid.UUID) ([]Job, error) {
+	existing, _, err := s.store.ListJobs(ctx, orgID, Filter{RunGroupID: &group}, "", replayListLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list reserved run group: %w", err)
 	}
 	covering := existing[:0:0]
 	for _, j := range existing {
@@ -321,7 +331,7 @@ func (s *Service) reserveRunGroup(ctx context.Context, orgID uuid.UUID, key stri
 			covering = append(covering, j)
 		}
 	}
-	return claimed, covering, nil
+	return covering, nil
 }
 
 // EnqueueSyncWith is EnqueueSync with an explicit trigger (a repo_sync

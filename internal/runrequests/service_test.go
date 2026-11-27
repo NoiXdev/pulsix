@@ -25,6 +25,8 @@ type memStore struct {
 	// origins is where each follow-up row sits (FollowUpOrigin), by its
 	// parent group and template.
 	origins map[followUpRowKey]runrequests.FollowUpOrigin
+	// decides counts the Decide calls.
+	decides int
 }
 
 // followUpRowKey is a follow-up row's unique key: its parent run group
@@ -112,6 +114,7 @@ func (m *memStore) Tokens(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[
 }
 
 func (m *memStore) Decide(_ context.Context, orgID, id uuid.UUID, to runrequests.Status, by uuid.UUID, at time.Time, fingerprint string, approved jobs.ApprovedRun, followUps *runrequests.FollowUpBindings) (bool, error) {
+	m.decides++
 	r, ok := m.rows[id]
 	rejectWaiting := r.Status == runrequests.StatusWaitingForSync && to == runrequests.StatusRejected
 	if !ok || r.OrgID != orgID || (r.Status != runrequests.StatusPending && !rejectWaiting) {
@@ -254,6 +257,15 @@ type fakeEnqueuer struct {
 	retryPin  string // the commit the last retry was pinned to
 	// retryApproved is what the last retry was given from its approval.
 	retryApproved jobs.ApprovedRun
+	// checkErr is what CheckReplay answers; checkKeys the keys it was
+	// asked with.
+	checkErr  error
+	checkKeys []string
+}
+
+func (f *fakeEnqueuer) CheckReplay(_ context.Context, _ uuid.UUID, _ runrequests.Request, key string) error {
+	f.checkKeys = append(f.checkKeys, key)
+	return f.checkErr
 }
 
 func (f *fakeEnqueuer) Run(_ context.Context, _ uuid.UUID, r runrequests.Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {

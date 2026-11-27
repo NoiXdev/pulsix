@@ -56,8 +56,11 @@ type fakeJobRunner struct {
 	retryPin       string
 	retryEnroll    []uuid.UUID
 	retryOverrides *jobs.RunOverrides
-	// runErr is what EnqueueRunWith answers.
-	runErr error
+	// runErr is what EnqueueRunWith answers, checkErr what the replay
+	// checks answer; checked is the run CheckRunReplay was asked about.
+	runErr   error
+	checkErr error
+	checked  *jobs.RunRequest
 	// targetCalls counts RetryTargets.
 	targetCalls int
 }
@@ -305,4 +308,13 @@ func TestClearErrorAbortsTheEnqueue(t *testing.T) {
 // retryOf is a retry request of job.
 func retryOf(job uuid.UUID) runrequests.Request {
 	return runrequests.Request{Kind: runrequests.KindRetryFailed, JobID: &job}
+}
+
+func (f *fakeJobRunner) CheckRunReplay(_ context.Context, _, _ uuid.UUID, req jobs.RunRequest) error {
+	f.checked = &req
+	return f.checkErr
+}
+
+func (f *fakeJobRunner) CheckRetryReplay(context.Context, uuid.UUID, uuid.UUID, string) error {
+	return f.checkErr
 }

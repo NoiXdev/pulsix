@@ -94,6 +94,29 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 	return templateID, group, tmpl.Revision, nil
 }
 
+// CheckReplay implements Enqueuer: the run (or retry) Run (RetryFailed)
+// would enqueue, asked of the queue without writing (review I1 of backlog
+// 2.142), the refusal named like the enqueue's. Overrides that no longer
+// pass are left to the enqueue, which refuses them after the decision as
+// before.
+func (r *Resolver) CheckReplay(ctx context.Context, orgID uuid.UUID, req Request, key string) error {
+	if req.Kind == KindRetryFailed {
+		if req.JobID == nil {
+			return nil
+		}
+		return r.nameGrowth(ctx, orgID, r.src.Jobs.CheckRetryReplay(ctx, orgID, *req.JobID, key))
+	}
+	run := jobs.RunRequest{Trigger: jobs.TriggerManual, OnlyHost: req.HostID, IdempotencyKey: key, RefuseCoveredZoneGrowth: true}
+	if req.Overrides != nil {
+		run.OnlyHost = nil
+		var err error
+		if run.Overrides, run.OnlyHosts, err = r.runOverrides(ctx, orgID, req); err != nil {
+			return nil
+		}
+	}
+	return r.nameGrowth(ctx, orgID, r.src.Jobs.CheckRunReplay(ctx, orgID, req.TemplateID, run))
+}
+
 // Run implements Enqueuer through the manual run path. The follow-ups the
 // group holds unstarted are cleared first; followUps is then the whole list
 // the run plans (empty, never nil, so nothing is inherited). A request's

@@ -123,3 +123,55 @@ func TestRetryReplayOfAnApprovedRetryRefusesGrowth(t *testing.T) {
 		t.Fatalf("replay of the approved retry = %v, want ErrCoveredZoneGrew", err)
 	}
 }
+
+// TestCheckRunReplayRefusesGrowthWithoutWriting is review I1: the approval
+// asks, before it records its decision, whether the replay would refuse;
+// the question writes nothing (no job, no reservation of a new key).
+func TestCheckRunReplayRefusesGrowthWithoutWriting(t *testing.T) {
+	actor := uuid.Must(uuid.NewV7())
+	req := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, IdempotencyKey: "run-request:c", RefuseCoveredZoneGrowth: true}
+	f := newCoveredZoneFixture(t, req, true)
+	if err := f.svc.CheckRunReplay(ctx, f.org, f.tmpl, req); !errors.Is(err, jobs.ErrCoveredZoneGrew) {
+		t.Fatalf("check = %v, want ErrCoveredZoneGrew", err)
+	}
+	if len(f.store.jobs) != 1 {
+		t.Fatalf("stored jobs after the check = %d, want the first attempt's one", len(f.store.jobs))
+	}
+	other := req
+	other.IdempotencyKey = "run-request:never-enqueued"
+	if err := f.svc.CheckRunReplay(ctx, f.org, f.tmpl, other); err != nil {
+		t.Fatalf("check of a key nothing enqueued = %v, want nil", err)
+	}
+	if n := len(f.store.idempotency); n != 1 {
+		t.Fatalf("reservations after the checks = %d, want the first attempt's one", n)
+	}
+	ok := newCoveredZoneFixture(t, req, false)
+	if err := ok.svc.CheckRunReplay(ctx, ok.org, ok.tmpl, req); err != nil {
+		t.Fatalf("check without growth = %v, want nil", err)
+	}
+}
+
+// TestCheckRetryReplayRefusesGrowth: the same question for an approved
+// retry request's keyed retry.
+func TestCheckRetryReplayRefusesGrowth(t *testing.T) {
+	f := newChainFixture(t)
+	orig := id7()
+	f.store.jobs[orig] = storedJob{j: jobs.Job{
+		ID: orig, OrgID: f.org, Kind: jobs.KindRun, Status: jobs.StatusFailed,
+		TemplateID: &f.tpl, HostIDs: []uuid.UUID{f.h1, f.h2}, RunGroupID: id7(),
+		Stats: map[string]any{jobs.StatsFailedHosts: []any{f.h1.String(), f.h2.String()}},
+	}}
+	if err := f.svc.CheckRetryReplay(ctx, f.org, orig, "run-request:r"); err != nil {
+		t.Fatalf("check before any attempt = %v, want nil", err)
+	}
+	if _, err := f.svc.RetryFailedInto(ctx, f.org, orig, nil, "run-request:r", id7(), nil, jobs.ApprovedRun{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.CheckRetryReplay(ctx, f.org, orig, "run-request:r"); err != nil {
+		t.Fatalf("check without growth = %v, want nil", err)
+	}
+	f.res.targets = []jobs.ZoneTargets{{ZoneID: f.zone, HostIDs: []uuid.UUID{f.h1, f.h2, f.h3}}}
+	if err := f.svc.CheckRetryReplay(ctx, f.org, orig, "run-request:r"); !errors.Is(err, jobs.ErrCoveredZoneGrew) {
+		t.Fatalf("check with growth = %v, want ErrCoveredZoneGrew", err)
+	}
+}
