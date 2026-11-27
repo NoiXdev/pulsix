@@ -180,6 +180,94 @@ func (q *Queries) InsertProbeSample(ctx context.Context, arg InsertProbeSamplePa
 	return err
 }
 
+const listHostProbeCurrent = `-- name: ListHostProbeCurrent :many
+SELECT org_id, host_id, check_key, vantage, item, metric, value, label, at, error FROM probe_current
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = ANY($3::text[])
+ORDER BY check_key, vantage, item, metric
+`
+
+type ListHostProbeCurrentParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	HostID    uuid.UUID `json:"host_id"`
+	CheckKeys []string  `json:"check_keys"`
+}
+
+// Every per-vantage current row of the listed checks of one host, for the
+// host page's vantage view in one read (backlog 3.79): by the primary
+// key's leading (host_id, check_key).
+func (q *Queries) ListHostProbeCurrent(ctx context.Context, arg ListHostProbeCurrentParams) ([]ProbeCurrent, error) {
+	rows, err := q.db.Query(ctx, listHostProbeCurrent, arg.OrgID, arg.HostID, arg.CheckKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProbeCurrent
+	for rows.Next() {
+		var i ProbeCurrent
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Vantage,
+			&i.Item,
+			&i.Metric,
+			&i.Value,
+			&i.Label,
+			&i.At,
+			&i.Error,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostProbeSlotAgents = `-- name: ListHostProbeSlotAgents :many
+SELECT check_key, agent_host_id FROM probe_assignments
+WHERE org_id = $1 AND target_host_id = $2
+  AND check_key = ANY($3::text[])
+ORDER BY check_key, agent_host_id
+`
+
+type ListHostProbeSlotAgentsParams struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	TargetHostID uuid.UUID `json:"target_host_id"`
+	CheckKeys    []string  `json:"check_keys"`
+}
+
+type ListHostProbeSlotAgentsRow struct {
+	CheckKey    string    `json:"check_key"`
+	AgentHostID uuid.UUID `json:"agent_host_id"`
+}
+
+// The agents currently assigned to the listed checks of one target host,
+// for the host page's vantage view in one read (backlog 3.79): by
+// probe_assignments_slot_idx.
+func (q *Queries) ListHostProbeSlotAgents(ctx context.Context, arg ListHostProbeSlotAgentsParams) ([]ListHostProbeSlotAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listHostProbeSlotAgents, arg.OrgID, arg.TargetHostID, arg.CheckKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHostProbeSlotAgentsRow
+	for rows.Next() {
+		var i ListHostProbeSlotAgentsRow
+		if err := rows.Scan(&i.CheckKey, &i.AgentHostID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProbeAssignmentsForAgent = `-- name: ListProbeAssignmentsForAgent :many
 SELECT org_id, agent_host_id, target_host_id, check_key, plugin, params, interval_seconds, address, assigned_at FROM probe_assignments
 WHERE org_id = $1 AND agent_host_id = $2
@@ -297,39 +385,6 @@ func (q *Queries) ListProbeCurrent(ctx context.Context, arg ListProbeCurrentPara
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listProbeSlotAgents = `-- name: ListProbeSlotAgents :many
-SELECT agent_host_id FROM probe_assignments
-WHERE org_id = $1 AND target_host_id = $2 AND check_key = $3
-ORDER BY agent_host_id
-`
-
-type ListProbeSlotAgentsParams struct {
-	OrgID        uuid.UUID `json:"org_id"`
-	TargetHostID uuid.UUID `json:"target_host_id"`
-	CheckKey     string    `json:"check_key"`
-}
-
-// The agents currently assigned to one (target host, check key) slot.
-func (q *Queries) ListProbeSlotAgents(ctx context.Context, arg ListProbeSlotAgentsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listProbeSlotAgents, arg.OrgID, arg.TargetHostID, arg.CheckKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []uuid.UUID
-	for rows.Next() {
-		var agent_host_id uuid.UUID
-		if err := rows.Scan(&agent_host_id); err != nil {
-			return nil, err
-		}
-		items = append(items, agent_host_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

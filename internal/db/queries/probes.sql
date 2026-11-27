@@ -11,11 +11,14 @@ SELECT * FROM probe_assignments
 WHERE org_id = sqlc.arg(org_id) AND agent_host_id = sqlc.arg(agent_host_id)
 ORDER BY target_host_id, check_key;
 
--- name: ListProbeSlotAgents :many
--- The agents currently assigned to one (target host, check key) slot.
-SELECT agent_host_id FROM probe_assignments
-WHERE org_id = sqlc.arg(org_id) AND target_host_id = sqlc.arg(target_host_id) AND check_key = sqlc.arg(check_key)
-ORDER BY agent_host_id;
+-- name: ListHostProbeSlotAgents :many
+-- The agents currently assigned to the listed checks of one target host,
+-- for the host page's vantage view in one read (backlog 3.79): by
+-- probe_assignments_slot_idx.
+SELECT check_key, agent_host_id FROM probe_assignments
+WHERE org_id = sqlc.arg(org_id) AND target_host_id = sqlc.arg(target_host_id)
+  AND check_key = ANY(sqlc.arg(check_keys)::text[])
+ORDER BY check_key, agent_host_id;
 
 -- name: InsertProbeAssignment :exec
 INSERT INTO probe_assignments (org_id, agent_host_id, target_host_id, check_key, plugin, params, interval_seconds, address)
@@ -59,6 +62,15 @@ ON CONFLICT (host_id, check_key, vantage, item, metric) DO UPDATE SET
 SELECT * FROM probe_current
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = sqlc.arg(check_key)
 ORDER BY vantage, item, metric;
+
+-- name: ListHostProbeCurrent :many
+-- Every per-vantage current row of the listed checks of one host, for the
+-- host page's vantage view in one read (backlog 3.79): by the primary
+-- key's leading (host_id, check_key).
+SELECT * FROM probe_current
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = ANY(sqlc.arg(check_keys)::text[])
+ORDER BY check_key, vantage, item, metric;
 
 -- name: DeleteProbeCurrentExcept :exec
 -- The vantages of one slot not in keep lose their current rows; samples
