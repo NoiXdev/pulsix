@@ -116,6 +116,7 @@ func TestClassify(t *testing.T) {
 		{"hostname", x509.HostnameError{Host: "secret-host"}, "TLS handshake failed"},
 		{"cert invalid", x509.CertificateInvalidError{Reason: x509.Expired}, "TLS handshake failed"},
 		{"alert", tls.AlertError(40), "TLS handshake failed"},
+		{"alert received", receivedAlert(t), "TLS handshake failed"},
 		{"tls wrapped", fmt.Errorf("a: %w", fmt.Errorf("b: %w", x509.UnknownAuthorityError{})), "TLS handshake failed"},
 		{"generic net", &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}, "connection failed"},
 		{"other", errors.New("boom"), "connection failed"},
@@ -128,6 +129,26 @@ func TestClassify(t *testing.T) {
 			}
 		})
 	}
+}
+
+// receivedAlert is the error crypto/tls returns when the server sends an
+// alert: a *net.OpError "remote error" around an unexported alert type. It
+// is produced by a real handshake against a server that refuses it.
+func receivedAlert(t *testing.T) error {
+	t.Helper()
+	cliConn, srvConn := net.Pipe()
+	defer func() { _ = cliConn.Close() }()
+	go func() {
+		// No certificate: the server answers the ClientHello with an alert.
+		_ = tls.Server(srvConn, &tls.Config{MinVersion: tls.VersionTLS12}).Handshake()
+		_ = srvConn.Close()
+	}()
+	err := tls.Client(cliConn, &tls.Config{ServerName: "x", MinVersion: tls.VersionTLS12}).Handshake()
+	var op *net.OpError
+	if !errors.As(err, &op) || op.Op != "remote error" {
+		t.Fatalf("handshake error %T %v is not a received alert", err, err)
+	}
+	return err
 }
 
 // timeoutErr is a net.Error that reports Timeout.

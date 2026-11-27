@@ -471,6 +471,33 @@ func TestSecretCheckStaysManagerOnly(t *testing.T) {
 	}
 }
 
+// TestCustomRequestCheckStaysManagerOnly: an http check with a method
+// other than GET or HEAD, headers or a body is never assigned to an
+// agent, whose earlier release could send it as a plain GET (backlog
+// 3.84); the descriptors refuse the combination, this guards a row
+// written past them.
+func TestCustomRequestCheckStaysManagerOnly(t *testing.T) {
+	for name, extra := range map[string]map[string]any{
+		"POST":    {"url": "http://192.0.2.1/", "method": "POST"},
+		"headers": {"url": "http://192.0.2.1/", "headers": []any{"X-A: 1"}},
+		"body":    {"url": "http://192.0.2.1/", "method": "PUT", "body": "x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			f := h.addFleet("a1")
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+				vantageCheck("web", "http", time.Minute, []uuid.UUID{f.group}, extra))
+			h.tickAt(0)
+			if rs := h.vstore.Replaces(); len(rs) != 1 || len(rs[0].set) != 0 {
+				t.Fatalf("assignments = %+v, want none for a custom request", rs)
+			}
+			if b := h.rec.Batches(); len(b) != 1 {
+				t.Fatalf("batches = %d, want the manager's own result", len(b))
+			}
+		})
+	}
+}
+
 func TestLostLockForgetsVantageState(t *testing.T) {
 	h := newHarness(t, nil)
 	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, synthetic("web", "tcp", time.Minute))

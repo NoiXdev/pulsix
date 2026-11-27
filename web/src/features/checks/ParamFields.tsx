@@ -6,7 +6,9 @@ import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { CheckPluginDescriptor, CheckPluginParam, MonitoringGroup } from '../../api/types.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
-import { isAssertions, paramText, placeholderOf, takesEscapes, VANTAGE_PARAMS, type ParamValues } from './paramForm.ts';
+import {
+  changesState, isAssertions, isMultiline, paramText, placeholderOf, takesEscapes, VANTAGE_PARAMS, type ParamValues,
+} from './paramForm.ts';
 import { VantageFields } from './VantageFields.tsx';
 import { AssertionEditor } from './AssertionEditor.tsx';
 import { isAssertionPlugin } from './assertionFormat.ts';
@@ -18,8 +20,9 @@ const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background 
  * descriptor lists them (GET /check-plugins, backlog 3.54), for both the
  * organization's check dialog and the instance's shared check form. Each
  * type has one control: a list a multi-line textarea (one entry per
- * line), an integer a number input, a string a text input, an enum a
- * select, a bool a switch. A field the user never touched holds no value,
+ * line), an integer a number input, a string a text input (a multi-line
+ * one, http's request body, a textarea), an enum a select, a bool a
+ * switch. A field the user never touched holds no value,
  * shows the server's default (a placeholder, a preselection, a switch's
  * position) and is not sent (paramsFrom).
  *
@@ -57,8 +60,11 @@ export function ParamFields({
   const text = (spec: CheckPluginParam) => paramText(t, plugin.name, spec.name);
   const label = (spec: CheckPluginParam) => text(spec)?.label ?? spec.name;
   const own = plugin.params.filter((p) => !VANTAGE_PARAMS.has(p.name));
-  const lists = own.filter((p) => p.type === 'list');
-  const inputs = own.filter((p) => p.type !== 'list' && p.type !== 'bool');
+  // A multi-line string (http's body) is a textarea like a list.
+  const blocks = own.filter((p) => p.type === 'list' || isMultiline(plugin.name, p.name));
+  const inputs = own.filter((p) => !blocks.includes(p) && p.type !== 'bool');
+  const hintOf = (spec: CheckPluginParam) =>
+    spec.name === 'method' && changesState(plugin.name, values) ? t.checks.synthetic.methodChangesState : text(spec)?.hint;
   const switches = own.filter((p) => p.type === 'bool');
   if (plugin.params.length === 0 && plugin.runs !== 'server') return null;
 
@@ -115,7 +121,7 @@ export function ParamFields({
   return (
     <div className="flex flex-col gap-3">
       {plugin.runs === 'server' && <p className="text-[11px] text-muted-foreground">{t.checks.synthetic.runsFromServer}</p>}
-      {lists.map((spec) => {
+      {blocks.map((spec) => {
         const id = `${idPrefix}-${spec.name}`;
         const value = values[spec.name];
         const hint = text(spec)?.hint;
@@ -165,7 +171,7 @@ export function ParamFields({
           {inputs.map((spec) => {
             const id = `${idPrefix}-${spec.name}`;
             return (
-              <Field key={spec.name} id={id} label={label(spec)} hint={text(spec)?.hint} error={errors[spec.name]}>
+              <Field key={spec.name} id={id} label={label(spec)} hint={hintOf(spec)} error={errors[spec.name]}>
                 {control(spec, id)}
               </Field>
             );

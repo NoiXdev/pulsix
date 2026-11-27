@@ -25,10 +25,29 @@ var ErrNotAllowed = errors.New("target address not allowed")
 // plus the operator's extra prefixes (PULSIX_PROBE_DENY_CIDRS). Unlike a
 // webhook, a probe has no allowlist: PULSIX_NOTIFY_ALLOW_CIDRS does not
 // apply to it.
+//
+// It also carries whether the manager's operator allows probes that may
+// change something on their target (PULSIX_PROBE_WRITE_METHODS, backlog
+// 3.84: an http check's POST, PUT, PATCH, DELETE or body); off unless
+// WithWrites turns it on, so an agent's guard never allows them.
 type Guard struct {
 	policy outbound.Policy
 	deny   []netip.Prefix
+	writes bool
 }
+
+// WithWrites returns a copy of g that allows state-changing requests when
+// on is true, and refuses them when false; g itself is unchanged.
+func (g *Guard) WithWrites(on bool) *Guard {
+	c := *g
+	c.deny = clonePrefixes(g.deny)
+	c.writes = on
+	return &c
+}
+
+// WritesAllowed reports whether g allows state-changing requests; a nil
+// guard does not.
+func (g *Guard) WritesAllowed() bool { return g != nil && g.writes }
 
 // NewGuard returns the production guard: the outbound policy, seeing
 // through nat64 (PULSIX_NOTIFY_NAT64_PREFIXES), plus extra

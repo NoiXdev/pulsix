@@ -118,14 +118,8 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (body []byte, reason
 		return nil, classify(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusUnauthorized:
-		return nil, "authentication failed (HTTP 401)"
-	case http.StatusForbidden:
-		return nil, "permission denied (HTTP 403)"
-	default:
-		return nil, "HTTP status " + strconv.Itoa(resp.StatusCode)
+	if reason := StatusReason(resp.StatusCode); reason != "" {
+		return nil, reason
 	}
 	limit := opt.limit()
 	body, err = io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
@@ -136,6 +130,21 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (body []byte, reason
 		return nil, "response too large"
 	}
 	return body, ""
+}
+
+// StatusReason is the fixed text of a status page answered with code, or
+// "" for 200, the only code that carries the page. phpfpm's FastCGI pools
+// map their CGI Status header through it too.
+func StatusReason(code int) string {
+	switch code {
+	case http.StatusOK:
+		return ""
+	case http.StatusUnauthorized:
+		return "authentication failed (HTTP 401)"
+	case http.StatusForbidden:
+		return "permission denied (HTTP 403)"
+	}
+	return "HTTP status " + strconv.Itoa(code)
 }
 
 // classify drops Go's *url.Error wrapper (its text carries the URL) before

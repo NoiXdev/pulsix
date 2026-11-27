@@ -236,6 +236,10 @@ func (allowAllGuard) CheckRunClaim(context.Context, uuid.UUID, uuid.UUID, jobs.A
 	return nil
 }
 
+func (allowAllGuard) ConfirmWithdrawn(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
+}
+
 // TestSetClaimGuardAcceptsAGuard: wiring a guard into a fresh queue is
 // accepted and the queue still answers an empty claim with nothing.
 func TestSetClaimGuardAcceptsAGuard(t *testing.T) {

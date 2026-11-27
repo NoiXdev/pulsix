@@ -36,6 +36,15 @@ func (r *Runner) secretName(c checks.Resolved) string {
 	return name
 }
 
+// managerOnly reports whether c's check is probed only from the manager
+// (checkplugins.Descriptor.ProbedOnlyFromManager): it names a secret, or
+// it is an http check with a custom request (backlog 3.84). A plugin no
+// descriptor knows is not.
+func (r *Runner) managerOnly(c checks.Resolved) bool {
+	d, ok := r.describe(c.Plugin)
+	return ok && d.ProbedOnlyFromManager(c.Params)
+}
+
 // secretFor returns the fields of the secret t's check names (t.secret),
 // nil when it names none. When the secret cannot be had it returns
 // instead the observations of a probe that could not be attempted, with

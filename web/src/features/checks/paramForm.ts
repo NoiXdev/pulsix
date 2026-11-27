@@ -45,6 +45,38 @@ export function isAssertions(plugin: string, param: string): boolean {
   return isAssertionPlugin(plugin) && param === 'assertions';
 }
 
+/** isMultiline: a string parameter edited in a textarea, its line breaks
+ * sent as typed — the http check's request body (backlog 3.84). */
+export function isMultiline(plugin: string, param: string): boolean {
+  return plugin === 'http' && param === 'body';
+}
+
+/** The http methods that ask the target to change something; the form
+ * warns while one is chosen (backlog 3.84). */
+const STATE_CHANGING: ReadonlySet<string> = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** changesState says whether the form's http method is one that asks the
+ * target to change something. */
+export function changesState(plugin: string, values: ParamValues): boolean {
+  return plugin === 'http' && typeof values.method === 'string' && STATE_CHANGING.has(values.method);
+}
+
+/** customRequest says whether the form's http check sends a method other
+ * than GET or HEAD, headers or a body (backlog 3.84): such a check is
+ * probed only from the Pulsix server (the plugin's own rule), since an
+ * agent of an earlier release would send a plain GET. */
+export function customRequest(plugin: string, values: ParamValues): boolean {
+  if (plugin !== 'http') return false;
+  const text = (name: string) => (typeof values[name] === 'string' ? (values[name] as string) : '');
+  const method = text('method');
+  return (
+    (method !== '' && method !== 'GET' && method !== 'HEAD') ||
+    lines(text('headers')).length > 0 ||
+    text('body') !== '' ||
+    text('content_type').trim() !== ''
+  );
+}
+
 /** The vantage-point parameters every synthetic plugin takes (backlog
  * 3.13a). The organization's check dialog edits them as their own section
  * (VantageFields); the instance's shared check form, which knows no

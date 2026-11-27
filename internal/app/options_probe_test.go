@@ -32,6 +32,12 @@ func TestProbeGuardDefaultIsProduction(t *testing.T) {
 			t.Errorf("default guard Allowed(%s) = %v, want %v", tc.ip, got, tc.want)
 		}
 	}
+	if g.WritesAllowed() {
+		t.Fatal("the default guard allows state-changing requests without PULSIX_PROBE_WRITE_METHODS")
+	}
+	if !o.probeGuardFor(config.Config{ProbeWriteMethods: true}).WritesAllowed() {
+		t.Fatal("PULSIX_PROBE_WRITE_METHODS does not reach the guard")
+	}
 	if o.probeTick != 0 || o.probeRefresh != 0 {
 		t.Fatalf("probe tick/refresh = %v/%v without options, want 0/0 (the runner's defaults)", o.probeTick, o.probeRefresh)
 	}

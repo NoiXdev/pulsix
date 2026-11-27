@@ -13,11 +13,13 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/testpki"
 )
 
 func i64(v int64) *int64 { return &v }
@@ -217,6 +219,16 @@ func TestBadSecretFields(t *testing.T) {
 		{"unknown", map[string]string{"user": "u", "pasword": plantedPassword}, "postgres: secret field `pasword` is not known"},
 		{"host with comma", map[string]string{"user": "u", "host": plantedHost + ",b"}, "postgres: secret field `host` is not a single host name or a socket directory"},
 		{"NUL in password", map[string]string{"user": "u", "password": "a\x00b"}, "postgres: secret field `password` is not text without NUL bytes"},
+		{"relative sslrootcert", map[string]string{"user": "u", "sslrootcert": plantedHost + ".pem"}, "postgres: secret field `sslrootcert` is not an absolute path or system"},
+		{"relative sslcert", map[string]string{"user": "u", "sslcert": plantedHost + ".pem", "sslkey": "/k"}, "postgres: secret field `sslcert` is not an absolute path"},
+		{"relative sslkey", map[string]string{"user": "u", "sslcert": "/c", "sslkey": plantedHost + ".key"}, "postgres: secret field `sslkey` is not an absolute path"},
+		{"sslcert without TLS", map[string]string{"user": "u", "sslmode": "disable", "sslcert": "/c", "sslkey": "/k"}, "postgres: secret field `sslcert` needs `sslmode` other than disable"},
+		{"sslkey without TLS", map[string]string{"user": "u", "sslmode": "disable", "sslkey": "/k"}, "postgres: secret field `sslkey` needs `sslmode` other than disable"},
+		{"sslcert without sslkey", map[string]string{"user": "u", "sslcert": "/" + plantedHost + ".pem"}, "postgres: secret field `sslcert` needs `sslkey`"},
+		{"sslkey without sslcert", map[string]string{"user": "u", "sslkey": "/" + plantedHost + ".key"}, "postgres: secret field `sslkey` needs `sslcert`"},
+		{"sslcert over a socket", map[string]string{"user": "u", "host": "/var/run/postgresql", "sslcert": "/c", "sslkey": "/k"}, "postgres: secret field `sslcert` needs a TCP host, not a socket directory"},
+		{"sslkey over a socket", map[string]string{"user": "u", "host": "/var/run/postgresql", "sslkey": "/k"}, "postgres: secret field `sslkey` needs a TCP host, not a socket directory"},
+		{"unreadable sslcert", map[string]string{"user": "u", "sslcert": "/" + plantedHost + ".pem", "sslkey": "/k"}, "postgres: secret field `sslcert` cannot be read"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -239,6 +251,70 @@ func TestUnreadableRootCertIsNamedWithoutThePath(t *testing.T) {
 	}
 	mustErr(t, obs, "", "pg.up", "postgres: secret field `sslrootcert` cannot be read")
 	noSecretIn(t, obs, err)
+}
+
+// A client certificate reaches the connection settings and the key file
+// is checked before anything dials.
+func TestClientCertificateFields(t *testing.T) {
+	dir := t.TempDir()
+	ca := testpki.NewCA(t)
+	client := ca.Client(t, "mon")
+	cert := testpki.Write(t, dir, "c.pem", client.CertPEM, 0o644)
+	key := testpki.Write(t, dir, "c.key", client.KeyPEM, 0o600)
+	var got connSettings
+	sess := &fakeSession{stats: serverStats{MaxConnections: 1}}
+	if _, err := collect(t, newTestPlugin(sess, nil, &got), nil, map[string]string{"user": "u", "sslmode": "verify-full", "sslcert": cert, "sslkey": key}); err != nil {
+		t.Fatal(err)
+	}
+	if got.sslcert != cert || got.sslkey != key {
+		t.Fatalf("settings = %+v", got)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	open := testpki.Write(t, dir, plantedHost+".key", client.KeyPEM, 0o644)
+	obs, err := collect(t, newTestPlugin(sess, nil, nil), nil, map[string]string{"user": "u", "sslcert": cert, "sslkey": open})
+	mustErr(t, obs, "", "pg.up", "postgres: secret field `sslkey` is accessible to other users; remove their permissions, for example chmod 600")
+	noSecretIn(t, obs, err)
+}
+
+// sslrootcert "system" means the system roots: no file is read, and the
+// value reaches the connection as it is.
+func TestRootCertSystem(t *testing.T) {
+	var got connSettings
+	sess := &fakeSession{stats: serverStats{MaxConnections: 1}}
+	obs, err := collect(t, newTestPlugin(sess, nil, &got), nil, map[string]string{"user": "u", "sslmode": "verify-full", "sslrootcert": "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustValue(t, obs, "", "pg.up", 1)
+	if got.sslrootcert != "system" {
+		t.Fatalf("settings = %+v", got)
+	}
+	cfg, err := buildConfig(got)
+	if err != nil || cfg.TLSConfig == nil || cfg.TLSConfig.InsecureSkipVerify || cfg.TLSConfig.RootCAs == nil {
+		t.Fatalf("system roots not configured: %+v, %v", cfg, err)
+	}
+}
+
+// pgx reads only the key file's first block, so leading EC PARAMETERS
+// (openssl ecparam -genkey) are named instead of failing inside pgx.
+func TestKeyWithECParametersIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	ca := testpki.NewCA(t)
+	client := ca.Client(t, "mon")
+	der, err := x509.MarshalECPrivateKey(client.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oid := []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07} // prime256v1
+	key := append(pem.EncodeToMemory(&pem.Block{Type: "EC PARAMETERS", Bytes: oid}), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})...)
+	f := map[string]string{
+		"user": "u", "sslcert": testpki.Write(t, dir, "c.pem", client.CertPEM, 0o644),
+		"sslkey": testpki.Write(t, dir, "c.key", key, 0o600),
+	}
+	obs, _ := collect(t, newTestPlugin(&fakeSession{}, nil, nil), nil, f)
+	mustErr(t, obs, "", "pg.up", "postgres: secret field `sslkey` does not start with the private key; remove the PEM blocks before it (such as EC PARAMETERS)")
 }
 
 func TestNilFieldsAreAConfigurationError(t *testing.T) {

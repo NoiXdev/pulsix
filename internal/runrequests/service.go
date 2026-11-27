@@ -214,6 +214,11 @@ type Store interface {
 	RevertToPending(ctx context.Context, orgID, id uuid.UUID) error
 	// ByRunGroup finds the request whose approval created group.
 	ByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Request, error)
+	// LockStatusByRunGroup is the status of the request whose approval
+	// created group, read under a share lock on its row that the
+	// transaction ctx carries holds to its end: Decide on that request
+	// waits for it, and a read that waited for a Decide sees its result.
+	LockStatusByRunGroup(ctx context.Context, orgID, group uuid.UUID) (Status, error)
 	// ListWaitingFor lists the requests waiting for the sync syncJob, with
 	// the sync job's state.
 	ListWaitingFor(ctx context.Context, syncJob uuid.UUID) ([]Waiting, error)

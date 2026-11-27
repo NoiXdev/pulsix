@@ -136,6 +136,14 @@ type Config struct {
 	// compose README recommends adding the stack's own network. An
 	// invalid entry fails start-up naming it.
 	ProbeDenyCIDRs []netip.Prefix
+	// ProbeWriteMethods lets the synthetic http check send requests that
+	// may change their target: POST, PUT, PATCH, DELETE or a body
+	// (PULSIX_PROBE_WRITE_METHODS, a boolean, default false; backlog
+	// 3.84). Off, such a check is refused on write and a stored one fails
+	// its attempt without sending anything: any member who may write
+	// checks could otherwise send writes into every network the manager
+	// reaches past ProbeDenyCIDRs.
+	ProbeWriteMethods bool
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -307,6 +315,13 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, fmt.Errorf("PULSIX_PROBE_DENY_CIDRS: %w", err)
 	}
 	cfg.ProbeDenyCIDRs = probeDeny
+	if raw := getenv("PULSIX_PROBE_WRITE_METHODS"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("PULSIX_PROBE_WRITE_METHODS %q is not a boolean: %v", raw, err)
+		}
+		cfg.ProbeWriteMethods = b
+	}
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")

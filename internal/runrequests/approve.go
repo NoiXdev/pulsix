@@ -171,7 +171,9 @@ var errNoApprovedPicture = errors.New("the run's approval recorded no run pictur
 // request passes only while that request is approved, the job carries
 // what the approval stored (run is the job's: its pinned commit and its
 // enroll list), and its run picture still has the fingerprint the person
-// approved. The picture of an approved request shows its stored commit
+// approved, and every host the job renders (run.HostIDs, frozen at its
+// enqueue) is among that picture's targets (checkApprovedHosts). The
+// picture of an approved request shows its stored commit
 // (Resolver.commit) and enroll list (Resolver.agentEnrollment), so a sync
 // or an agent enrolled after the approval does not fail the run. Anything else, a failed
 // lookup included, refuses the claim, and the queue fails the job with the
@@ -203,7 +205,52 @@ func (s *Service) CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID
 	if Fingerprint(r.ID, p) != r.ApprovedFingerprint {
 		return ErrChangedAfterApproval
 	}
+	return checkApprovedHosts(p, run.HostIDs)
+}
+
+// ErrHostsChangedAfterApproval fails the claim of a run job that renders a
+// host the approved run picture does not hold (backlog 2.141).
+var ErrHostsChangedAfterApproval = errors.New("the run's hosts changed after it was approved; ask for the run again")
+
+// checkApprovedHosts refuses a job host that is not among p's targets. p
+// is the live picture, and its fingerprint equals the approved one, so
+// its targets are the approved ones. A job froze its host list when it
+// was enqueued, after the approval read the picture: a host that joined
+// the template's hosts in between and left again before the claim is in
+// the job, but in neither picture, and must not be rendered — let alone
+// played on — without having been approved. Fewer hosts than approved is
+// fine (one left, or the enqueue excluded it).
+func checkApprovedHosts(p Picture, hostIDs []uuid.UUID) error {
+	approved := make(map[string]bool, len(p.Targets))
+	for _, h := range p.Targets {
+		approved[h.ID] = true
+	}
+	for _, id := range hostIDs {
+		if !approved[id.String()] {
+			return fmt.Errorf("%w (host %s was not part of the approved run)", ErrHostsChangedAfterApproval, id)
+		}
+	}
 	return nil
+}
+
+// ConfirmWithdrawn is the claim guard's second look before a job refused
+// with errRequestNotApproved is failed (jobs.ClaimGuard): it reports
+// whether the run group's request is still not approved, reading it under
+// a share lock that the transaction ctx carries — the one that writes the
+// job's failure — holds to its commit. A re-approval's Decide waits for
+// that commit, so its replay of the run group sees the job failed and
+// enqueues its zone again; or the read waited for the re-approval and sees
+// it approved, and the job runs (backlog 2.127). A run group no request
+// owns is not approved.
+func (s *Service) ConfirmWithdrawn(ctx context.Context, orgID, runGroupID uuid.UUID) (bool, error) {
+	st, err := s.store.LockStatusByRunGroup(ctx, orgID, runGroupID)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("confirm the run's request is not approved: %w", err)
+	}
+	return st != StatusApproved, nil
 }
 
 // idempotencyKey is the key an approval enqueues with, a run or a retry

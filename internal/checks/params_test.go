@@ -112,7 +112,7 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"http placeholder in port", checks.PluginHTTP, map[string]any{"url": "http://example.com:{address}/"}},
 		{"http userinfo", checks.PluginHTTP, map[string]any{"url": "https://user:pass@example.com/"}},
 		{"http user only", checks.PluginHTTP, map[string]any{"url": "https://user@{address}/"}},
-		{"http method POST", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "POST"}},
+		{"http method TRACE", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "TRACE"}},
 		{"http json values with HEAD", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "HEAD", "json_values": []any{"a=$.a"}}},
 		{"http json value unparsable", checks.PluginHTTP, map[string]any{"url": "http://x", "json_values": []any{"a=$["}}},
 		{"http duplicate json value names", checks.PluginHTTP, map[string]any{"url": "http://x", "json_values": []any{"a=$.a", "a=$.b"}}},

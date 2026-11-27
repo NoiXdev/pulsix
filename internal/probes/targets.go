@@ -158,14 +158,15 @@ func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (orgPlan, error)
 
 // newTarget is the target of check c on a host at address: its params
 // without the vantage params, its vantage settings read once. A check
-// naming a secret never gets agent vantages (its credentials stay on the
-// manager; the descriptors refuse the combination, this guards rows
-// written before them), and neither does any check while agent vantages
-// are off.
+// probed only from the manager never gets agent vantages: one naming a
+// secret (its credentials stay on the manager) or an http check with a
+// custom request (an agent of an earlier release would send a plain GET,
+// backlog 3.84); the descriptors refuse the combination, this guards rows
+// written past them. Neither does any check while agent vantages are off.
 func (r *Runner) newTarget(org uuid.UUID, address string, c checks.Resolved) target {
 	t := target{org: org, address: address, check: c, secret: r.secretName(c), vantage: checkplugins.VantageOf(c.Params)}
 	t.check.Params = checkplugins.StripVantage(c.Params)
-	if t.secret != "" || !r.vantagesOn() {
+	if r.managerOnly(c) || !r.vantagesOn() {
 		t.vantage.Groups = nil
 	}
 	return t

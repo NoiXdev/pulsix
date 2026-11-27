@@ -246,3 +246,27 @@ func TestResolveAllowedLookupError(t *testing.T) {
 		t.Fatalf("err %v, want the resolver's DNS error", err)
 	}
 }
+
+// TestGuardWrites: a guard allows state-changing requests only when it
+// was built with them (PULSIX_PROBE_WRITE_METHODS, backlog 3.84); the
+// switch returns a copy and leaves the original as it was.
+func TestGuardWrites(t *testing.T) {
+	g := probe.NewGuard(nil, nil)
+	if g.WritesAllowed() {
+		t.Fatal("a new guard allows writes")
+	}
+	on := g.WithWrites(true)
+	if !on.WritesAllowed() || g.WritesAllowed() {
+		t.Fatalf("WithWrites(true): copy %v, original %v", on.WritesAllowed(), g.WritesAllowed())
+	}
+	if on.WithWrites(false).WritesAllowed() {
+		t.Fatal("WithWrites(false) allows writes")
+	}
+	var none *probe.Guard
+	if none.WritesAllowed() {
+		t.Fatal("a nil guard allows writes")
+	}
+	if !on.Allowed(netip.MustParseAddr("192.0.2.1")) || on.Allowed(netip.MustParseAddr("127.0.0.1")) {
+		t.Fatal("WithWrites changed what may be dialled")
+	}
+}

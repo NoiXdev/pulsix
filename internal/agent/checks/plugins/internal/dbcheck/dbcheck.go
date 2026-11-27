@@ -116,7 +116,15 @@ func Classify(err error) string {
 	return "connection failed"
 }
 
+// isTLS reports a TLS failure on either side: a certificate the agent
+// refused, or an alert the server sent (Go reports a received alert as a
+// *net.OpError "remote error"; for example "certificate required" when no
+// client certificate was sent).
 func isTLS(err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) && op.Op == "remote error" {
+		return true
+	}
 	var (
 		rec    tls.RecordHeaderError
 		verify *tls.CertificateVerificationError

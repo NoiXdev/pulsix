@@ -86,7 +86,7 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"http placeholder in port", "http", map[string]any{"url": "http://example.com:{address}/"}, false},
 		{"http userinfo", "http", map[string]any{"url": "https://user:pass@example.com/"}, false},
 		{"http user only", "http", map[string]any{"url": "https://user@{address}/"}, false},
-		{"http method POST", "http", map[string]any{"url": "http://x", "method": "POST"}, false},
+		{"http method TRACE", "http", map[string]any{"url": "http://x", "method": "TRACE"}, false},
 		{"http method lower case", "http", map[string]any{"url": "http://x", "method": "get"}, false},
 		{"http follow_redirects not bool", "http", map[string]any{"url": "http://x", "follow_redirects": "yes"}, false},
 		{"http verify_tls not bool", "http", map[string]any{"url": "http://x", "verify_tls": 1.0}, false},

@@ -53,7 +53,7 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"caddy: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1:2019/metrics), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
-		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment), " +
+		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ / - without a dot), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"script: commands (required; list; not empty; at most 32 entries; each the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
@@ -61,7 +61,11 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5), " + vantage +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " +
 		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn] as for http, the subject one of connect_ms, response_ms, response (the first line the target sent) such as connect_ms < 500), " + vantage +
-		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), " +
+		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS; default GET), " +
+		"headers (list; at most 16 entries; each at most 1024 bytes; each Name: value, the name a header name other than Host, Content-Length, Transfer-Encoding, Connection, User-Agent, " +
+		"Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect, Accept-Encoding, Content-Type, Authorization, Proxy-Authorization, Cookie, a name containing token, secret, apikey, api-key, api_key, password, access-key, access_key or session or the segment auth, " +
+		"X-Forwarded and X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and the method overrides, the value UTF-8 without control characters), " +
+		"body (not empty; at most 8192 bytes), content_type (at most 255 bytes; a media type such as application/json (application/json when a body is sent without one)), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
 		"body_contains (not empty; at most 500 bytes), " +
 		"json_values (list; at most 32 entries; each name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status), " +

@@ -1,13 +1,12 @@
 package postgres
 
 import (
-	"crypto/x509"
 	"errors"
-	"os"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/dbcheck"
 )
@@ -16,6 +15,9 @@ import (
 // how to log in. It holds credentials, so nothing formats it.
 type connSettings struct {
 	host, port, user, password, database, sslmode, sslrootcert string
+	// sslcert and sslkey are the client certificate and its key; both or
+	// neither.
+	sslcert, sslkey string
 }
 
 func noNUL(s string) bool { return !strings.ContainsRune(s, 0) }
@@ -33,42 +35,56 @@ var fieldSpec = []dbcheck.Field{
 	{Name: "password", Valid: noNUL, Want: "text without NUL bytes"},
 	{Name: "database", Default: "postgres", Valid: noNUL, Want: "text without NUL bytes"},
 	{Name: "sslmode", Default: "prefer", Valid: dbcheck.OneOf("disable", "prefer", "require", "verify-ca", "verify-full"), Want: "one of disable, prefer, require, verify-ca, verify-full"},
-	{Name: "sslrootcert", Valid: noNUL, Want: "text without NUL bytes"},
+	{Name: "sslrootcert", Valid: rootCertOK, Want: "an absolute path or system"},
+	{Name: "sslcert", Valid: dbcheck.AbsPath, Want: "an absolute path"},
+	{Name: "sslkey", Valid: dbcheck.AbsPath, Want: "an absolute path"},
 }
+
+// rootCertOK accepts libpq's "system" (the system roots) or a CA file's
+// absolute path.
+func rootCertOK(s string) bool { return s == "system" || dbcheck.AbsPath(s) }
 
 func parseSettings(fields map[string]string) (connSettings, error) {
 	v, err := dbcheck.Parse(fields, fieldSpec)
 	if err != nil {
 		return connSettings{}, err
 	}
-	return connSettings{
+	s := connSettings{
 		host: v["host"], port: v["port"], user: v["user"], password: v["password"],
 		database: v["database"], sslmode: v["sslmode"], sslrootcert: v["sslrootcert"],
-	}, nil
+		sslcert: v["sslcert"], sslkey: v["sslkey"],
+	}
+	// A client certificate needs TLS: pgx (like libpq) uses none with
+	// sslmode disable or over a Unix socket, so the fields would be ignored.
+	overSocket, _ := pgconn.NetworkAddress(s.host, 5432)
+	for _, f := range []string{"sslcert", "sslkey"} {
+		switch {
+		case v[f] == "":
+		case s.sslmode == "disable":
+			return connSettings{}, errors.New("secret field `" + f + "` needs `sslmode` other than disable")
+		case overSocket == "unix":
+			return connSettings{}, errors.New("secret field `" + f + "` needs a TCP host, not a socket directory")
+		}
+	}
+	return s, nil
 }
 
-// errRootCert is a CA file the agent cannot read; errNotCAFile one it can
-// read that holds no PEM certificate.
-var (
-	errRootCert  = errors.New("sslrootcert cannot be read")
-	errNotCAFile = errors.New("sslrootcert is not a CA file")
-)
-
-// checkRootCert reports whether the CA file named by sslrootcert (when it
-// names a file) can be read and holds at least one PEM certificate. It
-// never returns the path.
-func checkRootCert(s connSettings) error {
-	if s.sslrootcert == "" || s.sslrootcert == "system" {
-		return nil
+// checkFiles reads the CA file (unless sslrootcert is "system") and the
+// client certificate and key the settings name, so a bad file is reported
+// by its field before pgx reads it again (pgx's own errors quote the path).
+// The errors name the field, never the path.
+func checkFiles(s connSettings) error {
+	f := dbcheck.TLSFiles{
+		Cert: s.sslcert, Key: s.sslkey,
+		CAField: "sslrootcert", CertField: "sslcert", KeyField: "sslkey",
+		// pgx reads only the key file's first PEM block.
+		FirstBlockOnly: true,
 	}
-	pem, err := os.ReadFile(s.sslrootcert)
-	if err != nil {
-		return errRootCert
+	if s.sslrootcert != "system" {
+		f.CA = s.sslrootcert
 	}
-	if !x509.NewCertPool().AppendCertsFromPEM(pem) {
-		return errNotCAFile
-	}
-	return nil
+	_, err := f.Load()
+	return err
 }
 
 // errInvalidSettings is the only error buildConfig returns: pgx's own parse
@@ -99,6 +115,16 @@ func quote(v string) string {
 	return b.String()
 }
 
+// certMode is libpq's sslcertmode: "allow" sends the client certificate
+// when the server asks for one; "disable" never reads one (not even
+// ~/.postgresql/postgresql.crt) when the secret names none.
+func certMode(s connSettings) string {
+	if s.sslcert != "" {
+		return "allow"
+	}
+	return "disable"
+}
+
 // buildConfig turns the settings into a pgx connection configuration that
 // depends on nothing but them.
 //
@@ -127,9 +153,9 @@ func buildConfig(s connSettings) (*pgx.ConnConfig, error) {
 		{"dbname", s.database},
 		{"sslmode", s.sslmode},
 		{"sslrootcert", s.sslrootcert},
-		{"sslcert", ""},
-		{"sslkey", ""},
-		{"sslcertmode", "disable"},
+		{"sslcert", s.sslcert},
+		{"sslkey", s.sslkey},
+		{"sslcertmode", certMode(s)},
 		{"sslpassword", ""},
 		{"sslnegotiation", "postgres"},
 		{"sslsni", "1"},

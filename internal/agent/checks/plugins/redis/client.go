@@ -17,9 +17,8 @@ type client struct {
 	stop func() bool
 }
 
-// dial connects under ctx, wraps the connection in TLS when asked, and puts
-// ctx's deadline on the connection. TLS is verified against the host name in
-// the secret ("true") or not at all ("skip-verify"); no custom CA is read.
+// dial connects under ctx, wraps the connection in TLS when s carries a
+// tls.Config (settings.withTLS), and puts ctx's deadline on the connection.
 func dial(ctx context.Context, s settings) (*client, error) {
 	var d net.Dialer
 	raw, err := d.DialContext(ctx, s.network, s.addr)
@@ -33,14 +32,8 @@ func dial(ctx context.Context, s settings) (*client, error) {
 	// A cancelled context closes the raw connection, which fails whatever
 	// read, write or handshake is in progress.
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
-	if s.tls != "false" {
-		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-		if s.tls == "skip-verify" {
-			cfg.InsecureSkipVerify = true //nolint:gosec // the operator chose skip-verify in the secret
-		} else {
-			cfg.ServerName = s.host
-		}
-		tc := tls.Client(raw, cfg)
+	if s.tlsConfig != nil {
+		tc := tls.Client(raw, s.tlsConfig)
 		if err := tc.HandshakeContext(ctx); err != nil {
 			stop()
 			_ = raw.Close()

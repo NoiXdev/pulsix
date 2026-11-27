@@ -95,6 +95,13 @@ WHERE org_id = $1 AND id = $2;
 -- name: GetRunRequestByRunGroup :one
 SELECT * FROM run_requests WHERE org_id = $1 AND run_group_id = $2;
 
+-- name: LockRunRequestStatusByRunGroup :one
+-- The status of the request whose approval created a run group, read under
+-- a FOR SHARE lock held to the end of the caller's transaction: an approval
+-- (DecideRunRequest) of the same request waits for that transaction, and a
+-- read that waited on an approval returns the approved row (backlog 2.127).
+SELECT status FROM run_requests WHERE org_id = $1 AND run_group_id = $2 FOR SHARE;
+
 -- name: ListWaitingRunRequestsForSync :many
 -- The requests waiting for one sync job (migration 00124), with the job's
 -- status and error.

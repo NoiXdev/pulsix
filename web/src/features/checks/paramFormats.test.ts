@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import fixture from '../../test/checkPlugins.json';
-import { FORMATS, formatProblem, formatValid } from './paramFormats.ts';
+import { FORMATS, formatProblem, formatValid, httpHeaderProblem } from './paramFormats.ts';
 
 interface Vector {
   format: string;
@@ -53,6 +53,24 @@ describe('the parameter formats', () => {
     }
     expect(formatProblem('jsonValue', 'a=.a')).toBe('jsonValue');
     expect(formatProblem('jsonValue', 'status=$.status')).toBeNull();
+  });
+
+  it('name why a request header is refused, so the message can point to the secret (backlog 3.84)', () => {
+    expect(httpHeaderProblem('X-Api-Version: 2')).toBeNull();
+    expect(formatProblem('httpHeader', 'Authorization: Bearer x')).toBe('httpHeaderCredentials');
+    expect(formatProblem('httpHeader', 'cookie: a=b')).toBe('httpHeaderCredentials');
+    expect(formatProblem('httpHeader', 'Host: example.com')).toBe('httpHeaderReserved');
+    expect(formatProblem('httpHeader', 'content-type: text/plain')).toBe('httpHeaderContentType');
+    expect(formatProblem('httpHeader', 'X-A: a\nb')).toBe('httpHeader');
+    expect(formatProblem('httpHeader', 'Authorization')).toBe('httpHeader');
+    expect(formatProblem('httpHeader', 'X-Api-Key: k')).toBe('httpHeaderCredentials');
+    expect(formatProblem('httpHeader', 'X-Forwarded-For: 1.2.3.4')).toBe('httpHeaderRouting');
+    for (const name of ['X-Api_Key', 'X-Auth', 'x-auth-user', 'Api-Auth', 'X-Access-Key', 'X-Access_Key', 'X-Session', 'X-Session-Id']) {
+      expect(formatProblem('httpHeader', `${name}: v`)).toBe('httpHeaderCredentials');
+    }
+    for (const name of ['X-Author', 'X-Authority', 'X-Authored-By', 'X-Access-Level']) {
+      expect(httpHeaderProblem(`${name}: v`)).toBeNull();
+    }
   });
 
   it('accept nothing for a format no twin knows, as the server does', () => {

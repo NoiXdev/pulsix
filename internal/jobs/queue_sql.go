@@ -191,8 +191,15 @@ func (q *SQLQueue) SetVaultResolver(r VaultResolver) { q.vaultResolver = r }
 // run is what the claimed job stored from its approval (its pinned
 // commit, "" for none, and its enroll list, nil for none); the guard
 // compares it with what the approval stored on its request.
+//
+// ConfirmWithdrawn is asked inside the transaction that would write the
+// failure of a job refused with ErrApprovalWithdrawn, before it writes:
+// true when the run's request is still not approved, read under a lock
+// that makes a concurrent approval wait for that transaction (see
+// guardClaim, claim_withdrawn.go). False lets the job be checked again.
 type ClaimGuard interface {
 	CheckRunClaim(ctx context.Context, orgID, runGroupID uuid.UUID, run ApprovedRun) error
+	ConfirmWithdrawn(ctx context.Context, orgID, runGroupID uuid.UUID) (bool, error)
 }
 
 // SetClaimGuard injects the claim guard of run jobs (see the claimGuard
@@ -323,11 +330,11 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 	}
 	claim := &Claim{Token: ""}
 	if job.Kind == KindRun && q.claimGuard != nil {
-		if err := q.claimGuard.CheckRunClaim(db.WithOrgScope(ctx, job.OrgID), job.OrgID, job.RunGroupID,
-			ApprovedRun{PinnedCommit: job.PinnedCommit, EnrollHostIDs: job.EnrollHostIDs}); err != nil {
-			if failErr := q.failJob(ctx, job.ID, claimRefusal(err)); failErr != nil {
-				return nil, fmt.Errorf("fail guarded job %s (guard: %v): %w", job.ID, err, failErr)
-			}
+		refused, err := q.guardClaim(ctx, job)
+		if err != nil {
+			return nil, err
+		}
+		if refused {
 			return nil, nil
 		}
 	}

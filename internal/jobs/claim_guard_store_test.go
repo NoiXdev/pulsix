@@ -28,6 +28,12 @@ func (g *refuseGuard) CheckRunClaim(_ context.Context, _, _ uuid.UUID, run jobs.
 	return g.reason
 }
 
+// ConfirmWithdrawn confirms every withdrawn refusal: the guard's answer
+// does not change.
+func (g *refuseGuard) ConfirmWithdrawn(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 // TestQueueClaimGuardRefusalMarksTheJob: a run job the claim guard refuses
 // as withdrawn fails with the fixed text jobs.WithdrawnAtClaimError, the
 // mark a replay of its run group and the group's outcome read; the claim
@@ -91,7 +97,9 @@ func TestQueueClaimGuardRefusalMarksTheJob(t *testing.T) {
 
 // TestQueueClaimGuardSeesTheJobsPin (spec 2026-11-25 A, B): the guard is
 // handed the commit the claimed job is pinned to and the hosts it enrols
-// agents on, which it compares with what its approval stored.
+// agents on, which it compares with what its approval stored, and the
+// hosts the job renders, which it compares with the approved picture
+// (backlog 2.141).
 func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, gen.New(d.Pool()), "jobs-claim-guard-pin")
@@ -114,7 +122,8 @@ func TestQueueClaimGuardSeesTheJobsPin(t *testing.T) {
 	if c, err := queue.ClaimFor(ctx, worker, org, []uuid.UUID{zone}, "v1", jobs.ClaimCaps{SupportsPinnedCommit: true}); err != nil || c != nil {
 		t.Fatalf("ClaimFor = %v, %v; want the guard's refusal", c, err)
 	}
-	if len(guard.runs) != 1 || guard.runs[0].PinnedCommit != j.PinnedCommit || !slices.Equal(guard.runs[0].EnrollHostIDs, j.EnrollHostIDs) {
-		t.Fatalf("guard saw %+v, want [{%s %v}]", guard.runs, j.PinnedCommit, j.EnrollHostIDs)
+	if len(guard.runs) != 1 || guard.runs[0].PinnedCommit != j.PinnedCommit || !slices.Equal(guard.runs[0].EnrollHostIDs, j.EnrollHostIDs) ||
+		len(j.HostIDs) == 0 || !slices.Equal(guard.runs[0].HostIDs, j.HostIDs) {
+		t.Fatalf("guard saw %+v, want [{%s %v %v}]", guard.runs, j.PinnedCommit, j.EnrollHostIDs, j.HostIDs)
 	}
 }

@@ -277,6 +277,66 @@ function statusURL(s: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// phpfpmPool (backlog 3.11a): a statusURL, or a pool's FastCGI address with
+// its status path — fcgi://host:port/path or unix:/socket:/path, ported
+// from internal/checkplugins/phpfpm_pool.go.
+// ---------------------------------------------------------------------------
+
+/** The status path: '/' and at most 254 letters, digits, _ / - (no dot
+ * and no ~, defence in depth: it never names a PHP script or a user_dir
+ * path). */
+const PHPFPM_STATUS_PATH = /^\/[A-Za-z0-9_/-]{0,254}$/;
+
+/** An IPv4 address, an IPv6 address in brackets without a zone, or a DNS
+ * name — validPHPFPMHost. */
+function phpfpmHost(h: string): boolean {
+  if (h.startsWith('[')) {
+    if (!h.endsWith(']') || h.length < 2) return false;
+    const inner = h.slice(1, -1);
+    return !inner.includes('%') && parseAddr(inner) === 6;
+  }
+  const family = parseAddr(h);
+  if (family !== null) return family === 4;
+  return !h.includes('{address}') && dnsName(h);
+}
+
+function phpfpmFastCGI(s: string): boolean {
+  if (s.startsWith('fcgi://')) {
+    const rest = s.slice('fcgi://'.length);
+    const slash = rest.indexOf('/');
+    if (slash < 0) return false;
+    const hostPort = rest.slice(0, slash);
+    const colon = hostPort.lastIndexOf(':');
+    if (colon < 0) return false;
+    const port = hostPort.slice(colon + 1);
+    return (
+      phpfpmHost(hostPort.slice(0, colon)) &&
+      /^[1-9][0-9]{0,4}$/.test(port) &&
+      Number(port) <= 65535 &&
+      PHPFPM_STATUS_PATH.test(rest.slice(slash))
+    );
+  }
+  const rest = s.slice('unix:'.length);
+  const colon = rest.indexOf(':');
+  if (colon < 0) return false;
+  const socket = rest.slice(0, colon);
+  return (
+    socket.startsWith('/') &&
+    !socket.startsWith('//') &&
+    byteLen(socket) <= 103 &&
+    !hasControl(socket) &&
+    PHPFPM_STATUS_PATH.test(rest.slice(colon + 1))
+  );
+}
+
+/** phpfpmPool: one entry of phpfpm's urls — a FastCGI address when it
+ * starts with fcgi:// or unix:, a statusURL otherwise. */
+function phpfpmPool(s: string): boolean {
+  if (s.startsWith('fcgi://') || s.startsWith('unix:')) return phpfpmFastCGI(s);
+  return statusURL(s);
+}
+
+// ---------------------------------------------------------------------------
 
 /** dnsName: dot-separated labels of letters, digits, '-' and '_', each
  * 1–63 bytes, an optional trailing dot, at most 253 bytes without it, once
@@ -359,6 +419,75 @@ function uuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
 }
 
+// ---------------------------------------------------------------------------
+// The http check's request (backlog 3.84), internal/probe/httpreq's rules.
+// ---------------------------------------------------------------------------
+
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const HEADER_NAME = new RegExp(`^${TOKEN}$`);
+
+/** The headers the probe or its transport controls. */
+const RESERVED_HEADERS: ReadonlySet<string> = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'user-agent', 'keep-alive', 'proxy-connection',
+  'te', 'trailer', 'upgrade', 'expect', 'accept-encoding',
+]);
+
+/** The headers that carry credentials, and the words in a name that
+ * suggest one: the check's secret sends them. */
+const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(['authorization', 'proxy-authorization', 'cookie']);
+const CREDENTIAL_WORDS = ['token', 'secret', 'apikey', 'api-key', 'api_key', 'password', 'access-key', 'access_key', 'session'];
+/** A name segment (split at - and _) that suggests a credential: X-Auth,
+ * Api-Auth, but not X-Author. */
+const CREDENTIAL_SEGMENTS: ReadonlySet<string> = new Set(['auth']);
+
+function credentialLike(lower: string): boolean {
+  return (
+    CREDENTIAL_HEADERS.has(lower) ||
+    CREDENTIAL_WORDS.some((w) => lower.includes(w)) ||
+    lower.split(/[-_]/).some((seg) => CREDENTIAL_SEGMENTS.has(seg))
+  );
+}
+
+/** The routing and override headers a target may trust; X-Forwarded and
+ * every X-Forwarded-* name too. */
+const ROUTING_HEADERS: ReadonlySet<string> = new Set([
+  'forwarded', 'x-real-ip', 'x-original-url', 'x-rewrite-url', 'x-http-method-override', 'x-http-method', 'x-method-override',
+]);
+
+/** headerValueOK is httpguts.ValidHeaderFieldValue: no control character
+ * below space other than tab, and no DEL; anything from U+0080 on is
+ * obs-text bytes to Go. */
+function headerValueOK(s: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u0008\u000a-\u001f\u007f]/.test(s);
+}
+
+/** httpHeaderProblem names why a headers entry is refused: 'httpHeader'
+ * for its shape or value, 'httpHeaderReserved', 'httpHeaderContentType',
+ * 'httpHeaderCredentials' or 'httpHeaderRouting' for its name; null when
+ * it may be sent. */
+export function httpHeaderProblem(s: string): string | null {
+  const colon = s.indexOf(':');
+  if (colon < 0) return 'httpHeader';
+  const name = s.slice(0, colon);
+  if (name.length > 128 || !HEADER_NAME.test(name) || !headerValueOK(s.slice(colon + 1))) return 'httpHeader';
+  const lower = name.toLowerCase();
+  if (RESERVED_HEADERS.has(lower)) return 'httpHeaderReserved';
+  if (lower === 'content-type') return 'httpHeaderContentType';
+  if (ROUTING_HEADERS.has(lower) || lower === 'x-forwarded' || lower.startsWith('x-forwarded-')) return 'httpHeaderRouting';
+  if (credentialLike(lower)) return 'httpHeaderCredentials';
+  return null;
+}
+
+const QUOTED = '"(?:[^"\\\\\u0000-\u0008\u000a-\u001f\u007f]|\\\\[^\u0000-\u0008\u000a-\u001f\u007f])*"';
+const MEDIA_TYPE = new RegExp(`^${TOKEN}/${TOKEN}(?:[ \\t]*;[ \\t]*${TOKEN}=(?:${TOKEN}|${QUOTED}))*$`);
+
+/** mediaType: http's content_type, type/subtype with optional
+ * ;name=value parameters (a token or a quoted string). */
+function mediaType(s: string): boolean {
+  return MEDIA_TYPE.test(s);
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -366,6 +495,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   devicePath,
   url: probeURL,
   statusURL,
+  phpfpmPool,
   dnsName,
   server,
   dockerLabel,
@@ -376,6 +506,8 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   jsonValue,
   assertion,
   uuid,
+  httpHeader: (s) => httpHeaderProblem(s) === null,
+  mediaType,
   tcpAssertion,
   dnsAssertion,
   tlsAssertion,
@@ -394,5 +526,6 @@ export function formatValid(format: string, s: string): boolean {
 export function formatProblem(format: string, s: string): string | null {
   if (formatValid(format, s)) return null;
   if (format === 'devicePath' && hasControl(s)) return 'noControl';
+  if (format === 'httpHeader') return httpHeaderProblem(s) ?? format;
   return format;
 }

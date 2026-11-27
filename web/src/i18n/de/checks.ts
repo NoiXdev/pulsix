@@ -146,6 +146,8 @@ export const deChecks: Messages['checks'] = {
     pluginHint: 'läuft auf dem Pulsix-Server',
     runsFromServer: 'Läuft auf dem Pulsix-Server, nicht auf dem Host.',
     rulesKey: (plugin: string) => `Alarmregeln für ${plugin}.*-Metriken gelten für jeden Check dieses Typs, unabhängig von seinem Schlüssel.`,
+    methodChangesState:
+      'Diese Anfrage wird in jedem Intervall von jedem Prüfpunkt aus gesendet. Nutzen Sie sie nur bei einem Endpunkt, an dem das nichts verändert, etwa einem Health- oder Echo-Endpunkt.',
     failures: {
       none: 'kein Fehler',
       dns: 'Name nicht auflösbar',
@@ -220,6 +222,7 @@ export const deChecks: Messages['checks'] = {
     chosenGroups: 'Gewählte Gruppen',
     addGroup: 'Gruppe hinzufügen',
     secretOnlyServer: 'Checks mit einem Secret werden nur vom Pulsix-Server aus geprüft.',
+    customRequestOnlyServer: 'Checks, die eine andere Methode als GET oder HEAD, Header oder einen Body senden, werden nur vom Pulsix-Server aus geprüft.',
   },
   params: {
     disk: {
@@ -346,12 +349,12 @@ export const deChecks: Messages['checks'] = {
     },
     phpfpm: {
       urls: {
-        label: 'URLs der Status-Seiten (eine pro Zeile, je ein Pool)',
-        hint: 'Die Status-Seite (pm.status_path) jedes PHP-FPM-Pools, ausgeliefert vom Webserver davor und gelesen vom Agent auf jedem Host; fehlt der Query-Schlüssel json, hängt der Agent ?json an. Jede URL ist ein Pool und benennt seine Messwerte. Leer heißt ein Pool unter http://127.0.0.1/status.',
+        label: 'Status-Seiten (eine pro Zeile, je ein Pool)',
+        hint: 'Die Status-Seite (pm.status_path) jedes PHP-FPM-Pools, gelesen vom Agent auf jedem Host. Entweder eine URL, ausgeliefert vom Webserver vor dem Pool (fehlt der Query-Schlüssel json, hängt der Agent ?json an), oder die eigene Listen-Adresse des Pools mit Status-Pfad, ohne Webserver dazwischen: fcgi://127.0.0.1:9000/status oder unix:/run/php/php8.3-fpm.sock:/status. Jeder Eintrag ist ein Pool und benennt seine Messwerte. Leer heißt ein Pool unter http://127.0.0.1/status.',
       },
       secret: {
         label: 'Secret (optional)',
-        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password), der an jeden Pool gesendet wird. Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password), der an jeden über eine URL gelesenen Pool gesendet wird. Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
@@ -394,6 +397,17 @@ export const deChecks: Messages['checks'] = {
     http: {
       url: { label: 'URL', hint: '{address} wird durch die Adresse des Hosts ersetzt.' },
       method: { label: 'Methode' },
+      headers: {
+        label: 'Anfrage-Header (einer pro Zeile, Name: Wert)',
+        hint: 'Werden mit jeder Anfrage gesendet, höchstens 16. Nicht Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect oder Accept-Encoding (setzt Pulsix), nicht Content-Type (dafür das Feld Inhaltstyp unten), nicht X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL oder Methoden-Overrides und keine Zugangsdaten wie Authorization, Cookie oder einen API-Key- oder Token-Header: Diese gehören in das Secret. Sie gehen nicht an eine andere Website mit, auf die eine Weiterleitung führt.',
+        placeholder: 'Accept: application/json',
+      },
+      body: {
+        label: 'Anfrage-Body',
+        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn der Betreiber des Pulsix-Servers sie eingeschaltet hat.',
+        placeholder: '{"ping": true}',
+      },
+      content_type: { label: 'Inhaltstyp des Bodys', hint: 'Nur mit einem Body. Leer bedeutet application/json.', placeholder: 'application/json' },
       secret: {
         label: 'Secret',
         hint: 'Optional. Name eines Secrets in den Secrets der Organisation (Einstellungen → Secrets), das den Login enthält: Benutzername und Passwort, ein Token (als Bearer-Token gesendet) oder Header und Wert (ein Header Ihrer Wahl). Führt eine Weiterleitung zu einem anderen Host, wird er dorthin nicht mitgesendet; seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie. Eine Definition, die mehrere Organisationen nutzen, liest in jeder deren eigenes Secret dieses Namens.',
@@ -402,12 +416,12 @@ export const deChecks: Messages['checks'] = {
       body_contains: { label: 'Inhalt enthält', hint: 'Wird im ersten MiB des Inhalts gesucht.' },
       json_values: {
         label: 'JSON-Werte (einer pro Zeile, Name=JSONPath)',
-        hint: 'Jede Zeile liest einen Wert aus einer JSON-Antwort (bis 1 MiB) und meldet ihn unter seinem Namen: eine Zahl als Wert, Text oder true/false als Label. Der Pfad muss genau einen Wert auswählen. Unterstützt: Namen, Indizes, *, ein .. und Filter, die @-Pfade mit Werten vergleichen. Erfordert die Methode GET.',
+        hint: 'Jede Zeile liest einen Wert aus einer JSON-Antwort (bis 1 MiB) und meldet ihn unter seinem Namen: eine Zahl als Wert, Text oder true/false als Label. Der Pfad muss genau einen Wert auswählen. Unterstützt: Namen, Indizes, *, ein .. und Filter, die @-Pfade mit Werten vergleichen. Nicht mit der Methode HEAD.',
         placeholder: 'status=$.status',
       },
       assertions: {
         label: 'Zusicherungen (eine pro Zeile, Name=Zusicherung)',
-        hint: 'Jede Zeile beschreibt, wie eine gute Antwort aussieht, und meldet unter ihrem Namen pass oder, wenn sie nicht zutrifft, warn oder crit, mit dem gesehenen Wert. Ein Gegenstand (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header("Name"), json("$.pfad"), html("Selektor") oder html("Selektor") count), ein Operator und ein Wert: Zahlen mit < <= > >= == != oder in a..b; Text in doppelten Anführungszeichen mit == != contains !contains matches !matches; header, json und html auch mit exists und !exists. @warn meldet warn statt crit. Body, json, html und size erfordern die Methode GET.',
+        hint: 'Jede Zeile beschreibt, wie eine gute Antwort aussieht, und meldet unter ihrem Namen pass oder, wenn sie nicht zutrifft, warn oder crit, mit dem gesehenen Wert. Ein Gegenstand (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header("Name"), json("$.pfad"), html("Selektor") oder html("Selektor") count), ein Operator und ein Wert: Zahlen mit < <= > >= == != oder in a..b; Text in doppelten Anführungszeichen mit == != contains !contains matches !matches; header, json und html auch mit exists und !exists. @warn meldet warn statt crit. Body, json, html und size funktionieren nicht mit der Methode HEAD.',
         placeholder: 'ok=status in 200..299',
       },
       timeout_s: { label: 'Timeout (Sekunden)' },
@@ -481,9 +495,19 @@ export const deChecks: Messages['checks'] = {
       snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0, die mit 0, 1 oder 2 beginnt (nach 0 oder 1 ist die zweite Zahl höchstens 39)',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
+      phpfpmPool: 'jeder Eintrag muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment sein oder eine Pool-Adresse fcgi://Host:Port/Pfad bzw. unix:/Socket:/Pfad, deren Pfad aus / und Buchstaben, Ziffern und _ / - besteht (kein Punkt)',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
       uuid: 'jeder Eintrag muss die ID einer Überwachungsgruppe sein (eine UUID in Kleinbuchstaben)',
+      httpHeader: 'jeder Eintrag muss Name: Wert sein, der Name aus Buchstaben, Ziffern und !#$%&\'*+-.^_`|~ (höchstens 128), der Wert ohne Zeilenumbrüche oder andere Steuerzeichen',
+      httpHeaderReserved:
+        'Host, Content-Length, Transfer-Encoding, Connection, User-Agent, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect und Accept-Encoding setzt Pulsix',
+      httpHeaderContentType: 'Content-Type wird über das Feld Inhaltstyp gesetzt, nicht als Header',
+      httpHeaderCredentials:
+        'Authorization, Proxy-Authorization, Cookie und Header, deren Name auf Zugangsdaten hindeutet (Token, Secret, API- oder Access-Key, Passwort, Session, Auth), tragen Zugangsdaten: Diese gehören in das Secret des Checks (Header und Wert)',
+      httpHeaderRouting:
+        'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
+      mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },
