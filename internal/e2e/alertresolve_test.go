@@ -31,15 +31,18 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/alertroutes"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
@@ -84,7 +87,11 @@ func alertItemsFor(t *testing.T, rec *hookReceiver, alertID uuid.UUID) ([]alertM
 
 // awaitAlertEvent polls the receiver until an item about alertID with the
 // given event has arrived, and returns the message carrying it.
-func awaitAlertEvent(t *testing.T, rec *hookReceiver, alertID uuid.UUID, event string, within time.Duration) alertMessage {
+//
+// On a timeout it prints diag's output (the delivery rows and the
+// receiver's requests, see deliveryDiagnostics) before failing, so a slow
+// or failed delivery shows its attempts and last error (backlog 2.144).
+func awaitAlertEvent(t *testing.T, rec *hookReceiver, alertID uuid.UUID, event string, within time.Duration, diag func() string) alertMessage {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for {
@@ -97,11 +104,73 @@ func awaitAlertEvent(t *testing.T, rec *hookReceiver, alertID uuid.UUID, event s
 			}
 		}
 		if time.Now().After(deadline) {
+			t.Log(diag())
 			t.Fatalf("the webhook received no %q item for alert %s in %s; %d request(s) in all",
 				event, alertID, within, len(rec.snapshot()))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// deliveryDiagnostics renders what a missing alert message needs to be
+// explained: the org's notification delivery rows (attempts, state, next
+// attempt, last error, timestamps; locked_until shows an in-flight send)
+// and a summary of every request the receiver got. Query errors are
+// printed, not fatal: this runs on a path that is failing anyway.
+func deliveryDiagnostics(ctx context.Context, d *db.DB, orgID uuid.UUID, rec *hookReceiver) string {
+	var b strings.Builder
+	now := time.Now()
+	fmt.Fprintf(&b, "diagnostics at %s\nnotification_deliveries of org %s:\n", now.Format(time.RFC3339Nano), orgID)
+	err := d.WithReadTx(ctx, orgID, func(ctx context.Context) error {
+		rows, err := d.Query(ctx, `SELECT id, channel_id, event_kind, event_key, status, attempts,
+				next_attempt_at, locked_until, last_error, created_at, sent_at
+			FROM notification_deliveries ORDER BY created_at`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, channel                  uuid.UUID
+				kind, key, status, lastError string
+				attempts                     int
+				next, created                time.Time
+				locked, sent                 *time.Time
+			)
+			if err := rows.Scan(&id, &channel, &kind, &key, &status, &attempts, &next, &locked, &lastError, &created, &sent); err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "  %s kind=%s status=%s attempts=%d next_attempt_at=%s (in %s) locked_until=%s created_at=%s sent_at=%s last_error=%q key=%s\n",
+				id, kind, status, attempts, next.Format(time.RFC3339Nano), next.Sub(now).Round(time.Millisecond),
+				fmtTime(locked), created.Format(time.RFC3339Nano), fmtTime(sent), lastError, key)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		fmt.Fprintf(&b, "  query failed: %v\n", err)
+	}
+	reqs := rec.snapshot()
+	fmt.Fprintf(&b, "receiver got %d request(s):\n", len(reqs))
+	for i, r := range reqs {
+		items := "no alert items"
+		var ev notify.Event
+		if json.Unmarshal(r.body, &ev) == nil && ev.Alerts != nil {
+			var parts []string
+			for _, it := range ev.Alerts.Items {
+				parts = append(parts, it.Event+":"+it.AlertID.String())
+			}
+			items = strings.Join(parts, ",")
+		}
+		fmt.Fprintf(&b, "  #%d event=%s delivery=%s timestamp=%s items=%s\n", i+1, r.event, r.delivery, r.timestamp, items)
+	}
+	return b.String()
+}
+
+func fmtTime(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return t.Format(time.RFC3339Nano)
 }
 
 // awaitAlertClosed polls the host's closed alerts until alertID is among
@@ -188,11 +257,13 @@ func TestAlertResolveNotificationEndToEnd(t *testing.T) {
 	follower := alertroutes.NewFollower(d, alertroutes.NewSQLStore(d), noGroupsReader{}, oncall.NewSQLStore(d), outbox,
 		"http://e2e-resolve.test", time.Now, nil)
 
+	diag := func() string { return deliveryDiagnostics(ctx, d, orgID, rec) }
+
 	// --- 1. The firing message ---------------------------------------------
 	if err := follower.Tick(ctx, orgID); err != nil {
 		t.Fatalf("follower tick after the alert opened: %v", err)
 	}
-	firing := awaitAlertEvent(t, rec, alertID, "opened", 30*time.Second)
+	firing := awaitAlertEvent(t, rec, alertID, "opened", 30*time.Second, diag)
 	if firing.event != string(notify.EventAlertBatch) || firing.ev.Kind != notify.EventAlertBatch {
 		t.Fatalf("firing message: header event %q, kind %q, want both %q", firing.event, firing.ev.Kind, notify.EventAlertBatch)
 	}
@@ -209,7 +280,7 @@ func TestAlertResolveNotificationEndToEnd(t *testing.T) {
 	if err := follower.Tick(ctx, orgID); err != nil {
 		t.Fatalf("follower tick after the alert closed: %v", err)
 	}
-	resolved := awaitAlertEvent(t, rec, alertID, "closed", 30*time.Second)
+	resolved := awaitAlertEvent(t, rec, alertID, "closed", 30*time.Second, diag)
 	if resolved.event != string(notify.EventAlertBatch) || resolved.ev.Kind != notify.EventAlertBatch {
 		t.Fatalf("resolve message: header event %q, kind %q, want both %q", resolved.event, resolved.ev.Kind, notify.EventAlertBatch)
 	}
