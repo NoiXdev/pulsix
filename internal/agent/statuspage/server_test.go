@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -320,4 +322,69 @@ func TestSelfSignedIsReusedAndRenewed(t *testing.T) {
 	if _, err := selfSigned(dir, "192.0.2.11", "agent-host.test", t0); err != nil {
 		t.Fatalf("broken file not replaced: %v", err)
 	}
+}
+
+// TestControllerQuickChangesOnTheSamePortEndServed: two changes on the
+// same port in quick succession (a token rotation) end with the page
+// served, never failed with "address in use" for a minute (re-review
+// 3.132, finding 1). The listen hook holds the port a moment before it
+// returns, so a second attempt would bind while the first still holds it.
+func TestControllerQuickChangesOnTheSamePortEndServed(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	_ = probe.Close()
+	var lc net.ListenConfig
+	c := NewController(&fakeSource{snap: fullSnapshot()}, Options{
+		DataDir: t.TempDir(),
+		Listen: func(ctx context.Context, network, a string) (net.Listener, error) {
+			ln, err := lc.Listen(ctx, network, a)
+			time.Sleep(20 * time.Millisecond)
+			return ln, err
+		},
+	})
+	t.Cleanup(c.Close)
+	for i := range 5 {
+		c.Apply(Config{Listen: addr, Token: testToken + strconv.Itoa(i)}, "")
+		c.Apply(Config{Listen: addr, Token: testToken + strconv.Itoa(i) + "x"}, "")
+		c.settle()
+		if c.Mode() != ModeLoopback || c.Addr() != addr {
+			t.Fatalf("rotation %d: mode %v addr %q", i, c.Mode(), c.Addr())
+		}
+	}
+}
+
+// TestControllerReportsTheRequestedModeWhileStarting: while a start is in
+// flight, Mode is that of the requested config, not off (re-review 3.132,
+// finding 2).
+func TestControllerReportsTheRequestedModeWhileStarting(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	open := func() { once.Do(func() { close(release) }) }
+	var lc net.ListenConfig
+	c := NewController(&fakeSource{snap: fullSnapshot()}, Options{
+		DataDir: t.TempDir(),
+		Listen: func(ctx context.Context, network, a string) (net.Listener, error) {
+			<-release
+			return lc.Listen(ctx, network, a)
+		},
+	})
+	t.Cleanup(c.Close)
+	t.Cleanup(open) // runs before Close: a failed check must not hang
+	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	if got := c.Mode(); got != ModeLoopback {
+		t.Fatalf("mode while starting = %v, want loopback", got)
+	}
+	open()
+	c.settle()
+	if c.Mode() != ModeLoopback || c.Addr() == "" {
+		t.Fatalf("after start: mode %v addr %q", c.Mode(), c.Addr())
+	}
+	c.Apply(Config{Listen: "127.0.0.1:0", Token: testToken, Network: true}, "")
+	if got := c.Mode(); got != ModeNetwork {
+		t.Fatalf("mode while restarting = %v, want network", got)
+	}
+	c.settle()
 }

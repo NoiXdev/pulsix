@@ -40,6 +40,10 @@
 - **R18 The page shows what was sent** (controller ruling): no redaction pass over keys, metric names or anything else the agent sent already redacted; the page redacts only the local checks' `params_json`, which the heartbeat sends as written, so this one field can differ from what the manager receives (documented in upgrades.md).
 - Not done: the free-port listen-and-close in the loop tests (controller: skip).
 
+### Fix round 2 (re-review `3.132-rereview.md`)
+- **R19 Start attempts are serialised** (`startMu`, held across opening the listener and deciding on it; an attempt superseded while it waited does not open at all), and `stopLocked` closes the listener as well as the server, so a quick change on the same port (a token rotation) never fails with "address in use" for a minute (`TestControllerQuickChangesOnTheSamePortEndServed`).
+- **R15 amended: while a start is in flight `Mode` reports the requested config's mode** (loopback or network), so a heartbeat in that moment does not read off; a retry after a failure reads as the requested mode for its at most ~1 s (`TestControllerReportsTheRequestedModeWhileStarting`).
+
 ## Review Focus
 - No secret on the page, in the JSON or the log ring: `TestRedactorReplacesLongestFirst`, `TestRingRedactsBeforeStoring`, `TestHandlerRedactsEverythingRendered`, `TestLoopRedactsCheckResultsBeforeSending`, `…ProbeResults…`, `…Facts…`, `TestWatcherKeepsRedactorWhileRefused`.
 - No network page without a token, no token in clear text: `TestParseStatusPageRules` (network without token refused, short token refused), `TestControllerServesNetworkOverTLSOnly`, `TestAuthRequiredWithToken`, `TestLoginCookieAttributes`.

@@ -79,6 +79,11 @@ type Controller struct {
 	src  Source
 	opts Options
 	wg   sync.WaitGroup // start attempts in flight
+	// startMu serialises start attempts across opening the listener and
+	// deciding what to do with it, so a stale attempt has closed its
+	// listener before the next one binds the same port (re-review 3.132,
+	// finding 1). It is taken before mu, never while mu is held.
+	startMu sync.Mutex
 
 	mu      sync.Mutex
 	closed  bool
@@ -170,6 +175,11 @@ func (c *Controller) startLocked(now time.Time) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		c.startMu.Lock()
+		defer c.startMu.Unlock()
+		if !c.current(gen) {
+			return // a newer change came while this one waited
+		}
 		ln, until, err := c.open(cfg, now)
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -191,6 +201,13 @@ func (c *Controller) startLocked(now time.Time) {
 		}
 		c.serveLocked(cfg, ln, until)
 	}()
+}
+
+// current reports whether gen is still what should be served.
+func (c *Controller) current(gen int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && gen == c.gen
 }
 
 // open builds the TLS settings and opens the listener, bounded to
@@ -251,10 +268,13 @@ func (c *Controller) serveLocked(cfg Config, ln net.Listener, until time.Time) {
 		"https", cfg.Network || cfg.TLSCert != "", "token", cfg.Token != "")
 }
 
-// stopLocked closes the server, if any; c.mu is held.
+// stopLocked closes the server and its listener, if any; c.mu is held.
+// The listener is closed too: a stop that comes before the Serve
+// goroutine has picked it up would otherwise leave the port held.
 func (c *Controller) stopLocked() {
 	if c.srv != nil {
 		_ = c.srv.Close()
+		_ = c.ln.Close()
 		c.srv, c.ln, c.certUntil = nil, nil, time.Time{}
 	}
 }
@@ -275,10 +295,18 @@ func (c *Controller) Asked() bool {
 	return c.want.Listen != "" || c.problem != ""
 }
 
-// Mode is what the page does now.
+// Mode is what the page does now; while a start is in flight, the mode
+// of the requested config (re-review 3.132, finding 2), so a heartbeat in
+// that moment does not report the page off.
 func (c *Controller) Mode() Mode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.attempting {
+		if c.want.Network {
+			return ModeNetwork
+		}
+		return ModeLoopback
+	}
 	return c.mode
 }
 
