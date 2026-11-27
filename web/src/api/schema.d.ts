@@ -7742,13 +7742,21 @@ export interface components {
         PictureFollowUp: {
             /** @enum {string} */
             commit?: "pinned" | "current" | "editor";
+            /** @description Set when the approval binds this follow-up: its template's extra vars, secrets masked */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
             follow_ups?: components["schemas"]["PictureFollowUp"][] | null;
             repo?: string;
             stop?: string;
+            /** @description Set when the approval binds this follow-up: the hosts it can run on, its template's targets among the hosts the run before it is bound to; absent when it reaches none */
+            targets?: components["schemas"]["PictureHost"][] | null;
             template_id: string;
             template_name: string;
             /** Format: int64 */
             template_revision?: number;
+            /** @description Set when the approval binds this follow-up: a keyed digest of every value it receives on those hosts; a change to any of them fails its run */
+            vars_digest?: string;
         };
         PictureFollowUps: {
             start: boolean;

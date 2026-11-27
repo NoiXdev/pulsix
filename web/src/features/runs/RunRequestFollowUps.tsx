@@ -2,6 +2,7 @@ import { Card } from '../../ui/table.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { shortId } from './status.ts';
+import { varText } from './pictureVars.ts';
 import type { PictureFollowUp as FollowUp, PictureFollowUps } from './followUps.ts';
 
 /** nodeName is the follow-up's name, or the short id of a template that is
@@ -23,10 +24,32 @@ function Tree({ nodes }: { nodes: FollowUp[] }) {
             {f.stop && <span className="text-muted-foreground"> · {stopLabel(f.stop, d.stop)}</span>}
             <CommitNote f={f} />
           </span>
+          <Bound f={f} />
           {(f.follow_ups ?? []).length > 0 && <Tree nodes={f.follow_ups ?? []} />}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Bound shows what approving binds of a follow-up (backlog 2.143): the hosts
+ * it can run on and its extra vars, secrets masked. Nothing for a follow-up
+ * the picture does not bind (no vars digest). */
+function Bound({ f }: { f: FollowUp }) {
+  const t = useT();
+  const b = t.runs.requests.detail.followUps.bound;
+  if (!f.vars_digest) return null;
+  const hosts = (f.targets ?? []).map((h) => h.name || shortId(h.id));
+  const vars = Object.entries(f.extra_vars ?? {});
+  return (
+    <div role="group" aria-label={b.label(nodeName(f))} className="ml-6 flex flex-col text-[11px] text-muted-foreground">
+      <span>{hosts.length > 0 ? b.hosts(hosts.join(', ')) : b.noHosts}</span>
+      {vars.length > 0 && (
+        <span className="break-all">
+          {b.vars(vars.map(([name, value]) => `${name} = ${varText(value, t.runs.requests.detail.secret)}`).join(', '))}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -104,6 +127,7 @@ export function RunRequestFollowUps({
                       <CommitNote f={f} />
                     </span>
                   )}
+                  <Bound f={f} />
                   {followUps.start && (f.follow_ups ?? []).length > 0 && <Tree nodes={f.follow_ups ?? []} />}
                 </li>
               );

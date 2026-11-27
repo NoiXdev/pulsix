@@ -288,7 +288,14 @@ export const enRuns = {
       },
       followUps: {
         offNote: 'Approving starts none of these follow-ups. Your organization has turned that off in Settings → General.',
-        hint: 'Follow-ups start later, when this run succeeds, on the hosts it ran on. This page shows them by name and revision, not what they run.',
+        hint: 'Follow-ups start later, when this run succeeds, on the hosts it ran on. Approving also binds the hosts and variables shown for each: if they change before a follow-up starts, that follow-up fails instead of running.',
+        /** What approving binds of a follow-up (backlog 2.143). */
+        bound: {
+          label: (name: string) => `What approving binds for ${name}`,
+          hosts: (names: string) => `Hosts: ${names}`,
+          noHosts: 'Hosts: none, it would not start',
+          vars: (vars: string) => `Extra vars: ${vars}`,
+        },
         truncated: 'More follow-ups than this page can show; approving starts none of them.',
         revision: (n: number) => `revision ${n}`,
         /** What a follow-up of a pinned run runs (spec 2026-11-25 A). */

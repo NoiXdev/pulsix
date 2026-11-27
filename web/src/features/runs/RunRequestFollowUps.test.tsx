@@ -90,3 +90,37 @@ describe('startableFollowUps', () => {
     expect(startableFollowUps(TREE).map((f) => f.template_id)).toEqual(['f1']);
   });
 });
+
+describe('RunRequestFollowUps bindings', () => {
+  it('shows the hosts and extra vars an approval binds for each follow-up (backlog 2.143)', () => {
+    show({
+      start: true,
+      templates: [
+        {
+          template_id: 'f1',
+          template_name: 'reload-lb',
+          template_revision: 3,
+          targets: [
+            { id: 'h1', name: 'web-01', address: '10.0.0.11' },
+            { id: 'h2', name: 'web-02', address: '10.0.0.12' },
+          ],
+          extra_vars: { port: 8080, token: { $secret: 'set' } },
+          vars_digest: 'd1',
+          follow_ups: [{ template_id: 'f2', template_name: 'warm-cache', template_revision: 9, vars_digest: 'd2' }],
+        },
+      ],
+    });
+    const lb = screen.getByRole('group', { name: 'What approving binds for reload-lb' });
+    expect(lb).toHaveTextContent('Hosts: web-01, web-02');
+    expect(lb).toHaveTextContent('Extra vars: port = 8080, token = secret (hidden)');
+    const cache = screen.getByRole('group', { name: 'What approving binds for warm-cache' });
+    expect(cache).toHaveTextContent('Hosts: none, it would not start');
+    expect(cache).not.toHaveTextContent('Extra vars');
+    expect(screen.getByText(/Approving also binds the hosts and variables shown for each/)).toBeInTheDocument();
+  });
+
+  it('shows no binding for a follow-up the picture does not bind', () => {
+    show({ start: true, templates: [{ template_id: 'f1', template_name: 'reload-lb', template_revision: 3 }] });
+    expect(screen.queryByRole('group', { name: /What approving binds/ })).not.toBeInTheDocument();
+  });
+});

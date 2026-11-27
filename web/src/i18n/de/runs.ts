@@ -274,7 +274,13 @@ export const deRuns: Messages['runs'] = {
       },
       followUps: {
         offNote: 'Die Freigabe startet keinen dieser Folgeläufe. Deine Organisation hat das unter Einstellungen → Allgemein ausgeschaltet.',
-        hint: 'Folgeläufe starten später, wenn dieser Lauf erfolgreich ist, auf den Hosts, auf denen er lief. Diese Seite zeigt sie mit Name und Revision, nicht was sie ausführen.',
+        hint: 'Folgeläufe starten später, wenn dieser Lauf erfolgreich ist, auf den Hosts, auf denen er lief. Die Freigabe legt auch die Hosts und Variablen fest, die hier bei jedem stehen: Ändern sie sich, bevor ein Folgelauf startet, schlägt dieser Folgelauf fehl, statt zu laufen.',
+        bound: {
+          label: (name: string) => `Was die Freigabe für ${name} festlegt`,
+          hosts: (names: string) => `Hosts: ${names}`,
+          noHosts: 'Hosts: keine, er würde nicht starten',
+          vars: (vars: string) => `Extra-Variablen: ${vars}`,
+        },
         truncated: 'Mehr Folgeläufe, als diese Seite anzeigen kann; die Freigabe startet keinen davon.',
         revision: (n: number) => `Revision ${n}`,
         commit: {
