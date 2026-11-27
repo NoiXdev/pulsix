@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Dialect is one plugin's assertion vocabulary (backlog 3.87): the
+// Dialect is one plugin's assertion vocabulary (backlog 3.87, 3.134): the
 // subjects its probe can judge. The entry syntax, the operators and the
 // bounds are the same in every dialect, and a subject means the same in
 // every dialect that has it (response_ms, cert_days, cert_issuer), so a
@@ -32,9 +32,12 @@ var (
 		SubjectHandshakeMS, SubjectCertValid, SubjectCertDays, SubjectCertIssuer,
 		SubjectCertSubject, SubjectCertSANs, SubjectVersion, SubjectCipher,
 	}}
+	// SNMP (backlog 3.134): an oids entry's value, the first request's
+	// round trip and the device's uptime in seconds.
+	SNMP = Dialect{plugin: "snmp", subjects: []Subject{SubjectValue, SubjectResponseMS, SubjectUptime}}
 )
 
-var dialects = []Dialect{HTTP, TCP, DNS, TLS}
+var dialects = []Dialect{HTTP, TCP, DNS, TLS, SNMP}
 
 // DialectOf is plugin's dialect; false for a plugin without assertions.
 func DialectOf(plugin string) (Dialect, bool) {

@@ -185,6 +185,10 @@ func compileArg(a *Assertion, s Subject, arg string) error {
 			return fmt.Errorf("the JSONPath of json(…) is not in Pulsix's supported subset (see the docs): %w", err)
 		}
 		a.path = path
+	case SubjectValue:
+		if !namePattern.MatchString(arg) {
+			return errors.New("the name in value(…) must be an oids entry's name: 1 to 64 letters, digits, '_', '.' or '-'")
+		}
 	case SubjectAnswer:
 		switch {
 		case strings.TrimSpace(arg) == "":
@@ -239,9 +243,12 @@ func (p *parser) op(a *Assertion) error {
 }
 
 // operand reads what the operator compares with: none for exists, a
-// range for in, a number for a numeric subject, a string otherwise.
+// range for in, a number for a numeric subject, a string otherwise; for
+// value, a number for an ordering operator and for == or != unless a
+// string follows.
 func (p *parser) operand(a *Assertion) error {
 	p.spaces()
+	a.numeric = a.subject.Numeric() || a.op == OpIn || (a.subject == SubjectValue && p.valueNumeric(a.op))
 	switch {
 	case a.op == OpExists || a.op == OpNotExists:
 		if !p.done() && p.s[p.i] != '@' {
@@ -257,8 +264,11 @@ func (p *parser) operand(a *Assertion) error {
 			return errors.New(`"in" takes a range a..b with a <= b, such as 200..299`)
 		}
 		return nil
-	case a.subject.Numeric():
+	case a.numeric:
 		n, err := number(p.rest())
+		if err != nil && a.subject == SubjectValue && (a.op == OpEq || a.op == OpNe) {
+			return fmt.Errorf("value takes a decimal number or a JSON string after %q, such as 2 or \"up\"", a.op)
+		}
 		if err != nil {
 			return fmt.Errorf("%s takes a decimal number after %q, such as 200", a.subject, a.op)
 		}
@@ -285,6 +295,18 @@ func (p *parser) operand(a *Assertion) error {
 		a.re, a.program = re, program
 	}
 	return nil
+}
+
+// valueNumeric reports whether value with op compares numbers: the
+// ordering operators always, == and != unless a string follows.
+func (p *parser) valueNumeric(op Op) bool {
+	switch op {
+	case OpLt, OpLe, OpGt, OpGe, OpIn:
+		return true
+	case OpEq, OpNe:
+		return p.done() || p.s[p.i] != '"'
+	}
+	return false
 }
 
 // MaxProgram bounds a regular expression's compiled program: Go's

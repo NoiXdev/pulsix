@@ -25,6 +25,7 @@ func TestDialects(t *testing.T) {
 			assert.SubjectHandshakeMS, assert.SubjectCertValid, assert.SubjectCertDays, assert.SubjectCertIssuer,
 			assert.SubjectCertSubject, assert.SubjectCertSANs, assert.SubjectVersion, assert.SubjectCipher,
 		}},
+		{"snmp", []assert.Subject{assert.SubjectValue, assert.SubjectResponseMS, assert.SubjectUptime}},
 	}
 	for _, tc := range cases {
 		d, ok := assert.DialectOf(tc.plugin)
@@ -39,12 +40,12 @@ func TestDialects(t *testing.T) {
 			t.Errorf("Plugin() = %q, want %q", d.Plugin(), tc.plugin)
 		}
 	}
-	for _, plugin := range []string{"icmp", "snmp", "cpu", ""} {
+	for _, plugin := range []string{"icmp", "cpu", ""} {
 		if _, ok := assert.DialectOf(plugin); ok {
 			t.Errorf("DialectOf(%q) = true, want no dialect", plugin)
 		}
 	}
-	if got := assert.Plugins(); strings.Join(got, ",") != "http,tcp,dns,tls" {
+	if got := assert.Plugins(); strings.Join(got, ",") != "http,tcp,dns,tls,snmp" {
 		t.Errorf("Plugins() = %v", got)
 	}
 }
@@ -83,6 +84,15 @@ func TestDialectParse(t *testing.T) {
 		{"tls", `n=cert_sans contains "www.example.com"`, `cert_sans contains "www.example.com"`, assert.SubjectCertSANs, ""},
 		{"tls", "p=version >= 1.2", "version >= 1.2", assert.SubjectVersion, ""},
 		{"tls", `c=cipher !matches "CBC"`, `cipher !matches "CBC"`, assert.SubjectCipher, ""},
+		{"snmp", "r=response_ms < 200", "response_ms < 200", assert.SubjectResponseMS, ""},
+		{"snmp", "u=uptime > 3600 @warn", "uptime > 3600", assert.SubjectUptime, ""},
+		{"snmp", `l=value("load") < 80`, `value("load") < 80`, assert.SubjectValue, "load"},
+		{"snmp", `l=value("load") in 0..80.5`, `value("load") in 0..80.5`, assert.SubjectValue, "load"},
+		{"snmp", `s=value("state") == 2`, `value("state") == 2`, assert.SubjectValue, "state"},
+		{"snmp", `s=value("state") == "online"`, `value("state") == "online"`, assert.SubjectValue, "state"},
+		{"snmp", `s=value("state") != "on\tline"`, `value("state") != "on\tline"`, assert.SubjectValue, "state"},
+		{"snmp", `d=value("sys.descr-1") contains "Linux"`, `value("sys.descr-1") contains "Linux"`, assert.SubjectValue, "sys.descr-1"},
+		{"snmp", `d=value("descr") !matches "^Cisco"`, `value("descr") !matches "^Cisco"`, assert.SubjectValue, "descr"},
 	}
 	for _, tc := range ok {
 		d, _ := assert.DialectOf(tc.plugin)
@@ -113,6 +123,18 @@ func TestDialectParse(t *testing.T) {
 		{"tls", `ok=cipher < 3`, `"<" is not an operator of cipher`},
 		{"tls", "ok=ttfb_ms < 3", `unknown subject "ttfb_ms"`},
 		{"tls", `ok=cert_sans exists`, `"exists" is not an operator of cert_sans`},
+		{"snmp", "ok=status == 200", `unknown subject "status" (snmp takes value, response_ms, uptime)`},
+		{"snmp", `ok=value exists`, "value takes a quoted argument"},
+		{"snmp", `ok=value("x") exists`, `"exists" is not an operator of value`},
+		{"snmp", `ok=value("x") !exists`, `"!exists" is not an operator of value`},
+		{"snmp", `ok=value("") < 3`, "the name in value(…) must be an oids entry's name"},
+		{"snmp", `ok=value("a b") < 3`, "the name in value(…) must be an oids entry's name"},
+		{"snmp", `ok=value("x") < "3"`, "value takes a decimal number after"},
+		{"snmp", `ok=value("x") contains 3`, "value takes a JSON string after"},
+		{"snmp", `ok=value("x") == up`, `value takes a decimal number or a JSON string after "=="`},
+		{"snmp", `ok=uptime == "3"`, "number"},
+		{"snmp", `ok=uptime("x") > 3`, "uptime takes no argument"},
+		{"http", `ok=value("x") < 3`, `unknown subject "value"`},
 	}
 	for _, tc := range refused {
 		d, _ := assert.DialectOf(tc.plugin)
@@ -135,6 +157,35 @@ func TestNewSubjectKinds(t *testing.T) {
 		if s.Numeric() != want || s.ReadsBody() || s.KeepsBody() {
 			t.Errorf("%s: numeric %v (want %v), body %v, kept %v", s, s.Numeric(), want, s.ReadsBody(), s.KeepsBody())
 		}
+	}
+}
+
+// TestAssertionNumeric (backlog 3.134): whether an assertion compares
+// numbers is its subject's kind, except for snmp's value, whose operator
+// and operand decide.
+func TestAssertionNumeric(t *testing.T) {
+	for entry, want := range map[string]bool{
+		`a=value("x") < 3`:            true,
+		`a=value("x") in 1..2`:        true,
+		`a=value("x") == 3`:           true,
+		`a=value("x") != -3.5`:        true,
+		`a=value("x") == "3"`:         false,
+		`a=value("x") != "up"`:        false,
+		`a=value("x") contains "u"`:   false,
+		`a=value("x") !matches "^u"`:  false,
+		`a=uptime > 3`:                true,
+		`a=response_ms in 0..9 @warn`: true,
+	} {
+		a, err := assert.SNMP.Parse(entry)
+		if err != nil {
+			t.Fatalf("Parse(%q) = %v", entry, err)
+		}
+		if a.Numeric() != want {
+			t.Errorf("%q Numeric() = %v, want %v", entry, a.Numeric(), want)
+		}
+	}
+	if !assert.SubjectUptime.Numeric() || assert.SubjectValue.Numeric() {
+		t.Error("uptime is numeric, value has no fixed kind")
 	}
 }
 
