@@ -8,12 +8,12 @@ func TestParseStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The first BusyWorkers line wins over a later duplicate.
-	want := status{busy: 3, idle: 72, accesses: 1234, kbytes: 56, extended: true}
+	want := status{busy: 3, idle: 72, accesses: 1234, kbytes: 56, extended: true, slots: 22}
 	if got != want {
 		t.Fatalf("parseStatus = %+v, want %+v", got, want)
 	}
 	got, err = parseStatus([]byte(preforkPage(1, 4)))
-	if err != nil || got != (status{busy: 1, idle: 4}) {
+	if err != nil || got != (status{busy: 1, idle: 4, slots: 6}) {
 		t.Fatalf("parseStatus(prefork) = %+v, %v", got, err)
 	}
 }
@@ -26,8 +26,42 @@ func TestParseStatusOneCounterOnly(t *testing.T) {
 		"BusyWorkers: 1\nIdleWorkers: 4\nTotal kBytes: 7\n",
 	} {
 		got, err := parseStatus([]byte(body))
-		if err != nil || got != (status{busy: 1, idle: 4}) {
+		if err != nil || got != (status{busy: 1, idle: 4, slotsReason: reasonNoScoreboard}) {
 			t.Fatalf("parseStatus(%q) = %+v, %v", body, got, err)
 		}
+	}
+}
+
+// The Scoreboard line has one character per worker slot, and mod_status
+// prints exactly the server's worker limit of them (backlog 3.11b, R1). A
+// line that is missing or not a scoreboard costs only the two metrics built
+// on it, never the page.
+func TestParseScoreboard(t *testing.T) {
+	const head = "BusyWorkers: 1\nIdleWorkers: 4\n"
+	tests := []struct {
+		name   string
+		body   string
+		slots  uint64
+		reason string
+	}{
+		{"every state", head + "Scoreboard: _SRWKDCLGI.\n", 11, ""},
+		{"no trailing newline", head + "Scoreboard: W____", 5, ""},
+		{"CRLF", head + "Scoreboard: W____\r\n", 5, ""},
+		{"first line wins", head + "Scoreboard: W_\nScoreboard: W____\n", 2, ""},
+		{"absent", head, 0, reasonNoScoreboard},
+		{"empty", head + "Scoreboard: \n", 0, "unexpected response format"},
+		{"foreign character", head + "Scoreboard: W_x_\n", 0, "unexpected response format"},
+		{"inner blank", head + "Scoreboard: W_ __\n", 0, "unexpected response format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseStatus([]byte(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.slots != tt.slots || got.slotsReason != tt.reason || got.busy != 1 || got.idle != 4 {
+				t.Fatalf("parseStatus = %+v, want slots %d reason %q", got, tt.slots, tt.reason)
+			}
+		})
 	}
 }

@@ -201,6 +201,8 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"apache.workers_busy_pct":           {CheckKey: "apache", Kind: rules.MetricNumeric},
 		"apache.requests_per_s":             {CheckKey: "apache", Kind: rules.MetricNumeric},
 		"apache.bytes_per_s":                {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.workers_max":                {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.workers_busy_max_pct":       {CheckKey: "apache", Kind: rules.MetricNumeric},
 		"caddy.up":                          {CheckKey: "caddy", Kind: rules.MetricNumeric},
 		"caddy.requests_in_flight":          {CheckKey: "caddy", Kind: rules.MetricNumeric},
 		"caddy.requests_per_s":              {CheckKey: "caddy", Kind: rules.MetricNumeric},

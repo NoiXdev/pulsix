@@ -80,12 +80,12 @@ func mustErr(t *testing.T, obs []checks.Observation, metric, reason string) {
 	webchecktest.MustErr(t, obs, "apache", metric, reason)
 }
 
-// mustDown asserts the whole down set: up 0 and the reason on the five
+// mustDown asserts the whole down set: up 0 and the reason on the seven
 // other metrics.
 func mustDown(t *testing.T, obs []checks.Observation, reason string) {
 	t.Helper()
-	if len(hostMetrics) != 5 {
-		t.Fatalf("%d host metrics, want 5", len(hostMetrics))
+	if len(hostMetrics) != 7 {
+		t.Fatalf("%d host metrics, want 7", len(hostMetrics))
 	}
 	webchecktest.MustDown(t, obs, "apache", "apache.up", hostMetrics, reason)
 }
@@ -115,10 +115,12 @@ func TestCollectReportsEveryMetric(t *testing.T) {
 	mustValue(t, obs, "apache.workers_busy", 3)
 	mustValue(t, obs, "apache.workers_idle", 72)
 	mustValue(t, obs, "apache.workers_busy_pct", 4)
+	mustValue(t, obs, "apache.workers_max", 22)
+	mustValue(t, obs, "apache.workers_busy_max_pct", float64(3)/22*100)
 	mustAbsent(t, obs, "apache.requests_per_s")
 	mustAbsent(t, obs, "apache.bytes_per_s")
-	if len(obs) != 4 {
-		t.Fatalf("first round: %d observations, want 4: %+v", len(obs), obs)
+	if len(obs) != 6 {
+		t.Fatalf("first round: %d observations, want 6: %+v", len(obs), obs)
 	}
 
 	clk.Advance(10 * time.Second)
@@ -146,8 +148,9 @@ func TestPreforkWithoutExtendedStatus(t *testing.T) {
 		mustValue(t, obs, "apache.workers_busy_pct", 20)
 		mustErr(t, obs, "apache.requests_per_s", errExtended)
 		mustErr(t, obs, "apache.bytes_per_s", errExtended)
-		if len(obs) != 6 {
-			t.Fatalf("%d observations, want 6: %+v", len(obs), obs)
+		mustValue(t, obs, "apache.workers_max", 6)
+		if len(obs) != 8 {
+			t.Fatalf("%d observations, want 8: %+v", len(obs), obs)
 		}
 		clk.Advance(10 * time.Second)
 	}
@@ -552,5 +555,46 @@ func TestPrototypeAndInstances(t *testing.T) {
 	}
 	if a.(*plugin).now == nil {
 		t.Fatal("instance has no clock")
+	}
+}
+
+// The limit-based percentage is busy over the scoreboard's slots, unclamped
+// (a graceful restart can leave more busy workers than slots), and the
+// existing percentage keeps its meaning next to it (backlog 3.11b, R2).
+func TestWorkersAgainstTheLimit(t *testing.T) {
+	page := func(busy, idle int, board string) string {
+		return fmt.Sprintf("BusyWorkers: %d\nIdleWorkers: %d\n%s", busy, idle, board)
+	}
+	tests := []struct {
+		name         string
+		body         string
+		max, pct     float64
+		reason       string
+		busyPctStill float64
+	}{
+		{"quarter", page(100, 100, "Scoreboard: "+strings.Repeat("_", 400)+"\n"), 400, 25, "", 50},
+		{"full", page(150, 0, "Scoreboard: "+strings.Repeat("W", 150)+"\n"), 150, 100, "", 100},
+		{"over the slots", page(6, 0, "Scoreboard: WWWW\n"), 4, 150, "", 100},
+		{"no scoreboard", page(1, 4, ""), 0, 0, reasonNoScoreboard, 20},
+		{"bad scoreboard", page(1, 4, "Scoreboard: <html>\n"), 0, 0, errFormatTx, 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newStatusServer(t, tt.body)
+			p, _ := newTestPlugin()
+			obs, err := p.Collect(t.Context(), params(srv))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustValue(t, obs, "apache.up", 1)
+			mustValue(t, obs, "apache.workers_busy_pct", tt.busyPctStill)
+			if tt.reason != "" {
+				mustErr(t, obs, "apache.workers_max", tt.reason)
+				mustErr(t, obs, "apache.workers_busy_max_pct", tt.reason)
+				return
+			}
+			mustValue(t, obs, "apache.workers_max", tt.max)
+			mustValue(t, obs, "apache.workers_busy_max_pct", tt.pct)
+		})
 	}
 }

@@ -776,6 +776,14 @@
         {
           "name": "apache.bytes_per_s",
           "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_max",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_busy_max_pct",
+          "kind": "numeric"
         }
       ]
     },
