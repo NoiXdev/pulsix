@@ -43,7 +43,8 @@ const (
 	// behind catches up over several ticks rather than in one pass long
 	// enough to matter to everything else sharing the pool.
 	DefaultFollowBatch = 500
-	// MaxBatchItems bounds how many alerts one message lists.
+	// MaxBatchItems bounds how many alerts one message lists; closed items
+	// are dropped last (capItems, backlog 4.43).
 	// notify.AlertBatch.Count is the number before truncation precisely so
 	// a reader can tell a complete list from a capped one — the same
 	// promise notify.MaxDigestSchedules already makes for the digest.
@@ -428,9 +429,7 @@ func (f *Follower) enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, b ba
 			// carries `?host=`, there is no /alerts/{id} page).
 			items[i].URL = base + "/alerts?host=" + items[i].HostID.String()
 		}
-		if len(items) > MaxBatchItems {
-			items = items[:MaxBatchItems]
-		}
+		items = capItems(items, MaxBatchItems)
 		ev := notify.Event{
 			Kind: notify.EventAlertBatch, At: now,
 			Org:    notify.OrgRef{ID: orgID, Slug: slug, Name: name},
@@ -442,6 +441,41 @@ func (f *Follower) enqueue(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, b ba
 		}
 	}
 	return nil
+}
+
+// capItems bounds one message's item list to limit, dropping closed items
+// last (backlog 4.43, owner decision 2026-11-27, every channel kind): the
+// closed items first, then the others, each in arrival order, and the kept
+// items keep their arrival order in the message. A left-out opened or
+// acknowledged item is a line the message's "… and N more" still counts; a
+// left-out closed item is a resolve that a channel following alert state
+// (PagerDuty resolves the incident it opened) never sees, and that leaves
+// an incident open with nobody left to close it. The input is not
+// modified.
+func capItems(items []notify.AlertItem, limit int) []notify.AlertItem {
+	if len(items) <= limit {
+		return items
+	}
+	keep := make([]bool, len(items))
+	n := 0
+	for _, closed := range []bool{true, false} {
+		for i, it := range items {
+			if n == limit {
+				break
+			}
+			if !keep[i] && (it.Event == string(alerts.EventClosed)) == closed {
+				keep[i] = true
+				n++
+			}
+		}
+	}
+	out := make([]notify.AlertItem, 0, limit)
+	for i, it := range items {
+		if keep[i] {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // tryLock takes orgID's follow lock for the rest of tx. Transaction-scoped
