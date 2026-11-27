@@ -23,9 +23,9 @@
 
 ## Review Focus
 - A long disconnect with many short-interval slots keeps the ring under its cap, newest kept, no partial round (`TestCappedRingEvictsOldestWholeInstantsOverTheCap`, `TestProbeBufferStaysUnderItsCapDuringALongDisconnect` with 200 slots at 10 s for 15 minutes on a fake clock).
-- The cap's drops are logged apart from age drops (`TestProbeBufferOverflowLogsTheCap`).
+- The cap's drops are logged apart from age drops (`over_cap=` in the same test); the cost counts the variable text (`TestProbeResultCostCountsTheVariableText`, `TestCappedRingCountsCostNotEntries`).
 - The age rule is unchanged for both rings (existing buffer tests stay green).
-- The agent binary has no gosnmp (`TestAgentLeavesOutSNMP`); the manager registry still runs snmp (`TestRunKnowsExactlyTheServerPlugins` unchanged); the agent registry is exactly the non-secret server plugins (`TestVantageRegistryIsTheServerPluginsButSNMP`).
+- The agent binary has no gosnmp (`TestAgentLeavesOutSNMP`); the manager registry still runs snmp (`TestRunKnowsExactlyTheServerPlugins` unchanged); the agent registry is exactly the server plugins but snmp (`TestVantageRegistryIsTheServerPluginsButSNMP`), whose secret stays required (`TestSNMPRequiresASecret`); an snmp slot on an agent fails with the descriptor's metrics (`TestSNMPSlotFailsWithTheDescriptorsMetrics`).
 - Check results spent to the burst do not pace probe results, and vice versa; probe results over their own bucket are paced (`TestProbeResultsHaveTheirOwnIngestBudget`, `TestIngestReservationsPerKind`).
 
 ## Task 1: Cap the probe ring
