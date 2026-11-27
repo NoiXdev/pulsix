@@ -81,6 +81,15 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
             <span className="text-muted-foreground">{t.hosts.agent.probes}</span>
             <span className="text-right">{agent.probes_supported ? t.hosts.agent.probesOn : t.hosts.agent.probesOff}</span>
           </div>
+          {/* Backlog 3.132: whether the agent's local status page is on and
+              where. Nothing for an agent that never reported it (too old,
+              or no heartbeat yet); never the address, port or token. */}
+          {agent.status_page != null && (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">{t.hosts.agent.statusPage}</span>
+              <span className="text-right">{t.hosts.agent.statusPageModes[agent.status_page]}</span>
+            </div>
+          )}
           <div className="flex flex-col gap-1">
             <div className="flex justify-between gap-2">
               <span className="text-muted-foreground">{t.hosts.agent.secrets}</span>

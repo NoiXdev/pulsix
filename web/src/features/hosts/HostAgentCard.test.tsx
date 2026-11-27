@@ -229,6 +229,37 @@ describe('HostAgentCard', () => {
     });
   });
 
+  describe('status page', () => {
+    const withStatusPage = (mode: string | null) =>
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/agent': {
+          agent: {
+            host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online',
+            last_seen: new Date().toISOString(), version: 'v0.3a', created_at: '', status_page: mode,
+          },
+        },
+      });
+
+    it.each([
+      ['off', 'Off'],
+      ['loopback', 'On, local only'],
+      ['network', 'On, network'],
+      ['failed', "Off — its settings in agent.yaml are refused or it could not start; the agent's log says why"],
+    ])('says the status page is %s', async (mode, text) => {
+      withStatusPage(mode);
+      renderCard();
+      expect(await screen.findByText('Status page')).toBeInTheDocument();
+      expect(screen.getByText(text)).toBeInTheDocument();
+    });
+
+    it('shows nothing for an agent that never reported it', async () => {
+      withStatusPage(null);
+      renderCard();
+      expect(await screen.findByText('Probes other hosts')).toBeInTheDocument();
+      expect(screen.queryByText('Status page')).not.toBeInTheDocument();
+    });
+  });
+
   describe('secrets report', () => {
     const withSecrets = (over: Record<string, unknown>) =>
       mockApi({

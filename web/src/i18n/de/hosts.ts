@@ -294,6 +294,13 @@ export const deHosts: Messages['hosts'] = {
     probes: 'Prüft andere Hosts',
     probesOn: 'Ja',
     probesOff: 'Nein – in der agent.yaml abgeschaltet oder die agent.yaml wird abgelehnt, oder der Agent ist zu alt',
+    statusPage: 'Statusseite',
+    statusPageModes: {
+      off: 'Aus',
+      loopback: 'An, nur lokal',
+      network: 'An, im Netzwerk',
+      failed: 'Aus – ihre Einstellungen in der agent.yaml werden abgelehnt oder sie konnte nicht starten; das Log des Agents nennt den Grund',
+    },
   },
   inventory: {
     needsManaged: 'Inventargruppen setzen die Fähigkeit „Verwaltet“ voraus.',
