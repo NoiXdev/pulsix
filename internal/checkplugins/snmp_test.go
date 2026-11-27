@@ -117,10 +117,10 @@ func TestSNMPDescriptor(t *testing.T) {
 		defaults[p.Name] = p.Default
 		required[p.Name] = p.Required
 	}
-	if want := []string{"secret", "version", "port", "timeout_seconds", "oids", "interfaces", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}; !slices.Equal(names, want) {
+	if want := []string{"secret", "version", "port", "timeout_seconds", "oids", "interfaces", "assertions", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}; !slices.Equal(names, want) {
 		t.Fatalf("params = %v, want %v", names, want)
 	}
-	if !required["secret"] || len(required) != 10 || required["oids"] || required["interfaces"] {
+	if !required["secret"] || len(required) != 11 || required["oids"] || required["interfaces"] {
 		t.Fatalf("required = %v, want only secret", required)
 	}
 	if defaults["version"] != "v2c" || defaults["port"] != int64(161) || defaults["timeout_seconds"] != int64(5) ||
@@ -142,6 +142,11 @@ func TestSNMPDescriptor(t *testing.T) {
 		{Name: "snmp.if.in_bps", Kind: checkplugins.Numeric},
 		{Name: "snmp.if.out_bps", Kind: checkplugins.Numeric},
 		{Name: "snmp.if.errors", Kind: checkplugins.Numeric},
+		{Name: "snmp.assertion", Kind: checkplugins.Discrete},
+		{Name: "snmp.assertion_actual", Kind: checkplugins.Discrete},
+	}
+	if a := d.Params[6]; a.Type != checkplugins.TypeList || a.MaxEntries != 32 || a.MaxBytes != 512 || a.Format != checkplugins.FormatSNMPAssertion {
+		t.Fatalf("assertions = %+v", a)
 	}
 	if !slices.Equal(d.Metrics, want) {
 		t.Fatalf("metrics = %v, want %v", d.Metrics, want)
@@ -252,5 +257,50 @@ func TestSNMPAsksForItem(t *testing.T) {
 				t.Fatalf("AsksForItem(snmp, %v, %q) = %v, want %v", tc.params, tc.item, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSNMPAssertionsCheck (backlog 3.134, plan R1 and R7): assertions in
+// the snmp dialect, value("x") only for an oids entry x, no name twice
+// and none shared with an oids entry; the items asked for are the oids
+// and assertion names (every item with interfaces).
+func TestSNMPAssertionsCheck(t *testing.T) {
+	oids := []any{"load=1.3.6.1.4.1.2021.10.1.3.1", "descr=1.3.6.1.2.1.1.1.0"}
+	with := func(entries ...any) map[string]any {
+		return map[string]any{"secret": "sw", "oids": oids, "assertions": entries}
+	}
+	for _, good := range [][]any{
+		{`busy=value("load") < 2`, `linux=value("descr") contains "Linux" @warn`, "up=uptime > 600", "fast=response_ms < 100"},
+		{`up=uptime > 600`},
+		{},
+	} {
+		if err := checkplugins.Validate("snmp", with(good...)); err != nil {
+			t.Errorf("Validate(%v) = %v", good, err)
+		}
+	}
+	for _, tc := range []struct {
+		entries []any
+		want    string
+	}{
+		{[]any{`busy=value("cpu") < 2`}, `assertion "busy" reads value("cpu"), which no oids entry names`},
+		{[]any{`load=value("load") < 2`}, `oids and assertions both name "load"`},
+		{[]any{"up=uptime > 1", "up=uptime > 2"}, `assertions names "up" twice`},
+		{[]any{"ok=status == 200"}, "unknown subject"},
+		{[]any{`busy=value("load") exists`}, `"exists" is not an operator of value`},
+	} {
+		err := checkplugins.Validate("snmp", with(tc.entries...))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("Validate(%v) = %v, want %q", tc.entries, err, tc.want)
+		}
+	}
+	params := with(`busy=value("load") < 2`)
+	for item, want := range map[string]bool{"": true, "load": true, "descr": true, "busy": true, "eth0": false} {
+		if got := checkplugins.AsksForItem("snmp", params, item); got != want {
+			t.Errorf("AsksForItem(%q) = %v, want %v", item, got, want)
+		}
+	}
+	params["interfaces"] = true
+	if !checkplugins.AsksForItem("snmp", params, "eth0") {
+		t.Error("with interfaces every item is asked for")
 	}
 }

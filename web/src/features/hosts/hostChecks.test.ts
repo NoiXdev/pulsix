@@ -142,7 +142,7 @@ describe('isGraphable', () => {
       'dns.assertion', 'dns.assertion_actual', 'dns.failure', 'docker.health', 'docker.state', 'http.assertion', 'http.assertion_actual', 'http.cert_issuer', 'http.failure', 'http.json.text',
       'icmp.failure', 'mysql.replication_state', 'pg.replica_state', 'raid.state',
       'redis.aof_last_bgrewrite_status', 'redis.aof_last_write_status', 'redis.rdb_last_bgsave_status',
-      'redis.replication_link', 'redis.role', 'script.output', 'script.status', 'service.state', 'smart.power_mode', 'snmp.failure', 'snmp.if.status', 'snmp.text',
+      'redis.replication_link', 'redis.role', 'script.output', 'script.status', 'service.state', 'smart.power_mode', 'snmp.assertion', 'snmp.assertion_actual', 'snmp.failure', 'snmp.if.status', 'snmp.text',
       'tcp.assertion', 'tcp.assertion_actual', 'tcp.failure', 'tls.assertion', 'tls.assertion_actual', 'tls.cert_issuer', 'tls.failure',
       'zfs.scan', 'zfs.state',
     ]);

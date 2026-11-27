@@ -2,6 +2,7 @@ package snmp
 
 import (
 	"math"
+	"strconv"
 
 	"github.com/gosnmp/gosnmp"
 
@@ -70,35 +71,56 @@ func noSuchObject(t gosnmp.Asn1BER) bool {
 	return t == gosnmp.NoSuchObject || t == gosnmp.NoSuchInstance || t == gosnmp.EndOfMibView
 }
 
-// valueObservation turns the answer for the oids entry name into its
-// observation: snmp.value for a number, snmp.text for a string, an OID or
-// an IP address, an error on snmp.value otherwise.
-func valueObservation(name string, pdu gosnmp.SnmpPDU) probe.Observation {
-	obs := probe.Observation{Metric: "snmp.value", Item: name}
+// value is what one oids entry read: a number, a text (as the device sent
+// it) or the error its snmp.value reports. A number also keeps spelled,
+// its exact decimal spelling: a Counter64 above 2^53 has no exact float64,
+// and the assertions compare text and show actuals by spelled.
+type value struct {
+	num     float64
+	spelled string
+	text    string
+	isText  bool
+	err     string
+}
+
+// readValue reads the answer for an oids entry: a number, a string, an OID
+// or an IP address as text, the error otherwise.
+func readValue(pdu gosnmp.SnmpPDU) value {
 	switch pdu.Type {
 	case gosnmp.Integer, gosnmp.Counter32, gosnmp.Counter64, gosnmp.Gauge32, gosnmp.TimeTicks, gosnmp.Uinteger32:
 		if v, ok := toFloat(pdu.Value); ok {
-			obs.Value = &v
-			return obs
+			return value{num: v, spelled: spell(pdu.Value, v)}
 		}
 	case gosnmp.OpaqueFloat, gosnmp.OpaqueDouble:
 		if v, ok := toFloat(pdu.Value); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
-			obs.Value = &v
-			return obs
+			return value{num: v, spelled: spell(pdu.Value, v)}
 		}
 	case gosnmp.OctetString, gosnmp.ObjectIdentifier, gosnmp.IPAddress:
 		if s, ok := toText(pdu.Value); ok {
-			l := probe.Label(s)
-			obs.Metric, obs.Label = "snmp.text", &l
-			return obs
+			return value{text: s, isText: true}
 		}
 	default:
 		if noSuchObject(pdu.Type) {
-			obs.Err = errNoSuchObject
-			return obs
+			return value{err: errNoSuchObject}
 		}
 	}
-	obs.Err = errUnsupportedType
+	return value{err: errUnsupportedType}
+}
+
+// observation is v as the oids entry name reports it: snmp.value for a
+// number, snmp.text for a text, an error on snmp.value.
+func (v value) observation(name string) probe.Observation {
+	obs := probe.Observation{Metric: "snmp.value", Item: name}
+	switch {
+	case v.err != "":
+		obs.Err = v.err
+	case v.isText:
+		l := probe.Label(v.text)
+		obs.Metric, obs.Label = "snmp.text", &l
+	default:
+		n := v.num
+		obs.Value = &n
+	}
 	return obs
 }
 
@@ -118,11 +140,38 @@ func toFloat(v any) (float64, bool) {
 	case uint64:
 		return float64(n), true
 	case float32:
-		return float64(n), true
+		// Through its shortest float32 spelling, so a device's 0.15 is
+		// 0.15 and not 0.15000000596046448 (review M1).
+		f, err := strconv.ParseFloat(strconv.FormatFloat(float64(n), 'g', -1, 32), 64)
+		return f, err == nil
 	case float64:
 		return n, true
 	}
 	return 0, false
+}
+
+// spell is the decimal spelling of the number v that toFloat read as f:
+// an integer's own digits (exact past 2^53), a float's shortest form
+// without an exponent.
+func spell(v any, f float64) string {
+	switch n := v.(type) {
+	case int:
+		return strconv.FormatInt(int64(n), 10)
+	case int32:
+		return strconv.FormatInt(int64(n), 10)
+	case int64:
+		return strconv.FormatInt(n, 10)
+	case uint:
+		return strconv.FormatUint(uint64(n), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(n), 10)
+	case uint64:
+		return strconv.FormatUint(n, 10)
+	}
+	if f == 0 {
+		f = 0 // no "-0"
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 // toUint reads an unsigned number (a counter, TimeTicks).

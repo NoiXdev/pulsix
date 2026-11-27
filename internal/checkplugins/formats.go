@@ -93,6 +93,10 @@ const (
 	FormatTCPAssertion Format = "tcpAssertion"
 	FormatDNSAssertion Format = "dnsAssertion"
 	FormatTLSAssertion Format = "tlsAssertion"
+	// FormatSNMPAssertion: one entry of the snmp check's assertions
+	// (backlog 3.134), the snmp dialect: value("name"), response_ms,
+	// uptime. That the name is an oids entry's is the descriptor's rule.
+	FormatSNMPAssertion Format = "snmpAssertion"
 	// FormatUUID: a canonical lower-case UUID (8-4-4-4-12 hex digits, no
 	// braces or urn prefix) — the id of a monitoring group in a check's
 	// vantage_groups (backlog 3.13a).
@@ -121,7 +125,7 @@ func Formats() []Format {
 		FormatPHPFPMPool, FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
 		FormatTCPAssertion, FormatDNSAssertion, FormatTLSAssertion,
-		FormatHTTPHeader, FormatMediaType, FormatScriptArg,
+		FormatHTTPHeader, FormatMediaType, FormatScriptArg, FormatSNMPAssertion,
 	}
 }
 
@@ -181,6 +185,8 @@ func (f Format) problem(s string) string {
 		return dialectProblem(assert.DNS, dnsAssertionExample, s)
 	case FormatTLSAssertion:
 		return dialectProblem(assert.TLS, tlsAssertionExample, s)
+	case FormatSNMPAssertion:
+		return dialectProblem(assert.SNMP, snmpAssertionExample, s)
 	case FormatUUID:
 		if id, err := uuid.Parse(s); err != nil || id.String() != s {
 			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"

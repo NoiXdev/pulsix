@@ -1,5 +1,6 @@
 // Package assert parses the synthetic checks' assertions (backlog 3.13b
-// for http, 3.87 for tcp, dns and tls: one Dialect of subjects per plugin,
+// for http, 3.87 for tcp, dns and tls, 3.134 for snmp: one Dialect of
+// subjects per plugin,
 // dialect.go; spec
 // docs/superpowers/specs/2026-11-16-web-assertions-design.md, section 3):
 // entries "name=expression" with an optional " @warn" (or " @crit", the
@@ -14,12 +15,16 @@
 //	          | dns:  resolve_ms | answer_count | answers | answer("value")
 //	          | tls:  handshake_ms | cert_valid | cert_days | cert_issuer
 //	          |       cert_subject | cert_sans | version | cipher
+//	          | snmp: value("name") | response_ms | uptime
 //
 // Numeric subjects take <, <=, >, >=, ==, != and in (a..b, inclusive)
 // with a decimal number; text subjects take ==, !=, contains, !contains,
 // matches and !matches (RE2) with a JSON string literal; header, json and
 // html also take exists and !exists, without an operand, and answer only
-// those two.
+// those two. snmp's value has no fixed kind (a device's value is a number
+// or text): it takes every numeric and text operator, and == and !=
+// compare numbers or text as their operand is a number or a string
+// (Assertion.Numeric).
 //
 // The descriptor's validation (internal/checkplugins), the probe
 // (internal/probe/http) and the alert detail all parse with this package,
@@ -88,13 +93,20 @@ const (
 	SubjectCertSANs    Subject = "cert_sans"
 	SubjectVersion     Subject = "version"
 	SubjectCipher      Subject = "cipher"
+
+	// snmp (backlog 3.134), beside response_ms. value("name") reads the
+	// oids entry name; its kind is the assertion's (Assertion.Numeric).
+	SubjectValue  Subject = "value"
+	SubjectUptime Subject = "uptime"
 )
 
-// Numeric reports whether s compares a number.
+// Numeric reports whether s always compares a number; false for a text
+// subject and for value, whose assertion decides.
 func (s Subject) Numeric() bool {
 	switch s {
 	case SubjectStatus, SubjectResponseMS, SubjectTTFBMS, SubjectSize, SubjectRedirects, SubjectCertDays, SubjectHTMLCount,
-		SubjectConnectMS, SubjectResolveMS, SubjectAnswerCount, SubjectHandshakeMS, SubjectCertValid, SubjectVersion:
+		SubjectConnectMS, SubjectResolveMS, SubjectAnswerCount, SubjectHandshakeMS, SubjectCertValid, SubjectVersion,
+		SubjectUptime:
 		return true
 	}
 	return false
@@ -117,7 +129,8 @@ func (s Subject) KeepsBody() bool {
 
 // takesArg reports whether s is written with a quoted argument.
 func (s Subject) takesArg() bool {
-	return s == SubjectHeader || s == SubjectJSON || s == SubjectHTML || s == SubjectHTMLCount || s == SubjectAnswer
+	return s == SubjectHeader || s == SubjectJSON || s == SubjectHTML || s == SubjectHTMLCount || s == SubjectAnswer ||
+		s == SubjectValue
 }
 
 // Op is an assertion's operator.
@@ -153,6 +166,8 @@ func opsOf(s Subject) []Op {
 		return []Op{OpLt, OpLe, OpGt, OpGe, OpEq, OpNe, OpIn}
 	case s == SubjectAnswer:
 		return []Op{OpExists, OpNotExists}
+	case s == SubjectValue:
+		return []Op{OpLt, OpLe, OpGt, OpGe, OpEq, OpNe, OpIn, OpContains, OpNotContains, OpMatches, OpNotMatches}
 	case s == SubjectHeader || s == SubjectJSON || s == SubjectHTML:
 		return []Op{OpEq, OpNe, OpContains, OpNotContains, OpMatches, OpNotMatches, OpExists, OpNotExists}
 	}
@@ -175,6 +190,8 @@ type Assertion struct {
 	arg      string
 	op       Op
 	severity Severity
+	// numeric: the assertion compares numbers (num, lo, hi), not text.
+	numeric bool
 	// The operand: num for a numeric op, lo and hi for in, text for a text
 	// op; re compiled from text for matches.
 	num, lo, hi float64
@@ -193,8 +210,9 @@ func (a Assertion) Name() string { return a.name }
 // Subject is what the assertion looks at.
 func (a Assertion) Subject() Subject { return a.subject }
 
-// Arg is the subject's argument: the header name, the JSONPath or the CSS
-// selector; "" for the other subjects.
+// Arg is the subject's argument: the header name, the JSONPath, the CSS
+// selector, the answer or the oids entry's name; "" for the other
+// subjects.
 func (a Assertion) Arg() string { return a.arg }
 
 // Op is the operator.
@@ -202,6 +220,11 @@ func (a Assertion) Op() Op { return a.op }
 
 // Severity is what the assertion reports when it fails.
 func (a Assertion) Severity() Severity { return a.severity }
+
+// Numeric reports whether the assertion compares numbers (HoldsNumber)
+// rather than text (HoldsText): its subject's kind, or for value its
+// operator and operand — <, <=, >, >=, in and == or != with a number.
+func (a Assertion) Numeric() bool { return a.numeric }
 
 // Path is json's compiled JSONPath, nil for any other subject.
 func (a Assertion) Path() *jpath.Path { return a.path }
@@ -223,7 +246,7 @@ func (a Assertion) Operand() string {
 		return ""
 	case a.op == OpIn:
 		return formatNumber(a.lo) + ".." + formatNumber(a.hi)
-	case a.subject.Numeric():
+	case a.numeric:
 		return formatNumber(a.num)
 	}
 	return Quote(a.text)
@@ -265,7 +288,7 @@ func subjectText(s Subject, arg string) string {
 	switch s {
 	case SubjectHTMLCount:
 		return "html(" + Quote(arg) + ") count"
-	case SubjectHeader, SubjectJSON, SubjectHTML, SubjectAnswer:
+	case SubjectHeader, SubjectJSON, SubjectHTML, SubjectAnswer, SubjectValue:
 		return string(s) + "(" + Quote(arg) + ")"
 	}
 	return string(s)

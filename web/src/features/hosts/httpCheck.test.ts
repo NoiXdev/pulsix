@@ -202,3 +202,22 @@ describe('assertions of tcp, dns and tls (backlog 3.87)', () => {
     expect(discreteText(en, 'icmp', 'icmp.assertion', 'crit')).toBe('crit');
   });
 });
+
+describe('assertions of snmp (backlog 3.134)', () => {
+  it('reads an snmp check\'s rows and keeps its values apart from them', () => {
+    const c = check(
+      [
+        value('snmp.value', { item: 'load', value: 93 }),
+        value('snmp.assertion', { item: 'busy', label: 'warn' }),
+        value('snmp.assertion_actual', { item: 'busy', label: '93' }),
+      ],
+      { oids: ['load=1.3.6.1.2.1.33.1.4.4.1.5.1'], assertions: ['busy=value("load") < 80 @warn', 's=value("state") == "online"'] },
+      'snmp',
+    );
+    expect(assertionRows(c, en, formatter('en'), NOW)).toEqual([
+      { key: 'busy', name: 'busy', expression: 'value("load") < 80', severity: 'warn', status: { label: 'warn', tone: 'warn' }, actual: '93', age: '1 minute ago' },
+      { key: 's', name: 's', expression: 'value("state") == "online"', severity: 'crit', status: { label: 'no result', tone: 'unknown' }, actual: '—', age: '—' },
+    ]);
+    expect(withoutAssertionRows(c).map((v) => v.metric)).toEqual(['snmp.value']);
+  });
+});

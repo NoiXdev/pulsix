@@ -63,6 +63,7 @@ func TestAlertDetailsSaysWhyAnAlertFired(t *testing.T) {
 		{Key: "api", Plugin: checks.PluginTCP, Params: map[string]any{"assertions": []any{"home=status == 200"}}},
 		{Key: "ssh", Plugin: checks.PluginTCP, Params: map[string]any{"assertions": []any{`banner=response matches "^SSH-2" @warn`}}},
 		{Key: "ns", Plugin: checks.PluginDNS, Params: map[string]any{"assertions": []any{`ip=answer("192.0.2.1") exists`}}},
+		{Key: "ups", Plugin: checks.PluginSNMP, Params: map[string]any{"oids": []any{"load=1.3.6.1.2.1.33.1.4.4.1.5.1"}, "assertions": []any{`busy=value("load") < 80 @warn`}}},
 	}}
 	labels := map[labelKey]string{
 		{"ping", "", "icmp.failure"}:               "timeout",
@@ -74,6 +75,7 @@ func TestAlertDetailsSaysWhyAnAlertFired(t *testing.T) {
 		{"api", "home", "http.assertion_actual"}:   "500",
 		{"ssh", "banner", "tcp.assertion_actual"}:  `"220 mail"`,
 		{"ns", "ip", "dns.assertion_actual"}:       "absent",
+		{"ups", "busy", "snmp.assertion_actual"}:   "93",
 		{"api", "home", "tcp.assertion_actual"}:    `"x"`,
 		{"box", "", "cpu.failure"}:                 "timeout",
 		{"box", "", "disk.used_pct"}:               "99",
@@ -95,6 +97,7 @@ func TestAlertDetailsSaysWhyAnAlertFired(t *testing.T) {
 		{"a check key that is not http", sub("api", "home", "http.assertion"), "saw 500"},
 		{"a tcp assertion (backlog 3.87)", sub("ssh", "banner", "tcp.assertion"), `response matches "^SSH-2" — saw "220 mail"`},
 		{"a dns assertion", sub("ns", "ip", "dns.assertion"), `answer("192.0.2.1") exists — saw absent`},
+		{"an snmp assertion (backlog 3.134)", sub("ups", "busy", "snmp.assertion"), `value("load") < 80 — saw 93`},
 		{"an entry not in its plugin's dialect: the actual alone", sub("api", "home", "tcp.assertion"), `saw "x"`},
 		{"a plugin without assertions", sub("box", "", "icmp.assertion"), ""},
 		{"an agent plugin's up is not a synthetic failure", sub("box", "", "cpu.up"), ""},

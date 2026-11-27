@@ -1,7 +1,7 @@
 /**
  * The TypeScript twin of the synthetic checks' assertion grammar
  * (internal/probe/assert, backlog 3.13b for http, 3.87 for tcp, dns and
- * tls): one entry of `assertions`, `name=expression` with an optional
+ * tls, 3.134 for snmp): one entry of `assertions`, `name=expression` with an optional
  * ` @warn` or ` @crit`, in the subjects of the check's plugin.
  *
  *   assertion = subject SP op [SP operand]
@@ -52,10 +52,12 @@ export type AssertionSubject =
   | 'cert_subject'
   | 'cert_sans'
   | 'version'
-  | 'cipher';
+  | 'cipher'
+  | 'value'
+  | 'uptime';
 
-/** The plugins with assertions (backlog 3.13b, 3.87). */
-export type AssertionPlugin = 'http' | 'tcp' | 'dns' | 'tls';
+/** The plugins with assertions (backlog 3.13b, 3.87, 3.134). */
+export type AssertionPlugin = 'http' | 'tcp' | 'dns' | 'tls' | 'snmp';
 
 /** DIALECTS: each plugin's subjects as an expression spells them, in the
  * server's order (internal/probe/assert dialect.go); `html count` is
@@ -65,6 +67,7 @@ const DIALECTS: Readonly<Record<AssertionPlugin, readonly AssertionSubject[]>> =
   tcp: ['connect_ms', 'response_ms', 'response'],
   dns: ['resolve_ms', 'answer_count', 'answers', 'answer'],
   tls: ['handshake_ms', 'cert_valid', 'cert_days', 'cert_issuer', 'cert_subject', 'cert_sans', 'version', 'cipher'],
+  snmp: ['value', 'response_ms', 'uptime'],
 };
 
 /** isAssertionPlugin: a plugin whose checks take assertions. */
@@ -80,14 +83,16 @@ export function dialectSubjects(plugin: AssertionPlugin): AssertionSubject[] {
 
 /** takesArg: the subjects written with a quoted argument. */
 export function subjectTakesArg(s: AssertionSubject): boolean {
-  return s === 'header' || s === 'json' || s === 'html' || s === 'html count' || s === 'answer';
+  return s === 'header' || s === 'json' || s === 'html' || s === 'html count' || s === 'answer' || s === 'value';
 }
 
 const NUMERIC_OPS = ['<', '<=', '>', '>=', '==', '!=', 'in'];
 const TEXT_OPS = ['==', '!=', 'contains', '!contains', 'matches', '!matches'];
 const PRESENCE_OPS = ['exists', '!exists'];
+const ORDER_OPS = ['<', '<=', '>', '>=', 'in'];
 
-/** isNumericSubject: the subjects that compare a number. */
+/** isNumericSubject: the subjects that always compare a number; snmp's
+ * `value` is not one, its operator and operand decide (comparesNumber). */
 export function isNumericSubject(s: AssertionSubject): boolean {
   return [
     'status',
@@ -103,13 +108,24 @@ export function isNumericSubject(s: AssertionSubject): boolean {
     'handshake_ms',
     'cert_valid',
     'version',
+    'uptime',
   ].includes(s);
+}
+
+/** comparesNumber: whether an assertion on subject with op compares
+ * numbers — the subject's kind, or for `value` an ordering operator, or
+ * == and != when the operand is not a string (quoted says it is). */
+export function comparesNumber(s: AssertionSubject, op: string, quoted: boolean): boolean {
+  if (isNumericSubject(s)) return true;
+  if (s !== 'value') return false;
+  return ORDER_OPS.includes(op) || ((op === '==' || op === '!=') && !quoted);
 }
 
 /** assertionOps: the operators a subject takes, in the server's order. */
 export function assertionOps(s: AssertionSubject): string[] {
   if (isNumericSubject(s)) return NUMERIC_OPS;
   if (s === 'answer') return PRESENCE_OPS;
+  if (s === 'value') return [...NUMERIC_OPS, 'contains', '!contains', 'matches', '!matches'];
   if (s === 'header' || s === 'json' || s === 'html') return [...TEXT_OPS, ...PRESENCE_OPS];
   return TEXT_OPS;
 }
@@ -122,6 +138,8 @@ export interface AssertionShape {
   op: string;
   operand: string;
   severity: 'warn' | 'crit';
+  /** Whether the assertion compares numbers (comparesNumber). */
+  numeric: boolean;
 }
 
 const isLetter = (c: string) => /^[A-Za-z_]$/.test(c);
@@ -209,6 +227,8 @@ function argValid(subject: AssertionSubject, arg: string): boolean {
       return arg.startsWith('$') && jsonPathDescendants(arg) <= 1;
     case 'answer':
       return arg.trim() !== '' && byteLen(arg) <= MAX_ANSWER;
+    case 'value':
+      return NAME.test(arg);
     default:
       return arg.trim() !== '' && byteLen(arg) <= MAX_SELECTOR;
   }
@@ -258,6 +278,7 @@ export function parseAssertion(entry: string, plugin: AssertionPlugin = 'http'):
   if (!assertionOps(subject).includes(op)) return null;
 
   p.spaces();
+  const numeric = comparesNumber(subject, op, p.peek() === '"');
   let operand = '';
   if (PRESENCE_OPS.includes(op)) {
     if (!p.done() && p.peek() !== '@') return null;
@@ -268,7 +289,7 @@ export function parseAssertion(entry: string, plugin: AssertionPlugin = 'http'):
     const lo = finiteNumber(operand.slice(0, dots));
     const hi = finiteNumber(operand.slice(dots + 2));
     if (lo === null || hi === null || lo > hi) return null;
-  } else if (isNumericSubject(subject)) {
+  } else if (numeric) {
     operand = p.rest();
     if (finiteNumber(operand) === null) return null;
   } else {
@@ -289,7 +310,7 @@ export function parseAssertion(entry: string, plugin: AssertionPlugin = 'http'):
     p.spaces();
   }
   if (!p.done()) return null;
-  return { name: entry.slice(0, eq), subject, arg, op, operand, severity };
+  return { name: entry.slice(0, eq), subject, arg, op, operand, severity, numeric };
 }
 
 /** assertion: the format of an http check's `assertions` entry. */
@@ -302,3 +323,6 @@ export function assertion(s: string): boolean {
 export const tcpAssertion = (s: string): boolean => parseAssertion(s, 'tcp') !== null;
 export const dnsAssertion = (s: string): boolean => parseAssertion(s, 'dns') !== null;
 export const tlsAssertion = (s: string): boolean => parseAssertion(s, 'tls') !== null;
+/** snmpAssertion: the format of an snmp check's entry (backlog 3.134);
+ * that value("name") names an oids entry is the server's rule. */
+export const snmpAssertion = (s: string): boolean => parseAssertion(s, 'snmp') !== null;

@@ -103,7 +103,7 @@ func TestBuildReconcilesZonelessOrganizations(t *testing.T) {
 // TestBuildSeedsRuleSetOnOrgCreation is Task 5's own coverage of
 // ChainOrgCreatedHooks' production composition (app.go): completing the
 // first-run wizard must leave the new organization with exactly the
-// twenty-two-row starter rule set rules.Service.SeedForOrg writes, each stamped
+// twenty-four-row starter rule set rules.Service.SeedForOrg writes, each stamped
 // origin "seed" and scope "org" — and with its check_definitions seed set
 // still in place, proving rulesSvc.SeedForOrg was appended to the same
 // chained hook rather than replacing checksSvc.SeedForOrg. A failing rule
@@ -168,8 +168,8 @@ func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 22 {
-		t.Fatalf("check_rules for the new org = %+v, want exactly the 22 seed rows", got)
+	if len(got) != 24 {
+		t.Fatalf("check_rules for the new org = %+v, want exactly the 24 seed rows", got)
 	}
 	seen := map[string]bool{}
 	for _, r := range got {

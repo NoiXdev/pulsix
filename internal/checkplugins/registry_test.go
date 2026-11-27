@@ -128,6 +128,9 @@ var listParamsNotItems = map[string]bool{
 	// http's assertions name items too, but json_values is the ItemParam;
 	// the ItemAsked hook reads both lists (backlog 3.13b).
 	"http.assertions": true,
+	// snmp's assertions likewise: oids is the ItemParam, the ItemAsked
+	// hook reads both lists (backlog 3.134).
+	"snmp.assertions": true,
 	// http's request headers (backlog 3.84): sent, not reported on.
 	"http.headers": true,
 	// script's values for placeholders (backlog 3.6j): passed, not
@@ -240,8 +243,9 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 		if p.Name != "secret" {
 			params["secret"] = "sw"
 		}
+		// The entry the assertions example reads (backlog 3.134).
 		if p.Name != "oids" {
-			params["oids"] = []any{"x=1.3"}
+			params["oids"] = []any{"ups_load=1.3"}
 		}
 	}
 	return checkplugins.Validate(plugin, params)

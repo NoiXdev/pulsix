@@ -10,6 +10,8 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/assert"
+	"github.com/noixdev/pulsix/internal/probe/judge"
 )
 
 // Parameter bounds and defaults; internal/checkplugins/snmp.go validates
@@ -44,6 +46,9 @@ type settings struct {
 	timeout    time.Duration
 	oids       []oidEntry
 	interfaces bool
+	// assertions are the assertions entries (backlog 3.134), read in the
+	// snmp dialect; one that does not parse fails only its own item.
+	assertions []judge.Entry
 }
 
 // parseSettings reads and checks params. Its errors quote no param value.
@@ -52,6 +57,7 @@ func parseSettings(params map[string]any) (settings, error) {
 		secret:     probe.StrParam(params, "secret", ""),
 		version:    probe.StrParam(params, "version", "v2c"),
 		interfaces: probe.BoolParam(params, "interfaces", false),
+		assertions: judge.Entries(assert.SNMP, params),
 	}
 	if s.secret == "" {
 		return s, errors.New(errNoSecretParam)

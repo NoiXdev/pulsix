@@ -1364,6 +1364,26 @@ assertions, so the items go stale until a new manager probes it: stop every mana
 instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
+Assertions on `snmp` checks (backlog 3.134) add migration 00135 and no proto change and
+no dependency. The migration seeds two organization rules (`SNMP assertion failed` and
+`SNMP assertion failed (critical)`, on `snmp.assertion in ("warn")` and `in ("crit")`),
+backfilled for every existing organization that holds no rule of that name; nothing is
+dropped or rewritten, and they match nothing until an snmp check has assertions. The
+descriptor gains the optional `assertions` parameter (format `snmpAssertion`: subjects
+`value("name")` of an `oids` entry, `response_ms`, `uptime`) and the metrics
+`snmp.assertion` and `snmp.assertion_actual` on one item per entry; an assertion may not
+share its name with an `oids` entry, and `value("x")` must name one. Existing snmp checks
+poll as before with one difference: an `oids` entry the device answers with an Opaque
+float now reads its float's shortest spelling (a device's 0.15 was stored as
+0.15000000596046448, it is now 0.15). A check that cannot be attempted with readable
+params (an unusable secret, a refused target) also puts its error on its assertions' items.
+**Skew:** snmp is probed from the manager only (it names a secret), so no agent is
+involved. A manager older than this release refuses the parameter; one still running
+during a rolling upgrade while it holds the probe lock polls such a check without its
+assertions, so the items have no reading until a new manager polls it: stop every manager
+instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
+
 ## Behaviour changes to check after an upgrade
 
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**

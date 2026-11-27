@@ -259,6 +259,8 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"snmp.if.in_bps":                     {CheckKey: "snmp", Kind: rules.MetricNumeric},
 		"snmp.if.out_bps":                    {CheckKey: "snmp", Kind: rules.MetricNumeric},
 		"snmp.if.errors":                     {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.assertion":                     {CheckKey: "snmp", Kind: rules.MetricDiscrete},
+		"snmp.assertion_actual":              {CheckKey: "snmp", Kind: rules.MetricDiscrete},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {

@@ -126,7 +126,7 @@ func TestFailAllCoversPluginsWithParamDependentMetrics(t *testing.T) {
 func TestFailAllReportsTheDescriptorsMetrics(t *testing.T) {
 	for plugin, params := range map[string]map[string]any{
 		"http": {"url": "http://x/", "body_contains": "ok", "json_values": []any{"a=$.a"}},
-		"snmp": {"secret": "sw", "oids": []any{"name=1.3.6.1.2.1.1.5.0"}},
+		"snmp": {"secret": "sw", "oids": []any{"name=1.3.6.1.2.1.1.5.0"}, "assertions": []any{"up=uptime > 1"}},
 		"tcp":  {"port": float64(22), "expect": "SSH", "assertions": []any{"a=connect_ms < 5"}},
 		"dns":  {"expect": "x", "assertions": []any{"a=answer_count > 0"}},
 		"tls":  {"assertions": []any{"a=cert_days > 5"}},
@@ -149,8 +149,13 @@ func TestFailAllReportsTheDescriptorsMetrics(t *testing.T) {
 				items[o.Item] = true
 			}
 		}
-		if len(items) != 1 {
-			t.Fatalf("%s: items %v, want the one list entry", plugin, items)
+		// One item per list entry: snmp's oids entry and its assertion.
+		want := 1
+		if plugin == "snmp" {
+			want = 2
+		}
+		if len(items) != want {
+			t.Fatalf("%s: items %v, want the %d list entries", plugin, items, want)
 		}
 	}
 	if obs, ok := all.FailAll("icmp", map[string]any{}, "boom"); ok || obs != nil {

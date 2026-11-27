@@ -78,3 +78,45 @@ describe('rows of tcp, dns and tls (backlog 3.87)', () => {
     expect(withSubject(emptyRow('tls'), 'cipher')).toMatchObject({ subject: 'cipher', op: '==' });
   });
 });
+
+describe('rows of snmp (backlog 3.134)', () => {
+  it('starts a new row at value', () => {
+    expect(emptyRow('snmp')).toMatchObject({ subject: 'value', op: '<' });
+  });
+
+  it('round-trips value with a number, a text and a number-like text', () => {
+    for (const entry of [
+      'busy=value("ups_load") < 80',
+      's=value("state") == 2',
+      's=value("state") == "online"',
+      's=value("state") != "6" @warn',
+      'd=value("descr") contains "Linux"',
+      'l=value("la") in 0..2.5',
+    ]) {
+      const row = rowFromEntry(entry, 'snmp') as AssertionRow;
+      expect(row, entry).not.toBeNull();
+      expect(composeRow(row)).toBe(entry);
+    }
+  });
+
+  it('writes a typed == operand as a number only when it is one', () => {
+    const row = { ...emptyRow('snmp'), name: 's', arg: 'state', op: '==' };
+    expect(composeRow({ ...row, operand: '2' })).toBe('s=value("state") == 2');
+    expect(composeRow({ ...row, operand: 'online' })).toBe('s=value("state") == "online"');
+    expect(composeRow({ ...row, op: 'contains', operand: '2' })).toBe('s=value("state") contains "2"');
+  });
+
+  it('compares a number-like operand typed in double quotes as text (review M4)', () => {
+    const row = { ...emptyRow('snmp'), name: 's', arg: 'state', op: '==' };
+    expect(composeRow({ ...row, operand: '"2.0"' })).toBe('s=value("state") == "2.0"');
+    expect(composeRow({ ...row, op: '!=', operand: ' "2" ' })).toBe('s=value("state") != "2"');
+    expect(composeRow({ ...row, operand: '"a' })).toBe('s=value("state") == "\\"a"');
+    expect(rowFromEntry('s=value("state") == "2.0"', 'snmp')).toMatchObject({ operand: '"2.0"' });
+    expect(rowFromEntry('s=value("state") == "\\"q\\""', 'snmp')).toMatchObject({ operand: '"\\"q\\""' });
+    expect(rowFromEntry('s=value("state") == "online"', 'snmp')).toMatchObject({ operand: 'online' });
+    expect(rowFromEntry('s=value("state") contains "2"', 'snmp')).toMatchObject({ operand: '2' });
+    for (const entry of ['s=value("state") == "2.0"', 's=value("state") == "\\"q\\""', 's=value("state") == "a\\""']) {
+      expect(composeRow(rowFromEntry(entry, 'snmp') as AssertionRow)).toBe(entry);
+    }
+  });
+});

@@ -152,6 +152,41 @@ describe('AssertionEditor', () => {
     expect(screen.queryByText(/html\(…\) takes a CSS selector/)).not.toBeInTheDocument();
   });
 
+  it('composes an snmp value assertion as a number or a text (backlog 3.134)', async () => {
+    const user = userEvent.setup();
+    render(<Harness plugin="snmp" initial="" />);
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    await user.click(screen.getByLabelText('Subject of assertion 1'));
+    expect(options()).toEqual(['value', 'response_ms', 'uptime']);
+    await user.keyboard('{Escape}');
+    await user.type(screen.getByLabelText('Name of assertion 1'), 'busy');
+    expect(screen.getByLabelText('Argument of assertion 1')).toHaveAttribute('placeholder', 'ups_load');
+    await user.type(screen.getByLabelText('Argument of assertion 1'), 'ups_load');
+    expect(screen.getByLabelText('Operator of assertion 1')).toHaveValue('<');
+    await user.type(screen.getByLabelText('Value of assertion 1'), '80');
+    expect(text()).toBe('busy=value("ups_load") < 80');
+    await pickOption(screen, 'Operator of assertion 1', { value: '==' });
+    expect(text()).toBe('busy=value("ups_load") == 80');
+    await user.clear(screen.getByLabelText('Value of assertion 1'));
+    await user.type(screen.getByLabelText('Value of assertion 1'), 'online');
+    expect(text()).toBe('busy=value("ups_load") == "online"');
+  });
+
+  it('shows a quoted number-like snmp value in quotes and lets a row type one (review M4)', async () => {
+    const user = userEvent.setup();
+    render(<Harness plugin="snmp" initial={'s=value("state") == "6"'} />);
+    expect(screen.getAllByTestId('assertion-row')).toHaveLength(1);
+    const field = screen.getByLabelText('Value of assertion 1');
+    expect(field).toHaveValue('"6"');
+    await user.clear(field);
+    await user.type(field, '6');
+    expect(text()).toBe('s=value("state") == 6');
+    await user.type(field, '.0"');
+    await user.type(field, '{Home}"');
+    expect(field).toHaveValue('"6.0"');
+    expect(text()).toBe('s=value("state") == "6.0"');
+  });
+
   it('keeps an entry of another plugin\'s dialect as text', () => {
     render(<Harness plugin="tcp" initial="ok=status == 200" />);
     expect(screen.queryAllByTestId('assertion-row')).toHaveLength(0);
