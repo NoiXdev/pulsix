@@ -12,7 +12,8 @@ import (
 
 // Backlog 3.87, R12 as amended in review: an entry missing from an up
 // representative round is the error judge.ErrUnevaluated only when the
-// round was probed after the check's assertions last changed and the
+// round was probed after the check's assertions last changed plus the
+// push horizon (the longest an agent can take to run new params) and the
 // same vantage left it out of two distinct such rounds. Otherwise it is
 // left unjudged for that combine: no row at all.
 
@@ -48,8 +49,9 @@ func agentOnlyCheck(h *harness, f fleet, plugin string, assertions ...any) {
 
 // TestUnevaluatedNeedsTwoRoundsAfterTheChange: an agent that ignores the
 // parameter (older than the plugin's assertions) is flagged on the
-// second of its rounds probed after the assertions were set, for tcp and
-// for http alike; the first such round leaves the entries unjudged.
+// second of its rounds probed after the assertions were set and the push
+// horizon passed, for tcp and for http alike; the first such round leaves
+// the entries unjudged.
 func TestUnevaluatedNeedsTwoRoundsAfterTheChange(t *testing.T) {
 	for _, plugin := range []string{"tcp", "http"} {
 		t.Run(plugin, func(t *testing.T) {
@@ -60,14 +62,17 @@ func TestUnevaluatedNeedsTwoRoundsAfterTheChange(t *testing.T) {
 			h.tickAt(0) // refresh: the assertions are known from t0 on
 			agent := f.agents[0].String()
 
-			h.vstore.put(h.host, "web", VantageRow{Vantage: agent, Metric: plugin + ".up", At: t0.Add(50 * time.Second), Value: f64(1)})
-			h.ticksTo(0, time.Minute)
+			// Past the push horizon, when every current agent runs the new
+			// params.
+			base := pushHorizon + time.Minute
+			h.vstore.put(h.host, "web", VantageRow{Vantage: agent, Metric: plugin + ".up", At: t0.Add(base + 50*time.Second), Value: f64(1)})
+			h.ticksTo(base, base+time.Minute)
 			if errs := h.assertionErrs(t); len(errs) != 0 {
-				t.Fatalf("first round after the change = %v, want the entry unjudged", errs)
+				t.Fatalf("first round after the horizon = %v, want the entry unjudged", errs)
 			}
 
-			h.vstore.put(h.host, "web", VantageRow{Vantage: agent, Metric: plugin + ".up", At: t0.Add(110 * time.Second), Value: f64(1)})
-			h.ticksTo(time.Minute, 2*time.Minute)
+			h.vstore.put(h.host, "web", VantageRow{Vantage: agent, Metric: plugin + ".up", At: t0.Add(base + 110*time.Second), Value: f64(1)})
+			h.ticksTo(base+time.Minute, base+2*time.Minute)
 			errs := h.assertionErrs(t)
 			for _, k := range []string{"fast " + plugin + ".assertion", "fast " + plugin + ".assertion_actual"} {
 				if errs[k] != judge.ErrUnevaluated {
@@ -173,5 +178,61 @@ func TestUnevaluatedNotForADownRound(t *testing.T) {
 	}
 	if errs := h.assertionErrs(t); len(errs) != 0 {
 		t.Errorf("down rounds = %v", errs)
+	}
+}
+
+// TestUnevaluatedNotWithinThePushHorizon (review round 2, N1): a current
+// agent of a 15 s check keeps running its old params until its next
+// heartbeat brings the new assignment; its rounds stamped after the
+// refresh but within the push horizon lack the new entry and are never
+// blamed, however many there are.
+func TestUnevaluatedNotWithinThePushHorizon(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true})
+	h.world.setChecks(h.host, vantageCheck("web", "tcp", 15*time.Second, []uuid.UUID{f.group}, map[string]any{
+		"vantage_manager": false, "port": float64(22), "assertions": []any{"b=connect_ms < 500"},
+	}))
+	h.tickAt(0)
+	agent := f.agents[0].String()
+	for at := 10 * time.Second; at < pushHorizon; at += 15 * time.Second {
+		h.vstore.put(h.host, "web", VantageRow{Vantage: agent, Metric: "tcp.up", At: t0.Add(at), Value: f64(1)})
+		h.ticksTo(at-10*time.Second, at+5*time.Second)
+		for k, e := range h.assertionErrs(t) {
+			if e != "" {
+				t.Fatalf("round at %v: %s = %q, want no error within the push horizon", at, k, e)
+			}
+		}
+	}
+}
+
+// TestUnevaluatedRestartsAfterRegainingTheLock (review round 2, N2): the
+// first refresh after the lock was lost and regained takes the change
+// time afresh, as a new holder does, even for unchanged assertions.
+func TestUnevaluatedRestartsAfterRegainingTheLock(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true})
+	agentOnlyCheck(h, f, "tcp", "fast=connect_ms < 500")
+	h.tickAt(0)
+	s := slot{host: h.host, key: "web"}
+	if got := h.r.targets[s].assertSince; !got.Equal(t0) {
+		t.Fatalf("assertSince = %v, want the first refresh %v", got, t0)
+	}
+	h.locker.mu.Lock()
+	h.locker.allow = false
+	h.locker.mu.Unlock()
+	h.tickAt(5 * time.Second)
+	h.locker.mu.Lock()
+	h.locker.allow = true
+	h.locker.mu.Unlock()
+	h.tickAt(20 * time.Minute)
+	if got := h.r.targets[s].assertSince; !got.Equal(t0.Add(20 * time.Minute)) {
+		t.Fatalf("assertSince = %v, want the refresh after regaining the lock", got)
+	}
+	// A later refresh with the same assertions keeps it.
+	h.tickAt(21 * time.Minute)
+	if got := h.r.targets[s].assertSince; !got.Equal(t0.Add(20 * time.Minute)) {
+		t.Fatalf("assertSince = %v after a later refresh, want it kept", got)
 	}
 }

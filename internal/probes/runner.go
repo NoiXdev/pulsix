@@ -156,6 +156,9 @@ type Runner struct {
 	// rows. Both are forgotten with the lock: a new holder writes once.
 	assignedEmpty map[uuid.UUID]bool
 	expected      map[slot]expectedSet
+	// regained marks the first refresh after the lock was lost: it takes
+	// every slot's assertSince afresh, as a new holder does.
+	regained bool
 
 	// skipped paces the log of a device's skipped interfaces per slot.
 	skipped *throttle
@@ -309,6 +312,7 @@ func (r *Runner) lost() {
 	clear(r.pollers)
 	clear(r.assignedEmpty)
 	clear(r.expected)
+	r.regained = true
 	r.mu.Lock()
 	clear(r.missing)
 	r.mu.Unlock()

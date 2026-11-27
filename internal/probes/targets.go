@@ -172,11 +172,15 @@ func (r *Runner) newTarget(org uuid.UUID, address string, c checks.Resolved) tar
 }
 
 // adoptAssertions sets each slot's assertSince: kept while the check's
-// assertions are what the slot had, now for a new slot or changed
-// assertions. A slot gone forgets its run of unevaluated rounds.
+// assertions are what the slot had, now for a new slot, changed
+// assertions and every slot on the first refresh after regaining the
+// lock (what happened while another manager held it is unknown). A slot
+// gone forgets its run of unevaluated rounds.
 func (r *Runner) adoptAssertions(next map[slot]target, now time.Time) {
+	fresh := r.regained
+	r.regained = false
 	for s, t := range next {
-		if old, ok := r.targets[s]; ok && !old.assertSince.IsZero() &&
+		if old, ok := r.targets[s]; ok && !fresh && !old.assertSince.IsZero() &&
 			reflect.DeepEqual(old.check.Params["assertions"], t.check.Params["assertions"]) {
 			t.assertSince = old.assertSince
 		} else {

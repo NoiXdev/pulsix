@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -104,3 +105,17 @@ func FromProto(cfg *agentpb.ProbeConfig) ([]Spec, error) {
 	}
 	return out, nil
 }
+
+// Bounds of how long an agent takes to run a newly written assignment,
+// shared by the agent (which enforces them) and the manager (which waits
+// them out before it blames an agent's rounds, internal/probes).
+const (
+	// MaxHeartbeatInterval is the longest heartbeat interval an agent
+	// accepts (PULSIX_HEARTBEAT_INTERVAL is clamped to it). The manager
+	// hands out a changed probe config only on a heartbeat.
+	MaxHeartbeatInterval = 10 * time.Minute
+	// FirstRunWindow caps how long after applying a config an agent's
+	// slot runs for the first time (its first run is spread over
+	// min(interval, FirstRunWindow)).
+	FirstRunWindow = time.Minute
+)

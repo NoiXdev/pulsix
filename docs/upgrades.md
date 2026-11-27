@@ -1213,11 +1213,15 @@ past `expect` only while an assertion looks at the response, to the first line b
 ignores the parameter; the manager marks every entry its up rounds left out as the error
 "the vantage point that answered did not evaluate this assertion; update its agent"
 (the item reads unknown with that reason) instead of letting it go stale. It does so only
-once the same vantage left entries out of two distinct rounds, both probed after the
-check's assertions last changed (as the manager holding the probe lock saw the change, or
-took the lock); a round probed before an edit, or a round still partly stored, leaves the
-entry without a reading for that combine. So after adding an assertion, an older agent's
-check reads unknown from about its second round on. This applies to `http` checks too: an
+once the same vantage left entries out of two distinct rounds, both stamped more than about
+12 minutes after the check's assertions last changed (as the manager holding the probe lock
+saw the change, or after it started or took the lock): the longest heartbeat interval an
+agent accepts (10 minutes, when a changed assignment reaches it), its first-run window
+(1 minute) and a minute's slack, so a current agent is never blamed for rounds it ran
+before it received the new parameters. A round inside that window, or a round still partly
+stored, leaves the entry without a reading for that combine. So after adding an assertion
+(or after a manager start or lock takeover) an older agent's entries read unknown with the
+reason only from about 12 minutes on; until then they have no reading. This applies to `http` checks too: an
 `http` check probed from agent vantages whose agent ignores an entry now reads that entry
 as this error instead of leaving it without a reading (in practice only agents from
 before 3.13b, which were never released). Update the agents of a check's vantage groups

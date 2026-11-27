@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/secrets"
+	"github.com/noixdev/pulsix/internal/probeconfig"
 )
 
 // Environment variable names.
@@ -46,7 +47,7 @@ const (
 // busy loop.
 const (
 	minHeartbeatInterval = 5 * time.Second
-	maxHeartbeatInterval = 10 * time.Minute
+	maxHeartbeatInterval = probeconfig.MaxHeartbeatInterval
 
 	minFactsInterval = 30 * time.Minute
 	maxFactsInterval = 24 * time.Hour
