@@ -5,14 +5,15 @@ import userEvent from '@testing-library/user-event';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { AssertionEditor } from './AssertionEditor.tsx';
+import type { AssertionPlugin } from './assertionFormat.ts';
 
 /** The editor with the form's state around it: `text` is what the form
  * would send. */
-function Harness({ initial, error, serverError }: { initial: string; error?: string; serverError?: string }) {
+function Harness({ initial, error, serverError, plugin }: { initial: string; error?: string; serverError?: string; plugin?: AssertionPlugin }) {
   const [value, setValue] = useState(initial);
   return (
     <>
-      <AssertionEditor id="a" label="Assertions" value={value} error={error} serverError={serverError} onChange={setValue} />
+      <AssertionEditor plugin={plugin} id="a" label="Assertions" value={value} error={error} serverError={serverError} onChange={setValue} />
       <output data-testid="text">{value}</output>
     </>
   );
@@ -132,6 +133,29 @@ describe('AssertionEditor', () => {
     const second = screen.getAllByTestId('assertion-row')[1];
     expect(within(second).getByRole('alert')).toHaveTextContent('Not a complete assertion yet');
     expect(within(screen.getAllByTestId('assertion-row')[0]).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('offers a dns check\'s subjects and composes its entries (backlog 3.87)', async () => {
+    const user = userEvent.setup();
+    render(<Harness plugin="dns" initial="" />);
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    await user.click(screen.getByLabelText('Subject of assertion 1'));
+    expect(options()).toEqual(['resolve_ms', 'answer_count', 'answers', 'answer']);
+    await user.keyboard('{Escape}');
+    await user.type(screen.getByLabelText('Name of assertion 1'), 'ip');
+    await pickOption(screen, 'Subject of assertion 1', { value: 'answer' });
+    expect(screen.getByLabelText('Argument of assertion 1')).toHaveAttribute('placeholder', '192.0.2.1');
+    await user.type(screen.getByLabelText('Argument of assertion 1'), '192.0.2.1');
+    expect(screen.getByLabelText('Operator of assertion 1')).toHaveValue('exists');
+    expect(screen.queryByLabelText('Value of assertion 1')).not.toBeInTheDocument();
+    expect(text()).toBe('ip=answer("192.0.2.1") exists');
+    expect(screen.queryByText(/html\(…\) takes a CSS selector/)).not.toBeInTheDocument();
+  });
+
+  it('keeps an entry of another plugin\'s dialect as text', () => {
+    render(<Harness plugin="tcp" initial="ok=status == 200" />);
+    expect(screen.queryAllByTestId('assertion-row')).toHaveLength(0);
+    expect(screen.getByLabelText('Assertions')).toHaveValue('ok=status == 200');
   });
 
   it('speaks German', () => {

@@ -327,6 +327,18 @@ the agent first, then add `commands:`. Migration 00094 adds two default rules,
 organization (skipped where a rule of that name exists); they judge nothing
 until a `script` check reports.
 
+Values for script check placeholders (backlog 3.6j) need the new agent on the
+host. **A command written in the new mapping form (`run:` and `args:`) is
+stricter for an older agent:** it expects every command to be a list and refuses
+the whole `agent.yaml`, so that host loses its `secrets:`, `commands:` and
+`checks:` until the agent is updated. Update the agent first, then rewrite a
+command in the mapping form. A command still written as a list behaves as before
+on every agent; if a check sends `args` for it, a new agent refuses the command
+("this command takes no arguments on this host") while an older one ignores the
+values and runs the command as written. An older manager refuses `args` when a
+check is saved and passes stored ones through unchanged. Nothing is migrated and
+the agent protocol is unchanged.
+
 Local checks in `agent.yaml` (backlog 3.5a) skew both ways. **The `checks:` key is
 stricter for an older agent.** An agent older than this release does not know the
 key and refuses the whole file, so a host whose `agent.yaml` gains `checks:` also
@@ -1298,6 +1310,43 @@ reports such an assertion as the error "the assertion is not valid" instead of j
 it with another meaning (the item reads unknown whenever the check's result comes from
 that vantage); the check's other assertions run as before. Update the agents of a
 check's vantage groups before using the new forms.
+
+Assertions on `tcp`, `dns` and `tls` checks (backlog 3.87) add migration 00134 and no
+proto change and no dependency. The migration seeds six organization rules (`TCP
+assertion failed` and `TCP assertion failed (critical)`, the same for DNS and TLS, on
+`<plugin>.assertion in ("warn")` and `in ("crit")`), backfilled for every existing
+organization that holds no rule of that name; nothing is dropped or rewritten, and they
+match nothing until a check has assertions. The three descriptors gain the optional
+`assertions` parameter (formats `tcpAssertion`, `dnsAssertion`, `tlsAssertion`) and the
+metrics `<plugin>.assertion` and `<plugin>.assertion_actual` on one item per entry.
+Existing checks probe as before with two small differences: a `tcp`, `dns` or `tls` check
+that cannot be attempted (a refused target, an unusable parameter, no vantage with a
+recent result) now puts its error only on the metrics it reports, so a `tcp` check
+without `expect` no longer gets an error on `tcp.banner_match`; and a `tcp` check reads
+past `expect` only while an assertion looks at the response, to the first line break.
+**Skew:** an agent older than this release, used as a vantage of a check with assertions,
+ignores the parameter; the manager marks every entry its up rounds left out as the error
+"the vantage point that answered did not evaluate this assertion; update its agent"
+(the item reads unknown with that reason) instead of letting it go stale. It does so only
+once the same vantage left entries out of two distinct rounds, both stamped more than about
+32 minutes after the check's assertions last changed (as the manager holding the probe lock
+saw the change, or after it started or took the lock): the longest an agent stays online,
+and so assigned, without a heartbeat that could bring it the changed assignment (three of
+its heartbeat intervals, at most 10 minutes each), its first-run window (1 minute) and a
+minute's slack, so a current agent is never blamed for rounds it ran, or buffered during an
+outage and replays, before it received the new parameters. A round inside that window, or a round still partly
+stored, leaves the entry without a reading for that combine. So after adding an assertion
+(or after a manager start or lock takeover) an older agent's entries read unknown with the
+reason only after about half an hour; until then they have no reading. This applies to `http` checks too: an
+`http` check probed from agent vantages whose agent ignores an entry now reads that entry
+as this error instead of leaving it without a reading (in practice only agents from
+before 3.13b, which were never released). Update the agents of a check's vantage groups
+before adding assertions. A manager older than this
+release refuses `assertions` on these plugins (unknown parameter); one still running
+during a rolling upgrade while it holds the probe lock probes such a check without its
+assertions, so the items go stale until a new manager probes it: stop every manager
+instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
 
 ## Behaviour changes to check after an upgrade
 

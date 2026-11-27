@@ -219,8 +219,20 @@ export const enChecks = {
       json: 'json (a JSON value)',
       html: 'html (text of an HTML element)',
       'html count': 'html count (number of HTML elements)',
+      connect_ms: 'connect_ms (connect time, ms)',
+      response: 'response (first line received)',
+      resolve_ms: 'resolve_ms (lookup time, ms)',
+      answer_count: 'answer_count (number of answers)',
+      answers: 'answers (all answers, sorted)',
+      answer: 'answer (one answer is present)',
+      handshake_ms: 'handshake_ms (handshake time, ms)',
+      cert_valid: 'cert_valid (1 when the chain verifies)',
+      cert_subject: 'cert_subject (certificate subject)',
+      cert_sans: 'cert_sans (names in the certificate)',
+      version: 'version (TLS version, such as 1.3)',
+      cipher: 'cipher (cipher suite)',
     },
-    argPlaceholders: { header: 'Content-Type', json: '$.status', html: 'h1.title' },
+    argPlaceholders: { header: 'Content-Type', json: '$.status', html: 'h1.title', answer: '192.0.2.1' },
     numberPlaceholder: '200',
     textPlaceholder: 'text',
     rowInvalid: 'Not a complete assertion yet: it needs a name (letters, digits and . _ -), an argument where the subject takes one and a value.',
@@ -396,6 +408,11 @@ export const enChecks = {
         hint: 'Names of commands defined under commands: in agent.yaml on each host; only the name is sent, the host decides what runs. A host that does not define a name reports it as unknown.',
         placeholder: 'backup_age\ndisk_root',
       },
+      args: {
+        label: 'Values for placeholders (one per line, command:placeholder=value)',
+        hint: 'Only for commands whose definition in a host’s agent.yaml declares placeholders under args; that host checks each value against its own rule and refuses the command when one does not pass. A value is passed as one argument, as written, never to a shell. A command without placeholders refuses any value. Leave a placeholder out to use the host’s default.',
+        placeholder: 'tcp_port:port=8080',
+      },
       format: {
         label: 'Output format',
         options: { nagios: 'Nagios plugin (exit code and perfdata)', json: 'JSON (status, message, metrics)' },
@@ -412,6 +429,11 @@ export const enChecks = {
       send: { label: 'Send after connecting', hint: 'Use \\r\\n for a line break, \\t for a tab and \\\\ for a backslash.' },
       expect: { label: 'Expected in the response', hint: 'Looked for in the first 4 KiB the server sends.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      assertions: {
+        label: 'Assertions (one per line, name=assertion)',
+        hint: 'Each line states what a good connection is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (connect_ms, response_ms or response, the first line the server sends), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches. Add @warn to report warn instead of crit.',
+        placeholder: 'fast=connect_ms < 500',
+      },
       ...vantageParamTexts,
     },
     http: {
@@ -453,6 +475,11 @@ export const enChecks = {
       port: { label: 'Port' },
       server_name: { label: 'Server name (SNI)', hint: 'Empty means the host’s address.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      assertions: {
+        label: 'Assertions (one per line, name=assertion)',
+        hint: 'Each line states what a good handshake is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version or cipher), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches. Add @warn to report warn instead of crit.',
+        placeholder: 'modern=version >= 1.2',
+      },
       ...vantageParamTexts,
     },
     dns: {
@@ -464,6 +491,11 @@ export const enChecks = {
       },
       expect: { label: 'Expected answer', hint: 'One answer must equal this, ignoring case and a trailing dot.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      assertions: {
+        label: 'Assertions (one per line, name=assertion)',
+        hint: 'Each line states what a good answer is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (resolve_ms, answer_count, answers or answer("value")), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches; answer("value") only with exists or !exists. Add @warn to report warn instead of crit.',
+        placeholder: 'ip=answer("192.0.2.1") exists',
+      },
       ...vantageParamTexts,
     },
     snmp: {
@@ -497,6 +529,9 @@ export const enChecks = {
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       commandName: 'every entry must be a command name of 1 to 64 characters: letters, digits and . _ -',
       assertion: 'every entry must be name=assertion such as ok=status == 200: a name of 1 to 64 characters (letters, digits and . _ -), a subject, an operator and a value (text in double quotes), optionally followed by @warn',
+      tcpAssertion: 'every entry must be name=assertion such as fast=connect_ms < 500: a name, a subject (connect_ms, response_ms or response), an operator and a value (text in double quotes), optionally followed by @warn',
+      dnsAssertion: 'every entry must be name=assertion such as ip=answer("192.0.2.1") exists: a name, a subject (resolve_ms, answer_count, answers or answer("…")), an operator and a value (text in double quotes), optionally followed by @warn',
+      tlsAssertion: 'every entry must be name=assertion such as modern=version >= 1.2: a name, a subject (handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version or cipher), an operator and a value (text in double quotes), optionally followed by @warn',
       jsonValue: 'every entry must be name=JSONPath: a name of 1 to 64 characters (letters, digits and . _ -) and a path of at most 512 bytes in the supported JSONPath subset (see the docs), such as $.status',
       snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2 (after 0 or 1, the second number is at most 39)',
       url: 'must be an http:// or https:// URL without a user name or password',
@@ -514,6 +549,8 @@ export const enChecks = {
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and method overrides are refused: a target may trust them for the client’s address, the path or the method',
       mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',
+      scriptArg:
+        'every entry must be command:placeholder=value: a command listed above, a placeholder name of lower-case letters, digits and _ (starting with a letter, at most 32), and a value of 1 to 512 bytes without line breaks, control or invisible formatting characters',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },

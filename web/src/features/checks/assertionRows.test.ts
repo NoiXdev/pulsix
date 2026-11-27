@@ -60,3 +60,21 @@ describe('the assertion editor rows', () => {
     expect(entryNamedBy(entries, null)).toBe(-1);
   });
 });
+
+describe('rows of tcp, dns and tls (backlog 3.87)', () => {
+  it('starts a new row at the plugin\'s first subject', () => {
+    expect(emptyRow('tcp')).toMatchObject({ subject: 'connect_ms', op: '<' });
+    expect(emptyRow('dns')).toMatchObject({ subject: 'resolve_ms', op: '<' });
+    expect(emptyRow()).toMatchObject({ subject: 'status', op: '==' });
+  });
+
+  it('reads and composes an entry in its plugin\'s dialect', () => {
+    const row = rowFromEntry('ip=answer( "192.0.2.1" ) !exists @warn', 'dns');
+    expect(row).toBeNull();
+    const ok = rowFromEntry('ip=answer("192.0.2.1")  !exists @warn', 'dns') as AssertionRow;
+    expect(ok).toMatchObject({ subject: 'answer', arg: '192.0.2.1', op: '!exists', severity: 'warn' });
+    expect(composeRow(ok)).toBe('ip=answer("192.0.2.1") !exists @warn');
+    expect(parseRows('a=connect_ms < 5\nb=status == 200', 'tcp')).toEqual({ bad: 2 });
+    expect(withSubject(emptyRow('tls'), 'cipher')).toMatchObject({ subject: 'cipher', op: '==' });
+  });
+});

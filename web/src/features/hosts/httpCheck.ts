@@ -3,14 +3,16 @@ import type { Format } from '../../i18n/format.ts';
 import type { Messages } from '../../i18n/types.ts';
 import type { AssertionTableRow } from '../../ui/AssertionTable.tsx';
 import type { StackedBarPart } from '../../ui/StackedBar.tsx';
+import { isAssertionPlugin } from '../checks/assertionFormat.ts';
 import { composeExpression, entriesOf, rowFromEntry } from '../checks/assertionRows.ts';
 import { assertionActualText, assertionResult, failureText } from '../checks/syntheticLabels.ts';
 import { formatNumber } from './hostChecks.ts';
 
 /**
  * The host page's reading of a synthetic check beyond its plain values
- * (backlog 3.13b): why it is down, beside `<plugin>.up`; and, for an http
- * check, the latest attempt's timing breakdown and one row per assertion.
+ * (backlog 3.13b): why it is down, beside `<plugin>.up`; for an http
+ * check, the latest attempt's timing breakdown; and, for a check with
+ * assertions (http, tcp, dns, tls), one row per assertion.
  * Pure, like hostChecks.ts: the server's readings are worded, never
  * recomputed.
  */
@@ -67,16 +69,20 @@ export function assertionValue(check: HostCheck, metric: string, item: string): 
 
 /** assertionRows are the check's assertions as table rows, in the order
  * its `assertions` parameter lists them: the expression and severity from
- * the entry, the status and the value seen from the latest attempt. */
+ * the entry, the status and the value seen from the latest attempt. Any
+ * plugin with assertions (http, and tcp, dns and tls since backlog 3.87);
+ * none for another. */
 export function assertionRows(check: HostCheck, t: Messages, format: Format, now: Date): AssertionTableRow[] {
+  const plugin = check.plugin;
+  if (!isAssertionPlugin(plugin)) return [];
   const raw = check.params?.assertions;
   const entries = Array.isArray(raw) ? entriesOf(raw.filter((e): e is string => typeof e === 'string').join('\n')) : [];
   return entries.map((entry) => {
     const eq = entry.indexOf('=');
     const name = entry.slice(0, eq);
-    const row = rowFromEntry(entry);
-    const result = assertionValue(check, 'http.assertion', name);
-    const actual = assertionValue(check, 'http.assertion_actual', name);
+    const row = rowFromEntry(entry, plugin);
+    const result = assertionValue(check, `${plugin}.assertion`, name);
+    const actual = assertionValue(check, `${plugin}.assertion_actual`, name);
     let status: AssertionTableRow['status'] = { label: t.hosts.http.noResult, tone: 'unknown' };
     if (result?.error !== undefined) status = { label: t.hosts.http.notEvaluated, tone: 'unknown' };
     else if (result?.label) status = assertionResult(t, result.label);
@@ -97,13 +103,12 @@ export function assertionRows(check: HostCheck, t: Messages, format: Format, now
   });
 }
 
-const ASSERTION_METRICS = ['http.assertion', 'http.assertion_actual'];
-
-/** withoutAssertionRows is the check's values for the generic list: an
- * http check's assertion items are listed, with their actions, in the
- * assertion table instead (backlog 3.89). */
+/** withoutAssertionRows is the check's values for the generic list: the
+ * assertion items of a check with assertions are listed, with their
+ * actions, in the assertion table instead (backlog 3.89, 3.87). */
 export function withoutAssertionRows(check: HostCheck): HostCheckValue[] {
   const values = check.values ?? [];
-  if (check.plugin !== 'http') return values;
-  return values.filter((v) => !(v.item !== '' && ASSERTION_METRICS.includes(v.metric)));
+  if (!isAssertionPlugin(check.plugin)) return values;
+  const metrics = [`${check.plugin}.assertion`, `${check.plugin}.assertion_actual`];
+  return values.filter((v) => !(v.item !== '' && metrics.includes(v.metric)));
 }

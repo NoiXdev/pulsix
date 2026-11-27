@@ -2,9 +2,11 @@ package secrets
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
+	"github.com/noixdev/pulsix/internal/scriptargs"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,20 +19,27 @@ const (
 const badCommandName = "a command name is 1 to 64 characters of A-Z a-z 0-9 _ . -"
 
 // parseCommands decodes the mapping under commands; a missing or empty one
-// holds none. A command is a name matching namePattern that maps to a
-// sequence of 1 to maxCommandArgs single values, each at most
-// maxValueBytes long and without a NUL character (no process can receive
-// one); the first is the program and must be an absolute path on the
-// agent's OS without control characters. An argument may hold a password,
-// so like a secret's value it is never quoted in an error.
-func parseCommands(n *yaml.Node) (map[string][]string, error) {
+// holds none. A command is a name matching namePattern that maps to its
+// command line, in one of two forms:
+//
+//   - a sequence of 1 to maxCommandArgs single values, each at most
+//     maxValueBytes long and without a NUL character (no process can
+//     receive one); the first is the program and must be an absolute path
+//     on the agent's OS without control characters. Every entry is
+//     literal (backlog 3.6g);
+//   - a mapping with run, such a sequence, and optionally args, the rules
+//     of the placeholders run holds (parseCommandMapping, backlog 3.6j).
+//
+// An argument may hold a password, so like a secret's value it is never
+// quoted in an error.
+func parseCommands(n *yaml.Node) (map[string]scriptargs.Template, error) {
 	if n == nil || isNull(n) {
 		return nil, nil
 	}
 	if n.Kind != yaml.MappingNode {
 		return nil, errAt(n, "commands must map command names to their program and arguments")
 	}
-	out := make(map[string][]string, len(n.Content)/2)
+	out := make(map[string]scriptargs.Template, len(n.Content)/2)
 	lines := map[string]int{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
@@ -44,11 +53,19 @@ func parseCommands(n *yaml.Node) (map[string][]string, error) {
 		if len(out) == maxCommands {
 			return nil, errAt(key, "more than "+strconv.Itoa(maxCommands)+" commands")
 		}
-		argv, err := parseArgv(key, val)
+		var tmpl scriptargs.Template
+		var err error
+		if val.Kind == yaml.MappingNode {
+			tmpl, err = parseCommandMapping(key, val)
+		} else {
+			var argv []string
+			argv, err = parseArgv(key, val)
+			tmpl = scriptargs.Fixed(argv)
+		}
 		if err != nil {
 			return nil, err
 		}
-		out[key.Value] = argv
+		out[key.Value] = tmpl
 	}
 	return out, nil
 }
@@ -83,6 +100,8 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 			return nil, errAt(entry, "the program path must not contain control characters")
 		case i == 0 && !filepath.IsAbs(entry.Value):
 			return nil, errAt(entry, "the program must be an absolute path")
+		case i == 0 && streamInProgram(entry.Value, runtime.GOOS == "windows"):
+			return nil, errAt(entry, "the program path must not hold a ':' after the drive")
 		}
 		argv = append(argv, entry.Value)
 	}
@@ -93,3 +112,18 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 // appear in a check's output, where such a character would break a line or
 // a terminal.
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// streamInProgram reports a Windows program path holding a ':' after its
+// drive letter: check.bat::$DATA names the file's data stream, which
+// would hide its extension from the batch rule, and \\?\C:\… is a
+// device form the file check refuses anyway. On other systems ':' is an
+// ordinary character.
+func streamInProgram(p string, windows bool) bool {
+	if !windows {
+		return false
+	}
+	if len(p) >= 2 && p[1] == ':' {
+		p = p[2:]
+	}
+	return strings.Contains(p, ":")
+}

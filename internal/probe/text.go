@@ -2,6 +2,7 @@ package probe
 
 import (
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -76,11 +77,18 @@ func IssuerLabel(cert *x509.Certificate) string {
 	if cert == nil {
 		return EmptyText
 	}
-	candidates := []string{cert.Issuer.CommonName}
-	if len(cert.Issuer.Organization) > 0 {
-		candidates = append(candidates, cert.Issuer.Organization[0])
+	return NameLabel(cert.Issuer)
+}
+
+// NameLabel names a certificate's issuer or subject n the way IssuerLabel
+// does: its Common Name, else its first Organization, else its
+// distinguished name, as a ShortLabel; EmptyText when it has none.
+func NameLabel(n pkix.Name) string {
+	candidates := []string{n.CommonName}
+	if len(n.Organization) > 0 {
+		candidates = append(candidates, n.Organization[0])
 	}
-	candidates = append(candidates, cert.Issuer.String())
+	candidates = append(candidates, n.String())
 	for _, c := range candidates {
 		if CleanText(c) != "" {
 			return ShortLabel(c)

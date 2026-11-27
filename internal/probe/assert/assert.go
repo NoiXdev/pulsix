@@ -1,18 +1,25 @@
-// Package assert parses the http check's assertions (backlog 3.13b, spec
+// Package assert parses the synthetic checks' assertions (backlog 3.13b
+// for http, 3.87 for tcp, dns and tls: one Dialect of subjects per plugin,
+// dialect.go; spec
 // docs/superpowers/specs/2026-11-16-web-assertions-design.md, section 3):
 // entries "name=expression" with an optional " @warn" (or " @crit", the
 // default), each stating one thing a good response is.
 //
 //	assertion = subject SP op [SP operand]
-//	subject   = status | response_ms | ttfb_ms | size | redirects
-//	          | cert_days | cert_issuer | body
-//	          | header("Name") | json("$.path") | html("selector")
-//	          | html("selector") count
+//	subject   = http: status | response_ms | ttfb_ms | size | redirects
+//	          |       cert_days | cert_issuer | body
+//	          |       header("Name") | json("$.path") | html("selector")
+//	          |       html("selector") count
+//	          | tcp:  connect_ms | response_ms | response
+//	          | dns:  resolve_ms | answer_count | answers | answer("value")
+//	          | tls:  handshake_ms | cert_valid | cert_days | cert_issuer
+//	          |       cert_subject | cert_sans | version | cipher
 //
 // Numeric subjects take <, <=, >, >=, ==, != and in (a..b, inclusive)
 // with a decimal number; text subjects take ==, !=, contains, !contains,
 // matches and !matches (RE2) with a JSON string literal; header, json and
-// html also take exists and !exists, without an operand.
+// html also take exists and !exists, without an operand, and answer only
+// those two.
 //
 // The descriptor's validation (internal/checkplugins), the probe
 // (internal/probe/http) and the alert detail all parse with this package,
@@ -43,6 +50,7 @@ const (
 	MaxEntryLen  = 512
 	MaxRegexLen  = 256
 	MaxSelectLen = 256
+	MaxAnswerLen = 256
 )
 
 // Subject is what an assertion looks at.
@@ -62,12 +70,31 @@ const (
 	SubjectJSON       Subject = "json"
 	SubjectHTML       Subject = "html"
 	SubjectHTMLCount  Subject = "html count"
+
+	// tcp (backlog 3.87).
+	SubjectConnectMS Subject = "connect_ms"
+	SubjectResponse  Subject = "response"
+
+	// dns (backlog 3.87). answer("x") takes only exists and !exists.
+	SubjectResolveMS   Subject = "resolve_ms"
+	SubjectAnswerCount Subject = "answer_count"
+	SubjectAnswers     Subject = "answers"
+	SubjectAnswer      Subject = "answer"
+
+	// tls (backlog 3.87), beside cert_days and cert_issuer.
+	SubjectHandshakeMS Subject = "handshake_ms"
+	SubjectCertValid   Subject = "cert_valid"
+	SubjectCertSubject Subject = "cert_subject"
+	SubjectCertSANs    Subject = "cert_sans"
+	SubjectVersion     Subject = "version"
+	SubjectCipher      Subject = "cipher"
 )
 
 // Numeric reports whether s compares a number.
 func (s Subject) Numeric() bool {
 	switch s {
-	case SubjectStatus, SubjectResponseMS, SubjectTTFBMS, SubjectSize, SubjectRedirects, SubjectCertDays, SubjectHTMLCount:
+	case SubjectStatus, SubjectResponseMS, SubjectTTFBMS, SubjectSize, SubjectRedirects, SubjectCertDays, SubjectHTMLCount,
+		SubjectConnectMS, SubjectResolveMS, SubjectAnswerCount, SubjectHandshakeMS, SubjectCertValid, SubjectVersion:
 		return true
 	}
 	return false
@@ -90,7 +117,7 @@ func (s Subject) KeepsBody() bool {
 
 // takesArg reports whether s is written with a quoted argument.
 func (s Subject) takesArg() bool {
-	return s == SubjectHeader || s == SubjectJSON || s == SubjectHTML || s == SubjectHTMLCount
+	return s == SubjectHeader || s == SubjectJSON || s == SubjectHTML || s == SubjectHTMLCount || s == SubjectAnswer
 }
 
 // Op is an assertion's operator.
@@ -124,10 +151,12 @@ func opsOf(s Subject) []Op {
 	switch {
 	case s.Numeric():
 		return []Op{OpLt, OpLe, OpGt, OpGe, OpEq, OpNe, OpIn}
-	case s == SubjectCertIssuer || s == SubjectBody:
-		return []Op{OpEq, OpNe, OpContains, OpNotContains, OpMatches, OpNotMatches}
+	case s == SubjectAnswer:
+		return []Op{OpExists, OpNotExists}
+	case s == SubjectHeader || s == SubjectJSON || s == SubjectHTML:
+		return []Op{OpEq, OpNe, OpContains, OpNotContains, OpMatches, OpNotMatches, OpExists, OpNotExists}
 	}
-	return []Op{OpEq, OpNe, OpContains, OpNotContains, OpMatches, OpNotMatches, OpExists, OpNotExists}
+	return []Op{OpEq, OpNe, OpContains, OpNotContains, OpMatches, OpNotMatches}
 }
 
 // Severity is what a failed assertion reports.
@@ -236,7 +265,7 @@ func subjectText(s Subject, arg string) string {
 	switch s {
 	case SubjectHTMLCount:
 		return "html(" + Quote(arg) + ") count"
-	case SubjectHeader, SubjectJSON, SubjectHTML:
+	case SubjectHeader, SubjectJSON, SubjectHTML, SubjectAnswer:
 		return string(s) + "(" + Quote(arg) + ")"
 	}
 	return string(s)

@@ -3,8 +3,11 @@ package checkplugins
 // dnsPlugin: resolve a name from the Pulsix server (backlog 3.13), through
 // server when one is set and the server's own resolver otherwise. The
 // record type is asked verbatim, so its case matters.
+//
+// Backlog 3.87 added assertions (withAssertions) on resolve_ms,
+// answer_count, answers and answer("…").
 func dnsPlugin() Descriptor {
-	return Descriptor{
+	return withAssertions(Descriptor{
 		Name: "dns",
 		Runs: Server,
 		Params: []ParamSpec{
@@ -22,5 +25,8 @@ func dnsPlugin() Descriptor {
 			{Name: "dns.resolve_ms", Kind: Numeric},
 			{Name: "dns.answer_match", Kind: Numeric},
 		},
-	}
+	}, FormatDNSAssertion, dnsAssertionExample)
 }
+
+// dnsAssertionExample is a valid dns assertion.
+const dnsAssertionExample = `ip=answer("192.0.2.1") exists`

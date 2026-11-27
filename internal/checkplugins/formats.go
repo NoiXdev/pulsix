@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jpath"
 	"github.com/noixdev/pulsix/internal/probe/assert"
 	"github.com/noixdev/pulsix/internal/probe/httpreq"
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -84,6 +85,14 @@ const (
 	// leaves regular expressions, CSS selectors and JSONPaths beyond their
 	// shape to the server.
 	FormatAssertion Format = "assertion"
+	// FormatTCPAssertion, FormatDNSAssertion and FormatTLSAssertion: one
+	// entry of the tcp, dns or tls check's assertions (backlog 3.87), the
+	// same grammar in that plugin's dialect (internal/probe/assert): only
+	// the subjects differ. The SPA's twin is FormatAssertion's with the
+	// plugin's subjects.
+	FormatTCPAssertion Format = "tcpAssertion"
+	FormatDNSAssertion Format = "dnsAssertion"
+	FormatTLSAssertion Format = "tlsAssertion"
 	// FormatUUID: a canonical lower-case UUID (8-4-4-4-12 hex digits, no
 	// braces or urn prefix) — the id of a monitoring group in a check's
 	// vantage_groups (backlog 3.13a).
@@ -96,6 +105,11 @@ const (
 	// FormatMediaType: http's content_type (backlog 3.84), type/subtype
 	// with optional ;name=value parameters (internal/probe/httpreq).
 	FormatMediaType Format = "mediaType"
+	// FormatScriptArg: one entry of script's args (backlog 3.6j),
+	// "command:placeholder=value" as internal/scriptargs reads it: a
+	// command name, a placeholder name, and a value of 1 to 512 bytes
+	// without control characters. The host's own rule judges the value.
+	FormatScriptArg Format = "scriptArg"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -106,7 +120,8 @@ func Formats() []Format {
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatPHPFPMPool, FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
-		FormatHTTPHeader, FormatMediaType,
+		FormatTCPAssertion, FormatDNSAssertion, FormatTLSAssertion,
+		FormatHTTPHeader, FormatMediaType, FormatScriptArg,
 	}
 }
 
@@ -160,6 +175,12 @@ func (f Format) problem(s string) string {
 		return jsonValueProblem(s)
 	case FormatAssertion:
 		return assertionProblem(s)
+	case FormatTCPAssertion:
+		return dialectProblem(assert.TCP, tcpAssertionExample, s)
+	case FormatDNSAssertion:
+		return dialectProblem(assert.DNS, dnsAssertionExample, s)
+	case FormatTLSAssertion:
+		return dialectProblem(assert.TLS, tlsAssertionExample, s)
 	case FormatUUID:
 		if id, err := uuid.Parse(s); err != nil || id.String() != s {
 			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"
@@ -168,6 +189,8 @@ func (f Format) problem(s string) string {
 		return httpreq.HeaderProblem(s)
 	case FormatMediaType:
 		return httpreq.MediaTypeProblem(s)
+	case FormatScriptArg:
+		return scriptargs.EntryProblem(s)
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}

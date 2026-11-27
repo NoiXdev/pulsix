@@ -194,8 +194,20 @@ export const deChecks: Messages['checks'] = {
       json: 'json (ein JSON-Wert)',
       html: 'html (Text eines HTML-Elements)',
       'html count': 'html count (Anzahl der HTML-Elemente)',
+      connect_ms: 'connect_ms (Verbindungszeit, ms)',
+      response: 'response (erste empfangene Zeile)',
+      resolve_ms: 'resolve_ms (Auflösungszeit, ms)',
+      answer_count: 'answer_count (Anzahl der Antworten)',
+      answers: 'answers (alle Antworten, sortiert)',
+      answer: 'answer (eine Antwort ist vorhanden)',
+      handshake_ms: 'handshake_ms (Handshake-Zeit, ms)',
+      cert_valid: 'cert_valid (1, wenn die Kette gültig ist)',
+      cert_subject: 'cert_subject (Inhaber des Zertifikats)',
+      cert_sans: 'cert_sans (Namen im Zertifikat)',
+      version: 'version (TLS-Version, etwa 1.3)',
+      cipher: 'cipher (Cipher-Suite)',
     },
-    argPlaceholders: { header: 'Content-Type', json: '$.status', html: 'h1.title' },
+    argPlaceholders: { header: 'Content-Type', json: '$.status', html: 'h1.title', answer: '192.0.2.1' },
     numberPlaceholder: '200',
     textPlaceholder: 'Text',
     rowInvalid: 'Noch keine vollständige Zusicherung: Sie braucht einen Namen (Buchstaben, Ziffern und . _ -), ein Argument, wo der Gegenstand eines nimmt, und einen Wert.',
@@ -361,6 +373,11 @@ export const deChecks: Messages['checks'] = {
         hint: 'Namen von Befehlen, die in der agent.yaml jedes Hosts unter commands: definiert sind; gesendet wird nur der Name, was läuft, bestimmt der Host. Ein Host, der einen Namen nicht definiert, meldet ihn als unbekannt.',
         placeholder: 'backup_age\ndisk_root',
       },
+      args: {
+        label: 'Werte für Platzhalter (einer pro Zeile, befehl:platzhalter=wert)',
+        hint: 'Nur für Befehle, deren Definition in der agent.yaml eines Hosts unter args Platzhalter festlegt; der Host prüft jeden Wert gegen seine eigene Regel und führt den Befehl nicht aus, wenn einer sie nicht erfüllt. Ein Wert wird als ein einzelnes Argument so übergeben, wie er dasteht, nie an eine Shell. Ein Befehl ohne Platzhalter lehnt jeden Wert ab. Fehlt ein Platzhalter, gilt der Standardwert des Hosts.',
+        placeholder: 'tcp_port:port=8080',
+      },
       format: {
         label: 'Ausgabeformat',
         options: { nagios: 'Nagios-Plugin (Exit-Code und Perfdata)', json: 'JSON (status, message, metrics)' },
@@ -383,6 +400,11 @@ export const deChecks: Messages['checks'] = {
       },
       expect: { label: 'In der Antwort erwartet', hint: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.' },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      assertions: {
+        label: 'Zusicherungen (eine pro Zeile, Name=Zusicherung)',
+        hint: 'Jede Zeile beschreibt, wie eine gute Verbindung aussieht, und meldet unter ihrem Namen pass oder, wenn sie nicht zutrifft, warn oder crit, mit dem gesehenen Wert. Ein Gegenstand (connect_ms, response_ms oder response, die erste Zeile, die der Server sendet), ein Operator und ein Wert: Zahlen mit < <= > >= == != oder in a..b; Text in doppelten Anführungszeichen mit == != contains !contains matches !matches. @warn meldet warn statt crit.',
+        placeholder: 'fast=connect_ms < 500',
+      },
       ...vantageParamTexts,
     },
     http: {
@@ -424,6 +446,11 @@ export const deChecks: Messages['checks'] = {
       port: { label: 'Port' },
       server_name: { label: 'Servername (SNI)', hint: 'Leer bedeutet die Adresse des Hosts.' },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      assertions: {
+        label: 'Zusicherungen (eine pro Zeile, Name=Zusicherung)',
+        hint: 'Jede Zeile beschreibt, wie ein guter Handshake aussieht, und meldet unter ihrem Namen pass oder, wenn sie nicht zutrifft, warn oder crit, mit dem gesehenen Wert. Ein Gegenstand (handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version oder cipher), ein Operator und ein Wert: Zahlen mit < <= > >= == != oder in a..b; Text in doppelten Anführungszeichen mit == != contains !contains matches !matches. @warn meldet warn statt crit.',
+        placeholder: 'modern=version >= 1.2',
+      },
       ...vantageParamTexts,
     },
     dns: {
@@ -438,6 +465,11 @@ export const deChecks: Messages['checks'] = {
         hint: 'Eine Antwort muss genau so lauten; Groß- und Kleinschreibung und ein abschließender Punkt zählen nicht.',
       },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      assertions: {
+        label: 'Zusicherungen (eine pro Zeile, Name=Zusicherung)',
+        hint: 'Jede Zeile beschreibt, wie eine gute Antwort aussieht, und meldet unter ihrem Namen pass oder, wenn sie nicht zutrifft, warn oder crit, mit dem gesehenen Wert. Ein Gegenstand (resolve_ms, answer_count, answers oder answer("Wert")), ein Operator und ein Wert: Zahlen mit < <= > >= == != oder in a..b; Text in doppelten Anführungszeichen mit == != contains !contains matches !matches; answer("Wert") nur mit exists oder !exists. @warn meldet warn statt crit.',
+        placeholder: 'ip=answer("192.0.2.1") exists',
+      },
       ...vantageParamTexts,
     },
     snmp: {
@@ -469,6 +501,9 @@ export const deChecks: Messages['checks'] = {
       secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
       commandName: 'jeder Eintrag muss ein Befehlsname aus 1 bis 64 Zeichen sein: Buchstaben, Ziffern und . _ -',
       assertion: 'jeder Eintrag muss Name=Zusicherung sein, etwa ok=status == 200: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -), ein Gegenstand, ein Operator und ein Wert (Text in doppelten Anführungszeichen), optional gefolgt von @warn',
+      tcpAssertion: 'jeder Eintrag muss Name=Zusicherung sein, etwa fast=connect_ms < 500: ein Name, ein Gegenstand (connect_ms, response_ms oder response), ein Operator und ein Wert (Text in doppelten Anführungszeichen), optional gefolgt von @warn',
+      dnsAssertion: 'jeder Eintrag muss Name=Zusicherung sein, etwa ip=answer("192.0.2.1") exists: ein Name, ein Gegenstand (resolve_ms, answer_count, answers oder answer("…")), ein Operator und ein Wert (Text in doppelten Anführungszeichen), optional gefolgt von @warn',
+      tlsAssertion: 'jeder Eintrag muss Name=Zusicherung sein, etwa modern=version >= 1.2: ein Name, ein Gegenstand (handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version oder cipher), ein Operator und ein Wert (Text in doppelten Anführungszeichen), optional gefolgt von @warn',
       jsonValue: 'jeder Eintrag muss Name=JSONPath sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und ein Pfad mit höchstens 512 Byte in der unterstützten JSONPath-Teilmenge (siehe Dokumentation), etwa $.status',
       snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0, die mit 0, 1 oder 2 beginnt (nach 0 oder 1 ist die zweite Zahl höchstens 39)',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
@@ -486,6 +521,8 @@ export const deChecks: Messages['checks'] = {
       httpHeaderRouting:
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
+      scriptArg:
+        'jeder Eintrag muss befehl:platzhalter=wert sein: ein oben genannter Befehl, ein Platzhaltername aus Kleinbuchstaben, Ziffern und _ (mit einem Buchstaben beginnend, höchstens 32) und ein Wert von 1 bis 512 Bytes ohne Zeilenumbrüche, Steuer- oder unsichtbare Formatzeichen',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },

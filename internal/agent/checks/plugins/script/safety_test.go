@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // marker stands for a credential in an argument: it must never reach an
@@ -17,7 +18,7 @@ const marker = "MARKER-s3cr3t"
 // panicky is a Commands lookup that panics with the marker.
 type panicky struct{}
 
-func (panicky) Command(string) ([]string, bool, string) { panic("lookup " + marker) }
+func (panicky) Command(string) (scriptargs.Template, bool, string) { panic("lookup " + marker) }
 
 func TestCollectNeverReportsAnArgument(t *testing.T) {
 	argv := []string{prog, "--password=" + marker, abs("nonexistent", marker), marker}

@@ -12,7 +12,7 @@ import (
 // rows, never a default hidden in Go code (the design's own position — an
 // operator must be able to see a threshold, change it and delete it, and
 // deleting it must mean "no rule", not "silently fall back to a hardcoded
-// value"). All sixteen bind at scope org, in form mode.
+// value"). All twenty-two bind at scope org, in form mode.
 //
 // The two script rules (backlog 3.6g) judge the verdict a host-defined
 // script reports: crit is critical, warn and unknown are warnings (a script
@@ -34,6 +34,9 @@ import (
 // check of that plugin; upgrading turns an already failing check into an
 // alert on the first evaluation (docs/upgrades.md).
 //
+// The six assertion rules (backlog 3.87) do for tcp, dns and tls what the
+// two web assertion rules do for http.
+//
 // service.state deliberately has no row here, and that is not an
 // oversight: backlog 4.3's standing ruling is that the seeded sshd check
 // (checks.SeedDefinitions) exists on nearly every host Pulsix manages, but
@@ -47,11 +50,13 @@ import (
 // SeedForOrg calls it directly for a newly created organization, and the
 // backfill migrations encode the same rows in SQL for organizations that
 // already existed — 00045 the first five, 00094 the two script rules,
-// 00097 the two SNMP rules. A migration cannot call Go code, so keep them
+// 00097 the two SNMP rules, 00104 the seven synthetic-check rules, 00134
+// the six assertion rules. A migration cannot call Go code, so keep them
 // in sync by hand when either changes (TestRulesBackfillMatchesSeedRules,
 // TestScriptRulesMigrationMatchesSeedForOrg and
 // TestSNMPRulesMigrationMatchesSeedForOrg and
-// TestWebRulesMigrationMatchesSeedForOrg compare them).
+// TestWebRulesMigrationMatchesSeedForOrg and
+// TestAssertionRulesMigrationMatchesSeedForOrg compare them).
 func SeedRules() []RuleInput {
 	return []RuleInput{
 		{
@@ -137,6 +142,24 @@ func SeedRules() []RuleInput {
 			Metric: "dns.up", Severity: SeverityCrit, Mode: modeForm,
 			Form: &Form{Metric: "dns.up", Op: "<", Value: 1},
 		},
+		assertionRule("TCP assertion failed", "tcp", SeverityWarn),
+		assertionRule("TCP assertion failed (critical)", "tcp", SeverityCrit),
+		assertionRule("DNS assertion failed", "dns", SeverityWarn),
+		assertionRule("DNS assertion failed (critical)", "dns", SeverityCrit),
+		assertionRule("TLS assertion failed", "tls", SeverityWarn),
+		assertionRule("TLS assertion failed (critical)", "tls", SeverityCrit),
+	}
+}
+
+// assertionRule is the seed rule that alerts at sev when an assertion of
+// plugin reports that severity (backlog 3.87): <plugin>.assertion carries
+// pass, or a failed entry's severity.
+func assertionRule(name, plugin string, sev Severity) RuleInput {
+	metric := plugin + ".assertion"
+	return RuleInput{
+		Name: name, Enabled: true, Scope: ScopeOrg,
+		Metric: metric, Severity: sev, Mode: modeForm,
+		Form: &Form{Metric: metric, Op: "in", Labels: []string{string(sev)}},
 	}
 }
 

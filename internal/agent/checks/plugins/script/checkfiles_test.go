@@ -150,7 +150,7 @@ func TestRunOneAgentStoppingDuringFileChecks(t *testing.T) {
 		cancel()
 		<-release
 	}}
-	opts, problem := parseOptions(map[string]any{"timeout_seconds": 30})
+	opts, problem := parseOptions(map[string]any{"timeout_seconds": 30}, []string{"x"})
 	if problem != "" {
 		t.Fatal(problem)
 	}

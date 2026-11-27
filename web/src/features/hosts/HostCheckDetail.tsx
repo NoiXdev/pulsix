@@ -2,6 +2,7 @@ import { HostCheckValueRow } from './HostCheckValueRow.tsx';
 import { HostCheckVantages } from './HostCheckVantages.tsx';
 import { HostCheckHttp } from './HostCheckHttp.tsx';
 import { withoutAssertionRows } from './httpCheck.ts';
+import { isAssertionPlugin } from '../checks/assertionFormat.ts';
 import type { CheckPluginDescriptor, EffectiveRule, HostCheck, MonitoringGroup } from '../../api/types.ts';
 import type { MetricSelection } from '../../api/hooks/useChecks.ts';
 import type { MetricKinds, TupleKey } from './hostChecks.ts';
@@ -31,8 +32,8 @@ export interface HostCheckDetailProps {
  */
 export function HostCheckDetail({ org, hostId, canWrite, frozen, check: c, plugins, kinds, open, onOpen, effective, groups, openRules, onOpenRules }: HostCheckDetailProps) {
   const t = useT();
-  // An http check's assertion items are listed in its assertion table,
-  // with their actions (backlog 3.89).
+  // A check's assertion items are listed in its assertion table, with
+  // their actions (backlog 3.89).
   const values = withoutAssertionRows(c);
   return (
     <>
@@ -57,9 +58,9 @@ export function HostCheckDetail({ org, hostId, canWrite, frozen, check: c, plugi
         ))}
         {values.length === 0 && <li className="text-[11px] text-muted-foreground">{t.hosts.checks.noReading}</li>}
       </ul>
-      {/* Backlog 3.13b: an http check's timing breakdown and assertions,
-          below its values. */}
-      {c.plugin === 'http' && (
+      {/* Backlog 3.13b: an http check's timing breakdown and the
+          assertions of any check with them (3.87), below its values. */}
+      {isAssertionPlugin(c.plugin) && (
         <HostCheckHttp
           org={org}
           hostId={hostId}

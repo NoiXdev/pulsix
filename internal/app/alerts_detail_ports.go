@@ -79,20 +79,26 @@ func (h *hostDetails) resolve(ctx context.Context, orgID, hostID uuid.UUID) (che
 	return r.set, r.err
 }
 
-// The metrics the detail reads.
-const (
-	metricAssertion       = "http.assertion"
-	metricAssertionActual = "http.assertion_actual"
-)
+// assertionPlugin is the plugin whose assertion verdict metric is
+// <plugin>.assertion (http since backlog 3.13b; tcp, dns and tls since
+// 3.87); false for any other metric.
+func assertionPlugin(metric string) (assert.Dialect, bool) {
+	plugin, ok := strings.CutSuffix(metric, ".assertion")
+	if !ok {
+		return assert.Dialect{}, false
+	}
+	return assert.DialectOf(plugin)
+}
 
 // Detail implements alerts.DetailLookup:
 //
 //   - <plugin>.up of a synthetic plugin: the current <plugin>.failure label
 //     of the same host, check key and item, unless it is none;
-//   - http.assertion: "<expression> — saw <actual>", the entry's
-//     expression from the host's resolved check of that key and the
-//     current http.assertion_actual of the same item, either part left out
-//     when it is not there;
+//   - <plugin>.assertion of a plugin with assertions (http, tcp, dns,
+//     tls): "<expression> — saw <actual>", the entry's expression from the
+//     host's resolved check of that key and plugin, parsed in the plugin's
+//     dialect, and the current <plugin>.assertion_actual of the same item,
+//     either part left out when it is not there;
 //   - anything else: nothing.
 //
 // The current values are read on tx, inside the executor's savepoint, so
@@ -104,8 +110,8 @@ const (
 // the descriptor's fixed vocabulary, a cleaned probe label or the
 // operator's own check definition — never from a library's error text.
 func (h *hostDetails) Detail(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
-	if sub.Metric == metricAssertion {
-		return h.assertion(ctx, tx, orgID, sub)
+	if d, ok := assertionPlugin(sub.Metric); ok {
+		return h.assertion(ctx, tx, orgID, sub, d)
 	}
 	plugin, rest, ok := strings.Cut(sub.Metric, ".")
 	if !ok || rest != "up" || !checks.IsSynthetic(plugin) {
@@ -118,9 +124,9 @@ func (h *hostDetails) Detail(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, su
 	return label, nil
 }
 
-// assertion is Detail for http.assertion.
-func (h *hostDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject) (string, error) {
-	actual, err := h.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, metricAssertionActual)
+// assertion is Detail for <plugin>.assertion of d's plugin.
+func (h *hostDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, sub alerts.Subject, d assert.Dialect) (string, error) {
+	actual, err := h.labels.CurrentLabel(ctx, tx, orgID, sub.HostID, sub.CheckKey, sub.Item, d.Plugin()+".assertion_actual")
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +134,7 @@ func (h *hostDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 	if err != nil {
 		return "", fmt.Errorf("resolve the host's checks: %w", err)
 	}
-	expr := assertionExpression(set, sub.CheckKey, sub.Item)
+	expr := assertionExpression(set, d, sub.CheckKey, sub.Item)
 	switch {
 	case expr != "" && actual != "":
 		return expr + " — saw " + actual, nil
@@ -139,18 +145,18 @@ func (h *hostDetails) assertion(ctx context.Context, tx pgx.Tx, orgID uuid.UUID,
 }
 
 // assertionExpression is the canonical expression of the assertions entry
-// named name in the http check checkKey of set, "" when there is none or it
-// does not parse.
-func assertionExpression(set checks.ResolvedSet, checkKey, name string) string {
+// named name in the check checkKey of set of d's plugin, "" when there is
+// none or it does not parse in d.
+func assertionExpression(set checks.ResolvedSet, d assert.Dialect, checkKey, name string) string {
 	for _, c := range set.All() {
-		if c.Key != checkKey || c.Plugin != checks.PluginHTTP {
+		if c.Key != checkKey || c.Plugin != d.Plugin() {
 			continue
 		}
 		for _, entry := range stringEntries(c.Params["assertions"]) {
 			if assert.EntryName(entry) != name {
 				continue
 			}
-			if parsed, err := assert.Parse(entry); err == nil {
+			if parsed, err := d.Parse(entry); err == nil {
 				return parsed.Expression()
 			}
 			return ""

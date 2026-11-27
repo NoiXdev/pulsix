@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/agent/secrets"
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // maxSecretsStateLen bounds the secrets file's state as the heartbeat
@@ -39,12 +40,12 @@ func (s secretsSource) Secret(name string) (map[string]string, bool, string) {
 // set, and why it has no commands when the file is missing or refused.
 type commandsSource struct{ w *secrets.Watcher }
 
-func (s commandsSource) Command(name string) ([]string, bool, string) {
+func (s commandsSource) Command(name string) (scriptargs.Template, bool, string) {
 	set, state := s.w.Current()
-	if argv, ok := set.Command(name); ok {
-		return argv, true, ""
+	if cmd, ok := set.Command(name); ok {
+		return cmd, true, ""
 	}
-	return nil, false, fileProblem(s.w, state)
+	return scriptargs.Template{}, false, fileProblem(s.w, state)
 }
 
 // fileProblem says why the watched file defines nothing in state: empty

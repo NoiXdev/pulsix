@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // Set is an immutable collection of secrets (names mapping to their
@@ -22,7 +24,7 @@ import (
 // Set holds none. It is safe for concurrent use.
 type Set struct {
 	secrets            map[string]map[string]string
-	commands           map[string][]string
+	commands           map[string]scriptargs.Template
 	localChecks        []LocalCheck // key order
 	localCheckProblems []string     // line order
 }
@@ -50,14 +52,12 @@ func (s Set) CommandNames() []string {
 	return slices.Sorted(maps.Keys(s.commands))
 }
 
-// Command returns a copy of the named command's program and arguments; ok
-// is false when the set does not define it.
-func (s Set) Command(name string) (argv []string, ok bool) {
-	a, ok := s.commands[name]
-	if !ok {
-		return nil, false
-	}
-	return slices.Clone(a), true
+// Command returns the named command's command line, whose Bind yields
+// its program and arguments; ok is false when the set does not define it.
+// A Template is immutable, so it is handed out as it is.
+func (s Set) Command(name string) (cmd scriptargs.Template, ok bool) {
+	cmd, ok = s.commands[name]
+	return cmd, ok
 }
 
 // LocalChecks returns copies of the local checks, in key order.

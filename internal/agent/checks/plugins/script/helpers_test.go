@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/scriptargs"
 )
 
 // fakeRunner answers Run through run, which a test sets per case.
@@ -68,18 +69,23 @@ func (f *fakeChecker) Check(path string, form pathForm) error {
 	return errNotFile
 }
 
-// fakeCommands is the agent.yaml lookup.
+// fakeCommands is the agent.yaml lookup: argv are list-form commands,
+// templates commands with placeholders (backlog 3.6j).
 type fakeCommands struct {
-	argv    map[string][]string
-	problem string
+	argv      map[string][]string
+	templates map[string]scriptargs.Template
+	problem   string
 }
 
-func (f fakeCommands) Command(name string) ([]string, bool, string) {
+func (f fakeCommands) Command(name string) (scriptargs.Template, bool, string) {
+	if t, ok := f.templates[name]; ok {
+		return t, true, ""
+	}
 	argv, ok := f.argv[name]
 	if !ok {
-		return nil, false, f.problem
+		return scriptargs.Template{}, false, f.problem
 	}
-	return append([]string(nil), argv...), true, ""
+	return scriptargs.Fixed(argv), true, ""
 }
 
 // prog is the programs' path in the tests, absolute on every platform.

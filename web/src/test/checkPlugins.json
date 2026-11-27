@@ -1013,6 +1013,14 @@
           "format": "commandName"
         },
         {
+          "name": "args",
+          "type": "list",
+          "example": "tcp_port:port=8080",
+          "max_entries": 64,
+          "max_bytes": 640,
+          "format": "scriptArg"
+        },
+        {
           "name": "format",
           "type": "enum",
           "default": "nagios",
@@ -1149,6 +1157,14 @@
           "max": 30
         },
         {
+          "name": "assertions",
+          "type": "list",
+          "example": "fast=connect_ms \u003c 500",
+          "max_entries": 32,
+          "max_bytes": 512,
+          "format": "tcpAssertion"
+        },
+        {
           "name": "vantage_manager",
           "type": "bool",
           "default": true
@@ -1177,6 +1193,8 @@
           ]
         }
       ],
+      "item_param": "assertions",
+      "host_item_always_asked": true,
       "metrics": [
         {
           "name": "tcp.up",
@@ -1193,6 +1211,14 @@
         {
           "name": "tcp.banner_match",
           "kind": "numeric"
+        },
+        {
+          "name": "tcp.assertion",
+          "kind": "discrete"
+        },
+        {
+          "name": "tcp.assertion_actual",
+          "kind": "discrete"
         }
       ]
     },
@@ -1420,6 +1446,14 @@
           "max": 30
         },
         {
+          "name": "assertions",
+          "type": "list",
+          "example": "modern=version \u003e= 1.2",
+          "max_entries": 32,
+          "max_bytes": 512,
+          "format": "tlsAssertion"
+        },
+        {
           "name": "vantage_manager",
           "type": "bool",
           "default": true
@@ -1448,6 +1482,8 @@
           ]
         }
       ],
+      "item_param": "assertions",
+      "host_item_always_asked": true,
       "metrics": [
         {
           "name": "tls.up",
@@ -1471,6 +1507,14 @@
         },
         {
           "name": "tls.cert_issuer",
+          "kind": "discrete"
+        },
+        {
+          "name": "tls.assertion",
+          "kind": "discrete"
+        },
+        {
+          "name": "tls.assertion_actual",
           "kind": "discrete"
         }
       ]
@@ -1519,6 +1563,14 @@
           "max": 30
         },
         {
+          "name": "assertions",
+          "type": "list",
+          "example": "ip=answer(\"192.0.2.1\") exists",
+          "max_entries": 32,
+          "max_bytes": 512,
+          "format": "dnsAssertion"
+        },
+        {
           "name": "vantage_manager",
           "type": "bool",
           "default": true
@@ -1547,6 +1599,8 @@
           ]
         }
       ],
+      "item_param": "assertions",
+      "host_item_always_asked": true,
       "metrics": [
         {
           "name": "dns.up",
@@ -1563,6 +1617,14 @@
         {
           "name": "dns.answer_match",
           "kind": "numeric"
+        },
+        {
+          "name": "dns.assertion",
+          "kind": "discrete"
+        },
+        {
+          "name": "dns.assertion_actual",
+          "kind": "discrete"
         }
       ]
     },

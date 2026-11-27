@@ -49,6 +49,10 @@ func errAt(n *yaml.Node, reason string) error {
 //	    <field>: <value>
 //	commands:
 //	  <name>: [<program>, <argument>, …]
+//	  <name>:
+//	    run: [<program>, <argument or {placeholder}>, …]
+//	    args:
+//	      <placeholder>: {pattern: <RE2> | min: <n>, max: <n> | values: [<value>, …], default: <value>}
 //	checks:
 //	  <key>:
 //	    plugin: <plugin>

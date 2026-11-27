@@ -57,9 +57,12 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"script: commands (required; list; not empty; at most 32 entries; each the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
+		"args (list; at most 64 entries; each at most 640 bytes; each command:placeholder=value, a value for a placeholder the command's definition in the host's agent.yaml declares: " +
+		"the command one listed in commands, the placeholder a lower-case letter followed by up to 31 lower-case letters, digits or _, the value 1 to 512 bytes without control, format or separator characters; the host's own rule judges the value), " +
 		"format (nagios or json; default nagios), timeout_seconds (1 to 60; default 10). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5), " + vantage +
-		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " + vantage +
+		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " +
+		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn] as for http, the subject one of connect_ms, response_ms, response (the first line the target sent) such as connect_ms < 500), " + vantage +
 		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS; default GET), " +
 		"headers (list; at most 16 entries; each at most 1024 bytes; each Name: value, the name a header name other than Host, Content-Length, Transfer-Encoding, Connection, User-Agent, " +
 		"Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade, Expect, Accept-Encoding, Content-Type, Authorization, Proxy-Authorization, Cookie, a name containing token, secret, apikey, api-key, api_key, password, access-key, access_key or session or the segment auth, " +
@@ -73,10 +76,12 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"html(\"selector\"), html(\"selector\") count), an operator and an operand such as status == 200), " +
 		"timeout_s (1 to 60; default 10), " +
 		"follow_redirects (true or false; default true), verify_tls (true or false; default true), " + vantage +
-		"tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10), " + vantage +
+		"tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10), " +
+		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn] as for http, the subject one of handshake_ms, cert_valid, cert_days, cert_issuer, cert_subject, cert_sans, version (1.0 to 1.3), cipher such as version >= 1.2), " + vantage +
 		"dns: name (at most 500 bytes; a DNS name that may contain {address}; default {address}), " +
 		"type (A, AAAA, CNAME, MX, TXT or NS; default A), server (at most 500 bytes; an IP address with an optional port), " +
-		"expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " + vantage +
+		"expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " +
+		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn] as for http, the subject one of resolve_ms, answer_count, answers (sorted, joined with \", \"), answer(\"value\") (exists or !exists only) such as answer(\"192.0.2.1\") exists), " + vantage +
 		"snmp: secret (required; not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
 		"version (v2c or v3; default v2c), port (1 to 65535; default 161), timeout_seconds (1 to 30; default 5), " +
 		"oids (list; at most 32 entries; each name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0), " +
