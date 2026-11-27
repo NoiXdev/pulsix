@@ -9,7 +9,9 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import {
   RUN_REQUEST_CHANGED,
+  coveredZonesOf,
   firstJobOfRunGroup,
+  type CoveredZone,
   useApproveRunRequest,
   useRejectRunRequest,
   useRunRequest,
@@ -90,6 +92,9 @@ export function RunRequestDetailPage() {
   });
   // A trigger's secret an approval drew: held only while its dialog is open.
   const [drawn, setDrawn] = useState<{ secret: string; url: string }>();
+  // The zones a refused re-approval named (backlog 2.142), for the request
+  // they belong to.
+  const [covered, setCovered] = useState<{ id: string; zones: CoveredZone[] }>();
 
   const guard = useQueryGuard(detail);
   if (guard) return guard;
@@ -228,6 +233,11 @@ export function RunRequestDetailPage() {
       await openRun(approved.run_group_id);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
+      const zones = coveredZonesOf(err);
+      if (zones) {
+        setCovered({ id, zones });
+        return;
+      }
       if (message.includes(RUN_REQUEST_CHANGED)) {
         setReview((r) => (r?.id === id ? { ...r, refused: true } : r));
         await detail.refetch();
@@ -319,6 +329,7 @@ export function RunRequestDetailPage() {
           )}
         </div>
       )}
+      {pending && covered?.id === id && <CoveredZonesNote zones={covered.zones} />}
       {pending ? (
         canRun ? (
           <div className="flex flex-col items-start gap-2">
@@ -407,5 +418,23 @@ export function RunRequestDetailPage() {
         <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
       )}
     </DetailLayout>
+  );
+}
+
+/** CoveredZonesNote says why a re-approval was refused (backlog 2.142): the
+ * zones the first approval already started its run in, and the hosts that
+ * joined them since, which approving again would not run. */
+function CoveredZonesNote({ zones }: { zones: CoveredZone[] }) {
+  const c = useT().runs.requests.detail.coveredZones;
+  return (
+    <div role="alert" aria-label={c.title} className="flex flex-col items-start gap-1 rounded-md border border-[var(--px-warn)] px-3 py-2 text-xs">
+      <p className="font-semibold text-[var(--px-warn)]">{c.title}</p>
+      <p className="text-muted-foreground">{c.body}</p>
+      <ul className="flex flex-col gap-0.5 font-mono">
+        {zones.map((z) => (
+          <li key={z.id}>{c.zone(z.name, z.hosts.map((h) => h.name).join(', '))}</li>
+        ))}
+      </ul>
+    </div>
   );
 }

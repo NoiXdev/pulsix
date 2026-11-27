@@ -170,6 +170,31 @@ describe('RunRequestDetailPage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('the request expired');
   });
 
+  it('says which hosts a refused re-approval leaves out (backlog 2.142)', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': orgAs('owner'),
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      [DETAIL_PATH]: detail(),
+      [APPROVE_PATH]: () =>
+        new Response(
+          JSON.stringify({
+            title: 'Conflict',
+            status: 409,
+            detail: 'approving again would not run the hosts …',
+            code: 'hosts_joined_covered_zone',
+            zones: [{ id: 'z1', name: 'eu', hosts: [{ id: 'h3', name: 'web-03' }, { id: 'h4', name: 'web-04' }] }],
+          }),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        ),
+    });
+    renderDetail();
+    await user.click(await screen.findByRole('button', { name: 'Approve' }));
+    const alert = await screen.findByRole('alert', { name: 'Not approved: hosts joined a zone this request already started in' });
+    expect(alert).toHaveTextContent('eu: web-03, web-04');
+    expect(alert).toHaveTextContent('ask for a new run for these hosts');
+  });
+
   it('rejects after confirming', async () => {
     const user = userEvent.setup();
     let rejected = false;

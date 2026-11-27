@@ -388,6 +388,11 @@ export const enRuns = {
       rejectFailed: 'Rejecting the request failed',
       changed: 'This request changed since you opened it. Review it again.',
       reviewNew: 'Review the new version',
+      coveredZones: {
+        title: 'Not approved: hosts joined a zone this request already started in',
+        body: 'The first approval of this request started its run in these zones before it failed. Approving again would not run the hosts that joined them since, so nothing was started. Reject this request and ask for a new run for these hosts.',
+        zone: (zone: string, hosts: string) => `${zone}: ${hosts}`,
+      },
       decided: {
         approved: 'Approved. The run was started.',
         rejected: 'Rejected. The run was not started.',

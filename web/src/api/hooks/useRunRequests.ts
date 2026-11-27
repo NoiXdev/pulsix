@@ -149,6 +149,27 @@ export async function firstJobOfRunGroup(org: string, runGroupId: string): Promi
   return body.jobs?.[0]?.id;
 }
 
+/** HOSTS_JOINED_COVERED_ZONE is the code of the 409 that refuses a re-approval whose
+ * replay would leave out hosts that joined a zone the first approval already started its
+ * run in (internal/api coveredZonesCode, backlog 2.142): a contract, not prose. */
+export const HOSTS_JOINED_COVERED_ZONE = 'hosts_joined_covered_zone';
+
+/** CoveredZone is one zone of that refusal with the hosts that joined it. */
+export interface CoveredZone {
+  id: string;
+  name: string;
+  hosts: { id: string; name: string }[];
+}
+
+/** coveredZonesOf reads the zones of that refusal from an approval's error; undefined for
+ * any other error. */
+export function coveredZonesOf(err: unknown): CoveredZone[] | undefined {
+  if (!(err instanceof ApiError) || err.status !== 409) return undefined;
+  const body = err.body as { code?: unknown; zones?: unknown } | undefined;
+  if (body?.code !== HOSTS_JOINED_COVERED_ZONE || !Array.isArray(body.zones)) return undefined;
+  return body.zones as CoveredZone[];
+}
+
 /** RUN_REQUEST_CHANGED is the 409 detail of an approval whose picture changed since the
  * page loaded it (internal/runrequests ErrChanged): a contract, not prose. */
 export const RUN_REQUEST_CHANGED = 'changed since you looked at it; review it again';

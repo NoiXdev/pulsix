@@ -370,6 +370,11 @@ export const deRuns: Messages['runs'] = {
       rejectFailed: 'Die Anfrage konnte nicht abgelehnt werden',
       changed: 'Diese Anfrage hat sich geändert, seit du sie geöffnet hast. Bitte prüfe sie erneut.',
       reviewNew: 'Neue Fassung ansehen',
+      coveredZones: {
+        title: 'Nicht freigegeben: Hosts kamen in eine Zone, in der diese Anfrage schon gestartet ist',
+        body: 'Die erste Freigabe dieser Anfrage hat ihren Lauf in diesen Zonen gestartet, bevor sie fehlschlug. Eine neue Freigabe würde die Hosts, die seitdem hinzugekommen sind, nicht ausführen, deshalb wurde nichts gestartet. Lehne diese Anfrage ab und stelle für diese Hosts eine neue Laufanfrage.',
+        zone: (zone: string, hosts: string) => `${zone}: ${hosts}`,
+      },
       decided: {
         approved: 'Freigegeben. Der Lauf wurde gestartet.',
         rejected: 'Abgelehnt. Der Lauf wurde nicht gestartet.',
