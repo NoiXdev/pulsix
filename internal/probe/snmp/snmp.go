@@ -19,6 +19,7 @@ import (
 	"github.com/gosnmp/gosnmp"
 
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/judge"
 )
 
 // hostMetrics are the metrics on the whole-host item.
@@ -72,8 +73,10 @@ func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address s
 // (FailureAuth for a refusal gosnmp names; FailureAuthOrLost when the device
 // answered the discovery but the first request and one more attempt got
 // no usable answer); params or a secret that cannot be
-// used, or a target the guard refuses, is an error on every host metric
-// and each oids entry's snmp.value.
+// used, or a target the guard refuses, is an error on every host metric,
+// each oids entry's snmp.value and each assertion's item. An up poll
+// judges every assertion once all values are read (backlog 3.134,
+// assert.go).
 //
 // Each request waits timeout_seconds and is retried once; ctx bounds the
 // whole poll.
@@ -116,9 +119,11 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	var obs []probe.Observation
 	asked := make([]oidEntry, 0, len(s.oids))
 	var badObs []probe.Observation
+	r := reading{values: make(map[string]value, len(s.oids))}
 	for _, e := range s.oids {
 		if e.bad {
-			badObs = append(badObs, probe.Observation{Metric: "snmp.value", Item: e.name, Err: errBadOID})
+			r.values[e.name] = value{err: errBadOID}
+			badObs = append(badObs, r.values[e.name].observation(e.name))
 			continue
 		}
 		asked = append(asked, e)
@@ -159,12 +164,14 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	if rtt <= 0 {
 		rtt = time.Since(start)
 	}
+	r.rtt = rtt
 	obs = append(probe.Up("snmp"), probe.Value("snmp.response_ms", probe.Millis(rtt)))
 
 	cur := sample{}
 	vars, batchErr := answers(pkt, first)
-	obs = append(obs, uptimeObservation(vars, batchErr, &cur))
-	obs = append(obs, entryObservations(asked[:len(first)-1], vars[min(len(vars), 1):], batchErr)...)
+	r.uptime = uptimeObservation(vars, batchErr, &cur)
+	obs = append(obs, r.uptime)
+	obs = append(obs, entryObservations(asked[:len(first)-1], vars[min(len(vars), 1):], batchErr, r.values)...)
 
 	// The other entries, oidsPerRequest at a time.
 	for off := len(first); off < len(oids); off += oidsPerRequest {
@@ -172,13 +179,14 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 		entries := asked[off-1 : off-1+len(batch)]
 		pkt, err := c.get(batch)
 		if err != nil {
-			obs = append(obs, entryObservations(entries, nil, errNoAnswer)...)
+			obs = append(obs, entryObservations(entries, nil, errNoAnswer, r.values)...)
 			continue
 		}
 		vars, batchErr := answers(pkt, batch)
-		obs = append(obs, entryObservations(entries, vars, batchErr)...)
+		obs = append(obs, entryObservations(entries, vars, batchErr, r.values)...)
 	}
 	obs = append(obs, badObs...)
+	obs = append(obs, judge.Observe("snmp", s.assertions, r.judge)...)
 
 	var info Info
 	keep := true
@@ -194,8 +202,8 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 }
 
 // FailAll is a poll that could not be attempted, with msg on every
-// metric params would have produced: the host metrics and each oids
-// entry's snmp.value, the shape Poll gives a secret it cannot use. Params
+// metric params would have produced: the host metrics, each oids entry's
+// snmp.value and each assertion's two metrics, the shape Poll gives a secret it cannot use. Params
 // it cannot read give the host metrics alone. The probe runner reports a
 // secret it cannot hand over this way.
 func FailAll(params map[string]any, msg string) []probe.Observation {
@@ -206,13 +214,14 @@ func FailAll(params map[string]any, msg string) []probe.Observation {
 	return failAll(s, msg)
 }
 
-// failAll is msg on the host metrics and each oids entry's snmp.value.
+// failAll is msg on the host metrics, each oids entry's snmp.value and
+// both metrics of each assertion's item.
 func failAll(s settings, msg string) []probe.Observation {
 	obs := probe.FailAll(msg, hostMetrics...)
 	for _, e := range s.oids {
 		obs = append(obs, probe.Observation{Metric: "snmp.value", Item: e.name, Err: msg})
 	}
-	return obs
+	return append(obs, judge.FailAll("snmp", s.assertions, msg)...)
 }
 
 // failed is the result of a dial or first request that failed, sorted as
@@ -298,15 +307,17 @@ func uptimeObservation(vars []gosnmp.SnmpPDU, batchErr string, cur *sample) prob
 }
 
 // entryObservations are the observations of oids entries from their
-// answers, or batchErr on each when the request as a whole failed.
-func entryObservations(entries []oidEntry, vars []gosnmp.SnmpPDU, batchErr string) []probe.Observation {
+// answers, or batchErr on each when the request as a whole failed; each
+// entry's value is also recorded in values for the assertions.
+func entryObservations(entries []oidEntry, vars []gosnmp.SnmpPDU, batchErr string, values map[string]value) []probe.Observation {
 	out := make([]probe.Observation, 0, len(entries))
 	for i, e := range entries {
-		if batchErr != "" {
-			out = append(out, probe.Observation{Metric: "snmp.value", Item: e.name, Err: batchErr})
-			continue
+		v := value{err: batchErr}
+		if batchErr == "" {
+			v = readValue(vars[i])
 		}
-		out = append(out, valueObservation(e.name, vars[i]))
+		values[e.name] = v
+		out = append(out, v.observation(e.name))
 	}
 	return out
 }

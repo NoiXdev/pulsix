@@ -70,35 +70,53 @@ func noSuchObject(t gosnmp.Asn1BER) bool {
 	return t == gosnmp.NoSuchObject || t == gosnmp.NoSuchInstance || t == gosnmp.EndOfMibView
 }
 
-// valueObservation turns the answer for the oids entry name into its
-// observation: snmp.value for a number, snmp.text for a string, an OID or
-// an IP address, an error on snmp.value otherwise.
-func valueObservation(name string, pdu gosnmp.SnmpPDU) probe.Observation {
-	obs := probe.Observation{Metric: "snmp.value", Item: name}
+// value is what one oids entry read: a number, a text (as the device sent
+// it) or the error its snmp.value reports.
+type value struct {
+	num    float64
+	text   string
+	isText bool
+	err    string
+}
+
+// readValue reads the answer for an oids entry: a number, a string, an OID
+// or an IP address as text, the error otherwise.
+func readValue(pdu gosnmp.SnmpPDU) value {
 	switch pdu.Type {
 	case gosnmp.Integer, gosnmp.Counter32, gosnmp.Counter64, gosnmp.Gauge32, gosnmp.TimeTicks, gosnmp.Uinteger32:
 		if v, ok := toFloat(pdu.Value); ok {
-			obs.Value = &v
-			return obs
+			return value{num: v}
 		}
 	case gosnmp.OpaqueFloat, gosnmp.OpaqueDouble:
 		if v, ok := toFloat(pdu.Value); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
-			obs.Value = &v
-			return obs
+			return value{num: v}
 		}
 	case gosnmp.OctetString, gosnmp.ObjectIdentifier, gosnmp.IPAddress:
 		if s, ok := toText(pdu.Value); ok {
-			l := probe.Label(s)
-			obs.Metric, obs.Label = "snmp.text", &l
-			return obs
+			return value{text: s, isText: true}
 		}
 	default:
 		if noSuchObject(pdu.Type) {
-			obs.Err = errNoSuchObject
-			return obs
+			return value{err: errNoSuchObject}
 		}
 	}
-	obs.Err = errUnsupportedType
+	return value{err: errUnsupportedType}
+}
+
+// observation is v as the oids entry name reports it: snmp.value for a
+// number, snmp.text for a text, an error on snmp.value.
+func (v value) observation(name string) probe.Observation {
+	obs := probe.Observation{Metric: "snmp.value", Item: name}
+	switch {
+	case v.err != "":
+		obs.Err = v.err
+	case v.isText:
+		l := probe.Label(v.text)
+		obs.Metric, obs.Label = "snmp.text", &l
+	default:
+		n := v.num
+		obs.Value = &n
+	}
 	return obs
 }
 
