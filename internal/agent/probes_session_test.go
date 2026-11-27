@@ -358,3 +358,73 @@ func (s *chunkingStream) sentMessages() []*agentpb.AgentMessage {
 	defer s.mu.Unlock()
 	return append([]*agentpb.AgentMessage(nil), s.sent...)
 }
+
+// TestProbeBufferStaysUnderItsCapDuringALongDisconnect: 200 slots at the
+// shortest interval, five results a round, disconnected for the whole
+// 15-minute window — 90 000 results, far over the cap. The ring keeps the
+// newest results, never more than its cap's worth, and no round half.
+func TestProbeBufferStaysUnderItsCapDuringALongDisconnect(t *testing.T) {
+	lt := newLoopTest(t)
+	base := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	now := base
+	lt.setNow(func() time.Time { return now })
+	l := lt.newLoop()
+
+	const slots, perRound, interval = 200, 5, 10 * time.Second
+	var last time.Time
+	for now = base; now.Before(base.Add(bufferWindow)); now = now.Add(interval) {
+		for s := range slots {
+			round := make([]probes.Result, perRound)
+			for i := range round {
+				round[i] = probes.Result{TargetHostID: probeTarget, CheckKey: "web" + strconv.Itoa(s),
+					Metric: "http.m" + strconv.Itoa(i), Value: floatPtr(1), At: now}
+			}
+			l.handleProbeResults(round)
+		}
+		last = now
+	}
+	held := l.probeBuffer.Drain()
+	cost := 0
+	perRoundAt := map[string]int{}
+	for _, r := range held {
+		cost += probeResultCost(r)
+		perRoundAt[r.CheckKey+r.At.String()]++
+	}
+	if cost > maxProbeBufferBytes {
+		t.Fatalf("probe ring holds %d bytes, over its cap of %d", cost, maxProbeBufferBytes)
+	}
+	if total := slots * perRound * int(bufferWindow/interval); len(held) >= total || len(held) < total/10 {
+		t.Fatalf("probe ring holds %d of %d results, want the cap to bite but keep a useful share", len(held), total)
+	}
+	if !held[len(held)-1].At.Equal(last) {
+		t.Fatalf("newest held result is from %s, want the last round %s", held[len(held)-1].At, last)
+	}
+	for k, n := range perRoundAt {
+		if n != perRound {
+			t.Fatalf("round %s is held with %d of its %d results", k, n, perRound)
+		}
+	}
+	if logs := lt.logOutput(); !strings.Contains(logs, "over_cap=") {
+		t.Fatalf("the cap's drops were not logged as such:\n%s", logs)
+	}
+}
+
+// TestProbeResultCostCountsTheVariableText: a result's cost grows with its
+// error and label text, which a target's answer can make long.
+func TestProbeResultCostCountsTheVariableText(t *testing.T) {
+	short := probes.Result{Metric: "http.up", Err: "x"}
+	long := short
+	long.Err = strings.Repeat("x", 1000)
+	label := "issuer"
+	labelled := short
+	labelled.Label = &label
+	if probeResultCost(long)-probeResultCost(short) != 999 {
+		t.Fatalf("cost of a 1000-byte error = %d, short = %d", probeResultCost(long), probeResultCost(short))
+	}
+	if probeResultCost(labelled) != probeResultCost(short)+len(label) {
+		t.Fatal("a label's text is not counted")
+	}
+	if probeResultCost(short) < 120 {
+		t.Fatalf("cost %d is below the result's own size", probeResultCost(short))
+	}
+}

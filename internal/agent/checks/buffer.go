@@ -21,13 +21,27 @@ import (
 //
 // It is generic so the agent's probe results (internal/agent/probes) ride
 // the same 15-minute rule as its check results; Buffer is the check
-// results' ring.
+// results' ring. A capped ring (NewCappedRing) also bounds the summed cost
+// of what it holds: the probe ring, whose size is set by up to 200
+// assignments rather than by the host's own checks (backlog 3.78).
 type Ring[T any] struct {
 	mu     sync.Mutex
 	window time.Duration
 	now    func() time.Time
 	at     func(T) time.Time
 	items  []T
+	// limit is the most summed cost the ring holds, 0 for no cap; held is
+	// the cost of items, kept only when capped.
+	limit int
+	cost  func(T) int
+	held  int
+}
+
+// Evicted is what one Put dropped: Aged entries fell out of the window,
+// OverCap entries left to bring a capped ring back under its cap.
+type Evicted struct {
+	Aged    int
+	OverCap int
 }
 
 // Buffer is the ring of check Results.
@@ -40,33 +54,78 @@ func NewRing[T any](window time.Duration, now func() time.Time, at func(T) time.
 	return &Ring[T]{window: window, now: now, at: at}
 }
 
+// NewCappedRing is NewRing that also holds at most limit of summed cost:
+// over it, Put evicts the oldest entries — whole instants, see Put — until
+// the rest fits. limit must be positive.
+func NewCappedRing[T any](window time.Duration, limit int, cost func(T) int, now func() time.Time, at func(T) time.Time) *Ring[T] {
+	return &Ring[T]{window: window, now: now, at: at, limit: limit, cost: cost}
+}
+
 // NewBuffer wires a Buffer holding window's worth of Results (the
 // design's 15 minutes), stamped by their own At.
 func NewBuffer(window time.Duration, now func() time.Time) *Buffer {
 	return NewRing(window, now, func(r Result) time.Time { return r.At })
 }
 
-// Add appends r to the ring, then evicts the oldest entries whose own
-// timestamp falls before now()-window. dropped is how many this call
-// evicted — a gap in a graph must have a cause somebody can read, which
-// is why this is a return value and not a swallowed side effect.
+// Add appends r to the ring and evicts as Put does. dropped is how many
+// this call evicted — a gap in a graph must have a cause somebody can
+// read, which is why this is a return value and not a swallowed side
+// effect.
 func (b *Ring[T]) Add(r []T) (dropped int) {
+	e := b.Put(r)
+	return e.Aged + e.OverCap
+}
+
+// Put appends r to the ring, then evicts the oldest entries whose own
+// timestamp falls before now()-window and, on a capped ring, the oldest
+// entries while the summed cost exceeds the cap. A cap eviction also takes
+// every following entry stamped with the same instant as the last one it
+// took: a probe round (or a check run) is one Add of results sharing one
+// timestamp, so none is left half buffered.
+func (b *Ring[T]) Put(r []T) Evicted {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.items = append(b.items, r...)
+	if b.limit > 0 {
+		for _, x := range r {
+			b.held += b.cost(x)
+		}
+	}
 
+	var e Evicted
 	cutoff := b.now().Add(-b.window)
 	i := 0
 	for i < len(b.items) && b.at(b.items[i]).Before(cutoff) {
+		b.release(b.items[i])
 		i++
 	}
+	e.Aged = i
+	if b.limit > 0 && b.held > b.limit {
+		for i < len(b.items) && b.held > b.limit {
+			b.release(b.items[i])
+			i++
+		}
+		last := b.at(b.items[i-1])
+		for i < len(b.items) && b.at(b.items[i]).Equal(last) {
+			b.release(b.items[i])
+			i++
+		}
+		e.OverCap = i - e.Aged
+	}
 	if i == 0 {
-		return 0
+		return e
 	}
 	remaining := make([]T, len(b.items)-i)
 	copy(remaining, b.items[i:])
 	b.items = remaining
-	return i
+	return e
+}
+
+// release takes x's cost off a capped ring's total.
+func (b *Ring[T]) release(x T) {
+	if b.limit > 0 {
+		b.held -= b.cost(x)
+	}
 }
 
 // Drain returns everything currently held, oldest first, and empties the
@@ -77,5 +136,6 @@ func (b *Ring[T]) Drain() []T {
 	defer b.mu.Unlock()
 	out := b.items
 	b.items = nil
+	b.held = 0
 	return out
 }
