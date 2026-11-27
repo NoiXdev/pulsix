@@ -33,6 +33,7 @@ import (
 	"github.com/noixdev/pulsix/internal/agent/logring"
 	"github.com/noixdev/pulsix/internal/agent/probes"
 	"github.com/noixdev/pulsix/internal/agent/secrets"
+	"github.com/noixdev/pulsix/internal/agent/statuspage"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -189,6 +190,10 @@ type Loop struct {
 	// logRing holds the last log lines for the status page (backlog
 	// 3.132); nil when the binary keeps none (tests).
 	logRing *logring.Ring
+	// status records what the loop sent and heard, and statusPage serves
+	// it when agent.yaml turns the page on (status.go).
+	status     *statusRecorder
+	statusPage *statuspage.Controller
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -260,6 +265,8 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	l.probes = l.newProbeRunner()
 	l.probeBuffer = newProbeBuffer(l.now)
+	l.status = newStatusRecorder()
+	l.statusPage = l.newStatusPage()
 	return l
 }
 
@@ -288,10 +295,17 @@ func (l *Loop) Run(ctx context.Context) error {
 		"data_dir", l.cfg.DataDir, "agent_name", l.cfg.AgentName, "version", l.cfg.Version,
 		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
 		"config_interval", l.cfg.ConfigInterval)
+	l.status.started(l.now())
+	if id.Valid(l.now()) {
+		l.status.setIdentity(id)
+	}
 	// The first look at the secrets file, so its outcome is logged at
 	// start rather than with the first heartbeat or check that needs it,
-	// and its local checks are in the scheduler before it starts.
+	// and its local checks are in the scheduler before it starts. It also
+	// starts the status page when the file asks for it; the page stops
+	// when Run returns.
 	l.lookAndApplyLocal()
+	defer l.statusPage.Close()
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either
@@ -375,6 +389,7 @@ func (l *Loop) Run(ctx context.Context) error {
 					continue
 				}
 				id = next
+				l.status.setIdentity(id)
 			}
 			if err := l.streamSession(ctx, id); err != nil {
 				if ctx.Err() != nil {
@@ -402,6 +417,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		switch {
 		case err == nil:
 			id = next
+			l.status.setIdentity(id)
 			backoffShift = 0
 			l.log.InfoContext(ctx, "agent identity ready", "host_id", id.HostID())
 		case errors.Is(err, ErrBadEnrollAnswer):

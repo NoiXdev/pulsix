@@ -477,3 +477,22 @@ func TestIntervalBelowTheMinimumIsRaised(t *testing.T) {
 		t.Fatalf("a zero interval probed %d times in 20 s, want at most 2 (the 10 s minimum)", n)
 	}
 }
+
+// TestRunnerAssigned: the applied set, in canonical order, as the status
+// page lists it (backlog 3.132); none while probing is off.
+func TestRunnerAssigned(t *testing.T) {
+	r, _, _ := newTestRunner(nil)
+	if got := r.Assigned(); len(got) != 0 {
+		t.Fatalf("new runner = %v", got)
+	}
+	b, a := spec(targetB, "web", "tcp", 60), spec(targetA, "web", "tcp", 30)
+	r.Apply([]probeconfig.Spec{b, a})
+	got := r.Assigned()
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("Assigned = %+v", got)
+	}
+	r.SetPolicy(false, nil)
+	if got := r.Assigned(); len(got) != 0 {
+		t.Fatalf("while off = %v", got)
+	}
+}

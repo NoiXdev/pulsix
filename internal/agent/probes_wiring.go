@@ -163,6 +163,7 @@ func (l *Loop) handleProbeResults(results []probes.Result) {
 	if len(results) == 0 {
 		return
 	}
+	l.status.probeResults(results)
 	routeResults(l, "probe results", results, (*streamSender).sendProbeResultsChunked, func(rest []probes.Result) {
 		if covers, due := l.probeEvictWarn.note(l.now(), l.probeBuffer.Put(rest)); due {
 			l.logProbeEvictions("probe result buffer overflowed while disconnected; oldest samples dropped",
