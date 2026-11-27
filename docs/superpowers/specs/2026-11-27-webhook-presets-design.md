@@ -276,8 +276,11 @@ As in 4.7: an older manager sends a new preset channel as the raw event JSON to 
   another preset meanwhile, as an operator might during a PagerDuty outage — every request is
   sent. A final failure stores the owed keys too (as a retry does; e-mail recipients likewise), so
   a later Resend repeats only what was owed.
-- **Known limit (M3):** alerts beyond a batch's cap of 50 get no PagerDuty event, so an incident
-  opened earlier for such an alert is not resolved by Pulsix (backlog 4.43).
+- **Known limit (M3), narrowed by backlog 4.43:** alerts beyond a batch's cap of 50 get no
+  PagerDuty event. The follower drops closed items last when it caps a batch (every channel
+  kind), so an incident opened earlier for an alert the batch resolves is still resolved; only
+  a trigger or an acknowledgement beyond the cap is missed, and more than 50 resolves in one
+  tick still leave the rest unresolved.
 
 ### Out of scope (4.8)
 
