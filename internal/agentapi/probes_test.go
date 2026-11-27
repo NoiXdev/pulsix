@@ -451,28 +451,38 @@ func TestProbeResultsContractRefusedOnTheWire(t *testing.T) {
 	}
 }
 
-// TestProbeResultsShareTheIngestBudget: probe results draw on the same
-// per-agent budget as check results, so an agent that spent it on check
-// results is paced before its probe results are stored.
-func TestProbeResultsShareTheIngestBudget(t *testing.T) {
+// TestProbeResultsHaveTheirOwnIngestBudget: probe results draw on a budget
+// of their own (backlog 3.78), so an agent that spent its check budget is
+// not paced for its probe results, one that spent its probe budget is not
+// paced for its check results, and probe results over their own budget are
+// paced (and stored in full).
+func TestProbeResultsHaveTheirOwnIngestBudget(t *testing.T) {
 	h, agentHost, stream := probeAgent(t)
 	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
+	h.checks.knownHosts = map[uuid.UUID]bool{agentHost: true}
+	probeBatch := func() *agentpb.AgentMessage {
+		rs := make([]*agentpb.ProbeResult, checks.MaxObservationsPerBatch)
+		for i := range rs {
+			rs[i] = probeValue(targetA, "web", "", "http.up", h.clock(), 1)
+		}
+		return probeResultsMsg(rs...)
+	}
 	for range ingestBurst / checks.MaxObservationsPerBatch {
 		sendResultsBatch(t, stream, checks.MaxObservationsPerBatch, h.clock())
 	}
+	for range ingestBurst / checks.MaxObservationsPerBatch {
+		sendAndAck(t, stream, probeBatch())
+	}
 	if slept := h.sleptTotal(); slept != 0 {
-		t.Fatalf("the burst itself waited %s", slept)
+		t.Fatalf("a burst of each kind waited %s; the kinds share a budget", slept)
 	}
-	rs := make([]*agentpb.ProbeResult, checks.MaxObservationsPerBatch)
-	for i := range rs {
-		rs[i] = probeValue(targetA, "web", "", "http.up", h.clock(), 1)
-	}
-	sendAndAck(t, stream, probeResultsMsg(rs...))
+	// Both buckets are empty now: one more of either kind is paced.
+	sendAndAck(t, stream, probeBatch())
 	if h.sleptTotal() == 0 {
-		t.Fatal("probe results over the spent budget were not paced")
+		t.Fatal("probe results over their own spent budget were not paced")
 	}
-	if calls := h.probes.vantageCalls(); len(calls) != 1 || len(calls[0].obs) != checks.MaxObservationsPerBatch {
-		t.Fatal("paced probe results were not stored in full")
+	if calls := h.probes.vantageCalls(); len(calls) != ingestBurst/checks.MaxObservationsPerBatch+1 {
+		t.Fatalf("stored %d probe batches, want every one", len(calls))
 	}
 }
 

@@ -229,9 +229,9 @@ func TestAnOversizedBatchIsRefusedBeforeItIsCharged(t *testing.T) {
 	}
 	h.svc.streams.mu.Lock()
 	defer h.svc.streams.mu.Unlock()
-	for serial, b := range h.svc.streams.ingest {
+	for key, b := range h.svc.streams.ingest {
 		if b.tokens != ingestBurst {
-			t.Fatalf("budget of %s = %.0f after a refused batch, want untouched %d", serial, b.tokens, ingestBurst)
+			t.Fatalf("budget of %s (%s) = %.0f after a refused batch, want untouched %d", key.serial, key.kind, b.tokens, ingestBurst)
 		}
 	}
 }
@@ -267,33 +267,33 @@ func TestThrottledCheckResultsAreLoggedOncePerMinute(t *testing.T) {
 func TestIngestReservations(t *testing.T) {
 	t0 := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	r := NewStreamRegistry()
-	if w := r.reserveIngest("s", t0, 2*checks.MaxTuplesPerHost); w != 0 {
+	if w := r.reserveIngest("s", ingestChecks, t0, 2*checks.MaxTuplesPerHost); w != 0 {
 		t.Fatalf("a fresh bucket must hold the whole burst, waits %s", w)
 	}
-	if w, want := r.reserveIngest("s", t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
+	if w, want := r.reserveIngest("s", ingestChecks, t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
 		t.Fatalf("one refill short waits %s, want %s", w, want)
 	}
-	if w := r.reserveIngest("s", t0, 1); w <= checks.MinInterval {
+	if w := r.reserveIngest("s", ingestChecks, t0, 1); w <= checks.MinInterval {
 		t.Fatalf("a second reservation must queue behind the first, waits %s", w)
 	}
-	if w := r.reserveIngest("other", t0, 1); w != 0 {
+	if w := r.reserveIngest("other", ingestChecks, t0, 1); w != 0 {
 		t.Fatalf("another agent's budget is separate, waits %s", w)
 	}
-	r.refundIngest("s", 1)
-	if w := r.reserveIngest("s", t0.Add(-time.Hour), 0); w <= 0 {
+	r.refundIngest("s", ingestChecks, 1)
+	if w := r.reserveIngest("s", ingestChecks, t0.Add(-time.Hour), 0); w <= 0 {
 		t.Fatalf("a clock stepping backwards must not refill, waits %s", w)
 	}
 	// A day later the bucket caps at the burst; a swept entry is fresh.
 	later := t0.Add(24 * time.Hour)
-	if w := r.reserveIngest("s", later, 2*checks.MaxTuplesPerHost); w != 0 {
+	if w := r.reserveIngest("s", ingestChecks, later, 2*checks.MaxTuplesPerHost); w != 0 {
 		t.Fatalf("an idle bucket must hold the burst, waits %s", w)
 	}
-	if w := r.reserveIngest("s", later, 0); w != 0 {
+	if w := r.reserveIngest("s", ingestChecks, later, 0); w != 0 {
 		t.Fatalf("an empty reservation waits %s", w)
 	}
-	r.reserveIngest("third", later.Add(checks.MinInterval), 1)
+	r.reserveIngest("third", ingestChecks, later.Add(checks.MinInterval), 1)
 	r.mu.Lock()
-	_, swept := r.ingest["other"]
+	_, swept := r.ingest[ingestKey{"other", ingestChecks}]
 	r.mu.Unlock()
 	if swept {
 		t.Fatal("a bucket that is full again must be swept")
@@ -311,7 +311,7 @@ func TestIngestReservationsAreSafeConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			waits <- r.reserveIngest("s", t0, checks.MaxObservationsPerBatch)
+			waits <- r.reserveIngest("s", ingestChecks, t0, checks.MaxObservationsPerBatch)
 		}()
 	}
 	wg.Wait()
@@ -324,5 +324,26 @@ func TestIngestReservationsAreSafeConcurrently(t *testing.T) {
 	want := time.Duration(debt / refillPerSecond * float64(time.Second))
 	if longest < want-time.Millisecond || longest > want+time.Millisecond {
 		t.Fatalf("longest wait = %s, want %s", longest, want)
+	}
+}
+
+// TestIngestReservationsPerKind: check results and probe results of one
+// agent draw on separate buckets of the same size (backlog 3.78); spending
+// one leaves the other whole, and a refund goes back to its own kind.
+func TestIngestReservationsPerKind(t *testing.T) {
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	r := NewStreamRegistry()
+	if w := r.reserveIngest("s", ingestChecks, t0, 2*checks.MaxTuplesPerHost); w != 0 {
+		t.Fatalf("a fresh check bucket must hold the burst, waits %s", w)
+	}
+	if w := r.reserveIngest("s", ingestProbes, t0, 2*checks.MaxTuplesPerHost); w != 0 {
+		t.Fatalf("spent check budget delayed probe results by %s", w)
+	}
+	if w, want := r.reserveIngest("s", ingestProbes, t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
+		t.Fatalf("one refill short on probes waits %s, want %s", w, want)
+	}
+	r.refundIngest("s", ingestProbes, checks.MaxTuplesPerHost)
+	if w, want := r.reserveIngest("s", ingestChecks, t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
+		t.Fatalf("a probe refund reached the check bucket: waits %s, want %s", w, want)
 	}
 }
