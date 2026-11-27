@@ -88,7 +88,10 @@ func TestTelegramEscapesHTML(t *testing.T) {
 }
 
 func TestTelegramBoundsLargeBatch(t *testing.T) {
-	_, p := render(t, notifytest.LargeBatch(50, 7))
+	raw, p := render(t, notifytest.LargeBatch(50, 7))
+	if len(raw) > 60<<10 {
+		t.Fatalf("body is %d bytes", len(raw))
+	}
 	if n := len(utf16.Encode([]rune(p.Text))); n > 4096 {
 		t.Fatalf("text is %d UTF-16 units", n)
 	}
@@ -152,6 +155,27 @@ func TestTelegramChatID(t *testing.T) {
 		}
 		if err == nil && s.ChatID != strings.TrimSpace(c.id) {
 			t.Errorf("%q normalised to %q", c.id, s.ChatID)
+		}
+	}
+}
+
+// TestTelegramBoundsWideMessages (review I1): the widest digest and alert
+// batch stay well under the sender's 64 KiB body cap, and say what they
+// left out.
+func TestTelegramBoundsWideMessages(t *testing.T) {
+	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
+		body, err := telegram.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > 60<<10 {
+			t.Errorf("%s: body is %d bytes", name, len(body))
+		}
+		if !strings.Contains(string(body), "… and ") {
+			t.Errorf("%s: no note for what was left out", name)
+		}
+		if !json.Valid(body) {
+			t.Errorf("%s: invalid JSON", name)
 		}
 	}
 }

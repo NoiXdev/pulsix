@@ -54,7 +54,11 @@ func (preset) Render(ev notify.Event, _ notify.PresetSettings) ([]byte, error) {
 	for i, l := range m.Lines {
 		lines[i] = line(l)
 	}
-	kept, more := notify.Fit(lines, textLimit, utf8.RuneCountInString, m.Omitted)
+	// Mattermost's characters, and bytes for the sender's 64 KiB cap
+	// (review I1); each JSON line also pays its "\n" separator.
+	kept, more := notify.FitWithin(lines, m.Omitted,
+		notify.Budget{Limit: textLimit, Size: utf8.RuneCountInString},
+		notify.Budget{Limit: notify.MaxRenderedLines, Size: func(l string) int { return notify.JSONSize(l) + 1 }})
 	if more > 0 {
 		kept = append(kept[:len(kept):len(kept)], notify.MoreNote(more))
 	}

@@ -1,7 +1,12 @@
 // Package slack renders a webhook channel's message for a Slack incoming
-// webhook (backlog 4.7): one attachment in the message's level colour
-// holding Block Kit blocks — a header, mrkdwn sections, the organization,
-// and a button to Pulsix.
+// webhook (backlog 4.7): the title as the message text, then one
+// attachment in the message's level colour holding Block Kit blocks —
+// mrkdwn sections, the organization, and a button to Pulsix.
+//
+// The title is not repeated as a header block: Slack shows a message's
+// top-level text as its body whenever the blocks sit inside an attachment
+// rather than at the top level (they only make the text a notification
+// fallback there), so a header block would show the title twice.
 package slack
 
 import (
@@ -10,15 +15,17 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/notify"
 )
 
-// Slack's own limits (Block Kit reference): a header's text, a section's
-// text; and how many sections a message may use of its 50 blocks.
+// Slack's own limits (Block Kit reference): a section's text, and how
+// many sections a message may use of its 50 blocks; the title is held to
+// a header's length, short enough for a notification.
 const (
-	headerLimit  = 150
+	titleLimit   = 150
 	sectionLimit = 3000
 	maxSections  = 10
 )
@@ -80,13 +87,17 @@ type payload struct {
 
 func (preset) Render(ev notify.Event, _ notify.PresetSettings) ([]byte, error) {
 	m := notify.Compose(ev)
-	title := notify.Clip(m.Title, headerLimit)
-	blocks := []any{block{Type: "header", Text: &textObj{Type: "plain_text", Text: title}}}
+	title := notify.Clip(m.Title, titleLimit)
+	var blocks []any
 	lines := make([]string, len(m.Lines))
 	for i, l := range m.Lines {
 		lines[i] = line(l)
 	}
-	sections, shown := pack(lines)
+	// Bytes first (review I1: wide characters and long links could push
+	// the body past the sender's 64 KiB cap), then Slack's own section
+	// limits; whatever either leaves out is named in the note.
+	fitted, _ := notify.FitWithin(lines, m.Omitted, notify.Budget{Limit: notify.MaxRenderedLines, Size: jsonLine})
+	sections, shown := pack(fitted)
 	for _, s := range sections {
 		blocks = append(blocks, block{Type: "section", Text: &textObj{Type: "mrkdwn", Text: s}})
 	}
@@ -148,11 +159,52 @@ func pack(lines []string) (sections []string, shown int) {
 	return sections, shown
 }
 
+// jsonLine is a line's cost inside the JSON body, its "\n" separator
+// included (FitWithin adds the other byte).
+func jsonLine(l string) int { return notify.JSONSize(l) + 1 }
+
 // escape is Slack's own escaping for text it parses: the three characters
-// that start an entity, a mention ("<!channel>") or a link ("<url|text>").
+// that start an entity, a mention ("<!channel>") or a link ("<url|text>"),
+// after defuseFormatting.
 func escape(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(defuseFormatting(s))
 }
+
+// lookalikes stand in for mrkdwn's formatting characters, which Slack
+// offers no escape for (review M3): '*' bold, '_' italic, '~' strike and
+// '`' code.
+var lookalikes = map[rune]rune{
+	'*': '\u2217', // ASTERISK OPERATOR
+	'_': '\u02CD', // MODIFIER LETTER LOW MACRON
+	'~': '\u223C', // TILDE OPERATOR
+	'`': '\u02CB', // MODIFIER LETTER GRAVE ACCENT
+}
+
+// defuseFormatting swaps a formatting character for its look-alike where
+// Slack could read it as markup. Slack opens and closes bold, italic and
+// strike only at a word's edge, so one between two letters or digits
+// ("used_percent") stays as written and the name stays searchable; a
+// backtick is always swapped.
+func defuseFormatting(s string) string {
+	r := []rune(s)
+	changed := false
+	for i, c := range r {
+		alt, ok := lookalikes[c]
+		if !ok {
+			continue
+		}
+		if c != '`' && i > 0 && i < len(r)-1 && word(r[i-1]) && word(r[i+1]) {
+			continue
+		}
+		r[i], changed = alt, true
+	}
+	if !changed {
+		return s
+	}
+	return string(r)
+}
+
+func word(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // marshal encodes without Go's HTML escaping, so the body reads as sent.
 func marshal(v any) ([]byte, error) {

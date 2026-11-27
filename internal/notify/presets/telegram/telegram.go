@@ -83,7 +83,11 @@ func (preset) Render(ev notify.Event, s notify.PresetSettings) ([]byte, error) {
 	}
 	// The lines sit between "\n\n" after the head and the tail; Fit counts
 	// one separator per line, so the first of the two is its own.
-	kept, more := notify.Fit(lines, textLimit-size(head)-1-size(tail), size, m.Omitted)
+	// Bytes too, for the sender's 64 KiB cap (review I1); Telegram's
+	// own limit binds first today, the byte budget keeps it so.
+	kept, more := notify.FitWithin(lines, m.Omitted,
+		notify.Budget{Limit: textLimit - size(head) - 1 - size(tail), Size: size},
+		notify.Budget{Limit: notify.MaxRenderedLines, Size: func(l string) int { return notify.JSONSize(l) + 1 }})
 	if more > 0 {
 		kept = append(kept[:len(kept):len(kept)], notify.MoreNote(more))
 	}

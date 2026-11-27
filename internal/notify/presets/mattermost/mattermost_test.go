@@ -88,7 +88,10 @@ func TestMattermostEscapesMarkdown(t *testing.T) {
 }
 
 func TestMattermostBoundsLargeBatch(t *testing.T) {
-	_, a := render(t, notifytest.LargeBatch(50, 7))
+	body, a := render(t, notifytest.LargeBatch(50, 7))
+	if len(body) > 60<<10 {
+		t.Fatalf("body is %d bytes", len(body))
+	}
 	if n := utf8.RuneCountInString(a.Text); n > 12000 {
 		t.Fatalf("text %d characters", n)
 	}
@@ -108,5 +111,26 @@ func TestMattermostSettings(t *testing.T) {
 	}
 	if err := mattermost.New().CheckURL(nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestMattermostBoundsWideMessages (review I1): the widest digest and alert
+// batch stay well under the sender's 64 KiB body cap, and say what they
+// left out.
+func TestMattermostBoundsWideMessages(t *testing.T) {
+	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
+		body, err := mattermost.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > 60<<10 {
+			t.Errorf("%s: body is %d bytes", name, len(body))
+		}
+		if !strings.Contains(string(body), "… and ") {
+			t.Errorf("%s: no note for what was left out", name)
+		}
+		if !json.Valid(body) {
+			t.Errorf("%s: invalid JSON", name)
+		}
 	}
 }

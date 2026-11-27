@@ -5,13 +5,6 @@
       "color": "#00E5FF",
       "blocks": [
         {
-          "type": "header",
-          "text": {
-            "type": "plain_text",
-            "text": "Weekly schedule digest for Acme"
-          }
-        },
-        {
           "type": "section",
           "text": {
             "type": "mrkdwn",

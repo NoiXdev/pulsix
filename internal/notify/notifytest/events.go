@@ -170,3 +170,40 @@ func Test() notify.Event {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// WideDigest is the widest digest a renderer must fit (backlog 4.7 review
+// I1): the full MaxDigestSchedules entries, each named with 100 Japanese
+// characters (three bytes each), plus five slowest runs.
+func WideDigest() notify.Event {
+	ev := Digest()
+	name := strings.Repeat("夜間更新", 25)
+	d := ev.Digest
+	d.Schedules = make([]notify.DigestSchedule, notify.MaxDigestSchedules)
+	for i := range d.Schedules {
+		d.Schedules[i] = notify.DigestSchedule{ID: ID(1000 + i), Name: name, Runs: 7, Failures: 1, Skipped: 1}
+	}
+	d.Truncated, d.ScheduleCountTotal = true, notify.MaxDigestSchedules+40
+	for i := 0; i < 5; i++ {
+		d.Slowest = append(d.Slowest, notify.DigestRun{Schedule: name, RunID: ID(2000 + i), StartedAt: At, DurationSeconds: 999, URL: LongBase + "/runs/" + ID(2000+i).String()})
+	}
+	return ev
+}
+
+// LongBase is a public URL prefix near SafeLink's bound, so every linked
+// line carries a long link.
+var LongBase = "https://pulsix.example/" + strings.Repeat("a", 1800) + "/o/acme"
+
+// WideBatch is the widest alert batch a renderer must fit (review I1): the
+// full 50 items with 100-character host names and 300-character details
+// of four-byte characters, each linking through LongBase.
+func WideBatch() notify.Event {
+	items := make([]notify.AlertItem, 50)
+	for i := range items {
+		items[i] = notify.AlertItem{
+			AlertID: ID(300 + i), HostID: ID(400 + i), HostName: strings.Repeat("𝔥", 100), CheckKey: "http",
+			Item: "home", Metric: "http.assertion", Severity: "crit", Event: "opened", At: At,
+			Detail: strings.Repeat("𝔡", 400), URL: LongBase + "/alerts?host=" + ID(400+i).String(),
+		}
+	}
+	return notify.Event{Kind: notify.EventAlertBatch, At: At, Org: org(), Alerts: &notify.AlertBatch{Count: 50, Items: items}, URL: LongBase + "/alerts"}
+}

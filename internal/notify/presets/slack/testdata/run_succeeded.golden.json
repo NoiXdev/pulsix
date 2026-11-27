@@ -5,13 +5,6 @@
       "color": "#34D399",
       "blocks": [
         {
-          "type": "header",
-          "text": {
-            "type": "plain_text",
-            "text": "Nightly OS patching: succeeded with changes"
-          }
-        },
-        {
           "type": "section",
           "text": {
             "type": "mrkdwn",

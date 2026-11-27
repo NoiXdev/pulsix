@@ -5,17 +5,10 @@
       "color": "#F87171",
       "blocks": [
         {
-          "type": "header",
-          "text": {
-            "type": "plain_text",
-            "text": "1 alert for Acme ‹!here› & ＠all"
-          }
-        },
-        {
           "type": "section",
           "text": {
             "type": "mrkdwn",
-            "text": "*‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ~chan #h…:* crit · opened · shop|x/‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged m›1: ‹!channel› ＠everyone *bold* _it_ `code` ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ~chan #h �gnp.exe�forged"
+            "text": "*‹!channel› ＠everyone ∗bold∗ ˍitˍ ˋcodeˋ ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ∼chan #h…:* crit · opened · shop|x/‹!channel› ＠everyone ∗bold∗ ˍitˍ ˋcodeˋ ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ∼chan #h �gnp.exe�forged m›1: ‹!channel› ＠everyone ∗bold∗ ˍitˍ ˋcodeˋ ‹/b›‹a href=\"x\"›&amp;amp; ［link］(https://evil.example) ∼chan #h �gnp.exe�forged"
           }
         },
         {

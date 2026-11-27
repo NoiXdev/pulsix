@@ -85,3 +85,33 @@ func noteSize(more int, size func(string) int) int {
 	}
 	return size(notify.MoreNote(more)) + 1
 }
+
+func TestFitWithinHonoursEveryBudget(t *testing.T) {
+	wide := strings.Repeat("𝔘", 10) // 10 runes, 40 bytes
+	lines := []string{wide, wide, wide, wide}
+	bytes := func(s string) int { return len(s) }
+	// Runes alone would keep all four (44 of 100); bytes keep two: each
+	// line costs 41, the note reserve 14 (… is three bytes).
+	kept, more := notify.FitWithin(lines, 0,
+		notify.Budget{Limit: 100, Size: utf8.RuneCountInString},
+		notify.Budget{Limit: 100, Size: bytes})
+	if len(kept) != 2 || more != 2 {
+		t.Fatalf("kept %d more %d", len(kept), more)
+	}
+}
+
+func TestJSONSize(t *testing.T) {
+	for s, want := range map[string]int{
+		"abc":  3,
+		`a"b`:  4,
+		`a\b`:  4,
+		"a\nb": 4,
+		"ä":    2,
+		"\x01": 6,
+		"&<>":  3,
+	} {
+		if got := notify.JSONSize(s); got != want {
+			t.Errorf("JSONSize(%q) = %d, want %d", s, got, want)
+		}
+	}
+}

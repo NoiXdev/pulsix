@@ -5,13 +5,6 @@
       "color": "#F87171",
       "blocks": [
         {
-          "type": "header",
-          "text": {
-            "type": "plain_text",
-            "text": "Nightly OS patching: failed"
-          }
-        },
-        {
           "type": "section",
           "text": {
             "type": "mrkdwn",

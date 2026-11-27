@@ -74,8 +74,15 @@ func TestSlackColourAndButton(t *testing.T) {
 	if last.Type != "actions" || last.Elements[0].Type != "button" || last.Elements[0].URL != notifytest.Base+"/alerts" {
 		t.Fatalf("last block = %+v", last)
 	}
-	if a.Blocks[0].Type != "header" || a.Blocks[0].Text.Text != "5 alerts for Acme" || p.Text != "5 alerts for Acme" {
-		t.Fatalf("header = %+v, text %q", a.Blocks[0], p.Text)
+	// The title is the message text, shown once (review M1): no header
+	// block repeats it inside the attachment.
+	if p.Text != "5 alerts for Acme" || a.Blocks[0].Type != "section" {
+		t.Fatalf("first block = %+v, text %q", a.Blocks[0], p.Text)
+	}
+	for _, b := range a.Blocks {
+		if b.Type == "header" {
+			t.Fatal("a header block repeats the title")
+		}
 	}
 	if _, p := render(t, notifytest.AlertsClosed()); p.Attachments[0].Color != "#34D399" {
 		t.Fatalf("all closed colour = %s", p.Attachments[0].Color)
@@ -118,7 +125,10 @@ func TestSlackEscapes(t *testing.T) {
 }
 
 func TestSlackBoundsLargeBatch(t *testing.T) {
-	_, p := render(t, notifytest.LargeBatch(50, 7))
+	body, p := render(t, notifytest.LargeBatch(50, 7))
+	if len(body) > 60<<10 {
+		t.Fatalf("body is %d bytes", len(body))
+	}
 	blocks := p.Attachments[0].Blocks
 	if len(blocks) > 50 {
 		t.Fatalf("%d blocks", len(blocks))
@@ -158,5 +168,43 @@ func TestSlackSettings(t *testing.T) {
 	}
 	if err := slack.New().CheckURL(nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSlackBoundsWideMessages (review I1): the widest digest and alert
+// batch stay well under the sender's 64 KiB body cap, and say what they
+// left out.
+func TestSlackBoundsWideMessages(t *testing.T) {
+	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
+		body, err := slack.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(body) > 60<<10 {
+			t.Errorf("%s: body is %d bytes", name, len(body))
+		}
+		if !strings.Contains(string(body), "… and ") {
+			t.Errorf("%s: no note for what was left out", name)
+		}
+		if !json.Valid(body) {
+			t.Errorf("%s: invalid JSON", name)
+		}
+	}
+}
+
+// TestSlackDefusesFormatting (review M3): bold, italic, strike and code
+// markers an operator or host chose reach Slack as look-alikes, while one
+// inside a word (a metric's underscore) stays as written.
+func TestSlackDefusesFormatting(t *testing.T) {
+	ev := notifytest.AlertsMixed()
+	ev.Alerts.Items[0].HostName = "*web* _a_ ~b~ `c` used_percent 2*3"
+	_, p := render(t, ev)
+	first, _, _ := strings.Cut(p.Attachments[0].Blocks[0].Text.Text, "\n")
+	label := first[strings.Index(first, "|")+1 : strings.Index(first, ">:*")]
+	if want := "\u2217web\u2217 \u02CDa\u02CD \u223Cb\u223C \u02CBc\u02CB used_percent 2*3"; label != want {
+		t.Fatalf("label %q, want %q", label, want)
+	}
+	if !strings.HasPrefix(first, "*<") || !strings.Contains(first, ">:* ") {
+		t.Fatalf("own bold markup lost: %q", first)
 	}
 }
