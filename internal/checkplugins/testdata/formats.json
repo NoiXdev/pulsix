@@ -562,5 +562,15 @@
   {"format": "scriptArg", "input": "x:a=1\t2", "valid": false},
   {"format": "scriptArg", "input": "x:a=\u0085", "valid": false},
   {"format": "scriptArg", "input": "x:a=\u007f", "valid": false},
-  {"format": "scriptArg", "input": "", "valid": false}
+  {"format": "scriptArg", "input": "", "valid": false},
+  {"format": "scriptArg", "input": "x:a=b\u00adc", "valid": false},
+  {"format": "scriptArg", "input": "x:a=\u202eb", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\u200bb", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\u2028b", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\u2029b", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\ufdd0b", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\ufffeb", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\ud83f\udfffb", "valid": false},
+  {"format": "scriptArg", "input": "x:a=a\u00a0b", "valid": true},
+  {"format": "scriptArg", "input": "x:a=\u65e5\u672c", "valid": true}
 ]

@@ -484,7 +484,7 @@ export const deChecks: Messages['checks'] = {
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL und Methoden-Overrides sind nicht erlaubt: Ein Ziel könnte ihnen Client-Adresse, Pfad oder Methode glauben',
       mediaType: 'muss ein Medientyp sein, etwa application/json oder text/plain; charset=utf-8',
       scriptArg:
-        'jeder Eintrag muss befehl:platzhalter=wert sein: ein oben genannter Befehl, ein Platzhaltername aus Kleinbuchstaben, Ziffern und _ (mit einem Buchstaben beginnend, höchstens 32) und ein Wert von 1 bis 512 Bytes ohne Zeilenumbrüche oder andere Steuerzeichen',
+        'jeder Eintrag muss befehl:platzhalter=wert sein: ein oben genannter Befehl, ein Platzhaltername aus Kleinbuchstaben, Ziffern und _ (mit einem Buchstaben beginnend, höchstens 32) und ein Wert von 1 bis 512 Bytes ohne Zeilenumbrüche, Steuer- oder unsichtbare Formatzeichen',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },

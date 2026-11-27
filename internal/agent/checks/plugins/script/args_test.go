@@ -1,6 +1,7 @@
 package script
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func portCommand(t *testing.T) fakeCommands {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := scriptargs.PatternRule(`/srv/[a-z0-9/ ]+`, false)
+	path, err := scriptargs.PatternRule(`/srv/[a-z0-9/ ]+`, scriptargs.PatternOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,9 +79,15 @@ func TestScriptArgsRefusals(t *testing.T) {
 		{"option injection",
 			map[string]any{"commands": []any{"x"}, "args": []any{"x:path=--config=/etc/shadow"}},
 			[]string{`argument "path" must not start with '-'`}},
-		{"path traversal the pattern does not allow",
+		{"path traversal",
 			map[string]any{"commands": []any{"x"}, "args": []any{"x:path=/srv/../etc"}},
+			[]string{`argument "path" must not hold a ".." path segment`}},
+		{"outside the pattern",
+			map[string]any{"commands": []any{"x"}, "args": []any{"x:path=/etc/passwd"}},
 			[]string{`argument "path" does not match the pattern this host allows`}},
+		{"not printable ASCII",
+			map[string]any{"commands": []any{"x"}, "args": []any{"x:path=/srv/a＂b"}},
+			[]string{`argument "path" must be printable ASCII (this host's rule does not set unicode: true)`}},
 		{"malformed entry",
 			map[string]any{"commands": []any{"x", "plain"}, "args": []any{"x-path=/srv/a"}},
 			[]string{textBadArgs, textBadArgs}},
@@ -122,5 +129,31 @@ func TestScriptArgsRefusalNeverQuotesValue(t *testing.T) {
 		if strings.Contains(strings.Join(got, "\n"), marker) {
 			t.Fatalf("observations quote a refused value: %q", got)
 		}
+	}
+}
+
+// TestScriptFileCheckOnValuesIsGeneric: a bound value the file check
+// refuses, or cannot check, is reported by its placeholder alone, with one
+// text that says neither whether the path exists nor who may write it
+// (review fix round 1). A literal argument keeps 3.6g's wording.
+func TestScriptFileCheckOnValuesIsGeneric(t *testing.T) {
+	params := map[string]any{"commands": []any{"x"}, "args": []any{"x:path=/srv/" + strings.ToLower("secretdir")}}
+	for name, err := range map[string]error{
+		"refused":   refuse("writable by others"),
+		"unchecked": errors.New("stat failed"),
+	} {
+		c := &fakeChecker{files: map[string]error{prog: nil, "/srv/secretdir": err}}
+		r := exitedWith(0, "OK")
+		got := collect(t, newPlugin(r, c), params, portCommand(t))
+		want := []string{`x script.status "unknown"`, `x script.output "argument \"path\" was refused by the file check"`}
+		equalLines(t, got, want)
+		if len(r.called()) != 0 {
+			t.Errorf("%s: the command ran", name)
+		}
+	}
+	// A value naming nothing in a safe place passes, as a literal does.
+	got := collect(t, newPlugin(exitedWith(0, "OK"), progOK()), params, portCommand(t))
+	if got[0] != `x script.status "ok"` {
+		t.Fatalf("missing path: %q", got)
 	}
 }

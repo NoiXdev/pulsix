@@ -21,9 +21,10 @@ type Param struct {
 // zero Template has no program. A Template is immutable and safe for
 // concurrent use.
 type Template struct {
-	argv   []string
-	params map[string]Param
-	batch  bool // the program re-parses its command line (batchProgram)
+	argv    []string
+	params  map[string]Param
+	batch   bool // the program re-parses its command line (batchProgram)
+	windows bool // the program is a Windows path (windowsProgram)
 }
 
 // Fixed is a command line that takes no values: every entry is literal,
@@ -72,7 +73,7 @@ func NewTemplate(argv []string, params map[string]Param) (Template, error) {
 	if len(params) > MaxPlaceholders {
 		return Template{}, &TemplateError{Arg: -1, Reason: "a command has more than " + strconv.Itoa(MaxPlaceholders) + " placeholders"}
 	}
-	t := Template{argv: slices.Clone(argv), params: maps.Clone(params), batch: batchProgram(argv[0])}
+	t := Template{argv: slices.Clone(argv), params: maps.Clone(params), batch: batchProgram(argv[0]), windows: windowsProgram(argv[0])}
 	for _, name := range slices.Sorted(maps.Keys(params)) {
 		p := params[name]
 		switch {
@@ -116,18 +117,28 @@ var errNoArguments = errors.New("this command takes no arguments on this host")
 // name the placeholder and a fixed reason, never a value; names are
 // judged in sorted order, so the error is the same every time.
 func (t Template) Bind(values map[string]string) ([]string, error) {
+	argv, _, err := t.BindNamed(values)
+	return argv, err
+}
+
+// BindNamed is Bind that also returns, for every entry of argv, the name
+// of the placeholder it was bound from, or "" for a literal entry, so a
+// later refusal of a bound argument (a file check) can name the
+// placeholder instead of the value.
+func (t Template) BindNamed(values map[string]string) (argv, names []string, err error) {
+	names = make([]string, len(t.argv))
 	if len(t.params) == 0 {
 		if len(values) > 0 {
-			return nil, errNoArguments
+			return nil, nil, errNoArguments
 		}
-		return slices.Clone(t.argv), nil
+		return slices.Clone(t.argv), names, nil
 	}
 	for _, name := range slices.Sorted(maps.Keys(values)) {
 		if !ValidName(name) {
-			return nil, errors.New("an argument name is invalid")
+			return nil, nil, errors.New("an argument name is invalid")
 		}
 		if _, ok := t.params[name]; !ok {
-			return nil, errors.New(argument(name) + " is not one this command takes on this host")
+			return nil, nil, errors.New(argument(name) + " is not one this command takes on this host")
 		}
 	}
 	bound := make(map[string]string, len(t.params))
@@ -136,49 +147,83 @@ func (t Template) Bind(values map[string]string) ([]string, error) {
 		v, given := values[name]
 		if !given {
 			if !p.HasDefault {
-				return nil, errors.New(argument(name) + " needs a value (this host sets no default)")
+				return nil, nil, errors.New(argument(name) + " needs a value (this host sets no default)")
 			}
 			v = p.Default
 		}
 		arg, reason := t.bindOne(p, v)
 		if reason != "" {
-			return nil, errors.New(argument(name) + " " + reason)
+			return nil, nil, errors.New(argument(name) + " " + reason)
 		}
 		bound[name] = arg
 	}
-	argv := slices.Clone(t.argv)
+	argv = slices.Clone(t.argv)
 	for i, arg := range argv[1:] {
 		if name, ok := Placeholder(arg); ok {
-			argv[i+1] = bound[name]
+			argv[i+1], names[i+1] = bound[name], name
 		}
 	}
-	return argv, nil
+	return argv, names, nil
 }
 
-// bindOne checks v against the shape, the batch rule and p's rule and
-// returns the argument to pass, or the reason it is refused.
+// bindOne checks v against the shape, printable ASCII (unless the rule
+// allows more), the batch rule and p's rule and returns the argument to
+// pass, or the reason it is refused.
 func (t Template) bindOne(p Param, v string) (arg, reason string) {
 	if reason := ValueProblem(v); reason != "" {
 		return "", reason
 	}
-	if t.batch && strings.ContainsAny(v, batchUnsafe) {
-		return "", `must not contain any of " % ^ & | < > ! ( ) for a batch program`
+	if !p.Rule.unicode && !printableASCII(v) {
+		return "", "must be printable ASCII (this host's rule does not set unicode: true)"
 	}
-	return p.Rule.check(v)
+	if t.batch && strings.ContainsAny(v, batchUnsafe) {
+		return "", `must not contain any of " % ^ & | < > ! ( ) , ; = for a batch program`
+	}
+	return p.Rule.check(v, t.windows)
 }
 
 func argument(name string) string { return `argument "` + name + `"` }
 
 // batchUnsafe are the characters cmd.exe gives a meaning on a command
-// line it re-parses; Go's quoting of an argument does not escape them.
-const batchUnsafe = `"%^&|<>!()`
+// line it re-parses, and the delimiters (',', ';', '=') at which it splits
+// a batch file's %1 … %9 outside quotes; Go's quoting of an argument
+// (only for space, tab and '"') escapes none of them. CR and LF fail the
+// shape already.
+const batchUnsafe = `"%^&|<>!(),;=`
 
 // batchProgram reports a program Windows runs through cmd.exe, or cmd.exe
 // itself: its base name, case and trailing dots and spaces ignored (as
 // Windows ignores them), ends in .bat or .cmd or is cmd.exe or cmd. It is
 // judged on every OS; a Unix file of that name is held to the same rule.
 func batchProgram(prog string) bool {
+	prog = withoutStream(prog)
 	base := prog[strings.LastIndexAny(prog, `/\`)+1:]
 	base = strings.ToLower(strings.TrimRight(base, ". "))
 	return strings.HasSuffix(base, ".bat") || strings.HasSuffix(base, ".cmd") || base == "cmd.exe" || base == "cmd"
 }
+
+// withoutStream cuts a Windows program path at a ':' after its drive
+// (check.bat::$DATA names check.bat's data stream), so the name is judged
+// without it. agent.yaml refuses such a program at load; this keeps the
+// batch rule right whatever a Template is built from.
+func withoutStream(prog string) string {
+	rest := prog
+	if len(prog) >= 2 && prog[1] == ':' && isLetter(prog[0]) {
+		rest = prog[2:]
+	}
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		return prog[:len(prog)-len(rest)+i]
+	}
+	return prog
+}
+
+// windowsProgram reports a program written as a Windows path: a drive
+// letter, ':' and a separator, or a path starting with two backslashes.
+// The agent accepts only absolute paths of its own OS, so on a Unix agent
+// this is never true.
+func windowsProgram(prog string) bool {
+	return (len(prog) >= 3 && isLetter(prog[0]) && prog[1] == ':' && (prog[2] == '\\' || prog[2] == '/')) ||
+		strings.HasPrefix(prog, `\\`)
+}
+
+func isLetter(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }

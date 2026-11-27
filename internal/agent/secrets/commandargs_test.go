@@ -11,12 +11,14 @@ func TestParseAcceptsCommandArgs(t *testing.T) {
 	p := quoted(program())
 	src := "commands:\n" +
 		"  tcp:\n" +
-		"    run: [" + p + ", -H, 127.0.0.1, -p, '{port}', -m, '{mode}', '{path}', '{offset}']\n" +
+		"    run: [" + p + ", -H, 127.0.0.1, -p, '{port}', -m, '{mode}', '{path}', '{offset}', '{rel}', '{word}']\n" +
 		"    args:\n" +
 		"      port:\n        min: 1\n        max: 65535\n        default: 5432\n" +
 		"      mode:\n        values: [fast, full]\n" +
 		"      path:\n        pattern: '/[a-z/]+'\n        default: /var\n" +
 		"      offset:\n        pattern: '-?[0-9]+'\n        allow_leading_dash: true\n        default: '0'\n" +
+		"      rel:\n        pattern: '.+'\n        allow_dotdot: true\n        unicode: true\n        default: ../grüße\n" +
+		"      word:\n        values: [grüße, fast]\n        unicode: true\n        default: grüße\n" +
 		"  fixed:\n    run: [" + p + ", x]\n" +
 		"  list_form: [" + p + ", '{port}']\n"
 	set, err := parse([]byte(src))
@@ -24,11 +26,11 @@ func TestParseAcceptsCommandArgs(t *testing.T) {
 		t.Fatalf("parse = %v", err)
 	}
 	tmpl, ok := set.Command("tcp")
-	if !ok || !reflect.DeepEqual(tmpl.Placeholders(), []string{"mode", "offset", "path", "port"}) {
+	if !ok || !reflect.DeepEqual(tmpl.Placeholders(), []string{"mode", "offset", "path", "port", "rel", "word"}) {
 		t.Fatalf("tcp = %v, %v", tmpl.Placeholders(), ok)
 	}
 	got, err := tmpl.Bind(map[string]string{"mode": "full", "offset": "-2"})
-	want := []string{program(), "-H", "127.0.0.1", "-p", "5432", "-m", "full", "/var", "-2"}
+	want := []string{program(), "-H", "127.0.0.1", "-p", "5432", "-m", "full", "/var", "-2", "../grüße", "grüße"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("Bind = %q, %v; want %q", got, err, want)
 	}
@@ -112,11 +114,21 @@ func TestParseRefusesCommandArgs(t *testing.T) {
 		{"values null", head + run + "    args:\n      x: {values: [~]}\n",
 			"line 5, column 20: a listed value must be a single value"},
 		{"unknown rule key", head + run + "    args:\n      x: {values: [a], label: " + argValue + "}\n",
-			"line 5, column 24: a rule takes only pattern, allow_leading_dash, min, max, values and default"},
+			"line 5, column 24: a rule takes only pattern, allow_leading_dash, allow_dotdot, unicode, min, max, values and default"},
 		{"rule key twice", head + run + "    args:\n      x: {values: [a], values: [b]}\n",
 			"line 5, column 24: values is already set at line 5"},
 		{"default fails the rule", head + run + "    args:\n      x: {values: [a], default: " + argValue + "}\n",
 			"line 5, column 7: the default is not one of the values this host allows"},
+		{"unknown flag value", head + run + "    args:\n      x: {pattern: a, allow_dotdot: " + argValue + "}\n",
+			"line 5, column 37: allow_dotdot must be true or false"},
+		{"dotdot flag without pattern", head + run + "    args:\n      x: {values: [a], allow_dotdot: true}\n",
+			"line 5, column 7: allow_dotdot goes only with a pattern"},
+		{"unicode with a range", head + run + "    args:\n      x: {min: 1, max: 2, unicode: true}\n",
+			"line 5, column 7: unicode goes only with a pattern or values"},
+		{"non-ASCII listed value without unicode", head + run + "    args:\n      x: {values: [grüße]}\n",
+			"line 5, column 19: a listed value has characters beyond printable ASCII; set unicode: true to allow them"},
+		{"non-ASCII default without unicode", head + run + "    args:\n      x: {pattern: '.+', default: grüße}\n",
+			"line 5, column 7: the default must be printable ASCII (this host's rule does not set unicode: true)"},
 		{"default null", head + run + "    args:\n      x: {values: [a], default: ~}\n",
 			"line 5, column 33: default must be a single value"},
 	}
@@ -147,5 +159,24 @@ func TestParseLimitsPlaceholders(t *testing.T) {
 	_, err := parse([]byte("commands:\n  a:\n    run: [" + p + run.String() + "]\n    args:\n" + args.String()))
 	if err == nil || err.Error() != "line 21, column 7: a command has more than 16 placeholders" {
 		t.Fatalf("parse = %v", err)
+	}
+}
+
+// TestProgramNamingAStreamIsRefused: on Windows a ':' after the drive
+// names an alternate data stream (check.bat::$DATA) or a device form; the
+// program is refused at load (review fix round 1).
+func TestProgramNamingAStreamIsRefused(t *testing.T) {
+	for _, p := range []string{`C:\checks\check.bat::$DATA`, `C:\checks\x.exe:s`, `\\?\C:\x.exe`, `C:x:`} {
+		if !streamInProgram(p, true) {
+			t.Errorf("streamInProgram(%q, windows) = false", p)
+		}
+	}
+	for _, p := range []string{`C:\checks\check.bat`, `c:/x/y.exe`, `\\server\share\x.exe`} {
+		if streamInProgram(p, true) {
+			t.Errorf("streamInProgram(%q, windows) = true", p)
+		}
+	}
+	if streamInProgram("/usr/lib/a:b", false) {
+		t.Error("a Unix program with ':' refused")
 	}
 }

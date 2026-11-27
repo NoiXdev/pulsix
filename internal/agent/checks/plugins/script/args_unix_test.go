@@ -22,7 +22,7 @@ func TestRealRunPassesValuesLiterally(t *testing.T) {
 	if err := os.WriteFile(script, []byte("printf '[%s]' \"$@\"\necho\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	anyText, err := scriptargs.PatternRule(`.+`, false)
+	anyText, err := scriptargs.PatternRule(`.+`, scriptargs.PatternOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -99,6 +100,8 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 			return nil, errAt(entry, "the program path must not contain control characters")
 		case i == 0 && !filepath.IsAbs(entry.Value):
 			return nil, errAt(entry, "the program must be an absolute path")
+		case i == 0 && streamInProgram(entry.Value, runtime.GOOS == "windows"):
+			return nil, errAt(entry, "the program path must not hold a ':' after the drive")
 		}
 		argv = append(argv, entry.Value)
 	}
@@ -109,3 +112,18 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 // appear in a check's output, where such a character would break a line or
 // a terminal.
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// streamInProgram reports a Windows program path holding a ':' after its
+// drive letter: check.bat::$DATA names the file's data stream, which
+// would hide its extension from the batch rule, and \\?\C:\… is a
+// device form the file check refuses anyway. On other systems ':' is an
+// ordinary character.
+func streamInProgram(p string, windows bool) bool {
+	if !windows {
+		return false
+	}
+	if len(p) >= 2 && p[1] == ':' {
+		p = p[2:]
+	}
+	return strings.Contains(p, ":")
+}

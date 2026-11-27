@@ -44,7 +44,7 @@ const (
 	ProblemEmpty   = "must not be empty"
 	ProblemLong    = "is longer than 512 bytes"
 	ProblemUTF8    = "must be valid UTF-8"
-	ProblemControl = "must not contain control characters"
+	ProblemControl = "must not contain control, format or separator characters"
 )
 
 // The entry problems, phrased to follow the parameter's name ("args …").
@@ -52,7 +52,7 @@ const (
 	ProblemEntryShape   = "must be command:placeholder=value"
 	ProblemEntryCommand = "must start with a command name of 1 to 64 letters, digits, '_', '.' or '-'"
 	ProblemEntryName    = "must name a placeholder of a lower-case letter followed by up to 31 lower-case letters, digits or '_'"
-	ProblemEntryValue   = "must have a value of 1 to 512 bytes without control characters"
+	ProblemEntryValue   = "must have a value of 1 to 512 bytes without control, format or separator characters"
 )
 
 var (
@@ -67,8 +67,8 @@ var (
 func ValidName(s string) bool { return namePattern.MatchString(s) }
 
 // ValueProblem says why v cannot be a value whatever the host's rule, or
-// returns "": a value is 1 to MaxValueBytes bytes of valid UTF-8 without a
-// control character (C0, DEL or C1). The text never quotes v.
+// returns "": a value is 1 to MaxValueBytes bytes of valid UTF-8 without
+// an invisible character (invisible). The text never quotes v.
 func ValueProblem(v string) string {
 	switch {
 	case v == "":
@@ -77,7 +77,7 @@ func ValueProblem(v string) string {
 		return ProblemLong
 	case !utf8.ValidString(v):
 		return ProblemUTF8
-	case strings.ContainsFunc(v, unicode.IsControl):
+	case strings.ContainsFunc(v, invisible):
 		return ProblemControl
 	}
 	return ""
@@ -132,4 +132,26 @@ func EmbedsPlaceholder(arg string) bool {
 		return false
 	}
 	return embedded.MatchString(arg)
+}
+
+// invisible reports a character no value may hold on either side: a
+// control character (C0, DEL, C1), a format character (Cf: soft hyphen,
+// bidi overrides and isolates, zero-width characters, the byte order
+// mark), a line or paragraph separator, or a non-character (U+FDD0 to
+// U+FDEF and the last two code points of every plane). Each either breaks
+// a line, hides or reorders text in output, or is no character at all.
+func invisible(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) ||
+		(r >= 0xfdd0 && r <= 0xfdef) || r&0xfffe == 0xfffe
+}
+
+// printableASCII reports whether v holds only the characters from space
+// to '~'.
+func printableASCII(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }

@@ -496,8 +496,8 @@ function mediaType(s: string): boolean {
 /** scriptArg: one entry of script's args, "command:placeholder=value",
  * split at the first ':' and the first '=' after it: a command name, a
  * placeholder name (a lower-case letter, then up to 31 lower-case letters,
- * digits or '_') and a value of 1 to 512 bytes without control
- * characters. The host's own rule judges the value. */
+ * digits or '_') and a value of 1 to 512 bytes without control, format or
+ * separator characters. The host's own rule judges the value. */
 function scriptArg(s: string): boolean {
   const colon = s.indexOf(':');
   if (colon < 0) return false;
@@ -510,8 +510,20 @@ function scriptArg(s: string): boolean {
     /^[a-z][a-z0-9_]{0,31}$/.test(rest.slice(0, eq)) &&
     value !== '' &&
     byteLen(value) <= 512 &&
-    !hasControl(value)
+    !scriptArgInvisible(value)
   );
+}
+
+/** scriptArgInvisible: internal/scriptargs's invisible — a control or
+ * format character (soft hyphen, bidi controls, zero width), a line or
+ * paragraph separator, or a non-character, which no value may hold. */
+function scriptArgInvisible(s: string): boolean {
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s)) return true;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0xfdd0 && cp <= 0xfdef) || (cp & 0xfffe) === 0xfffe) return true;
+  }
+  return false;
 }
 
 /** Every format, by the name the descriptors use. */

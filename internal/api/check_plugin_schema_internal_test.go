@@ -58,7 +58,7 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"verify_tls (true or false; default true). " +
 		"script: commands (required; list; not empty; at most 32 entries; each the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"args (list; at most 64 entries; each at most 640 bytes; each command:placeholder=value, a value for a placeholder the command's definition in the host's agent.yaml declares: " +
-		"the command one listed in commands, the placeholder a lower-case letter followed by up to 31 lower-case letters, digits or _, the value 1 to 512 bytes without control characters; the host's own rule judges the value), " +
+		"the command one listed in commands, the placeholder a lower-case letter followed by up to 31 lower-case letters, digits or _, the value 1 to 512 bytes without control, format or separator characters; the host's own rule judges the value), " +
 		"format (nagios or json; default nagios), timeout_seconds (1 to 60; default 10). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5), " + vantage +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5), " + vantage +

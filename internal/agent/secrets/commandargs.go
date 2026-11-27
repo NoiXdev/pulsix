@@ -103,12 +103,14 @@ func parseArgs(n *yaml.Node) (map[string]scriptargs.Param, map[string]*yaml.Node
 
 // ruleKeys are the keys a placeholder's rule mapping may hold.
 var ruleKeys = map[string]bool{
-	"pattern": true, "allow_leading_dash": true, "min": true, "max": true, "values": true, "default": true,
+	"pattern": true, "allow_leading_dash": true, "allow_dotdot": true, "unicode": true,
+	"min": true, "max": true, "values": true, "default": true,
 }
 
 // parseRule decodes one placeholder's rule mapping: exactly one of
-// pattern (with an optional allow_leading_dash: true or false), min and
-// max together, or values; and an optional default. name is the
+// pattern (with optional allow_leading_dash and allow_dotdot, true or
+// false), min and max together, or values; unicode (true or false) with a
+// pattern or values; and an optional default. name is the
 // placeholder's key node, where a fault of the whole rule is reported. The
 // default is checked against the rule by scriptargs.NewTemplate.
 func parseRule(name, n *yaml.Node) (scriptargs.Param, error) {
@@ -124,7 +126,7 @@ func parseRule(name, n *yaml.Node) (scriptargs.Param, error) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
 		if key.Kind != yaml.ScalarNode || !ruleKeys[key.Value] {
-			return scriptargs.Param{}, errAt(key, "a rule takes only pattern, allow_leading_dash, min, max, values and default")
+			return scriptargs.Param{}, errAt(key, "a rule takes only pattern, allow_leading_dash, allow_dotdot, unicode, min, max, values and default")
 		}
 		if line, dup := lines[key.Value]; dup {
 			return scriptargs.Param{}, errAt(key, key.Value+" is already set at line "+strconv.Itoa(line))
@@ -148,6 +150,10 @@ func parseRule(name, n *yaml.Node) (scriptargs.Param, error) {
 		return scriptargs.Param{}, errAt(name, "a range needs both min and max")
 	case fields["allow_leading_dash"] != nil && fields["pattern"] == nil:
 		return scriptargs.Param{}, errAt(name, "allow_leading_dash goes only with a pattern")
+	case fields["allow_dotdot"] != nil && fields["pattern"] == nil:
+		return scriptargs.Param{}, errAt(name, "allow_dotdot goes only with a pattern")
+	case fields["unicode"] != nil && fields["min"] != nil:
+		return scriptargs.Param{}, errAt(name, "unicode goes only with a pattern or values")
 	}
 	rule, err := ruleOf(n, fields)
 	if err != nil {
@@ -165,17 +171,18 @@ func parseRule(name, n *yaml.Node) (scriptargs.Param, error) {
 func ruleOf(n *yaml.Node, fields map[string]*yaml.Node) (scriptargs.Rule, error) {
 	switch {
 	case fields["pattern"] != nil:
-		allow := false
-		if d := fields["allow_leading_dash"]; d != nil {
-			switch d.Value {
-			case "true":
-				allow = true
-			case "false":
-			default:
-				return scriptargs.Rule{}, errAt(d, "allow_leading_dash must be true or false")
-			}
+		var o scriptargs.PatternOptions
+		var err error
+		if o.AllowLeadingDash, err = flag(fields, "allow_leading_dash"); err != nil {
+			return scriptargs.Rule{}, err
 		}
-		r, err := scriptargs.PatternRule(fields["pattern"].Value, allow)
+		if o.AllowDotDot, err = flag(fields, "allow_dotdot"); err != nil {
+			return scriptargs.Rule{}, err
+		}
+		if o.Unicode, err = flag(fields, "unicode"); err != nil {
+			return scriptargs.Rule{}, err
+		}
+		r, err := scriptargs.PatternRule(fields["pattern"].Value, o)
 		if err != nil {
 			return scriptargs.Rule{}, errAt(fields["pattern"], err.Error())
 		}
@@ -192,7 +199,11 @@ func ruleOf(n *yaml.Node, fields map[string]*yaml.Node) (scriptargs.Rule, error)
 			}
 			values = append(values, e.Value)
 		}
-		r, err := scriptargs.EnumRule(values)
+		unicode, err := flag(fields, "unicode")
+		if err != nil {
+			return scriptargs.Rule{}, err
+		}
+		r, err := scriptargs.EnumRule(values, unicode)
 		if err != nil {
 			return scriptargs.Rule{}, errAt(list, err.Error())
 		}
@@ -221,4 +232,19 @@ func wholeNumber(n *yaml.Node, key string) (int64, error) {
 		return 0, errAt(n, key+" must be a whole number")
 	}
 	return v, nil
+}
+
+// flag reads an optional true or false; absent is false.
+func flag(fields map[string]*yaml.Node, key string) (bool, error) {
+	n := fields[key]
+	if n == nil {
+		return false, nil
+	}
+	switch n.Value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	}
+	return false, errAt(n, key+" must be true or false")
 }

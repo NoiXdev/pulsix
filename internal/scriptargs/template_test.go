@@ -11,7 +11,7 @@ import (
 
 func mustPattern(t *testing.T, expr string, allowDash bool) scriptargs.Rule {
 	t.Helper()
-	r, err := scriptargs.PatternRule(expr, allowDash)
+	r, err := scriptargs.PatternRule(expr, scriptargs.PatternOptions{AllowLeadingDash: allowDash})
 	if err != nil {
 		t.Fatalf("PatternRule(%q) = %v", expr, err)
 	}
@@ -29,7 +29,7 @@ func mustRange(t *testing.T, lo, hi int64) scriptargs.Rule {
 
 func mustEnum(t *testing.T, values ...string) scriptargs.Rule {
 	t.Helper()
-	r, err := scriptargs.EnumRule(values)
+	r, err := scriptargs.EnumRule(values, false)
 	if err != nil {
 		t.Fatalf("EnumRule(%q) = %v", values, err)
 	}
@@ -37,11 +37,11 @@ func mustEnum(t *testing.T, values ...string) scriptargs.Rule {
 }
 
 func TestPatternRule(t *testing.T) {
-	if _, err := scriptargs.PatternRule("(", false); err == nil || strings.Contains(err.Error(), "(") {
+	if _, err := scriptargs.PatternRule("(", scriptargs.PatternOptions{}); err == nil || strings.Contains(err.Error(), "(") {
 		t.Errorf("PatternRule(bad) = %v, want a fixed reason", err)
 	}
 	// An expression that would close the anchoring group is refused.
-	if _, err := scriptargs.PatternRule("a)|(b", false); err == nil {
+	if _, err := scriptargs.PatternRule("a)|(b", scriptargs.PatternOptions{}); err == nil {
 		t.Error("PatternRule(a)|(b) accepted")
 	}
 	r := mustPattern(t, "a|b", false)
@@ -52,13 +52,13 @@ func TestPatternRule(t *testing.T) {
 	if _, err := tmpl.Bind(map[string]string{"x": "ab"}); err == nil {
 		t.Error("an alternation matched beyond its anchors")
 	}
-	if _, err := scriptargs.PatternRule("", false); err == nil {
+	if _, err := scriptargs.PatternRule("", scriptargs.PatternOptions{}); err == nil {
 		t.Error("PatternRule(empty) accepted")
 	}
-	if _, err := scriptargs.PatternRule(strings.Repeat("a", scriptargs.MaxPatternBytes+1), false); err == nil {
+	if _, err := scriptargs.PatternRule(strings.Repeat("a", scriptargs.MaxPatternBytes+1), scriptargs.PatternOptions{}); err == nil {
 		t.Error("PatternRule(long) accepted")
 	}
-	if _, err := scriptargs.PatternRule(strings.Repeat("a", scriptargs.MaxPatternBytes), false); err != nil {
+	if _, err := scriptargs.PatternRule(strings.Repeat("a", scriptargs.MaxPatternBytes), scriptargs.PatternOptions{}); err != nil {
 		t.Errorf("PatternRule(at the bound) = %v", err)
 	}
 }
@@ -84,7 +84,7 @@ func TestEnumRule(t *testing.T) {
 		bad[4][i] = "v" + strings.Repeat("x", i)
 	}
 	for _, values := range bad {
-		if _, err := scriptargs.EnumRule(values); err == nil {
+		if _, err := scriptargs.EnumRule(values, false); err == nil {
 			t.Errorf("EnumRule(%d values) accepted", len(values))
 		}
 	}
@@ -177,7 +177,7 @@ func TestBind(t *testing.T) {
 		{"pattern is anchored", map[string]string{"mode": "fast", "offset": "1x" + secretValue}, nil, `argument "offset" does not match`},
 		{"option injection", map[string]string{"mode": "fast", "path": "--" + secretValue}, nil, `argument "path" must not start with '-'`},
 		{"option injection a pattern would admit", map[string]string{"mode": "fast", "path": "-/x"}, nil, `must not start with '-'`},
-		{"control", map[string]string{"mode": "fast", "path": "/a\n" + secretValue}, nil, `argument "path" must not contain control characters`},
+		{"control", map[string]string{"mode": "fast", "path": "/a\n" + secretValue}, nil, `argument "path" must not contain control, format or separator characters`},
 		{"empty", map[string]string{"mode": "fast", "path": ""}, nil, `argument "path" must not be empty`},
 		{"long", map[string]string{"mode": "fast", "path": "/" + strings.Repeat(secretValue, 60)}, nil, `argument "path" is longer than 512 bytes`},
 		{"undeclared", map[string]string{"mode": "fast", "user": secretValue}, nil, `argument "user" is not one this command takes on this host`},

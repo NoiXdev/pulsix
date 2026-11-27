@@ -512,7 +512,7 @@ export const enChecks = {
         'X-Forwarded-*, Forwarded, X-Real-IP, X-Original-URL, X-Rewrite-URL and method overrides are refused: a target may trust them for the client’s address, the path or the method',
       mediaType: 'must be a media type such as application/json or text/plain; charset=utf-8',
       scriptArg:
-        'every entry must be command:placeholder=value: a command listed above, a placeholder name of lower-case letters, digits and _ (starting with a letter, at most 32), and a value of 1 to 512 bytes without line breaks or other control characters',
+        'every entry must be command:placeholder=value: a command listed above, a placeholder name of lower-case letters, digits and _ (starting with a letter, at most 32), and a value of 1 to 512 bytes without line breaks, control or invisible formatting characters',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },

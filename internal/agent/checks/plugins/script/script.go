@@ -220,7 +220,7 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 	}
 	// The host's rules judge the check's values; a refusal names the
 	// placeholder and a fixed reason, never the value.
-	argv, err := cmd.Bind(opts.args[name])
+	argv, names, err := cmd.BindNamed(opts.args[name])
 	if err != nil {
 		return noRun(name, err.Error())
 	}
@@ -228,7 +228,7 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 	// network mount.
 	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
-	refusal, err := p.checkFilesWithin(rctx, argv, opts.timeout)
+	refusal, err := p.checkFilesWithin(rctx, argv, names, opts.timeout)
 	if err != nil {
 		return nil // the agent is stopping: CollectWithCommands reports nothing
 	}
