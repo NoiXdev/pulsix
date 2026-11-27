@@ -415,7 +415,7 @@ func WithPictureCounter(n *atomic.Int64) Option {
 func newRunRequests(d *db.DB, deps api.Deps, now func() time.Time, counter ...*atomic.Int64) *runrequests.Service {
 	res := runrequests.NewResolver(runrequests.Sources{
 		Templates: deps.Templates, Playbooks: deps.Playbooks, Repos: deps.Repos, Jobs: deps.Jobs,
-		Hosts: deps.Hosts, SSH: deps.SSH, Credentials: deps.Credentials,
+		Hosts: deps.Hosts, Zones: deps.Hosts, SSH: deps.SSH, Credentials: deps.Credentials,
 		Vars:     app.NewRunRequestVars(templates.NewSQLStore(d), deps.Renderer, crypto.NewBox(testMasterKey)),
 		VarsKey:  runrequests.VarsDigestKey(testMasterKey),
 		Settings: deps.Assistant, FollowUpRuns: chain.NewSQLStore(d), Overrides: deps.Templates,

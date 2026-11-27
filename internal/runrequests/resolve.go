@@ -101,7 +101,7 @@ func (r *Resolver) ValidateRetry(ctx context.Context, orgID, jobID uuid.UUID) (u
 // jobs.RunOverrides; a dry run plans no follow-ups at all.
 func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor uuid.UUID, key string, group uuid.UUID, followUps []uuid.UUID) error {
 	run := jobs.RunRequest{Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: req.HostID, IdempotencyKey: key, RunGroupID: group,
-		PinnedCommit: req.PinnedCommit, EnrollHostIDs: req.EnrollHostIDs}
+		PinnedCommit: req.PinnedCommit, EnrollHostIDs: req.EnrollHostIDs, RefuseCoveredZoneGrowth: true}
 	if req.Overrides != nil {
 		// The run keeps to the picture's targets, its one host included.
 		run.OnlyHost = nil
@@ -118,6 +118,16 @@ func (r *Resolver) Run(ctx context.Context, orgID uuid.UUID, req Request, actor 
 		run.FollowUps = &list
 	}
 	_, err := r.src.Jobs.EnqueueRunWith(ctx, orgID, req.TemplateID, run)
+	return r.nameGrowth(ctx, orgID, err)
+}
+
+// nameGrowth names the zones and hosts of a replay the queue refused
+// because a covered zone grew (backlog 2.142); any other error passes.
+func (r *Resolver) nameGrowth(ctx context.Context, orgID uuid.UUID, err error) error {
+	var grew *jobs.CoveredZoneGrowthError
+	if errors.As(err, &grew) {
+		return r.namedGrowth(ctx, orgID, grew)
+	}
 	return err
 }
 
@@ -135,7 +145,7 @@ func (r *Resolver) RetryFailed(ctx context.Context, orgID uuid.UUID, req Request
 	}
 	list := nonNil(followUps)
 	_, err = r.src.Jobs.RetryFailedInto(ctx, orgID, *req.JobID, &actor, key, group, &list, approved, ov)
-	return err
+	return r.nameGrowth(ctx, orgID, err)
 }
 
 // Picture implements Pictures: everything the run would use now.

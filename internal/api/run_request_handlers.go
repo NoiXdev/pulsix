@@ -400,7 +400,50 @@ func runRequestDetail(ctx context.Context, deps Deps, scope Scope, id uuid.UUID)
 	return out, nil
 }
 
+// coveredZonesCode is the code of the 409 that refuses a re-approval
+// whose replay would leave out hosts that joined a covered zone (backlog
+// 2.142). It is a contract with the SPA, not prose.
+const coveredZonesCode = "hosts_joined_covered_zone"
+
+// coveredZonesProblem is that 409: the problem document plus the code and
+// the zones with the hosts that joined them.
+type coveredZonesProblem struct {
+	huma.ErrorModel
+	Code  string           `json:"code"`
+	Zones []coveredZoneDTO `json:"zones"`
+}
+
+type coveredZoneDTO struct {
+	ID    string           `json:"id"`
+	Name  string           `json:"name"`
+	Hosts []coveredHostDTO `json:"hosts"`
+}
+
+type coveredHostDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func toCoveredZonesProblem(e *runrequests.CoveredZonesError) *coveredZonesProblem {
+	out := &coveredZonesProblem{
+		ErrorModel: huma.ErrorModel{Title: http.StatusText(http.StatusConflict), Status: http.StatusConflict, Detail: e.Error()},
+		Code:       coveredZonesCode, Zones: make([]coveredZoneDTO, len(e.Zones)),
+	}
+	for i, z := range e.Zones {
+		dto := coveredZoneDTO{ID: z.ID.String(), Name: z.Name, Hosts: make([]coveredHostDTO, len(z.Hosts))}
+		for j, h := range z.Hosts {
+			dto.Hosts[j] = coveredHostDTO{ID: h.ID.String(), Name: h.Name}
+		}
+		out.Zones[i] = dto
+	}
+	return out
+}
+
 func mapRunRequestErr(ctx context.Context, err error) error {
+	var covered *runrequests.CoveredZonesError
+	if errors.As(err, &covered) {
+		return toCoveredZonesProblem(covered)
+	}
 	switch {
 	case errors.Is(err, runrequests.ErrNotFound):
 		return huma.Error404NotFound("not found")

@@ -56,6 +56,8 @@ type fakeJobRunner struct {
 	retryPin       string
 	retryEnroll    []uuid.UUID
 	retryOverrides *jobs.RunOverrides
+	// runErr is what EnqueueRunWith answers.
+	runErr error
 	// targetCalls counts RetryTargets.
 	targetCalls int
 }
@@ -76,7 +78,7 @@ func (f *fakeJobRunner) RetryTargets(context.Context, uuid.UUID, uuid.UUID) (uui
 func (f *fakeJobRunner) EnqueueRunWith(_ context.Context, _, _ uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
 	*f.calls = append(*f.calls, "enqueue")
 	f.enqueued = &req
-	return nil, nil
+	return nil, f.runErr
 }
 
 func (f *fakeJobRunner) RetryFailedInto(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID, key string, _ uuid.UUID, fu *[]uuid.UUID, approved jobs.ApprovedRun, ov *jobs.RunOverrides) ([]jobs.Job, error) {

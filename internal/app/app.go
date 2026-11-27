@@ -736,7 +736,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	assistantSvc := assistant.NewService(assistant.NewSQLStore(appDB))
 	runRequestResolver := runrequests.NewResolver(runrequests.Sources{
 		Templates: templatesSvc, Playbooks: playbooksSvc, Repos: reposSvc, Jobs: jobsSvc,
-		Hosts: hostsSvc, SSH: sshSvc, Credentials: credsSvc,
+		Hosts: hostsSvc, Zones: hostsSvc, SSH: sshSvc, Credentials: credsSvc,
 		Vars: NewRunRequestVars(templateStore, renderer, box), VarsKey: runrequests.VarsDigestKey(cfg.MasterKey),
 		Settings: assistantSvc, FollowUpRuns: chainStore, Overrides: templatesSvc,
 		Commits: reposSvc, SyncJobs: jobsSvc, RepoSyncs: reposSvc,

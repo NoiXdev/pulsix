@@ -52,6 +52,11 @@ type (
 	HostSource interface {
 		ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
 	}
+	// ZoneSource names the organization's zones (hosts.Service): a
+	// refused re-approval names the zones it refused (backlog 2.142).
+	ZoneSource interface {
+		ListZones(ctx context.Context, orgID uuid.UUID) ([]hosts.Zone, error)
+	}
 	SSHSource interface {
 		HostSSH(ctx context.Context, orgID, hostID uuid.UUID) (sshconf.HostSSH, error)
 		GetBastion(ctx context.Context, orgID, id uuid.UUID) (sshconf.Bastion, error)
@@ -138,11 +143,13 @@ type (
 
 // Sources is what NewResolver reads from.
 type Sources struct {
-	Templates   TemplateSource
-	Playbooks   PlaybookSource
-	Repos       RepoSource
-	Jobs        JobRunner
-	Hosts       HostSource
+	Templates TemplateSource
+	Playbooks PlaybookSource
+	Repos     RepoSource
+	Jobs      JobRunner
+	Hosts     HostSource
+	// Zones names zones in a refused re-approval; nil names them by id.
+	Zones       ZoneSource
 	SSH         SSHSource
 	Credentials CredentialSource
 	Vars        RunVarsSource
