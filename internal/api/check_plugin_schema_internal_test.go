@@ -46,13 +46,13 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"redis: secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
 		"nginx: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/nginx_status), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
-		"verify_tls (true or false; default true). " +
+		"verify_tls (true or false; default true), api_url (at most 500 bytes; an http or https URL without user info or fragment). " +
 		"apache: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/server-status?auto), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"caddy: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1:2019/metrics), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
-		"verify_tls (true or false; default true). " +
+		"verify_tls (true or false; default true), upstreams_url (at most 500 bytes; an http or https URL without user info or fragment). " +
 		"phpfpm: urls (list; at most 16 entries; each at most 500 bytes; each an http or https URL without user info or fragment, or a FastCGI address fcgi://host:port/path or unix:/socket:/path whose path is / and letters, digits, _ / - without a dot), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
