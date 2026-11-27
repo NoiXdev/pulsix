@@ -7,9 +7,10 @@ import (
 )
 
 // StreamRegistry tracks the open RunEvents streams per worker, so a
-// revocation can end them (spec §4 "Revocation"). It lives in process: with
-// several managers each ends only its own streams, while the interceptor
-// refuses the revoked worker's next call on every manager.
+// revocation can end them (spec §4 "Revocation"). It lives in process: the
+// manager that serves a revocation closes its own streams directly, and
+// every other manager's workers.RevocationWatcher closes them there once
+// the revocation's notification arrives (backlog 2.54).
 type StreamRegistry struct {
 	mu       sync.Mutex
 	next     uint64
@@ -92,4 +93,16 @@ func (r *StreamRegistry) CloseWorker(workerID uuid.UUID) int {
 		ts.shut()
 	}
 	return len(streams)
+}
+
+// Workers lists the workers with at least one open stream, each once, in
+// no particular order: what the revocation watcher rescans.
+func (r *StreamRegistry) Workers() []uuid.UUID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(r.byWorker))
+	for id := range r.byWorker {
+		out = append(out, id)
+	}
+	return out
 }

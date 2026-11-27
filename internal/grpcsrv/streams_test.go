@@ -3,6 +3,7 @@ package grpcsrv
 import (
 	"context"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -42,6 +43,29 @@ func TestStreamRegistry(t *testing.T) {
 	releaseA() // after close: a no-op
 	if n := r.CloseWorker(w); n != 0 {
 		t.Fatalf("second CloseWorker = %d", n)
+	}
+}
+
+// TestStreamRegistryWorkers: Workers lists each worker with an open stream
+// once; a released or closed worker drops out.
+func TestStreamRegistryWorkers(t *testing.T) {
+	r := NewStreamRegistry()
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers of an empty registry = %v", got)
+	}
+	a, b, c := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	r.track(a)
+	r.track(a)
+	r.track(b)
+	_, releaseC := r.track(c)
+	releaseC()
+	got := r.Workers()
+	if len(got) != 2 || !slices.Contains(got, a) || !slices.Contains(got, b) {
+		t.Fatalf("Workers = %v, want %s and %s once each", got, a, b)
+	}
+	r.CloseWorker(a)
+	if got := r.Workers(); len(got) != 1 || got[0] != b {
+		t.Fatalf("Workers after closing %s = %v, want only %s", a, got, b)
 	}
 }
 
