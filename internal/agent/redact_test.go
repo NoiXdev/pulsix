@@ -7,6 +7,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -121,6 +123,24 @@ func TestLoopRedactsTheLogRing(t *testing.T) {
 	l.lookAndApplyLocal()
 	_, _ = ring.Write([]byte(leaky("line") + "\n"))
 	if got := ring.Lines(); got[len(got)-1] != "line [secret] tail" {
+		t.Fatalf("ring = %q", got)
+	}
+}
+
+// TestLoopRedactsQuotedValuesInTheLogRing: slog's text handler writes a
+// value holding a quote or a backslash escaped; the ring replaces that
+// form too (review 3.132, finding 1).
+func TestLoopRedactsQuotedValuesInTheLogRing(t *testing.T) {
+	const tricky = `Tr0ub"dor\3`
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, "secrets:\n  db:\n    password: '"+tricky+"'\n")
+	ring := logring.New(10)
+	l := NewLoop(lt.cfg, lt.dialer, lt.facts, append(lt.options(), WithLogRing(ring))...)
+	l.lookAndApplyLocal()
+	logger := slog.New(slog.NewTextHandler(ring, nil))
+	logger.Warn("advisory", "err", "auth failed for "+tricky)
+	got := strings.Join(ring.Lines(), "\n")
+	if strings.Contains(got, "Tr0ub") || !strings.Contains(got, "[secret]") {
 		t.Fatalf("ring = %q", got)
 	}
 }
