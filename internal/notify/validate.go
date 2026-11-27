@@ -156,3 +156,61 @@ func checkSigningSecret(secret string) error {
 	}
 	return nil
 }
+
+// checkPresetShape resolves a webhook input's preset (nil: raw) and checks
+// what every preset shares (backlog 4.7): POST, no body template — the
+// preset owns the body — and no Content-Type header, since the body is
+// always the preset's JSON. Other headers and signing stay allowed.
+func (s *Service) checkPresetShape(in WebhookInput) (Preset, error) {
+	if in.Preset == "" {
+		return nil, nil
+	}
+	p, ok := s.d.Presets[in.Preset]
+	if !ok {
+		return nil, fmt.Errorf("%w: unknown preset %q", ErrInvalidInput, oneLine(Clip(in.Preset, 40)))
+	}
+	if m, _ := normalizeMethod(in.Method); m != "POST" {
+		return nil, fmt.Errorf("%w: a preset channel sends POST", ErrInvalidInput)
+	}
+	if in.BodyTemplate != "" {
+		return nil, fmt.Errorf("%w: a preset renders the body itself; leave the body template empty", ErrInvalidInput)
+	}
+	for _, h := range in.Headers {
+		if strings.EqualFold(h.Name, "Content-Type") {
+			return nil, fmt.Errorf("%w: a preset sets Content-Type itself", ErrInvalidInput)
+		}
+	}
+	return p, nil
+}
+
+// checkPresetURL applies the preset's own URL rule to a newly submitted
+// URL. The preset promises its error never repeats the URL.
+func checkPresetURL(p Preset, raw string) error {
+	if p == nil {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%w: url is not a valid URL", ErrInvalidInput)
+	}
+	if err := p.CheckURL(u); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return nil
+}
+
+// checkPresetSettings validates the preset's settings and returns the
+// chat id to store; a raw channel takes none.
+func checkPresetSettings(p Preset, in WebhookInput) (string, error) {
+	if p == nil {
+		if in.ChatID != "" {
+			return "", fmt.Errorf("%w: a chat id belongs to a preset channel", ErrInvalidInput)
+		}
+		return "", nil
+	}
+	s, err := p.CheckSettings(PresetSettings{ChatID: in.ChatID})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return s.ChatID, nil
+}

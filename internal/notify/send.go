@@ -52,19 +52,22 @@ func IsPermanent(err error) bool {
 
 // ChannelSender delivers one event through one channel.
 type ChannelSender struct {
-	box  Sealer
-	mail Mailer
-	http *http.Client
-	now  func() time.Time
+	box     Sealer
+	mail    Mailer
+	http    *http.Client
+	now     func() time.Time
+	presets Presets
 }
 
 // NewChannelSender wires the sender. client must be an outbound client
 // (internal/outbound): it is the one that refuses internal destinations.
-func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time) *ChannelSender {
+// presets renders the body of a preset channel (presets.Registry); a
+// channel whose preset is missing from it fails permanently.
+func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time, presets Presets) *ChannelSender {
 	if now == nil {
 		now = time.Now
 	}
-	return &ChannelSender{box: box, mail: m, http: client, now: now}
+	return &ChannelSender{box: box, mail: m, http: client, now: now, presets: presets}
 }
 
 // Send delivers ev through ch. deliveryID travels as X-Pulsix-Delivery so
@@ -119,6 +122,8 @@ func (s *ChannelSender) sendEmail(ctx context.Context, to []string, ev Event) er
 // held for the duration of one send.
 type openedWebhook struct {
 	method, url, bodyTemplate string
+	preset                    string
+	settings                  PresetSettings
 	headers                   [][2]string
 	signingSecret             []byte
 }
@@ -133,7 +138,7 @@ func (s *ChannelSender) openWebhook(ch Channel) (openedWebhook, error) {
 	if err != nil {
 		return openedWebhook{}, fmt.Errorf("open webhook url: %w", err)
 	}
-	out := openedWebhook{method: w.Method, url: string(u), bodyTemplate: w.BodyTemplate}
+	out := openedWebhook{method: w.Method, url: string(u), bodyTemplate: w.BodyTemplate, preset: ch.Preset, settings: PresetSettings{ChatID: w.ChatID}}
 	for _, h := range w.Headers {
 		v, err := s.box.OpenAAD(h.ValueSealed, aad)
 		if err != nil {
@@ -155,7 +160,7 @@ func (s *ChannelSender) openWebhook(ch Channel) (openedWebhook, error) {
 // signature covers "<timestamp>.<body>", the scheme incoming Pulsix
 // webhooks use too, so a replayed body with a fresh timestamp fails.
 func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, deliveryID uuid.UUID, ev Event) error {
-	body, err := renderWebhookBody(w.bodyTemplate, ev)
+	body, err := s.webhookBody(w, ev)
 	if err != nil {
 		return Permanent(err)
 	}
@@ -196,6 +201,27 @@ func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, delive
 	default:
 		return Permanent(fmt.Errorf("the endpoint answered %d", code))
 	}
+}
+
+// webhookBody is the body a webhook channel sends: its preset's rendering
+// (backlog 4.7), else the body template or the event's JSON. Everything
+// after the body — headers, signing, the request — is the same for both.
+func (s *ChannelSender) webhookBody(w openedWebhook, ev Event) ([]byte, error) {
+	if w.preset == "" {
+		return renderWebhookBody(w.bodyTemplate, ev)
+	}
+	p, ok := s.presets[w.preset]
+	if !ok {
+		return nil, fmt.Errorf("unknown preset %q", w.preset)
+	}
+	body, err := p.Render(ev, w.settings)
+	if err != nil {
+		return nil, fmt.Errorf("render %s message: %w", w.preset, err)
+	}
+	if len(body) > maxBodyBytes {
+		return nil, errBodyTooLarge
+	}
+	return body, nil
 }
 
 // redactURL drops the request URL from a transport error: url.Error's

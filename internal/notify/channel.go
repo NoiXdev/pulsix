@@ -75,6 +75,8 @@ type webhookConfig struct {
 	Headers       []storedHeader `json:"headers,omitempty"`
 	BodyTemplate  string         `json:"body_template,omitempty"`
 	SigningSealed []byte         `json:"signing_sealed,omitempty"`
+	// ChatID is a preset channel's PresetSettings.ChatID (Telegram).
+	ChatID string `json:"chat_id,omitempty"`
 }
 
 type storedHeader struct {
@@ -95,6 +97,8 @@ type WebhookView struct {
 	HeaderNames  []string
 	BodyTemplate string
 	Signed       bool
+	// Preset is the channel's preset ("" raw), ChatID its Telegram chat.
+	Preset, ChatID string
 }
 
 // View decodes the channel's settings into their secret-free form: exactly
@@ -112,7 +116,10 @@ func (c Channel) View() (*EmailConfig, *WebhookView, error) {
 		if err := json.Unmarshal(c.Config, &w); err != nil {
 			return nil, nil, fmt.Errorf("decode webhook channel: %w", err)
 		}
-		v := &WebhookView{Method: w.Method, URLDisplay: w.URLDisplay, BodyTemplate: w.BodyTemplate, Signed: len(w.SigningSealed) > 0}
+		v := &WebhookView{
+			Method: w.Method, URLDisplay: w.URLDisplay, BodyTemplate: w.BodyTemplate, Signed: len(w.SigningSealed) > 0,
+			Preset: c.Preset, ChatID: w.ChatID,
+		}
 		for _, h := range w.Headers {
 			v.HeaderNames = append(v.HeaderNames, h.Name)
 		}
@@ -139,6 +146,11 @@ type WebhookInput struct {
 	BodyTemplate  string
 	Signed        bool
 	SigningSecret *string
+	// Preset names the chat service the body is rendered for ("" raw);
+	// with one, BodyTemplate must be empty (the preset owns the body) and
+	// changing it needs URL again. ChatID is Telegram's chat.
+	Preset string
+	ChatID string
 }
 
 // Input is what an operator submits for create and update; exactly one

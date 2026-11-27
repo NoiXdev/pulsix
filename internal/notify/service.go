@@ -45,6 +45,9 @@ type Deps struct {
 	Mail       Mailer
 	// Sender delivers "Send test" synchronously (ChannelSender).
 	Sender Sender
+	// Presets are the chat services a webhook channel may render for
+	// (presets.Registry); nil allows raw webhooks only.
+	Presets Presets
 	// PublicURL is the instance's base URL, for the links in messages.
 	PublicURL string
 	Now       func() time.Time
@@ -99,12 +102,12 @@ func (s *Service) CreateChannel(ctx context.Context, orgID, actor uuid.UUID, in 
 			return Channel{}, ErrMailUnavailable
 		}
 	}
-	cfg, bodyJSON, err := s.buildConfig(orgID, id, in, nil)
+	b, err := s.buildConfig(orgID, id, in, nil)
 	if err != nil {
 		return Channel{}, err
 	}
 	return s.d.Channels.CreateChannel(ctx, Channel{
-		ID: id, OrgID: orgID, Kind: in.Kind, Name: name, Enabled: in.Enabled, Config: cfg, BodyJSON: bodyJSON, CreatedBy: &actor,
+		ID: id, OrgID: orgID, Kind: in.Kind, Preset: b.preset, Name: name, Enabled: in.Enabled, Config: b.cfg, BodyJSON: b.bodyJSON, CreatedBy: &actor,
 	})
 }
 
@@ -125,11 +128,11 @@ func (s *Service) UpdateChannel(ctx context.Context, orgID, id uuid.UUID, revisi
 	if err != nil {
 		return Channel{}, err
 	}
-	cfg, bodyJSON, err := s.buildConfig(orgID, id, in, &cur)
+	b, err := s.buildConfig(orgID, id, in, &cur)
 	if err != nil {
 		return Channel{}, err
 	}
-	cur.Name, cur.Enabled, cur.Config, cur.BodyJSON = name, in.Enabled, cfg, bodyJSON
+	cur.Name, cur.Enabled, cur.Preset, cur.Config, cur.BodyJSON = name, in.Enabled, b.preset, b.cfg, b.bodyJSON
 	return s.d.Channels.UpdateChannel(ctx, cur, revision)
 }
 
@@ -147,50 +150,61 @@ func (s *Service) DeleteChannel(ctx context.Context, orgID, id uuid.UUID) error 
 	return s.d.Channels.DeleteChannel(ctx, orgID, id)
 }
 
-// buildConfig turns an input into the stored config, plus the channel's
-// effective Content-Type classification (unused for KindEmail; true is
-// returned as a harmless, unread default). cur is the channel being
-// updated (nil on create): its sealed values, and its stored
+// builtConfig is a channel's stored settings as buildConfig made them:
+// the config, the effective Content-Type classification (unused for
+// KindEmail; true is a harmless, unread default) and the preset.
+type builtConfig struct {
+	cfg      json.RawMessage
+	bodyJSON bool
+	preset   string
+}
+
+// buildConfig turns an input into the stored config. cur is the channel
+// being updated (nil on create): its sealed values, and its stored
 // classification for a kept Content-Type header, are kept where the
 // input leaves them out.
-func (s *Service) buildConfig(orgID, id uuid.UUID, in Input, cur *Channel) (json.RawMessage, bool, error) {
+func (s *Service) buildConfig(orgID, id uuid.UUID, in Input, cur *Channel) (builtConfig, error) {
 	switch in.Kind {
 	case KindEmail:
 		if in.Webhook != nil {
-			return nil, false, fmt.Errorf("%w: an e-mail channel takes no webhook settings", ErrInvalidInput)
+			return builtConfig{}, fmt.Errorf("%w: an e-mail channel takes no webhook settings", ErrInvalidInput)
 		}
 		e, err := normalizeEmail(in.Email)
 		if err != nil {
-			return nil, false, err
+			return builtConfig{}, err
 		}
 		cfg, err := json.Marshal(e)
-		return cfg, true, err
+		return builtConfig{cfg: cfg, bodyJSON: true}, err
 	case KindWebhook:
 		if in.Email != nil || in.Webhook == nil {
-			return nil, false, fmt.Errorf("%w: a webhook channel takes webhook settings only", ErrInvalidInput)
+			return builtConfig{}, fmt.Errorf("%w: a webhook channel takes webhook settings only", ErrInvalidInput)
 		}
 		var stored webhookConfig
-		keptBodyJSON := true
+		keptBodyJSON, curPreset := true, ""
 		if cur != nil {
 			if err := json.Unmarshal(cur.Config, &stored); err != nil {
-				return nil, false, fmt.Errorf("decode stored webhook channel: %w", err)
+				return builtConfig{}, fmt.Errorf("decode stored webhook channel: %w", err)
 			}
-			keptBodyJSON = cur.BodyJSON
+			keptBodyJSON, curPreset = cur.BodyJSON, cur.Preset
 		}
-		w, bodyJSON, err := s.buildWebhook(AAD(orgID, id), *in.Webhook, stored, cur != nil, keptBodyJSON)
+		w, bodyJSON, err := s.buildWebhook(AAD(orgID, id), *in.Webhook, stored, cur != nil, keptBodyJSON, curPreset)
 		if err != nil {
-			return nil, false, err
+			return builtConfig{}, err
 		}
 		cfg, err := json.Marshal(w)
-		return cfg, bodyJSON, err
+		return builtConfig{cfg: cfg, bodyJSON: bodyJSON, preset: in.Webhook.Preset}, err
 	}
-	return nil, false, fmt.Errorf("%w: kind must be email or webhook", ErrInvalidInput)
+	return builtConfig{}, fmt.Errorf("%w: kind must be email or webhook", ErrInvalidInput)
 }
 
-func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig, update, keptBodyJSON bool) (webhookConfig, bool, error) {
+func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig, update, keptBodyJSON bool, curPreset string) (webhookConfig, bool, error) {
 	var out webhookConfig
 	var err error
 	if out.Method, err = normalizeMethod(in.Method); err != nil {
+		return out, false, err
+	}
+	preset, err := s.checkPresetShape(in)
+	if err != nil {
 		return out, false, err
 	}
 	switch {
@@ -198,9 +212,14 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 		if out.URLDisplay, err = checkURL(*in.URL); err != nil {
 			return out, false, err
 		}
+		if err := checkPresetURL(preset, *in.URL); err != nil {
+			return out, false, err
+		}
 		if out.URLSealed, err = s.d.Box.SealAAD([]byte(strings.TrimSpace(*in.URL)), aad); err != nil {
 			return out, false, fmt.Errorf("seal webhook url: %w", err)
 		}
+	case update && in.Preset != curPreset:
+		return out, false, fmt.Errorf("%w: changing a channel's preset needs the URL again", ErrInvalidInput)
 	case update:
 		out.URLSealed, out.URLDisplay = stored.URLSealed, stored.URLDisplay
 	default:
@@ -242,6 +261,9 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 		return out, false, err
 	}
 	out.BodyTemplate = in.BodyTemplate
+	if out.ChatID, err = checkPresetSettings(preset, in); err != nil {
+		return out, false, err
+	}
 	switch {
 	case in.Signed && in.SigningSecret != nil:
 		if err := checkSigningSecret(*in.SigningSecret); err != nil {

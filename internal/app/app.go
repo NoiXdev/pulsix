@@ -51,6 +51,7 @@ import (
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/notify/presets"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
@@ -647,11 +648,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// outbound client, which refuses internal destinations unless
 	// PULSIX_NOTIFY_ALLOW_CIDRS admits them. The sender is shared by the
 	// dispatcher below and the synchronous "Send test".
+	notifyPresets := presets.Registry()
 	notifySender := notify.NewChannelSender(box, mailer,
-		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), outbound.DefaultTimeout, nil), time.Now)
+		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), outbound.DefaultTimeout, nil), time.Now, notifyPresets)
 	notifyStore := notify.NewSQLStore(appDB)
 	notifySvc := notify.NewService(notify.Deps{
-		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: box, Mail: mailer, Sender: notifySender,
+		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: box, Mail: mailer, Sender: notifySender, Presets: notifyPresets,
 		PublicURL: cfg.PublicURL, Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
 

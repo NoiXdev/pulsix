@@ -68,7 +68,7 @@ func TestWebhookSendHeadersSignatureAndBody(t *testing.T) {
 	defer srv.Close()
 	c := webhookChannel(t, w, srv.URL+"/hook?token=abc", `{"text": {{ schedule.name | json }}}`, true)
 	now := time.Unix(1790000000, 0)
-	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), func() time.Time { return now })
+	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), func() time.Time { return now }, nil)
 	delivery := uuid.Must(uuid.NewV7())
 	ev := notify.Event{Kind: notify.EventRunFinished, Schedule: &notify.NamedRef{Name: "Nightly"}}
 	if err := sender.Send(ctx, notify.Claimed{Channel: c, Delivery: notify.Delivery{ID: delivery}}, ev); err != nil {
@@ -92,7 +92,7 @@ func TestWebhookSendDefaultBodyIsTheEvent(t *testing.T) {
 	srv := httptest.NewServer(rec)
 	defer srv.Close()
 	c := webhookChannel(t, w, srv.URL, "", false)
-	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil)
+	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, nil)
 	if err := sender.Send(ctx, notify.Claimed{Channel: c, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest, Org: notify.OrgRef{Slug: "acme"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestWebhookSendClassifiesFailures(t *testing.T) {
 		rec := &receiver{status: c.status}
 		srv := httptest.NewServer(rec)
 		ch := webhookChannel(t, w, srv.URL, "", false)
-		err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
+		err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
 		srv.Close()
 		if err == nil || notify.IsPermanent(err) != c.permanent {
 			t.Errorf("status %d: err = %v, permanent = %v", c.status, err, notify.IsPermanent(err))
@@ -139,7 +139,7 @@ func TestWebhookSendRefusesLoopbackWithoutAllowlist(t *testing.T) {
 	defer srv.Close()
 	ch := webhookChannel(t, w, srv.URL+"/secret-path", "", false)
 	client := outbound.NewClient(outbound.NewPolicy(nil, nil), time.Second, nil)
-	err := notify.NewChannelSender(fakeBox{}, w.mail, client, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
+	err := notify.NewChannelSender(fakeBox{}, w.mail, client, nil, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
 	if !notify.IsPermanent(err) || !errors.Is(err, outbound.ErrBlocked) || strings.Contains(err.Error(), "secret-path") {
 		t.Fatalf("err = %v, want a permanent ErrBlocked without the URL", err)
 	}
@@ -154,7 +154,7 @@ func TestWebhookSendTransportFailureIsRetryable(t *testing.T) {
 	url := srv.URL
 	srv.Close() // nothing listens any more
 	ch := webhookChannel(t, w, url, "", false)
-	err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
+	err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
 	if err == nil || notify.IsPermanent(err) || strings.Contains(err.Error(), url) {
 		t.Fatalf("err = %v, want a retryable error without the URL", err)
 	}
@@ -166,7 +166,7 @@ func TestEmailSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil)
+	sender := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, nil)
 	ev := notify.Event{Kind: notify.EventTest, Org: notify.OrgRef{Name: "Acme"}}
 	if err := sender.Send(ctx, notify.Claimed{Channel: c, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, ev); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestEmailSend(t *testing.T) {
 }
 
 func TestSendRefusesBrokenChannels(t *testing.T) {
-	sender := notify.NewChannelSender(fakeBox{}, &fakeMail{configured: true}, loopbackClient(), nil)
+	sender := notify.NewChannelSender(fakeBox{}, &fakeMail{configured: true}, loopbackClient(), nil, nil)
 	for _, ch := range []notify.Channel{
 		{Kind: "sms"},
 		{Kind: notify.KindEmail, Config: []byte(`{`)},
@@ -240,7 +240,7 @@ func TestWebhookErrorsNeverCarryTheURLsSecrets(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t)
 			ch := webhookChannel(t, w, c.url, "", false)
-			err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
+			err := notify.NewChannelSender(fakeBox{}, w.mail, loopbackClient(), nil, nil).Send(ctx, notify.Claimed{Channel: ch, Delivery: notify.Delivery{ID: uuid.Must(uuid.NewV7())}}, notify.Event{Kind: notify.EventTest})
 			if err == nil {
 				t.Fatal("want an error")
 			}

@@ -54,6 +54,7 @@ import (
 	"github.com/noixdev/pulsix/internal/maintenance"
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
+	"github.com/noixdev/pulsix/internal/notify/presets"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
@@ -547,8 +548,8 @@ func WithRestrictiveNotifyPolicy() Option {
 		box := crypto.NewBox(testMasterKey)
 		store := notify.NewSQLStore(s.DB)
 		s.Deps.Notify = notify.NewService(notify.Deps{
-			Channels: store, Deliveries: store, Digests: store, Box: box, Mail: s.Mail,
-			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil, nil), 5*time.Second, nil), time.Now),
+			Channels: store, Deliveries: store, Digests: store, Box: box, Mail: s.Mail, Presets: presets.Registry(),
+			Sender:    notify.NewChannelSender(box, s.Mail, outbound.NewClient(outbound.NewPolicy(nil, nil), 5*time.Second, nil), time.Now, presets.Registry()),
 			PublicURL: s.PublicURL, Now: time.Now, Rand: rand.Reader,
 		})
 	}
@@ -750,8 +751,9 @@ func New(t *testing.T, opts ...Option) *Server {
 	loopback := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 	notifySvc := notify.NewService(notify.Deps{
 		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: crypto.NewBox(testMasterKey), Mail: s.Mail,
+		Presets: presets.Registry(),
 		Sender: notify.NewChannelSender(crypto.NewBox(testMasterKey), s.Mail,
-			outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now),
+			outbound.NewClient(outbound.NewPolicy(loopback, nil), 5*time.Second, nil), time.Now, presets.Registry()),
 		PublicURL: publicURL, Now: time.Now, Rand: rand.Reader,
 	})
 	// The maintenance service (v0.2d): group windows resolve through the
