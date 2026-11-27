@@ -48,7 +48,7 @@ func (preset) CheckSettings(s notify.PresetSettings) (notify.PresetSettings, err
 	if !chatID.MatchString(s.ChatID) {
 		return s, errors.New("a Telegram channel needs a chat id: a number such as -1001234567890, or a public @username")
 	}
-	return s, nil
+	return s, s.Only("Telegram", "chat_id")
 }
 
 type payload struct {
@@ -70,7 +70,12 @@ var marks = map[notify.Level]string{
 	notify.LevelOK:      "\U0001F7E2 ",
 }
 
-func (preset) Render(ev notify.Event, s notify.PresetSettings) ([]byte, error) {
+// Render is the one JSON request of the message.
+func (preset) Render(ev notify.Event, t notify.Target) ([]notify.Request, error) {
+	return notify.JSONRequest(render(ev, t.Settings))
+}
+
+func render(ev notify.Event, s notify.PresetSettings) ([]byte, error) {
 	m := notify.Compose(ev)
 	head := marks[m.Level] + "<b>" + escape(m.Title) + "</b>"
 	tail := ""

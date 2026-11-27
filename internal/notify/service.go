@@ -207,23 +207,14 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 	if err != nil {
 		return out, false, err
 	}
-	switch {
-	case in.URL != nil:
-		if out.URLDisplay, err = checkURL(*in.URL); err != nil {
-			return out, false, err
-		}
-		if err := checkPresetURL(preset, *in.URL); err != nil {
-			return out, false, err
-		}
-		if out.URLSealed, err = s.d.Box.SealAAD([]byte(strings.TrimSpace(*in.URL)), aad); err != nil {
-			return out, false, fmt.Errorf("seal webhook url: %w", err)
-		}
-	case update && in.Preset != curPreset:
-		return out, false, fmt.Errorf("%w: changing a channel's preset needs the URL again", ErrInvalidInput)
-	case update:
-		out.URLSealed, out.URLDisplay = stored.URLSealed, stored.URLDisplay
-	default:
-		return out, false, fmt.Errorf("%w: a webhook channel needs a url", ErrInvalidInput)
+	if out.PresetSettings, err = checkPresetSettings(preset, in); err != nil {
+		return out, false, err
+	}
+	if out.URLSealed, out.URLDisplay, err = s.webhookURL(aad, preset, in, out.PresetSettings, stored, update, curPreset); err != nil {
+		return out, false, err
+	}
+	if out.Secrets, err = s.presetSecrets(aad, preset, in.Secrets, stored.Secrets, update && in.Preset == curPreset); err != nil {
+		return out, false, err
 	}
 	if len(in.Headers) > maxHeaders {
 		return out, false, fmt.Errorf("%w: at most %d headers", ErrInvalidInput, maxHeaders)
@@ -261,9 +252,6 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 		return out, false, err
 	}
 	out.BodyTemplate = in.BodyTemplate
-	if out.ChatID, err = checkPresetSettings(preset, in); err != nil {
-		return out, false, err
-	}
 	switch {
 	case in.Signed && in.SigningSecret != nil:
 		if err := checkSigningSecret(*in.SigningSecret); err != nil {
