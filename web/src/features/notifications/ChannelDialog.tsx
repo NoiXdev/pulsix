@@ -12,6 +12,16 @@ import { useT } from '../../i18n/useT.ts';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
+type Preset = NonNullable<NonNullable<NotifyChannel['webhook']>['preset']>;
+
+/** The shape of each service's URL, as the URL field's placeholder. */
+const URL_SHAPES: Record<Preset, string> = {
+  '': 'https://hooks.example.com/…',
+  slack: 'https://hooks.slack.com/services/…',
+  mattermost: 'https://mattermost.example.com/hooks/…',
+  telegram: 'https://api.telegram.org/bot<token>/sendMessage',
+};
+
 interface HeaderRow {
   name: string;
   /** Empty while editing keeps the stored value. */
@@ -52,7 +62,14 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
   const [template, setTemplate] = useState(channel?.webhook?.body_template ?? '');
   const [signed, setSigned] = useState(channel?.webhook?.signed ?? false);
   const [secret, setSecret] = useState('');
+  const [preset, setPreset] = useState<Preset>(channel?.webhook?.preset ?? '');
+  const [chatId, setChatId] = useState(channel?.webhook?.chat_id ?? '');
   const [error, setError] = useState<string | null>(null);
+  // A preset owns the body (backlog 4.7): no method choice, no template.
+  // Changing it while editing needs the URL again, since the stored one
+  // belongs to the old service and is never shown.
+  const presetChanged = editing && preset !== (channel.webhook?.preset ?? '');
+  const urlRequired = !editing || presetChanged;
 
   function body(): NotifyChannelInput {
     if (kind === 'email') {
@@ -63,12 +80,14 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
       name,
       enabled,
       webhook: {
-        method,
+        method: preset !== '' ? 'POST' : method,
         ...(url.trim() !== '' ? { url: url.trim() } : {}),
         headers: headers.filter((h) => h.name.trim() !== '').map((h) => (h.value !== '' ? { name: h.name.trim(), value: h.value } : { name: h.name.trim() })),
-        body_template: template,
+        ...(preset === '' ? { body_template: template } : {}),
         signed,
         ...(signed && secret !== '' ? { signing_secret: secret } : {}),
+        ...(preset !== '' ? { preset } : {}),
+        ...(preset === 'telegram' ? { chat_id: chatId.trim() } : {}),
       },
     };
   }
@@ -89,7 +108,7 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
     }
   }
 
-  const keep = editing ? d.keep : undefined;
+  const keep = editing && !presetChanged ? d.keep : undefined;
   return (
     <Dialog open onClose={onClose} title={editing ? d.editTitle(channel.name) : d.addTitle} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
@@ -121,24 +140,41 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
           </>
         ) : (
           <>
-            <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2">
+            <Label htmlFor="ch-preset">{d.format}</Label>
+            <Select
+              id="ch-preset"
+              options={(['', 'slack', 'mattermost', 'telegram'] as const).map((p) => ({ value: p, label: d.formats[p === '' ? 'raw' : p] }))}
+              value={preset}
+              onChange={(v) => setPreset(v as Preset)}
+            />
+            <div className={preset === '' ? 'grid grid-cols-[100px_minmax(0,1fr)] gap-2' : 'flex flex-col'}>
+              {preset === '' && (
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="ch-method">{d.method}</Label>
+                  <Select
+                    id="ch-method"
+                    options={[
+                      { value: 'POST', label: 'POST' },
+                      { value: 'PUT', label: 'PUT' },
+                    ]}
+                    value={method}
+                    onChange={(v) => setMethod(v as 'POST' | 'PUT')}
+                  />
+                </div>
+              )}
               <div className="flex flex-col gap-1">
-                <Label htmlFor="ch-method">{d.method}</Label>
-                <Select
-                  id="ch-method"
-                  options={[
-                    { value: 'POST', label: 'POST' },
-                    { value: 'PUT', label: 'PUT' },
-                  ]}
-                  value={method}
-                  onChange={(v) => setMethod(v as 'POST' | 'PUT')}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="ch-url">{editing ? d.urlNow(channel.webhook?.url ?? '') : d.url}</Label>
-                <Input id="ch-url" className="font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={keep ?? 'https://hooks.example.com/…'} required={!editing} />
+                <Label htmlFor="ch-url">{editing && !presetChanged ? d.urlNow(channel.webhook?.url ?? '') : d.url}</Label>
+                <Input id="ch-url" className="font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={keep ?? URL_SHAPES[preset]} required={urlRequired} />
               </div>
             </div>
+            {presetChanged && <p className="text-[11px] text-muted-foreground">{d.formatUrlAgain}</p>}
+            {preset === 'telegram' && (
+              <>
+                <p className="text-[11px] text-muted-foreground">{d.telegramToken}</p>
+                <Label htmlFor="ch-chat">{d.chatId}</Label>
+                <Input id="ch-chat" className="font-mono" value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder={d.chatIdPlaceholder} required maxLength={64} />
+              </>
+            )}
             <span className="text-[11px] font-medium text-muted-foreground">{d.headers}</span>
             {headers.map((h, i) => (
               <div key={i} className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_32px] gap-2">
@@ -158,8 +194,12 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
             <Button type="button" variant="ghost" className="self-start" onClick={() => setHeaders([...headers, { name: '', value: '' }])}>
               <Plus size={13} /> {d.addHeader}
             </Button>
-            <Label htmlFor="ch-template">{d.bodyTemplate}</Label>
-            <textarea id="ch-template" className={TEXTAREA} value={template} onChange={(e) => setTemplate(e.target.value)} placeholder='{"text": {{ schedule.name | json }}}' />
+            {preset === '' && (
+              <>
+                <Label htmlFor="ch-template">{d.bodyTemplate}</Label>
+                <textarea id="ch-template" className={TEXTAREA} value={template} onChange={(e) => setTemplate(e.target.value)} placeholder='{"text": {{ schedule.name | json }}}' />
+              </>
+            )}
             <div className="flex items-center gap-2 text-xs">
               <Switch id="ch-signed" checked={signed} onCheckedChange={setSigned} />
               <label htmlFor="ch-signed">{d.sign}</label>

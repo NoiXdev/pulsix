@@ -35,7 +35,7 @@ export function channelColumns(t: Messages): DataListColumn<NotifyChannel>[] {
       sortKey: 'kind',
       sortValue: (c) => c.kind,
       defaultVisible: true,
-      render: (c) => <span>{c.kind === 'email' ? c8.email : c8.webhook}</span>,
+      render: (c) => <span>{c.kind === 'email' ? c8.email : c.webhook?.preset ? c8.webhookPreset(m.channelDialog.formats[c.webhook.preset]) : c8.webhook}</span>,
     },
     {
       id: 'sends_to',
