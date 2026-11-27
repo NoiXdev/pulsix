@@ -22,11 +22,17 @@ const sessionCloseTimeout = 5 * time.Second
 // holds one pooled connection for as long as it lives, so the manager
 // gives it the pool its advisory lockers hold their sessions on (backlog
 // 3.92), never the one request work runs on.
-type SQLRevocationFeed struct{ pool *pgxpool.Pool }
+type SQLRevocationFeed struct {
+	pool *pgxpool.Pool
+	log  *slog.Logger
+}
 
-// NewSQLRevocationFeed builds the feed on pool.
-func NewSQLRevocationFeed(pool *pgxpool.Pool) *SQLRevocationFeed {
-	return &SQLRevocationFeed{pool: pool}
+// NewSQLRevocationFeed builds the feed on pool; a nil log is slog.Default.
+func NewSQLRevocationFeed(pool *pgxpool.Pool, log *slog.Logger) *SQLRevocationFeed {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &SQLRevocationFeed{pool: pool, log: log}
 }
 
 // Listen takes a connection and subscribes it to RevocationChannel.
@@ -35,7 +41,7 @@ func (f *SQLRevocationFeed) Listen(ctx context.Context) (RevocationSession, erro
 	if err != nil {
 		return nil, fmt.Errorf("acquire a connection: %w", err)
 	}
-	s := &sqlRevocationSession{conn: conn}
+	s := &sqlRevocationSession{conn: conn, log: f.log}
 	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{RevocationChannel}.Sanitize()); err != nil {
 		s.Close()
 		return nil, fmt.Errorf("listen on %s: %w", RevocationChannel, err)
@@ -46,6 +52,7 @@ func (f *SQLRevocationFeed) Listen(ctx context.Context) (RevocationSession, erro
 // sqlRevocationSession is one LISTENing connection.
 type sqlRevocationSession struct {
 	conn  *pgxpool.Conn
+	log   *slog.Logger
 	close sync.Once
 }
 
@@ -69,7 +76,7 @@ func (s *sqlRevocationSession) Next(ctx context.Context, wait time.Duration) (uu
 		if id, err := uuid.Parse(n.Payload); err == nil {
 			return id, nil
 		}
-		slog.DebugContext(ctx, "ignored a worker revocation notification that names no worker", "payload_bytes", len(n.Payload))
+		s.log.DebugContext(ctx, "ignored a worker revocation notification that names no worker", "payload_bytes", len(n.Payload))
 	}
 }
 

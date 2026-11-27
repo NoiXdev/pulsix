@@ -1031,7 +1031,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// manager with the worker endpoint holds worker streams.
 	var revocationsStop func()
 	if grpcServer != nil {
-		revocationsStop = startLoop(workers.NewRevocationWatcher(workers.NewSQLRevocationFeed(lockDB.Pool()), streams, workers.WatchConfig{Log: slog.Default()}).Run)
+		revocationsStop = startLoop(workers.NewRevocationWatcher(workers.NewSQLRevocationFeed(lockDB.Pool(), slog.Default()), streams, workers.WatchConfig{Log: slog.Default()}).Run)
 	}
 
 	// The backup schedule: one ticker per manager; the attempt row's claim

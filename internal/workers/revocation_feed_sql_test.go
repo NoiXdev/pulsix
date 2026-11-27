@@ -2,6 +2,7 @@ package workers_test
 
 import (
 	"context"
+	"log/slog"
 	"math/big"
 	"slices"
 	"testing"
@@ -57,7 +58,8 @@ func TestRevocationNotifiesOnCommitOnly(t *testing.T) {
 	svc := workers.NewService(workers.NewSQLStore(d))
 	org := seedOrg(t, q, "revocation-notify")
 	zone := seedZone(t, q, org, "default")
-	sess := listen(t, workers.NewSQLRevocationFeed(d.Pool()))
+	logs := &logRecorder{}
+	sess := listen(t, workers.NewSQLRevocationFeed(d.Pool(), slog.New(logs)))
 
 	committed, rolledBack := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	for _, tc := range []struct {
@@ -98,6 +100,9 @@ func TestRevocationNotifiesOnCommitOnly(t *testing.T) {
 	}
 	wantNext(t, sess, waitBound, w.ID)
 	wantNext(t, sess, quietWait, uuid.Nil) // nothing left: the wait just ends
+	if n := logs.count("DEBUG ignored a worker revocation notification"); n != 2 {
+		t.Fatalf("%d skipped payloads logged through the injected logger, want 2: %v", n, logs.records)
+	}
 }
 
 // TestRevocationSessionNotActive: of the asked ids, the revoked and the
@@ -114,7 +119,7 @@ func TestRevocationSessionNotActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknown := uuid.Must(uuid.NewV7())
-	sess := listen(t, workers.NewSQLRevocationFeed(d.Pool()))
+	sess := listen(t, workers.NewSQLRevocationFeed(d.Pool(), nil))
 	got, err := sess.NotActive(ctx, []uuid.UUID{active.ID, revoked.ID, unknown})
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +197,7 @@ func startManagerB(t *testing.T, streams *fakeOpenStreams) *managerB {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	feed := &signalFeed{inner: workers.NewSQLRevocationFeed(pool.Pool()), calls: make(chan struct{}, 16), ready: make(chan struct{}, 16), waiting: make(chan struct{}, 1), gate: make(chan chan struct{}, 1)}
+	feed := &signalFeed{inner: workers.NewSQLRevocationFeed(pool.Pool(), nil), calls: make(chan struct{}, 16), ready: make(chan struct{}, 16), waiting: make(chan struct{}, 1), gate: make(chan chan struct{}, 1)}
 	runWatcher(t, feed, streams)
 	waitFor(t, feed.calls, "B listens")
 	waitFor(t, feed.ready, "B's session")
