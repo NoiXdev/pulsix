@@ -53,7 +53,12 @@ func TestBuildListensForWorkerRevocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer plain.Close()
-	time.Sleep(300 * time.Millisecond)
+	// Build starts the watcher synchronously or not at all, so the stop
+	// hooks say which manager runs one, with no wait.
+	if a.stopRevocations == nil || plain.stopRevocations != nil {
+		a.Close()
+		t.Fatalf("watcher started with the endpoint = %v, without = %v; want true, false", a.stopRevocations != nil, plain.stopRevocations != nil)
+	}
 	if n := listeners(); n != 1 {
 		a.Close()
 		t.Fatalf("listening sessions with a manager without the worker endpoint = %d, want still 1", n)

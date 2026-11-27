@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -49,23 +50,27 @@ type sqlRevocationSession struct {
 }
 
 // Next waits for a notification. The wait ending is not an error: the
-// connection survives a read deadline, and the caller rescans. A payload
-// that is not a worker id reads as uuid.Nil, which rescans as well.
+// connection survives a read deadline, and the caller decides whether to
+// rescan. A payload that is not a worker id is skipped and the wait goes
+// on: only Pulsix announces on the channel, so such a payload carries
+// nothing, and rescanning for it would let anyone who can NOTIFY make
+// every manager query (backlog 2.54 review M2).
 func (s *sqlRevocationSession) Next(ctx context.Context, wait time.Duration) (uuid.UUID, error) {
 	wctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
-	n, err := s.conn.Conn().WaitForNotification(wctx)
-	if err != nil {
-		if ctx.Err() == nil && errors.Is(wctx.Err(), context.DeadlineExceeded) && !s.conn.Conn().IsClosed() {
-			return uuid.Nil, nil
+	for {
+		n, err := s.conn.Conn().WaitForNotification(wctx)
+		if err != nil {
+			if ctx.Err() == nil && errors.Is(wctx.Err(), context.DeadlineExceeded) && !s.conn.Conn().IsClosed() {
+				return uuid.Nil, nil
+			}
+			return uuid.Nil, err
 		}
-		return uuid.Nil, err
+		if id, err := uuid.Parse(n.Payload); err == nil {
+			return id, nil
+		}
+		slog.DebugContext(ctx, "ignored a worker revocation notification that names no worker", "payload_bytes", len(n.Payload))
 	}
-	id, err := uuid.Parse(n.Payload)
-	if err != nil {
-		return uuid.Nil, nil
-	}
-	return id, nil
 }
 
 // NotActive runs ListWorkersNotActive on the session's own connection.

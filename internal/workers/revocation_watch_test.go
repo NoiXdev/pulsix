@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -70,6 +72,7 @@ type fakeSession struct {
 	next    chan nextResult
 	queries chan []uuid.UUID
 	closed  chan struct{}
+	firstID uuid.UUID // a test's handle on a worker it notifies about
 
 	mu        sync.Mutex
 	notActive map[uuid.UUID]bool
@@ -143,14 +146,38 @@ func (f *fakeFeed) Listen(ctx context.Context) (workers.RevocationSession, error
 	}
 }
 
-// runWatcher starts the watcher and stops it when the test ends.
-func runWatcher(t *testing.T, feed workers.RevocationFeed, streams workers.OpenStreams) {
+// testClock is the watcher's injected clock; it moves only when told.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+// pastRescan moves a test clock beyond the watcher's rescan deadline.
+const pastRescan = 31 * time.Second
+
+// runWatcher starts the watcher on a frozen test clock and stops it when
+// the test ends.
+func runWatcher(t *testing.T, feed workers.RevocationFeed, streams workers.OpenStreams) *testClock {
 	t.Helper()
-	w := workers.NewRevocationWatcher(feed, streams, workers.WatchConfig{RetryDelay: time.Millisecond})
+	clock := &testClock{now: time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)}
+	w := workers.NewRevocationWatcher(feed, streams, workers.WatchConfig{RetryDelay: time.Millisecond, Now: clock.Now})
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); w.Run(runCtx) }()
 	t.Cleanup(func() { cancel(); <-done })
+	return clock
 }
 
 func compareIDs(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) }
@@ -205,42 +232,50 @@ func send(t *testing.T, s *fakeSession, r nextResult) {
 // database confirms. A notification for a worker without streams here asks
 // nothing.
 func TestRevocationWatcherVerifiesANotification(t *testing.T) {
-	revoked, alsoInactive, other := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	streams := newFakeOpenStreams(revoked, alsoInactive)
+	revoked, alsoInactive, active, other := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	streams := newFakeOpenStreams(revoked, alsoInactive, active)
 	sess := newFakeSession()
 	feed := newFakeFeed()
 	feed.sessions <- sess
 	runWatcher(t, feed, streams)
 
-	wantQuery(t, sess, revoked, alsoInactive) // the rescan on connect: nothing inactive yet
+	wantQuery(t, sess, revoked, alsoInactive, active) // the rescan on connect: nothing inactive yet
 	sess.mu.Lock()
 	sess.notActive[revoked], sess.notActive[alsoInactive] = true, true
 	sess.mu.Unlock()
 
+	// A notification naming a worker the database reports active (a
+	// forged one, say) is asked about and closes nothing.
+	send(t, sess, nextResult{id: active})
+	wantQuery(t, sess, active)
 	send(t, sess, nextResult{id: other})
 	send(t, sess, nextResult{id: revoked})
 	wantQuery(t, sess, revoked)
 	wantClosed(t, streams, revoked)
-	if !streams.isOpen(alsoInactive) {
-		t.Fatal("a worker the notification did not name was closed")
+	wantNoClose(t, streams)
+	if !streams.isOpen(alsoInactive) || !streams.isOpen(active) {
+		t.Fatal("a worker the notification did not name, or an active one, was closed")
 	}
 }
 
-// TestRevocationWatcherRescansWhenQuiet: a wait that ends without a usable
-// notification (quiet, or a payload that is not a worker id) rescans every
-// worker with open streams; only the inactive one is closed.
+// TestRevocationWatcherRescansWhenQuiet: a wait that ends at the rescan
+// deadline without a notification rescans every worker with open streams;
+// only the inactive one is closed. A wait that ends before the deadline
+// asks nothing.
 func TestRevocationWatcherRescansWhenQuiet(t *testing.T) {
 	revoked, active := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	streams := newFakeOpenStreams(revoked, active)
 	sess := newFakeSession()
 	feed := newFakeFeed()
 	feed.sessions <- sess
-	runWatcher(t, feed, streams)
+	clock := runWatcher(t, feed, streams)
 
 	wantQuery(t, sess, revoked, active)
 	sess.mu.Lock()
 	sess.notActive[revoked] = true
 	sess.mu.Unlock()
+	send(t, sess, nextResult{id: uuid.Nil}) // before the deadline
+	clock.advance(pastRescan)
 	send(t, sess, nextResult{id: uuid.Nil})
 	wantQuery(t, sess, revoked, active)
 	wantClosed(t, streams, revoked)
@@ -248,6 +283,33 @@ func TestRevocationWatcherRescansWhenQuiet(t *testing.T) {
 	if !streams.isOpen(active) {
 		t.Fatal("an active worker's streams were closed")
 	}
+}
+
+// TestRevocationWatcherRescansOnAFixedDeadline (backlog 2.54 review M1):
+// notifications do not postpone the periodic rescan. Unrelated
+// notifications keep arriving, yet once the deadline has passed the
+// watcher rescans every worker with open streams — the safety net for a
+// revocation an older manager served without a notification.
+func TestRevocationWatcherRescansOnAFixedDeadline(t *testing.T) {
+	revoked := uuid.Must(uuid.NewV7())
+	streams := newFakeOpenStreams(revoked)
+	sess := newFakeSession()
+	feed := newFakeFeed()
+	feed.sessions <- sess
+	clock := runWatcher(t, feed, streams)
+
+	wantQuery(t, sess, revoked)
+	sess.mu.Lock()
+	sess.notActive[revoked] = true // revoked without a notification
+	sess.mu.Unlock()
+	for range 3 {
+		clock.advance(10 * time.Second)
+		send(t, sess, nextResult{id: uuid.Must(uuid.NewV7())}) // no streams here
+	}
+	clock.advance(time.Second)                             // 31 s since the last rescan
+	send(t, sess, nextResult{id: uuid.Must(uuid.NewV7())}) // still unrelated
+	wantQuery(t, sess, revoked)
+	wantClosed(t, streams, revoked)
 }
 
 // TestRevocationWatcherReconnectsAndRescans: a session that fails (a lost
@@ -263,7 +325,7 @@ func TestRevocationWatcherReconnectsAndRescans(t *testing.T) {
 			s.mu.Lock()
 			s.queryErr = errors.New("timeout")
 			s.mu.Unlock()
-			send(t, s, nextResult{id: uuid.Nil})
+			send(t, s, nextResult{id: s.firstID})
 			<-s.queries
 		}},
 	} {
@@ -271,6 +333,7 @@ func TestRevocationWatcherReconnectsAndRescans(t *testing.T) {
 			revoked := uuid.Must(uuid.NewV7())
 			streams := newFakeOpenStreams(revoked)
 			first, second := newFakeSession(), newFakeSession(revoked)
+			first.firstID = revoked // a notification for it makes the session query
 			feed := newFakeFeed()
 			feed.sessions <- first
 			runWatcher(t, feed, streams)
@@ -348,5 +411,80 @@ func TestRevocationWatcherStopsWithItsContext(t *testing.T) {
 	case <-sess.closed:
 	default:
 		t.Fatal("the session was not closed")
+	}
+}
+
+// logRecorder is a slog handler keeping each record's level and message.
+type logRecorder struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (l *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (l *logRecorder) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *logRecorder) WithGroup(string) slog.Handler            { return l }
+func (l *logRecorder) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.records = append(l.records, r.Level.String()+" "+r.Message)
+	return nil
+}
+
+func (l *logRecorder) count(prefix string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, r := range l.records {
+		if strings.HasPrefix(r, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestRevocationWatcherBacksOff (backlog 2.54 review N2): failures wait
+// RetryDelay, doubled per failure up to MaxRetryDelay; a session that
+// reaches its first wait resets the delay. Each run of failures warns
+// once and logs its recovery once.
+func TestRevocationWatcherBacksOff(t *testing.T) {
+	var mu sync.Mutex
+	var pauses []time.Duration
+	after := func(d time.Duration) <-chan time.Time {
+		mu.Lock()
+		pauses = append(pauses, d)
+		mu.Unlock()
+		c := make(chan time.Time, 1)
+		c <- time.Time{}
+		return c
+	}
+	logs := &logRecorder{}
+	refused := errors.New("connection refused")
+	feed := newFakeFeed(refused, refused, refused, refused)
+	healthy, last := newFakeSession(), newFakeSession()
+	feed.sessions <- healthy
+	feed.sessions <- last
+	w := workers.NewRevocationWatcher(feed, newFakeOpenStreams(), workers.WatchConfig{
+		RetryDelay: 5 * time.Second, MaxRetryDelay: 20 * time.Second, After: after, Log: slog.New(logs),
+	})
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(runCtx) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	send(t, healthy, nextResult{err: errors.New("conn closed")})
+	send(t, last, nextResult{id: uuid.Nil}) // the watcher waits on the last session
+
+	mu.Lock()
+	got := slices.Clone(pauses)
+	mu.Unlock()
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 20 * time.Second, 5 * time.Second}
+	if !slices.Equal(got, want) {
+		t.Fatalf("pauses = %v, want %v", got, want)
+	}
+	if n := logs.count("WARN"); n != 2 {
+		t.Fatalf("%d warnings, want one per run of failures (2): %v", n, logs.records)
+	}
+	if n := logs.count("INFO listening for worker revocations again"); n != 2 {
+		t.Fatalf("%d recovery records, want one per run of failures (2): %v", n, logs.records)
 	}
 }

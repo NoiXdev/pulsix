@@ -80,10 +80,10 @@ import (
 const appRole = "pulsix_app"
 
 // lockSessions caps the pool the advisory lockers hold their sessions on
-// (backlog 3.92): one per locker — six today (re-test, item expiry,
-// retention purge, auth reaper, probe runner, backup) — one for the worker
-// revocation watcher's LISTEN session (backlog 2.54), plus headroom for
-// the next one. A locker that finds it full waits for a lock session, never for one
+// (backlog 3.92): one per locker — seven today (re-test, item expiry,
+// retention purge, auth reaper, invite reaper, probe runner, backup) — one
+// for the worker revocation watcher's LISTEN session (backlog 2.54), plus
+// headroom for the next one. A locker that finds it full waits for a lock session, never for one
 // the work it locks needs, so the cap bounds the connections the lockers
 // use and cannot deadlock them.
 const lockSessions = 9

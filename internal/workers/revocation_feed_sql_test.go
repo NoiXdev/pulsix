@@ -50,8 +50,7 @@ func wantNext(t *testing.T, sess workers.RevocationSession, wait time.Duration, 
 // TestRevocationNotifiesOnCommitOnly: the notification query is delivered
 // when its transaction commits, never before and never for a rollback; a
 // revocation through the store announces the worker, a failed one (unknown
-// worker) announces nothing; a payload that is not a worker id reads as a
-// rescan.
+// worker) announces nothing; a payload that is not a worker id is skipped.
 func TestRevocationNotifiesOnCommitOnly(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -88,10 +87,16 @@ func TestRevocationNotifiesOnCommitOnly(t *testing.T) {
 	}
 	wantNext(t, sess, waitBound, w.ID)
 
+	// A payload that is not a worker id is skipped (backlog 2.54 review
+	// M2): the wait goes on and returns the next real one.
 	if _, err := d.Pool().Exec(ctx, `SELECT pg_notify($1, 'not-a-worker')`, workers.RevocationChannel); err != nil {
 		t.Fatal(err)
 	}
-	wantNext(t, sess, waitBound, uuid.Nil)
+	wantNext(t, sess, quietWait, uuid.Nil)
+	if _, err := d.Pool().Exec(ctx, `SELECT pg_notify($1, 'not-a-worker'), pg_notify($1, $2)`, workers.RevocationChannel, w.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	wantNext(t, sess, waitBound, w.ID)
 	wantNext(t, sess, quietWait, uuid.Nil) // nothing left: the wait just ends
 }
 
