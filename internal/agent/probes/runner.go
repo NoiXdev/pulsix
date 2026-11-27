@@ -26,7 +26,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/probe"
-	"github.com/noixdev/pulsix/internal/probe/all"
+	"github.com/noixdev/pulsix/internal/probe/vantage"
 	"github.com/noixdev/pulsix/internal/probeconfig"
 )
 
@@ -87,15 +87,14 @@ type Deps struct {
 	Log *slog.Logger
 }
 
-// DefaultRegistry is internal/probe/all's registry without snmp: an snmp
-// check always names a secret, and checks with a secret are probed only
-// from the manager, so snmp never reaches an agent (and the manager drops
-// it if it did). An snmp slot is therefore an unknown plugin here and
-// reports its metrics as errors.
+// DefaultRegistry is internal/probe/vantage's registry, the manager's
+// without snmp: an snmp check always names a secret, and checks with a
+// secret are probed only from the manager, so snmp never reaches an agent
+// (and the manager drops it if it did). An snmp slot is therefore an
+// unknown plugin here and reports its descriptor's metrics as errors; its
+// library is not even linked into the agent (backlog 3.78).
 func DefaultRegistry() probe.Registry {
-	reg := all.Registry(nil)
-	delete(reg, "snmp")
-	return reg
+	return vantage.Registry(nil)
 }
 
 // slotKey identifies an assigned slot.

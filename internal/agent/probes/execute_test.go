@@ -260,3 +260,24 @@ func TestProbeHonoursCancellation(t *testing.T) {
 		t.Fatal("a round cut short by shutdown was delivered")
 	}
 }
+
+// TestSNMPSlotFailsWithTheDescriptorsMetrics: snmp's probe is not linked
+// into the agent (backlog 3.78), so a slot that named it anyway — the
+// manager never assigns one and drops what comes back — reports every
+// snmp descriptor metric as an error on item "", dialling nothing.
+func TestSNMPSlotFailsWithTheDescriptorsMetrics(t *testing.T) {
+	t.Parallel()
+	d, ok := checkplugins.Get("snmp")
+	if !ok {
+		t.Fatal("no snmp descriptor")
+	}
+	obs := failAll("snmp", map[string]any{"oids": []any{"a=1.3.6.1.2.1.1.3.0"}}, "unknown probe plugin snmp")
+	if len(obs) != len(d.Metrics) {
+		t.Fatalf("observations = %d, want one per descriptor metric (%d): %+v", len(obs), len(d.Metrics), obs)
+	}
+	for i, o := range obs {
+		if o.Metric != d.Metrics[i].Name || o.Item != "" || o.Err == "" {
+			t.Fatalf("observation %d = %+v, want %s on item \"\" as an error", i, o, d.Metrics[i].Name)
+		}
+	}
+}

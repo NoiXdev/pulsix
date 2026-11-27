@@ -9,7 +9,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/probe"
-	"github.com/noixdev/pulsix/internal/probe/all"
+	"github.com/noixdev/pulsix/internal/probe/vantage"
 )
 
 // deadline is the safety net on one probe of interval: min(interval,
@@ -53,12 +53,12 @@ func (r *Runner) execute(ctx context.Context, s *slot) []probe.Observation {
 }
 
 // failAll is msg on every metric a probe of plugin with params would have
-// produced: the plugin's own FailAll where it has one (all.FailAll),
+// produced: the plugin's own FailAll where it has one (vantage.FailAll),
 // otherwise each of its descriptor's metrics, item "" — and for a plugin
 // no descriptor knows either, its "<plugin>.up", as probe.Registry.Run
 // reports one.
 func failAll(plugin string, params map[string]any, msg string) []probe.Observation {
-	if obs, ok := all.FailAll(plugin, params, msg); ok {
+	if obs, ok := vantage.FailAll(plugin, params, msg); ok {
 		return obs
 	}
 	if d, ok := checkplugins.Get(plugin); ok && len(d.Metrics) > 0 {
