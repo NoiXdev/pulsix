@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/probe"
@@ -61,7 +60,7 @@ func probeDNS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	resolver := net.DefaultResolver
 	// refused records a dial the guard refused: Go's resolver reports it
 	// only as a failed lookup, not as probe.ErrNotAllowed.
-	var refused atomic.Bool
+	var refused probe.Refusal
 	// connFailed records why talking to the server failed: Go's resolver
 	// keeps only the text of a connection's error.
 	var connFailed ioFailure
@@ -70,8 +69,8 @@ func probeDNS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 		if err != nil {
 			return fail(err.Error())
 		}
-		if !g.Allowed(ap.Addr()) {
-			return fail(probe.ErrNotAllowed.Error())
+		if err := g.Check(ap.Addr()); err != nil {
+			return fail(probe.RefusalText(err))
 		}
 		resolver = guardedResolver(dial, ap, &refused, &connFailed)
 	}
@@ -82,8 +81,8 @@ func probeDNS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	start := time.Now()
 	answers, err := lookup(ctx, resolver, name)
 	elapsed := time.Since(start)
-	if refused.Load() {
-		return fail(probe.ErrNotAllowed.Error())
+	if refused.Refused() {
+		return fail(refused.Text())
 	}
 	if err != nil || len(answers) == 0 {
 		return probe.Down("dns", lookupFailure(err, connFailed.label()))
@@ -177,17 +176,15 @@ func matchingAnswer(typ string, answers []string, want string) (string, bool) {
 }
 
 // guardedResolver sends every query to server, through the guard's dialer,
-// and sets refused when that dialer refuses. The guard was already asked
+// and notes in refused when that dialer refuses. The guard was already asked
 // about server; the dial-time check is the backstop. Each connection's
 // failures are noted in failed.
-func guardedResolver(dial dialerFor, server netip.AddrPort, refused *atomic.Bool, failed *ioFailure) *net.Resolver {
+func guardedResolver(dial dialerFor, server netip.AddrPort, refused *probe.Refusal, failed *ioFailure) *net.Resolver {
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			conn, err := dial(0).DialContext(ctx, network, server.String())
-			if errors.Is(err, probe.ErrNotAllowed) {
-				refused.Store(true)
-			}
+			refused.Note(err)
 			if err != nil {
 				failed.note(err)
 				return nil, err

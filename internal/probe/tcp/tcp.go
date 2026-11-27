@@ -68,7 +68,7 @@ func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	conn, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		if errors.Is(err, probe.ErrNotAllowed) {
-			return failAll(expect, entries, probe.ErrNotAllowed.Error())
+			return failAll(expect, entries, probe.RefusalText(err))
 		}
 		return probe.Down("tcp", probe.Classify(err))
 	}

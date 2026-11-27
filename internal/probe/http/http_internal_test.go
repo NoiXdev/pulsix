@@ -9,7 +9,6 @@ import (
 	"net/http/httptrace"
 	"net/netip"
 	"net/url"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,7 +34,7 @@ func TestHTTPVerifiesAgainstInjectedRoots(t *testing.T) {
 }
 
 func TestHTTPTransportDialsOnlyThroughTheGuard(t *testing.T) {
-	var refused atomic.Bool
+	var refused probe.Refusal
 	tr := newHTTPTransport(probe.NewGuard(nil, nil), true, nil, &refused)
 	if tr.Proxy != nil {
 		t.Fatal("the transport must not use a proxy")
@@ -47,8 +46,8 @@ func TestHTTPTransportDialsOnlyThroughTheGuard(t *testing.T) {
 		t.Fatal("every connection must go through DialContext")
 	}
 	_, err := tr.DialContext(context.Background(), "tcp", netip.MustParseAddrPort("127.0.0.1:9").String())
-	if err == nil || !refused.Load() {
-		t.Fatalf("a refused dial must be recorded: err %v, refused %v", err, refused.Load())
+	if err == nil || !refused.Refused() {
+		t.Fatalf("a refused dial must be recorded: err %v, refused %v", err, refused.Refused())
 	}
 }
 
@@ -56,7 +55,7 @@ func TestHTTPTransportDialsOnlyThroughTheGuard(t *testing.T) {
 // old LAN appliances read down, so an http probe that does not verify
 // accepts TLS 1.0; an http probe that verifies keeps Go's default floor.
 func TestHTTPOldTLSVersionsAreAccepted(t *testing.T) {
-	var refused atomic.Bool
+	var refused probe.Refusal
 	if v := newHTTPTransport(loopbackOnly(), false, nil, &refused).TLSClientConfig.MinVersion; v != tls.VersionTLS10 {
 		t.Fatalf("http probe without verify_tls: MinVersion = %x, want TLS 1.0", v)
 	}

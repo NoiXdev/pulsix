@@ -184,3 +184,19 @@ func TestMatchingAnswer(t *testing.T) {
 		}
 	}
 }
+
+// TestDNSDialLocalRefusalIsAnError: a dial the agent's own deny list
+// refuses (backlog 3.82) reads as its own fixed text.
+func TestDNSDialLocalRefusalIsAnError(t *testing.T) {
+	params := map[string]any{"name": "example.test", "server": "127.0.0.1:53", "expect": "192.0.2.7", "timeout_s": float64(2)}
+	local := probe.NewGuardForTest(true, nil).WithLocalDeny([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
+	obs := probeDNS(context.Background(), probe.NewGuardForTest(true, nil), params, "", local.Dialer)
+	if len(obs) != 4 {
+		t.Fatalf("want one error per metric, got %+v", obs)
+	}
+	for _, o := range obs {
+		if o.Value != nil || o.Err != probe.ErrLocalPolicy.Error() {
+			t.Fatalf("%s: value %v, err %q; want err %q", o.Metric, o.Value, o.Err, probe.ErrLocalPolicy)
+		}
+	}
+}

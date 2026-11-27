@@ -51,7 +51,7 @@ func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, addres
 	raw, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		if errors.Is(err, probe.ErrNotAllowed) {
-			return failAll(entries, probe.ErrNotAllowed.Error())
+			return failAll(entries, probe.RefusalText(err))
 		}
 		return probe.Down("tls", probe.Classify(err))
 	}

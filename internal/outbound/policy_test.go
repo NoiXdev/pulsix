@@ -189,3 +189,22 @@ func TestPolicyRefusesIPv6CloudInstanceServices(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddedIPv4: the exported view of the forms Check sees through
+// (backlog 3.82: the probe guard's deny lists use it).
+func TestEmbeddedIPv4(t *testing.T) {
+	p := outbound.NewPolicy(nil, nil)
+	for in, want := range map[string]string{
+		"64:ff9b::a00:1":  "10.0.0.1",
+		"2002:a00:1::1":   "10.0.0.1",
+		"::ffff:0:a00:1":  "10.0.0.1",
+		"::ffff:10.0.0.1": "", // mapped: judged as IPv4 itself, embeds nothing
+		"2001:db8::1":     "",
+		"10.0.0.1":        "",
+	} {
+		got, ok := p.EmbeddedIPv4(netip.MustParseAddr(in))
+		if (want == "") == ok || (ok && got != netip.MustParseAddr(want)) {
+			t.Errorf("EmbeddedIPv4(%s) = %v, %v; want %q", in, got, ok, want)
+		}
+	}
+}
