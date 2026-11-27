@@ -1,6 +1,6 @@
 # Webhook presets: Slack, Mattermost, Telegram (backlog 4.7) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A webhook channel can be set to a Slack, Mattermost or Telegram preset that renders a native, colour-coded message, so nobody hand-writes a body template for these services.
 
@@ -37,11 +37,11 @@
 
 ## Review Focus
 
-- Token leak: a Telegram URL refused by validation, a transport error, a 4xx — none carry the path. Pinned by `TestTelegramURLErrorNeverEchoesToken` (presets/telegram), `TestPresetSendErrorRedactsURL` (notify), API read `TestNotifyChannelPresetReadHidesPath`.
+- Token leak: a Telegram URL refused by validation, a transport error, a 4xx — none carry the path. Pinned by `TestTelegramURLErrorNeverEchoesToken` (presets/telegram), `TestPresetSendErrorRedactsURL` (notify), API `TestNotifyChannelTelegramPreset` (create, read and refusals carry no token).
 - Hostile names (`<!channel>`, `@everyone`, `*bold*`, `</b>`, `&amp;`, bidi overrides) in schedule/host/detail: golden `hostile` cases per service.
 - A 50-alert batch with long details plus an already-capped count: `TestSlackBoundsLargeBatch`, `TestMattermostBoundsLargeBatch`, `TestTelegramBoundsLargeBatch` assert the limits and the "… and N more" total.
 - Mixed severity batch colour and an all-closed batch: `TestComposeLevel` (notify).
-- Raw channels unchanged: existing send/service tests green; `TestRawWebhookIgnoresPresetRegistry`.
+- Raw channels unchanged: the existing send, service and API channel tests pass unchanged with the registry wired.
 - Update paths: switching preset without URL refused; keeping the same preset without URL keeps it; template sent with a preset refused (`TestPresetValidation` table).
 
 ---
@@ -50,48 +50,48 @@
 
 **Files:** `internal/db/migrations/00136_notification_channel_presets.sql`, `internal/db/queries/notifications.sql` (create/update insert `preset`, claim returns `c.preset`), regenerated `internal/db/gen`, `internal/notify/{channel.go,store_sql.go,dispatch_sql.go}`, `internal/backup/fixture_test.go` (a webhook row with a preset), `internal/notify/store_sql_test.go`.
 
-- [ ] Failing `TestSQLStoreKeepsPreset` (create, get, list, update, claim carry the preset); the CHECKs refuse an unknown value and an e-mail channel with a preset.
-- [ ] Migration + queries + `make sqlc` + mapping; green. Commit `feat(notify): store a webhook channel's preset`.
+- [x] Failing `TestSQLStoreKeepsPreset` (create, get, list, update, claim carry the preset); the CHECKs refuse an unknown value and an e-mail channel with a preset.
+- [x] Migration + queries + `make sqlc` + mapping; green. Commit `feat(notify): store a webhook channel's preset`.
 
 ### Task 2: Preset interface, Compose and helpers in `notify`
 
 **Files:** `internal/notify/preset.go` (interface, `PresetSettings{ChatID}`, `Presets`), `internal/notify/compose.go` (`Level`, `Line`, `Message`, `Compose`, `LevelColor`), `internal/notify/chat.go` (`ChatText`, `Clip`, `MoreNote`, `SafeLink`, `Fit`), tests `compose_test.go`, `chat_test.go`; `internal/notify/notifytest/` (fixtures `RunFailed`, `ScheduleSkipped`, `Digest`, `AlertsMixed`, `AlertsClosed`, `Hostile`, `LargeBatch`, `Test`; `Golden(t, path, got, update)`).
 
-- [ ] Failing table tests: `TestComposeLevel`, `TestComposeLines` per event kind, `TestFit` (budget, reserve, omitted), `TestSafeLink`, `TestClip`.
-- [ ] Implement; green. Commit `feat(notify): compose a service-neutral chat message`.
+- [x] Failing table tests: `TestComposeLevel`, `TestComposeLines` per event kind, `TestFit` (budget, reserve, omitted), `TestSafeLink`, `TestClip`.
+- [x] Implement; green. Commit `feat(notify): compose a service-neutral chat message`.
 
 ### Task 3: Service validation and sender dispatch
 
 **Files:** `internal/notify/{service.go,validate.go,send.go,channel.go}` (`WebhookInput.Preset/ChatID`, `WebhookView.Preset/ChatID`, `webhookConfig.ChatID`, `Deps.Presets`, `NewChannelSender(..., presets)`), `internal/app/app.go`, `internal/api/apitest/apitest.go`, tests `preset_service_test.go`, `preset_send_test.go` with a fake preset.
 
-- [ ] Failing `TestPresetValidation` (table: unknown preset, PUT, template, Content-Type header, settings refused by the preset, URL refused by the preset with no URL in the message, chat_id on raw, preset change without URL, same preset kept without URL, raw→preset with URL) and `TestPresetSend` (fake preset's body posted with signing + X-Pulsix headers; unknown preset permanent; raw path untouched), `TestPresetSendErrorRedactsURL`.
-- [ ] Implement; green. Commit `feat(notify): webhook presets own the body`.
+- [x] Failing `TestPresetValidation` (table: unknown preset, PUT, template, Content-Type header, settings refused by the preset, URL refused by the preset with no URL in the message, chat_id on raw, preset change without URL, same preset kept without URL, raw→preset with URL) and `TestPresetSend` (fake preset's body posted with signing + X-Pulsix headers; unknown preset permanent; raw path untouched), `TestPresetSendErrorRedactsURL`.
+- [x] Implement; green. Commit `feat(notify): webhook presets own the body`.
 
 ### Task 4: Slack renderer
 
 **Files:** `internal/notify/presets/slack/{slack.go,slack_test.go,testdata/*.golden.json}`, `internal/notify/presets/registry.go` (+ test).
-- [ ] Golden tests over the fixtures; `TestSlackEscapes`, `TestSlackBoundsLargeBatch`, `TestSlackNoButtonWithoutLink`. Commit `feat(notify): Slack preset`.
+- [x] Golden tests over the fixtures; `TestSlackEscapes`, `TestSlackBoundsLargeBatch`, `TestSlackNoButtonWithoutLink`. Commit `feat(notify): Slack preset`.
 
 ### Task 5: Mattermost renderer
 
 **Files:** `internal/notify/presets/mattermost/…`, registry line.
-- [ ] Golden tests; `TestMattermostEscapesMarkdown`, `TestMattermostBoundsLargeBatch`. Commit `feat(notify): Mattermost preset`.
+- [x] Golden tests; `TestMattermostEscapesMarkdown`, `TestMattermostBoundsLargeBatch`. Commit `feat(notify): Mattermost preset`.
 
 ### Task 6: Telegram renderer
 
 **Files:** `internal/notify/presets/telegram/…`, registry line.
-- [ ] Golden tests; `TestTelegramCheckURL`, `TestTelegramURLErrorNeverEchoesToken`, `TestTelegramChatID`, `TestTelegramEscapesHTML`, `TestTelegramBoundsLargeBatch` (UTF-16 count). An end-to-end `TestTelegramSendThroughSender` against httptest. Commit `feat(notify): Telegram preset`.
+- [x] Golden tests; `TestTelegramCheckURL`, `TestTelegramURLErrorNeverEchoesToken`, `TestTelegramChatID`, `TestTelegramEscapesHTML`, `TestTelegramBoundsLargeBatch` (UTF-16 count). The end-to-end send through the real sender is the API test of Task 7. Commit `feat(notify): Telegram preset`.
 
 ### Task 7: API
 
 **Files:** `internal/api/notify_dto.go`, `internal/api/notify_handlers_test.go`, regenerated `web/src/api/schema.d.ts` (`npm run api:gen`).
-- [ ] Failing `TestNotifyChannelPresetRoundTrip` (create slack, read shows preset and host only; telegram with chat_id; bad chat_id 4xx), `TestNotifyChannelPresetReadHidesPath`, test send of a Slack preset channel posts blocks to an httptest receiver. Commit `feat(api): webhook channel presets`.
+- [x] Failing `TestNotifyChannelTelegramPreset` (create, read shows preset, chat_id and host only; Send test posts sendMessage's body; bad chat id, path, template, unknown preset refused without the token) and `TestNotifyChannelSlackPreset` (Send test posts blocks; switching preset without URL refused, keeping it accepted). Commit `feat(api): webhook channel presets`.
 
 ### Task 8: SPA
 
 **Files:** `web/src/features/notifications/ChannelDialog.tsx`, `channelColumns.tsx`, `web/src/i18n/{en,de}/notifications.ts`, tests `ChannelDialog.preset.test.tsx`.
-- [ ] Failing tests: picking Slack hides method and template and sends `preset: 'slack'`, no `body_template`; Telegram shows Chat ID and sends it; editing a preset channel and changing the format requires the URL; list shows "Webhook · Slack". Commit `feat(web): preset picker in the webhook channel dialog`.
+- [x] Failing tests: picking Slack hides method and template and sends `preset: 'slack'`, no `body_template`; Telegram shows Chat ID and sends it; editing a preset channel and changing the format requires the URL; list shows "Webhook · Slack". Commit `feat(web): preset picker in the webhook channel dialog`.
 
 ### Task 9: Docs
 
-- [ ] Backlog 4.7 → done; `docs/upgrades.md` entry for 00136 and skew. Commit `docs: backlog 4.7 done`.
+- [x] Backlog 4.7 → done; `docs/upgrades.md` entry for 00136 and skew. Commit `docs: backlog 4.7 done`.
