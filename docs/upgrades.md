@@ -1284,6 +1284,25 @@ secrets. Stop every
 manager instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
+Run request approvals that bind their follow-ups (backlog 2.143) add migration 00138 and no
+proto change and no dependency: one nullable column `run_requests.approved_follow_ups`
+(jsonb, no default, so the ADD COLUMN touches only the catalog). Nothing is dropped or
+rewritten; a backup carries the column with `run_requests`. An approval made by this
+version stores, for each follow-up it starts (its subtrees included), a fingerprint of the
+follow-up's hosts and vars and the hosts they were taken from; a request approved before
+the upgrade has none, keeps its run picture and fingerprint, and its follow-ups run
+unchecked as before. API additions, all additive: the run picture's follow-ups carry
+`targets`, `extra_vars` (secrets masked) and `vars_digest` when the approval binds them
+(the organization lets approvals start follow-ups; not on a request approved before the
+upgrade). **Fingerprint change:** a pending run request whose picture starts follow-ups
+gets a new fingerprint once; an approval sent with the old one is refused as changed and the
+page asks for another look. **Skew:** an older manager computes the picture without the
+bindings, so a run approved on this version whose follow-ups are bound fails its claim
+there ("changed after it was approved"); an older manager's approval stores no bindings
+(its follow-ups run unchecked) and its claim guard checks no follow-up. **Approve run
+requests with follow-ups only once every manager runs this version.** Workers and agents are
+not affected.
+
 ## Behaviour changes to check after an upgrade
 
 - **A worker revocation now cuts its open run streams on every manager
@@ -2352,6 +2371,27 @@ file, then rename) so that a half-written file does not turn probing off for a m
   change after approval. Fewer hosts than approved still run. Runs without a run
   request are unaffected. A job enqueued before the upgrade is checked the same way
   when it is claimed after it.
+- **A re-approval that would leave out a host is refused (backlog 2.142, no
+  migration):** when a run request's first approval enqueued some zones and then failed,
+  approving it again replays the jobs that exist. A host that joined one of those zones in
+  between would never run, so such a re-approval is now refused with 409
+  (`code: hosts_joined_covered_zone`, and `zones` with each zone's id, name and the hosts
+  that joined it); nothing is enqueued and the request stays pending. Ask for a new run for
+  those hosts, or reject the request. A re-approval that adds no host to such a zone works
+  as before; schedules, webhooks and follow-ups are unaffected.
+- **The follow-ups an approval starts are bound to their hosts and vars (backlog 2.143,
+  migration 00138):** with Settings → General letting approvals start follow-ups, the
+  approval page shows for each follow-up the hosts it can run on (its template's targets
+  among the hosts the run before it is bound to) and its extra vars, and the approval binds
+  them, like the run's own. A follow-up whose hosts or vars changed after the approval, one
+  the approval did not show (added to a template's follow-ups afterwards), or one whose job
+  holds a host outside the bound ones fails at its claim with `refused at claim: what the
+  run uses changed after it was approved; …` or `… the run's hosts changed after it was
+  approved; …`; its own follow-ups are skipped. A change to the hosts or vars of any
+  follow-up shown, deselected ones included, between the approval and the run's own claim
+  fails the run, as a follow-up's revision change already did. A follow-up's playbook,
+  credentials or revision changed after the run's claim still start unchecked (the limit
+  backlog 2.122 documents).
 - **More database metrics (backlog 3.10b, no migration):** the updated agent reports
   new metrics; nothing existing changes. `postgres`: `pg.replicas` on item "" every
   round (an error "no privilege to see replication" for a login without `pg_monitor`,

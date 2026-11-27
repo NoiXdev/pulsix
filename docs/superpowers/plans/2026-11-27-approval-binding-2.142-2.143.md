@@ -29,7 +29,7 @@
 - Re-approval with a host that joined a covered zone → 409 with code, zones and hosts, no new job, request pending (`TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone`, internal/api); the replay check itself (`TestEnqueueRunWithRefusesGrowthOfACoveredZone`, internal/jobs) and that a schedule replay is untouched (`TestEnqueueRunWithScheduleReplayIgnoresGrowth`).
 - Follow-up claim after a var change on its host → refused; untouched → claimed (`TestApprovedFollowUpClaimIsBoundToTheApproval`, internal/api).
 - Legacy approvals unchanged (`TestPictureOfALegacyApprovalBindsNoFollowUps`, internal/runrequests); the walk intersects with the parent's hosts (`TestPictureBindsFollowUpsToTheirParentsHosts`); the guard's branches (`TestCheckRunClaimOfAFollowUp`).
-- Store round trip, revert, origin walk (`TestDecideStoresFollowUpBindings`, `TestFollowUpOriginWalksToTheRequest`), backup fixture.
+- Store round trip, revert, origin walk (`TestSQLStoreKeepsTheFollowUpBindings`, `TestSQLStoreFindsAFollowUpsRequest`), backup fixture.
 
 ## Task 1: 2.142 in the replay (`internal/jobs`)
 **Files:** `internal/jobs/{run_request.go,service.go,covered_zone.go (new)}`, `internal/jobs/run_request_test.go`.
