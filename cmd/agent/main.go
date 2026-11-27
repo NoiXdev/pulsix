@@ -48,6 +48,7 @@ import (
 	"github.com/noixdev/pulsix/internal/agent"
 	"github.com/noixdev/pulsix/internal/agent/facts"
 	"github.com/noixdev/pulsix/internal/agent/logfile"
+	"github.com/noixdev/pulsix/internal/agent/logring"
 )
 
 // version is the agent's build version, reported on every heartbeat and
@@ -110,7 +111,7 @@ func runWithContext(ctx context.Context, args, env []string) int {
 		defer func() { _ = w.Close() }()
 		out = w
 	}
-	logger := slog.New(slog.NewTextHandler(out, nil))
+	logger, ring := newLogger(out)
 
 	if *envFile != "" {
 		fileEnv, err := agent.LoadEnvFile(*envFile)
@@ -132,14 +133,25 @@ func runWithContext(ctx context.Context, args, env []string) int {
 	cfg.Version = version
 	facts.AgentVersion = version
 
-	return runAgent(ctx, cfg, logger)
+	return runAgent(ctx, cfg, logger, ring)
+}
+
+// logRingLines is how many log lines the status page shows.
+const logRingLines = 100
+
+// newLogger is the agent's logger: text lines to out, teed into the ring
+// the local status page shows (backlog 3.132). The ring never fails a
+// write, so out sees every line it would have seen alone.
+func newLogger(out io.Writer) (*slog.Logger, *logring.Ring) {
+	ring := logring.New(logRingLines)
+	return slog.New(slog.NewTextHandler(io.MultiWriter(out, ring), nil)), ring
 }
 
 // runAgent runs the loop until ctx ends and maps the outcome to the exit
 // code: 0 clean, 1 failure, 2 operator action needed.
-func runAgent(ctx context.Context, cfg agent.Config, logger *slog.Logger) int {
+func runAgent(ctx context.Context, cfg agent.Config, logger *slog.Logger, ring *logring.Ring) int {
 	logger.Info("pulsix-agent starting", "manager", cfg.ManagerAddr, "data_dir", cfg.DataDir, "secrets_file", cfg.SecretsPath)
-	loop := agent.NewLoop(cfg, agent.NewDialer(cfg), collector{}, agent.WithLogger(logger))
+	loop := agent.NewLoop(cfg, agent.NewDialer(cfg), collector{}, agent.WithLogger(logger), agent.WithLogRing(ring))
 	if err := loop.Run(ctx); err != nil {
 		// Both enrollment sentinels carry the remediation ("create a new
 		// enrollment token"); the loop has already logged the details. A

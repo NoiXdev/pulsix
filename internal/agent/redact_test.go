@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/logring"
 	"github.com/noixdev/pulsix/internal/agent/probes"
 )
 
@@ -107,5 +108,19 @@ func TestLoopLeavesResultsAloneWithoutSecrets(t *testing.T) {
 	l.handleResults([]checks.Result{{CheckKey: "db", Metric: "db.up", Err: leaky("dial"), At: lt.now()}})
 	if got := l.buffer.Drain(); got[0].Err != leaky("dial") {
 		t.Fatalf("buffered = %+v", got)
+	}
+}
+
+// TestLoopRedactsTheLogRing: a log line carrying a secret value is stored
+// in the status page's ring with the value replaced.
+func TestLoopRedactsTheLogRing(t *testing.T) {
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, twoSecrets)
+	ring := logring.New(10)
+	l := NewLoop(lt.cfg, lt.dialer, lt.facts, append(lt.options(), WithLogRing(ring))...)
+	l.lookAndApplyLocal()
+	_, _ = ring.Write([]byte(leaky("line") + "\n"))
+	if got := ring.Lines(); got[len(got)-1] != "line [secret] tail" {
+		t.Fatalf("ring = %q", got)
 	}
 }

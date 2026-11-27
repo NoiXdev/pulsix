@@ -30,6 +30,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins"
+	"github.com/noixdev/pulsix/internal/agent/logring"
 	"github.com/noixdev/pulsix/internal/agent/probes"
 	"github.com/noixdev/pulsix/internal/agent/secrets"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
@@ -184,6 +185,10 @@ type Loop struct {
 	utf8Warn invalidUTF8Warner
 	// probeEvictWarn rate-limits the probe ring's overflow warning.
 	probeEvictWarn probeEvictWarner
+
+	// logRing holds the last log lines for the status page (backlog
+	// 3.132); nil when the binary keeps none (tests).
+	logRing *logring.Ring
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -207,6 +212,11 @@ func WithTicker(fn tickerFactory) LoopOption { return func(l *Loop) { l.ticker =
 // WithRand replaces the reconnect backoff's jitter source (tests pin it;
 // production uses math/rand/v2).
 func WithRand(fn func() float64) LoopOption { return func(l *Loop) { l.rand = fn } }
+
+// WithLogRing hands the loop the ring its logger tees into: the loop makes
+// it replace secret values before a line is stored, and the status page
+// shows its lines (backlog 3.132).
+func WithLogRing(r *logring.Ring) LoopOption { return func(l *Loop) { l.logRing = r } }
 
 // withProtector replaces the data directory's protector (tests: the
 // Windows protector would refuse a temp dir the test user owns).
@@ -238,6 +248,12 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 		o(l)
 	}
 	l.secrets = l.newSecretsWatcher()
+	if l.logRing != nil {
+		// The watcher publishes its redactor without a lock, so this is
+		// safe from inside a log write made while the watcher holds its
+		// own mutex.
+		l.logRing.SetRedact(func(s string) string { return l.secrets.Redactor().Redact(s) })
+	}
 	l.scheduler = checks.NewScheduler(l.registry, l.now, l.checksTicker,
 		checks.WithSecrets(secretsSource{l.secrets}), checks.WithCommands(commandsSource{l.secrets}),
 		checks.WithLogger(l.log))
