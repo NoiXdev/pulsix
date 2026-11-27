@@ -249,3 +249,71 @@ func TestARotationStepIsResolvedAtTheTicksInstant(t *testing.T) {
 		t.Errorf("closed items to the one on call when the step fired = %d, want 0", got)
 	}
 }
+
+// replaceSteps rewrites route's ladder through the store, as an edit in
+// the route dialog does (ReplaceSteps deletes the old rungs and inserts
+// the new ones at the positions given).
+func (e *followEnv) replaceSteps(route uuid.UUID, steps []alertroutes.Step) {
+	e.t.Helper()
+	ctx := context.Background()
+	tx, err := e.d.Begin(ctx)
+	if err != nil {
+		e.t.Fatalf("begin replace steps: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := e.store.ReplaceSteps(ctx, tx, e.org, route, steps); err != nil {
+		e.t.Fatalf("replace steps: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		e.t.Fatalf("commit replace steps: %v", err)
+	}
+}
+
+// TestAStepCutFromTheLadderMidIncidentHearsNothing pins ruling R3 of the
+// 2.145/2.146 plan: a fired step is looked up by position in the ladder as
+// it stands when the event goes out. Both rungs fired; then the ladder is
+// cut to one step and the alert resolves.
+//
+//   - Step 2 dropped: position 2 no longer exists, so its former channel
+//     hears nothing, and step 1's channel still hears the resolve.
+//   - Step 1 dropped and the old step 2 renumbered to position 1: position
+//     1 fired, so the channel now at position 1 (the old step 2's) hears
+//     the resolve and the old step 1's does not — R3's recorded cost.
+func TestAStepCutFromTheLadderMidIncidentHearsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		keep                 func(step1, step2 uuid.UUID) uuid.UUID
+		wantStep1, wantStep2 int
+	}{
+		{name: "step 2 dropped", keep: func(s1, _ uuid.UUID) uuid.UUID { return s1 }, wantStep1: 1, wantStep2: 0},
+		{name: "step 1 dropped, step 2 renumbered", keep: func(_, s2 uuid.UUID) uuid.UUID { return s2 }, wantStep1: 0, wantStep2: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newFollowEnv(t)
+			step1, step2 := env.secondChannel(), env.secondChannel()
+			alert, route := env.climbToStepOne(alertroutes.Step{ChannelIDs: []uuid.UUID{step1}},
+				alertroutes.Step{ChannelIDs: []uuid.UUID{step2}})
+			env.clock.advance(5 * time.Minute)
+			env.tickOnce()
+			if n := env.deliveriesTo(route, 2); n != 1 {
+				t.Fatalf("rung 2 fired %d time(s), want 1", n)
+			}
+
+			env.replaceSteps(route, []alertroutes.Step{
+				{Position: 1, Delay: 5 * time.Minute, ChannelIDs: []uuid.UUID{tc.keep(step1, step2)}},
+			})
+			env.closeAlert(alert)
+			env.tickOnce()
+
+			if got := env.itemsTo(step1, alert, alerts.EventClosed); got != tc.wantStep1 {
+				t.Errorf("closed items to the old step 1's channel = %d, want %d", got, tc.wantStep1)
+			}
+			if got := env.itemsTo(step2, alert, alerts.EventClosed); got != tc.wantStep2 {
+				t.Errorf("closed items to the old step 2's channel = %d, want %d", got, tc.wantStep2)
+			}
+			if got := env.itemsTo(env.channel, alert, alerts.EventClosed); got != 1 {
+				t.Errorf("closed items to the route's own channel = %d, want 1", got)
+			}
+		})
+	}
+}
