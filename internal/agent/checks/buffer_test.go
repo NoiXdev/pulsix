@@ -204,3 +204,69 @@ func TestUncappedRingNeverEvictsForSize(t *testing.T) {
 		t.Fatalf("an uncapped ring evicted %+v", e)
 	}
 }
+
+// cappedRoundsRing is a ring at its cap of n results, each Put of one
+// five-result round with its own timestamp, as a probe slot's rounds
+// arrive in production (one dispatch tick, one At per round).
+func cappedRoundsRing(n int) (*Ring[Result], func()) {
+	base := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	now := base
+	ring := NewCappedRing(time.Hour, n, func(Result) int { return 1 },
+		func() time.Time { return now }, func(r Result) time.Time { return r.At })
+	rounds := make([][]Result, 64)
+	put := 0
+	next := func() {
+		now = now.Add(time.Millisecond)
+		round := rounds[put%len(rounds)]
+		for i := range round {
+			round[i].At = now
+		}
+		put++
+		ring.Put(round)
+	}
+	for i := range rounds {
+		rounds[i] = make([]Result, 5)
+	}
+	for range n / 5 * 3 {
+		next()
+	}
+	return ring, next
+}
+
+// TestCappedRingAtItsCapDoesNotReallocate: once a capped ring is at its
+// cap, a Put that evicts as much as it adds reuses the ring's array —
+// eviction moves a head and compacts in place now and then, instead of
+// copying everything into a fresh exact-size array on every Put.
+func TestCappedRingAtItsCapDoesNotReallocate(t *testing.T) {
+	ring, next := cappedRoundsRing(30_000)
+	if allocs := testing.AllocsPerRun(2000, next); allocs > 0.01 {
+		t.Fatalf("a Put at the cap allocates %.2f times on average, want none", allocs)
+	}
+	if got := len(ring.Drain()); got != 30_000 {
+		t.Fatalf("ring holds %d at its cap, want 30000", got)
+	}
+}
+
+func BenchmarkCappedRingPutAtTheCap(b *testing.B) {
+	_, next := cappedRoundsRing(30_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		next()
+	}
+}
+
+// TestCappedRingRefusesANonPositiveCap: a cap of zero or less is a wiring
+// mistake, never "uncapped" (that is NewRing).
+func TestCappedRingRefusesANonPositiveCap(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("NewCappedRing with cap %d did not panic", limit)
+				}
+			}()
+			NewCappedRing(time.Minute, limit, func(int) int { return 1 }, time.Now, func(int) time.Time { return time.Time{} })
+		}()
+	}
+}

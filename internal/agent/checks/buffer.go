@@ -6,6 +6,7 @@
 package checks
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -29,7 +30,13 @@ type Ring[T any] struct {
 	window time.Duration
 	now    func() time.Time
 	at     func(T) time.Time
-	items  []T
+	// items[head:] are the entries held, oldest first; items[:head] are
+	// evicted slots, zeroed so they hold no references, reclaimed by an
+	// in-place compaction once they are the larger part of items. Eviction
+	// is therefore O(evicted) amortised, and a ring at its cap reuses one
+	// array instead of copying itself into a fresh one on every Put.
+	items []T
+	head  int
 	// limit is the most summed cost the ring holds, 0 for no cap; held is
 	// the cost of items, kept only when capped.
 	limit int
@@ -56,8 +63,12 @@ func NewRing[T any](window time.Duration, now func() time.Time, at func(T) time.
 
 // NewCappedRing is NewRing that also holds at most limit of summed cost:
 // over it, Put evicts the oldest entries — whole instants, see Put — until
-// the rest fits. limit must be positive.
+// the rest fits. limit must be positive: a cap of zero or less is a wiring
+// mistake (an uncapped ring is NewRing), so it panics.
 func NewCappedRing[T any](window time.Duration, limit int, cost func(T) int, now func() time.Time, at func(T) time.Time) *Ring[T] {
+	if limit <= 0 {
+		panic(fmt.Sprintf("checks.NewCappedRing: cap %d is not positive", limit))
+	}
 	return &Ring[T]{window: window, now: now, at: at, limit: limit, cost: cost}
 }
 
@@ -94,12 +105,12 @@ func (b *Ring[T]) Put(r []T) Evicted {
 
 	var e Evicted
 	cutoff := b.now().Add(-b.window)
-	i := 0
+	i := b.head
 	for i < len(b.items) && b.at(b.items[i]).Before(cutoff) {
 		b.release(b.items[i])
 		i++
 	}
-	e.Aged = i
+	e.Aged = i - b.head
 	if b.limit > 0 && b.held > b.limit {
 		for i < len(b.items) && b.held > b.limit {
 			b.release(b.items[i])
@@ -110,14 +121,22 @@ func (b *Ring[T]) Put(r []T) Evicted {
 			b.release(b.items[i])
 			i++
 		}
-		e.OverCap = i - e.Aged
+		e.OverCap = i - b.head - e.Aged
 	}
-	if i == 0 {
+	if i == b.head {
 		return e
 	}
-	remaining := make([]T, len(b.items)-i)
-	copy(remaining, b.items[i:])
-	b.items = remaining
+	clear(b.items[b.head:i])
+	b.head = i
+	if live := len(b.items) - b.head; b.head > live {
+		// More dead slots than live ones: move the live ones to the front
+		// of the same array. Each entry is moved at most once per time the
+		// ring turns over, and the array's spare capacity takes the next
+		// appends without growing.
+		n := copy(b.items, b.items[b.head:])
+		clear(b.items[n:])
+		b.items, b.head = b.items[:n], 0
+	}
 	return e
 }
 
@@ -134,8 +153,8 @@ func (b *Ring[T]) release(x T) {
 func (b *Ring[T]) Drain() []T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := b.items
-	b.items = nil
+	out := b.items[b.head:]
+	b.items, b.head = nil, 0
 	b.held = 0
 	return out
 }
