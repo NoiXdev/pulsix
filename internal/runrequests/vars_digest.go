@@ -96,16 +96,13 @@ func (r *Resolver) varsDigest(ctx context.Context, orgID, requestID, templateID 
 	}
 	var inv *render.Inventory
 	if len(targets) > 0 {
-		rendered, err := r.src.Vars.InventoryVars(ctx, orgID, targets)
+		rendered, err := r.targetInventory(ctx, orgID, targets)
 		if err != nil {
 			return "", fmt.Errorf("render target inventory: %w", err)
 		}
-		// The redact list only repeats values the document holds.
-		rendered.Secrets = nil
-		rendered.Doc = withoutFacts(rendered.Doc)
 		inv = &rendered
 	}
-	extra, err := r.src.Vars.ExtraVars(ctx, orgID, templateID)
+	extra, err := r.templateExtraVars(ctx, orgID, templateID)
 	if err != nil {
 		return "", fmt.Errorf("read template extra vars: %w", mapNotFound(err))
 	}

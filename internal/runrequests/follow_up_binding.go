@@ -109,16 +109,19 @@ func (r *Resolver) bindFollowUp(ctx context.Context, orgID, requestID uuid.UUID,
 			ids = append(ids, h)
 		}
 	}
-	var p Picture
-	if err := r.describeHosts(ctx, orgID, ids, &p); err != nil {
+	// Sorted, so the same hosts read the same way whatever order the scope
+	// lists them in (and share one render within a picture, pictureMemo).
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return cmp.Compare(a.String(), b.String()) })
+	targets, err := r.describedHosts(ctx, orgID, ids)
+	if err != nil {
 		return PictureFollowUp{}, err
 	}
-	slices.SortFunc(p.Targets, func(a, b PictureHost) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(targets, func(a, b PictureHost) int { return cmp.Compare(a.ID, b.ID) })
 	digest, err := r.varsDigest(ctx, orgID, requestID, tmpl.ID, ids)
 	if err != nil {
 		return PictureFollowUp{}, err
 	}
-	n := PictureFollowUp{TemplateID: tmpl.ID.String(), TemplateName: tmpl.Name, Targets: p.Targets, VarsDigest: digest}
+	n := PictureFollowUp{TemplateID: tmpl.ID.String(), TemplateName: tmpl.Name, Targets: targets, VarsDigest: digest}
 	if len(tmpl.ExtraVars) > 0 {
 		n.ExtraVars = schema.MaskVars(tmpl.ExtraVars)
 	}

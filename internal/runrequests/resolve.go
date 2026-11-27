@@ -188,6 +188,7 @@ func (r *Resolver) Picture(ctx context.Context, orgID uuid.UUID, req Request) (P
 		// A kind a newer version wrote is no run: never shown as one.
 		return Picture{}, fmt.Errorf("%w: requests of kind %q are not known to this version", ErrInvalidInput, req.Kind)
 	}
+	ctx = withPictureMemo(ctx)
 	tmpl, err := r.src.Templates.Get(ctx, orgID, req.TemplateID)
 	if err != nil {
 		return Picture{}, mapNotFound(err)

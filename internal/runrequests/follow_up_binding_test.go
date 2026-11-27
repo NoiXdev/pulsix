@@ -29,9 +29,12 @@ func (s *scopedRunner) LimitedRunTargets(_ context.Context, _, templateID uuid.U
 type hostVars struct {
 	byHost map[uuid.UUID]map[string]any
 	extra  map[uuid.UUID]map[string]any
+	// renders and extras count the reads.
+	renders, extras int
 }
 
 func (v *hostVars) InventoryVars(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (render.Inventory, error) {
+	v.renders++
 	hv := map[string]any{}
 	for _, id := range ids {
 		hv[id.String()] = v.byHost[id]
@@ -40,6 +43,7 @@ func (v *hostVars) InventoryVars(_ context.Context, _ uuid.UUID, ids []uuid.UUID
 }
 
 func (v *hostVars) ExtraVars(_ context.Context, _, templateID uuid.UUID) (map[string]any, error) {
+	v.extras++
 	return v.extra[templateID], nil
 }
 
@@ -173,3 +177,24 @@ func TestPictureOfALegacyApprovalBindsNoFollowUps(t *testing.T) {
 }
 
 var _ runrequests.JobRunner = (*scopedRunner)(nil)
+
+// TestPictureRendersEachHostSetOnce is review M1: within one picture the
+// follow-ups bound to the same hosts share one render of their inventory
+// (Y and Z are both bound to web-1), and each template's extra vars are
+// read once; the bindings are the same as computed one by one at a claim.
+func TestPictureRendersEachHostSetOnce(t *testing.T) {
+	f := newBindingFx()
+	req := runrequests.Request{ID: id(), Kind: runrequests.KindRun, TemplateID: f.x, Status: runrequests.StatusPending}
+	p := f.picture(t, req)
+	if f.vars.renders != 2 || f.vars.extras != 3 {
+		t.Fatalf("renders %d, extra var reads %d; want 2 (the run's hosts, web-1) and 3 (X, Y, Z)", f.vars.renders, f.vars.extras)
+	}
+	z := p.FollowUps.Templates[0].FollowUps[0]
+	got, err := f.resolver().BindFollowUp(context.Background(), f.org, req.ID, f.z, []uuid.UUID{f.h2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runrequests.FollowUpFingerprint(req.ID, got) != runrequests.FollowUpFingerprint(req.ID, z) {
+		t.Fatalf("Z at its claim %+v differs from the picture's %+v", got, z)
+	}
+}
