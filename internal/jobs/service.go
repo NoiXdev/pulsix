@@ -709,6 +709,11 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 		return nil, err
 	}
 
+	if req.RefuseCoveredZoneGrowth && len(alreadyDone) > 0 {
+		if err := refuseCoveredZoneGrowth(targets, alreadyDone); err != nil {
+			return nil, err
+		}
+	}
 	done := make(map[uuid.UUID]bool, len(alreadyDone))
 	for _, j := range alreadyDone {
 		done[j.ZoneID] = true
@@ -1239,8 +1244,10 @@ func (s *Service) RetryFailedInto(ctx context.Context, orgID, id uuid.UUID, acto
 			return nil, fmt.Errorf("copy follow-ups: %w", err)
 		}
 	}
+	// Only an approved retry request keys a retry: its re-approval refuses
+	// a covered zone that grew (backlog 2.142).
 	req := RunRequest{Trigger: TriggerManual, Actor: actor, PinnedCommit: cmp.Or(j.PinnedCommit, approved.PinnedCommit), Overrides: overrides,
-		EnrollHostIDs: approved.EnrollHostIDs}
+		EnrollHostIDs: approved.EnrollHostIDs, RefuseCoveredZoneGrowth: idempotencyKey != ""}
 	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}

@@ -140,6 +140,14 @@ type RunRequest struct {
 	// one (checkEnrollList): schedules, webhooks and chained follow-ups
 	// never carry one, so they mint nothing.
 	EnrollHostIDs []uuid.UUID
+	// RefuseCoveredZoneGrowth makes a keyed replay refuse, before creating
+	// any job, when a zone an earlier call's job covers now holds a host
+	// that job does not (refuseCoveredZoneGrowth, backlog 2.142). Only an
+	// approved run request sets it: a re-approval after a failed enqueue
+	// would otherwise leave such a host out without a word. Schedules,
+	// webhooks and follow-ups replay a run that already happened and keep
+	// filling in missing zones only.
+	RefuseCoveredZoneGrowth bool
 }
 
 // ApprovedRun is what an approval (or, for EnrollHostIDs, the person who
