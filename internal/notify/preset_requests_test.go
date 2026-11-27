@@ -276,3 +276,39 @@ func TestPresetRefusesSettingsItDoesNotTake(t *testing.T) {
 		t.Fatalf("only = %v", err)
 	}
 }
+
+// emptyPreset renders nothing, hugePreset a body over the cap.
+type emptyPreset struct{ openPreset }
+
+func (emptyPreset) Render(notify.Event, notify.Target) ([]notify.Request, error) { return nil, nil }
+
+type hugePreset struct{ openPreset }
+
+func (hugePreset) Render(notify.Event, notify.Target) ([]notify.Request, error) {
+	return []notify.Request{{Body: []byte(`{}`)}, {Body: make([]byte, 65<<10)}}, nil
+}
+
+// TestPresetSendRefusesWhatCannotBeSent: a preset that renders no
+// request, or one body over the cap, fails the delivery permanently and
+// sends nothing.
+func TestPresetSendRefusesWhatCannotBeSent(t *testing.T) {
+	rec := &pathReceiver{}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+	w, _ := requestsWorld(t, srv.URL)
+	ps := notify.Presets{"empty": emptyPreset{}, "huge": hugePreset{}}
+	for _, name := range []string{"empty", "huge"} {
+		in := presetInput(name, name, srv.URL+"/x/send", "")
+		w.svc = notify.NewService(notify.Deps{Channels: w.channels, Box: fakeBox{}, Mail: w.mail, Presets: ps, Rand: rand.Reader})
+		c, err := w.svc.CreateChannel(ctx, w.org, w.actor, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sendOnce(t, ps, c); !notify.IsPermanent(err) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(rec.paths) != 0 {
+		t.Fatalf("sent %v", rec.paths)
+	}
+}
