@@ -1,10 +1,10 @@
 import {
-  assertionOps, dialectSubjects, isNumericSubject, parseAssertion, subjectTakesArg, type AssertionPlugin, type AssertionSubject,
+  assertionOps, comparesNumber, dialectSubjects, parseAssertion, subjectTakesArg, type AssertionPlugin, type AssertionSubject,
 } from './assertionFormat.ts';
 
 /**
  * The row model of the assertion editor (backlog 3.13b for http, 3.87 for
- * tcp, dns and tls): one
+ * tcp, dns and tls, 3.134 for snmp): one
  * row per `assertions` entry, broken into the parts the form edits, and
  * the way back to the canonical text the server stores. Parsing is the
  * grammar twin's (assertionFormat.ts); this file only moves between its
@@ -31,6 +31,17 @@ export interface AssertionRow {
   /** The upper bound of `in`; '' otherwise. */
   hi: string;
   severity: 'warn' | 'crit';
+  /** snmp's `value` with == or !=: the entry compared text (a quoted
+   * operand), kept so a number-like text stays quoted. */
+  quoted?: boolean;
+}
+
+/** operandIsNumber: whether the row's operand is written as a number —
+ * the subject's kind, or for `value` its operator and, for == and !=, a
+ * number-like operand the entry did not quote. */
+export function operandIsNumber(row: AssertionRow): boolean {
+  if (row.subject !== 'value' || (row.op !== '==' && row.op !== '!=')) return comparesNumber(row.subject, row.op, false);
+  return !row.quoted && /^[+-]?[0-9]+(\.[0-9]+)?$/.test(row.operand.trim());
 }
 
 /** assertionSubjects: a plugin's subjects in the order the editor offers
@@ -96,10 +107,12 @@ export function rowFromEntry(entry: string, plugin: AssertionPlugin = 'http'): A
     const dots = operand.indexOf('..');
     hi = operand.slice(dots + 2);
     operand = operand.slice(0, dots);
-  } else if (operand !== '' && !isNumericSubject(shape.subject)) {
+  } else if (operand !== '' && !shape.numeric) {
     operand = JSON.parse(operand) as string;
   }
-  return { name: shape.name, subject: shape.subject, arg: shape.arg, op: shape.op, operand, hi, severity: shape.severity };
+  const row: AssertionRow = { name: shape.name, subject: shape.subject, arg: shape.arg, op: shape.op, operand, hi, severity: shape.severity };
+  if (shape.subject === 'value' && (shape.op === '==' || shape.op === '!=') && !shape.numeric) row.quoted = true;
+  return row;
 }
 
 /** canonicalNumber prints a number the way the server does (Go's
@@ -128,7 +141,7 @@ export function composeExpression(row: AssertionRow): string {
   if (row.op === 'in') parts.push(`${canonicalNumber(row.operand)}..${canonicalNumber(row.hi)}`);
   else if (!takesOperand(row.op)) {
     // exists, !exists: nothing follows.
-  } else if (isNumericSubject(row.subject)) parts.push(canonicalNumber(row.operand));
+  } else if (operandIsNumber(row)) parts.push(canonicalNumber(row.operand));
   else parts.push(JSON.stringify(row.operand));
   return parts.join(' ').trimEnd();
 }

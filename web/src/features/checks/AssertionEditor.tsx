@@ -6,7 +6,7 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { FieldError } from '../instance/shared/formParts.tsx';
-import { assertionOps, isNumericSubject, type AssertionPlugin, type AssertionSubject } from './assertionFormat.ts';
+import { assertionOps, comparesNumber, type AssertionPlugin, type AssertionSubject } from './assertionFormat.ts';
 import {
   assertionSubjects, composeRow, composeRows, emptyRow, entriesOf, entryNamedBy, isBlank, parseRows, rowFromEntry, takesArg,
   takesOperand, withOp, withSubject, type AssertionRow,
@@ -23,7 +23,7 @@ function rowsOf(text: string, plugin: AssertionPlugin): AssertionRow[] | null {
 
 /**
  * AssertionEditor edits a check's `assertions` (backlog 3.13b for http,
- * 3.87 for tcp, dns and tls, each with its own subjects): one row per entry — name, subject with its argument, an operator the
+ * 3.87 for tcp, dns and tls, 3.134 for snmp, each with its own subjects): one row per entry — name, subject with its argument, an operator the
  * subject takes, the value (none for exists and !exists, two bounds for
  * in) and the severity — composing the canonical text the form sends
  * (assertionRows.ts). "Edit as text" shows that text in a textarea, one
@@ -213,7 +213,9 @@ function AssertionRowFields({
 }) {
   const t = useT();
   const msg = t.checks.assertionEditor;
-  const numeric = isNumericSubject(row.subject);
+  // snmp's value compares numbers for an ordering operator; with == or
+  // != either kind is typed, so the field takes text.
+  const numeric = comparesNumber(row.subject, row.op, row.op === '==' || row.op === '!=');
   const valuePlaceholder = numeric ? msg.numberPlaceholder : msg.textPlaceholder;
   const argPlaceholder =
     row.subject === 'header'
@@ -222,7 +224,9 @@ function AssertionRowFields({
         ? msg.argPlaceholders.json
         : row.subject === 'answer'
           ? msg.argPlaceholders.answer
-          : msg.argPlaceholders.html;
+          : row.subject === 'value'
+            ? msg.argPlaceholders.value
+            : msg.argPlaceholders.html;
   const invalid = problem ? true : undefined;
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border p-2" data-testid="assertion-row">
