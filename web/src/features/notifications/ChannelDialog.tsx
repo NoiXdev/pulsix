@@ -70,6 +70,11 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
   // belongs to the old service and is never shown.
   const presetChanged = editing && preset !== (channel.webhook?.preset ?? '');
   const urlRequired = !editing || presetChanged;
+  // A preset sends its own Content-Type (review M2): such a row stays in
+  // the form, so switching back to a generic webhook keeps it, but is not
+  // sent while a preset is chosen.
+  const ownedByPreset = (h: HeaderRow) => preset !== '' && h.name.trim().toLowerCase() === 'content-type';
+  const dropsContentType = headers.some(ownedByPreset);
 
   function body(): NotifyChannelInput {
     if (kind === 'email') {
@@ -82,7 +87,7 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
       webhook: {
         method: preset !== '' ? 'POST' : method,
         ...(url.trim() !== '' ? { url: url.trim() } : {}),
-        headers: headers.filter((h) => h.name.trim() !== '').map((h) => (h.value !== '' ? { name: h.name.trim(), value: h.value } : { name: h.name.trim() })),
+        headers: headers.filter((h) => h.name.trim() !== '' && !ownedByPreset(h)).map((h) => (h.value !== '' ? { name: h.name.trim(), value: h.value } : { name: h.name.trim() })),
         ...(preset === '' ? { body_template: template } : {}),
         signed,
         ...(signed && secret !== '' ? { signing_secret: secret } : {}),
@@ -191,6 +196,7 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
                 </Button>
               </div>
             ))}
+            {dropsContentType && <p className="text-[11px] text-muted-foreground">{d.contentTypeByFormat}</p>}
             <Button type="button" variant="ghost" className="self-start" onClick={() => setHeaders([...headers, { name: '', value: '' }])}>
               <Plus size={13} /> {d.addHeader}
             </Button>

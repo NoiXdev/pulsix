@@ -109,6 +109,7 @@ export const enNotifications = {
     chatIdPlaceholder: '-1001234567890 or @channel',
     telegramToken: 'The bot token is part of the URL; it is stored encrypted and never shown again.',
     formatUrlAgain: 'Changing the format needs the URL again.',
+    contentTypeByFormat: 'Content-Type is set by the format and is not sent.',
     method: 'Method',
     url: 'URL',
     urlNow: (url: string) => `URL (now ${url})`,

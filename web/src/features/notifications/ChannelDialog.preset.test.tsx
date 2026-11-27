@@ -114,3 +114,27 @@ describe('channelColumns', () => {
     expect(screen.getByText('Webhook · Slack')).toBeInTheDocument();
   });
 });
+
+describe('ChannelDialog Content-Type and presets', () => {
+  it('switching a raw channel with a Content-Type header to a preset leaves the header out and says so', async () => {
+    const user = userEvent.setup();
+    let put: { webhook?: { headers?: unknown } } | undefined;
+    const raw: NotifyChannel = {
+      id: 'c1', kind: 'webhook', name: 'chat', enabled: true, revision: 1, created_at: '', updated_at: '',
+      webhook: { method: 'POST', url: 'https://hooks.example.test/…', headers: ['Content-Type', 'Authorization'], signed: false, preset: '', body_template: 'hi' },
+    };
+    mockApi({
+      'PUT /api/v1/orgs/acme/notification-channels/c1': (req: MockRequest) => {
+        put = req.body as typeof put;
+        return { channel: raw };
+      },
+    });
+    const dialog = renderDialog(raw);
+    expect(within(dialog).queryByText(/Content-Type is set by the format/)).not.toBeInTheDocument();
+    await pickOption(within(dialog), 'Format', 'Slack');
+    expect(within(dialog).getByText('Content-Type is set by the format and is not sent.')).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('URL'), 'https://hooks.slack.com/services/x');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put?.webhook?.headers).toEqual([{ name: 'Authorization' }]));
+  });
+});

@@ -177,7 +177,7 @@ func (s *Service) checkPresetShape(in WebhookInput) (Preset, error) {
 	}
 	for _, h := range in.Headers {
 		if strings.EqualFold(h.Name, "Content-Type") {
-			return nil, fmt.Errorf("%w: a preset sets Content-Type itself", ErrInvalidInput)
+			return nil, fmt.Errorf("%w: a preset sets Content-Type itself; remove the Content-Type header", ErrInvalidInput)
 		}
 	}
 	return p, nil

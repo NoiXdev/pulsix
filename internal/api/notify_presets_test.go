@@ -143,3 +143,37 @@ func TestNotifyChannelSlackPreset(t *testing.T) {
 		t.Fatalf("keep = %d %s", resp.StatusCode, raw)
 	}
 }
+
+// TestNotifyChannelPresetRefusesContentType (review M2): switching a raw
+// channel that carries a Content-Type header to a preset is refused with
+// 400 and a message naming the header — kept or resent — never a 500.
+func TestNotifyChannelPresetRefusesContentType(t *testing.T) {
+	f := newRunFixture(t, "notify-preset-ctype")
+	hook := httptest.NewServer(&hookReceiver{})
+	defer hook.Close()
+	c, _ := createPresetChannel(t, f, map[string]any{
+		"kind": "webhook", "name": "raw",
+		"webhook": map[string]any{
+			"url": hook.URL + "/x", "headers": []map[string]any{{"name": "Content-Type", "value": "text/plain"}},
+			"body_template": "hello",
+		},
+	})
+	for name, header := range map[string]map[string]any{
+		"kept":   {"name": "Content-Type"},
+		"resent": {"name": "Content-Type", "value": "application/json"},
+	} {
+		resp := requestWithHeaders(t, f.adminC, http.MethodPut, f.channelsURL()+"/"+c.ID, map[string]any{
+			"kind": "webhook", "name": "raw",
+			"webhook": map[string]any{"preset": "slack", "url": hook.URL + "/services/x", "headers": []map[string]any{header}},
+		}, map[string]string{"If-Match": `"1"`})
+		if raw := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "Content-Type") {
+			t.Errorf("%s: %d %s", name, resp.StatusCode, raw)
+		}
+	}
+	resp := requestWithHeaders(t, f.adminC, http.MethodPut, f.channelsURL()+"/"+c.ID, map[string]any{
+		"kind": "webhook", "name": "raw", "webhook": map[string]any{"preset": "slack", "url": hook.URL + "/services/x"},
+	}, map[string]string{"If-Match": `"1"`})
+	if raw := mustReadBody(t, resp); resp.StatusCode != http.StatusOK || !strings.Contains(raw, `"headers":[]`) {
+		t.Fatalf("without the header = %d %s", resp.StatusCode, raw)
+	}
+}

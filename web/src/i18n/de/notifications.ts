@@ -103,6 +103,7 @@ export const deNotifications: Messages['notifications'] = {
     chatIdPlaceholder: '-1001234567890 oder @kanal',
     telegramToken: 'Das Bot-Token ist Teil der URL; es wird verschlüsselt gespeichert und nie wieder angezeigt.',
     formatUrlAgain: 'Beim Wechsel des Formats muss die URL erneut eingegeben werden.',
+    contentTypeByFormat: 'Content-Type setzt das Format selbst; der Header wird nicht gesendet.',
     method: 'Methode',
     url: 'URL',
     urlNow: (url: string) => `URL (aktuell ${url})`,
