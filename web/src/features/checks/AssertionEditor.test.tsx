@@ -172,10 +172,19 @@ describe('AssertionEditor', () => {
     expect(text()).toBe('busy=value("ups_load") == "online"');
   });
 
-  it('keeps a quoted number-like snmp value as text', () => {
+  it('shows a quoted number-like snmp value in quotes and lets a row type one (review M4)', async () => {
+    const user = userEvent.setup();
     render(<Harness plugin="snmp" initial={'s=value("state") == "6"'} />);
     expect(screen.getAllByTestId('assertion-row')).toHaveLength(1);
-    expect(screen.getByLabelText('Value of assertion 1')).toHaveValue('6');
+    const field = screen.getByLabelText('Value of assertion 1');
+    expect(field).toHaveValue('"6"');
+    await user.clear(field);
+    await user.type(field, '6');
+    expect(text()).toBe('s=value("state") == 6');
+    await user.type(field, '.0"');
+    await user.type(field, '{Home}"');
+    expect(field).toHaveValue('"6.0"');
+    expect(text()).toBe('s=value("state") == "6.0"');
   });
 
   it('keeps an entry of another plugin\'s dialect as text', () => {

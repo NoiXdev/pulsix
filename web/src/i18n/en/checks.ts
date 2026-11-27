@@ -504,7 +504,7 @@ export const enChecks = {
       interfaces: { label: 'Watch the interfaces', hint: 'Status, traffic and errors of each interface the device lists, at most 128.' },
       assertions: {
         label: 'Assertions (one per line, name=assertion)',
-        hint: 'Each line states what a good device reading is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (value("name") of a line under Values, response_ms or uptime in seconds), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches. value("name") compares a number or a text, whichever you write; text the device sends that is a number can be compared as one. Add @warn to report warn instead of crit.',
+        hint: 'Each line states what a good device reading is and reports pass, or warn or crit when it fails, under its name, with the value seen. A subject (value("name") of a line under Values, response_ms or uptime in seconds), an operator and a value: numbers with < <= > >= == != or in a..b; text in double quotes with == != contains !contains matches !matches. value("name") compares a number or a text, whichever you write; text the device sends that is a number can be compared as one; to compare a number as text with == or !=, write it in double quotes ("2.0"). A time value read with value("name") is in hundredths of a second; uptime is in seconds and starts again from 0 after about 497 days (which then reads like a restart once), so it suits checks such as "not restarted in the last hour" (uptime > 3600). Add @warn to report warn instead of crit.',
         placeholder: 'busy=value("ups_load") < 80',
       },
       ...vantageParamTexts,

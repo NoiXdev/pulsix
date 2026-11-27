@@ -31,17 +31,40 @@ export interface AssertionRow {
   /** The upper bound of `in`; '' otherwise. */
   hi: string;
   severity: 'warn' | 'crit';
-  /** snmp's `value` with == or !=: the entry compared text (a quoted
-   * operand), kept so a number-like text stays quoted. */
-  quoted?: boolean;
+}
+
+const NUMBER_LIKE = /^[+-]?[0-9]+(\.[0-9]+)?$/;
+
+/** eitherKind: snmp's `value` with == or !=, whose operand field takes a
+ * number or a text (backlog 3.134). */
+function eitherKind(row: Pick<AssertionRow, 'subject' | 'op'>): boolean {
+  return row.subject === 'value' && (row.op === '==' || row.op === '!=');
+}
+
+/** eitherOperand is an either-kind row's operand as the expression
+ * writes it (review M4): a number when the field holds one, a text typed
+ * in double quotes as that text ("2.0" compares text), anything else as
+ * the text it is. */
+function eitherOperand(field: string): string {
+  const trimmed = field.trim();
+  if (NUMBER_LIKE.test(trimmed)) return canonicalNumber(trimmed);
+  if (trimmed.startsWith('"')) {
+    try {
+      const v: unknown = JSON.parse(trimmed);
+      if (typeof v === 'string') return JSON.stringify(v);
+    } catch {
+      // Not a string literal: the text as typed.
+    }
+  }
+  return JSON.stringify(field);
 }
 
 /** operandIsNumber: whether the row's operand is written as a number —
  * the subject's kind, or for `value` its operator and, for == and !=, a
- * number-like operand the entry did not quote. */
+ * number in the field. */
 export function operandIsNumber(row: AssertionRow): boolean {
-  if (row.subject !== 'value' || (row.op !== '==' && row.op !== '!=')) return comparesNumber(row.subject, row.op, false);
-  return !row.quoted && /^[+-]?[0-9]+(\.[0-9]+)?$/.test(row.operand.trim());
+  if (!eitherKind(row)) return comparesNumber(row.subject, row.op, false);
+  return NUMBER_LIKE.test(row.operand.trim());
 }
 
 /** assertionSubjects: a plugin's subjects in the order the editor offers
@@ -108,11 +131,13 @@ export function rowFromEntry(entry: string, plugin: AssertionPlugin = 'http'): A
     hi = operand.slice(dots + 2);
     operand = operand.slice(0, dots);
   } else if (operand !== '' && !shape.numeric) {
-    operand = JSON.parse(operand) as string;
+    const text = JSON.parse(operand) as string;
+    // An either-kind text the field would not give back as itself (a
+    // number-like or a quoted text) is shown in its double quotes.
+    const literal = JSON.stringify(text);
+    operand = eitherKind(shape) && eitherOperand(text) !== literal ? literal : text;
   }
-  const row: AssertionRow = { name: shape.name, subject: shape.subject, arg: shape.arg, op: shape.op, operand, hi, severity: shape.severity };
-  if (shape.subject === 'value' && (shape.op === '==' || shape.op === '!=') && !shape.numeric) row.quoted = true;
-  return row;
+  return { name: shape.name, subject: shape.subject, arg: shape.arg, op: shape.op, operand, hi, severity: shape.severity };
 }
 
 /** canonicalNumber prints a number the way the server does (Go's
@@ -141,7 +166,8 @@ export function composeExpression(row: AssertionRow): string {
   if (row.op === 'in') parts.push(`${canonicalNumber(row.operand)}..${canonicalNumber(row.hi)}`);
   else if (!takesOperand(row.op)) {
     // exists, !exists: nothing follows.
-  } else if (operandIsNumber(row)) parts.push(canonicalNumber(row.operand));
+  } else if (eitherKind(row)) parts.push(eitherOperand(row.operand));
+  else if (operandIsNumber(row)) parts.push(canonicalNumber(row.operand));
   else parts.push(JSON.stringify(row.operand));
   return parts.join(' ').trimEnd();
 }
