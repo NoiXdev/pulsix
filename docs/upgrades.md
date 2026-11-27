@@ -1368,6 +1368,20 @@ assertions, so the items have no reading until a new manager polls it: stop ever
 instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
+Webhook channel presets for Slack, Mattermost and Telegram (backlog 4.7) add migration 00136
+and no proto change and no dependency: `notification_channels.preset` (text, NOT NULL DEFAULT
+`''`, a CHECK allowing `''`, `slack`, `mattermost`, `telegram`, and a second CHECK allowing a
+preset only on a `webhook` channel). A catalog change with a constant default that rewrites
+nothing; every existing channel stays a raw webhook or an e-mail channel and sends exactly as
+before. A backup carries the column. A Telegram channel's chat id is stored unsealed in the
+channel's config (`chat_id`); its bot token, like every webhook URL, stays sealed. API additions,
+all additive: `webhook.preset` and `webhook.chat_id` on the channel read, create and update.
+**Skew:** an older manager still running during a rolling upgrade ignores the column: it sends a
+preset channel's deliveries (and Send test) as the raw event JSON, which the service refuses, so
+they fail permanently, and an update through it neither sees nor checks the preset. Stop every
+manager instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
+
 ## Behaviour changes to check after an upgrade
 
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**
