@@ -1,5 +1,6 @@
 [
   {
+    "key": "alert:0",
     "json": {
       "routing_key": "R0123456789abcdef0123456789abcde",
       "event_action": "trigger",
@@ -29,6 +30,7 @@
     }
   },
   {
+    "key": "alert:1",
     "json": {
       "routing_key": "R0123456789abcdef0123456789abcde",
       "event_action": "trigger",
@@ -58,6 +60,7 @@
     }
   },
   {
+    "key": "alert:2",
     "json": {
       "routing_key": "R0123456789abcdef0123456789abcde",
       "event_action": "resolve",
@@ -65,6 +68,7 @@
     }
   },
   {
+    "key": "alert:3",
     "json": {
       "routing_key": "R0123456789abcdef0123456789abcde",
       "event_action": "trigger",

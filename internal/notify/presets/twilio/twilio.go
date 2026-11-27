@@ -64,6 +64,12 @@ func (p preset) Endpoint(s notify.PresetSettings) string {
 	return p.base + "/2010-04-01/Accounts/" + s.AccountSID + "/Messages.json"
 }
 
+// SecretScope: the auth token belongs to the account, so a new account
+// SID needs its token again (review M2).
+func (preset) SecretScope(s notify.PresetSettings) (string, string) {
+	return "account_sid", s.AccountSID
+}
+
 // SecretNames is the account's auth token.
 func (preset) SecretNames() []string { return []string{"auth_token"} }
 

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/notify/notifytest"
 	"github.com/noixdev/pulsix/internal/notify/presets/pagerduty"
@@ -172,5 +174,51 @@ func TestPagerDutyBounds(t *testing.T) {
 	h := render(t, notifytest.Hostile())
 	if s := h[0].Payload.Summary; strings.Contains(s, "@everyone") || strings.Contains(s, "\u202E") || len(h[0].Links) != 0 {
 		t.Fatalf("hostile = %+v", h[0])
+	}
+}
+
+// TestPagerDutyClosedNowResolves (review I1): an alert closed by the time
+// its message goes out is resolved, whatever the event said.
+func TestPagerDutyClosedNowResolves(t *testing.T) {
+	ev := notifytest.AlertsMixed()
+	ev.Alerts.Items[1].Event = "acknowledged"
+	tg := target()
+	tg.Closed = map[uuid.UUID]bool{ev.Alerts.Items[0].AlertID: true, ev.Alerts.Items[1].AlertID: true}
+	reqs, err := pagerduty.New("").Render(ev, tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actions []string
+	for _, r := range reqs {
+		var e struct {
+			EventAction string          `json:"event_action"`
+			Payload     json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(r.Body, &e); err != nil {
+			t.Fatal(err)
+		}
+		actions = append(actions, e.EventAction)
+		if e.EventAction == "resolve" && e.Payload != nil {
+			t.Errorf("resolve carries a payload: %s", r.Body)
+		}
+	}
+	if strings.Join(actions, ",") != "resolve,resolve,resolve,trigger" {
+		t.Fatalf("actions = %v", actions)
+	}
+}
+
+// TestPagerDutyUnacknowledgedSendsNothing: an unacknowledgement has no
+// PagerDuty counterpart (a trigger would not undo an acknowledgement), so
+// it sends nothing; each request keeps its item's key.
+func TestPagerDutyUnacknowledgedSendsNothing(t *testing.T) {
+	ev := notifytest.AlertsMixed()
+	ev.Alerts.Items[0].Event = "ack_voided"
+	reqs, err := pagerduty.New("").Render(ev, target())
+	if err != nil || len(reqs) != 3 || reqs[0].Key != "alert:1" || reqs[2].Key != "alert:3" {
+		t.Fatalf("requests = %+v, %v", reqs, err)
+	}
+	ev.Alerts.Items = ev.Alerts.Items[:1]
+	if reqs, err := pagerduty.New("").Render(ev, target()); err != nil || len(reqs) != 0 {
+		t.Fatalf("only an unacknowledgement = %+v, %v", reqs, err)
 	}
 }

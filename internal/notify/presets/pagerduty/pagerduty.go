@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/notify"
 )
 
@@ -65,6 +67,10 @@ func (p preset) Endpoint(s notify.PresetSettings) string {
 	}
 	return hostUS + enqueuePath
 }
+
+// FollowsAlertState: an alert closed by the time its message goes out is
+// resolved, never triggered or acknowledged (review I1).
+func (preset) FollowsAlertState() {}
 
 // SecretNames is the integration's routing key.
 func (preset) SecretNames() []string { return []string{"routing_key"} }
@@ -120,7 +126,7 @@ type change struct {
 func (preset) Render(ev notify.Event, t notify.Target) ([]notify.Request, error) {
 	key := t.Secrets["routing_key"]
 	if ev.Kind == notify.EventAlertBatch && ev.Alerts != nil && len(ev.Alerts.Items) > 0 {
-		return alertEvents(ev, key)
+		return alertEvents(ev, key, t.Closed)
 	}
 	m := notify.Compose(ev)
 	lines, omitted := detailLines(m)
@@ -148,20 +154,27 @@ func (preset) Render(ev notify.Event, t notify.Target) ([]notify.Request, error)
 }
 
 // alertEvents maps each alert to an event on its own incident: closed
-// resolves, acknowledged and snoozed acknowledge, every other event
-// (opened, worsened, escalated, unacknowledged, unsnoozed) triggers.
-func alertEvents(ev notify.Event, key string) ([]notify.Request, error) {
+// resolves, acknowledged and snoozed acknowledge, an unacknowledgement
+// sends nothing (a trigger would not undo PagerDuty's acknowledgement),
+// every other event (opened, worsened, escalated, unsnoozed) triggers.
+// An alert that is closed by the time the message goes out (closed, read
+// at send time) is resolved whatever the event said: after an outage the
+// retried trigger can arrive after the resolve (review I1). Each request
+// is keyed by its item's place, so a retry sends only those still owed.
+func alertEvents(ev notify.Event, key string, closed map[uuid.UUID]bool) ([]notify.Request, error) {
 	items := ev.Alerts.Items
 	if len(items) > maxEvents {
 		items = items[:maxEvents]
 	}
 	out := make([]notify.Request, 0, len(items))
-	for _, it := range items {
+	for i, it := range items {
 		e := event{RoutingKey: key, DedupKey: "pulsix:alert:" + it.AlertID.String()}
-		switch it.Event {
-		case "closed":
+		switch {
+		case it.Event == "ack_voided":
+			continue
+		case it.Event == "closed" || closed[it.AlertID]:
 			e.EventAction = "resolve"
-		case "acknowledged", "snoozed":
+		case it.Event == "acknowledged" || it.Event == "snoozed":
 			e.EventAction = "acknowledge"
 		default:
 			e.EventAction = "trigger"
@@ -193,7 +206,7 @@ func alertEvents(ev notify.Event, key string) ([]notify.Request, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, notify.Request{Body: body})
+		out = append(out, notify.Request{Key: "alert:" + strconv.Itoa(i), Body: body})
 	}
 	return out, nil
 }

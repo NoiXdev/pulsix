@@ -171,3 +171,15 @@ func TestTwilioEndpointAndSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestTwilioSecretBelongsToTheAccount (review M2): the auth token is
+// scoped to the account SID, so a new SID needs it again.
+func TestTwilioSecretBelongsToTheAccount(t *testing.T) {
+	sc, ok := twilio.New("").(notify.SecretScoped)
+	if !ok {
+		t.Fatal("not scoped")
+	}
+	if name, value := sc.SecretScope(settings); name != "account_sid" || value != sid {
+		t.Fatalf("scope = %s %s", name, value)
+	}
+}

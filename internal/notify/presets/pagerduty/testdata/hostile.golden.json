@@ -1,5 +1,6 @@
 [
   {
+    "key": "alert:0",
     "json": {
       "routing_key": "R0123456789abcdef0123456789abcde",
       "event_action": "trigger",
