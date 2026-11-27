@@ -24,7 +24,7 @@
 ## Review Focus
 - Ack after the severity eased reaches the crit route that paged; a snooze after easing does not (`TestAcknowledgementReachesTheRouteThatPagedAfterTheSeverityEased`, `TestSnoozeStillNeedsTheLiveSeverity`, follow_told_test.go; table rows in `TestMatchRoutesToldEventsReachTheRoutesThatTold`).
 - An ack held behind a shut window breaks through where the page did (`TestAcknowledgementBreaksThroughWhereThePageDid`).
-- Closed and ack reach a fired step's channel, not an unfired one (`TestClosedReachesTheEscalationStepsThatFired`, `TestAcknowledgementReachesTheEscalationStepsThatFired`); a step channel equal to the route's channel hears once (`TestAStepChannelThatIsAlsoTheRoutesHearsOnce`); a rotation step resolves at the tick's instant (`TestARotationStepIsResolvedAtTheTicksInstant`).
+- Closed and ack reach a fired step's channel, not an unfired one (`TestClosedReachesTheEscalationStepsThatFired`, `TestAcknowledgementReachesTheEscalationStepsThatFired`); a step channel equal to the route's channel hears once (`TestAStepChannelThatIsAlsoTheRoutesHearsOnce`); a rotation step resolves at the tick's instant (`TestARotationStepIsResolvedAtTheTicksInstant`); a step cut from the ladder mid-incident hears nothing, a renumbered one is told at its new position (`TestAStepCutFromTheLadderMidIncidentHearsNothing`, R3).
 - The store read: org-scoped, base-keyed, positions per route (`TestToldIsScopedToOrganizationAndBase`, escalate_sql_test.go, replaces `TestToldRoutesIsScopedToOrganizationAndBase`).
 - The cap keeps closed items and order (`TestCapItemsKeepsClosedItemsFirst` table, internal; `TestTickCapKeepsClosedItems`, follow_test.go).
 
