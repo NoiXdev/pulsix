@@ -37,7 +37,7 @@
 
 ## Review Focus
 
-- Secret leak: create/read/refusals carry no secret (`TestNotifyChannelPushoverPreset`, `TestNotifyChannelTwilioPreset`, `TestNotifyChannelPagerDutyPreset`), stored config has none in clear (`TestPresetSecretsSealedAndKept`), a refused secret's error has no value (`Test*CheckSecret`).
+- Secret leak: create/read/refusals carry no secret (`TestNotifyChannelPushoverPreset`, `TestNotifyChannelTwilioPreset`, `TestNotifyChannelPagerDutyPreset`), stored config has none in clear (`TestPresetSecretsSealedAndKept`), a refused secret's error has no value (`TestPushoverEndpointAndSecrets`, `TestTwilioEndpointAndSecret`, `TestPagerDutyRegion`, and the "refused" cases of the API tests).
 - Secret keep/rotation: omitted keeps, new replaces, preset change requires all again (`TestPresetSecretsSealedAndKept`).
 - URL for built-host presets: a submitted URL refused, settings change rebuilds it (`TestPresetEndpoint`).
 - PagerDuty mapping and dedup keys over a mixed batch, change events for test/digest (`TestPagerDutyGolden`, `TestPagerDutyActions`).
@@ -51,33 +51,34 @@
 
 **Files:** `internal/notify/preset.go`, `send.go`, `service.go`, `validate.go`, new `preset_secrets.go`, `channel.go`; presets slack/mattermost/telegram (+ tests' call sites), `notifytest` (`Single`), tests `preset_test.go`, new `preset_secrets_test.go`.
 
-- [ ] Failing: `TestPresetSendSeveralRequests` (path override, content type, preset header wins, signature per request, the second failing fails the send), `TestPresetSecretsSealedAndKept`, `TestPresetEndpoint`, `TestPresetRefusesSecretsItDoesNotTake`.
-- [ ] Implement; 4.7 golden tests pass unchanged. Commit `feat(notify): presets render requests and take sealed secrets`.
+- [x] Failing: `TestPresetSendSeveralRequests` (path override, content type, preset header wins, signature per request, the second failing fails the send), `TestPresetSecretsSealedAndKept`, `TestPresetEndpoint`, `TestPresetRefusesSettingsItDoesNotTake`.
+- [x] Implement; 4.7 golden tests pass unchanged. Commit `feat(notify): presets render requests and take sealed secrets`.
 
 ### Task 2: Migration 00137, store round trip, backup fixture
 
 **Files:** `internal/db/migrations/00137_notification_channel_presets_48.sql`, `internal/notify/store_preset_sql_test.go`, `internal/backup/fixture_test.go` (a pagerduty row with a sealed secret blob).
-- [ ] Failing `TestSQLStorePresetChecks` case for `pagerduty`; migration; green; `go test ./internal/backup/...`. Commit with the registry entries of Tasks 3–6 (the registry test pins registry = CHECK).
+- [x] Failing `TestSQLStorePresetChecks` case for `pagerduty`; migration; green; `go test ./internal/backup/...`. Commit with the registry entries of Tasks 3–6 (the registry test pins registry = CHECK).
 
 ### Tasks 3–6: ntfy, Pushover, Twilio, PagerDuty renderers
 
 One package each under `internal/notify/presets/<name>` with `testdata/*.golden.json` over `notifytest.Cases()`, plus `presets.RegistryAt`.
-- ntfy: `TestNtfyGolden`, `TestNtfyCheckURL` (topic, query, no echo), `TestNtfyBounds` (4096 bytes, wide batch).
-- Pushover: `TestPushoverGolden` (form → JSON for the golden file), `TestPushoverCheckSecret`, `TestPushoverBounds` (1024/250, wide batch), `TestPushoverEndpoint`.
-- Twilio: `TestTwilioGolden`, `TestTwilioSettings`, `TestTwilioCheckSecret`, `TestTwilioBodyBounds`, `TestTwilioFold`, `TestTwilioBasicAuth`.
-- PagerDuty: `TestPagerDutyGolden`, `TestPagerDutyActions`, `TestPagerDutyRegion`, `TestPagerDutyBounds`.
-Commits `feat(notify): ntfy preset`, `… Pushover preset`, `… Twilio SMS preset`, `… PagerDuty preset`.
+- ntfy: `TestNtfyGolden`, `TestNtfyPublishesToTheRoot`, `TestNtfyPriorityAndTags`, `TestNtfyCheckURL` (topic, query, no echo), `TestNtfyBounds` (4096 bytes, wide batch).
+- Pushover: `TestPushoverGolden` (requests dumped by `notifytest.Dump`, a form body as an object), `TestPushoverFields`, `TestPushoverBounds` (1024/250, wide batch), `TestPushoverEndpointAndSecrets`.
+- Twilio: `TestTwilioGolden`, `TestTwilioSettings`, `TestTwilioEndpointAndSecret`, `TestTwilioBodyBounds`, `TestTwilioFold`, `TestTwilioBasicAuth`.
+- PagerDuty: `TestPagerDutyGolden`, `TestPagerDutyActions`, `TestPagerDutyNonAlertEvents`, `TestPagerDutyRegion`, `TestPagerDutyBounds`.
+- Registry: `TestRegistryMatchesTheSchema` (unchanged), `TestRegistryAtPointsFixedHostsAtBase`.
+Commits `feat(notify): ntfy preset`, `… Pushover preset`, `… Twilio SMS preset`, `… PagerDuty preset`, then `feat(notify): register ntfy, Pushover, Twilio and PagerDuty presets` (Task 2).
 
 ### Task 7: API
 
 **Files:** `internal/api/notify_dto.go`, `internal/api/notify_presets_48_test.go`, `internal/api/apitest/apitest.go` (`WithNotifyPresets`), regenerated `web/src/api/schema.d.ts`.
-- [ ] Failing `TestNotifyChannelNtfyPreset`, `TestNotifyChannelPushoverPreset`, `TestNotifyChannelTwilioPreset`, `TestNotifyChannelPagerDutyPreset` (create, read without secrets, Send test reaches the fake, refusals without secrets, keep on update). Commit `feat(api): ntfy, Pushover, Twilio and PagerDuty presets`.
+- [x] Failing `TestNotifyChannelNtfyPreset`, `TestNotifyChannelPushoverPreset`, `TestNotifyChannelTwilioPreset`, `TestNotifyChannelPagerDutyPreset` (create, read without secrets, Send test reaches the fake, refusals without secrets, keep on update). Commit `feat(api): ntfy, Pushover, Twilio and PagerDuty presets`.
 
 ### Task 8: SPA
 
-**Files:** `web/src/features/notifications/ChannelDialog.tsx` (+ a `PresetFields.tsx` if it grows), `useChannelListActions.tsx`, `web/src/i18n/{en,de}/notifications.ts`, tests `ChannelDialog.preset48.test.tsx`, `ChannelsPage` test for the Twilio confirm.
-- [ ] Failing: each format shows its fields and sends them (no URL for the three built hosts, secrets only when typed); Twilio's cost note; Send test on a Twilio channel confirms first. Commit `feat(web): ntfy, Pushover, Twilio and PagerDuty in the channel dialog`.
+**Files:** `web/src/features/notifications/ChannelDialog.tsx`, new `PresetFields.tsx` and `presetSettings.ts`, `useChannelListActions.tsx`, `web/src/i18n/{en,de}/notifications.ts`, tests `ChannelDialog.preset48.test.tsx`, `ChannelsPage.rows.test.tsx` (the Twilio confirm).
+- [x] Failing: each format shows its fields and sends them (no URL for the three built hosts, secrets only when typed); Twilio's cost note; Send test on a Twilio channel confirms first. Commit `feat(web): ntfy, Pushover, Twilio and PagerDuty in the channel dialog`.
 
 ### Task 9: Docs
 
-- [ ] Backlog 4.8 → done; `docs/upgrades.md` entry for 00137 and skew. Commit `docs: backlog 4.8 done`.
+- [x] Backlog 4.8 → done; `docs/upgrades.md` entry for 00137 and skew. Commit `docs: backlog 4.8 done`.

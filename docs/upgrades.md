@@ -1267,6 +1267,23 @@ alongside** refuses the new parameters on write, but if it holds the probe lock 
 stored check with headers or a body as a plain GET of its URL, and one with a new method as
 "invalid method" (unknown); set these up only once every manager instance runs this version.
 
+Webhook channel presets for ntfy, Pushover, Twilio SMS and PagerDuty (backlog 4.8) add migration
+00137 and no proto change and no dependency: it drops and re-adds
+`notification_channels_preset_check` with `ntfy`, `pushover`, `twilio` and `pagerduty` added
+(widen-only; every stored row passes, the re-added CHECK scans the small channel table once).
+Nothing else in the schema changes: the new settings (`account_sid`, `from`, `to`, `region`) are
+stored unsealed in the channel's config next to `chat_id`, and the new preset secrets (`secrets`:
+Pushover's token and user key, Twilio's auth token, PagerDuty's routing key) are sealed in the
+same config with the channel's key, like header values; a backup carries them sealed. Existing
+channels send exactly as before. API additions, all additive: `webhook.account_sid`, `from`, `to`,
+`region` and `secrets` (names on read, name → value on create and update). **Skew:** an older
+manager still running during a rolling upgrade does not know the four presets: it sends their
+deliveries (and Send test) as the raw event JSON to the stored URL, which the service refuses,
+so they fail permanently, and an update through it is refused or can lose their settings and
+secrets. Stop every
+manager instance before the new version starts. A downgrade needs the usual restore of a backup
+from before the upgrade.
+
 ## Behaviour changes to check after an upgrade
 
 - **A worker revocation now cuts its open run streams on every manager
