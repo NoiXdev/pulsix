@@ -31,7 +31,7 @@ jobs:
     # pins run on Node 24 and install golangci-lint v2.)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         # An exact patch, not "1.27". The floating minor once let the runner
         # move to 1.27.2 overnight, which broke golangci-lint v2.13.2 (it
         # cannot read that toolchain's export data) and, on the very same
@@ -151,7 +151,7 @@ jobs:
         run: git config --global core.autocrlf false
       # Pinned like the go job (see its pin table).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       # -race needs cgo, which uses the runner's preinstalled MinGW gcc.
       - name: Agent unit tests
@@ -208,7 +208,7 @@ jobs:
     steps:
       # Pinned like the go job (see its pin table).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       - name: Agent unit tests
         run: go test -race -timeout 900s ./internal/agent/... ./cmd/agent/...
@@ -256,7 +256,7 @@ jobs:
     steps:
       # Pinned like the go job (see its pin table).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       # The binary for the runner's own arch under the name the manager
       # serves it by, with its checksum, the way scripts/agent-binaries.sh
@@ -356,7 +356,7 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
@@ -392,7 +392,7 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
@@ -440,7 +440,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       # The same runtime deploy/worker/Dockerfile builds: Python 3.13,
       # ansible-core 2.21.4 + ansible-runner 2.4.3 installed into the
@@ -527,7 +527,7 @@ jobs:
   #       working-directory: web
   #   steps:
   #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-  #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+  #     - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
   #       with: { go-version: "1.27.3" }
   #     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
   #       with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
@@ -586,7 +586,7 @@ jobs:
       # this job just built. Without this step the test skips everywhere
       # and proves nothing, which is how a shipped image that could not
       # run a single playbook stayed green.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: { go-version: "1.27.3" }
       - name: Run the playbook uid boundary against the worker image
         env:
