@@ -270,6 +270,12 @@ As in 4.7: an older manager sends a new preset channel as the raw event JSON to 
   dialog makes the field required as soon as the SID differs from the stored one.
 - **Unacknowledged sends nothing** to PagerDuty (a trigger would not undo its acknowledgement);
   a batch that leaves nothing to send is delivered as sent.
+- **Owed keys survive no preset switch (re-review N1).** A key in the pending list is the
+  preset's name plus the request's key (`pagerduty:alert:3`; `webhook:0` for a raw channel), and
+  when the stored list names none of the requests rendered now — the channel was switched to
+  another preset meanwhile, as an operator might during a PagerDuty outage — every request is
+  sent. A final failure stores the owed keys too (as a retry does; e-mail recipients likewise), so
+  a later Resend repeats only what was owed.
 - **Known limit (M3):** alerts beyond a batch's cap of 50 get no PagerDuty event, so an incident
   opened earlier for such an alert is not resolved by Pulsix (backlog 4.43).
 

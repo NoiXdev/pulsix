@@ -39,6 +39,7 @@
 - R17 (review M1) Every request is tried; the error names the failed ones (≤ 5, position and status only); permanent only when every owed request was refused permanently and none is unreached (R4 superseded). A single-request send keeps its plain semantics.
 - R18 (review M2) `SecretScoped`: Twilio's auth token belongs to `account_sid`; a new SID needs the token again (400 naming both), and the dialog requires the field once the SID differs.
 - R19 PagerDuty `ack_voided` (unacknowledged) sends nothing; a render with no request is a delivered message (was: a permanent failure). `unsnoozed` still triggers (deduplicated by PagerDuty, harmless).
+- R21 (re-review N1) Owed keys are `<preset>:<key>` (`webhook:` for raw); a pending list that names no rendered request means all are owed. A final failure stores the owed list too (`DeliveryQueue.Fail` gains `pending`), for Resend; for e-mail that narrows a Resend to the recipients the final attempt missed. Pinned by `TestPagerDutyRetryAfterASwitchSendsTheNewRequest`, `TestPresetSendOwedKeysOfAnotherPreset`, `TestDispatcherFinalFailureKeepsWhatIsOwed`, `TestFinalFailureKeepsWhatIsStillOwed`.
 - R20 (review M3) Alerts beyond the batch cap get no PagerDuty event: documented, backlog 4.43. Twilio's segment arithmetic stays as ruled in R8 (an extension character at a segment edge can cost a third segment, rare).
 
 ## Review Focus
