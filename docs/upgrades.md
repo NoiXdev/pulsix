@@ -1435,7 +1435,43 @@ new agent whose `agent.yaml` is refused for any reason now stops probing for oth
 until the file is fixed (it used to keep probing); write the file atomically (to a temporary
 file, then rename) so that a half-written file does not turn probing off for a minute.
 
+The agent status page (backlog 3.132) adds migration 00138 and two additive proto fields and
+no new dependency (the agent now links `golang.org/x/net/netutil`, already a dependency). 00138 adds the nullable
+column `host_agents.status_page` (`off`, `loopback`, `network` or `failed`, a CHECK; catalog
+only, nothing backfilled): every existing row reads as unknown until that agent's first
+heartbeat after the upgrade, and a re-enrollment resets it like the other reports. A backup
+carries the column. `Heartbeat.status_page` (9, the enum `StatusPageMode`) says whether the
+agent's local page is on and where, never its address, port or token;
+`ManagerMessage.agent_names` (4) carries the names of the agent's organization and host on
+every heartbeat's acknowledgement, read by the heartbeat's own statement (which now answers a
+row instead of none; no extra query). The agent DTO gains `status_page` (nullable, additive).
+**Skew:** an older agent sends no mode (stored unknown, the card shows no row) and ignores the
+names; a new agent under an older manager gets no names, and its page shows the organization
+and host IDs instead. An older manager ignores the mode. **The `status_page:` key in
+`agent.yaml` is unknown to an older agent, which refuses the whole file** (its `secrets:`,
+`commands:` and `checks:` are lost and, from 3.82 on, probing stops) until the agent is
+updated: update the agent first, then add `status_page:`. A new agent never refuses the file
+for a mistake in that section; only the page stays off. The page is off unless the host's
+own `agent.yaml` turns it on; nothing the manager sends can. On a network address the agent
+keeps a self-signed certificate (`status-page.crt`, `status-page.key`, owner-only) in its
+data directory unless `tls_cert` and `tls_key` are set; deleting them makes it issue new ones.
+
 ## Behaviour changes to check after an upgrade
+
+- **The agent replaces secret values before it sends anything (backlog 3.132, owner
+  decision, no migration):** every value of the agent's own `agent.yaml` secrets that is 4
+  characters or longer is replaced by `[secret]` in check results (item, label and error
+  text), probe results and host facts before they are buffered or sent, whether or not the
+  status page is on. The manager therefore stores `[secret]` where it used to store such a
+  value. Values that are common words or numbers are replaced too: a secret field holding
+  `localhost` or `5432` turns every `localhost` or `5432` in a check's item, label or error
+  and in the host's facts into `[secret]`, and an item renamed this way starts a new series
+  under its new name (its old one ages out as a vanished item). Keep values that are not
+  secret (host names, ports, user names) out of `secrets:` where they would collide, or
+  accept the replacement. Check keys and metric names are never changed, and the local
+  checks' parameters the heartbeat reports are sent as written. A value shorter than 4
+  characters is not replaced anywhere. While `agent.yaml` is refused, the values of the
+  last file that was read stay replaced; once the file is removed, nothing is.
 
 - **`PULSIX_PROBE_DENY_CIDRS` sees through IPv4-in-IPv6 forms (backlog 3.82, no
   migration):** a probe target whose IPv6 address embeds an IPv4 address in a denied

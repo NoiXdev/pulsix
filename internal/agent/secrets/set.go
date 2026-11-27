@@ -1,13 +1,15 @@
 // Package secrets reads the agent's local configuration file (agent.yaml):
-// the named secrets, the host-defined commands, the local checks and the
+// the named secrets, the host-defined commands, the local checks, the
 // probe policy (whether the agent probes other hosts, and the ranges it
-// must never reach) an operator keeps there. It checks the file's protection, parses the whole
-// file strictly and reads it again once a minute. Field values and command
-// arguments never leave this package except through Set.Fields and
-// Set.Command, local check params only through Set.LocalChecks; every
-// error, state and printed form names secrets, commands, check keys and
-// file positions only (a refused local check's problem may name a
-// parameter, never its value).
+// must never reach) and the local status page settings an operator keeps
+// there. It checks the file's protection, parses the whole file strictly
+// and reads it again once a minute. Field values and command arguments
+// never leave this package except through Set.Fields and Set.Command, local
+// check params only through Set.LocalChecks; the Redactor holds the field
+// values to replace them and hands none out; every error, state and
+// printed form names secrets, commands, check keys and file positions only
+// (a refused local check's problem may name a parameter, never its value;
+// the status page's token is never printed).
 package secrets
 
 import (
