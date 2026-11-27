@@ -39,12 +39,15 @@ import (
 //
 // Check results and probe results each have a bucket of this size
 // (backlog 3.78): an agent probing up to probes.MaxAssignmentsPerAgent
-// slots for other hosts must not delay its own checks at the budget, nor
-// its own checks the probes. 4096 observations per 10 s is 20 a slot at
-// 200 slots on the shortest interval, 120 at the usual 60 s. The kind is
-// the message type, so an agent that sends no probe results (an older
-// one, or one without assignments) is paced exactly as before; one serial
-// may store at most twice what one bucket refills.
+// slots for other hosts must not draw on its own checks' budget, nor its
+// own checks on the probes'. 4096 observations per 10 s is 20 a round at
+// 200 slots on the shortest interval and 120 at 60 s; slots with
+// assertions or JSON values on a 10 s interval exceed it and are paced.
+// The budgets are separate, the stream is not: a paced batch holds up the
+// messages behind it on the stream (backlog 3.136). The kind is the
+// message type, so an agent that sends no probe results (an older one, or
+// one without assignments) is paced exactly as before; one serial may
+// store at most twice what one bucket refills.
 const (
 	ingestRefill      = checks.MaxTuplesPerHost
 	ingestRefillEvery = checks.MinInterval
